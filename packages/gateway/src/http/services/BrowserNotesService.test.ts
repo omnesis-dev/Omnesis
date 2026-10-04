@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceId, TokenId, Scope } from "@omnesis/types";
 import { BrowserNotesService } from "./BrowserNotesService.js";
 import type { AuthContext } from "../routes/types.js";
@@ -61,6 +61,87 @@ function fixture() {
 }
 
 describe("browser notes optional authority", () => {
+  beforeEach(() => vi.stubEnv("OMNESIS_EXPERIMENTAL", "1"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  test.each([undefined, "0"])(
+    "default-off gate rejects existing approved authority (%s), including synthetic mode",
+    async (flag) => {
+      const f = fixture();
+      const request = f.service.createAuthorization(f.auth, randomUUID());
+      await f.service.approve(request.requestId);
+      const notesAuth = { ...f.auth, tokenId: f.mintedId, scopes: [Scope("notes:create")] };
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", flag);
+      vi.stubEnv("OMNESIS_SYNTHETIC", "1");
+      for (const operation of [
+        () => f.service.createAuthorization(f.auth, randomUUID()),
+        () => f.service.poll(f.auth, request.requestId),
+        () => f.service.authorization(request.requestId),
+        () => f.service.status(notesAuth),
+      ])
+        expect(operation).toThrow(expect.objectContaining({ status: 404 }));
+      await expect(f.service.approve(request.requestId)).rejects.toMatchObject({ status: 404 });
+      await expect(
+        f.service.capture(notesAuth, {
+          id: randomUUID(),
+          text: "A thought",
+          page: { url: "https://example.org/article" },
+        }),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(f.createToken).toHaveBeenCalledTimes(1);
+      expect(f.capture).not.toHaveBeenCalled();
+    },
+  );
+
+  test("approval revokes a newly minted token when the experimental gate closes while queued", async () => {
+    const f = fixture();
+    const request = f.service.createAuthorization(f.auth, randomUUID());
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.createToken.mockImplementationOnce(async () => {
+      await waiting;
+      f.tokens.add(f.mintedId);
+      return { id: f.mintedId, token: "fictional-secret" };
+    });
+    const approval = f.service.approve(request.requestId);
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+    release();
+    await expect(approval).rejects.toMatchObject({ status: 404 });
+    expect(f.revokeToken).toHaveBeenCalledExactlyOnceWith(f.mintedId);
+    expect(f.tokens.has(f.mintedId)).toBe(false);
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    expect(f.service.poll(f.auth, request.requestId)).toEqual({ status: "pending" });
+  });
+
+  test("an in-flight idempotent capture cannot return data after experimental mode is disabled", async () => {
+    const f = fixture();
+    f.capture.mockImplementationOnce(async (input) => {
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+      return { ...input, day: "2026-01-01" };
+    });
+    await expect(
+      f.service.capture(
+        { ...f.auth, scopes: [Scope("notes:create")] },
+        { id: randomUUID(), text: "A thought", page: { url: "https://example.org/article" } },
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  test("queued writer gate failure maps to 404", async () => {
+    const f = fixture();
+    f.capture.mockRejectedValueOnce(
+      Object.assign(new Error("Feature unavailable"), { name: "BrowserNotesUnavailableError" }),
+    );
+    await expect(
+      f.service.capture(
+        { ...f.auth, scopes: [Scope("notes:create")] },
+        { id: randomUUID(), text: "A thought", page: { url: "https://example.org/article" } },
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
   test("only an approved request yields a separate create-only credential", async () => {
     const f = fixture();
     const request = f.service.createAuthorization(f.auth, randomUUID());

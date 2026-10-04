@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { experimentalEnabled } from "@omnesis/core";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
 import { browserFindSearchBody } from "../schemas/browser-find.js";
@@ -14,6 +15,18 @@ export function mountBrowserFindRoutes(
   service: BrowserFindService,
   searches: BrowserFindStreamService,
 ): void {
+  app.use("/browser/find", async (c, next) => {
+    if (!experimentalEnabled()) return c.notFound();
+    await next();
+  });
+  app.use("/browser/find/*", async (c, next) => {
+    if (!experimentalEnabled()) return c.notFound();
+    await next();
+  });
+  app.use("/admin/browser-find/*", async (c, next) => {
+    if (!experimentalEnabled()) return c.notFound();
+    await next();
+  });
   app.post(
     "/browser/find/authorization",
     scope.deviceSelf(),

@@ -143,6 +143,8 @@ export function initFindPanel(document: Document, api: PanelApi): void {
     }
     findNav.hidden = !next.enabled;
     form.hidden = !next.enabled;
+    const footer = document.querySelector<HTMLElement>(".find-footer");
+    if (footer) footer.hidden = !next.enabled;
     if (!dirtyInput) {
       input.value = next.query;
       if (mode === "find") input.select?.();
@@ -427,7 +429,7 @@ export function initFindPanel(document: Document, api: PanelApi): void {
   void api.storage.local.get(PANEL_VIEW_KEY).then((state) => {
     selectMode(state[PANEL_VIEW_KEY] === "find" ? "find" : "notes");
   });
-  void api.runtime.sendMessage<NotesView>({ type: "notes-view" }).then((notes) => {
+  void api.runtime.sendMessage<NotesView>({ type: "notes-status" }).then((notes) => {
     notesNav.hidden = !notes?.enabled;
   });
   void refresh().then(() => {

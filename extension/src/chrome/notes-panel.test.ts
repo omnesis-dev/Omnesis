@@ -7,13 +7,14 @@ import { describe, expect, it, vi } from "vitest";
 import { initNotesPanel } from "./notes-panel.js";
 import type { NotesView } from "./notes-service.js";
 
-function panel() {
+function panel(disabled = false) {
   const { document, window } = parseHTML(
     readFileSync(new URL("../../public/notes.html", import.meta.url), "utf8"),
   );
   let view: NotesView = {
-    supported: true,
-    enabled: true,
+    supported: !disabled,
+    enabled: !disabled,
+    rejected: disabled ? [{ id: "rejected", title: "Fictional page" }] : [],
     pendingApproval: false,
     pending: 0,
     draft: {
@@ -83,5 +84,14 @@ describe("notes side panel", () => {
       ),
     );
     expect(p.document.getElementById("note-url")?.textContent).toBe("https://example.org/article");
+  });
+  it("hides the composer and unsent-note recovery when experimental notes are unavailable", async () => {
+    const p = panel(true);
+    await vi.waitFor(() =>
+      expect(p.document.getElementById("notes-status")?.textContent).toContain("unavailable"),
+    );
+    expect(p.document.getElementById("notes-form")?.hidden).toBe(true);
+    expect(p.document.getElementById("notes-rejected")?.hidden).toBe(true);
+    expect(p.document.querySelectorAll("#notes-rejected button")).toHaveLength(0);
   });
 });

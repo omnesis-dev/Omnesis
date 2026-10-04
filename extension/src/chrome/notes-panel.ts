@@ -47,7 +47,8 @@ export function initNotesPanel(document: Document, api: PanelChrome): void {
               : "Write a note about this page."));
     const rejected = element("notes-rejected");
     rejected.replaceChildren();
-    for (const note of view.rejected ?? []) {
+    rejected.hidden = !view.enabled;
+    for (const note of view.enabled ? (view.rejected ?? []) : []) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "secondary";

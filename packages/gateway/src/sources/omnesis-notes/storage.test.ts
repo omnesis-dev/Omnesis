@@ -3,7 +3,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 type Db = Database.Database;
 
 import BetterSqlite3 from "better-sqlite3";
@@ -60,6 +60,7 @@ describe("note_entries storage", () => {
     db = createDatabase(dbPath); // schema setup creates note_entries
   });
   afterEach(() => {
+    vi.unstubAllEnvs();
     db.close();
     cleanupDb(dbPath);
   });
@@ -92,6 +93,7 @@ describe("note_entries storage", () => {
   });
 
   test("writer rejects a browser permission revoked before the queued capture commits", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
     const device = createDevice(db, { name: "Example browser", kind: "browser" });
     const token = createToken(db, device.id, [Scope("notes:create")]);
     const authority = { deviceId: device.id, tokenId: token.id };
@@ -101,6 +103,24 @@ describe("note_entries storage", () => {
     const queued = makeEntry({ deviceId: device.id });
     expect(() => insertNoteEntry(db, queued, undefined, authority)).toThrow("no longer active");
     expect(getNoteEntry(db, queued.id)).toBeNull();
+  });
+
+  test("writer fences a browser capture after experimental mode turns off while ordinary notes remain available", () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    const device = createDevice(db, { name: "Example browser", kind: "browser" });
+    const token = createToken(db, device.id, [Scope("notes:create")]);
+    const authority = { deviceId: device.id, tokenId: token.id };
+    const first = makeEntry({ deviceId: device.id });
+    expect(insertNoteEntry(db, first, undefined, authority)).toBe(true);
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+    vi.stubEnv("OMNESIS_SYNTHETIC", "1");
+    const queued = makeEntry({ deviceId: device.id });
+    expect(() => insertNoteEntry(db, queued, undefined, authority)).toThrow(
+      expect.objectContaining({ name: "BrowserNotesUnavailableError" }),
+    );
+    expect(getNoteEntry(db, queued.id)).toBeNull();
+    expect(getNoteEntry(db, first.id)).not.toBeNull();
+    expect(insertNoteEntry(db, makeEntry())).toBe(true);
   });
 
   test("page context persists across note edits and idempotent retries", () => {

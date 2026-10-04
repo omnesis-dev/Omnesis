@@ -37,7 +37,7 @@ describe("Browser Find owner-approved standard read (spawned gateway)", () => {
   const pageUrl = "https://example.org/orbit-workshop";
   beforeAll(async () => {
     harness = new SyntheticE2EHarness({
-      gatewayMode: "stable",
+      gatewayMode: "synthetic-experimental",
       universe: "e2e-minimal",
       embedderBackend: "fake",
     });
@@ -201,5 +201,87 @@ describe("Browser Find owner-approved standard read (spawned gateway)", () => {
       },
     );
     expect(replay.status).toBe(404);
+  });
+});
+
+describe("Stable browser capture without experimental note or Find APIs", () => {
+  let stable: SyntheticE2EHarness;
+  beforeAll(async () => {
+    stable = new SyntheticE2EHarness({
+      gatewayMode: "stable",
+      universe: "e2e-minimal",
+      embedderBackend: "fake",
+    });
+    await stable.start();
+  }, 180_000);
+  afterAll(async () => {
+    await stable?.destroy();
+  }, 30_000);
+  test("hides capabilities and rejects existing optional credentials while capture retains its default grant", async () => {
+    const health = (await (await fetch(`${stable.gatewayUrl}/health`)).json()) as {
+      experimental: boolean;
+      capabilities: Record<string, unknown>;
+    };
+    expect(health.experimental).toBe(false);
+    expect(health.capabilities).not.toHaveProperty("browserNotes");
+    expect(health.capabilities).not.toHaveProperty("browserFind");
+    const minted = await stable.gatewayJson<{ pairingCode: string }>("/admin/devices/pair", {
+      method: "POST",
+      body: JSON.stringify({ kind: "browser", name: "Stable browser" }),
+    });
+    const browser = await pair(stable.gatewayUrl, minted.pairingCode, nodeFetch, "Stable browser");
+    expect(browser.scopes).toEqual(["write:web"]);
+    for (const [feature, scope] of [
+      ["notes", "notes:create"],
+      ["find", "read"],
+    ] as const) {
+      const existing = await stable.gatewayJson<{ token: string }>("/admin/tokens", {
+        method: "POST",
+        body: JSON.stringify({
+          deviceId: browser.device.id,
+          scopes: [scope],
+          name: "Existing optional grant",
+        }),
+      });
+      const id = randomUUID();
+      for (const [path, token, body] of [
+        [`/browser/${feature}`, existing.token, undefined],
+        [`/browser/${feature}/authorization`, browser.token, { id }],
+        [`/browser/${feature}/authorization/${id}`, browser.token, undefined],
+        [`/admin/browser-${feature}/authorizations/${id}`, stable.apiKey, undefined],
+        [`/admin/browser-${feature}/authorizations/${id}/approve`, stable.apiKey, {}],
+        [
+          feature === "notes" ? "/browser/notes" : "/browser/find/search",
+          existing.token,
+          feature === "notes"
+            ? { version: 1, id, text: "Hidden note", page: { url: "https://example.org/stable" } }
+            : { text: "Hidden search" },
+        ],
+      ] as const) {
+        const response = await fetch(`${stable.gatewayUrl}${path}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+        expect(response.status, path).toBe(404);
+      }
+    }
+    const text =
+      "A fictional telescope assembly guide remains captured with experimental features off.";
+    const page = await buildWebPageDocument({
+      normalizedUrl: "https://example.org/stable",
+      title: "Stable capture",
+      text,
+      contentHash: createHash("sha256").update(text).digest("hex"),
+      visitedAt: new Date().toISOString(),
+      browserProfile: { deviceId: browser.device.id, label: "Stable browser" },
+    });
+    const capture = await fetch(`${stable.gatewayUrl}/documents`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${browser.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ documents: [page] }),
+    });
+    expect(capture.status).toBe(200);
+    expect((await stable.gatewayJson<{ count: number }>("/documents/count/web")).count).toBe(1);
   });
 });

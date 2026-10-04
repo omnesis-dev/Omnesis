@@ -155,6 +155,8 @@ copies retain their required SQLite sidecars; source originals remain read-only.
 
 ### Browser-openable search is a client presentation filter
 
+Chrome notes and Find require strict gateway `experimentalEnabled()` (`OMNESIS_EXPERIMENTAL=1`), including discovery, owner approval and previously approved credentials. Synthetic mode alone does not enable them. Automatic capture and ordinary portal/mobile notes are unaffected.
+
 Extension Find uses an independently owner-approved ordinary `read` credential;
 page capture keeps `write:web` and note creation keeps `notes:create`. Filtering
 search results by HTTP(S) `sourceUrl` does not narrow that read authority. Approval

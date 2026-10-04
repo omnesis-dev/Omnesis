@@ -14,6 +14,7 @@ function harness() {
   let stored: unknown,
     approved = false,
     revoked = false;
+  let experimental: unknown = true;
   let capability: unknown = { min: 1, max: 1 };
   let config: ExtensionConfig | null = {
     gatewayUrl: "https://gateway.example.org",
@@ -30,6 +31,7 @@ function harness() {
     new Response(JSON.stringify(value), { status });
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname;
+    if (path === "/status") return respond({ experimental });
     if (path === "/health") return respond({ capabilities: { browserFind: capability } });
     if (path === "/browser/find/authorization")
       return respond({
@@ -89,6 +91,9 @@ function harness() {
   };
   return {
     service: new FindService(deps),
+    setExperimental: (value: unknown) => {
+      experimental = value;
+    },
     deps,
     fetch,
     approve: () => {
@@ -398,5 +403,86 @@ describe("Find authorization and durable results", () => {
     expect(await new FindService(h.deps).status(false)).toMatchObject({
       results: [{ id: "card" }],
     });
+  });
+  it("requires explicit experimental true alongside the Find capability", async () => {
+    for (const flag of [undefined, false, null, 1, "true", {}]) {
+      const h = harness();
+      h.setExperimental(flag);
+      expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+      await expect(h.service.activate()).rejects.toThrow("unavailable");
+    }
+  });
+  it("hides already approved Find grants and blocks paid requests while the flag is off", async () => {
+    const h = harness();
+    await enable(h);
+    h.search(async () => h.respond({ results: [hit("card", "https://example.org/guide")] }));
+    await h.service.search("guide");
+    h.setExperimental(false);
+    h.fetch.mockClear();
+    expect(await h.service.search("another")).toMatchObject({
+      supported: false,
+      enabled: false,
+      results: [],
+    });
+    expect(
+      h.fetch.mock.calls.some(([url]) => new URL(String(url)).pathname === "/browser/find/search"),
+    ).toBe(false);
+    expect(await new FindService(h.deps).status(false)).toMatchObject({
+      enabled: false,
+      results: [],
+    });
+    h.setExperimental(true);
+    expect(await h.service.status()).toMatchObject({ enabled: true });
+  });
+  it("does not trust a legacy cached grant during an unverified outage", async () => {
+    const h = harness();
+    await enable(h);
+    const state = (await h.deps.read()) as Record<string, unknown>;
+    delete state.experimental;
+    await h.deps.write(state);
+    h.fetch.mockRejectedValue(new Error("Offline"));
+    expect(await new FindService(h.deps).status()).toMatchObject({
+      supported: false,
+      enabled: false,
+    });
+  });
+  it("aborts a live search and hides its results when the experimental flag turns off", async () => {
+    const h = harness();
+    await enable(h);
+    let started = false,
+      aborted = false;
+    h.search(
+      async (_body, signal) =>
+        new Promise<Response>((_resolve, reject) => {
+          started = true;
+          signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("aborted"));
+          });
+        }),
+    );
+    const run = h.service.search("guide");
+    await vi.waitFor(() => expect(started).toBe(true));
+    h.setExperimental(false);
+    expect(await h.service.status()).toMatchObject({
+      supported: false,
+      enabled: false,
+      results: [],
+      running: false,
+    });
+    await run;
+    expect(aborted).toBe(true);
+    expect(await h.service.status(false)).toMatchObject({ supported: false, enabled: false });
+  });
+  it("closes discovery when experimental-status access is explicitly rejected", async () => {
+    const h = harness();
+    await enable(h);
+    const original = h.fetch.getMockImplementation()!;
+    h.fetch.mockImplementation(async (input, init) =>
+      String(input).endsWith("/status")
+        ? new Response("{}", { status: 403 })
+        : original(input, init),
+    );
+    expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
   });
 });

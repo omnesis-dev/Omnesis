@@ -768,15 +768,13 @@ omnesis.example.com {
         </ul>
         <p>
           Automatic capture sends the readable text as Markdown, the title, the URL, the visit time
-          and how long the page was focused. Tell Omnesis also sends the note you submit and any
-          selected quotation. Form values, drafts in editable fields, raw HTML, scripts, images and
-          screenshots never do. Credentials in the address (tokens, signatures, one-time codes,
-          passwords, session ids, an OAuth callback's code and state) are removed before it is
-          recorded.
+          and how long the page was focused. Form values, drafts in editable fields, raw HTML,
+          scripts, images and screenshots never do. Credentials in the address (tokens, signatures,
+          one-time codes, passwords, session ids, an OAuth callback's code and state) are removed
+          before it is recorded.
         </p>
         <p>
-          The capture token can add pages but cannot search or read. Optional Find uses a separate,
-          owner-approved read credential to search your Omnesis data. The extension loads no remote
+          The capture token can add pages but cannot search or read. The extension loads no remote
           code and has no analytics or crash reporting.
         </p>
         <div class="callout warn">
@@ -816,11 +814,11 @@ omnesis.example.com {
           <code>write:web</code> only.
         </p>
         <p>
-          Page capture and optional features have separate compatibility checks. A gateway without
-          browser notes or Find support continues receiving pages; the extension hides the
-          unsupported feature. If pairing times out, submit the same code again: the gateway
-          recognises the repeated request and returns the token it already issued. If pairing fails
-          after you granted page access, Settings shows a button to remove that access.
+          Page capture and optional capabilities have separate compatibility checks. Unsupported
+          capabilities remain hidden while page capture continues. If pairing times out, submit the
+          same code again: the gateway recognises the repeated request and returns the token it
+          already issued. If pairing fails after you granted page access, Settings shows a button to
+          remove that access.
         </p>
         <p>
           To develop the extension itself, run <code>npm --prefix extension run build</code> from
@@ -828,63 +826,6 @@ omnesis.example.com {
           <em>Load unpacked</em> and select <code>extension/dist/</code>. The store version and an
           unpacked build are separate extensions that pair separately, so both capture if both are
           installed; unpair the unpacked build before relying on the store one.
-        </p>
-
-        <h3 id="browser-extension-find">Find and reopen indexed content</h3>
-        <p>
-          Enable <strong>Find</strong> in the extension popup or settings, then approve
-          <strong>Search your Omnesis data</strong> in the gateway portal. This grants ordinary read
-          access across the index, separately from page capture and note creation. Find displays
-          only results with an HTTP or HTTPS source link, including captured pages, Gmail messages
-          and Notion pages. Native-only links are omitted. This display filter does not restrict the
-          credential's access.
-        </p>
-        <p>
-          Press <strong>Alt/Option + Shift + F</strong> or choose <strong>Find</strong> in the
-          popup. Search results show titles, matching snippets, site icons and source links. Select
-          a result with the keyboard and press Enter, or click it, to switch to a matching tab and
-          its window. If no safe match exists, the source link opens in a new tab. The separate
-          new-tab action opens another copy. The query and results remain available when you reopen
-          the panel. The configured decision model chooses direct index search or a read-only agent
-          search. The panel shows its decision, streamed agent text and tool activity, then the
-          structured search results. Without an enabled decision model, Find uses direct search.
-          Each query starts a fresh task, with no timeline or follow-up conversation.
-        </p>
-        <p>
-          Existing page-access grants allow matching open tabs on those sites. Choose
-          <strong>Match all open tabs</strong> to grant optional tab access for broader matching.
-          Tab URLs are compared locally and the tab list is not uploaded. Optional favicon access
-          displays icons through Chrome's favicon service; missing icons have a fallback.
-          Browser-history access is not requested. Change either shortcut at
-          <code>chrome://extensions/shortcuts</code>.
-        </p>
-
-        <h3 id="browser-extension-notes">Tell Omnesis from a page</h3>
-        <p>
-          On a gateway that supports browser notes, enable <strong>Tell Omnesis</strong> in the
-          extension's Options page. It opens the gateway portal for a one-time approval for this
-          browser. Approval issues a separate credential that can create notes, but cannot read,
-          edit or delete existing notes. The page-capture credential remains
-          <code>write:web</code> only. Updating the gateway does not expand an existing browser's
-          permissions.
-        </p>
-        <p>
-          Press <strong>Alt + Shift + N</strong> (<strong>Option + Shift + N</strong> on macOS),
-          choose <strong>Tell Omnesis</strong> in the extension popup, or right-click the page. If
-          text is selected, the note includes that quotation; you can remove it before sending. Each
-          opens a side panel with the page context and a focused note field. The icon need not be
-          pinned to use the shortcut or right-click menu. Change the shortcut at
-          <code>chrome://extensions/shortcuts</code> if another extension uses it.
-        </p>
-        <p>
-          <strong>Ctrl + Enter</strong> (<strong>Command + Enter</strong> on macOS) sends the note;
-          Enter adds a line break. Drafts retain their original page even when you change tabs.
-          Submitted notes wait locally while the gateway is unavailable and show whether they are
-          waiting to sync or saved. They appear alongside other notes in the portal's
-          <strong>Tell Omnesis</strong> page and in the day's searchable Notes document, with the
-          page URL and optional quotation. Its page reference can resolve when the page is indexed
-          later; taking a note does not automatically capture an excluded page. Automatic capture
-          pauses and exclusions do not prevent you from explicitly submitting a note.
         </p>
 
         <h3 id="browser-extension-reference">Popup and capture settings</h3>

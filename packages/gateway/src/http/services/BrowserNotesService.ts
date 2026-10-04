@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { normalizeUrl } from "@omnesis/core";
-import { BadRequestError, ForbiddenError, HttpError } from "../errors.js";
+import { BadRequestError, ForbiddenError, HttpError, NotFoundError } from "../errors.js";
 import { BrowserAuthorizationService } from "./BrowserAuthorizationService.js";
 import type { AuthContext } from "../routes/types.js";
 import type { DeviceService } from "./DeviceService.js";
@@ -73,10 +73,14 @@ export class BrowserNotesService {
         deviceId: browser.deviceId,
       })
       .catch((error: unknown) => {
+        if (error instanceof Error && error.name === "BrowserNotesUnavailableError")
+          throw new NotFoundError("Browser notes feature is unavailable");
         if (error instanceof Error && error.name === "BrowserNoteAuthorizationError")
           throw new ForbiddenError("Browser note permission is no longer active");
         throw error;
       });
+    // The runtime can await a queued write or return an idempotent existing entry.
+    this.authorizationService.browser(auth, "notes:create");
     if (entry.deviceId !== browser.deviceId)
       throw new ForbiddenError("Note id belongs to another capture");
     if (

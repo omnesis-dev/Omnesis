@@ -19,7 +19,13 @@ describe("Find worker entrypoints", () => {
         pairedAt: 1,
       }),
       [TOKEN_KEY]: "web-token",
-      [FIND_STATE_KEY]: { pairing: identity, supported: true, query: "", results: [] },
+      [FIND_STATE_KEY]: {
+        pairing: identity,
+        supported: true,
+        experimental: true,
+        query: "",
+        results: [],
+      },
       [FIND_TOKEN_KEY]: { pairing: identity, token: "read-token" },
     };
     let command: ((name: string, tab?: chrome.tabs.Tab) => void) | undefined;
@@ -56,7 +62,7 @@ describe("Find worker entrypoints", () => {
           JSON.stringify(
             String(input).endsWith("/health")
               ? { capabilities: { browserFind: { min: 1, max: 1 } } }
-              : { enabled: true, canonicalizers: [] },
+              : { experimental: true, enabled: true, canonicalizers: [] },
           ),
         ),
       );

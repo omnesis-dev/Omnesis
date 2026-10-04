@@ -23,7 +23,7 @@ export function BrowserNotesApprovalView({ requestId, feature = "notes" }) {
     setError(null);
     setApproved(false);
     if (!requestId) {
-      setError(`Open this page from Enable ${label} in your browser extension.`);
+      setError("Open this page from your browser extension.");
       return;
     }
     loadRequest(requestId)
@@ -56,7 +56,7 @@ export function BrowserNotesApprovalView({ requestId, feature = "notes" }) {
   };
   return html`<div class="capture-view">
     <header class="privacy-page-header">
-      <div><h1>Enable ${label} in your browser</h1></div>
+      <div><h1>${request ? `Enable ${label} in your browser` : "Browser authorization"}</h1></div>
     </header>
     <section class="capture-column capture-composer">
       ${error ? html`<p role="alert">${error}</p>` : null}

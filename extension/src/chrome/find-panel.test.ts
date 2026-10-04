@@ -248,6 +248,7 @@ describe("Find panel", () => {
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(0));
     expect(p.document.getElementById("panel-find")?.hidden).toBe(true);
     expect(p.document.getElementById("find-form")?.hidden).toBe(true);
+    expect((p.document.querySelector(".find-footer") as unknown as HTMLElement).hidden).toBe(true);
   });
   it("requests broader tabs access only from its explicit action", async () => {
     const p = panel();

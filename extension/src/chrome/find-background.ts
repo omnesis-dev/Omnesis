@@ -162,7 +162,16 @@ export function installFindBackground(): {
     return true;
   };
   chrome.alarms.create("omnesis-find-refresh", { periodInMinutes: 1 });
-  detached(service.status(false).then((view) => refresh(view.supported || view.pendingApproval)));
+  detached(
+    (async () => {
+      const stored = await chrome.storage.local.get([FIND_STATE_KEY, FIND_TOKEN_KEY]);
+      const previous = stored[FIND_STATE_KEY] as { supported?: unknown } | null;
+      const view = await service.status(false);
+      await refresh(
+        !!stored[FIND_TOKEN_KEY] || previous?.supported === true || view.pendingApproval,
+      );
+    })(),
+  );
   return {
     message,
     alarm: (name) => {

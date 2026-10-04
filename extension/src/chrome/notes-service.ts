@@ -24,6 +24,7 @@ interface QueuedNote extends NoteDraft {
 interface NotesState {
   pairing: string;
   supported: boolean;
+  experimental?: boolean;
   requestId?: string;
   approvalPath?: string;
   token?: string;
@@ -133,7 +134,8 @@ export class NotesService {
       config,
       state: {
         pairing: identity(config),
-        supported: state.supported === true,
+        supported: state.supported === true && state.experimental === true,
+        experimental: state.experimental === true,
         queue: queue.filter(isDraft),
         ...(isDraft(state.draft) ? { draft: state.draft } : {}),
         ...(typeof state.token === "string" ? { token: state.token } : {}),
@@ -174,13 +176,13 @@ export class NotesService {
     return JSON.parse(text) as unknown;
   }
   private async refresh(config: ExtensionConfig, state: NotesState): Promise<void> {
-    let checking: "health" | "credential" | "authorization" = "health";
+    let checking: "health" | "experimental" | "credential" | "authorization" = "health";
     try {
       const health = (await this.request(config, "/health")) as {
         capabilities?: { browserNotes?: { min?: unknown; max?: unknown } };
       };
       const range = health?.capabilities?.browserNotes;
-      state.supported =
+      const compatible =
         typeof range?.min === "number" &&
         typeof range.max === "number" &&
         Number.isInteger(range.min) &&
@@ -189,6 +191,18 @@ export class NotesService {
         range.min <= range.max &&
         range.min <= 1 &&
         range.max >= 1;
+      if (compatible) {
+        checking = "experimental";
+        const status = (await this.request(config, "/status", config.token)) as {
+          experimental?: unknown;
+        };
+        state.experimental = status?.experimental === true;
+        state.supported = state.experimental;
+      } else {
+        state.experimental = false;
+        state.supported = false;
+      }
+
       if (state.supported && state.token) {
         checking = "credential";
         await this.request(config, "/browser/notes", state.token);
@@ -221,6 +235,10 @@ export class NotesService {
       // A network outage keeps drafts and authorized offline enqueue available.
       // An explicit authorization rejection always closes the feature.
       if (error instanceof NotesHttpError && [401, 403, 404, 410].includes(error.status)) {
+        if (checking === "health" || checking === "experimental") {
+          state.supported = false;
+          state.experimental = false;
+        }
         delete state.token;
         delete state.requestId;
         delete state.approvalPath;

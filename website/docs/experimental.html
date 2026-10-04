@@ -137,6 +137,7 @@
             <li>
               <a href="/docs/experimental" aria-current="page">Experimental</a>
               <ul class="side-sub">
+                <li><a href="#browser-extension">Browser extension</a></li>
                 <li><a href="#brain">Omnesis Brain</a></li>
                 <li><a href="#watch">Omnesis Watch</a></li>
               </ul>
@@ -149,11 +150,11 @@
         <p class="docs-kicker">Experimental</p>
         <h1>Experimental</h1>
         <p class="docs-lead">
-          Omnesis ships two features switched off because they are not yet stable:
-          <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
-          notes, loops and briefs about it, <strong>Omnesis Watch</strong>, which tells you or an
-          agent when a condition you describe becomes true. This page is for operators who want to
-          run them: how each works, what it spends, how to observe it and how to stop it.
+          <code>OMNESIS_EXPERIMENTAL=1</code> enables unstable features: browser-extension page
+          notes and Find, <strong>Omnesis Brain</strong>, which reads your data in the background
+          and keeps cited notes, loops and briefs, and <strong>Omnesis Watch</strong>, which tells
+          you or an agent when a condition becomes true. This page explains how to run, observe and
+          stop them.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -161,9 +162,10 @@
         </div>
         <p>
           Nothing here is visible unless the process was started with
-          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal Brain, Watch and
-          their controls; with it unset the gateway serves none of their routes, schedules none of
-          their work and creates none of their files. For a gateway you run in the foreground:
+          <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal browser notes, Find,
+          Brain, Watch and their controls; with it unset the gateway serves none of their routes,
+          schedules none of their work and creates none of their files. For a gateway you run in the
+          foreground:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -205,6 +207,72 @@
           portal, the mobile apps and the CLI use it to show or hide these controls. The flag on the
           collector matters only for sources: a source marked experimental is offered in the source
           picker only by a collector that runs with the flag itself.
+        </p>
+
+        <h2 id="browser-extension">Browser extension notes and Find</h2>
+        <p>
+          These features are unstable and require <code>OMNESIS_EXPERIMENTAL=1</code> on the
+          gateway. With the flag unset or <code>0</code>, the extension hides both features and the
+          gateway refuses their endpoints, including approval and requests using previously approved
+          credentials. Older gateways without the feature capabilities also hide them. Automatic
+          page capture remains available without experimental mode. Notes in the portal and mobile
+          apps remain available as usual.
+        </p>
+        <h3 id="browser-extension-find">Find and reopen indexed content</h3>
+        <p>
+          Enable <strong>Find</strong> in the extension popup or settings, then approve
+          <strong>Search your Omnesis data</strong> in the gateway portal. This grants ordinary read
+          access across the index, separately from page capture and note creation. Find displays
+          only results with an HTTP or HTTPS source link, including captured pages, Gmail messages
+          and Notion pages. Native-only links are omitted. This display filter does not restrict the
+          credential's access.
+        </p>
+        <p>
+          Press <strong>Alt/Option + Shift + F</strong> or choose <strong>Find</strong> in the
+          popup. Search results show titles, matching snippets, site icons and source links. Select
+          a result with the keyboard and press Enter, or click it, to switch to a matching tab and
+          its window. If no safe match exists, the source link opens in a new tab. The separate
+          new-tab action opens another copy. The query and results remain available when you reopen
+          the panel. The configured decision model chooses direct index search or a read-only agent
+          search. The panel shows its decision, streamed agent text and tool activity, then the
+          structured search results. Without an enabled decision model, Find uses direct search.
+          Each query starts a fresh task, with no timeline or follow-up conversation.
+        </p>
+        <p>
+          Existing page-access grants allow matching open tabs on those sites. Choose
+          <strong>Match all open tabs</strong> to grant optional tab access for broader matching.
+          Tab URLs are compared locally and the tab list is not uploaded. Optional favicon access
+          displays icons through Chrome's favicon service; missing icons have a fallback.
+          Browser-history access is not requested. Change either shortcut at
+          <code>chrome://extensions/shortcuts</code>.
+        </p>
+
+        <h3 id="browser-extension-notes">Tell Omnesis from a page</h3>
+        <p>
+          With experimental mode enabled on a compatible gateway, enable
+          <strong>Tell Omnesis</strong> in the extension's Options page. It opens the gateway portal
+          for a one-time approval for this browser. Approval issues a separate credential that can
+          create notes, but cannot read, edit or delete existing notes. The page-capture credential
+          remains <code>write:web</code> only. Updating the gateway does not expand an existing
+          browser's permissions.
+        </p>
+        <p>
+          Press <strong>Alt + Shift + N</strong> (<strong>Option + Shift + N</strong> on macOS),
+          choose <strong>Tell Omnesis</strong> in the extension popup, or right-click the page. If
+          text is selected, the note includes that quotation; you can remove it before sending. Each
+          opens a side panel with the page context and a focused note field. The icon need not be
+          pinned to use the shortcut or right-click menu. Change the shortcut at
+          <code>chrome://extensions/shortcuts</code> if another extension uses it.
+        </p>
+        <p>
+          <strong>Ctrl + Enter</strong> (<strong>Command + Enter</strong> on macOS) sends the note;
+          Enter adds a line break. Drafts retain their original page even when you change tabs.
+          Submitted notes wait locally while the gateway is unavailable and show whether they are
+          waiting to sync or saved. They appear alongside other notes in the portal's
+          <strong>Tell Omnesis</strong> page and in the day's searchable Notes document, with the
+          page URL and optional quotation. Its page reference can resolve when the page is indexed
+          later; taking a note does not automatically capture an excluded page. Automatic capture
+          pauses and exclusions do not prevent you from explicitly submitting a note.
         </p>
 
         <h2 id="brain">Omnesis Brain</h2>

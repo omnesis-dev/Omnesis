@@ -530,12 +530,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                   Judges whether an email is worth recording, so that time queries can leave out the
                   dates in marketing and newsletters when
                   <code>enrichment.dates.worthGate</code> is on (see
-                  <a href="/docs#documents-and-the-index">Documents and the index</a>). It also
-                  routes the browser extension's Find query to direct index retrieval or read-only
-                  agent research when the query needs connections, extraction or calculations. Find
-                  sends the query and routing instructions to the decision model; without an enabled
-                  decision role, it uses direct search. Served only by TypeSafe Jev, a cloud model,
-                  so it needs <strong>Allow cloud inference</strong>: add its key with
+                  <a href="/docs#documents-and-the-index">Documents and the index</a>). Served only
+                  by TypeSafe Jev, a cloud model, so it needs
+                  <strong>Allow cloud inference</strong>: add its key with
                   <code>omnesis backend key set typesafe</code> or under
                   <strong>Settings → Models → Decision model</strong>, then
                   <code>omnesis model assign decision typesafe/jev-1.13.0</code>. Each email with a

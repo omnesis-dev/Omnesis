@@ -214,8 +214,15 @@ export function installNotesBackground(): {
   chrome.alarms.create("omnesis-notes-refresh", { periodInMinutes: 1 });
 
   async function restoreSurfaces(): Promise<void> {
+    const stored = await chrome.storage.local.get([NOTES_STATE_KEY, NOTES_TOKEN_KEY]);
+    const previous = stored[NOTES_STATE_KEY] as { supported?: unknown } | null;
     const cached = await service.status(false);
-    await refresh(cached.supported || cached.pendingApproval || cached.pending > 0);
+    await refresh(
+      !!stored[NOTES_TOKEN_KEY] ||
+        previous?.supported === true ||
+        cached.pendingApproval ||
+        cached.pending > 0,
+    );
   }
   chrome.runtime.onInstalled.addListener(() => {
     menusEnabled = false;

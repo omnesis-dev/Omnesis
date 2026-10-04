@@ -6,6 +6,8 @@ These answers describe the packaged extension. Re-check them against the Chrome 
 
 Help users capture, annotate and return to browser-openable content through their paired Omnesis gateway. Automatic capture and submitted notes go directly to that gateway; optional Find searches its index and opens source links.
 
+Page notes and Find are experimental and hidden unless the paired gateway runs with `OMNESIS_EXPERIMENTAL=1`. Previously approved credentials cannot bypass that gateway gate. Automatic page capture remains available by default.
+
 ## Permission justifications
 
 - `storage`: stores the gateway pairing, a copy of the gateway's capture settings (pause, excluded domains, pages deleted for good), bounded retry queues, note drafts, Find queries and result state, and delivery status locally in the extension profile.

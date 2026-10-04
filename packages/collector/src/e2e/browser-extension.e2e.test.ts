@@ -88,7 +88,10 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
   const popupUrl = `chrome-extension://${TEST_EXTENSION_ID}/popup.html`;
 
   beforeAll(async () => {
-    harness = new SyntheticE2EHarness({ gatewayMode: "stable", embedderBackend: "fake" });
+    harness = new SyntheticE2EHarness({
+      gatewayMode: "synthetic-experimental",
+      embedderBackend: "fake",
+    });
     await harness.start();
 
     dist = await mkdtemp(join(tmpdir(), "omnesis-extension-e2e-dist-"));
@@ -739,7 +742,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     await approval
       .getByRole("button", { name: "Enable Find", exact: true })
       .waitFor({ state: "visible", timeout: 20_000 });
-    await expect(approval.locator("body")).toContainText("whole index");
+    await expect.poll(() => approval.locator("body").textContent()).toContain("whole index");
     await approval.screenshot({ path: "/tmp/omnesis-browser-find-approval.png", fullPage: true });
     await approval.getByRole("button", { name: "Enable Find", exact: true }).click();
     await approval
@@ -784,14 +787,20 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
         interval: 250,
       })
       .toBe(3);
-    await expect(panel.locator("#find-decision")).toContainText("Direct search");
-    await expect(panel.locator("#find-results")).toContainText(notionTitle);
-    await expect(panel.locator("#find-results")).toContainText("Waypoint email guide");
-    await expect(panel.locator("#find-results")).not.toContainText("Waypoint native notebook");
+    await expect
+      .poll(() => panel.locator("#find-decision").textContent())
+      .toContain("Direct search");
+    await expect.poll(() => panel.locator("#find-results").textContent()).toContain(notionTitle);
+    await expect
+      .poll(() => panel.locator("#find-results").textContent())
+      .toContain("Waypoint email guide");
+    expect(await panel.locator("#find-results").textContent()).not.toContain(
+      "Waypoint native notebook",
+    );
     const row = panel
       .locator(".find-result")
       .filter({ has: panel.locator(".find-result-title", { hasText: webTitle }) });
-    await expect(row.locator(".find-open-badge")).toHaveText("Open tab");
+    await expect.poll(() => row.locator(".find-open-badge").textContent()).toBe("Open tab");
     expect(await panel.locator("#find-results mark").count()).toBeGreaterThan(0);
     await panel.screenshot({ path: "/tmp/omnesis-extension-find-results.png", fullPage: true });
     const pageCount = context.pages().length;
@@ -880,4 +889,75 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     expect(await popup.locator("body").getAttribute("data-warn")).toBe("false");
     await popup.close();
   }, 60_000);
+  test("Browser Find and notes stay hidden on a stable gateway while page capture works", async () => {
+    const stable = new SyntheticE2EHarness({
+      gatewayMode: "stable",
+      universe: "e2e-minimal",
+      embedderBackend: "fake",
+    });
+    await stable.start();
+    try {
+      const minted = await stable.gatewayJson<{ pairingCode: string }>("/admin/devices/pair", {
+        method: "POST",
+        body: JSON.stringify({ kind: "browser", name: "Stable browser" }),
+      });
+      const options = await openPage(optionsUrl);
+      // This also supports running the stable regression after only selected feature tests.
+      if (await options.locator("#unpair").isVisible()) await options.locator("#unpair").click();
+      await options.locator("#pair-form").waitFor({ state: "visible" });
+      await options.fill("#profile-label", "Stable browser");
+      await options.fill("#gateway-url", stable.gatewayUrl);
+      await options.fill("#pairing-code", minted.pairingCode);
+      await options.check("#capture-consent");
+      await options.click("#pair-submit");
+      await options.locator("#paired").waitFor({ state: "visible", timeout: 30_000 });
+      worker = await currentWorker();
+      const support = await worker.evaluate(async () => ({
+        notes: await chrome.runtime.sendMessage({ type: "notes-status" }),
+        find: await chrome.runtime.sendMessage({ type: "find-status" }),
+      }));
+      expect(support).toMatchObject({ notes: { supported: false }, find: { supported: false } });
+      expect(await options.locator("#notes-entry").isVisible()).toBe(false);
+      expect(await options.locator("#find-entry").isVisible()).toBe(false);
+      const login = await context.request.post(`${stable.gatewayUrl}/portal/api/login`, {
+        data: { token: stable.apiKey },
+      });
+      expect(login.ok()).toBe(true);
+      for (const feature of ["notes", "find"]) {
+        const approval = await openPage(
+          `${stable.gatewayUrl}/portal/browser-${feature}?request=00000000-0000-4000-8000-000000000001`,
+        );
+        await approval
+          .getByRole("heading", { name: "Browser authorization", exact: true })
+          .waitFor({ state: "visible", timeout: 20_000 });
+        expect(await approval.getByRole("button", { name: /^Enable / }).count()).toBe(0);
+        expect(await approval.locator("h1").textContent()).toBe("Browser authorization");
+        await approval.close();
+      }
+      const popup = await openPage(popupUrl);
+      await expect
+        .poll(() => popup.locator("#state").getAttribute("data-state"), { timeout: 30_000 })
+        .toBe("ready");
+      expect(await popup.locator("#notes-entry").isVisible()).toBe(false);
+      expect(await popup.locator("#find-entry").isVisible()).toBe(false);
+      await popup.close();
+      const article = await openPage(`${FIXTURE_ORIGIN}/notes-stable`);
+      await article.bringToFront();
+      await expect
+        .poll(
+          async () => (await stable.gatewayJson<{ count: number }>("/documents/count/web")).count,
+          { timeout: CAPTURE_WAIT_MS, interval: 500 },
+        )
+        .toBeGreaterThanOrEqual(1);
+      const storage = await extensionStorage();
+      expect(
+        (JSON.parse(String(storage["omnesis.pairing.v1"])) as { scopes: string[] }).scopes,
+      ).toEqual(["write:web"]);
+      await article.close();
+      await options.locator("#unpair").click();
+      await options.close();
+    } finally {
+      await stable.destroy();
+    }
+  }, 240_000);
 });

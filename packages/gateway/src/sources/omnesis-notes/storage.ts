@@ -14,6 +14,7 @@
  * gateway's read handle.
  */
 
+import { experimentalEnabled } from "@omnesis/core";
 import { recordMcpToolInvocationAudit } from "../../access/store-audit.js";
 import type Database from "better-sqlite3";
 import type { DeviceId, TokenId, NoteCaptureContext } from "@omnesis/types";
@@ -181,6 +182,11 @@ export function insertNoteEntry(
   // snapshot cannot fence a token revoked while the capture waited in the queue.
   if (browserAuthority) {
     return db.transaction(() => {
+      if (!experimentalEnabled()) {
+        const error = new Error("Browser notes feature is unavailable");
+        error.name = "BrowserNotesUnavailableError";
+        throw error;
+      }
       const authorized = db
         .prepare<
           [string, string, number],

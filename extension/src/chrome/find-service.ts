@@ -26,6 +26,7 @@ export interface FindDecision {
 interface FindState {
   pairing: string;
   supported: boolean;
+  experimental?: boolean;
   canonicalizers: UrlCanonicalizerSpec[];
   sourceLabels: Record<string, string>;
   sourceAttributions: Record<string, string>;
@@ -114,7 +115,8 @@ export class FindService {
       config,
       state: {
         ...empty,
-        supported: raw.supported === true,
+        supported: raw.supported === true && raw.experimental === true,
+        experimental: raw.experimental === true,
         canonicalizers: readCanonicalizers(raw.canonicalizers),
         sourceLabels: readSourceLabels(raw.sourceLabels),
         sourceAttributions: readSourceLabels(raw.sourceAttributions, 1024),
@@ -188,7 +190,7 @@ export class FindService {
         capabilities?: { browserFind?: { min?: unknown; max?: unknown } };
       };
       const range = health?.capabilities?.browserFind;
-      state.supported =
+      const compatible =
         typeof range?.min === "number" &&
         typeof range.max === "number" &&
         Number.isInteger(range.min) &&
@@ -197,6 +199,19 @@ export class FindService {
         range.min <= range.max &&
         range.min <= 1 &&
         range.max >= 1;
+      if (compatible) {
+        checking = "experimental";
+        const status = (await this.request(config, "/status", config.token)) as {
+          experimental?: unknown;
+        };
+        state.experimental = status?.experimental === true;
+        state.supported = state.experimental;
+      } else {
+        state.experimental = false;
+        state.supported = false;
+      }
+      if (!state.supported) this.searchAbort?.abort();
+
       if (state.supported && state.token) {
         checking = "credential";
         const validation = (await this.request(config, "/browser/find", state.token)) as {
@@ -237,6 +252,10 @@ export class FindService {
       delete state.error;
     } catch (error) {
       if (error instanceof FindHttpError && [401, 403, 404, 410].includes(error.status)) {
+        if (checking === "health" || checking === "experimental") {
+          state.supported = false;
+          state.experimental = false;
+        }
         eraseRetrievedCache(state);
         this.searchAbort?.abort();
         delete state.token;

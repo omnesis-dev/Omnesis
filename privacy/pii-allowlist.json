@@ -10259,7 +10259,8 @@
       "value": "Browser Find",
       "paths": [
         "packages/collector/src/e2e/browser-find.e2e.test.ts",
-        "packages/collector/src/e2e/browser-find-agentic.e2e.test.ts"
+        "packages/collector/src/e2e/browser-find-agentic.e2e.test.ts",
+        "packages/collector/src/e2e/browser-extension.e2e.test.ts"
       ],
       "reason": "Public browser search feature name in end-to-end suite titles; not a person name."
     },

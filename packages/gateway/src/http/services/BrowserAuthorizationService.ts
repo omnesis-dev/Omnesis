@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { experimentalEnabled } from "@omnesis/core";
 import { Scope, type DeviceId, type TokenId } from "@omnesis/types";
 import { ForbiddenError, NotFoundError, HttpError } from "../errors.js";
 import type { AuthContext } from "../routes/types.js";
@@ -40,7 +41,11 @@ export class BrowserAuthorizationService {
   private now(): number {
     return this.deps.now?.() ?? Date.now();
   }
+  private requireExperimental(): void {
+    if (!experimentalEnabled()) throw new NotFoundError("Browser feature unavailable");
+  }
   browser(auth: AuthContext, required: string): { deviceId: DeviceId; tokenId: TokenId } {
+    this.requireExperimental();
     if (
       auth.authMethod !== "bearer" ||
       !auth.deviceId ||
@@ -69,6 +74,7 @@ export class BrowserAuthorizationService {
     );
   }
   private request(id: string): Authorization {
+    this.requireExperimental();
     const request = this.authorizations.get(id);
     if (!request || request.expiresAt <= this.now()) {
       this.authorizations.delete(id);
@@ -155,8 +161,10 @@ export class BrowserAuthorizationService {
           [Scope(this.deps.scope)],
           this.deps.label,
         );
-        if (!this.active(request) || request.expiresAt <= this.now()) {
+        const enabled = experimentalEnabled();
+        if (!enabled || !this.active(request) || request.expiresAt <= this.now()) {
           await this.deps.writeGate.revokeToken(minted.id);
+          if (!enabled) throw new NotFoundError("Browser feature unavailable");
           throw new ForbiddenError("Browser authorization is no longer active");
         }
         request.credential = {

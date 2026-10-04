@@ -85,6 +85,13 @@ certificate.
 `src/storage-keys.test.ts` pins every literal. Renaming one needs a worker-start
 migration in the same commit.
 
+The Notes and Find workers require both a compatible health capability and
+`GET /status` reporting `experimental: true`. They persist this verification
+separately from older capability caches. Previously verified notes may still be
+queued during a network outage; an explicit disabled experimental flag hides
+both features, stops delivery and preserves drafts and unsent notes. Native
+panel entrypoints revalidate before exposing either composer or search results.
+
 ## Releasing
 
 `docs/releasing.md` § "Chrome Web Store artifact" is the recipe. In short:
@@ -105,13 +112,13 @@ the setup page when the store listing goes live.
 
 ## Tell Omnesis
 
-On gateways advertising browser notes support, choose **Enable Tell Omnesis** in the popup or pairing settings and approve the create-only browser grant in the gateway portal. Existing page-capture pairing stays unchanged. Older gateways continue capturing pages without offering notes.
+This feature is unstable and requires `OMNESIS_EXPERIMENTAL=1` on the gateway. On compatible gateways advertising browser notes support, choose **Enable Tell Omnesis** in the popup or pairing settings and approve the create-only browser grant in the gateway portal. Existing page-capture pairing stays unchanged. Older gateways continue capturing pages without offering notes.
 
 Use **Alt/Option + Shift + N**, the popup's **Tell Omnesis** button, or the page/selection context menu. The native side panel freezes the page context and includes any selected text. **Ctrl/Cmd + Enter** saves; Enter inserts a newline. Unfinished drafts survive closing the panel and switching tabs. Unsent notes survive browser restarts and retry with stable IDs. A full 100-note queue refuses new saves and keeps the draft. Gateway-rejected notes can be reopened for editing. Chrome lets users change the shortcut at `chrome://extensions/shortcuts`.
 
 ## Find
 
-Enable **Find** in the popup or settings and approve **Search your Omnesis data** in the gateway portal. This stores a separate `read` credential; capture stays on `write:web` and notes stay on `notes:create`. Read approval allows ordinary search across all indexed sources. The extension filters results for browser-openable HTTP(S) source links; that display filter is not an authorization restriction. Gateways without Find support keep capturing pages and do not offer Find.
+Find is unstable and requires `OMNESIS_EXPERIMENTAL=1` on the gateway. Enable **Find** in the popup or settings and approve **Search your Omnesis data** in the gateway portal. This stores a separate `read` credential; capture stays on `write:web` and notes stay on `notes:create`. Read approval allows ordinary search across all indexed sources. The extension filters results for browser-openable HTTP(S) source links; that display filter is not an authorization restriction. Gateways without Find support keep capturing pages and do not offer Find.
 
 Use **Alt/Option + Shift + F** or the popup's **Find** button. The shared native side panel shows titles, matching snippets, favicons and source links. Keyboard selection and Enter open a result: a safely matching tab and its window receive focus, otherwise the source link opens in a new tab. The separate new-tab action opens another copy. Query and result state survive closing the panel. Matching never relies on a domain alone; unprovable account aliases open the source link instead.
 

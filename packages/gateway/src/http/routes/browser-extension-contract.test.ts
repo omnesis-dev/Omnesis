@@ -19,7 +19,7 @@
 
 import { readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import webSource from "@omnesis/provider-web";
 import {
   SCOPE_ADMIN,
@@ -273,6 +273,7 @@ function recipeFor(route: ContractRoute): Recipe {
 }
 
 beforeEach(async () => {
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   dbPath = `/tmp/omnesis-extension-contract-${randomUUID()}.db`;
   analyticsPath = `/tmp/omnesis-extension-contract-${randomUUID()}.duckdb`;
   db = createDatabase(dbPath);
@@ -301,6 +302,7 @@ afterEach(async () => {
   rmSync(analyticsPath, { force: true });
   rmSync(`${analyticsPath}.wal`, { force: true });
   resetOwnedWebDomains();
+  vi.unstubAllEnvs();
 });
 
 describe("the contract file", () => {
@@ -347,6 +349,60 @@ describe("a well-formed request is served", () => {
     expect(res.status, `${keyOf(route)} answered ${res.status}: ${await res.text()}`).toBe(
       recipe.expected,
     );
+  });
+});
+
+describe("optional browser features require explicit experimental mode", () => {
+  test("synthetic mode alone hides feature routes even for existing optional tokens", async () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+    vi.stubEnv("OMNESIS_SYNTHETIC", "1");
+    for (const feature of ["notes", "find"]) {
+      for (const [path, token, init] of [
+        [`/browser/${feature}`, feature === "notes" ? notesToken : findToken, undefined],
+        [
+          `/browser/${feature}/authorization`,
+          browserToken,
+          { method: "POST", body: JSON.stringify({ id: randomUUID() }) },
+        ],
+        [`/browser/${feature}/authorization/${randomUUID()}`, browserToken, undefined],
+        [`/admin/browser-${feature}/authorizations/${randomUUID()}`, adminToken, undefined],
+        [
+          `/admin/browser-${feature}/authorizations/${randomUUID()}/approve`,
+          adminToken,
+          { method: "POST" },
+        ],
+      ] as const)
+        expect((await call(path, token, init)).status, path).toBe(404);
+    }
+    expect(
+      (
+        await call("/browser/find/search", findToken, {
+          method: "POST",
+          body: JSON.stringify({ text: "hidden query" }),
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await call("/browser/notes", notesToken, {
+          method: "POST",
+          body: JSON.stringify({
+            version: 1,
+            id: randomUUID(),
+            text: "hidden note",
+            page: { url: "https://example.org/hidden" },
+          }),
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await call("/documents", browserToken, {
+          method: "POST",
+          body: JSON.stringify({ documents: [] }),
+        })
+      ).status,
+    ).toBe(200);
   });
 });
 

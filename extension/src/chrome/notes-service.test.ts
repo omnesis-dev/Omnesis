@@ -27,12 +27,14 @@ function harness() {
   let requestId = "";
   let rejectSubmit = false,
     badAck = false;
+  let experimental: unknown = true;
   let capability: unknown = { min: 1, max: 2 };
   const accepted = new Map<string, unknown>();
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     if (offline) throw new Error("offline");
     const url = String(input);
     const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+    if (url.endsWith("/status")) return respond({ experimental });
     if (url.endsWith("/health"))
       return respond({ capabilities: supported ? { browserNotes: capability } : {} });
     if (url.endsWith("/authorization")) {
@@ -79,6 +81,9 @@ function harness() {
   const service = new NotesService(deps);
   return {
     service,
+    setExperimental: (value: unknown) => {
+      experimental = value;
+    },
     fetch,
     accepted,
     mutateStored: (fn: (state: Record<string, unknown>) => void) =>
@@ -340,5 +345,57 @@ describe("browser notes", () => {
   it("rejects unsafe page contexts", () => {
     for (const url of ["javascript:alert(1)", "https://user:pass@example.org", "file:///tmp/a"])
       expect(notePage({ ...PAGE, url })).toBeNull();
+  });
+  it("requires explicit experimental true alongside the notes capability", async () => {
+    for (const flag of [undefined, false, null, 1, "true", {}]) {
+      const h = harness();
+      h.setExperimental(flag);
+      expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+      expect((await h.service.begin(PAGE)).draft).toBeNull();
+      await expect(h.service.activate()).rejects.toThrow("does not support");
+    }
+  });
+  it("keeps queued notes and drafts while the experimental flag disables existing grants", async () => {
+    const h = harness();
+    await enabled(h);
+    const note = (await h.service.begin(PAGE)).draft!;
+    await h.service.update(note.id, "A queued fictional note");
+    await h.service.submit(note.id);
+    const draft = (await h.service.begin({ ...PAGE, url: "https://example.org/another" })).draft!;
+    await h.service.update(draft.id, "A fictional draft");
+    h.setExperimental(false);
+    expect(await h.service.drain()).toMatchObject({
+      supported: false,
+      enabled: false,
+      pending: 1,
+      draft: { id: draft.id, text: "A fictional draft" },
+    });
+    expect(h.accepted.size).toBe(0);
+    expect(await h.restart().status(false)).toMatchObject({ enabled: false, pending: 1 });
+    await expect(h.service.submit(draft.id)).rejects.toThrow("unavailable");
+    h.setExperimental(true);
+    expect(await h.service.drain()).toMatchObject({ enabled: true, pending: 0 });
+    expect(h.accepted.size).toBe(1);
+  });
+  it("does not trust legacy cached grants before experimental verification", async () => {
+    const h = harness();
+    await enabled(h);
+    h.mutateStored((state) => {
+      delete state.experimental;
+    });
+    h.setOffline(true);
+    expect(await h.restart().status(false)).toMatchObject({ supported: false, enabled: false });
+    expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+  });
+  it("closes discovery when experimental-status access is explicitly rejected", async () => {
+    const h = harness();
+    await enabled(h);
+    const original = h.fetch.getMockImplementation()!;
+    h.fetch.mockImplementation(async (input, init) =>
+      String(input).endsWith("/status")
+        ? new Response("{}", { status: 403 })
+        : original(input, init),
+    );
+    expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
   });
 });

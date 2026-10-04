@@ -23,6 +23,7 @@ describe("notes worker adapter", () => {
     storage[NOTES_STATE_KEY] = {
       pairing: "https://gateway.example.org\0" + "11111111-1111-4111-8111-111111111111",
       supported: true,
+      experimental: true,
       queue: [],
     };
     storage[NOTES_TOKEN_KEY] = {
@@ -77,9 +78,15 @@ describe("notes worker adapter", () => {
     vi.stubGlobal("fetch", function (this: unknown) {
       if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
       return Promise.resolve(
-        new Response(JSON.stringify({ capabilities: { browserNotes: { min: 1, max: 1 } } }), {
-          status: 200,
-        }),
+        new Response(
+          JSON.stringify({
+            experimental: true,
+            capabilities: { browserNotes: { min: 1, max: 1 } },
+          }),
+          {
+            status: 200,
+          },
+        ),
       );
     });
     const background = installNotesBackground();
@@ -103,6 +110,35 @@ describe("notes worker adapter", () => {
     await vi.waitFor(() =>
       expect((storage[NOTES_STATE_KEY] as { draft?: unknown }).draft).toBeDefined(),
     );
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              experimental: false,
+              capabilities: { browserNotes: { min: 1, max: 1 } },
+            }),
+          ),
+      ),
+    );
+    const disabled = await new Promise((resolve) =>
+      background.message(
+        { type: "notes-status" },
+        { id: "test-extension", url: "chrome-extension://test-extension/popup.html" },
+        resolve,
+      ),
+    );
+    expect(disabled).toMatchObject({ supported: false, enabled: false });
+    expect(chrome.contextMenus.removeAll).toHaveBeenCalled();
+    expect(chrome.sidePanel.setOptions).toHaveBeenCalledWith({
+      enabled: false,
+      path: "notes.html",
+    });
+    const count = open.mock.calls.length;
+    command?.("tell-omnesis", { id: 1, url: "https://example.org/article" });
+    expect(open).toHaveBeenCalledTimes(count);
     expect(
       background.message(
         { type: "notes-status" },

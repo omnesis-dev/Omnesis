@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { notesRateLimiter } from "../../rate-limit.js";
+import { experimentalEnabled } from "@omnesis/core";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
 import { authorizationBody, browserNoteBody } from "../schemas/browser-notes.js";
@@ -10,6 +11,18 @@ import type { RouteApp } from "./types.js";
 import type { BrowserNotesService } from "../services/BrowserNotesService.js";
 
 export function mountBrowserNotesRoutes(app: RouteApp, service: BrowserNotesService): void {
+  app.use("/browser/notes", async (c, next) => {
+    if (!experimentalEnabled()) return c.notFound();
+    await next();
+  });
+  app.use("/browser/notes/*", async (c, next) => {
+    if (!experimentalEnabled()) return c.notFound();
+    await next();
+  });
+  app.use("/admin/browser-notes/*", async (c, next) => {
+    if (!experimentalEnabled()) return c.notFound();
+    await next();
+  });
   const captureLimiter = notesRateLimiter();
   app.post(
     "/browser/notes/authorization",
