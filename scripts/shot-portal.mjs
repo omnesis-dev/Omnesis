@@ -29,7 +29,13 @@
 //   PORTAL_W/H        viewport in CSS px (defaults 1440x980)
 //   PORTAL_WAIT_TIMEOUT  ms to wait on the selector (default 20000)
 
-import { launchPortal, signIn, ensureTheme, PORTAL_READY_SELECTOR } from "./lib/portal-capture.mjs";
+import {
+  launchPortal,
+  signIn,
+  ensureTheme,
+  PORTAL_READY_SELECTOR,
+  capturePortalScreenshot,
+} from "./lib/portal-capture.mjs";
 
 const url = process.env.PORTAL_URL;
 const token = process.env.PORTAL_TOKEN;
@@ -97,9 +103,31 @@ try {
   // paint the default palette).
   await ensureTheme(page, appearance);
 
-  await page.screenshot({ path: out, fullPage: true });
+  await capturePortalScreenshot(page, { path: out, fullPage: true });
   console.log(`Wrote ${out} (route "/portal/${route}", waited on "${waitSelector}")`);
 } catch (err) {
+  // Preserve capture geometry before the viewport-only diagnostic changes it.
+  // Do not log the authenticated URL or browser storage.
+  try {
+    const geometry = await page.evaluate(() => ({
+      readyState: globalThis.document.readyState,
+      devicePixelRatio: globalThis.devicePixelRatio,
+      viewport: { width: globalThis.innerWidth, height: globalThis.innerHeight },
+      document: {
+        width: Math.max(
+          globalThis.document.documentElement.scrollWidth,
+          globalThis.document.body?.scrollWidth ?? 0,
+        ),
+        height: Math.max(
+          globalThis.document.documentElement.scrollHeight,
+          globalThis.document.body?.scrollHeight ?? 0,
+        ),
+      },
+    }));
+    console.log(`Capture geometry: ${JSON.stringify(geometry)}`);
+  } catch {
+    /* a closed page cannot report geometry */
+  }
   // Dump what the page looked like at failure so the cause is visible. The
   // debug frame is clearly named so it is never mistaken for the real asset.
   const debug = out.replace(/\.png$/, "-debug.png");

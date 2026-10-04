@@ -29,6 +29,8 @@
 //     "Fast inner loops" guidance in AGENTS.md points at scripts that work.
 
 import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
+import captureAssert from "node:assert/strict";
+import { capturePortalScreenshot } from "./lib/portal-capture.mjs";
 import { execFileSync, execFile, spawn, spawnSync } from "node:child_process";
 import {
   mkdtempSync,
@@ -3001,7 +3003,10 @@ describe("scripts/shot-portal.sh on-demand portal screenshot loop (C9)", () => {
     // --keep leaves the gateway up so the negative control + landing-page
     // regression check below reuse it instead of paying the boot cost again.
     const out = join(outDir, "people.png");
-    const ok = await runShot(["people", "--keep", "--out", out], { timeout: 240000 });
+    const ok = await runShot(
+      ["people", "--keep", "--wait", ".people-view .results-count", "--out", out],
+      { timeout: 240000 },
+    );
     expect(ok.code, ok.out).toBe(0);
     expect(ok.out).toContain("Screenshot written:");
     expect(existsSync(out)).toBe(true);
@@ -3385,4 +3390,70 @@ describe("scripts/android-logic.sh emulator-less JVM logic lane guards (C11)", (
     );
     expect(src).toMatch(/OMNESIS_ANDROID_SDK_HOME:-\\\$HOME\/Library\/Android\/sdk/);
   });
+});
+
+it("capture waits for fonts and two paint frames, disables animations and preserves full-page bounds", async () => {
+  const calls = [];
+  const originalDocument = globalThis.document;
+  const originalFrame = globalThis.requestAnimationFrame;
+  try {
+    globalThis.document = {
+      fonts: {
+        get ready() {
+          calls.push("fonts");
+          return Promise.resolve();
+        },
+      },
+    };
+    globalThis.requestAnimationFrame = (callback) => {
+      calls.push("frame");
+      queueMicrotask(callback);
+    };
+    const page = {
+      waitForFunction: async (callback, argument, options) => {
+        captureAssert.equal(argument, null);
+        captureAssert.equal(options.timeout, 30_000);
+        captureAssert.equal(await callback(), true);
+        return { dispose: async () => {} };
+      },
+      screenshot: async (options) => {
+        calls.push("capture");
+        captureAssert.deepEqual(options, {
+          path: "fictional.png",
+          fullPage: true,
+          animations: "disabled",
+        });
+        return "image";
+      },
+    };
+    captureAssert.equal(
+      await capturePortalScreenshot(page, { path: "fictional.png", fullPage: true }),
+      "image",
+    );
+    captureAssert.deepEqual(calls, ["fonts", "frame", "frame", "capture"]);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalFrame === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = originalFrame;
+  }
+});
+
+it("capture propagates the original protocol failure without retry or viewport substitution", async () => {
+  const failure = new Error("fictional protocol capture failure");
+  let captures = 0;
+  await captureAssert.rejects(
+    capturePortalScreenshot(
+      {
+        waitForFunction: async () => ({ dispose: async () => {} }),
+        screenshot: async () => {
+          captures++;
+          throw failure;
+        },
+      },
+      { fullPage: true },
+    ),
+    (error) => error === failure,
+  );
+  captureAssert.equal(captures, 1);
 });
