@@ -6,6 +6,7 @@ import {
   readSourceLabels,
   readCanonicalizers,
   parseFindResults,
+  dedupeFindResults,
   readSourceIcons,
   type FindResult,
 } from "./find-results.js";
@@ -136,17 +137,20 @@ export class FindService {
         resultsQuery:
           typeof raw.resultsQuery === "string" ? raw.resultsQuery.slice(0, MAX_FIND_QUERY) : "",
         results: Array.isArray(raw.results)
-          ? raw.results
-              .filter(
-                (item) =>
-                  item &&
-                  typeof item.id === "string" &&
-                  browserUrl(item.url) &&
-                  typeof item.title === "string" &&
-                  typeof item.snippet === "string" &&
-                  typeof item.source === "string",
-              )
-              .slice(0, 200)
+          ? dedupeFindResults(
+              raw.results
+                .filter(
+                  (item) =>
+                    item &&
+                    typeof item.id === "string" &&
+                    browserUrl(item.url) &&
+                    typeof item.title === "string" &&
+                    typeof item.snippet === "string" &&
+                    typeof item.source === "string",
+                )
+                .slice(0, 200),
+              readCanonicalizers(raw.canonicalizers),
+            )
           : [],
         limit: [25, 50, 100, 200].includes(raw.limit ?? 0) ? raw.limit! : 25,
         hasMore: raw.hasMore === true,
@@ -450,9 +454,10 @@ export class FindService {
                   query,
                   state.sourceAttributions,
                 );
-                const merged = new Map(state.results.map((card) => [card.id, card]));
-                for (const card of cards) merged.set(card.id, card);
-                state.results = [...merged.values()].slice(0, 200);
+                state.results = dedupeFindResults(
+                  [...state.results, ...cards],
+                  state.canonicalizers,
+                );
                 state.hasMore = payload.hasMore === true && limit < 200;
                 state.limit = limit;
               } else if (type === "find.complete") state.complete = true;

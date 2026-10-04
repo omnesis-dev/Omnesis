@@ -6,7 +6,7 @@ import { parseHTML } from "linkedom";
 import { describe, expect, it, vi } from "vitest";
 import { initNotesEditPanel } from "./notes-edit-panel.js";
 import type { NotesEditView } from "./notes-edit-service.js";
-function panel() {
+function panel(writtenDraft = "", beforeNewNote?: () => Promise<void>) {
   const { document, window } = parseHTML(
     readFileSync(new URL("../../public/notes.html", import.meta.url), "utf8"),
   );
@@ -31,10 +31,23 @@ function panel() {
     ],
   };
   const accepted = vi.fn();
+  const showNewNote = vi.fn((notes: { draft?: { text: string } }) => {
+    newText.value = notes.draft?.text ?? "";
+    document.getElementById("notes-form")!.hidden = false;
+  });
+  let rejectBegin = false;
   let rejectDiscard = false,
     release: (() => void) | undefined;
   const send = vi.fn(async (message: unknown) => {
     const msg = message as { type: string; text?: string };
+    if (msg.type === "notes-begin")
+      return rejectBegin
+        ? { ok: false, reason: "Invented gateway failure" }
+        : {
+            supported: true,
+            enabled: true,
+            draft: { id: "new", text: writtenDraft, url: view.url },
+          };
     if (msg.type === "notes-view")
       return { enabled: true, draft: { id: "new", text: "", url: view.url } };
     if (msg.type === "notes-edit-select")
@@ -70,6 +83,8 @@ function panel() {
       },
     },
     accepted,
+    showNewNote,
+    beforeNewNote,
   );
   return {
     document,
@@ -79,6 +94,10 @@ function panel() {
     flush,
     send,
     accepted,
+    showNewNote,
+    rejectBegin: () => {
+      rejectBegin = true;
+    },
     release: () => release?.(),
     rejectDiscard: () => {
       rejectDiscard = true;
@@ -140,6 +159,52 @@ describe("saved-note editor", () => {
     p.release();
     await flushed;
     expect(persisted).toBe(true);
+  });
+  it("begins a creation draft when none exists and preserves an already written thought", async () => {
+    for (const written of ["", "An existing invented thought"]) {
+      const p = panel(written);
+      await vi.waitFor(() => expect(p.document.querySelectorAll("[data-note-id]")).toHaveLength(1));
+      p.document.getElementById("saved-note-new")!.click();
+      await vi.waitFor(() =>
+        expect(p.showNewNote).toHaveBeenCalledWith(
+          expect.objectContaining({ draft: expect.objectContaining({ text: written }) }),
+        ),
+      );
+      expect(p.send).toHaveBeenCalledWith({ type: "notes-begin" });
+      expect(p.document.getElementById("notes-form")?.hidden).toBe(false);
+      expect(p.newText.value).toBe(written);
+    }
+  });
+  it("waits for creation draft persistence before beginning another draft", async () => {
+    let release!: () => void;
+    const p = panel(
+      "An existing invented thought",
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await vi.waitFor(() => expect(p.document.querySelectorAll("[data-note-id]")).toHaveLength(1));
+    p.document.getElementById("saved-note-new")!.click();
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(p.send).not.toHaveBeenCalledWith({ type: "notes-begin" });
+    release();
+    await vi.waitFor(() => expect(p.showNewNote).toHaveBeenCalled());
+  });
+  it("keeps the saved editor open and shows an error when starting a creation draft fails", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll("[data-note-id]")).toHaveLength(1));
+    p.document.querySelector<HTMLButtonElement>("[data-note-id]")!.click();
+    await vi.waitFor(() => expect(p.textarea.value).toBe("Invented saved thought"));
+    p.rejectBegin();
+    p.document.getElementById("saved-note-new")!.click();
+    await vi.waitFor(() =>
+      expect(p.document.getElementById("saved-notes-status")?.textContent).toBe(
+        "Invented gateway failure",
+      ),
+    );
+    expect(p.document.getElementById("saved-note-editor")?.hidden).toBe(false);
+    expect(p.showNewNote).not.toHaveBeenCalled();
   });
   it("keeps the editor visible when discarding changes fails", async () => {
     const p = panel();

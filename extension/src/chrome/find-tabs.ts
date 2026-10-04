@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { browserUrlIdentity, type UrlCanonicalizerSpec } from "@omnesis/core/url-normalize";
-import { browserUrl, type FindResult } from "./find-service.js";
+import { browserIdentity, browserUrl, type FindResult } from "./find-results.js";
+import type { UrlCanonicalizerSpec } from "@omnesis/core/url-normalize";
+export { browserIdentity } from "./find-results.js";
 
-/** Preserve unknown routing/account parameters; only provider-declared rewrites may collapse them. */
-export function browserIdentity(value: string, canonicalizers: UrlCanonicalizerSpec[]): string {
-  const url = new URL(value);
-  const spec = canonicalizers.find((spec) => spec.hosts.includes(url.hostname));
-  return browserUrlIdentity(value, spec);
-}
 export function findOpenTab(
   result: FindResult,
   tabs: chrome.tabs.Tab[],

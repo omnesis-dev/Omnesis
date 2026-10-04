@@ -18,7 +18,8 @@ document.addEventListener("DOMContentLoaded", () => {
       await Promise.all([flushNotes(), flushEdits()]);
     },
   );
-  flushNotes = initNotesPanel(document, chrome, dismiss);
-  flushEdits = initNotesEditPanel(document, chrome, dismiss);
+  const notes = initNotesPanel(document, chrome, dismiss);
+  flushNotes = notes.flush;
+  flushEdits = initNotesEditPanel(document, chrome, dismiss, notes.show, notes.flush);
   initFindPanel(document, chrome, dismiss);
 });

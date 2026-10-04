@@ -220,10 +220,19 @@ export function initFindPanel(
         const url = new URL(api.runtime.getURL("_favicon/"));
         url.searchParams.set("pageUrl", result.url);
         url.searchParams.set("size", "32");
-        img.src = url.href;
+        // Keep the local fallback until the favicon loads. Register both
+        // transitions before src so cached images and later successful loads
+        // cannot leave an earlier error permanently hiding the favicon.
+        img.hidden = true;
+        img.addEventListener("load", () => {
+          img.hidden = false;
+          fallback.hidden = true;
+        });
         img.addEventListener("error", () => {
           img.hidden = true;
+          fallback.hidden = false;
         });
+        img.src = url.href;
         icon.appendChild(img);
       }
       const body = document.createElement("span");

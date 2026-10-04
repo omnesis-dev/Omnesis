@@ -15,6 +15,22 @@ const result: FindResult = {
 };
 afterEach(() => vi.unstubAllGlobals());
 describe("local document tab identity", () => {
+  it("matches capture-equivalent trailing slashes without discarding query or fragment state", () => {
+    const url = "https://example.org/guide/?edition=1#overview";
+    expect(
+      findOpenTab(
+        { ...result, url },
+        [{ id: 7, url: "https://example.org/guide?edition=1#overview" }],
+        [],
+      )?.id,
+    ).toBe(7);
+    for (const distinct of [
+      "https://example.org/guide?edition=2#overview",
+      "https://example.org/guide?edition=1#details",
+    ]) {
+      expect(findOpenTab({ ...result, url }, [{ id: 7, url: distinct }], [])).toBeUndefined();
+    }
+  });
   it("does not collapse domains, hash-only resources, account selectors or session parameters", () => {
     for (const [a, b] of [
       ["https://example.org/guide", "https://example.org/another-guide"],

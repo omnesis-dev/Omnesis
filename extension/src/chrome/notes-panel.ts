@@ -21,7 +21,7 @@ export function initNotesPanel(
   document: Document,
   api: PanelChrome,
   onAccepted?: () => Promise<void> | void,
-): () => Promise<void> {
+): { show(view: NotesView): void; flush(): Promise<void> } {
   const element = <T extends HTMLElement>(id: string): T => {
     const value = document.getElementById(id);
     if (!value) throw new Error(`Missing #${id}`);
@@ -218,12 +218,18 @@ export function initNotesPanel(
     if (area === "local" && NOTES_STATE_KEY in changes) void refresh(true);
   });
   void refresh();
-  return async () => {
-    // Include keystrokes arriving while a slower storage write is still pending.
-    let pending: Promise<unknown>;
-    do {
-      pending = updates;
-      await pending;
-    } while (pending !== updates);
+  return {
+    show(view) {
+      request++;
+      render(view);
+    },
+    flush: async () => {
+      // Include keystrokes arriving while a slower storage write is still pending.
+      let pending: Promise<unknown>;
+      do {
+        pending = updates;
+        await pending;
+      } while (pending !== updates);
+    },
   };
 }

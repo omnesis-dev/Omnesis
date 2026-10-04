@@ -17,6 +17,8 @@ export function initNotesEditPanel(
   document: Document,
   api: EditPanelApi,
   onAccepted?: () => Promise<void> | void,
+  onNewNote?: (view: NotesView) => void,
+  beforeNewNote?: () => Promise<void>,
 ): () => Promise<void> {
   const element = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
   const section = element("saved-notes"),
@@ -184,13 +186,32 @@ export function initNotesEditPanel(
     }
   });
   newNote.addEventListener("click", () => {
-    if (saving) return;
-    editing(false);
-    void api.runtime.sendMessage<NotesView>({ type: "notes-view" }).then((notes) => {
-      if (notes?.enabled && notes.draft) {
+    if (saving || newNote.disabled) return;
+    newNote.disabled = true;
+    void (async () => {
+      try {
+        let pending: Promise<unknown>;
+        do {
+          pending = writes;
+          await pending;
+        } while (pending !== writes);
+        await beforeNewNote?.();
+        const notes = await api.runtime.sendMessage<NotesView & { ok?: boolean; reason?: string }>({
+          type: "notes-begin",
+        });
+        if (notes?.ok === false) throw new Error(notes.reason);
+        if (!notes?.enabled || !notes.draft)
+          throw new Error("A new note could not open. Check the gateway connection and try again.");
+        editing(false);
+        onNewNote?.(notes);
         element<HTMLTextAreaElement>("note-text").focus();
+      } catch (error) {
+        status.textContent =
+          error instanceof Error ? error.message : "A new note could not open. Try again.";
+      } finally {
+        newNote.disabled = false;
       }
-    });
+    })();
   });
   element("saved-note-discard").addEventListener("click", () => {
     if (saving) return;

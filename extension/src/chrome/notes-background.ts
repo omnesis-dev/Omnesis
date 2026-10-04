@@ -183,6 +183,16 @@ export function installNotesBackground(): {
             typeof state?.draft?.text === "string" && state.draft.text !== state.draft.original,
         };
       });
+    else if (msg.type === "notes-begin" && sender.url === chrome.runtime.getURL("notes.html"))
+      task = (async () => {
+        const stored = await chrome.storage.local.get(NOTES_PAGE_KEY);
+        const context = stored[NOTES_PAGE_KEY];
+        const page = notePage(
+          context && typeof context === "object" ? { ...context, selection: "" } : null,
+        );
+        if (!page) throw new Error("Reopen Tell Omnesis from the page to start a note.");
+        return service.begin(page);
+      })();
     else if (
       msg.type === "notes-open" &&
       sender.url === chrome.runtime.getURL("popup.html") &&

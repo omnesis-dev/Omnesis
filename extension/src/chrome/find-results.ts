@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { UrlCanonicalizerSpec } from "@omnesis/core/url-normalize";
+import { browserUrlIdentity, type UrlCanonicalizerSpec } from "@omnesis/core/url-normalize";
 
 export interface FindResult {
   id: string;
@@ -24,6 +24,36 @@ export function browserUrl(value: unknown): string | null {
     return null;
   }
 }
+/** Shared with local tab matching: unknown account and routing components stay distinct. */
+export function browserIdentity(value: string, canonicalizers: UrlCanonicalizerSpec[]): string {
+  const url = new URL(value);
+  // Capture treats trailing path slashes as the same page; keep query and
+  // fragment routing intact when applying that equivalence to local cards/tabs.
+  if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "");
+  return browserUrlIdentity(
+    url.href,
+    canonicalizers.find((spec) => spec.hosts.includes(url.hostname)),
+  );
+}
+
+/** One card per destination; the first ranked hit keeps its identity and evidence. */
+export function dedupeFindResults(
+  results: FindResult[],
+  canonicalizers: UrlCanonicalizerSpec[],
+): FindResult[] {
+  const destinations = new Set<string>();
+  const ids = new Set<string>();
+  return results
+    .filter((result) => {
+      const destination = browserIdentity(result.url, canonicalizers);
+      if (destinations.has(destination) || ids.has(result.id)) return false;
+      destinations.add(destination);
+      ids.add(result.id);
+      return true;
+    })
+    .slice(0, 200);
+}
+
 export function readSourceLabels(value: unknown, maxLength = 128): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(

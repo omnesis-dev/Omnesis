@@ -303,6 +303,65 @@ describe("Find authorization and durable results", () => {
       attribution: "Example attribution",
     });
   });
+  it("deduplicates streamed agent destinations across batches and cached worker restarts", async () => {
+    const h = harness();
+    await enable(h);
+    h.search(async () =>
+      sse([
+        {
+          type: "find.decision",
+          payload: { mode: "agentic", status: "decided", reason: "Related evidence" },
+        },
+        {
+          type: "find.results",
+          payload: {
+            results: [
+              hit("first", "https://example.org/guide"),
+              hit("other", "https://example.org/other"),
+            ],
+          },
+        },
+        {
+          type: "find.results",
+          payload: {
+            results: [
+              hit("duplicate", "https://example.org/guide"),
+              hit("last", "https://example.org/last"),
+            ],
+          },
+        },
+        { type: "find.complete", payload: { mode: "agentic" } },
+      ]),
+    );
+    const result = await h.service.search("guide");
+    expect(result.results.map((card) => card.id)).toEqual(["first", "other", "last"]);
+    const cached = (await h.deps.read()) as { results: typeof result.results };
+    cached.results.push({ ...cached.results[0]!, id: "legacy-duplicate" });
+    await h.deps.write(cached);
+    expect((await new FindService(h.deps).status(false)).results.map((card) => card.id)).toEqual([
+      "first",
+      "other",
+      "last",
+    ]);
+  });
+  it("keeps one strongest card per direct destination when expanding the ranked pool", async () => {
+    const h = harness();
+    await enable(h);
+    h.search(async ({ limit }) =>
+      h.respond({
+        results: [
+          hit("strongest", "https://example.org/guide"),
+          hit("same-page-chunk", "https://example.org/guide/"),
+          ...(limit > 25 ? [hit("new-page", "https://example.org/new")] : []),
+        ],
+      }),
+    );
+    expect((await h.service.search("guide")).results.map((card) => card.id)).toEqual(["strongest"]);
+    expect((await h.service.search("guide", true)).results.map((card) => card.id)).toEqual([
+      "strongest",
+      "new-page",
+    ]);
+  });
   it("persists final explanation and decision, without retaining ephemeral tool cards", async () => {
     const h = harness();
     await enable(h);

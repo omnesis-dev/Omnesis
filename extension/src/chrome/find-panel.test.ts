@@ -161,8 +161,18 @@ describe("Find panel", () => {
     expect(p.document.querySelector(".find-snippet img")).toBeNull();
     const img = p.document.querySelector(".find-icon img") as unknown as HTMLImageElement;
     expect(img.src).toContain("chrome-extension://test/_favicon/");
+    const fallback = p.document.querySelector(".find-icon span") as HTMLElement;
+    expect(img.hidden).toBe(true);
+    expect(fallback.hidden).toBe(false);
+    img.dispatchEvent(new p.window.Event("load"));
+    expect(img.hidden).toBe(false);
+    expect(fallback.hidden).toBe(true);
     img.dispatchEvent(new p.window.Event("error"));
     expect(img.hidden).toBe(true);
+    expect(fallback.hidden).toBe(false);
+    img.dispatchEvent(new p.window.Event("load"));
+    expect(img.hidden).toBe(false);
+    expect(fallback.hidden).toBe(true);
     expect(p.document.getElementById("find-decision")?.textContent).toContain(
       "Decision model not configured",
     );
