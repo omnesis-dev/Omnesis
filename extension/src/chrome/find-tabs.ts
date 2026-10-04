@@ -25,7 +25,6 @@ export async function activateFindResult(
   result: Pick<FindResult, "url">,
   canonicalizers: UrlCanonicalizerSpec[],
   newCopy = false,
-  currentTabId?: number,
 ): Promise<void> {
   const url = browserUrl(result.url);
   if (!url) throw new Error("This result cannot open in a browser");
@@ -41,14 +40,6 @@ export async function activateFindResult(
       }
       if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
       return;
-    }
-  }
-  if (!newCopy && currentTabId !== undefined) {
-    try {
-      await chrome.tabs.update(currentTabId, { url });
-      return;
-    } catch {
-      // The originating tab may have closed while the destination was checked.
     }
   }
   await chrome.tabs.create({ url });

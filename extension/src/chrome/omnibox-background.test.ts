@@ -112,7 +112,7 @@ describe("Omnesis omnibox", () => {
     expect(suggestions[0]?.description).toContain("&lt;guide&gt; &amp;");
     h.enter(suggestions[0]!.content);
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.update).toHaveBeenCalledWith(7, { active: true });
+    expect(h.update).toHaveBeenCalledWith(7, { url: "https://example.org/article" });
     expect(h.create).not.toHaveBeenCalled();
   });
   it("opens a selected URL after Chrome reports its address-bar text as changed", async () => {
@@ -128,7 +128,7 @@ describe("Omnesis omnibox", () => {
     h.change(url, vi.fn());
     h.enter(url);
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.update).toHaveBeenCalledExactlyOnceWith(7, { active: true });
+    expect(h.update).toHaveBeenCalledExactlyOnceWith(7, { url: "https://example.org/article" });
     expect(h.create).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(300);
     expect(h.suggest).toHaveBeenCalledTimes(1);
@@ -140,6 +140,21 @@ describe("Omnesis omnibox", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(h.ensureRead).toHaveBeenCalledOnce();
     expect(h.create).toHaveBeenCalledExactlyOnceWith({ url: "https://example.org/a-saved-page" });
+  });
+  it("navigates the originating tab even when the destination is already open elsewhere", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.queryTabs.mockResolvedValue([
+      { id: 7, windowId: 1, url: "https://example.org/current" },
+      { id: 9, windowId: 1, url: "https://example.org/article" },
+    ]);
+    h.start();
+    await vi.advanceTimersByTimeAsync(0);
+    h.enter("https://example.org/article");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.update).toHaveBeenCalledExactlyOnceWith(7, { url: "https://example.org/article" });
+    expect(h.queryTabs).toHaveBeenCalledOnce();
+    expect(h.create).not.toHaveBeenCalled();
   });
   it("opens an unmatched suggestion in the originating tab on normal Enter", async () => {
     vi.useFakeTimers();
@@ -274,7 +289,7 @@ describe("Omnesis omnibox", () => {
       expect(h.create).toHaveBeenCalledWith(
         disposition === "newBackgroundTab"
           ? { url: "https://example.org/article", active: false }
-          : { url: "https://example.org/article" },
+          : { url: "https://example.org/article", active: true },
       );
       expect(h.update).not.toHaveBeenCalled();
     },

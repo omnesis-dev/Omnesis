@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { browserUrl, dedupeFindResults, type FindResult } from "./find-results.js";
-import { activateFindResult } from "./find-tabs.js";
 import type { FindView } from "./find-service.js";
 
 interface OmniboxFind {
@@ -119,6 +118,24 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
     }, 150);
   });
   chrome.omnibox.onInputCancelled.addListener(clear);
+  async function navigate(
+    url: string,
+    disposition: chrome.omnibox.OnInputEnteredDisposition,
+    tabId: number | undefined,
+    request: number,
+  ): Promise<void> {
+    if (request !== generation) return;
+    if (disposition !== "currentTab") {
+      await chrome.tabs.create({ url, active: disposition === "newForegroundTab" });
+      return;
+    }
+    try {
+      if (tabId === undefined) await chrome.tabs.create({ url });
+      else await chrome.tabs.update(tabId, { url });
+    } catch {
+      if (request === generation) await chrome.tabs.create({ url });
+    }
+  }
   chrome.omnibox.onInputEntered.addListener((text, disposition) => {
     const selectedUrl = browserUrl(text);
     const tabId = activeTab?.id;
@@ -132,15 +149,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
         .ensureRead()
         .then(async (current) => {
           if (!current.enabled || selectionGeneration !== generation) return;
-          if (disposition === "newBackgroundTab")
-            await chrome.tabs.create({ url: selectedUrl, active: false });
-          else
-            await activateFindResult(
-              { url: selectedUrl },
-              current.canonicalizers,
-              disposition === "newForegroundTab",
-              disposition === "currentTab" ? tabId : undefined,
-            );
+          await navigate(selectedUrl, disposition, tabId, selectionGeneration);
         })
         .catch(() => undefined);
       return;
@@ -161,16 +170,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
         if (!current.enabled || selectionGeneration !== generation) return;
         const url = new URL(chrome.runtime.getURL("find.html"));
         url.searchParams.set("q", query);
-        if (disposition !== "currentTab") {
-          await chrome.tabs.create({ url: url.href, active: disposition === "newForegroundTab" });
-        } else {
-          try {
-            if (tabId === undefined) await chrome.tabs.create({ url: url.href });
-            else await chrome.tabs.update(tabId, { url: url.href });
-          } catch {
-            if (selectionGeneration === generation) await chrome.tabs.create({ url: url.href });
-          }
-        }
+        await navigate(url.href, disposition, tabId, selectionGeneration);
       })
       .catch(() => defaultSuggestion(false));
   });
