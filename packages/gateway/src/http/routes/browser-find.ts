@@ -17,15 +17,15 @@ export function mountBrowserFindRoutes(
 ): void {
   app.use("/browser/find", async (c, next) => {
     if (!experimentalEnabled()) return c.notFound();
-    await next();
+    return next();
   });
   app.use("/browser/find/*", async (c, next) => {
     if (!experimentalEnabled()) return c.notFound();
-    await next();
+    return next();
   });
   app.use("/admin/browser-find/*", async (c, next) => {
     if (!experimentalEnabled()) return c.notFound();
-    await next();
+    return next();
   });
   app.post(
     "/browser/find/authorization",

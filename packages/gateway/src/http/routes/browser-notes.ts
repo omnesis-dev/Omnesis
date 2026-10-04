@@ -13,15 +13,15 @@ import type { BrowserNotesService } from "../services/BrowserNotesService.js";
 export function mountBrowserNotesRoutes(app: RouteApp, service: BrowserNotesService): void {
   app.use("/browser/notes", async (c, next) => {
     if (!experimentalEnabled()) return c.notFound();
-    await next();
+    return next();
   });
   app.use("/browser/notes/*", async (c, next) => {
     if (!experimentalEnabled()) return c.notFound();
-    await next();
+    return next();
   });
   app.use("/admin/browser-notes/*", async (c, next) => {
     if (!experimentalEnabled()) return c.notFound();
-    await next();
+    return next();
   });
   const captureLimiter = notesRateLimiter();
   app.post(
