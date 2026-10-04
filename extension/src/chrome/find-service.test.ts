@@ -279,17 +279,21 @@ describe("Find authorization and durable results", () => {
         { type: "find.complete", payload: { mode: "agentic" } },
       ]),
     );
-    expect(await h.service.search("guide")).toMatchObject({
+    const completed = await h.service.search("guide");
+    expect(completed).toMatchObject({
       agentText: "Here is the invented guide.",
       decision: { mode: "agentic" },
       running: false,
-      tools: [],
     });
-    expect(await new FindService(h.deps).status(false)).toMatchObject({
+    expect(completed.tools ?? []).toEqual([]);
+    expect(await h.deps.read()).not.toHaveProperty("tools");
+    const restored = await new FindService(h.deps).status(false);
+    expect(restored).toMatchObject({
       agentText: "Here is the invented guide.",
       results: [{ id: "card" }],
       interrupted: false,
     });
+    expect(restored.tools ?? []).toEqual([]);
   });
   it("clears read authority immediately when a live stream reports revocation", async () => {
     const h = harness();

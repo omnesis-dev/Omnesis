@@ -162,9 +162,15 @@ describe("browser notes optional authority", () => {
     const f = fixture();
     const request = f.service.createAuthorization(f.auth, randomUUID());
     await f.service.approve(request.requestId);
-    expect(() =>
-      f.service.poll({ ...f.auth, tokenId: TokenId(randomUUID()) }, request.requestId),
-    ).toThrow("Authorization not found");
+    const siblingId = TokenId(randomUUID());
+    f.tokens.add(siblingId);
+    expect(() => f.service.poll({ ...f.auth, tokenId: siblingId }, request.requestId)).toThrow(
+      "Authorization not found",
+    );
+    expect(f.service.poll(f.auth, request.requestId)).toMatchObject({
+      status: "approved",
+      credential: { token: "fictional-secret", tokenId: f.mintedId },
+    });
   });
   test("concurrent approval mints one credential and revocation does not resurrect it", async () => {
     const f = fixture();
