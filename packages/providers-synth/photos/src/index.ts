@@ -13,6 +13,7 @@ import {
   syncFromFixture,
   type SynthCursor,
 } from "@omnesis/providers-synth-common";
+import { photosIcon } from "./icons.js";
 import type { DocumentInput, SourceId, ProviderId } from "@omnesis/types";
 const instant = z.string().refine((value) => Number.isFinite(Date.parse(value)));
 const photoSchema = z
@@ -91,7 +92,7 @@ export default defineSource<SynthCursor>({
   },
   singleInstance: true,
   multiDevice: { mode: "partitioned" },
-  icon: { sfSymbol: "photo", color: "#FF9500" },
+  icon: photosIcon,
   discover: async () => preDiscoveredAccounts("photos", universeAccounts("photos")),
   authFlow: async () => fakeLocalFlow("photos", universeAccounts("photos")[0] ?? "synthetic-ios"),
   async create({ sourceId, providerId }) {

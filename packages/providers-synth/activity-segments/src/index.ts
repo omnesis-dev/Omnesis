@@ -13,6 +13,7 @@ import {
   universeAccounts,
   type SynthCursor,
 } from "@omnesis/providers-synth-common";
+import { activitySegmentsIcon } from "./icons.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { DocumentInput, SourceId, ProviderId } from "@omnesis/types";
 const instant = z.string().refine((value) => Number.isFinite(Date.parse(value)));
@@ -165,7 +166,7 @@ export default defineStructuredSource<SynthCursor>({
   },
   singleInstance: true,
   multiDevice: { mode: "partitioned" },
-  icon: { sfSymbol: "figure.walk", color: "#30B0C7" },
+  icon: activitySegmentsIcon,
   analyticsSchemas: [schema],
   discover: async () =>
     preDiscoveredAccounts("activity-segments", universeAccounts("activity-segments")),

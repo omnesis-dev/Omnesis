@@ -3,6 +3,7 @@
 
 import { defineSource, type SyncCursor } from "@omnesis/source-sdk";
 
+import { openclawIconDataUri } from "./icons.js";
 import { openClawDocumentEventProfile } from "./document-event-profile.js";
 
 /**
@@ -26,6 +27,11 @@ export default defineSource<SyncCursor>({
   provider: { id: "openclaw", name: "OpenClaw" },
   authType: "local",
   unitName: "conversations",
+  icon: {
+    sfSymbol: "bubble.left.and.bubble.right",
+    color: "#FF4D4D",
+    imageDataUri: openclawIconDataUri,
+  },
   gatewayHosted: true,
   singleInstance: true,
   execution: "external",
