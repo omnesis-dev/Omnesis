@@ -23,6 +23,8 @@ Use the actual source URL or an exact embedded URL from a retrieved document;
 for analytics use an identifiable row and its provider-declared stored URL or
 source-bound document. When using SQL, retrieve the full primary key so run_sql
 can supply rowIdentities; include the provider's URL column where available.
+Copy one complete rowIdentities entry into evidence.record exactly as returned,
+including recordKey and primaryKeyColumns. Never reconstruct recordKey from a raw ID.
 A stored row URL does not require a separately captured web page. Do not return
 an empty list merely because the user did not explicitly ask for a URL or because
 no separate web document exists. If a relevant retrieved record has a supported
