@@ -139,6 +139,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
               { url: selectedUrl },
               current.canonicalizers,
               disposition === "newForegroundTab",
+              disposition === "currentTab" ? tabId : undefined,
             );
         })
         .catch(() => undefined);

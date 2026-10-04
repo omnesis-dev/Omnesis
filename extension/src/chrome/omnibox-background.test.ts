@@ -141,6 +141,32 @@ describe("Omnesis omnibox", () => {
     expect(h.ensureRead).toHaveBeenCalledOnce();
     expect(h.create).toHaveBeenCalledExactlyOnceWith({ url: "https://example.org/a-saved-page" });
   });
+  it("opens an unmatched suggestion in the originating tab on normal Enter", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const url = "https://example.org/another-guide";
+    h.suggest.mockResolvedValue([card("first", url)]);
+    h.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const callback = vi.fn();
+    h.change("invented guide", callback);
+    await vi.advanceTimersByTimeAsync(150);
+    h.enter(callback.mock.calls[0]![0][0].content);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.update).toHaveBeenCalledExactlyOnceWith(7, { url });
+    expect(h.create).not.toHaveBeenCalled();
+  });
+  it("opens a replacement tab if the originating tab closed before navigation", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const url = "https://example.org/another-guide";
+    h.start();
+    await vi.advanceTimersByTimeAsync(0);
+    h.update.mockRejectedValueOnce(new Error("Tab closed"));
+    h.enter(url);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.create).toHaveBeenCalledExactlyOnceWith({ url });
+  });
   it.each(["currentTab", "newForegroundTab", "newBackgroundTab"] as const)(
     "opens raw Enter as full-page Find with disposition %s",
     async (disposition) => {
