@@ -32,7 +32,7 @@ export const browserResultsSchema = z.object({
           .min(1)
           .max(512)
           .describe(
-            "Use the evidence document title or a verbatim body span; unsupported titles fall back to the document title",
+            "Use the evidence document or record title, or a verbatim stored text span; unsupported titles fall back to the evidence title",
           ),
         snippet: z.string().max(1200).optional(),
         // The shared model-schema converter exposes objects but not unions.
@@ -223,8 +223,8 @@ export function createBrowserResultsTool(options: {
       "Present the final clickable browser search results. Call even when results are empty. " +
       "Document destinations must be a retrieved document's source URL or an exact URL in its body. " +
       "For SQL results copy a rowIdentities reference; the destination must match a provider-declared stored row URL or its bound document. " +
-      "Use the source document title or a verbatim body span as the title; other titles fall back to the source title. " +
-      "A snippet must be a verbatim passage from the supporting document. Never invent URLs or evidence.",
+      "Use the document or record title, or a verbatim stored text span; other titles fall back to the evidence title. " +
+      "A snippet must be a verbatim passage from the supporting document or stored row text. Omit it when the row has no useful text. Never invent URLs or evidence.",
     schema: browserResultsSchema,
     async invoke(raw, context): Promise<ToolResult> {
       const parsed = browserResultsSchema.safeParse(raw);
