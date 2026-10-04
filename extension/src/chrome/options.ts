@@ -2,7 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./chrome-api.js";
+import { confirmNotesUnpair, initNotesEntry } from "./notes-entry.js";
 import { initOptions } from "./options-page.js";
 
 /** Options entry: hands the real options document and `chrome` to the controller. */
-document.addEventListener("DOMContentLoaded", () => initOptions(document, chrome));
+document.addEventListener("DOMContentLoaded", () =>
+  initOptions(document, chrome, {
+    beforeUnpair: () => confirmNotesUnpair(chrome, (message) => window.confirm(message)),
+  }),
+);
+
+document.addEventListener("DOMContentLoaded", () => initNotesEntry(document, chrome));

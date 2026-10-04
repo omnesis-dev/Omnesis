@@ -36,6 +36,7 @@ import {
   listPrivacyExchanges,
 } from "../../api.js";
 import { ConfirmModal } from "../../components/confirm-modal.js";
+import { ThinkingDots } from "../../components/thinking-dots.js";
 import { Loading } from "../../components/loading.js";
 import { renderPart } from "../../components/agent/parts.js";
 import { navigate } from "../../lib/router.js";
@@ -410,6 +411,7 @@ export function PrivacyExchangeSpine({
       <header class="privacy-card-head">
         <${PrivacyActor}
           kind="omnesis"
+          working=${drafting}
           label=${generationFailed
             ? "Omnesis could not draft an answer"
             : drafting ? "Omnesis is drafting an answer" : "Omnesis drafted an answer"}
@@ -468,6 +470,8 @@ export function PrivacyExchangeSpine({
       </header>
       <p class="privacy-decision-sentence">
         ${exchangeDecisionCopy(exchange)}
+        ${exchange.status === "running" && exchange.outcome === "checking" && !drafting
+          ? html`<${ThinkingDots} />` : null}
         <${PrivacyReviewedUnder} review=${exchange.review} />
       </p>
       ${reviewFailed && failure

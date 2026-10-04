@@ -20,6 +20,7 @@ import {
   type LinkRetarget,
   type SameResourceUpdate,
 } from "./UrlOwnershipReconciliation.js";
+import { hasRetainedUrlMetadata } from "./RetainedLinkUrls.js";
 import type { ExtractedLink } from "@omnesis/core";
 
 export {
@@ -649,6 +650,7 @@ function directResolvableScanSql(referencePredicate: string): string {
 export const DIRECT_RESOLVABLE_SCAN_SQL = directResolvableScanSql("0");
 
 interface UnresolvedRow {
+  metadata_json?: string | null;
   id: number;
   source_doc_id: string;
   link_type: string;
@@ -823,7 +825,7 @@ export function computeLinkResolutions(
     ? []
     : db
         .prepare<[number, number, number], UnresolvedRow>(
-          `SELECT id, source_doc_id, link_type, normalized_target
+          `SELECT id, source_doc_id, link_type, normalized_target, metadata_json
          FROM document_links
         WHERE link_type = 'url' AND target_doc_id IS NULL AND id > ? AND id <= ?
         ORDER BY id
@@ -1011,6 +1013,7 @@ export function computeLinkResolutions(
   for (let i = 0; i < urlRows.length; i++) {
     if (urlScanResolutions[i]?.targetDocId !== null) continue;
     if (!knownUrlPatternDeclarationReady) continue;
+    if (hasRetainedUrlMetadata(urlRows[i].metadata_json)) continue;
     if (urlTargetMatchesKnownSourceType(db, urlRows[i].normalized_target, knownUrlPatterns)) {
       continue;
     }
@@ -1130,7 +1133,9 @@ export function upsertLinkResolutionsYieldable(
         AND EXISTS (SELECT 1 FROM documents WHERE id = ?)`,
   );
   const deleteStmt = db.prepare(
-    "DELETE FROM document_links WHERE id = ? AND target_doc_id IS NULL",
+    `DELETE FROM document_links WHERE id = ? AND target_doc_id IS NULL
+      AND (link_type != 'url' OR CASE WHEN json_valid(metadata_json)
+        THEN COALESCE(json_extract(metadata_json, '$.retainTarget'), 0) ELSE 0 END != 1)`,
   );
   const retargetStmt = db.prepare(
     `UPDATE document_links SET target_doc_id = ?, resolved_at = ?

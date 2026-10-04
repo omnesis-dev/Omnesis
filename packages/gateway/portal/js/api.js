@@ -983,8 +983,8 @@ export const setDeviceAccessLevel = (deviceId, levelId, expectedLevelRevision) =
  * Recent items for a source. Returns one of:
  *   { kind: "documents", documents: [...] }   — documents ordered newest-first
  *   { kind: "analytics", table, displayName, columns, columnDefs, rows } —
- *     fallback for pure-structured sources (Strava, Screen Time, Notion
- *     databases). `columnDefs` is the AnalyticsCatalogEntry.columns array,
+ *     fallback for pure-structured sources (Screen Time, Notion databases).
+ *     `columnDefs` is the AnalyticsCatalogEntry.columns array,
  *     used by the portal DataTable for semantic link rendering.
  *   { kind: "empty" }                          — source has nothing yet
  */
@@ -1630,3 +1630,6 @@ export const cancelCodexLogin = () =>
 
 export const removeCodexBackend = () =>
   request("DELETE", "/admin/inference/codex");
+
+export const getBrowserNotesAuthorization = (id) => request("GET", `/admin/browser-notes/authorizations/${encodeURIComponent(id)}`);
+export const approveBrowserNotesAuthorization = (id) => request("POST", `/admin/browser-notes/authorizations/${encodeURIComponent(id)}/approve`);

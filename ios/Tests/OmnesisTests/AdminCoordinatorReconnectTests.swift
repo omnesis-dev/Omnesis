@@ -106,6 +106,37 @@ final class AdminCoordinatorReconnectTests: XCTestCase {
         return AdminClient(baseURL: URL(string: "https://stub.local")!, token: "t", session: session)
     }
 
+    func testOldPairingStatusCannotRepopulateAfterClientRotation() async throws {
+        let coord = AdminCoordinator()
+        let gate = SourceReadGate()
+        let oldSession = MockSession()
+        oldSession.beforeResponse = { request in
+            if request.url?.path == "/status" { await gate.pause() }
+        }
+        oldSession.responder = { request in
+            let body = request.url?.path == "/status"
+                ? #"{"documents":{"total":0,"bySource":{}},"transcriptionVocabulary":true}"# : "{}"
+            return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        try coord.injectSearchClientForTesting(SearchClient(
+            baseURL: XCTUnwrap(URL(string: "https://old.example.com")),
+            token: "old-token",
+            session: oldSession
+        ))
+        let read = Task { await coord.refreshGatewayStats() }
+        await gate.waitForRead()
+        coord.stopAdmin()
+        XCTAssertNil(coord.statusSnapshot)
+        try coord.injectSearchClientForTesting(SearchClient(
+            baseURL: XCTUnwrap(URL(string: "https://new.example.com")),
+            token: "new-token",
+            session: MockSession()
+        ))
+        await gate.resume()
+        await read.value
+        XCTAssertNil(coord.statusSnapshot)
+    }
+
     func testFirstConnectSkipsRefetchAndReconnectRefetches() async {
         let coord = AdminCoordinator()
         coord.injectAdminClientForTesting(makeStubClient())

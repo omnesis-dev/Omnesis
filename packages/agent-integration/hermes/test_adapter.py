@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import signal
+import socket
 import sqlite3
 import stat
 import subprocess
@@ -3501,6 +3502,147 @@ class OAuthRefreshTests(unittest.TestCase):
 
         return Connection
 
+    def _http_connection_answering(self, outcomes, bodies):
+        """A plaintext token endpoint giving one outcome per request, in order.
+
+        An outcome is an exception to raise or a ``(status, body)`` answer;
+        each request body sent is appended to ``bodies``.
+        """
+        remaining = list(outcomes)
+
+        class Connection:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            @staticmethod
+            def request(_method, _path, body, _headers):
+                bodies.append(body)
+
+            @staticmethod
+            def getresponse():
+                outcome = remaining.pop(0)
+                if isinstance(outcome, BaseException):
+                    raise outcome
+                status, body = outcome
+                return type(
+                    "Response",
+                    (),
+                    {"status": status, "read": staticmethod(lambda _limit: body)},
+                )()
+
+            @staticmethod
+            def close():
+                pass
+
+        return Connection
+
+    def test_a_refresh_whose_answer_was_lost_is_repeated_once(self):
+        # The gateway rotates as it answers, so a lost answer may have spent
+        # the token held here; it answers an identical repeat with that pair.
+        rotated = json.dumps(
+            {
+                "access_token": "access_new_fictional",
+                "refresh_token": "refresh_new_fictional",
+                "token_type": "Bearer",
+            }
+        ).encode("utf-8")
+        for lost in (
+            socket.timeout("timed out"),
+            ConnectionResetError("reset by peer"),
+            (503, json.dumps({"error": "server_error"}).encode("utf-8")),
+        ):
+            with self.subTest(lost=lost):
+                self.path.write_text(json.dumps(self.raw), encoding="utf-8")
+                self.instance._credentials = adapter_module._load_credentials(self.path)
+                bodies = []
+                connection = self._http_connection_answering([lost, (200, rotated)], bodies)
+                with (
+                    patch.object(adapter_module.http.client, "HTTPConnection", connection),
+                    patch.object(self.instance, "_request_json") as request_json,
+                ):
+                    bearer = self.instance._refresh_oauth_token_locked()
+                self.assertEqual(bearer, "access_new_fictional")
+                self.assertEqual(len(bodies), 2)
+                self.assertEqual(bodies[0], bodies[1])
+                self.assertIn(b"refresh_token=refresh_old_fictional", bodies[1])
+                request_json.assert_not_called()
+                persisted = json.loads(self.path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    persisted["oauth"]["tokens"]["refresh_token"], "refresh_new_fictional"
+                )
+
+    def test_a_refresh_rides_out_a_40_second_writer_stall(self):
+        # A restarted gateway can hold its single writer for about 40 seconds,
+        # and the token endpoint answers behind it. The socket budget has to
+        # outlast that, or the answer to a rotation the gateway goes on to make
+        # is lost and the refresh token with it.
+        stall_seconds = 40.0
+        rotated = json.dumps(
+            {
+                "access_token": "access_new_fictional",
+                "refresh_token": "refresh_new_fictional",
+                "token_type": "Bearer",
+            }
+        ).encode("utf-8")
+        budgets = []
+        bodies = []
+
+        class StalledConnection:
+            def __init__(self, *_args, timeout, **_kwargs):
+                budgets.append(timeout)
+                self.timeout = timeout
+
+            @staticmethod
+            def request(_method, _path, body, _headers):
+                bodies.append(body)
+
+            def getresponse(self):
+                if self.timeout < stall_seconds:
+                    raise socket.timeout("timed out")
+                return type(
+                    "Response",
+                    (),
+                    {"status": 200, "read": staticmethod(lambda _limit: rotated)},
+                )()
+
+            @staticmethod
+            def close():
+                pass
+
+        with (
+            patch.object(adapter_module.http.client, "HTTPConnection", StalledConnection),
+            patch.object(self.instance, "_request_json") as request_json,
+        ):
+            bearer = self.instance._refresh_oauth_token_locked()
+        self.assertEqual(bearer, "access_new_fictional")
+        self.assertEqual(budgets, [adapter_module.OAUTH_TOKEN_TIMEOUT_SECONDS])
+        self.assertEqual(len(bodies), 1)
+        request_json.assert_not_called()
+
+    def test_a_lost_refresh_is_repeated_only_once(self):
+        bodies = []
+        connection = self._http_connection_answering(
+            [socket.timeout("timed out"), socket.timeout("timed out again")], bodies
+        )
+        with (
+            patch.object(adapter_module.http.client, "HTTPConnection", connection),
+            patch.object(self.instance, "_request_json") as request_json,
+        ):
+            with self.assertRaises(OSError):
+                self.instance._refresh_oauth_token_locked()
+        self.assertEqual(len(bodies), 2)
+        request_json.assert_not_called()
+
+    def test_an_oauth_verdict_on_a_refresh_is_never_repeated(self):
+        bodies = []
+        connection = self._http_connection_answering(
+            [(400, json.dumps({"error": "invalid_client"}).encode("utf-8"))], bodies
+        )
+        with patch.object(adapter_module.http.client, "HTTPConnection", connection):
+            with self.assertRaises(adapter_module.GatewayHttpError):
+                self.instance._refresh_oauth_token_locked()
+        self.assertEqual(len(bodies), 1)
+
     def test_a_spent_refresh_token_is_re_issued_against_the_management_token(self):
         # The cliff: nobody asked this installation anything for a month, so
         # the refresh token is gone and no browser is available to replace it.
@@ -3521,8 +3663,10 @@ class OAuthRefreshTests(unittest.TestCase):
             bearer = self.instance._refresh_oauth_token_locked()
 
         self.assertEqual(bearer, "access_reissued_fictional")
-        method, endpoint, token, payload = request_json.call_args.args
+        method, endpoint, token, payload, timeout = request_json.call_args.args
         self.assertEqual((method, endpoint), ("POST", "/agent-integration/oauth-reissue"))
+        # A write on the gateway's writer, given the same budget as a refresh.
+        self.assertEqual(timeout, adapter_module.OAUTH_TOKEN_TIMEOUT_SECONDS)
         # Presented with the operational management token — the one authority
         # an unattended plugin still holds, and one that cannot read the corpus.
         self.assertEqual(token, "omn_management_example")
@@ -3685,6 +3829,101 @@ class OAuthRefreshTests(unittest.TestCase):
             self.instance._maintain_oauth_once()
         refresh.assert_called_once_with("access_old_fictional")
 
+
+    def _drop_tokens(self, **oauth_extra):
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["oauth"]["tokens"] = {}
+        raw["oauth"].update(oauth_extra)
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        self.instance._credentials = adapter_module._load_credentials(self.path)
+
+    _REISSUED = {
+        "access_token": "access_reissued_fictional",
+        "refresh_token": "refresh_reissued_fictional",
+        "token_type": "Bearer",
+    }
+
+    def test_a_file_left_without_tokens_still_loads_with_its_approved_client(self):
+        # An `omnesis connect` that stopped part-way leaves the approved client
+        # without a token set. Refusing the file would take delivery and
+        # ingestion down with it, over something a re-issue repairs.
+        self._drop_tokens()
+        credentials = self.instance._credentials
+        self.assertEqual(credentials.oauth_client_id, "client_fictional")
+        self.assertIsNone(credentials.oauth_access_token)
+        self.assertIsNone(credentials.oauth_refresh_token)
+
+    def test_a_file_without_a_client_keeps_delivery_and_names_the_repair(self):
+        # A connect interrupted between dropping a client and registering the
+        # next leaves nothing to re-issue for. Delivery and ingestion still
+        # load; the corpus tools answer with the repair.
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["oauth"]["clientInformation"] = {}
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        credentials = adapter_module._load_credentials(self.path)
+        self.assertEqual(credentials.delivery_token, "omn_delivery_example")
+        self.assertIsNone(credentials.oauth_client_id)
+        self.assertIsNone(credentials.oauth_access_token)
+        self.instance._credentials = credentials
+        with patch.object(self.instance, "_request_json") as request_json:
+            self.assertIsNone(self.instance._principal_access_token())
+        request_json.assert_not_called()
+
+    def test_a_missing_token_set_is_re_issued_before_the_first_corpus_call(self):
+        self._drop_tokens()
+        with patch.object(
+            self.instance, "_request_json", return_value=dict(self._REISSUED)
+        ) as request_json:
+            token = self.instance._principal_access_token()
+        self.assertEqual(token, "access_reissued_fictional")
+        method, endpoint, bearer, payload, _timeout = request_json.call_args.args
+        self.assertEqual((method, endpoint), ("POST", "/agent-integration/oauth-reissue"))
+        self.assertEqual(bearer, "omn_management_example")
+        self.assertEqual(payload, {"clientId": "client_fictional"})
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted["oauth"]["tokens"]["refresh_token"], "refresh_reissued_fictional"
+        )
+
+    def test_a_missing_token_set_with_nothing_approved_reports_the_repair(self):
+        self._drop_tokens()
+        refusal = adapter_module.GatewayHttpError(404, None, "NO_APPROVED_CREDENTIAL")
+        with patch.object(self.instance, "_request_json", side_effect=refusal):
+            self.assertIsNone(self.instance._principal_access_token())
+        payload = adapter_module._answer_failure_payload(adapter_module.GatewayHttpError(401))
+        self.assertIn("omnesis connect hermes --refresh", payload["repair"])
+
+    def test_a_refresh_with_no_refresh_token_re_issues_instead_of_giving_up(self):
+        self._drop_tokens()
+        with patch.object(
+            self.instance, "_request_json", return_value=dict(self._REISSUED)
+        ):
+            bearer = self.instance._refresh_oauth_token_locked()
+        self.assertEqual(bearer, "access_reissued_fictional")
+
+    def test_maintenance_repairs_a_missing_token_set(self):
+        self._drop_tokens(codeVerifier="verifier-of-an-abandoned-attempt")
+        with patch.object(
+            self.instance, "_request_json", return_value=dict(self._REISSUED)
+        ):
+            self.instance._maintain_oauth_once()
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted["oauth"]["tokens"]["access_token"], "access_reissued_fictional"
+        )
+
+    def test_keepalive_resumes_once_a_recorded_approval_has_expired(self):
+        now = 1_900_000_000_000
+        raw = json.loads(json.dumps(self.raw))
+        raw["oauth"]["tokensObtainedAt"] = 1
+        raw["oauth"]["codeVerifier"] = "fictional-pkce-verifier"
+        record = adapter_module._pending_authorization_path(self.path)
+        # A verifier no record dates is somebody's live attempt.
+        self.assertFalse(adapter_module._refresh_keepalive_due(raw, now, self.path))
+        record.write_text(json.dumps({"expiresAt": now + 1}), encoding="utf-8")
+        self.assertFalse(adapter_module._refresh_keepalive_due(raw, now, self.path))
+        record.write_text(json.dumps({"expiresAt": now}), encoding="utf-8")
+        self.assertTrue(adapter_module._refresh_keepalive_due(raw, now, self.path))
 
     def test_cross_origin_https_refresh_uses_system_trust(self):
         raw = json.loads(self.path.read_text(encoding="utf-8"))
@@ -3991,6 +4230,31 @@ class OAuthRefreshTests(unittest.TestCase):
                 tool_adapter._state.close()
         self.assertEqual(answer["code"], "authorization_required")
         self.assertEqual(management["code"], "authorization_required")
+
+    def test_an_ask_without_tokens_and_nothing_approved_answers_with_the_repair(self):
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["oauth"]["tokens"] = {}
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        tool_adapter = adapter_module.OmnesisAdapter.for_tools()
+        tool_adapter._credential_path = self.path
+        tool_adapter._credentials = adapter_module._load_credentials(self.path)
+        refusal = adapter_module.GatewayHttpError(404, None, "NO_APPROVED_CREDENTIAL")
+        try:
+            with patch.object(
+                tool_adapter, "_request_json", side_effect=refusal
+            ) as request_json:
+                answer = json.loads(
+                    tool_adapter.answer({"question": "A fictional question?"}, "session-human")
+                )
+        finally:
+            if tool_adapter._state is not None:
+                tool_adapter._state.close()
+        # The re-issue was tried first, with the device's management token.
+        self.assertEqual(
+            request_json.call_args.args[:2], ("POST", "/agent-integration/oauth-reissue")
+        )
+        self.assertEqual(answer["code"], "authorization_required")
+        self.assertIn("omnesis connect hermes --refresh", answer["repair"])
 
     def test_refresh_rotation_is_atomically_persisted_with_private_mode(self):
         captured = {}

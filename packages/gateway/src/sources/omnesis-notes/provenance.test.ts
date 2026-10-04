@@ -106,6 +106,8 @@ describe("capture day provenance", () => {
     expect(result.documentId).toBe(id);
     expect(result.mentions).toHaveLength(1);
     expect(result.mentions[0]).toMatchObject({
+      origin: "mention",
+      kind: "event",
       start: "2026-10-12T04:00:00.000Z",
       endExclusive: "2026-10-13T04:00:00.000Z",
     });
@@ -150,6 +152,7 @@ describe("capture day provenance", () => {
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
     const result = await service.forDay(day);
     expect(result.annotations.map((item) => item.id)).toEqual(["ta_live"]);
+    expect(result.annotations[0]).toMatchObject({ origin: "annotation", kind: expect.any(String) });
     expect(result.loops).toEqual([{ id: "loop_updated", title: "Review outline", status: "done" }]);
   });
 
@@ -219,6 +222,8 @@ describe("capture day provenance", () => {
     expect((await service.forDay(day, "America/New_York")).annotations).toEqual([
       {
         id: "ta_distant",
+        origin: "annotation",
+        kind: "event",
         label: "Long-range outline review",
         start: "2031-02-01T05:00:00.000Z",
         endExclusive: "2031-03-01T05:00:00.000Z",

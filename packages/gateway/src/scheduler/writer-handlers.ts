@@ -412,6 +412,7 @@ import {
   deleteNoteEntry,
   applyNoteEntryTranscript,
   type NoteEntry,
+  type BrowserNoteAuthority,
 } from "../sources/omnesis-notes/storage.js";
 import {
   insertPendingVoiceNote,
@@ -1713,8 +1714,12 @@ export const writerHandlers = {
   // (one row per captured note); update/delete are the user's edit and
   // hard-delete of a single entry. The per-day document projection is
   // driven separately by the NotesDayUpserter, not by these ops.
-  "notes.appendEntry": (db: Db, entry: NoteEntry, audit?: McpToolInvocationAuditInput): boolean =>
-    insertNoteEntry(db, entry, audit),
+  "notes.appendEntry": (
+    db: Db,
+    entry: NoteEntry,
+    audit?: McpToolInvocationAuditInput,
+    browserAuthority?: BrowserNoteAuthority,
+  ): boolean => insertNoteEntry(db, entry, audit, browserAuthority),
   "notes.updateEntry": (db: Db, id: string, text: string, nowIso: string): boolean =>
     updateNoteEntryText(db, id, text, nowIso),
   "notes.deleteEntry": (db: Db, id: string) => deleteNoteEntry(db, id),
@@ -1768,7 +1773,21 @@ export const writerHandlers = {
  * non-yieldable fallback only applies when a name appears in
  * `writerHandlers` and not here.
  */
+import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
+import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import type {
+  VocabularySettings,
+  ExtractedVocabularyDocument,
+} from "../transcribe/vocabulary/types.js";
+
 export const writerYieldableHandlers = {
+  "vocabulary.advanceRebuild": (db: Db, token: PreemptToken, settings: VocabularySettings) =>
+    advanceTranscriptionVocabularyRebuild(db, settings, token),
+  "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
+    const result = applyTranscriptionVocabularyBatch(db, docs, token);
+    if (result.remaining.length) return { kind: "yield" as const, resume: [result.remaining] };
+    return { applied: result.applied, skipped: result.skipped };
+  },
   /**
    * Cooperative-yield variant of `db.upsertDocuments`. Processes the
    * docs in chunks (one transaction per chunk); between chunks, polls

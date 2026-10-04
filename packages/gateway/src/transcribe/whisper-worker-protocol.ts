@@ -34,6 +34,8 @@ export interface WhisperRequestHeader {
   pcmBytes: number;
   /** ISO-639-1 hint or "auto". */
   language: string;
+  /** Packed literal phrases, bounded by the local Whisper adapter. */
+  vocabularyHint?: import("./vocabulary-adapter.js").WhisperVocabularyHint;
 }
 
 /** Worker → parent: emitted once after the model is loaded and ready to serve. */

@@ -27,6 +27,7 @@ import { MAX_AUDIO_BYTES } from "../../transcribe/index.js";
 import { BadRequestError, HttpError, ValidationError } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import { voiceNoteMetadata } from "../schemas/index.js";
+import { transcriptionVocabularyAllowed } from "../transcription-access.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
 import type { DictationFeatureStatus } from "../../dictation/index.js";
 import type { VoiceNoteService } from "../../voice-notes/index.js";
@@ -53,7 +54,8 @@ export function languageHint(tag: string | undefined): string | undefined {
 
 export interface VoiceNoteRoutesDeps {
   service: VoiceNoteService;
-  getStatus: () => DictationFeatureStatus;
+  /** The dictation verdict, once the transcriber has settled anything it is still checking. */
+  getStatus: () => Promise<DictationFeatureStatus>;
 }
 
 export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): void {
@@ -67,7 +69,7 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
     }
     enforceWriteScopeForSource(c.get("auth").scopes, "omnesis-notes");
 
-    const status = deps.getStatus();
+    const status = await deps.getStatus();
     if (!status.enabled) {
       throw new HttpError(409, "DICTATION_DISABLED", "Gateway transcription is switched off.");
     }
@@ -116,6 +118,7 @@ export function mountVoiceNoteRoutes(app: RouteApp, deps: VoiceNoteRoutesDeps): 
       latitude: note.latitude,
       longitude: note.longitude,
       placeName: note.placeName,
+      allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
     });
     return c.json({ id, transcription: "pending" as const }, 202);
   });

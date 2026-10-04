@@ -29,7 +29,18 @@ export {
   SerializedIntegrationAuthProvider,
   authorizeIntegrationOAuth,
   authorizeIntegrationOAuthWithCredentialLock,
+  withCredentialRefreshLock,
 } from "./oauth.js";
+export {
+  IntegrationReauthorizationRequiredError,
+  reissueIntegrationOAuthTokens,
+} from "./oauth-keepalive.js";
+export {
+  clearPendingAuthorization,
+  loadPendingAuthorization,
+  savePendingAuthorization,
+  type PendingIntegrationAuthorization,
+} from "./pending-authorization.js";
 export { agentIntegrationVersion, describeVersionDrift } from "./version.js";
 export { capDeviceUpdateDetail, summarizeCommandFailure } from "./command-output.js";
 export { resolveHarnessBinary } from "./self-update.js";

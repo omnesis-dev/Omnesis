@@ -31,8 +31,8 @@ code run under Node in the spawned-gateway E2E and byte for byte in the worker.
 ## How it works
 
 - **Pairing.** The options page redeems a one-time code (`omnesis devices pair --kind browser`)
-  against `POST /devices/pair` after reading `GET /health` and refusing a gateway on an older minor
-  release. The gateway returns a `write:web` token, stored under its own key so the content
+  against `POST /devices/pair` after reading `GET /health` and refusing a gateway older than the fixed capture-contract minimum (0.5.0). Optional notes use
+  explicit capability discovery rather than product-minor comparisons. The gateway returns a `write:web` token, stored under its own key so the content
   script — which imports `pairing-record.ts` only — never sees it (`bundle-boundaries.test.ts`
   asserts the content bundle names neither the token key nor the legacy combined record). A retry
   after a timeout reuses a stored idempotency key, so the gateway replays the first redemption
@@ -49,8 +49,11 @@ code run under Node in the spawned-gateway E2E and byte for byte in the worker.
   worker turns into one `POST /documents` (a `webpage` document keyed on the SHA-256 of the
   normalized URL) and one `POST /analytics/ingest` row (`page_visits`). Mutations re-extract after
   a debounce and re-push only when the text or title changed. The emission is staged in
-  `chrome.storage.local` until the worker acknowledges it, so a worker evicted mid-handoff loses
-  nothing.
+  `chrome.storage.local` until the worker acknowledges it. This recovery outbox holds up to
+  20 records; evicted recovery copies can still be handed off by their open tabs. Eviction counts
+  remain available in diagnostic storage but do not trigger a popup warning or toolbar badge:
+  they do not establish that an upload was lost. Current handoff failures and confirmed discarded
+  uploads still surface in the popup and badge.
 - **The worker.** MV3 workers are evicted within seconds of idling, so `background.ts` holds no
   authoritative state: every wake rebuilds the push client from the durable queue and config, and
   `chrome.alarms` drives the drain cadence. One request per pass, exponential backoff with
@@ -99,3 +102,9 @@ id from an unpacked build of the same source and starts with no pairing. The two
 therefore coexist in one browser, each pairing on its own; unpair the unpacked
 build before relying on the store one, or both capture the same pages. Say so on
 the setup page when the store listing goes live.
+
+## Tell Omnesis
+
+On gateways advertising browser notes support, choose **Enable Tell Omnesis** in the popup or pairing settings and approve the create-only browser grant in the gateway portal. Existing page-capture pairing stays unchanged. Older gateways continue capturing pages without offering notes.
+
+Use **Alt/Option + Shift + N**, the popup's **Tell Omnesis** button, or the page/selection context menu. The native side panel freezes the page context and includes any selected text. **Ctrl/Cmd + Enter** saves; Enter inserts a newline. Unfinished drafts survive closing the panel and switching tabs. Unsent notes survive browser restarts and retry with stable IDs. A full 100-note queue refuses new saves and keeps the draft. Gateway-rejected notes can be reopened for editing. Chrome lets users change the shortcut at `chrome://extensions/shortcuts`.

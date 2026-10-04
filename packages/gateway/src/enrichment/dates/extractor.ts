@@ -208,6 +208,17 @@ interface CultureTextRules {
   backwardDurationBefore: RegExp | null;
   /** Backward-pointing context immediately AFTER a bare duration ("3 years ago"). */
   backwardDurationAfter: RegExp | null;
+  /**
+   * A match that opens with the rest-of head word joined straight to its
+   * unit, with no "of" between them. The recognizer reads "rest of the day"
+   * and "rest of the week" as the span from the document's moment to the end
+   * of that day or week, but its pattern makes the "of" optional, so the
+   * compound nouns "rest day", "rest week" and "rest month" — a day off, not
+   * a span counted from now — resolve the same way. The grammar of the
+   * rest-of phrase needs the link word in every routed language, so a match
+   * without it is a compound noun and is dropped. null = no such pattern.
+   */
+  restCompound: RegExp | null;
 }
 
 const ENGLISH_RULES: CultureTextRules = {
@@ -216,6 +227,7 @@ const ENGLISH_RULES: CultureTextRules = {
   forwardDurationBefore: FORWARD_DURATION_CONTEXT,
   backwardDurationBefore: null,
   backwardDurationAfter: BACKWARD_DURATION_CONTEXT,
+  restCompound: /^rest(?!\s+of\b)\s/i,
 };
 
 const CULTURE_RULES: Record<DateCulture, CultureTextRules> = {
@@ -228,6 +240,7 @@ const CULTURE_RULES: Record<DateCulture, CultureTextRules> = {
     forwardDurationBefore: /(?:\b(?:dans|sous|apr[eè]s)|d['’]ici)\s*$/i,
     backwardDurationBefore: /\bil\s+y\s+a\s*$/i,
     backwardDurationAfter: /^\s*(?:plus\s+t[oô]t|auparavant)\b/i,
+    restCompound: /^reste(?!\s+(?:d[eu]\b|d['’]))\s/i,
   },
   "es-es": {
     dateHint: null,
@@ -236,6 +249,7 @@ const CULTURE_RULES: Record<DateCulture, CultureTextRules> = {
     forwardDurationBefore: /\b(?:en|dentro\s+de|tras)\s*$/i,
     backwardDurationBefore: /\bhace\s*$/i,
     backwardDurationAfter: /^\s*(?:atr[aá]s|antes)\b/i,
+    restCompound: /^resto(?!\s+del?\b)\s/i,
   },
   "zh-cn": {
     dateHint: null,
@@ -247,6 +261,7 @@ const CULTURE_RULES: Record<DateCulture, CultureTextRules> = {
     forwardDurationBefore: null,
     backwardDurationBefore: null,
     backwardDurationAfter: null,
+    restCompound: null,
   },
 };
 
@@ -395,6 +410,16 @@ function isoDay(d: Date): string {
   return `${y}-${mo}-${day}`;
 }
 
+/**
+ * The date names the anchor day and nothing else: a day on it, or a span
+ * that starts and ends on it. An open-ended span ("before today") bounds
+ * other days and is not one.
+ */
+function onlyAnchorDay(date: ExtractedDate, anchorDay: string): boolean {
+  if (date.mod || date.resolvedStart !== anchorDay) return false;
+  return date.kind === "date" || date.resolvedEnd === anchorDay;
+}
+
 /** The `datetimeV2.<subtype>` tail of a result's typeName. */
 function subtypeOf(typeName: string): string {
   const dot = typeName.lastIndexOf(".");
@@ -431,6 +456,7 @@ function normalizeResult(
   if (values.length === 0) return null;
   const subtype = subtypeOf(r.typeName);
   const text = content.slice(r.start, r.end + 1);
+  if (rules.restCompound?.test(text)) return null;
   const base = {
     relative: rules.relativeMarker.test(text),
     text,
@@ -651,14 +677,15 @@ export function scanDatesFromText(
       const absolute = { ...r, start: r.start + base, end: r.end + base };
       const norm = normalizeResult(absolute, anchor, text, rules);
       if (!norm) continue;
-      // Drop the document's own anchor-day date. The email `Date:` header
-      // (and same-day adverbs like "today"/"now") resolve to the anchor day —
-      // the timestamp the document row already holds, not a semantic date in
-      // the prose. With a last-edit anchor this drops edit-day mentions on
-      // edited documents, the same self-reference by another clock. A future
-      // date can never equal the (past/present) anchor day, so this never
-      // drops a forward-looking reference.
-      if (norm.kind === "date" && !norm.mod && norm.resolvedStart === anchorDay) continue;
+      // Drop the document's own anchor-day date. The email `Date:` header,
+      // same-day adverbs ("today", "now") and spans that never leave the day
+      // ("tonight", "this afternoon", "the rest of the day") resolve to the
+      // anchor day — the timestamp the document row already holds, not a
+      // semantic date in the prose. With a last-edit anchor this drops
+      // edit-day mentions on edited documents, the same self-reference by
+      // another clock. A future date can never equal the (past/present)
+      // anchor day, so this never drops a forward-looking reference.
+      if (onlyAnchorDay(norm, anchorDay)) continue;
       // Dedupe by resolved VALUE (not text span): the same date mentioned
       // twice — or matched by two overlapping chunks — collapses to one
       // entry, the document's list of distinct semantic dates.

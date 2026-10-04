@@ -76,23 +76,12 @@ class CitingBackend implements ChatBackend {
   readonly model = "citing";
   readonly turns: TurnInput[] = [];
 
-  constructor(
-    private readonly documentIds: readonly string[],
-    private readonly text: { before?: string; after?: string } = {
-      after: "The budget review is on Tuesday.",
-    },
-  ) {}
+  constructor(private readonly documentIds: readonly string[]) {}
 
   async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
     this.turns.push(input);
     const { sessionId, messageId } = input;
     yield { type: "agent.message.start", payload: { sessionId, messageId, role: "assistant" } };
-    if (this.text.before) {
-      yield {
-        type: "agent.text.delta",
-        payload: { sessionId, messageId, delta: this.text.before },
-      };
-    }
     const annotate = input.tools.find((tool) => tool.name === "annotate_many");
     if (annotate) {
       const args = { annotations: this.documentIds.map((documentId) => ({ documentId })) };
@@ -106,8 +95,50 @@ class CitingBackend implements ChatBackend {
         payload: { sessionId, messageId, toolCallId: "cite_1", result, durationMs: 0 },
       };
     }
-    if (this.text.after) {
-      yield { type: "agent.text.delta", payload: { sessionId, messageId, delta: this.text.after } };
+    yield {
+      type: "agent.text.delta",
+      payload: { sessionId, messageId, delta: "The budget review is on Tuesday." },
+    };
+    yield { type: "agent.message.end", payload: { sessionId, messageId, stopReason: "end_turn" } };
+  }
+}
+
+type AnswerStep = { text: string } | { tool: string };
+
+/**
+ * Plays a fixed sequence of text and tool calls. A tool call is announced
+ * and answered without running the tool: what the answer surface keeps
+ * depends only on which tool was called.
+ */
+class ScriptedAnswerBackend implements ChatBackend {
+  readonly name = "scripted";
+  readonly model = "scripted";
+
+  constructor(private readonly steps: readonly AnswerStep[]) {}
+
+  async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+    const { sessionId, messageId } = input;
+    yield { type: "agent.message.start", payload: { sessionId, messageId, role: "assistant" } };
+    for (const [index, step] of this.steps.entries()) {
+      if ("text" in step) {
+        yield { type: "agent.text.delta", payload: { sessionId, messageId, delta: step.text } };
+        continue;
+      }
+      const toolCallId = `call_${index}`;
+      yield {
+        type: "agent.tool.start",
+        payload: { sessionId, messageId, toolCallId, tool: step.tool, args: {} },
+      };
+      yield {
+        type: "agent.tool.result",
+        payload: {
+          sessionId,
+          messageId,
+          toolCallId,
+          result: { ok: true, data: {} },
+          durationMs: 0,
+        },
+      };
     }
     yield { type: "agent.message.end", payload: { sessionId, messageId, stopReason: "end_turn" } };
   }
@@ -484,19 +515,83 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
     await service.dispose();
   });
 
-  it.each([
+  it.each<{ shape: string; steps: AnswerStep[]; answer: string }>([
     {
-      shape: "narration before its research",
-      text: { before: "I'm checking your records.", after: "The review is on Tuesday." },
+      shape: "drops narration written before a research call",
+      steps: [
+        { text: "I'm checking your records." },
+        { tool: "search_many" },
+        { text: "The review is on Tuesday." },
+      ],
       answer: "The review is on Tuesday.",
     },
     {
-      shape: "an answer written before its citation call",
-      text: { before: "The review is on Tuesday." },
+      shape: "keeps an answer cited after it was written",
+      steps: [{ text: "The review is on Tuesday." }, { tool: "annotate_many" }],
       answer: "The review is on Tuesday.",
     },
-  ])("answers with the reply, not $shape", async ({ text, answer }) => {
-    const backend = new CitingBackend(["doc_missing"], text);
+    {
+      shape: "keeps an answer cited before a short closing line",
+      steps: [{ text: "The review is on Tuesday." }, { tool: "annotate_many" }, { text: "Done." }],
+      answer: "The review is on Tuesday.\n\nDone.",
+    },
+    {
+      shape: "joins answer text written on both sides of a citation call",
+      steps: [
+        { text: "The review is on Tuesday." },
+        { tool: "annotate_many" },
+        { text: "It moved from Monday." },
+      ],
+      answer: "The review is on Tuesday.\n\nIt moved from Monday.",
+    },
+    {
+      shape: "drops narration across a citation call once research follows",
+      steps: [
+        { text: "I'm checking your records." },
+        { tool: "annotate_many" },
+        { text: "Looking further." },
+        { tool: "fetch_many" },
+        { tool: "annotate_many" },
+        { text: "The review is on Tuesday." },
+      ],
+      answer: "The review is on Tuesday.",
+    },
+    {
+      shape: "keeps narration written right before a citation call",
+      steps: [
+        { text: "Citing the sources." },
+        { tool: "annotate_many" },
+        { text: "The review is on Tuesday." },
+      ],
+      answer: "Citing the sources.\n\nThe review is on Tuesday.",
+    },
+    {
+      shape: "joins segments with one paragraph break whatever whitespace surrounds them",
+      steps: [
+        { text: "The review is on Tuesday.\n" },
+        { tool: "annotate_many" },
+        { text: "\n\n" },
+        { text: "\nIt moved from Monday." },
+      ],
+      answer: "The review is on Tuesday.\n\nIt moved from Monday.",
+    },
+    {
+      shape: "keeps no trailing whitespace written after a citation call",
+      steps: [{ text: "The review is on Tuesday." }, { tool: "annotate_many" }, { text: " \n" }],
+      answer: "The review is on Tuesday.",
+    },
+    {
+      shape: "drops whitespace written before a citation call",
+      steps: [{ text: "\n" }, { tool: "annotate_many" }, { text: "The review is on Tuesday." }],
+      answer: "The review is on Tuesday.",
+    },
+    {
+      shape: "falls back to the answer when only a research call follows it",
+      steps: [{ text: "The review is on Tuesday." }, { tool: "search_many" }],
+      answer: "The review is on Tuesday.",
+    },
+  ])("$shape", async ({ steps, answer }) => {
+    const backend = new ScriptedAnswerBackend(steps);
     const service = new AgentService({
       backendFactory: () => backend,
       ports: { search: stubSearch, document: stubDocument },
@@ -509,6 +604,27 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
     const result = await service.generateReadOnlyAnswerCandidate("When is the review?", []);
 
     expect(result.answer).toBe(answer);
+    await service.dispose();
+  });
+
+  it("counts the paragraph break between segments toward the candidate limit", async () => {
+    const backend = new ScriptedAnswerBackend([
+      { text: "x".repeat(MAX_READ_ONLY_ANSWER_CANDIDATE_CHARS - 2) },
+      { tool: "annotate_many" },
+      { text: "y" },
+    ]);
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "external answer prompt",
+      store: makeStore(),
+      sessionIdGen: () => "S_joined_limit",
+      idleTimeoutMs: 60_000,
+    });
+
+    await expect(
+      service.generateReadOnlyAnswerCandidate("When is the review?", []),
+    ).rejects.toMatchObject<AgentError>({ code: "answer_too_large" });
     await service.dispose();
   });
 

@@ -443,12 +443,13 @@ internal fun rememberWorkingDotsRevealed(active: Boolean, revision: Int): Boolea
  * same shared wave.
  */
 @Composable
-internal fun WorkingDots(modifier: Modifier = Modifier) {
+internal fun WorkingDots(modifier: Modifier = Modifier, contentDescription: String = "Working") {
     AgentWaveDots(
         modifier = modifier.padding(vertical = 2.dp),
         dotSize = 5.dp,
         spacing = 4.dp,
         restAlpha = 0.3f,
+        contentDescription = contentDescription,
     )
 }
 

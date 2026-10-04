@@ -88,6 +88,7 @@ class CaptureViewModel @Inject constructor(
     }
 
     fun startListening() {
+        transcriber.setPurpose("dictation")
         if (_state.value.save !is SaveState.Idle) return
         val existing = voiceNote
         if (existing != null) {

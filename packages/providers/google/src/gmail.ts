@@ -46,7 +46,13 @@ import type {
   AttachmentExtractionConfig,
   AttachmentExtractFn,
 } from "@omnesis/core";
-import type { SyncCursor, SyncResult, HistoryCoverage } from "@omnesis/source-sdk";
+import type {
+  SyncCursor,
+  SyncOptions,
+  SyncResult,
+  HistoryCoverage,
+  SyncRun,
+} from "@omnesis/source-sdk";
 import type { DocumentInput } from "@omnesis/types";
 
 const log = createLogger("source:gmail");
@@ -95,6 +101,18 @@ export interface GmailSyncCursor extends SyncCursor {
    * below that point and the result keeps the coverage it had.
    */
   recoveryVouched?: boolean;
+  /**
+   * When the oldest message this bootstrap walk has listed reached the
+   * mailbox (its `internalDate`, ISO). Where a walk resumes when Gmail
+   * refuses the saved `pageToken`. Cleared when the walk ends.
+   */
+  oldestListedAt?: string;
+  /**
+   * The `before:` bound of the listing the current `pageToken` belongs to,
+   * set once a walk has resumed after Gmail refused a saved `pageToken`.
+   * Cleared when the walk ends.
+   */
+  listBefore?: string;
 }
 
 /**
@@ -130,6 +148,13 @@ function reachDetail(coverage: HistoryCoverage): string | undefined {
   return undefined;
 }
 
+/** The earlier of an ISO timestamp and an epoch-ms instant, as ISO. */
+function earlierIso(iso: string | undefined, ms: number | undefined): string | undefined {
+  if (ms === undefined) return iso;
+  const prior = iso ? Date.parse(iso) : Number.NaN;
+  return !Number.isNaN(prior) && prior <= ms ? iso : new Date(ms).toISOString();
+}
+
 /** Later (more recent) of two optional dates, or whichever one is defined. */
 function laterDate(a?: Date, b?: Date): Date | undefined {
   if (a && b) return a.getTime() >= b.getTime() ? a : b;
@@ -145,9 +170,41 @@ function gmailAfterDate(d: Date): string {
 }
 
 /** The `messages.list` query for mail after `afterFloor`, spam and trash left out. */
-function listQuery(afterFloor: Date | undefined): string {
-  const q = "-in:spam -in:trash";
-  return afterFloor ? `${q} after:${gmailAfterDate(afterFloor)}` : q;
+function listQuery(afterFloor: Date | undefined, before?: Date): string {
+  let q = "-in:spam -in:trash";
+  if (afterFloor) q += ` after:${gmailAfterDate(afterFloor)}`;
+  // Seconds since the epoch: Gmail reads a bare number as an exact instant,
+  // where a date would be midnight in the account's timezone.
+  if (before) q += ` before:${Math.ceil(before.getTime() / 1000)}`;
+  return q;
+}
+
+/**
+ * How far past the oldest listed message a resumed listing starts. Gmail lists
+ * newest first; the overlap re-lists a day of already-read mail (idempotent,
+ * since a message's document id is its own) rather than trusting the order to
+ * the second.
+ */
+const GMAIL_RESUME_OVERLAP_MS = 24 * 60 * 60 * 1000;
+
+const INVALID_PAGE_TOKEN_PATTERN = /page\s*token/i;
+
+/**
+ * Whether Gmail refused a `messages.list` page token: a 400 whose message
+ * names the token. Gmail gives no machine-readable reason for it, so the text
+ * is the signal, read from the error itself or from the response body.
+ */
+function isInvalidPageTokenError(err: unknown): boolean {
+  if (googleApiStatus(err) !== 400) return false;
+  const e = err as {
+    message?: unknown;
+    response?: { data?: { error?: { message?: unknown } | string } };
+  };
+  const nested = e.response?.data?.error;
+  const nestedMessage = typeof nested === "string" ? nested : nested?.message;
+  return [e.message, nestedMessage].some(
+    (text) => typeof text === "string" && INVALID_PAGE_TOKEN_PATTERN.test(text),
+  );
 }
 
 export function isGmailSyncCursor(v: unknown): v is GmailSyncCursor {
@@ -212,8 +269,11 @@ export function gmailMessageUrl(messageId: string, accountEmail?: string): strin
  */
 const GMAIL_SYNC_BUDGET_MS = 20 * 60 * 1000;
 
-/** What fetching one message came to: its documents, or that Gmail no longer has it. */
-type Fetched = { documents: DocumentInput[] } | { gone: true };
+/**
+ * What fetching one message came to: its documents and when it reached the
+ * mailbox, or that Gmail no longer has it.
+ */
+type Fetched = { documents: DocumentInput[]; receivedAt?: number } | { gone: true };
 
 /**
  * Gmail source.
@@ -229,8 +289,12 @@ export class GmailSource {
   private extractAttachment?: AttachmentExtractFn;
   private labelMap: Map<string, string> | null = null;
   private labelMapFetchedAt = 0;
-  /** When the current sync's first page began; unset between syncs. */
-  private syncStartedAt: number | undefined;
+  /**
+   * When the current sync began, and the host run it belongs to. A page from
+   * a different run starts a fresh budget, so a sync the host abandoned
+   * between pages never shortens the next one. Unset between syncs.
+   */
+  private budget: { runId: string | undefined; startedAt: number } | undefined;
   // The account email (== accountId for multi-account sources). Used to pin
   // "open in Gmail" links to the right account via `?authuser=`.
   private accountEmail?: string;
@@ -297,7 +361,7 @@ export class GmailSource {
     return labelIds.map((id) => map.get(id) ?? id);
   }
 
-  async sync(cursor: SyncCursor | null): Promise<SyncResult> {
+  async sync(cursor: SyncCursor | null, opts?: SyncOptions): Promise<SyncResult> {
     const state = validateGmailSyncCursor(cursor) ?? { phase: "bootstrap" };
 
     // One typed boundary for both phases. `incrementalSync` maps the errors
@@ -308,30 +372,41 @@ export class GmailSource {
     // it those reach the collector as raw SDK throws: kind `unknown`, and a
     // transport failure reading `fetch failed` with nothing to say which
     // request died.
-    this.syncStartedAt ??= Date.now();
+    const startedAt = this.budgetStart(opts?.run);
     try {
       const result =
         state.phase === "bootstrap" || !state.historyId
           ? await this.bootstrapSync(state)
           : await this.incrementalSync(state);
-      if (result.hasMore && Date.now() - this.syncStartedAt >= GMAIL_SYNC_BUDGET_MS) {
+      if (result.hasMore && Date.now() - startedAt >= GMAIL_SYNC_BUDGET_MS) {
         log.info(
           `Sync of ${this.id} paused after ${Math.round(GMAIL_SYNC_BUDGET_MS / 60_000)} minutes; the next sync continues it`,
         );
         result.hasMore = false;
       }
-      if (!result.hasMore) this.syncStartedAt = undefined;
+      if (!result.hasMore) this.budget = undefined;
       return result;
     } catch (error: unknown) {
-      this.syncStartedAt = undefined;
+      this.budget = undefined;
       throw mapGoogleApiError(error);
     }
+  }
+
+  /**
+   * When the sync this page belongs to began. The host names its run on every
+   * page; without a run, a sync is the pages up to one that ends it.
+   */
+  private budgetStart(run: SyncRun | undefined): number {
+    if (!this.budget || (run !== undefined && run.id !== this.budget.runId)) {
+      this.budget = { runId: run?.id, startedAt: Date.now() };
+    }
+    return this.budget.startedAt;
   }
 
   /** Fetch every listed message, concurrently within Gmail's quota. */
   private async fetchAll(
     ids: readonly string[],
-  ): Promise<{ documents: DocumentInput[]; gone: string[] }> {
+  ): Promise<{ documents: DocumentInput[]; gone: string[]; oldestReceivedAt?: number }> {
     // RTT-bound: each per-message `messages.get` is a separate round-trip,
     // serial loops over a 100-message page were the dominant bootstrap
     // wall-clock cost. Bounded concurrency stays inside Gmail's quota.
@@ -340,11 +415,21 @@ export class GmailSource {
     });
     const documents: DocumentInput[] = [];
     const gone: string[] = [];
+    let oldestReceivedAt: number | undefined;
     fetched.forEach((result, i) => {
-      if ("gone" in result) gone.push(ids[i]!);
-      else documents.push(...result.documents);
+      if ("gone" in result) {
+        gone.push(ids[i]!);
+        return;
+      }
+      documents.push(...result.documents);
+      if (
+        result.receivedAt !== undefined &&
+        (oldestReceivedAt === undefined || result.receivedAt < oldestReceivedAt)
+      ) {
+        oldestReceivedAt = result.receivedAt;
+      }
     });
-    return { documents, gone };
+    return { documents, gone, ...(oldestReceivedAt === undefined ? {} : { oldestReceivedAt }) };
   }
 
   private async bootstrapSync(state: GmailSyncCursor): Promise<SyncResult> {
@@ -383,17 +468,13 @@ export class GmailSource {
       state.coverage,
     );
 
-    const res = await this.gmail.users.messages.list({
-      userId: "me",
-      maxResults: GOOGLE_PAGE_SIZE,
-      pageToken: state.pageToken ?? undefined,
-      q: listQuery(afterFloor),
-    });
+    const { res, listBefore } = await this.listBootstrapPage(state, afterFloor);
 
     const messageIds = (res.data.messages ?? [])
       .map((m) => m.id)
       .filter((id): id is string => typeof id === "string");
-    const { documents } = await this.fetchAll(messageIds);
+    const { documents, oldestReceivedAt } = await this.fetchAll(messageIds);
+    const oldestListedAt = earlierIso(state.oldestListedAt, oldestReceivedAt);
 
     // Apply data cutoff as a safety net: Gmail's `after:YYYY/MM/DD` pushdown
     // is granular to the day in the user's account timezone, so a 1y cutoff
@@ -479,6 +560,8 @@ export class GmailSource {
         // settling that — so the fix held only for a recovery small enough to
         // finish in one page, which is not the case it exists for.
         recoveryVouched: hasMore ? state.recoveryVouched : undefined,
+        oldestListedAt: hasMore ? oldestListedAt : undefined,
+        listBefore: hasMore ? listBefore : undefined,
         lastSyncAt: hasMore ? state.lastSyncAt : new Date().toISOString(),
         // Settled when the walk ends: from here on the incremental pages
         // restate it, because a history delta cannot re-derive how far back
@@ -494,6 +577,41 @@ export class GmailSource {
         ...(reachDetail(settledReach) ? { detail: reachDetail(settledReach)! } : {}),
       },
     };
+  }
+
+  /**
+   * One page of the bootstrap listing. A saved `pageToken` can outlive what
+   * Gmail will accept, since a walk pauses between syncs; when Gmail refuses
+   * it, the listing starts again just above the oldest message the walk has
+   * listed, or from the newest mail when the walk has not recorded one.
+   * Re-listed mail is fetched again and lands on the same documents.
+   */
+  private async listBootstrapPage(
+    state: GmailSyncCursor,
+    afterFloor: Date | undefined,
+  ): Promise<{ res: { data: gmail_v1.Schema$ListMessagesResponse }; listBefore?: string }> {
+    const list = (pageToken: string | undefined, listBefore: string | undefined) =>
+      this.gmail.users.messages.list({
+        userId: "me",
+        maxResults: GOOGLE_PAGE_SIZE,
+        pageToken,
+        q: listQuery(afterFloor, listBefore ? new Date(listBefore) : undefined),
+      });
+    try {
+      const res = await list(state.pageToken ?? undefined, state.listBefore);
+      return { res, ...(state.listBefore ? { listBefore: state.listBefore } : {}) };
+    } catch (error: unknown) {
+      if (!state.pageToken || !isInvalidPageTokenError(error)) throw error;
+      const oldest = state.oldestListedAt ? Date.parse(state.oldestListedAt) : Number.NaN;
+      const listBefore = Number.isNaN(oldest)
+        ? state.listBefore
+        : new Date(oldest + GMAIL_RESUME_OVERLAP_MS).toISOString();
+      log.warn(
+        `Gmail refused the saved page token for ${this.id}; listing again from ${listBefore ?? "the newest mail"}`,
+      );
+      const res = await list(undefined, listBefore);
+      return { res, ...(listBefore ? { listBefore } : {}) };
+    }
   }
 
   private async incrementalSync(state: GmailSyncCursor): Promise<SyncResult> {
@@ -683,11 +801,15 @@ export class GmailSource {
     if (res === null) return { gone: true };
 
     const msg = res.data;
-    if (!msg.id || !msg.payload) return { documents: [] };
+    const internal = msg.internalDate ? Number.parseInt(msg.internalDate, 10) : Number.NaN;
+    const received = Number.isNaN(internal) ? {} : { receivedAt: internal };
+    if (!msg.id || !msg.payload) return { documents: [], ...received };
 
     // Skip messages in Spam or Trash
     const labels = msg.labelIds ?? [];
-    if (labels.includes("SPAM") || labels.includes("TRASH")) return { documents: [] };
+    if (labels.includes("SPAM") || labels.includes("TRASH")) {
+      return { documents: [], ...received };
+    }
 
     const payload = msg.payload;
     await this.fetchDeferredBodyText(msg.id, payload);
@@ -774,7 +896,7 @@ export class GmailSource {
         }),
       );
     }
-    return { documents };
+    return { documents, ...received };
   }
 
   /**

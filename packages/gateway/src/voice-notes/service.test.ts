@@ -38,6 +38,7 @@ let transcripts: (TranscriptionResult | null)[];
 let onIngest: (() => void) | null;
 let calls: { mimeType: string; language?: string; bytes: number; minTimeoutMs?: number }[];
 /** While set, a transcription waits until `release` is called. */
+let vocabularyPermissions: Array<boolean | undefined>;
 let held: Promise<void> | null;
 let release: () => void;
 
@@ -96,11 +97,13 @@ beforeEach(() => {
   transcripts = [];
   calls = [];
   held = null;
+  vocabularyPermissions = [];
   service = new VoiceNoteService({
     notes: () => notes,
     writeGate: gate,
     readDb: db,
     transcribe: async (bytes, mimeType, opts) => {
+      vocabularyPermissions.push(opts?.allowVocabulary);
       calls.push({
         mimeType,
         language: opts?.language,
@@ -110,7 +113,7 @@ beforeEach(() => {
       if (held) await held;
       return transcripts.length > 0 ? transcripts.shift()! : null;
     },
-    readiness: () => readiness,
+    readiness: async () => readiness,
     now: () => now,
   });
 });
@@ -142,6 +145,26 @@ describe("VoiceNoteService", () => {
     ]);
     expect(getPendingVoiceNote(db, input.id)).toBeNull();
   });
+
+  test.each([true, false])(
+    "preserves vocabulary authorization %s while audio waits for a transcriber",
+    async (allowed) => {
+      readiness = { runnable: false };
+      const input = voiceNote({ allowVocabulary: allowed });
+      await service.accept(input);
+      await service.idle();
+      expect(getPendingVoiceNote(db, input.id)?.allowVocabulary).toBe(allowed);
+      advance(60 * 60_000);
+      expect(
+        listDuePendingVoiceNotes(db, now.toISOString(), 10).find((note) => note.noteId === input.id)
+          ?.allowVocabulary,
+      ).toBe(allowed);
+      readiness = { runnable: true };
+      transcripts.push({ text: "captured speech" });
+      await pass();
+      expect(vocabularyPermissions).toEqual([allowed]);
+    },
+  );
 
   test("the day document is published only once the recording is queued", async () => {
     const input = voiceNote();
@@ -309,7 +332,7 @@ describe("VoiceNoteService", () => {
       writeGate: directWriteGate(db),
       readDb: db,
       transcribe: async () => ({ text: "Pick up the dry cleaning" }),
-      readiness: () => ({ runnable: true }),
+      readiness: async () => ({ runnable: true }),
       now: () => now,
     });
     restarted.start();

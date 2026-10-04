@@ -62,5 +62,6 @@ export * from "./temporal-interval.js";
 export * from "./pagination.js";
 export * from "./privacy.js";
 export * from "./subscriptions.js";
+export * from "./oauth.js";
 export * from "./mobile-permission-health.js";
 export type * from "./source-notice.js";

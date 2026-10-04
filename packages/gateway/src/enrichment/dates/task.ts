@@ -81,6 +81,37 @@ export function dateExtractionTask(
   // batchSize / maxCharsPerDoc / scanBudgetMs / enabled are read live per tick.
   const { periodMs, idlePeriodMs } = getSettings();
   let total = 0;
+
+  /**
+   * The next batch of documents to read. A document whose content is still
+   * due to be replaced stays unstamped: replacing it resets the stamp, and a
+   * give-up leaves it for a later tick once nothing is pending. Held documents
+   * are excluded from the next fetch, so a batch made only of them never hides
+   * the rest. Empty only when nothing readable is left.
+   */
+  async function fetchUnheldBatch(
+    settings: ResolvedDateEnrichmentSettings,
+  ): Promise<DateExtractionDocRow[]> {
+    const held: string[] = [];
+    for (;;) {
+      const fetched = await ioGate.fetchDateExtractionBatch(
+        settings.batchSize,
+        settings.maxCharsPerDoc,
+        held,
+      );
+      if (fetched.length === 0 || !contentPending || settings.pendingContentWaitMs <= 0) {
+        return fetched;
+      }
+      const pending = contentPending(
+        fetched.map((row) => row.id),
+        settings.pendingContentWaitMs,
+      );
+      const rows = fetched.filter((row) => !pending.has(row.id));
+      if (rows.length > 0) return rows;
+      held.push(...pending);
+    }
+  }
+
   return {
     name: DATE_EXTRACTION_TASK_NAME,
     runner: "main",
@@ -102,21 +133,7 @@ export function dateExtractionTask(
           // Live gate: idle out cleanly if the knob flipped off.
           if (!settings.enabled) return { idle: true };
 
-          const fetched = await ioGate.fetchDateExtractionBatch(
-            settings.batchSize,
-            settings.maxCharsPerDoc,
-          );
-          // A document whose content is still due to be replaced stays unstamped:
-          // replacing it resets the stamp, and a give-up leaves it for a later
-          // tick once nothing is pending.
-          const pending =
-            contentPending && settings.pendingContentWaitMs > 0 && fetched.length > 0
-              ? contentPending(
-                  fetched.map((row) => row.id),
-                  settings.pendingContentWaitMs,
-                )
-              : new Set<string>();
-          const rows = fetched.filter((row) => !pending.has(row.id));
+          const rows = await fetchUnheldBatch(settings);
           if (rows.length === 0) {
             if (total > 0) {
               log.info(`date extraction caught up: ${total} docs processed this run`);

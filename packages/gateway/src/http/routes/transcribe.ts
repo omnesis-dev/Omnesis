@@ -19,6 +19,8 @@ import { bodyLimit } from "hono/body-limit";
 import { scope } from "../scope.js";
 import { BadRequestError } from "../errors.js";
 import { MAX_AUDIO_BYTES, type TranscribeService } from "../../transcribe/index.js";
+import { transcriptionContextSchema } from "../schemas/transcription.js";
+import { transcriptionVocabularyAllowed } from "../transcription-access.js";
 import type { RouteApp } from "./types.js";
 
 const log = createLogger("gateway:http").child("routes:transcribe");
@@ -66,8 +68,22 @@ export function mountTranscribeRoutes(app: RouteApp, deps: TranscribeRoutesDeps)
 
     const mimeType = c.req.header("content-type") ?? "application/octet-stream";
     const language = c.req.query("language") || undefined;
+    const rawContext = c.req.header("x-omnesis-transcription-context");
+    let context;
+    if (rawContext !== undefined) {
+      if (rawContext.length > 8192) throw new BadRequestError("Transcription context is too large");
+      try {
+        context = transcriptionContextSchema.parse(JSON.parse(decodeURIComponent(rawContext)));
+      } catch {
+        throw new BadRequestError("Invalid transcription context");
+      }
+    }
 
-    const result = await transcribeService.transcribe(body, mimeType, { language });
+    const result = await transcribeService.transcribe(body, mimeType, {
+      language,
+      context,
+      allowVocabulary: transcriptionVocabularyAllowed(c.get("auth").scopes),
+    });
     if (result === null) {
       // No transcriber configured/loadable. The collector treats this as
       // "no transcript" and renders the plain placeholder.

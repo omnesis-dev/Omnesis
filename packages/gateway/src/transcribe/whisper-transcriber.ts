@@ -42,6 +42,7 @@ import {
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
+import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
 import type { TranscribeCapability, TranscriptionResult } from "@omnesis/core";
 
 const log = createLogger("gateway:transcribe:whisper");
@@ -198,6 +199,7 @@ interface PendingRequest {
 }
 
 export class WhisperTranscriber implements TranscribeCapability {
+  readonly vocabularyRuntime = "smart-whisper" as const;
   readonly name: string;
   readonly modelId: string;
   private readonly modelPath: string;
@@ -308,7 +310,7 @@ export class WhisperTranscriber implements TranscribeCapability {
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string; minTimeoutMs?: number },
+    opts?: Parameters<TranscribeCapability["transcribe"]>[2],
   ): Promise<TranscriptionResult> {
     const pcm = await this.decodeAudio(audio, mimeType);
     let worker: WhisperWorkerProcess;
@@ -326,6 +328,14 @@ export class WhisperTranscriber implements TranscribeCapability {
       id,
       pcmBytes: pcm.byteLength,
       language: opts?.language ?? "auto",
+      ...(opts?.vocabulary
+        ? {
+            vocabularyHint: adaptTranscriptionVocabulary(opts.vocabulary, {
+              runtime: this.vocabularyRuntime,
+              maxPromptTokens: opts.maxPromptTokens,
+            }),
+          }
+        : {}),
     };
     // Budget = explicit override (tests) or a duration-scaled value that covers
     // a cold reload plus the inference itself — so a long clip on CPU isn't

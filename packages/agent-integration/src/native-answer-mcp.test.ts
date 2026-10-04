@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod/v4";
 
 import {
@@ -339,11 +339,64 @@ describe("native Answer MCP client", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("fictional server did not listen");
-    const fetchFn = integrationOAuthFetch(`http://127.0.0.1:${address.port}`, undefined, 25);
+    const fetchFn = integrationOAuthFetch(`http://127.0.0.1:${address.port}`, undefined, {
+      requestMs: 25,
+      tokenMs: 25,
+    });
 
     await expect(fetchFn(`http://127.0.0.1:${address.port}/oauth/token`)).rejects.toBeInstanceOf(
       Error,
     );
+    await expect(
+      fetchFn(`http://127.0.0.1:${address.port}/.well-known/oauth-authorization-server`),
+    ).rejects.toBeInstanceOf(Error);
+  });
+
+  test("waits out a 40-second writer stall at the token endpoint, and only there", async () => {
+    // A restarted gateway can hold its writer for about 40 seconds; the token
+    // endpoint answers behind it, ordinary OAuth requests do not.
+    const held: Array<{ path: string; respond: () => void }> = [];
+    let arrived: () => void = () => {};
+    const server = createServer((request, response) => {
+      held.push({
+        path: request.url ?? "",
+        respond: () => {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end('{"ok":true}');
+        },
+      });
+      arrived();
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("fictional server did not listen");
+    const gatewayUrl = `http://127.0.0.1:${address.port}`;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const fetchFn = integrationOAuthFetch(gatewayUrl);
+      const send = async (path: string) => {
+        const reached = new Promise<void>((resolve) => (arrived = resolve));
+        const pending = fetchFn(`${gatewayUrl}${path}`, { method: "POST" }).then(
+          (response) => response.status,
+          (error: Error) => error.message,
+        );
+        await reached;
+        // Wrapped, so awaiting the arrival does not also await the answer.
+        return { status: pending };
+      };
+
+      const token = await send("/oauth/token");
+      const registration = await send("/oauth/register");
+      await vi.advanceTimersByTimeAsync(40_000);
+      held[0]!.respond();
+      held[1]!.respond();
+
+      await expect(token.status).resolves.toBe(200);
+      await expect(registration.status).resolves.toBe("Omnesis OAuth request timed out");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("preserves a gateway path prefix for the MCP endpoint", async () => {

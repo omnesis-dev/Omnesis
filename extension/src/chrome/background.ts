@@ -32,6 +32,7 @@ import {
   readCachedPolicy,
   writeCachedPolicy,
 } from "../capture/policy.js";
+import { installNotesBackground } from "./notes-background.js";
 import { PAIRING_ATTEMPT_KEY, resolvePairingAttempt } from "./pairing-attempt.js";
 import {
   chromeLocalStore,
@@ -154,6 +155,8 @@ const realFetch: FetchLike = (input, init) => {
   const hasBody = init.method !== "GET" && init.method !== "HEAD" && init.body !== "";
   return fetch(input, {
     method: init.method,
+    // A browser's paired credential must never borrow a logged-in portal session.
+    credentials: "omit",
     headers: init.headers,
     ...(hasBody ? { body: init.body } : {}),
     ...(init.signal ? { signal: init.signal } : {}),
@@ -697,6 +700,7 @@ function handlePairingState(
             // data. A mid-transition storage failure can then neither drain an
             // old queue with the new credential nor leave a half-cleared old
             // pairing claiming to be healthy.
+            await notesBackground.clear();
             await clearConfig();
             await clearPushQueue(chromeLocalStore);
             await clearPushObservability(chromeLocalStore);
@@ -714,6 +718,7 @@ function handlePairingState(
           // pairing into a failure acknowledgement.
           await saveConfig(config, profileLabel);
         } else {
+          await notesBackground.clear();
           await clearConfig();
           await clearPushQueue(chromeLocalStore);
           await clearPushObservability(chromeLocalStore);
@@ -799,6 +804,7 @@ function runEvent(task: Promise<unknown>): void {
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  notesBackground.alarm(alarm.name);
   if (alarm.name === PERIODIC_DRAIN_ALARM || alarm.name === RETRY_DRAIN_ALARM) {
     runEvent(
       (async () => {
@@ -854,21 +860,23 @@ chrome.permissions.onRemoved.addListener((permissions) => {
   runEvent(reconcilePermissionWork(permissionCoordinator.handleRemoved(permissions)));
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) =>
-  routeBackgroundMessage(message, sender, sendResponse, {
-    runtimeId: chrome.runtime.id ?? "",
-    popupUrl: chrome.runtime.getURL("popup.html"),
-    optionsUrl: chrome.runtime.getURL("options.html"),
-    handleCapture,
-    drain: drainOnce,
-    judgeEligibility,
-    handlePause: handlePauseMessage,
-    dismissDiagnostics,
-    checkNow: handleCheckNow,
-    readPolicy: readPolicySnapshot,
-    mutateExclusions,
-    changePairing: handlePairingState,
-  }),
+chrome.runtime.onMessage.addListener(
+  (message, sender, sendResponse) =>
+    notesBackground.message(message, sender, sendResponse) ||
+    routeBackgroundMessage(message, sender, sendResponse, {
+      runtimeId: chrome.runtime.id ?? "",
+      popupUrl: chrome.runtime.getURL("popup.html"),
+      optionsUrl: chrome.runtime.getURL("options.html"),
+      handleCapture,
+      drain: drainOnce,
+      judgeEligibility,
+      handlePause: handlePauseMessage,
+      dismissDiagnostics,
+      checkNow: handleCheckNow,
+      readPolicy: readPolicySnapshot,
+      mutateExclusions,
+      changePairing: handlePairingState,
+    }),
 );
 
 // On every worker spawn: (re)register the periodic drain alarm and kick an
@@ -896,3 +904,5 @@ runEvent(
   })(),
 );
 runEvent(refreshBadge());
+
+const notesBackground = installNotesBackground();

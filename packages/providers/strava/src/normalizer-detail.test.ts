@@ -16,7 +16,11 @@ import {
   athleteStatsToRecords,
   gearToRecord,
   computeSummaryHash,
+  movedCounters,
+  summaryEdited,
+  withListedComparedFields,
 } from "./normalizer-detail.js";
+import { activityToRecord } from "./normalizer.js";
 import type {
   StravaDetailedActivity,
   StravaActivityZone,
@@ -261,6 +265,21 @@ describe("activityZonesToRecords", () => {
     });
     expect(rows[3]).toMatchObject({ zone_type: "power", custom_zones: true });
   });
+
+  test("the open-ended top zone is stored without an upper bound", () => {
+    // Strava marks it `max: -1`; stored as is, `WHERE max_value < 150` would
+    // count the top zone among the lowest.
+    const rows = activityZonesToRecords(12345, [
+      {
+        type: "heartrate",
+        distribution_buckets: [
+          { min: 140, max: 160, time: 900 },
+          { min: 160, max: -1, time: 300 },
+        ],
+      },
+    ]);
+    expect(rows.map((row) => row.max_value)).toEqual([160, null]);
+  });
 });
 
 describe("commentToRecord / kudoToRecord", () => {
@@ -350,6 +369,19 @@ describe("athleteToRecord / athleteZonesToRecords / athleteStatsToRecords", () =
       biggest_climb_elevation_gain_m: 1200,
     });
     expect(typeof row.fetched_at).toBe("string");
+  });
+
+  test("the athlete's open-ended top zones are stored without an upper bound", () => {
+    const rows = athleteZonesToRecords(99, {
+      heart_rate: {
+        zones: [
+          { min: 150, max: 170 },
+          { min: 170, max: -1 },
+        ],
+      },
+      power: { zones: [{ min: 300, max: -1 }] },
+    });
+    expect(rows.map((row) => row.max_value)).toEqual([170, null, null]);
   });
 
   test("athlete zones produce one row per bucket per type", () => {
@@ -479,5 +511,111 @@ describe("computeSummaryHash", () => {
     for (const edit of edits) {
       expect(computeSummaryHash({ ...baseActivity, ...edit })).not.toBe(base);
     }
+  });
+
+  test("withListedComparedFields takes every field the walks compare from the listing", () => {
+    // A detail page writes the detail over the listing yet must leave the row
+    // matching what the listing gave it. Every field differs here, so a field
+    // added to the comparison but not to `withListedComparedFields` fails this.
+    const listed: StravaSummaryActivity = {
+      ...baseActivity,
+      gear_id: "g1",
+      commute: false,
+      trainer: false,
+      private: false,
+      manual: false,
+      workout_type: 1,
+      kudos_count: 4,
+      comment_count: 1,
+      athlete_count: 1,
+      achievement_count: 2,
+      pr_count: 1,
+      photo_count: 0,
+      total_photo_count: 0,
+      average_speed: 3.2,
+    };
+    const edited = (value: unknown): unknown =>
+      typeof value === "string"
+        ? `${value} edited`
+        : typeof value === "number"
+          ? value + 1
+          : typeof value === "boolean"
+            ? !value
+            : value;
+    const fetched = {
+      ...(Object.fromEntries(
+        Object.entries(listed).map(([key, value]) => [key, edited(value)]),
+      ) as unknown as StravaSummaryActivity),
+      start_date: "2026-05-03T09:41:00Z",
+    };
+    const record = (a: StravaSummaryActivity) =>
+      activityToRecord(a, { summaryHash: computeSummaryHash(a) });
+    expect(summaryEdited(record(listed), record(fetched))).toBe(true);
+    expect(movedCounters(record(listed), record(fetched))).toBeDefined();
+
+    const written = withListedComparedFields(fetched, listed);
+    expect(summaryEdited(record(listed), record(written))).toBe(false);
+    expect(movedCounters(record(listed), record(written))).toBeUndefined();
+    // Everything else is what was fetched.
+    expect(written.start_date_local).toBe(fetched.start_date_local);
+    expect(written.average_speed).toBe(fetched.average_speed);
+  });
+});
+
+describe("telling what a listing changed from the stored row", () => {
+  const listed: StravaSummaryActivity = {
+    ...baseActivity,
+    manual: false,
+    kudos_count: 3,
+    comment_count: 1,
+    athlete_count: 1,
+  };
+  const record = (a: StravaSummaryActivity) =>
+    activityToRecord(a, { summaryHash: computeSummaryHash(a) });
+  const stored = record(listed);
+
+  test("a row as the store renders it back is the listing that wrote it", () => {
+    // The store spells the start in its own zone and returns a flag it was
+    // never given, or a count it was never given, as null.
+    const readBack = {
+      ...stored,
+      start_time: "2026-05-03 11:31:00+02",
+      manual: null,
+      achievement_count: null,
+    };
+    expect(summaryEdited(readBack, record({ ...listed, achievement_count: 0 }))).toBe(false);
+    expect(movedCounters(readBack, record({ ...listed, achievement_count: 0 }))).toBeUndefined();
+  });
+
+  test("every field edited in place reads as an edit, as every hashed one does", () => {
+    const edits: Partial<StravaSummaryActivity>[] = [
+      { distance: 10_000 },
+      { moving_time: 3_000 },
+      { elapsed_time: 3_050 },
+      { total_elevation_gain: 12 },
+      { manual: true },
+      { start_date: "2026-05-03T09:41:00Z" },
+      { name: "Different Title" },
+    ];
+    for (const edit of edits) {
+      expect(summaryEdited(stored, record({ ...listed, ...edit })), JSON.stringify(edit)).toBe(
+        true,
+      );
+    }
+  });
+
+  test("counters that moved are no edit, and are the listing's", () => {
+    const congratulated = record({ ...listed, kudos_count: 9, comment_count: 4 });
+    expect(summaryEdited(stored, congratulated)).toBe(false);
+    expect(movedCounters(stored, congratulated)).toEqual({
+      kudos_count: 9,
+      comment_count: 4,
+      athlete_count: 1,
+      achievement_count: null,
+      pr_count: null,
+      photo_count: null,
+      total_photo_count: null,
+    });
+    expect(movedCounters(stored, record(listed))).toBeUndefined();
   });
 });

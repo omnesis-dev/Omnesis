@@ -3,10 +3,9 @@
 
 import { html } from "htm/preact";
 import { sourceIconUrl } from "../lib/format.js";
+import { MOMENT_KINDS, kindMeta } from "../lib/time-index-labels.js";
+import { TimeIndexPills } from "../components/time-index-pills.js";
 import {
-  ORIGIN_LABELS,
-  MOMENT_KINDS,
-  kindMeta,
   formatTime,
   dayKeyInTimeZone,
   entryStartMs,
@@ -17,25 +16,6 @@ import {
   groupDayEntries,
   groupMentionDocuments,
 } from "./calendar-model.js";
-
-/** Native hover help matches the kind pills and never opens on modal focus. */
-export function OriginBadge({ origin }) {
-  const meta = ORIGIN_LABELS[origin] ?? { row: origin, icon: "○", description: origin };
-  return html`<span class=${`calendar-origin-pill calendar-origin-pill--${origin}`} title=${meta.description}>
-    <span aria-hidden="true">${meta.icon}</span>${meta.row}
-  </span>`;
-}
-
-export function KindPill({ kind }) {
-  const meta = kindMeta(kind);
-  return html`<span
-    class="calendar-kind"
-    title=${meta.description}
-    style=${`--calendar-kind:${meta.color}`}
-  >
-    <span aria-hidden="true">${meta.icon}</span>${meta.label}
-  </span>`;
-}
 
 export function CalendarEntryRow({
   entry,
@@ -87,10 +67,7 @@ export function CalendarEntryRow({
         </span>`}
       </span>
     </button>
-    <div class="calendar-entry-pills">
-      <${OriginBadge} origin=${entry.origin} />
-      <${KindPill} kind=${entry.kind} />
-    </div>
+    <${TimeIndexPills} class="calendar-entry-pills" origin=${entry.origin} kind=${entry.kind} />
   </div>`;
 }
 

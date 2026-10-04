@@ -771,6 +771,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "11-search-breadcrumbs")
         searchBreadcrumbsLargeText()
         searchBreadcrumbsManyCopies()
+        searchBreadcrumbsOutline()
         searchBreadcrumbsHubOnly()
     }
 
@@ -786,6 +787,17 @@ final class PreviewSnapshotTests: XCTestCase {
             }.background(Theme.bgPrimary)
         }.environment(\.dynamicTypeSize, .accessibility3)
         snapshot(view, name: "11-search-breadcrumbs-large-text", size: CGSize(width: 393, height: 1800))
+    }
+
+    private func searchBreadcrumbsOutline() {
+        let view = NavigationStack {
+            SearchBreadcrumbsView(
+                provenance: PreviewMocks.searchProvenanceOutline,
+                documentId: "sample-root",
+                store: AppStore.preview()
+            ).padding()
+        }
+        snapshot(view, name: "11-search-breadcrumbs-outline")
     }
 
     private func searchBreadcrumbsManyCopies() {
@@ -5238,6 +5250,16 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view.environment(AppStore.preview()), name: "111-models-capability-list")
     }
 
+    func testModelsReadOnlyRole() {
+        // A role this app cannot configure: no chevron, a portal hint, beside
+        // a tappable card.
+        let view = NavigationStack {
+            ModelsView(previewOverview: ModelsPreviewData.overviewWithReadOnlyRole())
+                .environment(AppStore.preview())
+        }
+        snapshot(view, name: "111bb-models-read-only-role")
+    }
+
     func testModelsViewLoading() {
         let view = NavigationStack {
             ModelsView(previewOverview: nil, previewLoading: true)
@@ -5802,6 +5824,34 @@ final class PreviewSnapshotTests: XCTestCase {
             name: "111ya-privacy-spine-unattended-draft",
             size: CGSize(width: 393, height: 1200)
         )
+    }
+
+    func testAnswerWorkingDotsReducedMotion() {
+        snapshot(
+            AgentWorkingDots(reduceMotionOverride: true)
+                .padding(Theme.Spacing.lg)
+                .background(Theme.bgPrimary),
+            name: "111yad-answer-working-dots-reduced-motion",
+            size: CGSize(width: 120, height: 80)
+        )
+    }
+
+    func testPrivacyFeedAnswersInProgress() {
+        let view = VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+            PrivacyFeedRow(exchange: PreviewMocks.privacyRunningExchange)
+            PrivacyFeedRow(exchange: PreviewMocks.privacyCheckingExchange)
+        }
+        .padding(Theme.Spacing.lg)
+        .background(Theme.bgPrimary)
+        snapshot(view, name: "111yab-privacy-feed-in-progress", size: CGSize(width: 393, height: 320))
+    }
+
+    func testPrivacyExchangeChecking() {
+        let view = NavigationStack {
+            PrivacyExchangeDetailView(previewExchange: PreviewMocks.privacyCheckingExchange)
+        }
+        .environment(AppStore.preview())
+        snapshot(view, name: "111yac-privacy-spine-checking", size: CGSize(width: 393, height: 1100))
     }
 
     func testPrivacyExchangeDrafting() {

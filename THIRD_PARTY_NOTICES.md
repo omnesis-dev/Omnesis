@@ -32,6 +32,33 @@ canonical upstream source where the complete text lives.
 
 ---
 
+## Transcription vocabulary common-word evidence
+
+`packages/gateway/src/transcribe/vocabulary/common-words-data.ts` contains an
+adaptation of **wordfreq 3.1.1** by Robyn Speer and its credited corpus
+contributors, from [the pinned PyPI release](https://pypi.org/project/wordfreq/3.1.1/).
+Each language retains the first 5,000 lexical entries from its `large` frequency
+list (English, French, Spanish, German, Italian, Portuguese, and Dutch), ordered
+by frequency, with NFC/lowercase normalization and nonlexical entries omitted.
+This is a bounded membership resource, not a port of the full wordfreq API.
+
+The derived data remains **CC-BY-SA-4.0**; it is not relicensed under Omnesis's
+AGPL. Its distributable TypeScript module embeds the complete upstream data
+attribution and citations, source/version and modification notices, the upstream
+Apache code-license notice, and the full CC-BY-SA license text, so compiled npm
+packages retain them. Copies are retained under the adjacent `licenses/`
+directory. Omnesis's original lookup code is separately AGPL-3.0-or-later.
+
+The upstream attribution credits Google Books Ngrams, the Leeds Internet Corpus,
+Wikipedia, ParaCrawl, OPUS/OpenSubtitles, SUBTLEX authors, and the other corpus
+contributors cited in the bundled notice. **SUBTLEX is freely available data**;
+its authors (including Marc Brysbaert, Boris New, Emmanuel Keuleers, Walter van
+Heuven, Pawel Mandera, and their credited coauthors) are credited in full in that
+notice. The data license is available at
+[Creative Commons Attribution-ShareAlike 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+
+---
+
 ## Models.dev catalog snapshot
 
 `packages/gateway/models-dev/api.json` is a committed snapshot of the

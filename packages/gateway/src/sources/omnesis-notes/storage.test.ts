@@ -4,11 +4,13 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import type Database from "better-sqlite3";
 type Db = Database.Database;
 
 import BetterSqlite3 from "better-sqlite3";
 
+import { Scope } from "@omnesis/types";
+import { createDevice } from "../../data/repositories/DeviceRepository.js";
+import { createToken, revokeToken } from "../../data/repositories/TokenRepository.js";
 import { createDatabase } from "../../db.js";
 import {
   createNoteEntriesTables,
@@ -19,6 +21,7 @@ import {
   updateNoteEntryText,
   type NoteEntry,
 } from "./storage.js";
+import type Database from "better-sqlite3";
 
 function testDbPath(): string {
   return `/tmp/omnesis-test-${randomUUID()}.db`;
@@ -86,6 +89,34 @@ describe("note_entries storage", () => {
     expect(stored?.latitude).toBeCloseTo(48.8566, 4);
     expect(stored?.longitude).toBeCloseTo(2.3522, 4);
     expect(stored?.placeName).toBe("Paris");
+  });
+
+  test("writer rejects a browser permission revoked before the queued capture commits", () => {
+    const device = createDevice(db, { name: "Example browser", kind: "browser" });
+    const token = createToken(db, device.id, [Scope("notes:create")]);
+    const authority = { deviceId: device.id, tokenId: token.id };
+    const first = makeEntry({ deviceId: device.id });
+    expect(insertNoteEntry(db, first, undefined, authority)).toBe(true);
+    revokeToken(db, token.id);
+    const queued = makeEntry({ deviceId: device.id });
+    expect(() => insertNoteEntry(db, queued, undefined, authority)).toThrow("no longer active");
+    expect(getNoteEntry(db, queued.id)).toBeNull();
+  });
+
+  test("page context persists across note edits and idempotent retries", () => {
+    const entry = makeEntry({
+      page: {
+        url: "https://example.org/article",
+        title: "Example article",
+        selection: "A selected passage",
+      },
+    });
+    expect(insertNoteEntry(db, entry)).toBe(true);
+    expect(insertNoteEntry(db, { ...entry, page: { url: "https://example.org/other" } })).toBe(
+      false,
+    );
+    updateNoteEntryText(db, entry.id, "Revised thought", "2026-06-15T10:00:00.000Z");
+    expect(getNoteEntry(db, entry.id)?.page).toEqual(entry.page);
   });
 
   test("get returns null for an unknown id", () => {

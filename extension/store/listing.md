@@ -16,6 +16,8 @@ Pair the extension with an HTTPS Omnesis gateway, enter the name shown in Chrome
 
 The extension stores its scoped pairing credential, a copy of the gateway's capture settings and a bounded retry queue in Chrome local extension storage. It has no advertising, analytics or crash-reporting SDK. Browsing data goes only to the gateway the user deliberately selects; if that gateway is operated by the developer, the developer receives the data as its operator. Its gateway token is limited to `write:web`; it cannot read the user's Omnesis corpus.
 
+On supported gateways, enable Tell Omnesis with gateway-owner approval to write a note about the current page or a selected passage. Open it from the extension popup, the page's right-click menu, or Alt/Option + Shift + N. The native side panel keeps the page visible while you write. Drafts and unsent notes survive browser restarts; Ctrl/Cmd + Enter saves. Notes use a separate create-only credential and never broaden the page-capture token. Older gateways continue capturing pages and do not offer notes.
+
 An Omnesis gateway with a browser-trusted HTTPS certificate is required.
 
 ## Category

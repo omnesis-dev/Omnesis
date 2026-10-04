@@ -767,11 +767,12 @@ omnesis.example.com {
           </li>
         </ul>
         <p>
-          Only the readable text as Markdown, the title, the URL, the visit time and how long the
-          page was focused leave the browser. Form values, drafts in editable fields, raw HTML,
-          scripts, images and screenshots never do. Credentials in the address (tokens, signatures,
-          one-time codes, passwords, session ids, an OAuth callback's code and state) are removed
-          before it is recorded.
+          Automatic capture sends the readable text as Markdown, the title, the URL, the visit time
+          and how long the page was focused. Tell Omnesis also sends the note you submit and any
+          selected quotation. Form values, drafts in editable fields, raw HTML, scripts, images and
+          screenshots never do. Credentials in the address (tokens, signatures, one-time codes,
+          passwords, session ids, an OAuth callback's code and state) are removed before it is
+          recorded.
         </p>
         <p>
           The extension cannot read anything back: its token can add pages but never search or read.
@@ -814,11 +815,11 @@ omnesis.example.com {
           <code>write:web</code> only.
         </p>
         <p>
-          The extension refuses to pair with a gateway on an older minor release than its own, and
-          names both versions; update the gateway and pair again. If pairing times out, submit the
-          same code again: the gateway recognises the repeated request and returns the token it
-          already issued. If pairing fails after you granted page access, Settings shows a button to
-          remove that access.
+          Page capture and optional features have separate compatibility checks. A gateway without
+          browser notes support continues receiving pages; the extension hides Tell Omnesis. If
+          pairing times out, submit the same code again: the gateway recognises the repeated request
+          and returns the token it already issued. If pairing fails after you granted page access,
+          Settings shows a button to remove that access.
         </p>
         <p>
           To develop the extension itself, run <code>npm --prefix extension run build</code> from
@@ -826,6 +827,34 @@ omnesis.example.com {
           <em>Load unpacked</em> and select <code>extension/dist/</code>. The store version and an
           unpacked build are separate extensions that pair separately, so both capture if both are
           installed; unpair the unpacked build before relying on the store one.
+        </p>
+
+        <h3 id="browser-extension-notes">Tell Omnesis from a page</h3>
+        <p>
+          On a gateway that supports browser notes, enable <strong>Tell Omnesis</strong> in the
+          extension's Options page. It opens the gateway portal for a one-time approval for this
+          browser. Approval issues a separate credential that can create notes, but cannot read,
+          edit or delete existing notes. The page-capture credential remains
+          <code>write:web</code> only. Updating the gateway does not expand an existing browser's
+          permissions.
+        </p>
+        <p>
+          Press <strong>Alt + Shift + N</strong> (<strong>Option + Shift + N</strong> on macOS),
+          choose <strong>Tell Omnesis</strong> in the extension popup, or right-click the page. If
+          text is selected, the note includes that quotation; you can remove it before sending. Each
+          opens a side panel with the page context and a focused note field. The icon need not be
+          pinned to use the shortcut or right-click menu. Change the shortcut at
+          <code>chrome://extensions/shortcuts</code> if another extension uses it.
+        </p>
+        <p>
+          <strong>Ctrl + Enter</strong> (<strong>Command + Enter</strong> on macOS) sends the note;
+          Enter adds a line break. Drafts retain their original page even when you change tabs.
+          Submitted notes wait locally while the gateway is unavailable and show whether they are
+          waiting to sync or saved. They appear alongside other notes in the portal's
+          <strong>Tell Omnesis</strong> page and in the day's searchable Notes document, with the
+          page URL and optional quotation. Its page reference can resolve when the page is indexed
+          later; taking a note does not automatically capture an excluded page. Automatic capture
+          pauses and exclusions do not prevent you from explicitly submitting a note.
         </p>
 
         <h3 id="browser-extension-reference">Popup and capture settings</h3>
@@ -836,6 +865,11 @@ omnesis.example.com {
           <em>Gateway checked</em> is the latest conclusive check of the connection and the token,
           and an inconclusive check shows as a warning. <em>Current page</em> says whether the open
           page is being watched:
+        </p>
+        <p>
+          A past eviction of temporary capture recovery copies does not show an error: open tabs can
+          still deliver those captures. Current capture delays and discarded pending uploads still
+          show a warning.
         </p>
         <div class="table-wrap">
           <table>
@@ -919,10 +953,10 @@ omnesis.example.com {
         </div>
         <p>
           <strong>Versions and access.</strong> The popup shows the gateway's version beside its
-          address, and warns, without stopping capture, when the gateway is a minor release behind
-          the extension (update the gateway to clear it) or on a different major release (update
-          whichever is older). If Chrome's page access is later revoked, the popup says so: open
-          <em>Pairing settings</em>, choose <em>Grant HTTPS page access</em>, then reload open
+          address. Page capture uses its established compatibility floor; optional notes require the
+          gateway's advertised notes capability. A different major release produces a warning to
+          update the older component. If Chrome's page access is later revoked, the popup says so:
+          open <em>Pairing settings</em>, choose <em>Grant HTTPS page access</em>, then reload open
           pages. Unpairing removes both the extension's token and its page access.
         </p>
         <p>

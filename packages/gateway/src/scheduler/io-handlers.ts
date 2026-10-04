@@ -97,11 +97,24 @@ import {
   planSourceUrlRecanonicalization,
   type SourceUrlRecanonicalizationCursor,
 } from "../domain/SourceUrlRecanonicalization.js";
-import type { ConversationRetentionFile } from "../agent/conversation-retention.js";
+
+import {
+  fetchTranscriptionVocabularyBatch,
+  getTranscriptionVocabulary,
+} from "../transcribe/vocabulary/storage.js";
+import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
-import type { UrlCanonicalizerSpec } from "@omnesis/core";
+import type { ConversationRetentionFile } from "../agent/conversation-retention.js";
+import type { VocabularySettings } from "../transcribe/vocabulary/types.js";
 
 export const ioHandlers = {
+  "io.fetchTranscriptionVocabularyBatch": (db: Db, settings: VocabularySettings) =>
+    fetchTranscriptionVocabularyBatch(db, settings),
+  "io.getTranscriptionVocabulary": (
+    db: Db,
+    context: TranscriptionContext,
+    settings: VocabularySettings,
+  ) => getTranscriptionVocabulary(db, context, settings),
   // Identity op for runner integration tests — verifies the call/result
   // envelope without any DB access.
   "io.echo": <T>(_db: Db, value: T): T => value,
@@ -308,8 +321,12 @@ export const ioHandlers = {
     ),
 
   // ── date-enrichment three-phase pipeline (IO-only fetch) ───────────
-  "io.fetchDateExtractionBatch": (db: Db, limit: number, maxChars: number) =>
-    fetchDateExtractionBatch(db, limit, maxChars),
+  "io.fetchDateExtractionBatch": (
+    db: Db,
+    limit: number,
+    maxChars: number,
+    excludeIds: readonly string[],
+  ) => fetchDateExtractionBatch(db, limit, maxChars, excludeIds),
   "io.fetchPendingMentionJudgements": (
     db: Db,
     limit: number,

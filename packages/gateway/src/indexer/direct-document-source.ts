@@ -16,6 +16,7 @@ type Db = Database.Database;
 import {
   listDocuments,
   listDocumentsLightweight,
+  getDocumentUpdatedAtBoundary,
   listDocumentIds,
   listDocumentsByIds,
   documentExistsForSource,
@@ -26,6 +27,10 @@ import { toListedDocument } from "../data/document-mappers.js";
 
 export class DirectDocumentSource implements DocumentSource {
   constructor(private db: Db) {}
+
+  async getUpdatedAtBoundary(): Promise<string | null> {
+    return getDocumentUpdatedAtBoundary(this.db);
+  }
 
   async listUpdated(
     since: string | null,

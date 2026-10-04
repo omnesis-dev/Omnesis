@@ -364,6 +364,8 @@ final class AdminCoordinator {
         deviceSocket = nil
         adminClient = nil
         searchClient = nil
+        statusSnapshot = nil
+        indexStats = nil
         watchesClient = nil
         briefsClient = nil
         privacyClient = nil
@@ -444,12 +446,17 @@ final class AdminCoordinator {
 
     /// Refresh `/status` + `/index/stats` snapshots used by the Sources
     /// header strip and per-row cells. Tolerant — failures keep the
-    /// last-known snapshot rather than blanking the header.
+    /// last-known snapshot rather than blanking the header. Also clears
+    /// search's kept capabilities, so the next search re-reads them from the
+    /// gateway.
     func refreshGatewayStats() async {
         guard let client = searchClient else { return }
+        let revision = sourceRegistryRevision
+        client.invalidateSearchCapabilities()
         async let status = try? client.getStatus()
         async let idx = try? client.getIndexStats()
         let (s, i) = await (status, idx)
+        guard revision == sourceRegistryRevision, searchClient === client else { return }
         if let s {
             statusSnapshot = s
         }
@@ -752,9 +759,11 @@ final class AdminCoordinator {
             // and the source list on every *re*connect. After a gateway
             // restart the device socket reconnects but the cached icon maps go
             // stale — without this, citation sticky tabs keep rendering the
-            // generic placeholder for the rest of the session. The first
+            // generic placeholder for the rest of the session, and search
+            // keeps the restarted gateway's old capabilities. The first
             // connect is already covered by rebuildAdmin, so it's skipped.
             if didInitialConnect {
+                searchClient?.invalidateSearchCapabilities()
                 if let admin = adminClient {
                     iconRefetchAsked.removeAll()
                     Task { await loadSourceIcons(admin: admin) }
@@ -1181,6 +1190,13 @@ extension AdminCoordinator {
     @MainActor
     func injectAdminClientForTesting(_ client: AdminClient) {
         adminClient = client
+    }
+
+    /// Test-only: replace the read-side client without starting a socket.
+    @MainActor
+    func injectSearchClientForTesting(_ client: SearchClient) {
+        sourceRegistryRevision += 1
+        searchClient = client
     }
 
     /// Test-only: inject a stubbed `AccessClient` so a test can drive

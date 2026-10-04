@@ -13,6 +13,7 @@ type Db = Database.Database;
 import { createDatabase } from "../db.js";
 import { createDocAnnotation } from "../brain/storage/annotations.js";
 import { createOpenLoop } from "../brain/storage/open-loops.js";
+import { OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
 import {
   createGatewayDocumentByUrlPort,
   createGatewayDocumentPort,
@@ -556,6 +557,18 @@ describe("createGatewaySearchPort.search", () => {
     });
   });
 
+  test("graph context replaces the breadcrumb", async () => {
+    insertDocument({ id: "seed-hit", sourceId: "gmail:self", title: "Hit", content: "x" });
+    insertDocument({ id: "att-1", sourceId: "gmail:self", title: "Attachment", content: "y" });
+    seedLink("seed-hit", "contains", "att-1");
+    const pipeline = {
+      ...fakePipeline({ ...baseItem, documentId: "seed-hit", sourceId: "gmail:self" }),
+      agentSearchV2Enabled: true,
+    } as unknown as SearchPipeline;
+    const out = await createGatewaySearchPort(pipeline, undefined, db).search({ query: "hit" });
+    expect(out.results[0]?.breadcrumb).toBeUndefined();
+  });
+
   test("a hit with no neighbours gets no breadcrumb", async () => {
     insertDocument({ id: "seed-hit", sourceId: "gmail:self", title: "Hit", content: "x" });
     const port = createGatewaySearchPort(
@@ -642,6 +655,37 @@ describe("createGatewayDocumentPort.fetch — includeNeighbors", () => {
     });
     expect(out?.neighbors).toBeDefined();
     expect(out?.neighborsTruncated).toBe(true);
+  });
+
+  test("under graph context, neighbours follow only the structural links", async () => {
+    seedSeedAndNeighbor();
+    insertDocument({ id: "doc-phone", sourceId: "notes:self", title: "Same number", content: "z" });
+    seedLink("doc-seed", "shares-phone", "doc-phone");
+    const legacy = await createGatewayDocumentPort(db).fetch("doc-seed", {
+      includeNeighbors: true,
+    });
+    expect(legacy?.neighbors?.map((n) => n.documentId).sort()).toEqual(["doc-att", "doc-phone"]);
+    const graph = await createGatewayDocumentPort(db, undefined, { graphContext: true }).fetch(
+      "doc-seed",
+      { includeNeighbors: true },
+    );
+    expect(graph?.neighbors?.map((n) => n.documentId)).toEqual(["doc-att"]);
+  });
+
+  test("under graph context, an Omnesis answer that references the document is not a neighbour", async () => {
+    seedSeedAndNeighbor();
+    insertDocument({
+      id: "doc-answer",
+      sourceId: OMNESIS_CHAT_SOURCE_ID,
+      title: "Answer",
+      content: "a",
+    });
+    seedLink("doc-answer", "references", "doc-seed");
+    const graph = await createGatewayDocumentPort(db, undefined, { graphContext: true }).fetch(
+      "doc-seed",
+      { includeNeighbors: true },
+    );
+    expect(graph?.neighbors?.map((n) => n.documentId)).toEqual(["doc-att"]);
   });
 
   test("returns NO neighbours when includeNeighbors is not set", async () => {

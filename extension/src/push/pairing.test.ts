@@ -315,9 +315,9 @@ describe("pair", () => {
       scopes: ["write:web"],
     };
 
-    it("derives the floor from the build's own minor", () => {
-      expect(minimumGatewayVersionFor("0.4.5")).toBe("0.4.0");
-      expect(minimumGatewayVersionFor("1.2.3-rc.1")).toBe("1.2.0");
+    it("keeps the capture contract floor independent of optional feature releases", () => {
+      expect(minimumGatewayVersionFor("0.4.5")).toBe("0.5.0");
+      expect(minimumGatewayVersionFor("1.2.3-rc.1")).toBe("0.5.0");
       expect(minimumGatewayVersionFor(undefined)).toBeNull();
       expect(minimumGatewayVersionFor("dev")).toBeNull();
     });
@@ -332,14 +332,15 @@ describe("pair", () => {
         pair("https://gateway.example.ts.net", "0123456789", fetch.fetch, "Personal", {
           version: "0.4.5",
         }),
-      ).rejects.toThrow(/runs Omnesis 0\.3\.9.*needs 0\.4\.0/);
+      ).rejects.toThrow(/runs Omnesis 0\.3\.9.*needs 0\.5\.0/);
       expect(pairRequests(fetch)).toHaveLength(0);
     });
 
     it("pairs with a gateway on the same minor at any patch, and with a build of unknown version", async () => {
       for (const [gateway, version] of [
-        ["0.4.1", "0.4.5"],
+        ["0.5.1", "0.5.5"],
         ["0.5.0", "0.4.5"],
+        ["0.5.1", "1.2.3"],
         ["0.1.0", undefined],
       ] as const) {
         const fetch = new FakeFetch((request) =>

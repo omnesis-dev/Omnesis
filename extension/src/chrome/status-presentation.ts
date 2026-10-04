@@ -2,12 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { compareProductVersions, parseProductVersion } from "@omnesis/core/client-version";
+import { minimumGatewayVersionFor } from "../push/pairing.js";
 import type { CaptureStatus } from "./status.js";
 
 /**
  * A version-skew notice, or "" when the two versions are compatible or one is
- * unknown. HTTP changes within a minor are additive, so only a gateway on an
- * older minor (or a different major) than this extension is worth a warning.
+ * unknown. Optional features use capability discovery; the capture contract has a fixed
+ * compatibility floor independent of the extension product minor.
  */
 export function gatewayVersionNotice(
   gatewayVersion: string | null,
@@ -17,15 +18,10 @@ export function gatewayVersionNotice(
   const gateway = parseProductVersion(gatewayVersion);
   const extension = parseProductVersion(extensionVersion);
   if (!gateway || !extension) return "";
-  if (gateway.major !== extension.major) {
-    return `This gateway (${gatewayVersion}) and this extension (${extensionVersion}) are on different major versions. Update the older one.`;
-  }
-  const order = compareProductVersions(
-    `${gateway.major}.${gateway.minor}.0`,
-    `${extension.major}.${extension.minor}.0`,
-  );
+  const floor = minimumGatewayVersionFor(extensionVersion);
+  const order = floor ? compareProductVersions(gatewayVersion, floor) : null;
   return order !== null && order < 0
-    ? `This gateway (${gatewayVersion}) is behind this extension (${extensionVersion}). Update the gateway.`
+    ? `This gateway (${gatewayVersion}) is behind this extension's capture requirements (${floor}). Update the gateway.`
     : "";
 }
 
@@ -82,9 +78,6 @@ export function warningFor(status: CaptureStatus): string {
     } and ${discardedVisits} visit-analytics upload${
       discardedVisits === 1 ? " was" : "s were"
     } discarded; new captures continue.`;
-  }
-  if (status.handoffOverflow) {
-    return `Durable tab-to-worker recovery was dropped for ${status.handoffOverflow.discarded} staged capture${status.handoffOverflow.discarded === 1 ? "" : "s"} after the local handoff budget was reached. Affected captures can still sync while their tabs remain open.`;
   }
   if (status.failure) {
     const subject = status.failure.kind === "document" ? "page upload" : "visit-analytics upload";

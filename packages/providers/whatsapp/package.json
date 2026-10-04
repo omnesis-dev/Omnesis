@@ -1,6 +1,6 @@
 {
   "name": "@omnesis/provider-whatsapp",
-  "version": "0.5.14",
+  "version": "0.6.0",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "src/index.ts",
@@ -18,7 +18,7 @@
     "better-sqlite3-multiple-ciphers": "^13.0.3",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0",
-    "sharp": "^0.35.4"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0"

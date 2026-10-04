@@ -5342,6 +5342,36 @@ describe("AnalyticsDb — counting what a delete removed", () => {
     expect(remaining.rows.length).toBe(1);
   });
 
+  test("within one write the rows land first and the deletions after them", async () => {
+    // The order `TableWrite` documents. A write carrying a group's new rows
+    // and its delete key keeps none of them, which is why a source replacing
+    // the group sends the delete and the rows as two writes.
+    const combined = await db.ingestPage({
+      tableName: schema.tableName,
+      records: [{ run_id: "r-4", sample_index: 0 }],
+      schema,
+      sourceId,
+      deletedKeys: [{ run_id: "r-4" }],
+    });
+    expect(combined.deleted).toBe(1);
+
+    await db.ingestPage({
+      tableName: schema.tableName,
+      records: [],
+      sourceId,
+      deletedKeys: [{ run_id: "r-4" }],
+    });
+    await db.ingestPage({
+      tableName: schema.tableName,
+      records: [{ run_id: "r-4", sample_index: 1 }],
+      sourceId,
+    });
+    const held = await db.executeQuery(
+      `SELECT sample_index FROM ${schema.tableName} WHERE run_id = 'r-4'`,
+    );
+    expect(held.rows.map((row) => Number(row[0]))).toEqual([1]);
+  });
+
   test("a key naming nothing removes nothing and says so", async () => {
     await db.ingestPage({
       tableName: schema.tableName,

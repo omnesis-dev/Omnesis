@@ -8,7 +8,10 @@ import type Database from "better-sqlite3";
 import type { TemporalItem } from "@omnesis/core";
 import type { OpenLoopState } from "../../brain/storage/types.js";
 
-type TemporalReference = Pick<TemporalItem, "id" | "label" | "start" | "endExclusive">;
+type TemporalReference = Pick<
+  TemporalItem,
+  "id" | "origin" | "kind" | "label" | "start" | "endExclusive"
+>;
 
 export interface NotesDayProvenance {
   day: string;
@@ -71,6 +74,8 @@ export class NotesProvenanceService {
       for (const item of page.items) {
         const reference = {
           id: item.id,
+          origin: item.origin,
+          kind: item.kind,
           label: item.label,
           start: item.start,
           endExclusive: item.endExclusive,

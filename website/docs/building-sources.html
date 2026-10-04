@@ -390,9 +390,12 @@ export default defineSource({
           Use the injected <code>SourceHost</code> for logging, <code>now()</code>, attachment
           extraction, optional audio transcription, and scoped analytics reads. Its
           <code>analytics.query()</code> is read-only and restricted to the source's declared
-          tables; writes belong on a sync page. <code>stateDir</code> is scoped to the provider
-          account and shared by its sibling sources, so use distinct filenames;
-          <code>host.configDir</code> remains available for credential layouts that already use it.
+          tables; writes belong on a sync page. A table written by several accounts answers a query
+          with every account's rows, so a read that picks rows to act on filters on this account's
+          value of the table's <code>sharedDiscriminatorColumn</code>. <code>stateDir</code> is
+          scoped to the provider account and shared by its sibling sources, so use distinct
+          filenames; <code>host.configDir</code> remains available for credential layouts that
+          already use it.
         </p>
         <p>
           The host interface is not a sandbox for in-process provider code, nor a promise of access
@@ -417,7 +420,11 @@ export default defineSource({
           hint, and a <code>remediation</code> — a one-line summary, the steps, and whether the
           collector must restart — for a condition only the operator can clear, such as a missing
           operating-system permission. Clients show the remediation as a fix instead of the raw
-          message. An untyped throw counts as a failure of the whole source.
+          message. A rate limit names what the platform counted it against in
+          <code>quota.kind</code>: <code>app</code> only when every account on the collector signs
+          in through one application credential (a credentials spec without
+          <code>perAccount</code>), otherwise <code>account</code>; the collector shows every source
+          on that budget as rate limited. An untyped throw counts as a failure of the whole source.
         </p>
         <p>
           Some sources read files that another program maintains. If that program stops, the source
@@ -692,7 +699,10 @@ export default defineSource({
           <code>canShow(kind)</code> before selecting a client interaction; unsupported questions
           fail immediately rather than waiting for timeout. Clients that declare no capabilities
           support only redirect and QR challenges. The generic answer endpoint accepts only pending
-          code or fields questions; redirects and widgets complete through their own callbacks.
+          code or fields questions; redirects and widgets complete through their own callbacks. A
+          redirect the gateway catches is answered with the callback's <code>scope</code> parameter
+          beside its code, for a platform that reports a narrowed grant there and nowhere else; a
+          code pasted by hand carries none.
         </p>
         <p>
           For API-key providers, where the pasted value is the account's own credential rather than
@@ -831,8 +841,10 @@ export default defineSource({
           <code>records</code> to insert or update by primary key, <code>deletedKeys</code> to
           remove, and <code>presentKeys</code> as that table's snapshot; both kinds of key are
           records over the table's <code>deleteKey</code> columns. The host writes the list in
-          order, and a table may appear twice. One page fills as many tables as the upstream record
-          spans, so a workout that is also its splits, laps, and best efforts writes all four
+          order, and a table may appear twice. Within one write the records land first and the
+          deletions after them, so a page that replaces a group of rows sends the deletion and the
+          new rows as two writes, in that order. One page fills as many tables as the upstream
+          record spans, so a workout that is also its splits, laps, and best efforts writes all four
           together under the checkpoint that covers them.
         </p>
         <p>

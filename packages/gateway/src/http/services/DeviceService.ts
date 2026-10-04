@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { getDevice, listDevices } from "../../data/repositories/DeviceRepository.js";
-import { deviceIdForToken, listTokens } from "../../data/repositories/TokenRepository.js";
+import {
+  deviceIdForToken,
+  listTokens,
+  isDeviceTokenActive,
+} from "../../data/repositories/TokenRepository.js";
 import type Database from "better-sqlite3";
 import type { DeviceId, DeviceRecord, Scope, TokenId } from "@omnesis/types";
 
@@ -41,6 +45,10 @@ export class DeviceService {
   /** Names are unique per gateway; revoked rows keep theirs. */
   listDevices(): DeviceRecord[] {
     return listDevices(this.db);
+  }
+
+  tokenIsActive(id: TokenId, deviceId: DeviceId): boolean {
+    return isDeviceTokenActive(this.db, id, deviceId);
   }
 
   listTokens(deviceId?: DeviceId) {

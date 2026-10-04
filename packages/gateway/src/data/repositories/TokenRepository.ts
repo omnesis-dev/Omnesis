@@ -669,3 +669,13 @@ export function cleanupExpiredSessions(db: Db): number {
   const result = db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now());
   return result.changes;
 }
+
+/** Read-side authority check for deferred device approvals. */
+export function isDeviceTokenActive(db: Db, id: TokenId, deviceId: DeviceId): boolean {
+  return !!db
+    .prepare<
+      [string, string, number],
+      { active: number }
+    >("SELECT 1 AS active FROM tokens WHERE id = ? AND device_id = ? AND (expires_at IS NULL OR expires_at > ?)")
+    .get(id, deviceId, Date.now());
+}

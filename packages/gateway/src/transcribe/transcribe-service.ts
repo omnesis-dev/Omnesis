@@ -20,7 +20,13 @@
 import { createLogger, assertNever } from "@omnesis/core";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
 import { whisperDepsAvailable } from "./whisper-transcriber.js";
-import type { ResolvedAssignment, TranscribeCapability, TranscriptionResult } from "@omnesis/core";
+import type {
+  ResolvedAssignment,
+  TranscribeCapability,
+  TranscriptionResult,
+  TranscriptionContext,
+  TranscriptionVocabulary,
+} from "@omnesis/core";
 
 const log = createLogger("gateway:transcribe");
 
@@ -57,6 +63,7 @@ export interface TranscriberReadiness {
   reason?: string;
 }
 
+const LOCAL_RUNTIME_CHECKING = "Checking for the local transcription runtime.";
 const LOCAL_RUNTIME_MISSING =
   "Local transcription needs the smart-whisper and ffmpeg-static optional dependencies.";
 
@@ -96,10 +103,20 @@ export class TranscribeService {
   /** Result of probing the local Whisper runtime; null until the probe settles. */
   private localRuntime: boolean | null = null;
   private probing: Promise<void> | null = null;
+  private readonly vocabulary?: {
+    enabled(): boolean;
+    getDictionary(context: TranscriptionContext): Promise<TranscriptionVocabulary>;
+    maxPromptTokens(): number;
+  };
 
-  constructor(opts: { resolveAssignment: () => ResolvedAssignment; deps?: LoadTranscriberDeps }) {
+  constructor(opts: {
+    resolveAssignment: () => ResolvedAssignment;
+    deps?: LoadTranscriberDeps;
+    vocabulary?: TranscribeService["vocabulary"];
+  }) {
     this.resolveAssignment = opts.resolveAssignment;
     this.deps = opts.deps ?? {};
+    this.vocabulary = opts.vocabulary;
   }
 
   private async ensureCapability(): Promise<TranscribeCapability | null> {
@@ -128,20 +145,39 @@ export class TranscribeService {
   /**
    * Whether a transcription could run now, without loading anything. A local
    * assignment also needs the optional Whisper runtime; the first call starts a
-   * one-off probe for it and reports runnable until the probe says otherwise,
-   * so a status poll never waits on it.
+   * one-off probe for it and reports not runnable until the probe confirms the
+   * runtime, so a status poll never waits on it and never advertises a
+   * runtime nobody has seen yet.
    */
   readiness(): TranscriberReadiness {
     const resolved = this.resolveAssignment();
     const readiness = assignmentReadiness(resolved);
     if (!readiness.runnable || resolved.kind !== "local") return readiness;
     if (this.localRuntime === null) {
-      this.probing ??= whisperDepsAvailable(this.deps.loadModule).then((available) => {
-        this.localRuntime = available;
-      });
-      return readiness;
+      this.probeLocalRuntime();
+      return { runnable: false, reason: LOCAL_RUNTIME_CHECKING };
     }
     return this.localRuntime ? readiness : { runnable: false, reason: LOCAL_RUNTIME_MISSING };
+  }
+
+  /**
+   * The readiness once the Whisper runtime probe, if one is needed, has
+   * settled. For callers that are already waiting on a request or a queue
+   * pass, where a few milliseconds beat a wrong "not yet".
+   */
+  async settledReadiness(): Promise<TranscriberReadiness> {
+    const readiness = this.readiness();
+    if (this.probing && this.localRuntime === null) {
+      await this.probing;
+      return this.readiness();
+    }
+    return readiness;
+  }
+
+  private probeLocalRuntime(): void {
+    this.probing ??= whisperDepsAvailable(this.deps.loadModule).then((available) => {
+      this.localRuntime = available;
+    });
   }
 
   /**
@@ -158,7 +194,12 @@ export class TranscribeService {
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string; minTimeoutMs?: number },
+    opts?: {
+      language?: string;
+      minTimeoutMs?: number;
+      context?: TranscriptionContext;
+      allowVocabulary?: boolean;
+    },
   ): Promise<TranscriptionResult | null> {
     // Resolve/load the capability AND run the transcription inside the same
     // serialization fence. A model reassignment disposes the previous
@@ -169,7 +210,34 @@ export class TranscribeService {
       const capability = await this.ensureCapability();
       if (!capability) return null;
       try {
-        return await capability.transcribe(audio, mimeType, opts);
+        let vocabulary: TranscriptionVocabulary | undefined;
+        if (
+          opts?.allowVocabulary !== false &&
+          capability.vocabularyRuntime &&
+          this.vocabulary?.enabled()
+        ) {
+          try {
+            vocabulary = await this.vocabulary.getDictionary(
+              opts?.context ?? {
+                purpose: "source-audio",
+                ...(opts?.language ? { languageHints: [opts.language] } : {}),
+              },
+            );
+          } catch {
+            // Vocabulary is optional; an unavailable read worker must not lose audio.
+            log.warn("Vocabulary lookup unavailable; transcribing without hints");
+          }
+        }
+        return await capability.transcribe(audio, mimeType, {
+          ...(opts?.language ? { language: opts.language } : {}),
+          ...(opts?.minTimeoutMs !== undefined ? { minTimeoutMs: opts.minTimeoutMs } : {}),
+          ...(vocabulary && this.vocabulary?.enabled()
+            ? {
+                vocabulary,
+                maxPromptTokens: this.vocabulary.maxPromptTokens(),
+              }
+            : {}),
+        });
       } catch (err) {
         log.warn(
           `Transcription failed (will retry on a later sync): ${err instanceof Error ? err.message : String(err)}`,

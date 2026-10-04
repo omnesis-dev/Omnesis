@@ -227,9 +227,8 @@ export interface SourceManagerOptions {
   extractAttachment?: AttachmentExtractFn;
   /**
    * Audio transcription function (forwards bytes to the gateway's
-   * `/inference/transcribe`). Wired only when the `stt` experimental feature
-   * is enabled — when unset, sources skip voice-note transcription entirely
-   * and never download audio.
+   * `/inference/transcribe`). The collector always wires it; when unset,
+   * sources skip voice-note transcription entirely and never download audio.
    */
   transcribeAudio?: AudioTranscribeFn;
   /**

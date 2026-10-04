@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +22,9 @@ import {
   testProcessEnv,
   unitWorkers,
 } from "./run-check.mjs";
+
+import { ESLint } from "eslint";
+import { collectLintFiles, runFullLint } from "./lib/check-lint.mjs";
 
 import { progressArgs } from "./lib/check-progress.mjs";
 
@@ -324,6 +335,7 @@ describe("portable check entrypoint", () => {
   });
   test("lint builds its compatibility dependency before ESLint and shares heap setting", () => {
     const cwd = root();
+    writeFileSync(join(cwd, "eslint.config.mjs"), "export default [{}];");
     stub(
       cwd,
       "typescript/bin/tsc",
@@ -345,5 +357,139 @@ describe("portable check entrypoint", () => {
     const result = invoke(cwd, ["lint"]);
     expect(result.status).toBe(6);
     expect(result.stderr).toContain("failed: exit 6");
+  });
+  test("explicit lint arguments preserve the original CLI invocation", () => {
+    const cwd = root();
+    stub(cwd, "typescript/bin/tsc", "process.exit(0)");
+    stub(
+      cwd,
+      "eslint/bin/eslint.js",
+      "process.stdout.write(JSON.stringify(process.argv.slice(2)));",
+    );
+    const result = invoke(cwd, ["lint", "fixture.js", "--fix", "--max-warnings", "0"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      JSON.stringify([".", "fixture.js", "--fix", "--max-warnings", "0"]),
+    );
+  });
+});
+
+function lintFixture() {
+  const cwd = root();
+  const put = (name, text = "") => {
+    const path = join(cwd, name);
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, text);
+    return path;
+  };
+  put(
+    "eslint.config.mjs",
+    'export default [{ ignores: ["ignored/**", "**/*.d.ts", "filtered/*", "!filtered/keep.js"] }, { files: ["**/*.custom", "**/*.ts"], languageOptions: { ecmaVersion: 2022 } }];',
+  );
+  return { cwd, put };
+}
+
+describe("bounded full lint", () => {
+  test("matches ESLint directory discovery, including hidden and configured file types", async () => {
+    const { cwd, put } = lintFixture();
+    put(".hidden.js");
+    put(".hidden-directory/fixture.mjs");
+    put("configured.custom");
+    put("configured.ts");
+    put("ignored.d.ts");
+    put("filtered/keep.js");
+    put("filtered/drop.js");
+    put("nonlinted.txt");
+    put("ignored/fixture.js");
+    put("node_modules/fixture.js");
+    put(".git/fixture.js");
+    const target = put("target.js");
+    symlinkSync(target, join(cwd, "linked.js"));
+    symlinkSync(cwd, join(cwd, "cycle"), "dir");
+    chmodSync(join(cwd, "ignored"), 0);
+    let expected;
+    try {
+      expected = (await new ESLint({ cwd }).lintFiles(["."]))
+        .map((result) => result.filePath)
+        .sort();
+      expect(await collectLintFiles(cwd)).toEqual(expected);
+    } finally {
+      chmodSync(join(cwd, "ignored"), 0o700);
+    }
+    expect(expected).toEqual(
+      [
+        ".hidden-directory/fixture.mjs",
+        ".hidden.js",
+        "configured.custom",
+        "configured.ts",
+        "eslint.config.mjs",
+        "filtered/keep.js",
+        "linked.js",
+        "target.js",
+      ]
+        .map((path) => join(cwd, path))
+        .sort(),
+    );
+  });
+
+  test("rejects unreadable directory symlinks before explicit file batches can follow them", async () => {
+    const { cwd } = lintFixture();
+    symlinkSync(cwd, join(cwd, "cycle.js"), "dir");
+    await expect(new ESLint({ cwd }).lintFiles(["."])).rejects.toThrow("EISDIR");
+    const run = vi.fn();
+    await expect(runFullLint({ cwd, executable: "eslint.js", env: {}, run })).rejects.toThrow(
+      "EISDIR",
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  test("discovery leaves syntax and inline directives to the configured lint subprocess", async () => {
+    const { cwd, put } = lintFixture();
+    const path = put(
+      "fixture.js",
+      "/* eslint nonexistent-rule: error */ this is invalid JavaScript",
+    );
+    expect(await collectLintFiles(cwd)).toContain(path);
+    const run = vi.fn().mockResolvedValue(1);
+    expect(await runFullLint({ cwd, executable: "eslint.js", env: {}, run })).toBe(1);
+    expect(run.mock.calls[0][1]).toContain(path);
+  });
+
+  test("visits every file once in bounded batches and keeps earlier lint failures", async () => {
+    const { cwd, put } = lintFixture();
+    for (let index = 0; index < 6; index++) put(`fixture-${index}.js`);
+    const run = vi.fn().mockResolvedValueOnce(1).mockResolvedValue(0);
+    const env = { NODE_OPTIONS: "--max-old-space-size=6144" };
+    expect(await runFullLint({ cwd, executable: "eslint.js", env, run, batchSize: 2 })).toBe(1);
+    expect(run).toHaveBeenCalledTimes(4);
+    const paths = run.mock.calls.flatMap(([node, args, actualEnv]) => {
+      expect(node).toBe(process.execPath);
+      expect(args.slice(0, 2)).toEqual(["eslint.js", "--"]);
+      expect(args.length - 2).toBeLessThanOrEqual(2);
+      expect(actualEnv).toBe(env);
+      return args.slice(2);
+    });
+    expect(paths).toEqual(await collectLintFiles(cwd));
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  test("stops after a configuration failure or interrupted subprocess", async () => {
+    const { cwd, put } = lintFixture();
+    put("fixture.js");
+    const run = vi.fn().mockResolvedValue(2);
+    expect(await runFullLint({ cwd, executable: "eslint.js", env: {}, run, batchSize: 1 })).toBe(2);
+    expect(run).toHaveBeenCalledTimes(1);
+    run.mockReset().mockRejectedValue(new Error("Interrupted"));
+    await expect(
+      runFullLint({ cwd, executable: "eslint.js", env: {}, run, batchSize: 1 }),
+    ).rejects.toThrow("Interrupted");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  test("retains ESLint's empty discovery behavior", async () => {
+    const { cwd, put } = lintFixture();
+    put("eslint.config.mjs", 'export default [{ ignores: ["**/*"] }];');
+    const run = vi.fn();
+    await expect(runFullLint({ cwd, executable: "eslint.js", env: {}, run })).rejects.toThrow();
+    expect(run).not.toHaveBeenCalled();
   });
 });

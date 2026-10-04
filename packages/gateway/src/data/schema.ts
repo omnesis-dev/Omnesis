@@ -22,7 +22,9 @@ import { createAgentMessagesTables } from "../sources/agent-conversations/storag
 import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
+import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
+import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { installCollectorRosterRevision, installMutableListRevisions } from "./list-revisions.js";
@@ -68,6 +70,7 @@ export function runSchemaSetup(db: Db): void {
 }
 
 function runSchemaSetupInTxn(db: Db): void {
+  createTranscriptionVocabularyTables(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
@@ -89,6 +92,8 @@ function runSchemaSetupInTxn(db: Db): void {
       updated_at TEXT NOT NULL,
       source_url TEXT,
       people_resolved_at TEXT,
+      vocabulary_processed_at TEXT,
+      vocabulary_revision INTEGER NOT NULL DEFAULT 0,
       links_extracted_at TEXT,
       dates_extracted_at TEXT,
       dates_truncated INTEGER,
@@ -103,6 +108,16 @@ function runSchemaSetupInTxn(db: Db): void {
       UNIQUE(provider_id, source_id, external_id, stream_id)
     )
   `);
+
+  if (
+    (
+      db.prepare("SELECT name FROM pragma_table_info('documents')").all() as Array<{ name: string }>
+    ).some((column) => column.name === "vocabulary_processed_at")
+  ) {
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_documents_vocabulary_pending ON documents(id) WHERE vocabulary_processed_at IS NULL AND people_resolved_at IS NOT NULL",
+    );
+  }
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_documents_source
@@ -155,6 +170,8 @@ function runSchemaSetupInTxn(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_documents_source_id_updated_at ON documents(source_id, updated_at)",
   );
+  // Declared-edge endpoints resolve by source and external id.
+  indexDocumentsBySourceExternalId(db);
 
   // Partial index supporting cross-source dedup — duplicate
   // -content detection between binary-extracted docs (attachments and

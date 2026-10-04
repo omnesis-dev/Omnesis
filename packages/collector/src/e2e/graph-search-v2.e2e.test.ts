@@ -285,7 +285,13 @@ describe("Agent search v2 — synthetic file journey", () => {
     expect(context).toBeDefined();
     expect(context.facts.reduce((sum, fact) => sum + fact.length, 0)).toBeLessThanOrEqual(700);
     expect(context.limits.length).toBeLessThanOrEqual(5);
-    expect(context.documents[0]).toMatchObject({ ref: "D1", documentId: hit.documentId });
+    // Labels are shared across one search's results, so the hit's own label
+    // depends on its rank; it is always the first row of its own table.
+    expect(context.documents[0]).toMatchObject({ documentId: hit.documentId });
+    expect(context.documents[0]!.ref).toMatch(/^D[1-9][0-9]*$/);
+    for (const document of context.documents) {
+      expect(document.date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/);
+    }
     expect(new Set(context.documents.map((document) => document.documentId)).size).toBe(
       context.documents.length,
     );

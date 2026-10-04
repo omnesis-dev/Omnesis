@@ -53,6 +53,7 @@ import { mountPushRoutes } from "./http/routes/push.js";
 import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { mountTranscribeRoutes } from "./http/routes/transcribe.js";
+import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-vocabulary.js";
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
 import { VoiceNoteService, pendingVoiceNoteIds } from "./voice-notes/index.js";
 import { mountOcrRoutes } from "./http/routes/ocr.js";
@@ -102,6 +103,8 @@ import { mountWatchV2Routes } from "./http/routes/watch.js";
 import { mountDocumentGraphRoute } from "./http/routes/document-graph.js";
 import { mountGraphWalkRoute } from "./http/routes/graph.js";
 import { mountDocumentTrailRoute } from "./http/routes/document-trail.js";
+import { mountBrowserNotesRoutes } from "./http/routes/browser-notes.js";
+import { BrowserNotesService } from "./http/services/BrowserNotesService.js";
 import { mountNotesRoutes } from "./http/routes/notes.js";
 import { NotesProvenanceService } from "./sources/omnesis-notes/provenance.js";
 import { bootOmnesisNotes, type OmnesisNotesRuntime } from "./sources/omnesis-notes/index.js";
@@ -464,6 +467,7 @@ export function createServer(
      * transcribe source audio (e.g. WhatsApp voice notes) during sync.
      */
     transcribeService?: import("./transcribe/index.js").TranscribeService;
+    transcriptionVocabularyService?: import("./transcribe/vocabulary/service.js").TranscriptionVocabularyService;
     /**
      * OCR service. When provided, mounts `POST /inference/ocr` (gated behind
      * the `ocr` experimental feature). The collector calls it to recognize
@@ -1225,6 +1229,8 @@ export function createServer(
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,
+    getTranscriptionVocabularyEnabled: () =>
+      opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,
   });
 
@@ -1265,6 +1271,9 @@ export function createServer(
   // when a transcribe service was wired.
   if (opts?.transcribeService) {
     mountTranscribeRoutes(app, { transcribeService: opts.transcribeService });
+  }
+  if (opts?.transcriptionVocabularyService) {
+    mountTranscriptionVocabularyRoutes(app, opts.transcriptionVocabularyService);
   }
 
   // OCR route. Mounted only when an OCR service was wired.
@@ -1630,13 +1639,21 @@ export function createServer(
     const runtime = getOmnesisNotesRuntime();
     opts.onOmnesisNotesRuntime(runtime);
   }
+  mountBrowserNotesRoutes(
+    app,
+    new BrowserNotesService({
+      devices: deviceService,
+      writeGate: w,
+      runtime: getOmnesisNotesRuntime,
+    }),
+  );
   mountNotesRoutes(app, {
     provenance: new NotesProvenanceService(db),
     runtime: getOmnesisNotesRuntime,
     pendingTranscriptions: (noteIds) => pendingVoiceNoteIds(db, noteIds),
   });
 
-  // Voice notes (experimental): Tell Omnesis captures that arrive with their
+  // Voice notes: Tell Omnesis captures that arrive with their
   // audio, saved at once and transcribed afterwards. The queue runs whenever a
   // transcriber is wired, so notes accepted before a restart, or before the
   // feature was switched off, are still transcribed.
@@ -1648,11 +1665,20 @@ export function createServer(
       readDb: db,
       transcribe: (audio, mimeType, transcribeOpts) =>
         transcribeService.transcribe(audio, mimeType, transcribeOpts),
-      readiness: () => transcribeService.readiness(),
+      readiness: () => transcribeService.settledReadiness(),
     });
     voiceNotes.start();
     opts.onVoiceNoteService?.(voiceNotes);
-    mountVoiceNoteRoutes(app, { service: voiceNotes, getStatus: opts.getDictationStatus });
+    const getDictationStatus = opts.getDictationStatus;
+    mountVoiceNoteRoutes(app, {
+      service: voiceNotes,
+      // A recording that arrives while the Whisper runtime probe is still
+      // running waits for its answer rather than being refused on a "not yet".
+      getStatus: async () => {
+        await transcribeService.settledReadiness();
+        return getDictationStatus();
+      },
+    });
   }
 
   // agent-conversations: the pushed-transcript ingest surface for the managed

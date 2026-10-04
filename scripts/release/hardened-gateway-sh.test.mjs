@@ -110,6 +110,115 @@ describe("hardened-gateway.sh options", () => {
   });
 });
 
+describe("hardened gateway install activation", () => {
+  function installActivation(failure) {
+    const fixture = mkdtempSync(join(scratch, "activation-"));
+    const calls = join(fixture, "calls");
+    const state = join(fixture, "state");
+    const res = sourced(`
+      UNIT_NAME=fixture-gateway.service
+      ADMIN_LINK="${fixture}/admin"
+      CURRENT="${fixture}/current"
+      RELEASE_DIR="${fixture}/release"
+      RELEASE_VERSION=0.4.9
+      require_linux_systemd() { :; }
+      require_node() { :; }
+      require_git() { :; }
+      read_legacy_unit() { :; }
+      prepare_keyring() { :; }
+      build_release() { :; }
+      write_install_env() { :; }
+      switch_current() { :; }
+      set_previous() { :; }
+      cleanup() { echo cleanup >> "${calls}"; }
+      render_unit() {
+        echo render >> "${calls}"
+        echo active > "${state}"
+        ${failure === "render" ? 'echo "activation poll failed" >&2; return 23' : ":"}
+        ${failure === "render-command" ? 'false; echo "UNSAFE_RENDER_CONTINUATION"' : ":"}
+      }
+      systemctl() {
+        echo "$*" >> "${calls}"
+        case "$1" in
+          restart)
+            echo active > "${state}"
+            ${failure === "restart" ? 'echo "restart failed" >&2; return 24' : ":"}
+            ;;
+          stop) echo stopped > "${state}" ;;
+          *) echo "unexpected systemctl command" >&2; return 25 ;;
+        esac
+      }
+      wait_for_version() {
+        echo "ready:$1" >> "${calls}"
+        ${failure === "readiness" ? "return 1" : ":"}
+      }
+      prune_releases() {
+        echo prune >> "${calls}"
+        ${failure === "prune" ? "return 26" : ":"}
+      }
+      print_installed() { echo installed >> "${calls}"; }
+      cmd_install
+    `);
+    return {
+      ...res,
+      calls: readFileSync(calls, "utf8").trim().split("\n"),
+      state: readFileSync(state, "utf8").trim(),
+    };
+  }
+
+  test.each([
+    ["render", ["render", "stop fixture-gateway.service", "cleanup"]],
+    ["render-command", ["render", "stop fixture-gateway.service", "cleanup"]],
+    [
+      "restart",
+      ["render", "restart fixture-gateway.service", "stop fixture-gateway.service", "cleanup"],
+    ],
+    [
+      "readiness",
+      [
+        "render",
+        "restart fixture-gateway.service",
+        "ready:0.4.9",
+        "stop fixture-gateway.service",
+        "cleanup",
+      ],
+    ],
+  ])("stops only the install's service after %s fails", (failure, calls) => {
+    const result = installActivation(failure);
+    expect(result.status).not.toBe(0);
+    expect(result.calls).toEqual(calls);
+    expect(result.state).toBe("stopped");
+    expect(result.output).not.toContain("UNSAFE_RENDER_CONTINUATION");
+  });
+
+  test("leaves the service running after successful activation", () => {
+    const result = installActivation();
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toEqual([
+      "render",
+      "restart fixture-gateway.service",
+      "ready:0.4.9",
+      "prune",
+      "installed",
+      "cleanup",
+    ]);
+    expect(result.state).toBe("active");
+  });
+
+  test("a later pruning failure does not stop the already healthy service", () => {
+    const result = installActivation("prune");
+    expect(result.status).not.toBe(0);
+    expect(result.calls).toEqual([
+      "render",
+      "restart fixture-gateway.service",
+      "ready:0.4.9",
+      "prune",
+      "cleanup",
+    ]);
+    expect(result.state).toBe("active");
+  });
+});
+
 describe("hardened-gateway.sh helpers", () => {
   test("refs are held to the characters refs use", () => {
     const res = sourced(`

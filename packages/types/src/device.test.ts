@@ -7,6 +7,7 @@ import {
   isAnswerBoundedScope,
   scopesAreAnswerBounded,
   DeviceId,
+  Scope,
   TokenId,
   DEVICE_KINDS,
   isDeviceKind,
@@ -22,10 +23,10 @@ import {
   parseScope,
   classifyScope,
   scopeSatisfies,
+  missingHostedWriteScopes,
   NOTIFICATION_DELIVERY_HEALTH_STATES,
   isNotificationDeliveryHealth,
 } from "./device.js";
-import type { Scope } from "./device.js";
 
 describe("device identifier brands", () => {
   // DeviceId / TokenId now validate UUID v4 shape on construction (was a
@@ -302,4 +303,15 @@ describe("read:bulk scope", () => {
     expect(scopeSatisfies([SCOPE_ADMIN], SCOPE_READ_BULK)).toBe(false);
     expect(scopeSatisfies([SCOPE_READ_BULK], SCOPE_READ_BULK)).toBe(true);
   });
+});
+
+test("notes:create is independent of corpus reads and source writes", () => {
+  const notes = Scope("notes:create");
+  expect(missingHostedWriteScopes([notes], "browser")).toEqual([]);
+  expect(classifyScope(notes)).toEqual({ kind: "notes-create" });
+  expect(scopeSatisfies([notes], notes)).toBe(true);
+  expect(scopeSatisfies([SCOPE_WRITE_ALL], notes)).toBe(false);
+  expect(scopeSatisfies([notes], SCOPE_READ)).toBe(false);
+  expect(scopeSatisfies([notes], SCOPE_ADMIN)).toBe(false);
+  expect(scopeSatisfies([notes], writeScope(SourceType("web")))).toBe(false);
 });

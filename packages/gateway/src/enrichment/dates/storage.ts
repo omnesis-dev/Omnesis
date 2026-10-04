@@ -139,6 +139,33 @@ export function addDateMentions(db: Db): void {
 }
 
 /**
+ * Migration 188: queue for a rescan every document holding a date the
+ * extractor no longer keeps — a span that starts and ends on one day (the
+ * document's own day when it is "tonight" or "the rest of the day") or a
+ * rest-of match ("rest day", "rest week"). The selection is a superset: a
+ * rescanned document whose dates still stand gets the same rows back.
+ */
+export function rescanSameDaySpansAndRestCompounds(db: Db): void {
+  const has = (table: string, column: string): boolean =>
+    db
+      .prepare<[string], { name: string }>("SELECT name FROM pragma_table_info(?)")
+      .all(table)
+      .some((c) => c.name === column);
+  if (!has("documents", "dates_extracted_at") || !has("document_extracted_dates", "matched_text")) {
+    return;
+  }
+  db.exec(
+    `UPDATE documents SET dates_extracted_at = NULL
+       WHERE dates_extracted_at IS NOT NULL
+         AND id IN (
+           SELECT document_id FROM document_extracted_dates
+            WHERE (kind = 'range' AND mod IS NULL AND resolved_start = resolved_end)
+               OR lower(matched_text) LIKE 'rest%'
+         )`,
+  );
+}
+
+/**
  * Partial index over un-extracted documents — the extraction pass's cheap
  * "find work" query (mirrors idx_documents_links_unprocessed). References
  * `documents.dates_extracted_at`, which the migration adds by ALTER, so this
@@ -160,13 +187,18 @@ export function createDatesUnprocessedIndex(db: Db): void {
  * last edit; `addressed` carries `metadata.addressedToAgent`. Newest documents first (the partial
  * pending-age index serves exactly this), so live ingest clears the agent
  * readiness barrier promptly even while a large re-extraction backlog
- * drains behind it. Runs on the io pool's read-only handle.
+ * drains behind it. `excludeIds` skips documents the caller is deliberately
+ * leaving for later, so they never fill a batch ahead of the rest. Runs on the
+ * io pool's read-only handle.
  */
 export function fetchDateExtractionBatch(
   db: Db,
   limit: number,
   maxChars: number,
+  excludeIds: readonly string[] = [],
 ): DateExtractionDocRow[] {
+  const excluded =
+    excludeIds.length > 0 ? `AND id NOT IN (${excludeIds.map(() => "?").join(", ")})` : "";
   return db
     .prepare(
       `SELECT id, title, substr(content, 1, ?) AS content,
@@ -179,11 +211,11 @@ export function fetchDateExtractionBatch(
                 json_extract(metadata, '$.extra.conversationId')
               ) AS threadKey
          FROM documents
-        WHERE dates_extracted_at IS NULL
+        WHERE dates_extracted_at IS NULL ${excluded}
         ORDER BY ingested_at DESC
         LIMIT ?`,
     )
-    .all(maxChars, limit)
+    .all(maxChars, ...excludeIds, limit)
     .map((raw) => {
       const { addressed, ...row } = raw as Omit<DateExtractionDocRow, "addressed"> & {
         addressed: number;

@@ -780,6 +780,30 @@ class PrivacyScreenshotTest {
     fun privacy_spine_drafting_dark() =
         capture("privacy_spine_drafting_dark", true) { spine(runningExchange, events = emptyList()) }
 
+    @Test
+    fun privacy_spine_checking_light() =
+        capture("privacy_spine_checking_light", false) {
+            spine(runningExchange.copy(draftAnswer = "The fictional venue desk closes at 18:00."), events = emptyList())
+        }
+
+    @Test
+    fun privacy_spine_checking_dark() =
+        capture("privacy_spine_checking_dark", true) {
+            spine(runningExchange.copy(draftAnswer = "The fictional venue desk closes at 18:00."), events = emptyList())
+        }
+
+    @Test
+    fun privacy_activity_running_light() =
+        capture("privacy_activity_running_light", false) {
+            privacy(PrivacyUiState(loading = false, exchanges = listOf(runningExchange, sharedExchange)))
+        }
+
+    @Test
+    fun privacy_activity_running_dark() =
+        capture("privacy_activity_running_dark", true) {
+            privacy(PrivacyUiState(loading = false, exchanges = listOf(runningExchange, sharedExchange)))
+        }
+
     /* ── The released answer, compared with the draft ── */
 
     @Test

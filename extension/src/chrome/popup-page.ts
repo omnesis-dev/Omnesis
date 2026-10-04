@@ -334,7 +334,7 @@ export function initPopup(document: Document, chrome: PopupChrome): void {
     // still broken.
     const activeFailure = hasActiveFailure(status);
     const historicalLoss = Boolean(
-      status.queueCorruption || status.queueOverflow || status.handoffOverflow || status.failure,
+      status.queueCorruption || status.queueOverflow || status.failure,
     );
     document.body.dataset.notice = String(historicalLoss && !activeFailure);
     ($("ack-warning") as HTMLButtonElement).hidden = activeFailure || !historicalLoss;

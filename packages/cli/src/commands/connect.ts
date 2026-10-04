@@ -804,15 +804,26 @@ function runInstaller(command: string, args: string[], environment: NodeJS.Proce
 /**
  * What `openclaw plugins uninstall omnesis-bridge` prints when OpenClaw knows
  * of no such plugin: neither an install record nor a discovered plugin.
- * Earlier releases name the plugin as not found; later ones say it has no
- * tracked package install, which they report only when the id is in neither
- * their plugin index nor their install records. The config's own references
- * to it are removed beforehand by `retireLegacyOpenClawConfig`.
+ * Earlier releases name the plugin as not found; later ones say it is not
+ * associated with a tracked package install, which they report only when the
+ * id is in neither their plugin index nor their install records, and whose
+ * closing guidance differs by release line. The config's own references to it
+ * are removed beforehand by `retireLegacyOpenClawConfig`.
  */
 const LEGACY_OPENCLAW_PLUGIN_ABSENT = new Set([
   "Plugin not found: omnesis-bridge",
   'Plugin "omnesis-bridge" is not associated with a tracked package install. Refresh the plugin registry, then reinstall the package or run openclaw doctor before retrying.',
+  'Plugin "omnesis-bridge" is not associated with a tracked package install. Package maintenance requires an unambiguous install record and its discovered package owner. Refresh the plugin registry and run openclaw plugins doctor to inspect the install record before retrying.',
 ]);
+
+/**
+ * The start of what OpenClaw prints when it discovers an `omnesis-bridge`
+ * plugin on disk that it has no install record for (a copy placed in one of
+ * its plugin directories by hand). OpenClaw refuses to uninstall such a copy,
+ * so the operator removes its directory themselves.
+ */
+const LEGACY_OPENCLAW_PLUGIN_UNTRACKED =
+  'Plugin "omnesis-bridge" has no authoritative package-owner metadata.';
 
 function retirePersistedLegacyOpenClawPlugin(environment: NodeJS.ProcessEnv): void {
   const result = spawnSync("openclaw", ["plugins", "uninstall", "omnesis-bridge", "--force"], {
@@ -843,8 +854,14 @@ function retirePersistedLegacyOpenClawPlugin(environment: NodeJS.ProcessEnv): vo
     result.stderr.trim() ||
     result.stdout.trim() ||
     `openclaw exited with status ${result.status ?? "unknown"}`;
+  const remedy =
+    !result.error && diagnostic?.trim().startsWith(LEGACY_OPENCLAW_PLUGIN_UNTRACKED)
+      ? "\nOpenClaw found an omnesis-bridge plugin it did not install and will not remove it. " +
+        "Run `openclaw plugins inspect omnesis-bridge` and delete the plugin directory its " +
+        "Source line names."
+      : "";
   throw new CliError(
-    `${c.red}Could not retire the legacy OpenClaw Omnesis registry entry: ${detail}${c.reset}`,
+    `${c.red}Could not retire the legacy OpenClaw Omnesis registry entry: ${detail}${remedy}${c.reset}`,
     EXIT_USER_ERROR,
   );
 }
@@ -1515,6 +1532,11 @@ export const connectCommand = defineCommand({
       description:
         "Refresh the installed plugin, skill, and the connection's OAuth authorization without re-pairing the operational device",
     },
+    interactive: {
+      type: "boolean",
+      description:
+        "With --refresh: ask for a new approval when the connection has none left. On by default in a terminal; --no-interactive fails with the repair command instead, as an unattended update does",
+    },
     restart: {
       type: "boolean",
       default: true,
@@ -1572,6 +1594,14 @@ export const connectCommand = defineCommand({
     const refresh = ctx.args.refresh === true;
     if (skillOnly && refresh) {
       throw new CliError("Use either --refresh or --skill-only, not both.", EXIT_USER_ERROR);
+    }
+    if (typeof ctx.args.interactive === "boolean" && !refresh) {
+      // A first connect, or the resume of one, needs an approval by
+      // definition; only a refresh has a choice to make.
+      throw new CliError(
+        "--interactive and --no-interactive apply to --refresh only.",
+        EXIT_USER_ERROR,
+      );
     }
     if (
       refresh &&
@@ -1680,7 +1710,13 @@ export const connectCommand = defineCommand({
       warnOnVersionDrift(capabilities, harness);
       skillCapabilities = { subscriptions: capabilities.subscriptions };
       const credentials = persistGatewayTrust(credentialsPath, existing.credentials, tls);
-      await authorizeHarness(home, harness, credentials);
+      // Asking for a new approval needs somebody to give it. Without a
+      // terminal — an update, a fleet update, a script — the refresh keeps a
+      // working token set as it is and otherwise recovers headlessly or
+      // fails naming this command; it never opens a request nobody watches.
+      const consent =
+        typeof ctx.args.interactive === "boolean" ? ctx.args.interactive : interactive;
+      await authorizeHarness(home, harness, credentials, { consent });
       const prepared = prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
       try {
         prepared.install();

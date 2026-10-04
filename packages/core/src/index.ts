@@ -727,12 +727,15 @@ export type {
   DocumentGraph,
   BuildDocumentGraphOptions,
   GraphWalkFilters,
+  GraphContextOptionalLinkType,
   RecordReference,
 } from "./graph.js";
 
 export {
   NEAR_DUPLICATE_EDGE_TYPE,
   SAME_ENTITY_EDGE_TYPE,
+  GRAPH_CONTEXT_LINK_TYPES,
+  GRAPH_CONTEXT_OPTIONAL_LINK_TYPES,
   analyticsRowKey,
   parseAnalyticsRowKey,
   recordReference,
@@ -791,7 +794,13 @@ export type {
   AttachmentExtractFn,
 } from "./attachments.js";
 
-export type { AudioTranscribeFn } from "./transcription.js";
+export type {
+  AudioTranscribeFn,
+  TranscriptionContext,
+  TranscriptionPerson,
+  TranscriptionVocabulary,
+  TranscriptionVocabularyEntry,
+} from "./transcription.js";
 
 export type { OcrFn, OcrResult } from "./ocr.js";
 

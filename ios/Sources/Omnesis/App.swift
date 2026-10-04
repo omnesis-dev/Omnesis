@@ -46,6 +46,7 @@ public struct OmnesisApp: App {
         // here, register right away, then stash it in @State.
         let store = AppStore()
         store.registerBackgroundTasks()
+        store.maintainTranscriptionVocabulary()
         #if os(iOS)
         store.publishDictationGateToWatch()
         #endif
@@ -1613,6 +1614,7 @@ public final class AppStore {
         pushGatewayRegistrationFailure = nil
         relayPushConsentRequest = nil
         let state = pairingCoord.reload()
+        TranscriptionVocabularyCache.shared.configure(pairing: pairingCoord.pairing, enabled: false)
         if let pairing = pairingCoord.pairing, localSourceOwner.deviceId == nil {
             // A launch that finds a pairing and no recorded owner gives the pairing the local source state.
             localSourceOwner.deviceId = pairing.deviceId
@@ -1634,6 +1636,7 @@ public final class AppStore {
     /// the old device identity. User-authored notes and HealthKit/source
     /// preferences survive, matching an intentional re-pair.
     private func tearDownAfterPairingLoss(wipeBuffer: Bool) async {
+        TranscriptionVocabularyCache.shared.clear()
         adminCoord.stopAdmin()
         agentCoord.teardown()
         notesCoord.teardown()
@@ -1652,6 +1655,7 @@ public final class AppStore {
     /// `pairAsync(raw:)`.
     public func pair(raw: String) {
         if let pairing = pairingCoord.pair(raw: raw) {
+            TranscriptionVocabularyCache.shared.configure(pairing: pairing, enabled: false)
             pushRegistrationAttempts.invalidate()
             pushCallbackRequests.invalidate()
             pushConfigurationChecks.invalidate()
@@ -1670,6 +1674,7 @@ public final class AppStore {
     /// (POST /devices/pair). Also falls back to V1 for legacy QR payloads.
     public func pairAsync(raw: String) async {
         if let pairing = await pairingCoord.pairAsync(raw: raw) {
+            TranscriptionVocabularyCache.shared.configure(pairing: pairing, enabled: false)
             pushRegistrationAttempts.invalidate()
             pushCallbackRequests.invalidate()
             pushConfigurationChecks.invalidate()
@@ -1695,6 +1700,7 @@ public final class AppStore {
         relayPushConsentRequest = nil
         let stagedRevocation = pairingCoord.stageUnpair()
         guard stagedRevocation != nil || pairingCoord.pairing == nil else { return }
+        TranscriptionVocabularyCache.shared.clear()
         adminCoord.stopAdmin()
         agentCoord.teardown()
         NotificationClaimCredentials.clear()
@@ -2317,6 +2323,7 @@ public final class AppStore {
     }
 
     func onActive() async {
+        Task { await TranscriptionVocabularyCache.shared.refreshIfDue() }
         await retryPendingDeviceRevocation()
         // Decide navigation before any sync/network await. This gives the
         // explicit fresh/exact-conversation choice a generation immediately,

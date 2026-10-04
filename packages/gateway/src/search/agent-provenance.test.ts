@@ -6,9 +6,10 @@ import { rmSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { computeContentHash } from "@omnesis/core";
 import { createDatabase } from "../db.js";
-import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
+import { resetUrlGraphRoles, setUrlGraphRoles } from "../url-graph-roles.js";
 import { OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
 import { cognitionAuthoredDocumentTypes } from "../brain/cognition-authored.js";
+import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
 import { enrichAgentSearch, type AgentSearchProvenanceOptions } from "./agent-provenance.js";
 import type { SearchResultItem } from "./types.js";
 import type Database from "better-sqlite3";
@@ -47,6 +48,7 @@ function doc(
     lowSignal?: boolean;
     stream?: string;
     extra?: Record<string, unknown>;
+    created?: string;
   } = {},
 ): SearchResultItem {
   const source = options.source ?? "archive:fictional";
@@ -73,7 +75,7 @@ function doc(
     computeContentHash(body),
     options.hash ?? computeContentHash(body),
     JSON.stringify(metadata),
-    NOW,
+    options.created ?? NOW,
     NOW,
     NOW,
     NOW,
@@ -419,7 +421,6 @@ describe("agent graph search evidence", () => {
     ["url", "links to", "is linked from"],
     ["references", "references", "is referenced by"],
     ["replies-to", "is a reply to", "has a reply in"],
-    ["part-of-thread", "is in the same conversation as", "is in the same conversation as"],
     ["calendar-event", "has a calendar connection with", "has a calendar connection with"],
   ])("%s paths pair readable relations with preserved machine edges", (type, outward, inward) => {
     const first = doc("first", { type: "note", body: "A fictional starting note." });
@@ -433,6 +434,244 @@ describe("agent graph search evidence", () => {
     expect(back.paths[0].relations).toEqual([inward]);
     expect(out.summary).toContain(`${outward} Title second`);
     expect(back.summary).toContain(`${inward} Title first`);
+  });
+
+  describe("threads", () => {
+    // Stored thread links point every message at one arbitrary member, so a
+    // long thread is a star around it.
+    function thread(size: number): SearchResultItem[] {
+      const messages = Array.from({ length: size }, (_, n) =>
+        doc(`m${n + 1}`, {
+          type: "email",
+          body: `Fictional thread message ${n + 1}.`,
+          extra: { threadId: "thread-1" },
+          created: `2026-01-${String(n + 1).padStart(2, "0")}T09:00:00.000Z`,
+        }),
+      );
+      for (const message of messages.slice(1)) edge(message.documentId, "m1", "part-of-thread");
+      return messages;
+    }
+
+    test("a long thread is one neighbour, named by its latest message", () => {
+      const [first] = thread(9);
+      const provenance = search([first])[0].provenance!;
+      expect(provenance.stopReasons).not.toContain("hub");
+      expect(provenance.paths[0]).toEqual({
+        documentIds: ["m1", "m9"],
+        edges: ["outbound:part-of-thread"],
+        relations: ["is in a 9-message conversation whose latest message is"],
+      });
+      expect(provenance.modelContext?.facts[0]).toBe(
+        "[D1] is in a 9-message conversation whose latest message is [D2] and is in the same conversation as [D3], [D4], [D5], [D6] and [D7].",
+      );
+      // The newest messages, up to the fanout; the oldest of a long thread stay out.
+      expect(provenance.paths.map((path) => path.documentIds.at(-1))).toEqual([
+        "m9",
+        "m8",
+        "m7",
+        "m6",
+        "m5",
+        "m4",
+      ]);
+    });
+
+    test("a short thread is shown whole, so no message in its middle is hidden", () => {
+      const messages = thread(4);
+      const provenance = search([messages[3]])[0].provenance!;
+      expect(provenance.paths).toEqual([
+        {
+          documentIds: ["m4", "m3"],
+          edges: ["outbound:part-of-thread"],
+          relations: ["is the latest of 4 messages in a conversation that also has"],
+        },
+        {
+          documentIds: ["m4", "m2"],
+          edges: ["outbound:part-of-thread"],
+          relations: ["is in the same conversation as"],
+        },
+        {
+          documentIds: ["m4", "m1"],
+          edges: ["outbound:part-of-thread"],
+          relations: ["is in the same conversation as"],
+        },
+      ]);
+    });
+
+    test("a thread with no other visible member adds no fact", () => {
+      const [only] = thread(1);
+      const hidden = hiddenSourceIdsToExclude()[0];
+      doc("hidden-member", { source: hidden, extra: { threadId: "thread-1" } });
+      expect(search([only])[0].provenance?.paths).toEqual([]);
+    });
+
+    test("reads a conversationId when no threadId is declared", () => {
+      const members = [1, 2, 3].map((n) =>
+        doc(`c${n}`, {
+          type: "email",
+          body: `Fictional conversation message ${n}.`,
+          extra: { conversationId: "conv-1" },
+          created: `2026-01-0${n}T09:00:00.000Z`,
+        }),
+      );
+      expect(search([members[0]])[0].provenance?.paths.map((path) => path.documentIds)).toEqual([
+        ["c1", "c3"],
+        ["c1", "c2"],
+      ]);
+    });
+
+    test("ignores a thread id that is not text", () => {
+      const members = [1, 2].map((n) =>
+        doc(`n${n}`, { type: "email", body: `Fictional numbered ${n}.`, extra: { threadId: 7 } }),
+      );
+      expect(search([members[0]])[0].provenance?.paths).toEqual([]);
+    });
+
+    test("member lookups use the thread index rather than scanning the source", () => {
+      for (const field of ["threadId", "conversationId"]) {
+        const plan = db
+          .prepare(
+            `EXPLAIN QUERY PLAN SELECT d.id, COUNT(*) OVER () AS n FROM documents d
+             WHERE d.source_id = ? AND json_extract(d.metadata, '$.extra.${field}') = ?
+             ORDER BY +d.source_created_at DESC, d.id DESC LIMIT 1`,
+          )
+          .all("archive:fictional", "thread-1") as Array<{ detail: string }>;
+        expect(plan.map((row) => row.detail).join(" ")).toMatch(/USING INDEX idx_documents_/);
+        expect(plan.map((row) => row.detail).join(" ")).not.toMatch(/source_id_created_at/);
+      }
+    });
+
+    test("a thread counts once against the hub limit", () => {
+      const [first] = thread(3);
+      for (const n of [1, 2]) {
+        doc(`ref-${n}`, { type: "note", body: `Fictional note ${n}.` });
+        edge("m1", `ref-${n}`, "references");
+      }
+      expect(search([first], { fanout: 3 })[0].provenance?.stopReasons).not.toContain("hub");
+      expect(search([first], { fanout: 2 })[0].provenance?.stopReasons).toContain("hub");
+    });
+  });
+
+  describe("cleaned reference counts", () => {
+    function referenced(): SearchResultItem {
+      const target = doc("target", { type: "note", body: "A fictional much-linked note." });
+      for (const n of [1, 2]) {
+        doc(`citer-${n}`, { type: "note", body: `Fictional note ${n}.` });
+        edge(`citer-${n}`, "target", "references");
+      }
+      doc("page", { type: "note", body: "A fictional page linking three times." });
+      const insert = db.prepare(`INSERT INTO document_links
+        (source_doc_id,link_type,raw_target,normalized_target,target_doc_id,created_at)
+        VALUES ('page','url',?,?,'target',?)`);
+      for (const n of [1, 2, 3]) insert.run(`u${n}`, `u${n}`, NOW);
+      doc("same-phone", { type: "note", body: "A fictional note sharing a number." });
+      edge("same-phone", "target", "shares-phone");
+      doc("answer", { source: OMNESIS_CHAT_SOURCE_ID, type: "conversation" });
+      edge("answer", "target", "cited");
+      return { ...target, refCount: 8 };
+    }
+
+    test("count distinct visible documents over the followed links", () => {
+      const [hit] = search([referenced()], { cleanRefCounts: true, minRefCount: 3 });
+      expect(hit.refCount).toBe(3);
+    });
+
+    test("leave refCount untouched when the caller does not ask for it", () => {
+      expect(search([referenced()])[0].refCount).toBe(8);
+    });
+
+    test("drop refCount when nothing visible links in", () => {
+      const lone = { ...doc("lone"), refCount: 2 };
+      expect(search([lone], { cleanRefCounts: true, minRefCount: 3 })[0]).not.toHaveProperty(
+        "refCount",
+      );
+    });
+
+    test("enrich a well-linked hit past the leading results", () => {
+      const first = doc("first", { type: "note", body: "A fictional leading note." });
+      const target = referenced();
+      const [, walked] = search([first, target], { topN: 1, cleanRefCounts: true, minRefCount: 3 });
+      expect(walked.provenance?.paths.length).toBeGreaterThan(0);
+      const [, plain] = search([first, target], { topN: 1, cleanRefCounts: true, minRefCount: 4 });
+      expect(plain.provenance).toBeUndefined();
+      const [, off] = search([first, target], { topN: 1, cleanRefCounts: true, minRefCount: 0 });
+      expect(off.provenance).toBeUndefined();
+    });
+  });
+
+  test("well-linked hits past the leading ones share an allowance of topN", () => {
+    const hits = [doc("lead", { type: "note", body: "A fictional leading note." })];
+    for (const n of [1, 2, 3]) {
+      hits.push(doc(`linked-${n}`, { type: "note", body: `Fictional linked note ${n}.` }));
+      for (const m of [1, 2, 3]) {
+        doc(`in-${n}-${m}`, { type: "note", body: `Fictional citer ${n}-${m}.` });
+        edge(`in-${n}-${m}`, `linked-${n}`, "references");
+      }
+    }
+    const walked = search(hits, { topN: 1, cleanRefCounts: true, minRefCount: 3 }).map(
+      (hit) => (hit.provenance?.paths.length ?? 0) > 0,
+    );
+    expect(walked).toEqual([false, true, false, false]);
+  });
+
+  test("the cleaned count leaves out links from a URL hub source", () => {
+    const target = doc("target", { type: "note", body: "A fictional linked page." });
+    doc("history-day", { source: "browser-history:fictional", type: "note", body: "A day." });
+    edge("history-day", "target", "url");
+    setUrlGraphRoles("test", ["browser-history"], [], []);
+    try {
+      expect(search([target], { cleanRefCounts: true })[0]).not.toHaveProperty("refCount");
+    } finally {
+      resetUrlGraphRoles();
+    }
+  });
+
+  describe("reference table", () => {
+    test("labels are shared across hits and a neighbour that is a hit says so", () => {
+      const first = doc("first", { type: "note", body: "A fictional first note." });
+      const second = doc("second", { type: "note", body: "A fictional second note." });
+      edge("first", "second", "references");
+      const [a, b] = search([first, second]);
+      expect(a.provenance?.modelContext?.facts).toContain(
+        "Also in these search results: [D2] (result 2).",
+      );
+      expect(b.provenance?.modelContext?.documents[0]).toMatchObject({
+        ref: "D2",
+        documentId: "second",
+      });
+      expect(b.provenance?.modelContext?.facts).toEqual([
+        "Also in these search results: [D1] (result 1).",
+        "[D2] is referenced by [D1].",
+      ]);
+    });
+
+    test("a copy collapsed into a result reads as that result", () => {
+      const note = doc("note", { type: "note", body: "A fictional note linking to a file." });
+      const file = doc("file-a");
+      const copy = doc("file-b");
+      edge("note", "file-b", "references");
+      const [first] = search([note, file, copy]);
+      expect(first.provenance?.modelContext?.facts[0]).toBe(
+        "Also in these search results: [D2] (result 2).",
+      );
+    });
+
+    test("which neighbours are results outlasts a tight fact budget", () => {
+      const first = doc("first", { type: "note", body: "A fictional first note." });
+      const second = doc("second", { type: "note", body: "A fictional second note." });
+      edge("first", "second", "references");
+      const facts = search([first, second], { maxSummaryChars: 60 })[0].provenance?.modelContext
+        ?.facts;
+      expect(facts).toEqual(["Also in these search results: [D2] (result 2)."]);
+    });
+
+    test("each row carries the document's date to the minute and its type", () => {
+      const first = doc("first", { type: "email", created: "2026-03-04T05:06:07.890Z" });
+      const [hit] = search([first]);
+      expect(hit.provenance?.modelContext?.documents[0]).toMatchObject({
+        date: "2026-03-04T05:06Z",
+        type: "email",
+      });
+    });
   });
 
   test("readable multi-hop paths retain one relation per connection", () => {

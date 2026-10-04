@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { OAUTH_REFRESH_REPLAY_WINDOW_MS } from "@omnesis/types";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
 
 import { activeAccessTokenPredicate } from "./active-access-token.js";
@@ -18,7 +19,6 @@ import type {
 import type { AccessMutationResult } from "./store-contracts.js";
 import type { Db } from "../data/types.js";
 
-const REFRESH_RETRY_GRACE_MS = 60_000;
 const GCM_TAG_BYTES = 16;
 
 /** Resolve the immutable audience bound to an opaque refresh token. */
@@ -130,7 +130,7 @@ export function refreshPrincipalAccessToken(
         WHERE id = ?`,
     ).run(
       encryptRefreshReplacement(tokens, input.refreshToken, row.id),
-      now + REFRESH_RETRY_GRACE_MS,
+      now + OAUTH_REFRESH_REPLAY_WINDOW_MS,
       row.id,
     );
     appendAudit(db, {

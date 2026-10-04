@@ -243,6 +243,81 @@ describe("answer completion transport during a rolling upgrade", () => {
   });
 });
 
+describe("OAuth keepalive", () => {
+  async function startWith(tokens: Record<string, unknown>) {
+    const stateDir = mkdtempSync(join(tmpdir(), "omnesis-openclaw-keepalive-"));
+    tempDirs.push(stateDir);
+    mkdirSync(join(stateDir, "omnesis"));
+    const credentialsPath = join(stateDir, "omnesis", "integration.json");
+    writeFileSync(
+      credentialsPath,
+      `${JSON.stringify({
+        gatewayUrl: "http://127.0.0.1:1",
+        deliveryToken: "omn_fictional_delivery",
+        ingestionToken: "omn_fictional_ingestion",
+        managementToken: "omn_fictional_management",
+        oauth: {
+          redirectUri: "http://127.0.0.1:48123/callback",
+          clientInformation: { client_id: "client_fictional" },
+          tokens,
+        },
+      })}\n`,
+    );
+    vi.spyOn(AgentIntegrationClient.prototype, "start").mockImplementation(() => {});
+    vi.spyOn(DurableTranscriptIngestor.prototype, "start").mockImplementation(() => {});
+    vi.spyOn(AgentIntegrationClient.prototype, "stop").mockResolvedValue();
+    vi.spyOn(DurableTranscriptIngestor.prototype, "stop").mockResolvedValue();
+    const fake = api("full");
+    registerOpenClawIntegration(fake as never);
+    const service = fake.services[0] as {
+      start(context: { stateDir: string; logger: { warn(message: string): void } }): Promise<void>;
+      stop(): Promise<void>;
+    };
+    const warn = vi.fn();
+    await service.start({ stateDir, logger: { warn } });
+    return { service, credentialsPath, warn };
+  }
+
+  test("re-issues a token set a stopped connect left missing, on start", async () => {
+    const requests: Array<[string, string, unknown]> = [];
+    vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockImplementation(
+      async (method: string, path: string, body?: unknown) => {
+        requests.push([method, path, body]);
+        return {
+          access_token: "access_reissued",
+          refresh_token: "refresh_reissued",
+          token_type: "Bearer",
+        } as never;
+      },
+    );
+    const { service, credentialsPath } = await startWith({});
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(credentialsPath, "utf8")).oauth.tokens).toMatchObject({
+        access_token: "access_reissued",
+      }),
+    );
+    expect(requests).toContainEqual([
+      "POST",
+      "/agent-integration/oauth-reissue",
+      { clientId: "client_fictional" },
+    ]);
+    await service.stop();
+  });
+
+  test("names the repair when nothing approved is left to re-issue", async () => {
+    vi.spyOn(PinnedGatewayHttpClient.prototype, "requestJson").mockRejectedValue(
+      new IntegrationHttpError(404, "not found", undefined, "NO_APPROVED_CREDENTIAL"),
+    );
+    const { service, warn } = await startWith({});
+    await vi.waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("omnesis connect openclaw --refresh"),
+      ),
+    );
+    await service.stop();
+  });
+});
+
 describe("the window one tool call may use", () => {
   const HOST_DEFAULT_MS = 90_000;
 

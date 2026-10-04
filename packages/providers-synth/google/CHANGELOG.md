@@ -1,5 +1,15 @@
 # @omnesis/provider-google-synth
 
+## 0.6.0
+
+### Patch Changes
+
+- @omnesis/core@0.6.0
+- @omnesis/providers-synth-common@0.6.0
+- @omnesis/provider-google@0.6.0
+- @omnesis/source-sdk@0.6.0
+- @omnesis/types@0.6.0
+
 ## 0.5.14
 
 ### Patch Changes

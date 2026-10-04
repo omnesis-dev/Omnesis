@@ -50,6 +50,7 @@ function makeDoc(externalId = "msg-1"): DocumentInput {
 // instrumenting the test gateway further.
 const postDocCalls: Array<{ docCount: number }> = [];
 const ocrRequestBodies: string[] = [];
+const transcriptionContextHeaders: Array<string | null> = [];
 const withCursorBodies: Array<Record<string, unknown>> = [];
 const reconcileBodies: Array<Record<string, unknown>> = [];
 // Spy log of POST /analytics/ingest calls: asserts deletes-only pages
@@ -129,6 +130,7 @@ function createTestGateway(database: Db, apiKey: string) {
       // POST /inference/transcribe — echoes the audio bytes as the transcript,
       // with magic bodies to exercise the unavailable / disabled / error paths.
       if (path === "/inference/transcribe" && req.method === "POST") {
+        transcriptionContextHeaders.push(req.headers.get("x-omnesis-transcription-context"));
         return req.arrayBuffer().then(async (buf) => {
           const text = new TextDecoder().decode(new Uint8Array(buf));
           if (text === "TRIGGER_SLOW") {
@@ -383,6 +385,54 @@ describe("HttpGatewayClient.transcribe", () => {
       language: "fr",
     });
     expect(r).toEqual({ text: "hello from a voice note", language: "fr", durationSec: 1.5 });
+  });
+
+  test("forwards Unicode transcription context in a header without changing audio transport", async () => {
+    const context = {
+      purpose: "source-audio" as const,
+      conversation: { sourceId: SourceId("fictional-source"), threadId: "conversation-é" },
+      speaker: { isSelf: true },
+    };
+    const result = await client.transcribe(enc("spoken words"), "audio/ogg", { context });
+    expect(result?.text).toBe("spoken words");
+    expect(JSON.parse(decodeURIComponent(transcriptionContextHeaders.at(-1)!))).toEqual(context);
+    await client.transcribe(enc("plain words"), "audio/ogg");
+    expect(transcriptionContextHeaders.at(-1)).toBeNull();
+  });
+
+  test("omits oversized context while preserving audio and the language hint", async () => {
+    const requestsBefore = transcriptionContextHeaders.length;
+    const result = await client.transcribe(enc("speech"), "audio/ogg", {
+      language: "fr",
+      context: {
+        purpose: "source-audio",
+        conversation: { sourceId: SourceId("fictional-source"), threadId: "x".repeat(9000) },
+      },
+    });
+    expect(result).toMatchObject({ text: "speech", language: "fr" });
+    expect(transcriptionContextHeaders.length).toBe(requestsBefore + 1);
+    expect(transcriptionContextHeaders.at(-1)).toBeNull();
+  });
+
+  test("large groups with valid individual identities preserve ordinary transcription", async () => {
+    const context = {
+      purpose: "source-audio" as const,
+      participants: Array.from({ length: 32 }, (_, index) => ({
+        identifiers: [
+          {
+            kind: "email" as const,
+            value: `${"x".repeat(62)}${String(index).padStart(2, "0")}@${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(38)}.example.org`,
+          },
+        ],
+      })),
+    };
+    expect(context.participants.every((person) => person.identifiers[0].value.length <= 254)).toBe(
+      true,
+    );
+    expect(encodeURIComponent(JSON.stringify(context)).length).toBeGreaterThan(8192);
+    const result = await client.transcribe(enc("group speech"), "audio/ogg", { context });
+    expect(result?.text).toBe("group speech");
+    expect(transcriptionContextHeaders.at(-1)).toBeNull();
   });
 
   test("returns null when the gateway reports no transcriber available", async () => {

@@ -61,6 +61,7 @@ final class RoutingStubProtocol: URLProtocol {
     nonisolated(unsafe) static var messageResponses: [ScriptedMessageResponse] = []
     nonisolated(unsafe) static var cancelResponses: [ScriptedMessageResponse] = []
     nonisolated(unsafe) static var conversationActionResponses: [ScriptedMessageResponse] = []
+    nonisolated(unsafe) static var eventRequestCount = 0
     nonisolated(unsafe) static var conversationRequestCount = 0
     nonisolated(unsafe) static var sessionRequestCount = 0
     nonisolated(unsafe) static var sessionRequestBodies: [Data] = []
@@ -84,6 +85,7 @@ final class RoutingStubProtocol: URLProtocol {
         messageResponses = []
         cancelResponses = []
         conversationActionResponses = []
+        eventRequestCount = 0
         conversationRequestCount = 0
         sessionRequestCount = 0
         sessionRequestBodies = []
@@ -93,6 +95,25 @@ final class RoutingStubProtocol: URLProtocol {
         conversationActions = []
         seenMarks = []
         lock.unlock()
+    }
+
+    static func seenEventRequests() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return eventRequestCount
+    }
+
+    /// Serves the scripted stream the way the gateway does on a reconnect:
+    /// frames whose numeric `id:` is at or before `Last-Event-ID` are not sent
+    /// again. Frames without an id are always sent.
+    private static func replay(_ stream: Data, after lastEventId: String?) -> Data {
+        guard let lastEventId, let cursor = Int(lastEventId),
+              let text = String(data: stream, encoding: .utf8) else { return stream }
+        let frames = text.components(separatedBy: "\n\n").filter { frame in
+            let id = frame.split(separator: "\n").first { $0.hasPrefix("id: ") }.flatMap { Int($0.dropFirst(4)) }
+            return id.map { $0 > cursor } ?? true
+        }
+        return Data(frames.joined(separator: "\n\n").utf8)
     }
 
     static func recordedSeenMarks() -> [(id: String, body: String)] {
@@ -174,7 +195,10 @@ final class RoutingStubProtocol: URLProtocol {
         let path = request.url?.path
         let isEvents = path == "/agent/events"
         Self.lock.lock()
-        var body = isEvents ? Self.sseBody : Self.jsonBody
+        var body = isEvents
+            ? Self.replay(Self.sseBody, after: request.value(forHTTPHeaderField: "Last-Event-ID"))
+            : Self.jsonBody
+        if isEvents { Self.eventRequestCount += 1 }
         var delay: TimeInterval = 0
         var status = 200
         var responseGate: ScriptedResponseGate?

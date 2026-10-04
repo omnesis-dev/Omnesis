@@ -65,6 +65,14 @@ enum ModelsPreviewData {
             experimental: true,
             section: "cognition"
         ),
+        CapabilityMeta(
+            role: "decision",
+            title: "Decision model",
+            description: "Answers typed questions about a document, such as whether an email is worth recording.",
+            icon: "scale",
+            section: "cognition",
+            backendFamily: "typed-decision"
+        ),
     ]
 
     static func overview() -> ModelsOverview {
@@ -83,6 +91,23 @@ enum ModelsPreviewData {
                     values: PreviewMocks.modelReasoningValues
                 ),
             ]
+        )
+    }
+
+    /// An ordinary role beside one only a special backend family serves, so
+    /// the read-only card sits in view next to a tappable one.
+    static func overviewWithReadOnlyRole() -> ModelsOverview {
+        let base = overview()
+        return ModelsOverview(
+            assignmentDisplays: base.assignmentDisplays,
+            capabilities: base.capabilities.filter { ["agent", "decision"].contains($0.role) },
+            inference: base.inference,
+            catalog: base.catalog,
+            installed: base.installed,
+            activeDownloads: base.activeDownloads,
+            presets: base.presets,
+            modelControls: base.modelControls,
+            modelSettings: base.modelSettings
         )
     }
 
@@ -140,6 +165,13 @@ enum ModelsPreviewData {
                 providerId: "codex",
                 providerLabel: "Codex",
                 modelName: "GPT Example Frontier",
+                available: true,
+                configured: true
+            ),
+            "decision": ModelDisplay(
+                providerId: "typesafe",
+                providerLabel: "TypeSafe",
+                modelName: "jev-example",
                 available: true,
                 configured: true
             ),

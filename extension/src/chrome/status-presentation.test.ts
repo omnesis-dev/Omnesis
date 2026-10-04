@@ -74,10 +74,26 @@ describe("capture status presentation", () => {
       status({ connectivity: { reachable: true, degraded: true, at: 1 } }),
       status({ queueCorruption: { at: 1, discarded: 2 } }),
       status({ queueOverflow: { at: 1, discardedDocuments: 1, discardedVisits: 2 } }),
-      status({ handoffOverflow: { at: 1, discarded: 2 } }),
       status({ failure: { kind: "document", status: 422, reason: "invented", at: 1, count: 1 } }),
     ];
     for (const value of warningStates) expect(warningFor(value).trim()).not.toBe("");
+  });
+
+  it("does not warn about recovery-copy evictions when capture is healthy", () => {
+    const value = status({ handoffOverflow: { at: 1, discarded: 3 } });
+    expect(warningFor(value)).toBe("");
+    expect(hasActiveFailure(value)).toBe(false);
+  });
+
+  it("still reports a current handoff failure alongside recovery history", () => {
+    const value = status({
+      handoffOverflow: { at: 1, discarded: 3 },
+      handoffFailure: { at: 2, attempts: 4 },
+    });
+    expect(warningFor(value)).toBe(
+      "Capture handoff is delayed. Omnesis is retrying; keep the page open.",
+    );
+    expect(hasActiveFailure(value)).toBe(true);
   });
 
   it("gives gateway health priority over lower-priority warnings", () => {
@@ -157,18 +173,18 @@ describe("gatewayVersionNotice", () => {
     expect(gatewayVersionNotice("0.4.5", null)).toBe("");
     expect(gatewayVersionNotice("garbage", "0.4.5")).toBe("");
     // Same minor, any patch: HTTP changes within a minor are additive.
-    expect(gatewayVersionNotice("0.4.1", "0.4.5")).toBe("");
-    expect(gatewayVersionNotice("0.4.9", "0.4.5")).toBe("");
+    expect(gatewayVersionNotice("0.5.1", "0.5.5")).toBe("");
+    expect(gatewayVersionNotice("0.5.9", "0.5.5")).toBe("");
     // A gateway ahead of the extension is fine too.
     expect(gatewayVersionNotice("0.6.0", "0.4.5")).toBe("");
   });
 
-  it("warns when the gateway is a minor behind, and when the majors differ", () => {
+  it("warns only when the gateway predates the capture contract", () => {
     expect(gatewayVersionNotice("0.3.9", "0.4.5")).toMatch(
       /behind this extension.*Update the gateway/,
     );
-    expect(gatewayVersionNotice("1.0.0", "0.4.5")).toMatch(/different major versions/);
-    expect(gatewayVersionNotice("0.4.5", "1.0.0")).toMatch(/different major versions/);
+    expect(gatewayVersionNotice("1.0.0", "0.5.5")).toBe("");
+    expect(gatewayVersionNotice("0.5.5", "1.0.0")).toBe("");
   });
 
   it("is the lowest-priority warning in the popup ladder", () => {

@@ -18,14 +18,17 @@ struct SearchBreadcrumbsView: View {
         let facts = SearchBreadcrumbFormatter.facts(provenance, documentId: documentId)
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(facts.enumerated()), id: \.offset) { _, fact in
+                // A branch sits one level under the fact that ends with its colon.
                 HStack(alignment: .top, spacing: 6) {
-                    Text("•")
+                    Text(fact.depth == 0 ? "•" : "◦")
                         .foregroundStyle(Theme.textMuted)
                         .fixedSize()
                         .frame(width: 12, alignment: .leading)
+                        .accessibilityHidden(true)
                     BreadcrumbRichText(fact: fact, store: store) { selectedDocument = $0 }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(.leading, CGFloat(fact.depth) * 16)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -53,6 +56,12 @@ private struct BreadcrumbRichText: UIViewRepresentable {
         view.textContainer.lineFragmentPadding = 0
         view.adjustsFontForContentSizeCategory = true
         view.delegate = context.coordinator
+        // A long-press on a link opens its menu, never a text drag. UIKit's
+        // drag of a range holding an icon attachment raises a range exception
+        // while it builds the drag item, and a dragged internal navigation URL
+        // means nothing outside this view anyway.
+        view.textDragInteraction?.isEnabled = false
+        view.isAccessibilityElement = true
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return view
     }
@@ -77,8 +86,7 @@ private struct BreadcrumbRichText: UIViewRepresentable {
                 let size = font.capHeight
                 attachment.bounds = CGRect(x: 0, y: (font.capHeight - size) / 2, width: size, height: size)
                 text.append(NSAttributedString(attachment: attachment))
-                let title = document.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled document"
-                text.append(NSAttributedString(string: "\u{00A0}\(title)", attributes: attributes))
+                text.append(NSAttributedString(string: "\u{00A0}\(document.displayTitle)", attributes: attributes))
                 if let url = SearchBreadcrumbNavigation.url(documentId: document.documentId) {
                     text.addAttribute(.link, value: url, range: NSRange(location: start, length: text.length - start))
                 }
@@ -86,7 +94,16 @@ private struct BreadcrumbRichText: UIViewRepresentable {
         }
         view.linkTextAttributes = [.foregroundColor: UIColor(Theme.accent)]
         view.attributedText = text
+        // VoiceOver reads the fact as one sentence, without the icons, and
+        // offers each linked document as its own action.
         view.accessibilityLabel = fact.plainText
+        let coordinator = context.coordinator
+        view.accessibilityCustomActions = fact.links.map { document in
+            UIAccessibilityCustomAction(name: "Open \(document.displayTitle)") { _ in
+                coordinator.onOpen(document.documentId)
+                return true
+            }
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
@@ -132,15 +149,42 @@ private struct BreadcrumbRichText: UIViewRepresentable {
             self.onOpen = onOpen
         }
 
+        /// A tap on a breadcrumb link opens its document in place; any other
+        /// link does nothing rather than leaving the app.
         func textView(
-            _ textView: UITextView, shouldInteractWith URL: URL,
-            in characterRange: NSRange, interaction: UITextItemInteraction
+            _ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction
         )
-            -> Bool {
-            if let id = SearchBreadcrumbNavigation.documentId(URL) {
-                onOpen(id)
+            -> UIAction? {
+            guard let id = documentId(textItem, in: textView) else { return nil }
+            return UIAction { [weak self] _ in self?.onOpen(id) }
+        }
+
+        /// A long-press offers only opening the document. The system menu
+        /// (Open Link, Copy Link, a web preview) would act on the internal
+        /// navigation URL, which nothing outside this view can open.
+        func textView(
+            _ textView: UITextView, menuConfigurationFor textItem: UITextItem, defaultMenu: UIMenu
+        )
+            -> UITextItem.MenuConfiguration? {
+            guard let id = documentId(textItem, in: textView) else { return nil }
+            let open = UIAction(title: "Open Document", image: UIImage(systemName: "doc.text")) { [weak self] _ in
+                self?.onOpen(id)
             }
-            return false
+            return UITextItem.MenuConfiguration(menu: UIMenu(children: [open]))
+        }
+
+        /// The document a link names. The icon and the title share one link,
+        /// so an item reported for the icon attachment reads the link
+        /// attribute under it.
+        private func documentId(_ textItem: UITextItem, in textView: UITextView) -> String? {
+            if case .link(let url) = textItem.content {
+                return SearchBreadcrumbNavigation.documentId(url)
+            }
+            let text = textView.attributedText ?? NSAttributedString()
+            guard textItem.range.location < text.length,
+                  let url = text.attribute(.link, at: textItem.range.location, effectiveRange: nil) as? URL
+            else { return nil }
+            return SearchBreadcrumbNavigation.documentId(url)
         }
     }
 }
@@ -151,6 +195,17 @@ private struct BreadcrumbRichText: UIViewRepresentable {
     NavigationStack {
         SearchBreadcrumbsView(
             provenance: PreviewMocks.searchProvenance,
+            documentId: "sample-root",
+            store: AppStore.preview()
+        ).padding().background(Theme.bgPrimary)
+    }
+}
+
+@available(iOS 17.0, *)
+#Preview("Search — graph facts, branching thread") {
+    NavigationStack {
+        SearchBreadcrumbsView(
+            provenance: PreviewMocks.searchProvenanceOutline,
             documentId: "sample-root",
             store: AppStore.preview()
         ).padding().background(Theme.bgPrimary)

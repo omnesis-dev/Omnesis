@@ -11,6 +11,7 @@ import { extractLinks, type UrlCanonicalizerSpec } from "@omnesis/core";
 import { getCachedSafeUrlCanonicalizerRegistry } from "../known-url-pattern-safety.js";
 import { documentsMetadataCodec } from "../data/json-columns.js";
 import { linkExtractionInputDigest } from "./LinkExtractionInput.js";
+import { retainAttachedUrls } from "./RetainedLinkUrls.js";
 import type { ExtractedLinkBatchEntry } from "./LinkExtraction.js";
 
 export interface LinkExtractionDocRow {
@@ -34,7 +35,11 @@ export function extractLinksFromDocs(
     const meta = documentsMetadataCodec.parseWithFallback(row.metadata, { rowId: row.id }) as {
       extra?: Record<string, unknown>;
     };
-    const links = extractLinks(row.content, meta, row.external_id, registry);
+    const links = retainAttachedUrls(
+      extractLinks(row.content, meta, row.external_id, registry),
+      meta,
+      registry,
+    );
     out.push({
       docId: row.id,
       contentHash: row.content_hash,

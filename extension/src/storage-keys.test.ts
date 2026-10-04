@@ -15,6 +15,8 @@ import {
   PROFILE_LABEL_KEY,
   TOKEN_KEY,
 } from "./chrome/storage.js";
+import { NOTES_TOKEN_KEY } from "./chrome/notes-credential.js";
+import { NOTES_STATE_KEY } from "./chrome/notes-service.js";
 import { PAIRING_ATTEMPT_KEY } from "./chrome/pairing-attempt.js";
 import { CAPTURE_POLICY_KEY } from "./capture/policy.js";
 import { PUSH_SERVER_STATE_KEY } from "./push/observability.js";
@@ -46,6 +48,8 @@ describe("chrome.storage.local keys are append-only", () => {
       QUEUE_OVERFLOW_KEY,
       PUSH_SERVER_STATE_KEY,
       PAIRING_ATTEMPT_KEY,
+      NOTES_STATE_KEY,
+      NOTES_TOKEN_KEY,
     }).toEqual({
       PAIRING_KEY: "omnesis.pairing.v1",
       TOKEN_KEY: "omnesis.token.v1",
@@ -67,6 +71,8 @@ describe("chrome.storage.local keys are append-only", () => {
       QUEUE_OVERFLOW_KEY: "omnesis.push.queueOverflow.v1",
       PUSH_SERVER_STATE_KEY: "omnesis.push.serverState.v1",
       PAIRING_ATTEMPT_KEY: "omnesis.pairing.attempt.v1",
+      NOTES_STATE_KEY: "omnesis.notes.state.v1",
+      NOTES_TOKEN_KEY: "omnesis.notes.token.v1",
     });
   });
 });

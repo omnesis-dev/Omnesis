@@ -18,6 +18,34 @@
  */
 
 import type { TranscriptionResult } from "./models/capabilities.js";
+import type { PersonIdentifier, SourceId } from "@omnesis/types";
+
+/** A known canonical person or source-native identifiers resolved by the gateway. */
+export interface TranscriptionPerson {
+  personId?: string;
+  isSelf?: boolean;
+  identifiers?: PersonIdentifier[];
+}
+
+/** The situation in which speech was recorded, independent of the recognizer. */
+export interface TranscriptionContext {
+  purpose: "source-audio" | "dictation" | "agent";
+  speaker?: TranscriptionPerson;
+  conversation?: { sourceId: SourceId; threadId: string };
+  participants?: TranscriptionPerson[];
+  languageHints?: string[];
+  recordedAt?: string;
+}
+
+/** Relevance scores select hints; they are not recognizer boost values. */
+export interface TranscriptionVocabularyEntry {
+  text: string;
+  score: number;
+}
+
+export interface TranscriptionVocabulary {
+  entries: TranscriptionVocabularyEntry[];
+}
 
 export type { TranscriptionResult } from "./models/capabilities.js";
 
@@ -27,5 +55,6 @@ export type AudioTranscribeFn = (
   opts?: {
     /** ISO-639-1 hint to skip language auto-detection. */
     language?: string;
+    context?: TranscriptionContext;
   },
 ) => Promise<TranscriptionResult | null>;

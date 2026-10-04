@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "client": "chrome-extension",
-  "productVersion": "0.5.14",
+  "productVersion": "0.6.0",
   "sourceRepository": "https://github.com/omnesis-dev/Omnesis",
   "sourceAvailability": "on-request",
   "supportContact": "contact@omnesis.dev",
@@ -55,6 +55,27 @@
       "method": "POST",
       "path": "/analytics/ingest",
       "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/notes/authorization",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/browser/notes/authorization/:id",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/browser/notes",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/notes",
+      "authenticated": true
     }
-  ]
+  ],
+  "optionalNotesTokenScopes": ["notes:create"]
 }

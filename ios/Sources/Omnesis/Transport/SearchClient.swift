@@ -16,6 +16,7 @@ public final class SearchClient: Sendable {
     private let session: URLSessionLike
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
+    private let graphCapability = SearchGraphCapability()
 
     public init(baseURL: URL, token: String, session: URLSessionLike = OmnesisURLSession.shared) {
         self.baseURL = baseURL
@@ -55,16 +56,30 @@ public final class SearchClient: Sendable {
         return try decodeOrThrow(SearchResponse.self, from: data)
     }
 
+    /// Forget the kept graph-context capability so the next search asks the
+    /// gateway again. Called when the app re-reads `/status` or the device
+    /// socket reconnects.
+    public func invalidateSearchCapabilities() {
+        graphCapability.invalidate()
+    }
+
     /// A missing capability (including an older gateway's 404) keeps the
     /// original request shape. Optional graph diagnostics cannot block search.
     private func graphContextAvailable() async throws -> Bool {
         struct Readiness: Decodable { let graphContextAvailable: Bool? }
+        let (kept, generation) = graphCapability.read()
+        if let kept { return kept }
         do {
             let (data, _) = try await dispatch(method: "GET", path: "/search/readiness", body: nil)
-            return try decoder.decode(Readiness.self, from: data).graphContextAvailable == true
+            let available = try decoder.decode(Readiness.self, from: data).graphContextAvailable == true
+            graphCapability.store(available, generation: generation)
+            return available
         } catch {
             try Task.checkCancellation()
             if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
+            if SearchGraphCapability.isConclusive(error) {
+                graphCapability.store(false, generation: generation)
+            }
             return false
         }
     }
@@ -613,6 +628,32 @@ public struct SearchResultItem: Decodable, Identifiable, Hashable, Sendable {
     public let refCount: Int?
     public let scoreBreakdown: SearchScoreBreakdown?
     public var provenance: SearchProvenance?
+
+    private enum CodingKeys: String, CodingKey {
+        case documentId, sourceId, documentType, title, sourceUrl, appUrl, sourceCreatedAt
+        case author, chunkText, score, refCount, scoreBreakdown, provenance
+    }
+}
+
+extension SearchResultItem {
+    /// `provenance` is optional enrichment: a block this build cannot read
+    /// decodes as nil for that hit instead of failing the whole response.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        documentId = try container.decode(String.self, forKey: .documentId)
+        sourceId = try container.decode(String.self, forKey: .sourceId)
+        documentType = try container.decode(String.self, forKey: .documentType)
+        title = try container.decode(String.self, forKey: .title)
+        sourceUrl = try container.decodeIfPresent(String.self, forKey: .sourceUrl)
+        appUrl = try container.decodeIfPresent(String.self, forKey: .appUrl)
+        sourceCreatedAt = try container.decode(String.self, forKey: .sourceCreatedAt)
+        author = try container.decodeIfPresent(String.self, forKey: .author)
+        chunkText = try container.decode(String.self, forKey: .chunkText)
+        score = try container.decode(Double.self, forKey: .score)
+        refCount = try container.decodeIfPresent(Int.self, forKey: .refCount)
+        scoreBreakdown = try container.decodeIfPresent(SearchScoreBreakdown.self, forKey: .scoreBreakdown)
+        provenance = try? container.decodeIfPresent(SearchProvenance.self, forKey: .provenance)
+    }
 }
 
 /// Per-result score components emitted when `verbose: true` is set on
@@ -1314,6 +1355,8 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// The gateway dictation gate. `nil` from a gateway that
     /// predates it, which keeps every mic on the on-device recognizer.
     public let dictation: DictationStatus?
+    /// Gateway personal vocabulary opt-in; absent on older gateways.
+    public let transcriptionVocabulary: Bool
 
     public init(
         documents: Documents,
@@ -1323,7 +1366,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         experimental: Bool = false,
         developer: Bool = false,
         briefs: BriefsStatus? = nil,
-        dictation: DictationStatus? = nil
+        dictation: DictationStatus? = nil,
+        transcriptionVocabulary: Bool = false
     ) {
         self.documents = documents
         self.dbSizeBytes = dbSizeBytes
@@ -1333,6 +1377,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.developer = developer
         self.briefs = briefs
         self.dictation = dictation
+        self.transcriptionVocabulary = transcriptionVocabulary
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1344,6 +1389,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         case developer
         case briefs
         case dictation
+        case transcriptionVocabulary
     }
 
     public init(from decoder: Decoder) throws {
@@ -1360,6 +1406,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         // An experimental field: a shape this app cannot read reads as absent
         // rather than failing the whole snapshot.
         dictation = try? c.decodeIfPresent(DictationStatus.self, forKey: .dictation)
+        transcriptionVocabulary = try c.decodeIfPresent(Bool.self, forKey: .transcriptionVocabulary) ?? false
     }
 
     /// What the "on disk" stat shows: the gateway's whole footprint, or the

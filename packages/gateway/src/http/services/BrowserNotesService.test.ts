@@ -1,0 +1,153 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { randomUUID } from "node:crypto";
+import { describe, expect, test, vi } from "vitest";
+import { DeviceId, TokenId, Scope } from "@omnesis/types";
+import { BrowserNotesService } from "./BrowserNotesService.js";
+import type { AuthContext } from "../routes/types.js";
+import type { DeviceService } from "./DeviceService.js";
+import type { CaptureNoteInput, OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
+
+function fixture() {
+  const deviceId = DeviceId(randomUUID());
+  const tokenId = TokenId(randomUUID());
+  const mintedId = TokenId(randomUUID());
+  const tokens = new Set([tokenId]);
+  let now = 1000;
+  const auth: AuthContext = {
+    authMethod: "bearer",
+    deviceId,
+    tokenId,
+    scopes: [Scope("write:web")],
+  };
+  const createToken = vi.fn(async () => {
+    tokens.add(mintedId);
+    return { id: mintedId, token: "fictional-secret" };
+  });
+  const revokeToken = vi.fn(async (id: TokenId) => tokens.delete(id));
+  const devices = {
+    getById: vi.fn(() => ({
+      id: deviceId,
+      name: "Example browser",
+      kind: "browser",
+      revokedAt: null,
+    })),
+    tokenIsActive: vi.fn((id: TokenId) => tokens.has(id)),
+    listTokens: vi.fn(() => [...tokens].map((id) => ({ id }))),
+  } as unknown as DeviceService;
+  const capture = vi.fn(async (input: CaptureNoteInput) => ({ ...input, day: "2026-01-01" }));
+  const runtime = () => ({ capture }) as unknown as OmnesisNotesRuntime;
+  const service = new BrowserNotesService({
+    devices,
+    writeGate: { createToken, revokeToken },
+    runtime,
+    now: () => now,
+  });
+  return {
+    service,
+    auth,
+    deviceId,
+    tokenId,
+    mintedId,
+    tokens,
+    createToken,
+    revokeToken,
+    capture,
+    advance: () => {
+      now += 600_001;
+    },
+  };
+}
+
+describe("browser notes optional authority", () => {
+  test("only an approved request yields a separate create-only credential", async () => {
+    const f = fixture();
+    const request = f.service.createAuthorization(f.auth, randomUUID());
+    expect(f.service.poll(f.auth, request.requestId)).toEqual({ status: "pending" });
+    await f.service.approve(request.requestId);
+    expect(f.createToken).toHaveBeenCalledWith(
+      f.deviceId,
+      [Scope("notes:create")],
+      "Browser Tell Omnesis",
+    );
+    expect(f.service.poll(f.auth, request.requestId)).toMatchObject({
+      status: "approved",
+      credential: { token: "fictional-secret", scopes: ["notes:create"] },
+    });
+    expect(f.auth.scopes).toEqual(["write:web"]);
+  });
+  test("a sibling token cannot obtain the approved credential", async () => {
+    const f = fixture();
+    const request = f.service.createAuthorization(f.auth, randomUUID());
+    await f.service.approve(request.requestId);
+    expect(() =>
+      f.service.poll({ ...f.auth, tokenId: TokenId(randomUUID()) }, request.requestId),
+    ).toThrow("Authorization not found");
+  });
+  test("concurrent approval mints one credential and revocation does not resurrect it", async () => {
+    const f = fixture();
+    const request = f.service.createAuthorization(f.auth, randomUUID());
+    await Promise.all([f.service.approve(request.requestId), f.service.approve(request.requestId)]);
+    expect(f.createToken).toHaveBeenCalledTimes(1);
+    f.tokens.delete(f.mintedId);
+    expect(f.service.poll(f.auth, request.requestId)).toEqual({ status: "revoked" });
+    await expect(f.service.approve(request.requestId)).rejects.toThrow("revoked");
+    expect(() => f.service.authorization(request.requestId)).toThrow("revoked");
+    expect(f.createToken).toHaveBeenCalledTimes(1);
+    const fresh = f.service.createAuthorization(f.auth, randomUUID());
+    expect(fresh.requestId).not.toBe(request.requestId);
+    expect(f.service.poll(f.auth, fresh.requestId)).toEqual({ status: "pending" });
+  });
+  test("expired requests and inactive original credentials cannot be approved", async () => {
+    const f = fixture();
+    const request = f.service.createAuthorization(f.auth, randomUUID());
+    f.tokens.delete(f.tokenId);
+    await expect(f.service.approve(request.requestId)).rejects.toThrow("no longer active");
+    expect(f.createToken).not.toHaveBeenCalled();
+    f.tokens.add(f.tokenId);
+    f.advance();
+    expect(() => f.service.poll(f.auth, request.requestId)).toThrow("expired");
+  });
+  test("credentials are stripped from page context and combined length stays editable", async () => {
+    const f = fixture();
+    const auth = { ...f.auth, scopes: [Scope("notes:create")] };
+    const note = await f.service.capture(auth, {
+      id: randomUUID(),
+      text: "A thought",
+      page: { url: "https://user:secret@example.org/article?token=private&keep=yes" },
+    });
+    expect(note.page?.url).toBe("https://example.org/article?keep=yes");
+    expect(note.text).not.toContain("secret");
+    expect(note.text).not.toContain("private");
+    await expect(
+      f.service.capture(auth, {
+        id: randomUUID(),
+        text: "a".repeat(8192),
+        page: { url: "https://example.org/article" },
+      }),
+    ).rejects.toThrow("fit within 8192");
+  });
+  test("page capture authority cannot create notes, and notes preserve explicit context", async () => {
+    const f = fixture();
+    const input = {
+      id: randomUUID(),
+      text: "Compare this approach.",
+      page: {
+        url: "https://example.org/article",
+        title: "Example article",
+        selection: "First line\nSecond line",
+      },
+    };
+    await expect(f.service.capture(f.auth, input)).rejects.toThrow("notes:create");
+    const note = await f.service.capture({ ...f.auth, scopes: [Scope("notes:create")] }, input);
+    expect(note.text).toBe(
+      "Compare this approach.\n\nPage: Example article — https://example.org/article\n\nSelected passage:\n> First line\n> Second line",
+    );
+    expect(note).toMatchObject({
+      surface: "chrome-extension",
+      deviceId: f.deviceId,
+      page: input.page,
+    });
+  });
+});

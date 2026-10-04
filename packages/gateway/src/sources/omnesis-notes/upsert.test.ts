@@ -102,6 +102,19 @@ function makeHarness(sched: FakeScheduler, opts: { debounceMs?: number } = {}): 
 }
 
 describe("buildNotesDayDocument", () => {
+  test("explicit page attachment survives editing the visible URL and deduplicates within a day", () => {
+    const page = {
+      url: "https://example.org/article",
+      title: "Example article",
+      selection: "A selected passage",
+    };
+    const doc = buildNotesDayDocument("2026-06-15", [
+      makeEntry({ id: "a", text: "Revised thought without the page address", page }),
+      makeEntry({ id: "b", text: "Another thought", page }),
+    ]);
+    expect(doc.content).not.toContain(page.url);
+    expect(doc.metadata.extra?.retainedLinkUrls).toEqual([page.url]);
+  });
   test("externalId is the day; marker + self author + entry count are set", () => {
     const doc = buildNotesDayDocument("2026-06-15", [
       makeEntry({ id: "a", capturedAt: "2026-06-15T09:00:00.000Z" }),

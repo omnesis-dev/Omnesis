@@ -11,11 +11,20 @@ const mocks = vi.hoisted(() => ({ getProvenance: vi.fn(), navigate: vi.fn() }));
 vi.mock("../api.js", () => ({ getNotesProvenance: mocks.getProvenance }));
 vi.mock("../lib/router.js", () => ({ navigate: mocks.navigate }));
 import { NoteDayReferences } from "./note-day-references.js";
+import { CALENDAR_KINDS, ORIGIN_LABELS } from "../lib/time-index-labels.js";
 
 const day = "2026-09-11";
-const mention = { id: "dm_example/1", label: "next Tuesday", start: "2026-09-15T12:00:00Z" };
+const mention = {
+  id: "dm_example/1",
+  origin: "mention",
+  kind: "deadline",
+  label: "next Tuesday",
+  start: "2026-09-15T12:00:00Z",
+};
 const annotation = {
   id: "ta_example",
+  origin: "annotation",
+  kind: "appointment",
   label: "Submit the entry form",
   start: "2026-09-15T12:00:00Z",
 };
@@ -63,9 +72,35 @@ describe("daily note references", () => {
     expect(host.querySelector("summary").textContent).toContain("3 related items");
     expect(host.querySelector("details").hasAttribute("open")).toBe(false);
     expect(host.textContent).not.toContain("Linked to this day's combined notes");
+    const rows = Array.from(host.querySelectorAll(".note-reference-row"));
     expect(
-      Array.from(host.querySelectorAll(".note-reference-heading")).map((el) => el.textContent),
-    ).toEqual(["Dates mentioned", "Related events", "Open loops"]);
+      rows.map((row) =>
+        Array.from(row.querySelectorAll(".time-index-pills > span")).map((pill) => [
+          pill.className,
+          pill.textContent.trim(),
+          pill.getAttribute("title"),
+        ]),
+      ),
+    ).toEqual([
+      [
+        [
+          "calendar-origin-pill calendar-origin-pill--mention",
+          "❝Date mention",
+          ORIGIN_LABELS.mention.description,
+        ],
+        ["calendar-kind", "⚑Deadline", CALENDAR_KINDS.deadline.description],
+      ],
+      [
+        [
+          "calendar-origin-pill calendar-origin-pill--annotation",
+          "✦Agent interpretation",
+          ORIGIN_LABELS.annotation.description,
+        ],
+        ["calendar-kind", "◉Appointment", CALENDAR_KINDS.appointment.description],
+      ],
+      [],
+    ]);
+    expect(rows[2].querySelector(".note-reference-heading").textContent).toBe("Open loop");
     const links = Array.from(host.querySelectorAll("a"));
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/portal/debug/calendar/dm_example%2F1",
@@ -159,6 +194,18 @@ describe("daily note references", () => {
     });
     expect(host.textContent).not.toContain("next Tuesday");
     expect(mocks.getProvenance).toHaveBeenLastCalledWith("2026-09-12", expect.any(String));
+  });
+
+  test("an entry without a kind shows its origin alone, and an older response falls back to its group", async () => {
+    mocks.getProvenance.mockResolvedValue({
+      ...empty,
+      mentions: [{ id: "dm_bare", label: "soon", start: "2026-09-15T12:00:00Z" }],
+    });
+    await mount();
+    const pills = Array.from(host.querySelectorAll(".time-index-pills > span"));
+    expect(pills.map((pill) => pill.className)).toEqual([
+      "calendar-origin-pill calendar-origin-pill--mention",
+    ]);
   });
 
   test("a failed reference lookup offers its own retry and never claims an empty result", async () => {

@@ -44,7 +44,17 @@ import type {
   MergeEquivalenceSnapshot,
 } from "../domain/merge/types.js";
 
+import type {
+  VocabularySettings,
+  VocabularyDocument,
+  ExtractedVocabularyDocument,
+} from "../transcribe/vocabulary/types.js";
+
 export interface CpuGate {
+  extractTranscriptionVocabulary(
+    docs: VocabularyDocument[],
+    settings: VocabularySettings,
+  ): Promise<ExtractedVocabularyDocument[]>;
   echo<T>(value: T): Promise<T>;
   nearDupSignBatch(
     docs: NearDupDocForSigning[],
@@ -100,6 +110,7 @@ const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 2_000;
 
 const CPU_OP_DEFS: readonly CpuOpDef[] = [
+  { name: "cpu.extractTranscriptionVocabulary", priority: "background" },
   { name: "cpu.echo", priority: "background" },
   { name: "cpu.nearDupSignBatch", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "cpu.nearDupVerifyBatch", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -143,6 +154,8 @@ export function cpuGateFromScheduler(scheduler: Scheduler): CpuGate {
   };
   return {
     echo: (value) => call("cpu.echo", [value]),
+    extractTranscriptionVocabulary: (docs, settings) =>
+      call("cpu.extractTranscriptionVocabulary", [docs, settings]),
     nearDupSignBatch: (docs, algoConfig, dfData, eligibleDocTypes) =>
       call("cpu.nearDupSignBatch", [docs, algoConfig, dfData, eligibleDocTypes]),
     nearDupVerifyBatch: (pairs, dfData, gateConfig) =>

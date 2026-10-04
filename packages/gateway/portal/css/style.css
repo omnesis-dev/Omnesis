@@ -1150,65 +1150,49 @@ a:hover { text-decoration: underline; }
   font-size: 12px;
 }
 .access-level-terms { padding: 0 18px 16px; }
-.access-level-terms .access-detail-grid {
-  display: grid;
-  margin: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-/* One tile per capability: a tinted glyph, vertically centred on the left,
-   beside the capability's name and the terms it runs under. */
-.access-level-terms .access-term {
-  --term-color: var(--text-muted);
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  min-width: 0;
-  min-height: 60px;
-  box-sizing: border-box;
-  padding: 12px 14px 12px 62px;
-  border: 1px solid color-mix(in srgb, var(--term-color) 35%, var(--border-light));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--term-color) 4%, transparent);
-}
-.access-level-terms .access-term dt { display: flex; }
-.access-level-terms .access-term dd {
-  margin: 0;
-  color: var(--text-secondary);
+/* One row per capability, styled alike: only the permission column says
+   whether it is granted, so colour never has to name the capability too. */
+/* A recessed, dense panel, so the level's permissions read as a different
+   kind of thing from the connection list beneath them. */
+.access-terms-table {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: color-mix(in srgb, var(--bg-tertiary) 45%, transparent);
   font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
 }
-.access-term-icon {
-  position: absolute;
-  top: 50%;
-  left: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--term-color) 14%, transparent);
-  color: var(--term-color);
-  transform: translateY(-50%);
+.access-terms-table th,
+.access-terms-table td {
+  padding: 5px 12px;
+  border-top: 1px solid var(--border-light);
+  text-align: left;
+  vertical-align: middle;
 }
-/* Inside a tile the capability's name is a label, not a pill. */
-.access-level-terms .access-term .access-badge {
-  padding: 0;
-  border: none;
-  font-size: 10px;
-  letter-spacing: 0.07em;
+.access-terms-table thead th {
+  padding-block: 5px;
+  border-top: none;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.access-level-terms .access-term-answer { --term-color: var(--success); }
-.access-level-terms .access-term-direct { --term-color: var(--danger); }
-.access-level-terms .access-term-notes { --term-color: var(--accent); }
-.access-level-terms .access-term-unreviewed { --term-color: var(--warning); }
-.access-level-terms .access-term-off { background: transparent; border-color: var(--border-light); }
-.access-level-terms .access-term-off .access-badge.is-off { opacity: 1; }
-.access-level-terms .access-term-off dd { color: var(--text-muted); }
+.access-terms-table thead th:first-child { width: 120px; }
+.access-terms-table thead th:nth-child(2) { width: 120px; }
+.access-terms-table tbody th { color: var(--text-primary); font-weight: 500; white-space: nowrap; }
+.access-term-capability { display: inline-flex; align-items: center; gap: 7px; }
+.access-term-icon { display: inline-flex; flex: none; color: var(--text-secondary); }
+.access-permission { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); white-space: nowrap; }
+.access-permission.is-granted { color: var(--text-primary); }
+.access-permission-icon { flex: none; color: var(--text-muted); }
+.access-permission.is-granted .access-permission-icon { color: var(--success); }
+.access-permission.is-unreviewed .access-permission-icon { color: var(--warning); }
+.access-term-details { color: var(--text-secondary); line-height: 1.4; overflow-wrap: anywhere; }
+.access-term-off .access-term-details { color: var(--text-muted); }
 .access-level-body { display: grid; gap: 14px; padding: 0 18px 16px; }
 .access-level-section { display: grid; gap: 8px; }
 .access-level-subhead { margin: 0; color: var(--text-primary); font-size: 12.5px; font-weight: 600; }
@@ -1370,7 +1354,6 @@ a:hover { text-decoration: underline; }
 }
 .access-copy:hover { color: var(--text-primary); }
 .access-used-cell { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.access-reach-cell { color: var(--text-secondary); font-size: 11.5px; }
 /* Unreviewed release is a state the owner chose, not a fault, so it is the
    warning colour. Danger stays with Direct, the capability that actually
    returns raw records — two reds on one row means neither is read as one. */
@@ -1413,7 +1396,7 @@ a:hover { text-decoration: underline; }
   list-style: none;
 }
 .access-sign-in { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--text-secondary); font-size: 11.5px; }
-.access-term dd a { color: inherit; text-decoration: underline; }
+.access-term-details a { color: inherit; text-decoration: underline; }
 .access-revoked,
 .access-badge {
   display: inline-flex;
@@ -1883,8 +1866,15 @@ a:hover { text-decoration: underline; }
   .access-connection-row .access-connection-facts { grid-column: 2 / -1; grid-row: 2; }
 }
 
-@media (max-width: 900px) {
-  .access-level-terms .access-detail-grid { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 760px) {
+  /* The details drop beneath the capability and its permission. */
+  .access-terms-table thead { display: none; }
+  .access-terms-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .access-terms-table tbody tr + tr { border-top: 1px solid var(--border-light); }
+  .access-terms-table th,
+  .access-terms-table td { border-top: none; }
+  .access-terms-table .access-term-details { grid-column: 1 / -1; padding-top: 0; padding-left: 33px; }
+  .access-terms-table .access-term-off .access-term-details { display: none; }
 }
 
 @media (max-width: 760px) {
@@ -2135,6 +2125,9 @@ a:hover { text-decoration: underline; }
 .search-provenance { scroll-margin-top: 20px; }
 .search-provenance-facts { margin: 0; padding-left: 18px; }
 .search-provenance-facts > li { margin: 5px 0; line-height: 1.6; }
+/* An outline: a branch's lines nest under the line that ends with its colon. */
+.search-provenance-branches { margin: 2px 0 0; padding-left: 18px; list-style-type: circle; }
+.search-provenance-branches > li { margin: 2px 0; }
 .search-graph-document { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: middle; }
 .search-graph-document-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
 .search-graph-document-title { min-width: 0; overflow-wrap: anywhere; }
@@ -11364,6 +11357,7 @@ div.source-activity-popover-link:hover {
 .calendar-item--mention .calendar-entry-title { color: var(--text-muted); }
 .calendar-item--mention .calendar-entry-spine { width: 2px; flex-basis: 2px; background: var(--border); }
 .calendar-item--projection .calendar-entry-spine { background: var(--calendar-kind); }
+.time-index-pills { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .calendar-entry-pills { display: flex; align-items: center; gap: 4px; padding: 0 9px 8px 22px; font-size: 10px; }
 .calendar-entry-pills > .calendar-kind { white-space: nowrap; }
 .calendar-origin-pill { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; padding: 1px 6px; background: color-mix(in srgb, currentColor 12%, transparent); font-weight: 650; border-radius: 999px; }
@@ -18886,14 +18880,16 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 
 .note-reference-row {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  align-items: baseline;
-  padding: 4px 0;
+  align-items: start;
+  padding: 5px 0;
 }
 
+.note-reference-body { display: grid; justify-items: start; gap: 3px; min-width: 0; }
+.note-reference-body .time-index-pills { font-size: 10px; }
 .note-reference-heading { color: var(--text-muted); font-size: 11px; }
-.note-reference-link { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.note-reference-link { max-width: 100%; overflow-wrap: anywhere; line-height: 1.5; }
 .note-reference-detail {
   color: var(--text-muted);
   font-size: 11px;
@@ -18920,7 +18916,8 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 .notes-table tbody tr:hover { background: transparent; }
-.notes-table .portal-table-actions-col { width: 32px; padding-left: 8px; }
+/* Border-box sizing counts the padding in the width: 28px trigger + 8px gap. */
+.notes-table .portal-table-actions-col { width: 36px; padding-left: 8px; }
 .notes-table .row-action-trigger {
   width: 28px;
   height: 28px;
@@ -18934,8 +18931,7 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 
 @media (max-width: 560px) {
   .capture-day-actions { gap: 8px; }
-  .note-reference-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
-  .note-reference-heading { grid-column: 1 / -1; }
+  .note-reference-row { gap: 4px 10px; }
   .note-reference-count { font-size: 11px; }
 }
 
@@ -19203,3 +19199,9 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
    muted weight of the generic actor glyphs. */
 .privacy-caller-logo { display: inline-flex; flex: none; }
 .privacy-direct-caller { display: flex; align-items: center; gap: 5px; }
+
+/* Inline twin of the conversation waiting indicator. */
+.privacy-progress-dots { display: inline-flex; vertical-align: middle; padding: 0 4px; }
+@media (prefers-reduced-motion: reduce) {
+  .agent-typing > span { animation: none; opacity: 0.7; }
+}

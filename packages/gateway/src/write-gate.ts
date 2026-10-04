@@ -454,6 +454,7 @@ import {
   deleteNoteEntry,
   applyNoteEntryTranscript,
   type NoteEntry,
+  type BrowserNoteAuthority,
 } from "./sources/omnesis-notes/storage.js";
 import {
   insertPendingVoiceNote,
@@ -647,7 +648,20 @@ import {
   type CommittedReminderNotificationResult,
 } from "./push/reminder-notification-operations.js";
 
+import { advanceTranscriptionVocabularyRebuild } from "./transcribe/vocabulary/rebuild.js";
+import { applyTranscriptionVocabularyBatch } from "./transcribe/vocabulary/storage.js";
+import type {
+  VocabularySettings,
+  ExtractedVocabularyDocument,
+} from "./transcribe/vocabulary/types.js";
+
 export interface WriteGate {
+  advanceTranscriptionVocabularyRebuild(
+    settings: VocabularySettings,
+  ): Promise<{ ready: boolean; worked: boolean }>;
+  applyTranscriptionVocabularyBatch(
+    docs: ExtractedVocabularyDocument[],
+  ): Promise<{ applied: number; skipped: number }>;
   // ── db.ts ─────────────────────────────────────────────────────────
   upsertDocuments(
     docs: DocumentInput[],
@@ -2026,7 +2040,11 @@ export interface WriteGate {
    * false when a row with that id already exists — the id doubles as
    * the client idempotency key, so a retried capture is a no-op.
    */
-  appendNoteEntry(entry: NoteEntry, audit?: McpToolInvocationAuditInput): Promise<boolean>;
+  appendNoteEntry(
+    entry: NoteEntry,
+    audit?: McpToolInvocationAuditInput,
+    browserAuthority?: BrowserNoteAuthority,
+  ): Promise<boolean>;
   /**
    * Replace an entry's text (bumps `updated_at`). Returns false when
    * the id is unknown.
@@ -2354,6 +2372,9 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("db.requeueStaleMentionJudgements", [rubricVersion, limit]),
     drainPendingEdges: (limit) => call("edges.drainPending", [limit]),
     upsertExtractedLinksBatch: (rows) => call("links.upsertExtractedLinksBatch", [rows]),
+    advanceTranscriptionVocabularyRebuild: (settings) =>
+      call("vocabulary.advanceRebuild", [settings]),
+    applyTranscriptionVocabularyBatch: (docs) => call("vocabulary.applyBatch", [docs]),
     markLinkStatsDirty: () => call("links.markLinkStatsDirty", []),
     upsertLinkStats: (agg) => call("links.upsertLinkStats", [agg]),
     reconcileLinkStatsCounters: () => call("links.reconcileLinkStatsCounters", []),
@@ -2684,7 +2705,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     upsertConversationCitations: (sourceDocId, citations) =>
       call("omnesisChat.upsertConversationCitations", [sourceDocId, citations]),
 
-    appendNoteEntry: (entry, audit) => call("notes.appendEntry", [entry, audit]),
+    appendNoteEntry: (entry, audit, browserAuthority) =>
+      call("notes.appendEntry", [entry, audit, browserAuthority]),
     updateNoteEntry: (id, text, now) => call("notes.updateEntry", [id, text, now]),
     deleteNoteEntry: (id) => call("notes.deleteEntry", [id]),
     applyNoteEntryTranscript: (id, expected, text, now) =>
@@ -2918,6 +2940,9 @@ export function directWriteGate(db: Db): WriteGate {
       requeueStaleMentionJudgementsInDb(db, rubricVersion, limit),
     drainPendingEdges: async (limit) => drainPendingEdges(db, { limit }),
     upsertExtractedLinksBatch: async (rows) => upsertExtractedLinksBatch(db, rows),
+    advanceTranscriptionVocabularyRebuild: async (settings) =>
+      advanceTranscriptionVocabularyRebuild(db, settings),
+    applyTranscriptionVocabularyBatch: async (docs) => applyTranscriptionVocabularyBatch(db, docs),
     markLinkStatsDirty: async () => {
       markLinkStatsDirty(db);
     },
@@ -3339,7 +3364,8 @@ export function directWriteGate(db: Db): WriteGate {
     upsertConversationCitations: async (sourceDocId, citations) =>
       upsertConversationCitations(db, sourceDocId, citations),
 
-    appendNoteEntry: async (entry, audit) => insertNoteEntry(db, entry, audit),
+    appendNoteEntry: async (entry, audit, browserAuthority) =>
+      insertNoteEntry(db, entry, audit, browserAuthority),
     updateNoteEntry: async (id, text, now) => updateNoteEntryText(db, id, text, now),
     deleteNoteEntry: async (id) => deleteNoteEntry(db, id),
     applyNoteEntryTranscript: async (id, expected, text, now) =>

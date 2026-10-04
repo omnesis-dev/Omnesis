@@ -429,6 +429,7 @@ const searchBm25 = z
 export const DEFAULT_SEARCH_V2_SETTINGS = Object.freeze({
   enabled: true,
   topN: 3,
+  minRefCount: 3,
   maxDepth: 4,
   fanout: 6,
   maxNodes: 24,
@@ -451,6 +452,15 @@ const searchV2 = z
       .max(10)
       .default(DEFAULT_SEARCH_V2_SETTINGS.topN)
       .describe("Number of leading agent search results enriched with graph provenance."),
+    minRefCount: z
+      .number()
+      .int()
+      .min(0)
+      .max(50)
+      .default(DEFAULT_SEARCH_V2_SETTINGS.minRefCount)
+      .describe(
+        "Also enrich a later agent search result when at least this many distinct documents link to it over the links graph provenance follows. 0 enriches only the leading results.",
+      ),
     maxDepth: z
       .number()
       .int()
@@ -2974,6 +2984,72 @@ const backendKey = z
     message: "Backend name cannot be 'local', 'anthropic', 'codex', 'replay', or contain '/'",
   });
 
+const transcriptionVocabularySettings = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe(
+        "Use personal vocabulary hints for gateway transcription and build vocabulary in background. Disabled by default; requires enabled: true.",
+      )
+      .optional(),
+    maxTerms: z
+      .number()
+      .int()
+      .min(1)
+      .max(128)
+      .describe("Maximum ranked vocabulary phrases returned per transcription. Default 64.")
+      .optional(),
+    maxPromptTokens: z
+      .number()
+      .int()
+      .min(1)
+      .max(224)
+      .describe(
+        "Whisper hint token budget. The local adapter conservatively counts UTF-8 bytes. Default 96.",
+      )
+      .optional(),
+    batchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(8)
+      .describe("Documents per background vocabulary tick. Default 4.")
+      .optional(),
+    maxDocumentChars: z
+      .number()
+      .int()
+      .min(256)
+      .max(65536)
+      .describe("Maximum document characters read for vocabulary extraction. Default 32768.")
+      .optional(),
+    maxTermsPerDocument: z
+      .number()
+      .int()
+      .min(1)
+      .max(128)
+      .describe("Maximum vocabulary candidates materialized per document. Default 64.")
+      .optional(),
+    periodMs: z
+      .number()
+      .int()
+      .min(100)
+      .max(2_147_483_647)
+      .describe(
+        "Background vocabulary tick interval while work remains, in milliseconds. Default 1000.",
+      )
+      .optional(),
+    idlePeriodMs: z
+      .number()
+      .int()
+      .min(1000)
+      .max(2_147_483_647)
+      .describe(
+        "Background vocabulary tick interval when caught up, in milliseconds. Default 60000.",
+      )
+      .optional(),
+  })
+  .strict();
+
 const inference = z
   .object({
     backends: z.record(backendKey, httpBackendConfig).optional(),
@@ -3021,6 +3097,7 @@ const inference = z
       .strict()
       .optional(),
     dictation: dictationSettings.optional(),
+    transcriptionVocabulary: transcriptionVocabularySettings.optional(),
   })
   .strict();
 
@@ -3103,7 +3180,7 @@ const enrichmentDates = z
     numericDateOrder: z
       .enum(["auto", "day-first", "month-first"])
       .describe(
-        'How an all-numeric English date such as "10/07/2026" reads: "day-first" (10 July), "month-first" (7 October), or "auto" — month-first when the gateway host\'s time zone is in the Americas, day-first elsewhere. Applies to documents scanned after the change.',
+        'How an all-numeric English date such as "10/07/2026" reads: "day-first" (10 July), "month-first" (7 October), or "auto" — month-first when the gateway host\'s time zone is in the United States, a US territory or the Philippines, day-first everywhere else, including the rest of the Americas. A gateway whose time zone is UTC, as a container often is, reads them day-first, so set this explicitly there. Applies to documents scanned after the change.',
       )
       .optional(),
     worthGate: z
@@ -3184,9 +3261,7 @@ export const omnesisConfigSchema = z
     multiDevice: multiDevice.describe("Sources hosted by several devices.").optional(),
     agent: agent.describe("Agent tunables.").optional(),
     brain: brain.describe("Omnesis Brain / Cognition Steward tunables (experimental).").optional(),
-    enrichment: enrichment
-      .describe("Omnesis-derived enrichment signals (experimental).")
-      .optional(),
+    enrichment: enrichment.describe("Omnesis-derived enrichment signals.").optional(),
   })
   .strict();
 

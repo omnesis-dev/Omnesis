@@ -76,6 +76,7 @@ import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.PrivacyExchangePresentation
 import dev.omnesis.android.transport.dto.PrivacySubscriptionApprovalSummary
+import dev.omnesis.android.ui.agent.WorkingDots
 import dev.omnesis.android.ui.common.GatewayErrorView
 import dev.omnesis.android.ui.common.ListPagingFooter
 import dev.omnesis.android.ui.common.PullToRefresh
@@ -613,16 +614,20 @@ private fun PrivacyFeedOutcome(exchange: PrivacyExchangePresentation, modifier: 
         horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val dot = Modifier
-            .size(6.dp)
-            .clip(CircleShape)
-        Box(
-            if (presentation.outcome.tone == PrivacyTone.WAITING) {
-                dot.border(1.5.dp, color, CircleShape)
-            } else {
-                dot.background(color)
-            },
-        )
+        if (privacyExchangeNeedsPolling(exchange)) {
+            WorkingDots(contentDescription = "Answer in progress")
+        } else {
+            val dot = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+            Box(
+                if (presentation.outcome.tone == PrivacyTone.WAITING) {
+                    dot.border(1.5.dp, color, CircleShape)
+                } else {
+                    dot.background(color)
+                },
+            )
+        }
         Text(
             presentation.outcome.label,
             color = c.textSecondary,

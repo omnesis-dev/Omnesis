@@ -381,7 +381,7 @@ describe("health endpoint", () => {
     expect(body.compat.watchPrivacyPolicy).toBe(1);
   });
 
-  test("advertises experimental visibility and the subscriptions capability without auth", async () => {
+  test("advertises experimental visibility and versioned browser notes capability without auth", async () => {
     const originalExperimental = process.env.OMNESIS_EXPERIMENTAL;
     const originalSynthetic = process.env.OMNESIS_SYNTHETIC;
     try {
@@ -394,6 +394,7 @@ describe("health endpoint", () => {
       expect(off.capabilities).toEqual({
         subscriptions: false,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+        browserNotes: { min: 1, max: 1 },
       });
 
       process.env.OMNESIS_EXPERIMENTAL = "1";
@@ -402,6 +403,7 @@ describe("health endpoint", () => {
       expect(on.capabilities).toEqual({
         subscriptions: true,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+        browserNotes: { min: 1, max: 1 },
       });
     } finally {
       if (originalExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
@@ -10792,30 +10794,32 @@ describe("POST /admin/background/run/:taskName", () => {
     });
   });
 
-  test.each(["nearDup.inboxFlush", "backfill.nearDupDfRefresh", "backfill.nearDupCompute"])(
-    "allows the synthetic near-duplicate stage %s",
-    async (taskName) => {
-      const kickPeriodicAndWait = vi.fn(async () => ({ idle: false }));
-      const customApp = createServer(db, undefined, {
-        scheduler: {
-          snapshot,
-          pauseBackground: vi.fn(),
-          resumeBackground: vi.fn(),
-          isBackgroundPaused: () => false,
-          kickPeriodicAndWait,
-          quiescePeriodics: vi.fn(),
-        },
-      });
+  test.each([
+    "nearDup.inboxFlush",
+    "backfill.nearDupDfRefresh",
+    "backfill.nearDupCompute",
+    "transcription.vocabularyBackfill",
+  ])("allows the synthetic background stage %s", async (taskName) => {
+    const kickPeriodicAndWait = vi.fn(async () => ({ idle: false }));
+    const customApp = createServer(db, undefined, {
+      scheduler: {
+        snapshot,
+        pauseBackground: vi.fn(),
+        resumeBackground: vi.fn(),
+        isBackgroundPaused: () => false,
+        kickPeriodicAndWait,
+        quiescePeriodics: vi.fn(),
+      },
+    });
 
-      const res = await customApp.request(`/admin/background/run/${taskName}?timeoutMs=30000`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${TEST_TOKEN}` },
-      });
+    const res = await customApp.request(`/admin/background/run/${taskName}?timeoutMs=30000`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
 
-      expect(res.status).toBe(200);
-      expect(kickPeriodicAndWait).toHaveBeenCalledWith(taskName, 30_000);
-    },
-  );
+    expect(res.status).toBe(200);
+    expect(kickPeriodicAndWait).toHaveBeenCalledWith(taskName, 30_000);
+  });
 
   test("defaults and clamps synthetic periodic timeouts", async () => {
     const seen: number[] = [];

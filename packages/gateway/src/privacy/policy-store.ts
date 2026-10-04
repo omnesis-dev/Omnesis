@@ -70,6 +70,13 @@ export const PRIVACY_POLICY_THIRD_PARTY_SENTENCE =
   "Another person's phone numbers, email addresses, postal addresses, financial account or card numbers, and health details are held for your approval of the exact answer, even when they appear in your own contacts, messages, or files; a person's name alone, and your own contact details, follow the table.";
 
 /**
+ * The decision-table row every built-in template gives credentials. The
+ * policy editor keeps it in step with the credential approval opt-in.
+ */
+export const PRIVACY_POLICY_CREDENTIAL_ROW_LABEL =
+  "Passwords, authentication codes, tokens, private keys, and recovery codes";
+
+/**
  * What a policy says about credentials while the deterministic hard stop
  * is in force, and what it says instead once the policy opts credentials into
  * per-request approval. Exactly one of the two belongs in a policy at a time:
@@ -154,7 +161,7 @@ const GUARDED_POLICY = composePolicy(
 | Health | Approval required | Approval required | Approval required |
 | Money and payment information | Approval required | Approval required | Approval required |
 | Identity documents | Approval required | Approval required | Approval required |
-| Passwords, authentication codes, tokens, private keys, and recovery codes | Approval required | Approval required | Approval required |`,
+| ${PRIVACY_POLICY_CREDENTIAL_ROW_LABEL} | Approval required | Approval required | Approval required |`,
 );
 
 const BALANCED_POLICY = composePolicy(
@@ -170,7 +177,7 @@ const BALANCED_POLICY = composePolicy(
 | Health | Approval required | Approval required | Approval required |
 | Money and payment information | Approval required | Approval required | Approval required |
 | Identity documents | Approval required | Approval required | Approval required |
-| Passwords, authentication codes, tokens, private keys, and recovery codes | Approval required | Approval required | Approval required |`,
+| ${PRIVACY_POLICY_CREDENTIAL_ROW_LABEL} | Approval required | Approval required | Approval required |`,
 );
 
 const OPEN_POLICY = composePolicy(
@@ -186,7 +193,7 @@ const OPEN_POLICY = composePolicy(
 | Health | Approval required | Release with reductions | Approval required |
 | Money and payment information | Approval required | Release with reductions | Approval required |
 | Identity documents | Approval required | Approval required | Approval required |
-| Passwords, authentication codes, tokens, private keys, and recovery codes | Approval required | Approval required | Approval required |`,
+| ${PRIVACY_POLICY_CREDENTIAL_ROW_LABEL} | Approval required | Approval required | Approval required |`,
 );
 
 const UNFILTERED_POLICY = composePolicy(
@@ -197,7 +204,7 @@ const UNFILTERED_POLICY = composePolicy(
 | All information not listed below | Allow | Allow | Allow |
 | Identity documents | Approval required | Approval required | Approval required |
 | Other people's contact, financial, and health details | Approval required | Approval required | Approval required |
-| Passwords, authentication codes, tokens, private keys, and recovery codes | Approval required | Approval required | Approval required |`,
+| ${PRIVACY_POLICY_CREDENTIAL_ROW_LABEL} | Approval required | Approval required | Approval required |`,
   {
     additionalInstructions: UNFILTERED_POLICY_ADDITIONAL_INSTRUCTIONS,
     floor: PRIVACY_POLICY_APPROVAL_FLOOR,

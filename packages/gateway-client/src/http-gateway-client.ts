@@ -45,7 +45,12 @@ import type {
 } from "@omnesis/source-sdk";
 import type { DocumentInput, AccountId, SourceId, SourceType, ProviderId } from "@omnesis/types";
 import type { OmnesisConfig } from "@omnesis/config";
-import type { TranscriptionResult, OcrResult, EdgeDeclaration } from "@omnesis/core";
+import type {
+  TranscriptionResult,
+  AudioTranscribeFn,
+  OcrResult,
+  EdgeDeclaration,
+} from "@omnesis/core";
 
 const log = createLogger("collector:http");
 
@@ -304,7 +309,7 @@ export class HttpGatewayClient implements GatewayClient {
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
-    opts?: { language?: string },
+    opts?: Parameters<AudioTranscribeFn>[2],
   ): Promise<TranscriptionResult | null> {
     // Permanent "no transcript" (a 4xx response, the backend reporting
     // `available: false`, or no speech detected) returns null — the source
@@ -319,12 +324,21 @@ export class HttpGatewayClient implements GatewayClient {
     // Sends raw bytes (no base64 inflation) with the audio MIME type as
     // Content-Type; the gateway holds them only for the request.
     const qs = opts?.language ? `?language=${encodeURIComponent(opts.language)}` : "";
+    let contextHeader = opts?.context
+      ? encodeURIComponent(JSON.stringify(opts.context))
+      : undefined;
+    if (contextHeader && contextHeader.length > 8192) {
+      // Optional context must not prevent an otherwise valid audio upload.
+      contextHeader = undefined;
+    }
     const res = await this.inferenceFetch(
       "/inference/transcribe",
       qs,
       audio,
       mimeType,
       "transcribe",
+      undefined,
+      contextHeader ? { "x-omnesis-transcription-context": contextHeader } : undefined,
     );
     if (res === null) return null;
     const data = (await res.json()) as {
@@ -465,6 +479,7 @@ export class HttpGatewayClient implements GatewayClient {
     mimeType: string,
     label: string,
     signal?: AbortSignal,
+    extraHeaders?: Record<string, string>,
   ): Promise<Response | null> {
     let res: Response;
     try {
@@ -472,6 +487,7 @@ export class HttpGatewayClient implements GatewayClient {
       res = await fetch(`${this.baseUrl}${path}${qs}`, {
         method: "POST",
         headers: {
+          ...extraHeaders,
           "Content-Type": mimeType || "application/octet-stream",
           Authorization: `Bearer ${this.apiKey}`,
           "User-Agent": "omnesis-collector",

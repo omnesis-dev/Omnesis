@@ -34,6 +34,8 @@ import {
   listNoteEntriesForDay,
   listNoteEntriesHistory,
   type NoteEntry,
+  type NotePageContext,
+  type BrowserNoteAuthority,
   type NoteHistoryCursor,
   type NoteHistoryPage,
 } from "./storage.js";
@@ -69,6 +71,8 @@ export interface OmnesisNotesBootDeps {
 
 /** Input to `capture` — one quick-capture note addressed to the assistant. */
 export interface CaptureNoteInput {
+  page?: NotePageContext;
+  browserAuthority?: BrowserNoteAuthority;
   captureContext?: NoteCaptureContext;
   /**
    * Client-supplied idempotency key (UUID). When a capture with this id
@@ -195,6 +199,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       const receivedAt = new Date().toISOString();
       const capturedAt = new Date(input.capturedAt ?? receivedAt).toISOString();
       const entry: NoteEntry = {
+        ...(input.page ? { page: input.page } : {}),
         ...(input.captureContext ? { captureContext: input.captureContext } : {}),
         id: input.id
           ? audit
@@ -217,7 +222,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       // INSERT OR IGNORE under the hood: a false result means this id
       // was already captured (client retry) — return the stored entry
       // untouched and skip the re-render.
-      const inserted = await deps.writeGate.appendNoteEntry(entry, audit);
+      const inserted = await deps.writeGate.appendNoteEntry(entry, audit, input.browserAuthority);
       if (!inserted) {
         const existing = getNoteEntry(deps.readDb, entry.id);
         if (existing) return existing;

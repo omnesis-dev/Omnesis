@@ -402,7 +402,10 @@
           Every template holds credentials for your approval, one request at a time. A prior
           approval never authorizes a later credential release. You can still configure an explicit
           <strong>Deny</strong> rule to block information even with approval, or disable credential
-          approval to block credentials outright.
+          approval to block credentials outright. Disabling it also sets the credentials row of the
+          decision table, when it keeps its template label, to <strong>Deny</strong> for the exact
+          value and for every decision that required approval. Enabling it again turns that row back
+          to <strong>Approval required</strong> when it is denied in every column.
         </p>
         <p>
           The reviewer judges an answer's <a href="#citations">citations</a> under the same policy
@@ -443,11 +446,13 @@
         <p>
           The <strong>Answer</strong> tab lists every exchange, newest first and grouped by day,
           with its outcome: shared, shared with details removed, not shared, failed, or still in
-          progress. An exchange reviewed under a named policy says so and links to it. Anything
-          waiting for your decision is pinned above the list with the held answer and both choices.
-          While decisions are waiting, the Audit entry in the portal's sidebar and in the mobile
-          apps' menu shows their count. A status filter narrows the list to one outcome; it applies
-          to the activity already loaded, so load older activity to look further back.
+          progress. In the portal and mobile apps, three animated dots mark an answer being drafted
+          or checked, both in the list and in its detail view. An exchange reviewed under a named
+          policy says so and links to it. Anything waiting for your decision is pinned above the
+          list with the held answer and both choices. While decisions are waiting, the Audit entry
+          in the portal's sidebar and in the mobile apps' menu shows their count. A status filter
+          narrows the list to one outcome; it applies to the activity already loaded, so load older
+          activity to look further back.
         </p>
         <p>
           The <strong>Direct</strong> tab lists the raw reads made with Direct tools, grouped into
@@ -755,10 +760,11 @@
           The public address is also where the Notion, Outlook and Strava sources send their sign-in
           back once <code>gateway.publicBaseUrl</code> is set:
           <code>https://studio.tail-example.ts.net/oauth/callback</code>. Add that redirect address
-          to the app you registered with the provider before you next sign one of them in.
-          <code>tailscale funnel reset</code> takes the gateway off the Internet again, along with
-          any other Tailscale Serve configuration on the machine; hosted connectors stop working
-          until it is published again.
+          to the app you registered with the provider before you next sign one of them in. A Strava
+          app takes a callback domain rather than an address: set it to the host name alone,
+          <code>studio.tail-example.ts.net</code>. <code>tailscale funnel reset</code> takes the
+          gateway off the Internet again, along with any other Tailscale Serve configuration on the
+          machine; hosted connectors stop working until it is published again.
         </p>
 
         <h3 id="approving-a-connection">Approve the connection</h3>
@@ -1232,6 +1238,24 @@
           code. It also re-establishes TLS trust, so a renewed gateway certificate needs a refresh,
           not a new pairing. When a refresh does need a new approval, the approval screen suggests
           replacing the integration's existing connection, which keeps its name and access level.
+        </p>
+        <p>
+          A refresh asks for a new approval only as a last resort. It first collects an approval you
+          gave to a request an earlier refresh opened, then renews the sign-in, then re-issues it
+          for the connection you already approved using the agent device's own credentials. A
+          refresh that does have to ask keeps one request open per integration: running it again
+          waits on that request instead of opening another, and an approval you give after the
+          command stopped is collected by the next refresh, as long as it runs within the request's
+          ten minutes. Without a terminal, as when
+          <code>omnesis update</code> or a fleet update runs it, a refresh never asks: it leaves a
+          working sign-in to the plugin, and when nothing approved is left it stops and names the
+          command to run. <code>--interactive</code> and <code>--no-interactive</code> override that
+          choice.
+        </p>
+        <p>
+          The OpenClaw and Hermes plugins repair their own sign-in the same way, without a browser,
+          when it lapses or a refresh stopped part-way. When the connection's approval was revoked,
+          Omnesis tools in the agent answer with the refresh command instead.
         </p>
         <p>
           <code>omnesis update</code> refreshes the plugin for you, and a fleet update restarts the

@@ -547,6 +547,11 @@ installing it takes one command as root:
           <code>sudo omnesis doctor</code> to include it in the checks.
         </p>
         <p>
+          If installation fails while activating the gateway, the installer stops the service so
+          systemd does not keep restarting it. Inspect the journal, correct the startup error, and
+          run the install command again. The state and passphrase are kept.
+        </p>
+        <p>
           The keys reach the gateway as a systemd credential: the unit names
           <code>/etc/omnesis-gateway/keyring.pass</code>, which systemd reads as root and hands to
           this service alone. Before the first start the unit creates the root key, so the stores

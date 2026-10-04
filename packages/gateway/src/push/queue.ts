@@ -166,7 +166,15 @@ interface ClaimedRow {
   route_data: string | null;
 }
 
-/** Approval prompts remain actionable only while a matching request is waiting. */
+/**
+ * Approval prompts remain actionable only while a matching request is waiting.
+ *
+ * A privacy approval matches its own approval row. An access prompt matches any
+ * waiting authorization request: it is deliberately generic (it names no
+ * request and only opens code entry), and every access prompt shares one
+ * collapse id, so the newest prompt supersedes the older ones and stands for
+ * every request still waiting, including those whose own prompt it replaced.
+ */
 function notificationIsActionable(db: Db, kind: string, targetId: string, now: number): boolean {
   if (kind === "access-authorization") {
     return (

@@ -59,6 +59,7 @@ import {
   createExtractedDatesTables,
   createDatesUnprocessedIndex,
   addDateMentions,
+  rescanSameDaySpansAndRestCompounds,
 } from "../enrichment/dates/storage.js";
 import {
   cascadeTemporalAnnotationPrivacyDelete,
@@ -78,6 +79,8 @@ import {
   createSubscriptionApprovalListIndexes,
   createSubscriptionTables,
 } from "../subscriptions/store-schema.js";
+import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/rebuild.js";
+import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -127,6 +130,7 @@ import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { normalizeSourceTimestamps } from "./migration-180-source-timestamps.js";
 import { migrateV182PrivateKeyJwtClients } from "./migration-182-private-key-jwt-clients.js";
 import { addCredentialApprovedAudience } from "./migration-183-credential-approved-audience.js";
+import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -1063,7 +1067,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Omnesis-derived date-enrichment signal (experimental): a
+    // Omnesis-derived date-enrichment signal: a
     // `dates_extracted_at` dirty-flag column on documents (mirrors
     // links_extracted_at) plus the `document_extracted_dates` sidecar table.
     // The ALTER adds the column on existing installs; createExtractedDatesTables
@@ -4724,6 +4728,43 @@ export const MIGRATIONS: readonly Migration[] = [
       }
     },
   },
+  {
+    // Declared edges resolve their endpoints by `(source_id, external_id)`
+    // inside the writer transaction; without an index on that pair each
+    // lookup scans the whole target source. Schema setup creates the index
+    // before migrations run, so this step is a no-op on every path that
+    // reaches it; it records the schema change in the version chain.
+    version: 187,
+    description: "index documents by source and external id for declared-edge resolution",
+    up: indexDocumentsBySourceExternalId,
+  },
+  {
+    version: 188,
+    description: "rescan documents holding same-day spans or rest-of compounds as dates",
+    up: rescanSameDaySpansAndRestCompounds,
+  },
+  {
+    version: 189,
+    description: "materialize contextual transcription vocabulary",
+    up: installTranscriptionVocabulary,
+  },
+  {
+    version: 190,
+    description: "version contextual transcription vocabulary materialization",
+    up: createTranscriptionVocabularyState,
+  },
+  {
+    version: 191,
+    description: "persist page context attached to captured notes",
+    up(db) {
+      const cols = db
+        .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('note_entries')")
+        .all();
+      if (cols.length > 0 && !cols.some((column) => column.name === "page_context")) {
+        db.exec("ALTER TABLE note_entries ADD COLUMN page_context TEXT");
+      }
+    },
+  },
 ];
 
 /**
@@ -5139,6 +5180,8 @@ function rebuildForDocumentStreams(db: Db): void {
       updated_at TEXT NOT NULL,
       source_url TEXT,
       people_resolved_at TEXT,
+      vocabulary_processed_at TEXT,
+      vocabulary_revision INTEGER NOT NULL DEFAULT 0,
       links_extracted_at TEXT,
       dates_extracted_at TEXT,
       dates_truncated INTEGER,

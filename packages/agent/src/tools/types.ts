@@ -22,6 +22,7 @@ import type {
   AgentUsage,
   DocRef,
   EventTrail,
+  GraphContextOptionalLinkType,
   LoopDetail,
   LoopSummary,
   PersonSummary,
@@ -166,13 +167,24 @@ export interface PersonPort {
 // ─── trace_connections ──────────────────────────────────────────────────────────
 
 export interface TrailPortOptions {
-  /** Max BFS depth. Clamped by the impl to [1, 10]; default 4. */
+  /**
+   * Max BFS depth. Clamped by the impl to [1, 10]. Defaults to 4, or to 2
+   * under graph context when every seed is an attachment or another part of
+   * a larger document — its explanation is one or two links away.
+   */
   depth?: number;
   /** Per-vertex per-category fanout cap. Clamped to [1, 100]; default 25. */
   fanoutCap?: number;
+  /** Under graph context, further link types to follow beyond the structural set. */
+  includeLinkTypes?: ReadonlyArray<GraphContextOptionalLinkType>;
 }
 
 export interface TrailPort {
+  /**
+   * Whether the gateway serves graph context: the walk follows the same
+   * structural links search graph context does, unless a call names more.
+   */
+  readonly graphContext?: boolean;
   /**
    * Build a chronologically-ordered event trail around one or more seed
    * documents. Each top-level event carries its people (by role), its

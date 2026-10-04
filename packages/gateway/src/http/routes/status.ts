@@ -71,6 +71,8 @@ export interface StatusRoutesDeps {
    * the feature inactive, so clients keep on-device dictation.
    */
   getDictationStatus?: () => DictationFeatureStatus;
+  /** Corpus vocabulary is independent of whether the gateway transcribes audio. */
+  getTranscriptionVocabularyEnabled?: () => boolean;
   /**
    * The gateway's whole on-disk footprint, by store. When omitted, `/status`
    * reports `diskUsage: null` and clients fall back to `dbSizeBytes`.
@@ -96,6 +98,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
     getReleaseCheck,
     getBriefsStatus,
     getDictationStatus,
+    getTranscriptionVocabularyEnabled,
     getDiskUsage,
   } = deps;
   // Health check + version. Public so liveness probes and clients can
@@ -120,6 +123,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       experimental: experimentalVisible(),
       capabilities: {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+        browserNotes: { min: 1, max: 1 },
         // Watch management and Watch-reaction delivery sit on the Watch
         // runtime, which is still experimental. The rest of the agent
         // integration — transcript ingestion and Answer through /mcp — is
@@ -483,6 +487,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // to `POST /notes/voice`. A client that finds no field, or finds it
       // inactive, saves the phone's own transcript as a plain note.
       dictation: getDictationStatus?.() ?? inactiveDictationStatus(),
+      transcriptionVocabulary: getTranscriptionVocabularyEnabled?.() ?? false,
       // How long the gateway believes a client's "I am showing this
       // conversation" mark without a refresh. Clients pace their own refresh
       // off this rather than hardcoding a second number that has to stay

@@ -7,7 +7,7 @@
  * maintenance (a COUNT(*) over the source and a latest-activity refresh); a
  * page must not pay that per document because one document in it is large.
  */
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import Database from "better-sqlite3";
 import { runSchemaSetup } from "../schema.js";
 import { runMigrations } from "../migrations.js";
@@ -24,7 +24,10 @@ beforeEach(() => {
   runMigrations(db);
 });
 
-afterEach(() => db.close());
+afterEach(() => {
+  vi.useRealTimers();
+  db.close();
+});
 
 const SOURCE = "drive:maya@example.com";
 const T = "2026-01-01T10:00:00Z";
@@ -46,6 +49,32 @@ function doc(externalId: string, contentBytes: number): DocumentInput {
 const HUGE = 1_000_000;
 
 describe("upsertDocuments yieldable chunking", () => {
+  test("timestamps each committed chunk after the preceding yield check", () => {
+    vi.useFakeTimers();
+    const firstAt = new Date("2026-08-01T12:00:00.000Z");
+    const secondAt = new Date("2026-08-01T12:00:01.000Z");
+    vi.setSystemTime(firstAt);
+    upsertDocuments(db, [doc("a", 100), doc("b", 100)], {
+      chunkSize: 1,
+      token: {
+        requested: () => {
+          vi.setSystemTime(secondAt);
+          return false;
+        },
+      },
+    });
+    const rows = db
+      .prepare<
+        [],
+        { external_id: string; updated_at: string }
+      >("SELECT external_id, updated_at FROM documents ORDER BY external_id")
+      .all();
+    expect(rows).toEqual([
+      { external_id: "a", updated_at: firstAt.toISOString() },
+      { external_id: "b", updated_at: secondAt.toISOString() },
+    ]);
+  });
+
   test("isolates a huge document without collapsing its siblings to one per chunk", () => {
     // Four ordinary documents, then one over the huge threshold, then two more.
     // A token that yields at the first opportunity reveals how big the first

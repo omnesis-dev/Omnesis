@@ -586,7 +586,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
                 <td>App Usage</td>
                 <td>
                   A screen-time document per day (total time, pickups, top apps), plus per-session
-                  and per-app daily analytics rows
+                  and per-app daily analytics rows. An app's time counts while it is on screen with
+                  the screen on.
                 </td>
                 <td>Usage access (system Settings)</td>
               </tr>
@@ -680,8 +681,10 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         <p>
           Notes are grouped by capture day, with a <strong>View combined note</strong> link to the
           day's searchable document. Expand <strong>Related to this day</strong> below the notes to
-          see <strong>Dates mentioned</strong>; selecting a date opens its entry in the portal's
-          time index. These links do not require the Brain and apply to the whole day's notes.
+          see the dates they mention, each labelled <strong>Date mention</strong> with its kind,
+          such as <strong>Event</strong> or <strong>Deadline</strong>, as on the portal's Calendar.
+          Selecting a date opens its entry in the portal's time index. These links do not require
+          the Brain and apply to the whole day's notes.
         </p>
         <p>
           On iPhone, say <strong>“Hey Siri, Ask Omnesis”</strong>; Siri then asks what you want to
@@ -775,6 +778,25 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           transcriber, the setting says what is missing, and notes keep the phone's own text.
         </p>
 
+        <p>
+          When <code>inference.transcriptionVocabulary.enabled</code> is explicitly set to
+          <code>true</code>, personal vocabulary hints can improve both gateway Whisper and the
+          apps' on-device recognition, including voice questions to the agent and notes captured
+          with gateway dictation off. This setting is disabled by default. The apps fetch hints in
+          the background, keep them in memory for offline use for up to 24 hours, and refresh them
+          opportunistically after 30 minutes when returning to the foreground or refreshing gateway
+          status. Starting a recording never waits for hints. See
+          <a href="/docs/operating">Operating Omnesis</a> for vocabulary behavior.
+        </p>
+        <p>
+          iOS supplies hints only to on-device recognition. Android requires Android 13 or later and
+          a compatible on-device recognizer; the recognition service may ignore hints. Recognition
+          that uses an operating-system cloud service receives no personal dictionary. Apple Watch
+          recordings transcribed on the paired iPhone can use hints. Watch system dictation,
+          keyboard dictation, and voice-assistant input do not expose vocabulary hints to the app.
+          Android hints apply to the app's Ask/Tell voice capture and voice follow-ups; typing or
+          using the keyboard microphone in the agent composer does not use this dictionary.
+        </p>
         <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
         <p>
           While you dictate, Tell Omnesis shows that it is recording rather than what the phone

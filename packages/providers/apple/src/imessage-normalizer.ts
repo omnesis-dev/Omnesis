@@ -10,8 +10,21 @@ import {
   extractPhonesFromText,
   parseSourceKey,
 } from "@omnesis/core";
-import type { DocumentInput, SourceId, ProviderId, PersonMention } from "@omnesis/types";
+import type {
+  DocumentInput,
+  SourceId,
+  ProviderId,
+  PersonMention,
+  PersonIdentifier,
+} from "@omnesis/types";
 import type { ParsedIMessage, IMessageChatInfo, IMessageAttachmentInfo } from "./imessage-types.js";
+
+/** The same handle normalization used for document and transcription identities. */
+export function imessagePersonIdentifiers(handle: string): PersonIdentifier[] {
+  if (handle.includes("@")) return [{ kind: "email", value: normalizeEmail(handle) }];
+  const phone = normalizePhone(handle);
+  return phone ? [{ kind: "phone", value: phone }] : [];
+}
 
 /**
  * Tapback type codes to human-readable labels.
@@ -238,12 +251,12 @@ export function normalizeDayChat(
           : undefined,
     };
     if (id.includes("@")) {
-      const email = normalizeEmail(id);
+      const email = imessagePersonIdentifiers(id)[0].value;
       if (seenIds.has(email)) return;
       person.emails = [email];
       seenIds.add(email);
     } else {
-      const normalized = normalizePhone(id);
+      const normalized = imessagePersonIdentifiers(id)[0]?.value;
       if (normalized) {
         if (seenIds.has(normalized)) return;
         person.phones = [normalized];
@@ -336,6 +349,7 @@ export function normalizeDayChat(
       people: people.length > 0 ? people : undefined,
       extra: {
         chatIdentifier: chat.chatIdentifier,
+        conversationId: chat.chatIdentifier,
         chatName: chat.displayName ?? undefined,
         isGroup: chat.isGroup,
         messageCount,

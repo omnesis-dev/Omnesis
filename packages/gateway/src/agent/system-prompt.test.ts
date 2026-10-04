@@ -453,3 +453,27 @@ describe("renderSourceRestrictedAnswerSection — a restricted Answer's groundin
     }
   });
 });
+
+describe("buildSystemPrompt — graph guidance", () => {
+  test("keeps the breadcrumb cues when search carries no graph context", () => {
+    const prompt = buildSystemPrompt({ now: new Date("2026-01-01T10:00:00Z") });
+    expect(prompt).toContain("**`breadcrumb`** on a top hit");
+    expect(prompt).not.toContain("Read the graph context before you conclude");
+  });
+
+  test.each(["interactive", "subagent"] as const)(
+    "teaches the %s agent to read graph context and never mentions breadcrumbs",
+    (audience) => {
+      const prompt = buildSystemPrompt({
+        now: new Date("2026-01-01T10:00:00Z"),
+        audience,
+        graphContext: true,
+      });
+      expect(prompt).toContain("Read the graph context before you conclude");
+      expect(prompt).toContain("Labels are not ids");
+      expect(prompt).toContain("defaults to depth 2");
+      expect(prompt).toContain("stopped early");
+      expect(prompt).not.toContain("breadcrumb");
+    },
+  );
+});

@@ -17,6 +17,7 @@ const SYNTHETIC_PERIODIC_TASKS = new Set([
   "nearDup.inboxFlush",
   "backfill.nearDupDfRefresh",
   "backfill.nearDupCompute",
+  "transcription.vocabularyBackfill",
   // The absence sweep is the only path by which a snapshot omission becomes a
   // deletion; a synthetic E2E drives it deliberately rather than waiting out
   // its cadence.

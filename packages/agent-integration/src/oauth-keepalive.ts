@@ -22,7 +22,7 @@
  *     approved, which is the one authority an unattended plugin still holds.
  */
 
-import { IntegrationHttpError, PinnedGatewayHttpClient } from "./http.js";
+import { IntegrationHttpError, OAUTH_TOKEN_TIMEOUT_MS, PinnedGatewayHttpClient } from "./http.js";
 import type { IntegrationOAuthProvider } from "./oauth.js";
 import type { IntegrationCredentials } from "./credentials.js";
 
@@ -88,8 +88,11 @@ interface ReissuedTokenResponse {
  */
 const NO_APPROVED_CREDENTIAL = "NO_APPROVED_CREDENTIAL";
 
-/** Raised when the operator has revoked the grant, or never approved one. */
-class IntegrationReauthorizationRequiredError extends Error {
+/**
+ * Raised when the operator has revoked the grant, or never approved one: the
+ * one outcome of a headless recovery after which only a new approval helps.
+ */
+export class IntegrationReauthorizationRequiredError extends Error {
   constructor(harnessHint = "<harness>") {
     super(
       `Omnesis corpus access for this installation is no longer authorized. ` +
@@ -128,6 +131,9 @@ export async function reissueIntegrationOAuthTokens(
       "POST",
       "/agent-integration/oauth-reissue",
       { clientId },
+      undefined,
+      // A write on the gateway's writer, like the refresh it replaces.
+      { timeoutMs: OAUTH_TOKEN_TIMEOUT_MS },
     );
   } catch (error) {
     if (error instanceof IntegrationHttpError && error.code === NO_APPROVED_CREDENTIAL) {

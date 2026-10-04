@@ -132,6 +132,60 @@ final class SearchBreadcrumbTests: XCTestCase {
         XCTAssertEqual(SearchBreadcrumbFormatter.visiblePanels([first, second]), ["root"])
     }
 
+    func testSharedRouteIsSaidOnceWithBranchesIndentedAndRepeatedNamesFolded() {
+        let attached = "is attached to"
+        let includes = "includes the attachment"
+        let thread = "is in the same conversation as"
+        let contains = "inbound:contains"
+        let evidence = SearchProvenance(
+            copies: [],
+            paths: [
+                .init(documentIds: ["root", "email", "sheet"], edges: [contains, contains], relations: [attached, includes]),
+                .init(documentIds: ["root", "email", "logo1"], edges: [contains, contains], relations: [attached, includes]),
+                .init(
+                    documentIds: ["root", "email", "reply", "signed"],
+                    edges: [contains, "outbound:part-of-thread", contains],
+                    relations: [attached, thread, includes]
+                ),
+                .init(
+                    documentIds: ["root", "email", "reply", "logo2"],
+                    edges: [contains, "outbound:part-of-thread", contains],
+                    relations: [attached, thread, includes]
+                ),
+            ],
+            stopReasons: [],
+            modelContext: .init(documents: [
+                document("email", title: "Sample request"), document("sheet", title: "Measurements.pdf"),
+                document("logo1", title: "image001.png"), document("reply", title: "Re: Sample request"),
+                document("signed", title: "Signed form.pdf"), document("logo2", title: "image001.png"),
+            ])
+        )
+        let facts = SearchBreadcrumbFormatter.facts(evidence, documentId: "root")
+        XCTAssertEqual(facts.map(\.plainText), [
+            "This document is attached to Sample request, which:",
+            "includes the attachment Measurements.pdf and image001.png (and 1 more with this name).",
+            "is in the same conversation as Re: Sample request, which includes the attachment Signed form.pdf.",
+        ])
+        XCTAssertEqual(facts.map(\.depth), [0, 1, 1])
+    }
+
+    func testVisibleResultIsNeverFoldedIntoASameNamedDocument() {
+        let evidence = SearchProvenance(
+            copies: [document("root", title: "image001.png"), document("copy", title: "Agreement copy")],
+            paths: [
+                .init(documentIds: ["copy", "a", "root"], edges: ["outbound:url", "outbound:url"], relations: ["links to", "links to"]),
+                .init(documentIds: ["copy", "b", "image"], edges: ["outbound:url", "outbound:url"], relations: ["links to", "links to"]),
+            ],
+            stopReasons: [],
+            modelContext: .init(documents: [
+                document("a", title: "Note A"), document("b", title: "Note B"), document("image", title: "image001.png"),
+            ])
+        )
+        let text = SearchBreadcrumbFormatter.facts(evidence, documentId: "root").map(\.plainText).joined(separator: "\n")
+        XCTAssertFalse(text.contains("more with this name"))
+        XCTAssertTrue(text.contains("This document"))
+    }
+
     func testCyclicPathDoesNotProduceMisleadingProse() {
         let evidence = provenance(paths: [
             .init(documentIds: ["root", "email", "root"], edges: ["url", "url"], relations: nil),
@@ -145,5 +199,20 @@ final class SearchBreadcrumbTests: XCTestCase {
         XCTAssertEqual(SearchBreadcrumbNavigation.documentId(url), id)
         XCTAssertNil(try SearchBreadcrumbNavigation.documentId(XCTUnwrap(URL(string: "https://example.com/?id=wrong"))))
         XCTAssertNil(try SearchBreadcrumbNavigation.documentId(XCTUnwrap(URL(string: "omnesis-document://open?id="))))
+    }
+
+    func testLinksListEachDocumentOnceInReadingOrderForVoiceOver() {
+        let untitled = SearchProvenance.Document(documentId: "blank", sourceId: "", title: "", deviceName: nil, path: nil)
+        let fact = SearchBreadcrumbFact(fragments: [
+            .document(document("email", title: "Budget thread")),
+            .text(" links to "),
+            .document(untitled),
+            .text(" and "),
+            .document(document("email", title: "Budget thread")),
+            .text("."),
+        ])
+        XCTAssertEqual(fact.links.map(\.documentId), ["email", "blank"])
+        XCTAssertEqual(fact.links.map(\.displayTitle), ["Budget thread", "Untitled document"])
+        XCTAssertEqual(fact.plainText, "Budget thread links to Untitled document and Budget thread.")
     }
 }

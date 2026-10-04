@@ -125,4 +125,26 @@ describe("renderActivityMarkdown", () => {
   test("fall back gracefully when detail/comments/kudoers are undefined", () => {
     expect(() => renderActivityMarkdown(summary)).not.toThrow();
   });
+
+  test("a foot pace whose seconds round up to a minute carries it into the minutes", () => {
+    // 1798 s over 5 km is 359.6 s/km: six minutes, not five and sixty seconds.
+    const run = { ...summary, distance: 5000, moving_time: 1798 };
+    expect(renderActivityMarkdown(run)).toContain("**Pace:** 6:00 /km\n");
+    expect(renderActivityMarkdown({ ...run, moving_time: 1797 })).toContain("**Pace:** 5:59 /km\n");
+  });
+
+  test("the Started line reads the same for the API's and the store's spelling of one wall clock", () => {
+    // The listing hands over what the API sent, the enrichment tiers what the
+    // store rendered; one document must not spell its start two ways.
+    const fromApi = renderActivityMarkdown({
+      ...summary,
+      start_date_local: "2026-05-03T10:31:00Z",
+    });
+    const fromStore = renderActivityMarkdown({
+      ...summary,
+      start_date_local: "2026-05-03T10:31:00.000",
+    });
+    expect(fromStore).toBe(fromApi);
+    expect(fromApi).toContain("**Started:** 2026-05-03 10:31:00\n");
+  });
 });

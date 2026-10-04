@@ -954,8 +954,18 @@
                   Activities, splits, best efforts, laps, segment efforts, zones, streams, comments,
                   kudos, gear, and athlete profile, zones, and stats as analytics tables, plus a
                   summary document per activity. Each installation needs its own Strava API app,
-                  because Strava caps a shared app at one connected athlete; the first add flow
-                  walks you through registering it.
+                  registered by a Strava account with an active Strava subscription; the first add
+                  flow walks you through registering it. A new app connects one athlete, and its
+                  owner can raise that to ten. Without the subscription Strava deactivates the app
+                  and refuses every request: the source stops and says what to do, and once the
+                  owner has subscribed and reactivated the app on Strava's
+                  <a href="https://www.strava.com/settings/api">API settings page</a>, it carries on
+                  where it stopped. The athletes you connect need no subscription, but Strava gives
+                  an activity's heart-rate and power zones only to an athlete who has one. Strava
+                  allows a new app 1,000 reads a day, so the source is added with a 30-minute sync
+                  interval, and for an account with many activities a first sync or a resync can
+                  take several days to fetch every activity's details, while new activities keep
+                  being listed.
                 </td>
               </tr>
               <tr>
@@ -1087,10 +1097,12 @@
                 <td>
                   Quick notes captured with <code>omnesis note</code>, the portal's
                   <strong>Tell Omnesis</strong> page, the mobile apps, Siri or Android voice
-                  assistants, and Apple Watch, indexed as one searchable document per day. No agent
-                  model is needed. The Sources lists show it as a read-only row; to amend or delete
-                  a note, use <strong>Tell Omnesis</strong>, and the day's document rebuilds from
-                  what remains. There is nothing to sync, pause, or remove.
+                  assistants, Apple Watch, and the browser extension, indexed as one searchable
+                  document per day. Browser notes include the page URL and optional selected
+                  quotation, with a reference to the page when it is indexed. No agent model is
+                  needed. The Sources lists show it as a read-only row; to amend or delete a note,
+                  use <strong>Tell Omnesis</strong>, and the day's document rebuilds from what
+                  remains. There is nothing to sync, pause, or remove.
                 </td>
               </tr>
               <tr>

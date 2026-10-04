@@ -1,5 +1,11 @@
 # @omnesis/relay
 
+## 0.6.0
+
+### Patch Changes
+
+- @omnesis/core@0.6.0
+
 ## 0.5.14
 
 ### Patch Changes
