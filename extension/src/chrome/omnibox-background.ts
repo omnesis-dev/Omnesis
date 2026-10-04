@@ -33,7 +33,6 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
   let ready: Promise<void> = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
-  const suggestions = new Map<string, FindResult>();
   const defaultSuggestion = (enabled: boolean): void => {
     void chrome.omnibox
       .setDefaultSuggestion({
@@ -56,7 +55,6 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
     activeTab = undefined;
     view = undefined;
     cancelPending();
-    suggestions.clear();
     defaultSuggestion(false);
   }
   chrome.omnibox.onInputStarted.addListener(() => {
@@ -83,7 +81,6 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
   });
   chrome.omnibox.onInputChanged.addListener((text, suggest) => {
     cancelPending();
-    suggestions.clear();
     const request = ++generation;
     // InputStarted's gate belongs to this session even after its text changes.
     const query = text.trim();
@@ -107,11 +104,9 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
             cards.flatMap((card) => {
               const url = browserUrl(card.url);
               if (!url) return [];
-              const content = `omnesis-result:${crypto.randomUUID()}`;
-              suggestions.set(content, card);
               return [
                 {
-                  content,
+                  content: url,
                   description: `<match>${escape(card.title.slice(0, 180))}</match> <dim>${escape(new URL(url).hostname)}</dim>`,
                 },
               ];
@@ -125,25 +120,23 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
   });
   chrome.omnibox.onInputCancelled.addListener(clear);
   chrome.omnibox.onInputEntered.addListener((text, disposition) => {
-    const selected = suggestions.get(text);
+    const selectedUrl = browserUrl(text);
     const tabId = activeTab?.id;
-    const enabled = view?.enabled === true;
     cancelPending();
-    suggestions.clear();
     session = false;
     generation++;
     const selectionGeneration = generation;
-    if (selected) {
-      if (!enabled) return;
+    if (selectedUrl) {
+      if (view?.enabled === false) return;
       void find
         .ensureRead()
         .then(async (current) => {
           if (!current.enabled || selectionGeneration !== generation) return;
           if (disposition === "newBackgroundTab")
-            await chrome.tabs.create({ url: selected.url, active: false });
+            await chrome.tabs.create({ url: selectedUrl, active: false });
           else
             await activateFindResult(
-              selected,
+              { url: selectedUrl },
               current.canonicalizers,
               disposition === "newForegroundTab",
             );

@@ -6,7 +6,7 @@ import type { UrlCanonicalizerSpec } from "@omnesis/core/url-normalize";
 export { browserIdentity } from "./find-results.js";
 
 export function findOpenTab(
-  result: FindResult,
+  result: Pick<FindResult, "url">,
   tabs: chrome.tabs.Tab[],
   canonicalizers: UrlCanonicalizerSpec[],
 ): chrome.tabs.Tab | undefined {
@@ -22,7 +22,7 @@ export function findOpenTab(
 
 /** URLs are compared locally; no tab title, URL or history is sent to Omnesis. */
 export async function activateFindResult(
-  result: FindResult,
+  result: Pick<FindResult, "url">,
   canonicalizers: UrlCanonicalizerSpec[],
   newCopy = false,
 ): Promise<void> {

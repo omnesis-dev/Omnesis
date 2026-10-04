@@ -85,7 +85,7 @@ afterEach(() => {
 });
 
 describe("Omnesis omnibox", () => {
-  it("debounces index previews, escapes markup, deduplicates destinations and bounds opaque suggestions", async () => {
+  it("debounces index previews, escapes markup, deduplicates destinations and bounds URL suggestions", async () => {
     vi.useFakeTimers();
     const h = harness();
     h.suggest.mockResolvedValue([
@@ -108,13 +108,38 @@ describe("Omnesis omnibox", () => {
     expect(first).not.toHaveBeenCalled();
     const suggestions = second.mock.calls[0]?.[0] as chrome.omnibox.SuggestResult[];
     expect(suggestions).toHaveLength(5);
-    expect(suggestions[0]?.content).toMatch(/^omnesis-result:/);
-    expect(suggestions[0]?.content).not.toContain("example.org");
+    expect(suggestions[0]?.content).toBe("https://example.org/article");
     expect(suggestions[0]?.description).toContain("&lt;guide&gt; &amp;");
     h.enter(suggestions[0]!.content);
     await vi.advanceTimersByTimeAsync(0);
     expect(h.update).toHaveBeenCalledWith(7, { active: true });
     expect(h.create).not.toHaveBeenCalled();
+  });
+  it("opens a selected URL after Chrome reports its address-bar text as changed", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.suggest.mockResolvedValue([card("first")]);
+    h.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const callback = vi.fn();
+    h.change("invented guide", callback);
+    await vi.advanceTimersByTimeAsync(150);
+    const url = callback.mock.calls[0]![0][0].content;
+    h.change(url, vi.fn());
+    h.enter(url);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.update).toHaveBeenCalledExactlyOnceWith(7, { active: true });
+    expect(h.create).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(h.suggest).toHaveBeenCalledTimes(1);
+  });
+  it("opens a valid result URL without relying on an in-memory suggestion identifier", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.enter("https://example.org/a-saved-page");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.ensureRead).toHaveBeenCalledOnce();
+    expect(h.create).toHaveBeenCalledExactlyOnceWith({ url: "https://example.org/a-saved-page" });
   });
   it.each(["currentTab", "newForegroundTab", "newBackgroundTab"] as const)(
     "opens raw Enter as full-page Find with disposition %s",
