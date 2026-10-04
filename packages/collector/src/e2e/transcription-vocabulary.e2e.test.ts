@@ -63,7 +63,8 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
           sourceId: SOURCE_A,
           externalId: "vocab-voice-thread",
           title: "Vocabulary context",
-          content: "Quenlora quenlora is the project. The and this are ordinary words.",
+          content:
+            "Quenlora quenlora is the project. A stray zeriVex appears here only. The and this are ordinary words.",
           metadata: {
             documentType: "conversation",
             extra: { conversationId: THREAD },
@@ -80,6 +81,20 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
           },
         },
         {
+          sourceId: SOURCE_A,
+          externalId: "vocab-voice-followup",
+          title: "Project follow-up",
+          content: "We reviewed the Quenlora project and agreed on the next step.",
+          metadata: {
+            documentType: "conversation",
+            extra: { conversationId: THREAD },
+            people: [
+              { role: "participant", identifiers: [{ kind: "phone", value: PHONE }] },
+              { role: "participant", isSelf: true },
+            ],
+          },
+        },
+        {
           sourceId: SOURCE_B,
           externalId: "vocab-mail-context",
           title: "Vocabulary context",
@@ -91,9 +106,34 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
         },
         {
           sourceId: SOURCE_B,
+          externalId: "vocab-mail-followup",
+          title: "Exchange follow-up",
+          content: "We continued the Vexluma discussion with a revised proposal.",
+          metadata: {
+            documentType: "email",
+            people: [{ role: "sender", identifiers: [{ kind: "email", value: EMAIL }] }],
+          },
+        },
+        {
+          sourceId: SOURCE_B,
           externalId: "vocab-unrelated-context",
           title: "Vocabulary context",
           content: "Zelvanta zelvanta is the unrelated project.",
+          metadata: {
+            documentType: "email",
+            people: [
+              {
+                role: "sender",
+                identifiers: [{ kind: "email", value: "other-speaker@example.org" }],
+              },
+            ],
+          },
+        },
+        {
+          sourceId: SOURCE_B,
+          externalId: "vocab-unrelated-followup",
+          title: "Separate project update",
+          content: "We saw the Zelvanta team complete a milestone this week.",
           metadata: {
             documentType: "email",
             people: [
@@ -145,7 +185,7 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
               "SELECT count(*) AS count FROM documents WHERE external_id LIKE 'vocab-%' AND vocabulary_processed_at IS NOT NULL",
             )
             .get(),
-        ).toEqual({ count: 3 });
+        ).toEqual({ count: 6 });
       },
       { timeout: 90_000, interval: 500 },
     );
@@ -217,6 +257,17 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
     ).toBe(false);
   });
 
+  test("a mixed-case singleton remains ineligible after scheduled extraction", async () => {
+    expect(
+      db
+        .prepare(
+          "SELECT document_count FROM transcription_vocabulary_terms WHERE scope_kind='global' AND term='zerivex'",
+        )
+        .get(),
+    ).toEqual({ document_count: 1 });
+    expect(score(await dictionary(harness, { purpose: "dictation" }), "zeriVex")).toBe(0);
+  });
+
   test("requires corpus read access and bounds context before selection", async () => {
     const created = await harness.gatewayJson<{ device: { id: string }; token: string }>(
       "/admin/devices",
@@ -285,6 +336,28 @@ describe("transcription vocabulary materialization and API (E2E)", () => {
       method: "PATCH",
       body: JSON.stringify({ inference: { transcriptionVocabulary: { enabled: true } } }),
     });
+    await vi.waitFor(
+      async () => {
+        await tick(harness);
+        expect(
+          db
+            .prepare(
+              "SELECT document_count FROM transcription_vocabulary_terms WHERE scope_kind='global' AND term='nuvriala'",
+            )
+            .get(),
+        ).toEqual({ document_count: 1 });
+      },
+      { timeout: 30_000, interval: 500 },
+    );
+    expect(score(await dictionary(harness, { purpose: "dictation" }), "Nuvriala")).toBe(0);
+    await harness.pushDocuments([
+      {
+        sourceId: SOURCE_A,
+        externalId: "vocab-enabled-corroboration",
+        title: "Follow-up discussion",
+        content: "We discussed Nuvriala again and recorded the outcome.",
+      },
+    ]);
     await vi.waitFor(
       async () => {
         await tick(harness);
