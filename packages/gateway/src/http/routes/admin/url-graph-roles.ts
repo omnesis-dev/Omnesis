@@ -17,6 +17,7 @@ import {
   refreshCollectorDeclarationRoster,
 } from "../../../collector-declaration-roster.js";
 import { updateLinkDeclarations } from "../../../domain/LinkDeclarationService.js";
+import { setSourceAttributions, validateSourceAttributions } from "../../../source-attributions.js";
 import { setKnownUrlPatterns } from "../../../known-url-patterns.js";
 import { setUrlCanonicalizersForDeclarer } from "../../../url-canonicalizers.js";
 import {
@@ -62,6 +63,10 @@ export function mountUrlGraphRolesRoutes(app: RouteApp, deps: AdminRoutesDeps): 
           auth.scopes,
           auth.deviceId === null ? undefined : deps.wsServer?.isConnected(auth.deviceId),
         );
+        // Older collectors omit optional display metadata; preserve their last declaration.
+        if (body.sourceAttributions !== undefined) {
+          validateSourceAttributions(declarationKey, body.sourceAttributions);
+        }
         setUrlCanonicalizersForDeclarer(declarationKey, body.canonicalizers);
         setUrlGraphRoles(
           declarationKey,
@@ -70,6 +75,9 @@ export function mountUrlGraphRolesRoutes(app: RouteApp, deps: AdminRoutesDeps): 
           body.referenceOnlyPrefixes,
         );
         setKnownUrlPatterns(declarationKey, body.patterns);
+        if (body.sourceAttributions !== undefined) {
+          setSourceAttributions(declarationKey, body.sourceAttributions);
+        }
         markLinkDeclarationBundleReady(declarationKey);
       });
       return c.json({ ok: true });

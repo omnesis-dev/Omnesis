@@ -1633,3 +1633,6 @@ export const removeCodexBackend = () =>
 
 export const getBrowserNotesAuthorization = (id) => request("GET", `/admin/browser-notes/authorizations/${encodeURIComponent(id)}`);
 export const approveBrowserNotesAuthorization = (id) => request("POST", `/admin/browser-notes/authorizations/${encodeURIComponent(id)}/approve`);
+
+export const getBrowserFindAuthorization = (id) => request("GET", `/admin/browser-find/authorizations/${encodeURIComponent(id)}`);
+export const approveBrowserFindAuthorization = (id) => request("POST", `/admin/browser-find/authorizations/${encodeURIComponent(id)}/approve`);

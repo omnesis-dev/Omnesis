@@ -75,7 +75,28 @@
       "method": "POST",
       "path": "/browser/notes",
       "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/find/authorization",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/browser/find/authorization/:id",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/browser/find",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/find/search",
+      "authenticated": true
     }
   ],
-  "optionalNotesTokenScopes": ["notes:create"]
+  "optionalNotesTokenScopes": ["notes:create"],
+  "optionalFindTokenScopes": ["read"]
 }

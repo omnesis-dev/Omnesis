@@ -141,13 +141,18 @@ declare global {
     namespace tabs {
       interface Tab {
         id?: number;
+        windowId?: number;
         url?: string;
         title?: string;
         incognito?: boolean;
       }
       function create(details: { url: string }): Promise<Tab>;
-      function query(queryInfo: { active: boolean; currentWindow: boolean }): Promise<Tab[]>;
+      function query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<Tab[]>;
+      function update(tabId: number, details: { active: boolean }): Promise<Tab>;
       function sendMessage<T = unknown>(tabId: number, message: unknown): Promise<T>;
+    }
+    namespace windows {
+      function update(windowId: number, details: { focused: boolean }): Promise<unknown>;
     }
 
     namespace commands {

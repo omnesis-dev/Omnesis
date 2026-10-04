@@ -5,6 +5,7 @@ import { normalizeUrl } from "@omnesis/core";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   getUrlCanonicalizers,
+  getUrlCanonicalizerSpecs,
   resetUrlCanonicalizers,
   setExpectedUrlCanonicalizerDeclarers,
   setUrlCanonicalizersForDeclarer,
@@ -106,4 +107,27 @@ describe("URL canonicalizer declarations", () => {
 
     expect([...getUrlCanonicalizers().keys()]).toEqual(["updates.example.org"]);
   });
+});
+
+test("rolling collector upgrades retain optional browser identities without changing document rules", () => {
+  const legacy = {
+    hosts: ["shared.example.org"],
+    rules: [
+      {
+        match: "^https://shared[.]example[.]org/(.*)$",
+        replacement: "https://shared.example.org/$1",
+      },
+    ],
+  };
+  const current = {
+    ...legacy,
+    browserIdentity: { part: "path" as const, format: "uuid-suffix" as const },
+  };
+  setExpectedUrlCanonicalizerDeclarers(["legacy", "current"]);
+  setUrlCanonicalizersForDeclarer("current", [current]);
+  setUrlCanonicalizersForDeclarer("legacy", [legacy]);
+  expect(getUrlCanonicalizerSpecs()).toEqual([current]);
+  setExpectedUrlCanonicalizerDeclarers(["legacy"]);
+  expect(getUrlCanonicalizerSpecs()[0]?.browserIdentity).toBeUndefined();
+  expect(getUrlCanonicalizerSpecs()[0]?.rules).toEqual(legacy.rules);
 });

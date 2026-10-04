@@ -1,0 +1,417 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { describe, expect, it, vi } from "vitest";
+import { AgentService } from "../../agent/service.js";
+import { BrowserFindEvidence, createBrowserResultsTool } from "./results-tool.js";
+import { buildBrowserFindRuntime } from "./runtime.js";
+import type { AgentEvent } from "@omnesis/core";
+import type { ChatBackend, DocumentPort, RecordPort, TurnInput } from "@omnesis/agent";
+
+const document: DocumentPort = {
+  fetch: async (id) =>
+    id === "doc-1"
+      ? {
+          ref: {
+            documentId: id,
+            sourceId: "demo:one",
+            sourceType: "demo",
+            title: "Example activity",
+            url: "https://example.org/activity/1",
+          },
+          document: {
+            id,
+            content:
+              "Compare the route at https://example.org/routes/2. Read [route](https://example.org/wiki/Route_(example)). A long weekend run.",
+            sourceCreatedAt: "2026-01-01",
+          },
+        }
+      : null,
+};
+const context = { sessionId: "find-session", messageId: "find-message" };
+const reference = {
+  table: "demo_activities",
+  recordKey: "demo_activities:1",
+  primaryKeyColumns: [{ name: "id", value: "1" }],
+};
+
+function fixture() {
+  const evidence = new BrowserFindEvidence();
+  const onResults = vi.fn();
+  const resolve = vi.fn<RecordPort["resolve"]>(async () => ({
+    table: reference.table,
+    recordKey: reference.recordKey,
+    primaryKeyColumns: reference.primaryKeyColumns,
+    title: "Example activity",
+    keyFields: [],
+    semanticTime: "2026-01-01",
+    snapshot: {},
+    sourceId: "demo:one",
+    sourceType: "demo",
+    tableDisplayName: "Activities",
+    boundDocumentId: "doc-1",
+  }));
+  const tool = createBrowserResultsTool({
+    evidence,
+    ports: { document, record: { resolve } },
+    onResults,
+  });
+  return { evidence, onResults, resolve, tool };
+}
+
+function result(destinationUrl = "https://example.org/activity/1") {
+  return {
+    destinationUrl,
+    title: "Example activity",
+    snippet: "A long weekend run.",
+    evidence: { documentIds: ["doc-1"] },
+  };
+}
+
+describe("grounded browser result presentation", () => {
+  it("requires retrieved evidence, accepts embedded URLs, and rejects invented snippets atomically", async () => {
+    const f = fixture();
+    expect(await f.tool.invoke({ results: [result()] }, context)).toMatchObject({
+      kind: "error",
+      code: "unretrieved_evidence",
+    });
+    f.evidence.observe({
+      kind: "search.results",
+      query: "route",
+      durationMs: 0,
+      results: [{ documentId: "doc-1", sourceId: "demo:one", sourceType: "demo" }],
+    });
+    expect(
+      await f.tool.invoke({ results: [result("https://example.org/routes/2")] }, context),
+    ).toMatchObject({ kind: "structured" });
+    expect(f.onResults.mock.calls[0]![0][0]).toMatchObject({
+      sourceUrl: "https://example.org/routes/2",
+      documentId: "doc-1",
+      chunkText: "A long weekend run.",
+    });
+    f.onResults.mockClear();
+    expect(
+      await f.tool.invoke(
+        { results: [result(), { ...result(), snippet: "Invented distance" }] },
+        context,
+      ),
+    ).toMatchObject({ kind: "error", code: "ungrounded_snippet" });
+    expect(f.onResults).not.toHaveBeenCalled();
+  });
+
+  it("replaces invented title claims with the source title and preserves verbatim title spans", async () => {
+    const f = fixture();
+    f.evidence.observe({
+      kind: "search.results",
+      query: "route",
+      durationMs: 0,
+      results: [{ documentId: "doc-1", sourceId: "demo:one", sourceType: "demo" }],
+    });
+    expect(
+      await f.tool.invoke(
+        { results: [{ ...result(), title: "World record marathon winner" }] },
+        context,
+      ),
+    ).toMatchObject({ kind: "structured" });
+    expect(f.onResults.mock.lastCall![0][0]).toMatchObject({
+      title: "Example activity",
+      chunkText: "A long weekend run.",
+    });
+    expect(
+      await f.tool.invoke({ results: [{ ...result(), title: "A long weekend run." }] }, context),
+    ).toMatchObject({ kind: "structured" });
+    expect(f.onResults.mock.lastCall![0][0]).toMatchObject({ title: "A long weekend run." });
+  });
+
+  it("rejects fabricated projected SQL URLs and resolves the real bound document", async () => {
+    const f = fixture();
+    f.evidence.observe({
+      kind: "sql.rows",
+      sql: "SELECT id, 'https://example.org/invented' AS url FROM demo_activities",
+      columns: ["id", "url"],
+      rows: [["1", "https://example.org/invented"]],
+      rowCount: 1,
+      durationMs: 0,
+      rowIdentities: [reference],
+    });
+    const item = { ...result(), evidence: { record: reference } };
+    expect(
+      await f.tool.invoke(
+        { results: [{ ...item, destinationUrl: "https://example.org/invented" }] },
+        context,
+      ),
+    ).toMatchObject({ kind: "error", code: "ungrounded_destination" });
+    expect(await f.tool.invoke({ results: [item] }, context)).toMatchObject({ kind: "structured" });
+    expect(f.resolve).toHaveBeenCalledWith({
+      reference,
+      snapshot: { id: "1", url: "https://example.org/invented" },
+    });
+    expect(f.onResults).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports explicit no matches and refuses unsafe schemes and canceled emissions", async () => {
+    const f = fixture();
+    expect(await f.tool.invoke({ results: [] }, context)).toMatchObject({ kind: "structured" });
+    expect(f.onResults).toHaveBeenCalledWith([]);
+    expect(
+      await f.tool.invoke({ results: [result("javascript:alert(1)")] }, context),
+    ).toMatchObject({ kind: "error", code: "ungrounded_destination" });
+    f.onResults.mockClear();
+    const controller = new AbortController();
+    controller.abort();
+    expect(
+      await f.tool.invoke({ results: [] }, { ...context, abortSignal: controller.signal }),
+    ).toMatchObject({ kind: "error", code: "canceled" });
+    expect(f.onResults).not.toHaveBeenCalled();
+  });
+});
+
+describe("browser result evidence boundaries", () => {
+  it("emits cumulative deduplicated snapshots and rejects a batch over the result cap", async () => {
+    const f = fixture();
+    f.evidence.documentIds.add("doc-1");
+    await f.tool.invoke({ results: [result()] }, context);
+    await f.tool.invoke({ results: [result("https://example.org/routes/2")] }, context);
+    await f.tool.invoke({ results: [result()] }, context);
+    expect(f.onResults.mock.lastCall?.[0]).toHaveLength(2);
+    const limited = createBrowserResultsTool({
+      evidence: f.evidence,
+      ports: { document },
+      limit: 1,
+      onResults: f.onResults,
+    });
+    f.onResults.mockClear();
+    expect(
+      await limited.invoke(
+        { results: [result(), result("https://example.org/routes/2")] },
+        context,
+      ),
+    ).toMatchObject({ kind: "error", code: "too_many_results" });
+    expect(f.onResults).not.toHaveBeenCalled();
+  });
+
+  it("retains balanced URL parentheses and sends only the original SQL reference to the port", async () => {
+    const f = fixture();
+    f.evidence.documentIds.add("doc-1");
+    expect(
+      await f.tool.invoke(
+        { results: [result("https://example.org/wiki/Route_(example)")] },
+        context,
+      ),
+    ).toMatchObject({ kind: "structured" });
+    f.evidence.observe({
+      kind: "sql.rows",
+      sql: "SELECT * FROM demo_activities",
+      columns: ["id"],
+      rows: [["1"]],
+      rowCount: 1,
+      durationMs: 0,
+      rowIdentities: [reference],
+    });
+    const tampered = {
+      ...reference,
+      primaryKeyColumns: [{ ...reference.primaryKeyColumns[0]!, castType: "untrusted cast" }],
+    };
+    expect(
+      await f.tool.invoke({ results: [{ ...result(), evidence: { record: tampered } }] }, context),
+    ).toMatchObject({ kind: "structured" });
+    expect(f.resolve).toHaveBeenLastCalledWith({ reference, snapshot: { id: "1" } });
+  });
+
+  it("bounds retained evidence without authorizing dropped identities", async () => {
+    const f = fixture();
+    f.evidence.observe({
+      kind: "search.results",
+      query: "examples",
+      durationMs: 0,
+      results: Array.from({ length: 5001 }, (_, index) => ({
+        documentId: `doc-${index}`,
+        sourceId: "demo:one",
+        sourceType: "demo",
+      })),
+    });
+    expect(f.evidence.documentIds.size).toBe(5000);
+    expect(f.evidence.budgetExhausted).toBe(true);
+    expect(
+      await f.tool.invoke(
+        { results: [{ ...result(), evidence: { documentIds: ["doc-5000"] } }] },
+        context,
+      ),
+    ).toMatchObject({ kind: "error", code: "unretrieved_evidence" });
+    expect(f.onResults).not.toHaveBeenCalled();
+  });
+});
+
+class PuppetBackend implements ChatBackend {
+  readonly name = "puppet";
+  readonly model = "puppet";
+  tools: string[] = [];
+  systemPrompt = "";
+  constructor(
+    private readonly present = true,
+    private readonly fail = false,
+  ) {}
+  async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+    this.tools = input.tools.map((tool) => tool.name);
+    this.systemPrompt = input.systemPrompt;
+    const payload = { sessionId: input.sessionId, messageId: input.messageId };
+    yield { type: "agent.message.start", payload: { ...payload, role: "assistant" } };
+    yield { type: "agent.text.delta", payload: { ...payload, delta: "Checking the route." } };
+    await input.tools
+      .find((tool) => tool.name === "fetch_many")!
+      .invoke({ documents: [{ documentId: "doc-1" }] }, context);
+    yield {
+      type: "agent.message.end",
+      payload: { ...payload, stopReason: "tool_use", usage: { inputTokens: 10, outputTokens: 2 } },
+    };
+    yield { type: "agent.text.delta", payload: { ...payload, delta: "Found the route." } };
+    if (this.fail) throw new Error("Fictional backend failure");
+    if (this.present)
+      await input.tools
+        .find((tool) => tool.name === "present_browser_results")!
+        .invoke({ results: [result()] }, context);
+    yield {
+      type: "agent.message.end",
+      payload: { ...payload, stopReason: "end_turn", usage: { inputTokens: 5, outputTokens: 1 } },
+    };
+  }
+}
+
+describe("ephemeral read-only browser search", () => {
+  it("streams one grounded turn, hot-resolves the agent, excludes writes and conversation side effects", async () => {
+    const backend = new PuppetBackend();
+    const factory = vi.fn(() => backend);
+    const broadcast = vi.fn();
+    const prompt = vi.fn(() => "Current corpus prompt");
+    const recordSpend = vi.fn();
+    const service = new AgentService({
+      backendFactory: factory,
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: prompt,
+      broadcastEvent: broadcast,
+      recordSpend,
+    });
+    const onResults = vi.fn();
+    const events: AgentEvent[] = [];
+    expect(
+      await buildBrowserFindRuntime({
+        query: "Find my route",
+        agent: service,
+        timeZone: "Europe/Paris",
+        signal: new AbortController().signal,
+        onEvent: (event) => events.push(event),
+        onResults,
+      }),
+    ).toEqual({ presented: true });
+    expect(factory).toHaveBeenLastCalledWith("agent");
+    expect(prompt).toHaveBeenCalledWith("answer", { timeZone: "Europe/Paris" });
+    expect(backend.tools).toEqual(
+      expect.arrayContaining(["search_many", "fetch_many", "present_browser_results"]),
+    );
+    expect(
+      backend.tools.some((name) =>
+        /annotate|cite_record|plan|spawn|watch_|memory|create/.test(name),
+      ),
+    ).toBe(false);
+    expect(onResults).toHaveBeenCalledTimes(1);
+    expect(events.some((event) => event.type === "agent.text.delta")).toBe(true);
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(service.sessionCount()).toBe(0);
+    expect(recordSpend).toHaveBeenCalledExactlyOnceWith({
+      mechanism: "browser-find",
+      modelId: "puppet",
+      usage: { inputTokens: 15, outputTokens: 3, cacheReadTokens: 0, cacheCreationTokens: 0 },
+      completed: true,
+    });
+    await service.dispose();
+  });
+
+  it("does not treat Markdown alone as a structured result", async () => {
+    const service = new AgentService({
+      backendFactory: () => new PuppetBackend(false),
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+      broadcastEvent: () => {},
+    });
+    expect(
+      await buildBrowserFindRuntime({
+        query: "Find route",
+        agent: service,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+        onResults: () => {},
+      }),
+    ).toEqual({ presented: false });
+    await service.dispose();
+  });
+
+  it("records consumed tool-round tokens once when the backend fails", async () => {
+    const recordSpend = vi.fn();
+    const service = new AgentService({
+      backendFactory: () => new PuppetBackend(true, true),
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+      recordSpend,
+    });
+    await expect(
+      buildBrowserFindRuntime({
+        query: "Find route",
+        agent: service,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+        onResults: () => {},
+      }),
+    ).rejects.toThrow("Fictional backend failure");
+    expect(recordSpend).toHaveBeenCalledExactlyOnceWith({
+      mechanism: "browser-find",
+      modelId: "puppet",
+      usage: { inputTokens: 10, outputTokens: 2 },
+      completed: false,
+    });
+    await service.dispose();
+  });
+
+  it("records cancellation spend without emitting late results", async () => {
+    const recordSpend = vi.fn();
+    const onResults = vi.fn();
+    const controller = new AbortController();
+    const service = new AgentService({
+      backendFactory: () => new PuppetBackend(),
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+      recordSpend,
+    });
+    await expect(
+      buildBrowserFindRuntime({
+        query: "Find route",
+        agent: service,
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.type === "agent.text.delta" && event.payload.delta === "Found the route.")
+            controller.abort();
+        },
+        onResults,
+      }),
+    ).rejects.toThrow("Search did not finish");
+    expect(onResults).not.toHaveBeenCalled();
+    expect(recordSpend).toHaveBeenCalledExactlyOnceWith({
+      mechanism: "browser-find",
+      modelId: "puppet",
+      usage: { inputTokens: 10, outputTokens: 2 },
+      completed: false,
+    });
+    await service.dispose();
+  });
+});

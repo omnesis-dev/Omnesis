@@ -27,7 +27,7 @@ packages/cli/          unified `omnesis` CLI — read commands hit /search, /doc
 packages/providers/*   one package per provider (google, apple, notion, whatsapp, …)
 packages/watch/     the Watch V2 DSL, validator, runtime and compiler — standalone by contract, imports nothing from the gateway; the gateway hosts it through `packages/gateway/src/watch/`
 packages/agent-integration/ shared off-host integration runtime for OpenClaw and Hermes — transcript ingestion, subscription delivery, and scoped management tools
-extension/             Chrome MV3 browser-capture extension — pairs as a `browser` device with a `write:web` token and pushes visited pages to the gateway-hosted `web` source; optional Tell Omnesis notes use a separately approved create-only credential and negotiated browser-notes capability; store listing and privacy declarations under `extension/store/`, packaging in `extension/scripts/` (see docs/releasing.md)
+extension/             Chrome MV3 browser-capture extension — pairs as a `browser` device with a `write:web` token and pushes visited pages to the gateway-hosted `web` source; optional Tell Omnesis notes and Find search use separately approved create-only and read credentials with independent capability discovery; store listing and privacy declarations under `extension/store/`, packaging in `extension/scripts/` (see docs/releasing.md)
 scripts/release/       publish pipeline — stage packages, transform src-pointing manifests to dist at publish time (see docs/releasing.md)
 ios/                   native iPhone app — pairs with the gateway, hosts Apple Health
 website/               static site Cloudflare publishes to omnesis.dev — landing page, public docs (website/docs/), privacy policy, installer mirror

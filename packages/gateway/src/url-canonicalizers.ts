@@ -38,25 +38,56 @@ let currentRegistry: ReadonlyMap<string, UrlCanonicalizerSpec> = new Map();
 function mergedSpecs(
   candidate: ReadonlyMap<string, readonly UrlCanonicalizerSpec[]>,
 ): UrlCanonicalizerSpec[] {
-  const rulesByHost = new Map<string, { identity: string; rules: UrlCanonicalizerSpec["rules"] }>();
+  const rulesByHost = new Map<
+    string,
+    {
+      identity: string;
+      rules: UrlCanonicalizerSpec["rules"];
+      browserIdentity?: UrlCanonicalizerSpec["browserIdentity"];
+    }
+  >();
   for (const key of [...candidate.keys()].sort()) {
     for (const spec of candidate.get(key) ?? []) {
       const identity = JSON.stringify(spec.rules);
+      const browserIdentity = spec.browserIdentity;
       for (const rawHost of spec.hosts) {
         const host = rawHost.trim().toLowerCase();
         const existing = rulesByHost.get(host);
         if (existing && existing.identity !== identity) {
           throw new Error(`conflicting URL canonicalizer declarations for host ${host}`);
         }
-        rulesByHost.set(host, { identity, rules: spec.rules });
+        if (
+          existing?.browserIdentity &&
+          browserIdentity &&
+          JSON.stringify(existing.browserIdentity) !== JSON.stringify(browserIdentity)
+        ) {
+          throw new Error(`conflicting browser identity declarations for host ${host}`);
+        }
+        rulesByHost.set(host, {
+          identity,
+          rules: spec.rules,
+          browserIdentity: browserIdentity ?? existing?.browserIdentity,
+        });
       }
     }
   }
-  const hostsByRules = new Map<string, { hosts: string[]; rules: UrlCanonicalizerSpec["rules"] }>();
+  const hostsByRules = new Map<
+    string,
+    {
+      hosts: string[];
+      rules: UrlCanonicalizerSpec["rules"];
+      browserIdentity?: UrlCanonicalizerSpec["browserIdentity"];
+    }
+  >();
   for (const [host, entry] of [...rulesByHost.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    const group = hostsByRules.get(entry.identity) ?? { hosts: [], rules: entry.rules };
+    const groupIdentity = JSON.stringify([entry.rules, entry.browserIdentity]);
+    const group = hostsByRules.get(groupIdentity) ?? {
+      hosts: [],
+      rules: entry.rules,
+      browserIdentity: entry.browserIdentity,
+    };
     group.hosts.push(host);
-    hostsByRules.set(entry.identity, group);
+    hostsByRules.set(groupIdentity, group);
   }
   return [...hostsByRules.values()];
 }

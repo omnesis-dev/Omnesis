@@ -4,6 +4,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { browserUrlIdentity } from "@omnesis/core";
 import { ProviderId } from "@omnesis/types";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { fakeProviderHost } from "@omnesis/source-sdk/testing";
@@ -92,4 +93,19 @@ describe("Notion isAuthenticated", () => {
       status: "never-connected",
     });
   });
+});
+
+test("browser Notion identities recognize title and dashed UUID variants", () => {
+  const spec = definition.sources.find((source) => source.id === "notion-pages")?.urlCanonicalizer;
+
+  const plain = "https://www.notion.so/123456781234123412341234567890ab";
+  expect(
+    browserUrlIdentity(
+      "https://notion.so/Invented-title-12345678-1234-1234-1234-1234567890ab?view=sample",
+      spec,
+    ),
+  ).toBe(browserUrlIdentity(plain, spec));
+  expect(
+    browserUrlIdentity("https://www.notion.so/123456781234123412341234567890ac", spec),
+  ).not.toBe(browserUrlIdentity(plain, spec));
 });

@@ -45,6 +45,11 @@ declare const chrome: {
   runtime: { sendMessage(message: unknown): Promise<unknown> };
   storage: { local: { get(keys: null): Promise<Record<string, unknown>> } };
   permissions: { getAll(): Promise<{ origins?: string[] }> };
+  tabs: {
+    query(query: {
+      active?: boolean;
+    }): Promise<Array<{ id?: number; url?: string; active?: boolean }>>;
+  };
 };
 
 const require = createRequire(import.meta.url);
@@ -83,7 +88,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
   const popupUrl = `chrome-extension://${TEST_EXTENSION_ID}/popup.html`;
 
   beforeAll(async () => {
-    harness = new SyntheticE2EHarness({ gatewayMode: "stable" });
+    harness = new SyntheticE2EHarness({ gatewayMode: "stable", embedderBackend: "fake" });
     await harness.start();
 
     dist = await mkdtemp(join(tmpdir(), "omnesis-extension-e2e-dist-"));
@@ -641,6 +646,176 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     await other.close();
     await article.close();
   }, 120_000);
+
+  test("Find searches browser links and focuses existing tabs while preserving notes", async () => {
+    const articleUrl = `${FIXTURE_ORIGIN}/find-waypoint`;
+    const webTitle = "Waypoint research notebook";
+    const notionTitle =
+      "Waypoint architecture review with an unusually long fictional title for a compact results panel";
+    const gmailUrl =
+      "https://mail.google.com/mail/u/0/?authuser=find%40example.org#all/abcdef123456";
+    const notionUrl = "https://www.notion.so/123456781234123412341234567890ab";
+    const fixtureDocs = [
+      {
+        sourceId: "web",
+        providerId: "web",
+        externalId: "find-waypoint",
+        title: webTitle,
+        url: articleUrl,
+      },
+      {
+        sourceId: "gmail:find@example.org",
+        providerId: "google:find@example.org",
+        externalId: "find-email",
+        title: "Waypoint email guide",
+        url: gmailUrl,
+      },
+      {
+        sourceId: "notion-pages:find-workspace",
+        providerId: "notion:find-workspace",
+        externalId: "find-notion",
+        title: notionTitle,
+        url: notionUrl,
+      },
+      {
+        sourceId: "apple-notes:find-notebook",
+        providerId: "apple:find-notebook",
+        externalId: "find-native",
+        title: "Waypoint native notebook",
+        url: "mobilenotes://showNote?identifier=fictional",
+      },
+    ];
+    await harness.pushDocuments(
+      fixtureDocs.map((doc) => ({
+        sourceId: doc.sourceId,
+        providerId: doc.providerId,
+        externalId: doc.externalId,
+        title: doc.title,
+        content: `${doc.title}. Waypoint observations are entirely invented for this browser test.`,
+        metadata: { sourceUrl: doc.url },
+      })),
+    );
+    await expect
+      .poll(
+        async () => {
+          await harness.refreshSearchSnapshot();
+          const response = await harness.gatewayJson<{
+            results: Array<{ documentId: string; title: string }>;
+          }>("/search", { method: "POST", body: JSON.stringify({ text: "Waypoint", limit: 200 }) });
+          return fixtureDocs.every((doc) =>
+            response.results.some((hit) => hit.title === doc.title),
+          );
+        },
+        { timeout: 120_000, interval: 500 },
+      )
+      .toBe(true);
+    const options = await openPage(optionsUrl);
+    const discovered = await options.evaluate(() =>
+      chrome.runtime.sendMessage({ type: "find-status" }),
+    );
+    expect(discovered).toMatchObject({ supported: true, enabled: false });
+    await options.locator("#enable-find").waitFor({ state: "visible", timeout: 20_000 });
+    await options.locator("#enable-find").click();
+    let requestId = "";
+    await expect
+      .poll(
+        async () => {
+          const state = (await extensionStorage())["omnesis.find.state.v1"] as
+            | { requestId?: string }
+            | undefined;
+          requestId = state?.requestId ?? "";
+          return requestId;
+        },
+        { timeout: 20_000, interval: 250 },
+      )
+      .toMatch(/^[0-9a-f-]{36}$/);
+    const login = await context.request.post(`${harness.gatewayUrl}/portal/api/login`, {
+      data: { token: harness.apiKey },
+    });
+    expect(login.status()).toBe(200);
+    const approval = await openPage(
+      `${harness.gatewayUrl}/portal/browser-find?request=${requestId}`,
+    );
+    await approval
+      .getByRole("button", { name: "Enable Find", exact: true })
+      .waitFor({ state: "visible", timeout: 20_000 });
+    await expect(approval.locator("body")).toContainText("whole index");
+    await approval.screenshot({ path: "/tmp/omnesis-browser-find-approval.png", fullPage: true });
+    await approval.getByRole("button", { name: "Enable Find", exact: true }).click();
+    await approval
+      .getByRole("heading", { name: "Find is enabled", exact: true })
+      .waitFor({ state: "visible", timeout: 20_000 });
+    await expect
+      .poll(
+        async () =>
+          ((await extensionStorage())["omnesis.find.token.v1"] as { token?: string } | undefined)
+            ?.token,
+        { timeout: 20_000, interval: 250 },
+      )
+      .toBeTruthy();
+    const storage = await extensionStorage();
+    expect(storage["omnesis.notes.token.v1"]).toBeTruthy();
+    expect(JSON.parse(String(storage["omnesis.pairing.v1"]))).toMatchObject({
+      scopes: ["write:web"],
+    });
+    await approval.close();
+    await options.close();
+    const article = await openPage(articleUrl);
+    const popup = await openPage(popupUrl);
+    await article.bringToFront();
+    await popup.reload();
+    await popup.locator("#find-omnesis").waitFor({ state: "visible", timeout: 20_000 });
+    await popup.locator("#find-omnesis").click();
+    await expect
+      .poll(async () => (await extensionStorage())["omnesis.panel.view.v1"], {
+        timeout: 10_000,
+        interval: 100,
+      })
+      .toBe("find");
+    await popup.close();
+    const panel = await openPage(`chrome-extension://${TEST_EXTENSION_ID}/notes.html`);
+    await panel.setViewportSize({ width: 380, height: 820 });
+    await panel.locator("#find-section").waitFor({ state: "visible", timeout: 20_000 });
+    await panel.locator("#find-query").fill("Waypoint");
+    await panel.locator("#find-query").press("Enter");
+    await expect
+      .poll(async () => panel.locator(".find-result-open").count(), {
+        timeout: 30_000,
+        interval: 250,
+      })
+      .toBe(3);
+    await expect(panel.locator("#find-decision")).toContainText("Direct search");
+    await expect(panel.locator("#find-results")).toContainText(notionTitle);
+    await expect(panel.locator("#find-results")).toContainText("Waypoint email guide");
+    await expect(panel.locator("#find-results")).not.toContainText("Waypoint native notebook");
+    const row = panel
+      .locator(".find-result")
+      .filter({ has: panel.locator(".find-result-title", { hasText: webTitle }) });
+    await expect(row.locator(".find-open-badge")).toHaveText("Open tab");
+    expect(await panel.locator("#find-results mark").count()).toBeGreaterThan(0);
+    await panel.screenshot({ path: "/tmp/omnesis-extension-find-results.png", fullPage: true });
+    const pageCount = context.pages().length;
+    await row.locator(".find-result-open").click();
+    await expect
+      .poll(
+        async () =>
+          worker.evaluate(async (url) => {
+            const tabs = await chrome.tabs.query({ active: true });
+            return tabs.some((tab) => tab.url === url);
+          }, articleUrl),
+        { timeout: 10_000, interval: 100 },
+      )
+      .toBe(true);
+    expect(context.pages()).toHaveLength(pageCount);
+    const newPage = context.waitForEvent("page");
+    await row.locator(".find-new-copy").click();
+    const copy = await newPage;
+    await expect.poll(() => copy.url(), { timeout: 10_000, interval: 100 }).toBe(articleUrl);
+    expect(context.pages()).toHaveLength(pageCount + 1);
+    await copy.close();
+    await panel.close();
+    await article.close();
+  }, 180_000);
 
   test("when the gateway revokes the device the popup says to re-pair", async () => {
     const storage = await extensionStorage();

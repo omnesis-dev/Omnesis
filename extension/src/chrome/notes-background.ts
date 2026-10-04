@@ -3,6 +3,7 @@
 
 import "./chrome-api.js";
 import { normalizeCaptureUrl, preferCanonicalUrl } from "../capture/normalize.js";
+import { registerPanelFeature, selectPanelView, setPanelFeature } from "./panel-surface.js";
 import { loadConfig } from "./storage.js";
 import {
   NOTES_STATE_KEY,
@@ -24,6 +25,7 @@ export function installNotesBackground(): {
   ): boolean;
   alarm(name: string): void;
 } {
+  registerPanelFeature("notes");
   const service = new NotesService({
     config: loadConfig,
     read: async () => {
@@ -74,7 +76,7 @@ export function installNotesBackground(): {
     return serializeSurface(async () => {
       const state = fresh ? await service.drain() : await service.status(false);
       if (clearing || state.enabled === menusEnabled) return;
-      await chrome.sidePanel.setOptions({ enabled: state.enabled, path: "notes.html" });
+      await setPanelFeature("notes", state.enabled);
       if (clearing) return;
       await chrome.contextMenus.removeAll();
       if (clearing) return;
@@ -107,7 +109,8 @@ export function installNotesBackground(): {
     };
     if (!notePage(page)) return;
     // Open before network work: Chrome's side panel API requires the invocation's user gesture.
-    await chrome.sidePanel.open({ tabId: tab.id });
+    const opening = chrome.sidePanel.open({ tabId: tab.id });
+    await opening;
     if (!pageUrl || pageUrl === tab.url) {
       try {
         const results = await chrome.scripting.executeScript({
@@ -129,7 +132,8 @@ export function installNotesBackground(): {
       }
     }
     page.url = normalizeCaptureUrl(page.url);
-    await service.begin(page);
+    const view = await service.begin(page);
+    if (view.enabled) await selectPanelView("notes");
   }
   chrome.commands.onCommand.addListener((command, tab) => {
     if (command === "tell-omnesis" && tab) detached(open(tab));
@@ -235,7 +239,7 @@ export function installNotesBackground(): {
       clearing = true;
       return serializeSurface(async () => {
         await service.clear();
-        await chrome.sidePanel.setOptions({ enabled: false, path: "notes.html" });
+        await setPanelFeature("notes", false);
         await chrome.contextMenus.removeAll();
         menusEnabled = false;
         clearing = false;

@@ -11,7 +11,7 @@
  *
  * For every contract route: it is registered on the app under exactly the
  * contract's method and path pattern; a well-formed request from the browser's
- * own `write:web` token, optional `notes:create` credential, or no token for a
+ * own `write:web` token, optional `notes:create` or `read` credential, or no token for a
  * public route is served; an
  * authenticated route refuses a missing token with 401 while a public route
  * never does; and the recipe table below stays in lockstep with the contract.
@@ -49,6 +49,7 @@ interface ReleaseContract {
   deviceKind: string;
   tokenScopes: string[];
   optionalNotesTokenScopes: string[];
+  optionalFindTokenScopes: string[];
   gatewayRoutes: ContractRoute[];
 }
 
@@ -76,6 +77,7 @@ interface Recipe {
   ): Promise<{ path: string; init: RequestInit }> | { path: string; init: RequestInit };
   expected: number;
   notesCredential?: boolean;
+  findCredential?: boolean;
 }
 
 let db: Db;
@@ -85,6 +87,7 @@ let analyticsPath: string;
 let analyticsDb: AnalyticsDb;
 let browserToken: string;
 let notesToken: string;
+let findToken: string;
 let notesRuntime: import("../../sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
 let adminToken: string;
 
@@ -137,6 +140,38 @@ function pairingBody(pairingCode: string) {
 const pageVisitsSchema = webSource.analyticsSchemas?.find((s) => s.tableName === "page_visits");
 
 const recipes: Record<RouteKey, Recipe> = {
+  "GET /browser/find": {
+    build: () => ({ path: "/browser/find", init: { method: "GET" } }),
+    expected: 200,
+    findCredential: true,
+  },
+  "POST /browser/find/search": {
+    build: () => ({
+      path: "/browser/find/search",
+      init: json("POST", { text: "example", limit: 25 }),
+    }),
+    expected: 200,
+    findCredential: true,
+  },
+  "POST /browser/find/authorization": {
+    build: () => ({
+      path: "/browser/find/authorization",
+      init: json("POST", { id: randomUUID() }),
+    }),
+    expected: 201,
+  },
+  "GET /browser/find/authorization/:id": {
+    build: async (token = browserToken) => {
+      const result = await call(
+        "/browser/find/authorization",
+        token,
+        json("POST", { id: randomUUID() }),
+      );
+      const { requestId } = (await result.json()) as { requestId: string };
+      return { path: `/browser/find/authorization/${requestId}`, init: { method: "GET" } };
+    },
+    expected: 200,
+  },
   "GET /browser/notes": {
     build: () => ({ path: "/browser/notes", init: { method: "GET" } }),
     expected: 200,
@@ -253,6 +288,7 @@ beforeEach(async () => {
   resetOwnedWebDomains();
   browserToken = mintToken("browser", [writeScope(SourceType("web"))]);
   notesToken = mintToken("browser", [Scope("notes:create")]);
+  findToken = mintToken("browser", [SCOPE_READ]);
   adminToken = mintToken("cli", [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
 });
 
@@ -272,6 +308,7 @@ describe("the contract file", () => {
     expect(contract.deviceKind).toBe("browser");
     expect(contract.tokenScopes).toEqual([writeScope(SourceType("web"))]);
     expect(contract.optionalNotesTokenScopes).toEqual(["notes:create"]);
+    expect(contract.optionalFindTokenScopes).toEqual(["read"]);
     expect(contract.gatewayRoutes.length).toBeGreaterThan(0);
     expect(pageVisitsSchema, "the web provider publishes a page_visits schema").toBeDefined();
   });
@@ -298,7 +335,13 @@ describe("a well-formed request is served", () => {
     const { path, init } = await recipe.build();
     const res = await call(
       path,
-      route.authenticated ? (recipe.notesCredential ? notesToken : browserToken) : null,
+      route.authenticated
+        ? recipe.notesCredential
+          ? notesToken
+          : recipe.findCredential
+            ? findToken
+            : browserToken
+        : null,
       init,
     );
     expect(res.status, `${keyOf(route)} answered ${res.status}: ${await res.text()}`).toBe(
@@ -348,7 +391,7 @@ describe("pairing", () => {
       const { path, init } = await recipe.build(body.token);
       const reply = await call(path, body.token, init);
       expect(reply.status, `${keyOf(route)} with the paired token`).toBe(
-        recipe.notesCredential ? 403 : recipe.expected,
+        recipe.notesCredential || recipe.findCredential ? 403 : recipe.expected,
       );
     }
   });

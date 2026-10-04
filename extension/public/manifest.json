@@ -49,6 +49,14 @@
         "mac": "Alt+Shift+N"
       },
       "description": "Tell Omnesis about the current page or selection"
+    },
+    "find-omnesis": {
+      "suggested_key": {
+        "default": "Alt+Shift+F",
+        "mac": "Alt+Shift+F"
+      },
+      "description": "Find an Omnesis result and switch to its open tab"
     }
-  }
+  },
+  "optional_permissions": ["tabs", "favicon"]
 }

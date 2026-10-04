@@ -312,6 +312,10 @@ export function defaultScopesForDeviceKind(kind: DeviceKind): Scope[] {
  */
 export function missingHostedWriteScopes(granted: readonly Scope[], kind: DeviceKind): Scope[] {
   const held = new Set(granted);
+  // Optional browser read credentials are not capture credentials. Repairing
+  // their device's ingestion grant would turn owner-approved reads into writes.
+  if (kind === "browser" && held.has(SCOPE_READ) && !granted.some((s) => s.startsWith("write:")))
+    return [];
   // Capability-only note credentials are separate from source ingestion; a
   // device handshake must never upgrade them to its default capture grant.
   if (held.has(Scope("notes:create")) && !granted.some((scope) => scope.startsWith("write:")))

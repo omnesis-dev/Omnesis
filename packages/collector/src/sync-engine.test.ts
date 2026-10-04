@@ -1145,6 +1145,26 @@ describe("SyncEngine", () => {
 });
 
 describe("SyncEngine.pushLinkDeclarations", () => {
+  test("publishes provider attribution without requiring a URL canonicalizer and clears removed sources", async () => {
+    const gateway = new MockGateway();
+    const engine = new SyncEngine(gateway);
+    const source = {
+      ...makeSource("demo-notes", "test", async () => ({
+        documents: [],
+        deletedExternalIds: [],
+        cursor: {},
+        hasMore: false,
+      })),
+      attribution: { itemFooter: "Data from example.org" },
+    };
+    await engine.pushLinkDeclarations([], [{ source }]);
+    expect(gateway.linkDeclarations[0]?.sourceAttributions).toEqual({
+      "demo-notes": "Data from example.org",
+    });
+    await engine.pushLinkDeclarations([], []);
+    expect(gateway.linkDeclarations[1]?.sourceAttributions).toEqual({});
+  });
+
   test("preserves snapshot order when the first publication is delayed", async () => {
     const gateway = new MockGateway();
     const engine = new SyncEngine(gateway);

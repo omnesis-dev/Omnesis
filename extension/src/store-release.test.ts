@@ -36,7 +36,7 @@ describe("Chrome Web Store release contract", () => {
     expect(contract.sourceRepository).toBe("https://github.com/omnesis-dev/Omnesis");
   });
 
-  it("declares exactly the gateway routes browser capture and notes use", () => {
+  it("declares exactly the gateway routes browser capture, notes and Find use", () => {
     expect(contract.gatewayRoutes).toEqual([
       { method: "GET", path: "/health", authenticated: false },
       { method: "POST", path: "/devices/pair", authenticated: false },
@@ -55,9 +55,14 @@ describe("Chrome Web Store release contract", () => {
       { method: "GET", path: "/browser/notes/authorization/:id", authenticated: true },
       { method: "GET", path: "/browser/notes", authenticated: true },
       { method: "POST", path: "/browser/notes", authenticated: true },
+      { method: "POST", path: "/browser/find/authorization", authenticated: true },
+      { method: "GET", path: "/browser/find/authorization/:id", authenticated: true },
+      { method: "GET", path: "/browser/find", authenticated: true },
+      { method: "POST", path: "/browser/find/search", authenticated: true },
     ]);
     expect(contract.tokenScopes).toEqual(["write:web"]);
     expect(contract.optionalNotesTokenScopes).toEqual(["notes:create"]);
+    expect(contract.optionalFindTokenScopes).toEqual(["read"]);
     expect(contract.deviceKind).toBe("browser");
   });
 
@@ -65,6 +70,7 @@ describe("Chrome Web Store release contract", () => {
     expect(manifest.manifest_version).toBe(3);
     expect(manifest.minimum_chrome_version).toBe("130");
     expect(manifest.optional_host_permissions).toEqual(["https://*/*"]);
+    expect(manifest.optional_permissions).toEqual(["tabs", "favicon"]);
     expect(manifest.permissions).toEqual([
       "storage",
       "unlimitedStorage",

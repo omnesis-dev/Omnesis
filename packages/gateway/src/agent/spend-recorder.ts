@@ -18,6 +18,9 @@ import type { AgentUsage } from "@omnesis/core";
 /** User-driven chat turns (SSE/WS sessions, incl. anchored talk-back threads). */
 export const INTERACTIVE_SPEND_MECHANISM = "interactive";
 
+/** Ephemeral browser Find turns, with no durable conversation transcript. */
+export const BROWSER_FIND_SPEND_MECHANISM = "browser-find";
+
 /** Children the interactive agent spawns via `spawn_subagent`. */
 export const SUBAGENT_SPEND_MECHANISM = "subagent";
 

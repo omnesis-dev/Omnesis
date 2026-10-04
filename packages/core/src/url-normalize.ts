@@ -47,6 +47,60 @@ export interface UrlCanonicalizerSpec {
    * URL goes through the generic normalization untouched.
    */
   rules: readonly UrlCanonicalizerRule[];
+  /** Optional account-preserving browser-tab identity selectors. Never use the
+   * document-link rules for tab activation unless the source declares them here. */
+  browserIdentity?: BrowserUrlIdentitySpec;
+}
+
+/** Fixed URL operations for local browser matching; no executable regex is accepted. */
+export interface BrowserUrlIdentitySpec {
+  canonicalHost?: string;
+  pathPrefix?: string;
+  part: "path" | "fragment";
+  format: "uuid-suffix" | "hex-segment";
+  requiredQuery?: readonly string[];
+}
+
+/** Unknown routes retain their exact URL, including account and SPA state. */
+export function browserUrlIdentity(value: string, spec?: UrlCanonicalizerSpec): string {
+  try {
+    const url = new URL(value);
+    const identity = spec?.browserIdentity;
+    if (
+      !identity ||
+      !spec?.hosts.includes(url.hostname) ||
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      (identity.pathPrefix && !url.pathname.startsWith(identity.pathPrefix))
+    )
+      return url.href;
+    const query: string[] = [];
+    for (const key of identity.requiredQuery ?? []) {
+      const values = url.searchParams.getAll(key);
+      if (values.length !== 1 || !values[0]) return url.href;
+      query.push(`${encodeURIComponent(key)}=${encodeURIComponent(values[0])}`);
+    }
+    const segment =
+      (identity.part === "path" ? url.pathname : url.hash.slice(1)).split("/").at(-1) ?? "";
+    let resource: string;
+    if (identity.format === "uuid-suffix") {
+      const match = segment.match(
+        /([a-f0-9]{8})-?([a-f0-9]{4})-?([a-f0-9]{4})-?([a-f0-9]{4})-?([a-f0-9]{12})$/i,
+      );
+      if (!match) return url.href;
+      resource = match.slice(1).join("").toLowerCase();
+    } else {
+      if (!/^[a-f0-9]{6,64}$/i.test(segment)) return url.href;
+      resource = segment.toLowerCase();
+    }
+    const host = identity.canonicalHost ?? url.hostname;
+    // The source explicitly claims every host alias it can collapse.
+    if (!spec.hosts.includes(host)) return url.href;
+    return `browser-identity:${JSON.stringify([url.protocol, host, url.port, identity.format, resource, query])}`;
+  } catch {
+    return value;
+  }
 }
 
 export interface UrlCanonicalizerRule {

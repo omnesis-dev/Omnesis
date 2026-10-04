@@ -107,6 +107,18 @@
             requires gateway-owner approval and uses a separate create-only notes credential.
           </li>
           <li>
+            <strong>Find</strong> — queries sent to the paired gateway and returned document titles,
+            snippets and source links. This optional feature requires gateway-owner approval for a
+            separate read credential that permits ordinary search across indexed sources. The
+            extension filters results for browser-openable source links. The current query, results
+            and bounded agent explanation stay in local extension storage so the panel can reopen
+            them. When a decision model is enabled, it can choose a read-only agent search that
+            inspects indexed evidence and returns browser destinations. The panel shows the
+            decision, streamed explanation and transient tool activity. Each query starts a fresh
+            task, with no follow-up conversation. Open-tab URLs are compared locally and the tab
+            list is not uploaded.
+          </li>
+          <li>
             <strong>Local controls and delivery state</strong> — Chrome profile label, the paired
             gateway's reported version, recent status, a bounded retry queue, and a copy of the
             capture settings the paired gateway holds (pause, excluded domains, pages you deleted
@@ -133,16 +145,17 @@
 
         <h2>Where data goes</h2>
         <p>
-          Captured content, visit metadata and submitted notes are sent over HTTPS directly to the
-          gateway you approve during pairing. Pair only with an endpoint and operator you trust. The
-          extension developer does not receive this data merely because you installed the extension.
-          The developer does receive it if you deliberately pair with a developer-operated gateway.
+          Captured content, visit metadata, submitted notes and search queries are sent over HTTPS
+          directly to the gateway you approve during pairing. Pair only with an endpoint and
+          operator you trust. The extension developer does not receive this data merely because you
+          installed the extension. The developer does receive it if you deliberately pair with a
+          developer-operated gateway.
         </p>
         <p>
-          If the gateway operator enables a cloud model for indexing or agent features, the gateway
-          may send the inputs needed for that configured role to the selected model provider. The
-          extension does not choose or contact that provider; the gateway operator controls that
-          processing and the provider's terms apply.
+          If the gateway operator enables a cloud model for indexing, decision or agent features,
+          the gateway may send the inputs needed for that configured role to the selected model
+          provider. The extension does not choose or contact that provider; the gateway operator
+          controls that processing and the provider's terms apply.
         </p>
 
         <h2>Chrome permissions</h2>
@@ -162,7 +175,7 @@
           <li>
             <strong>Scripting</strong> lets the extension register the capture script after page
             access is granted. The popup uses that same optional page grant to report capture
-            status. The extension does not request the <code>tabs</code> permission.
+            status.
           </li>
           <li>
             <strong>Active tab</strong> gives temporary access to the page URL, title and selected
@@ -172,7 +185,21 @@
             <strong>Context menus</strong> adds Tell Omnesis to the page and selection right-click
             menus when the feature is enabled.
           </li>
-          <li><strong>Side panel</strong> displays the note composer alongside the page.</li>
+          <li>
+            <strong>Side panel</strong> displays the note composer and Find results alongside the
+            page.
+          </li>
+          <li>
+            <strong>Optional tabs</strong> lets Find match source links against open tabs across the
+            Chrome profile after you choose <strong>Match all open tabs</strong>. Existing
+            page-access grants allow matching those sites without this permission. Browser-history
+            access is not requested.
+          </li>
+          <li>
+            <strong>Optional favicon</strong> displays site icons through Chrome's favicon service.
+            Missing icons have a fallback; the extension sends no result URLs to a third-party icon
+            service.
+          </li>
         </ul>
 
         <h2>Retention and control</h2>
@@ -183,10 +210,15 @@
           evicts old entries when those limits are reached. Credential-bearing query parameters
           (tokens, signatures, one-time codes, passwords, session ids) are removed from a page's
           address before it is recorded, so a password-reset link or a signed download link is
-          stored without its secret. Pairing and notes credentials remain until you unpair or clear
-          the extension's data. Notes drafts and submitted notes waiting for delivery are stored
-          locally; delivered notes are removed from the local delivery queue. A full notes queue
-          refuses new submissions instead of evicting previously submitted notes.
+          stored without its secret. Pairing, notes and Find credentials remain until you unpair or
+          clear the extension's data. Notes drafts and submitted notes waiting for delivery are
+          stored locally; delivered notes are removed from the local delivery queue. A full notes
+          queue refuses new submissions instead of evicting previously submitted notes.
+        </p>
+        <p>
+          Find keeps the current results and bounded agent explanation locally when the panel closes
+          or the gateway is temporarily unavailable. When the gateway reports that Find permission
+          is revoked, the extension removes that cached result content.
         </p>
         <ul>
           <li>
@@ -199,11 +231,12 @@
             domain already contributed.
           </li>
           <li>
-            Unpair to remove gateway credentials, note drafts and queued notes, pending captures,
-            recent delivery state, the copy of the capture settings, and the extension's HTTPS
-            page-access grant. The Chrome profile label and random installation identifier remain so
-            your browser identity survives a later re-pair; removing the extension or clearing its
-            data removes them. Excluded domains stay on the gateway.
+            Unpair to remove gateway credentials, Find query and result state, note drafts and
+            queued notes, pending captures, recent delivery state, the copy of the capture settings,
+            and the extension's HTTPS page-access grant. The Chrome profile label and random
+            installation identifier remain so your browser identity survives a later re-pair;
+            removing the extension or clearing its data removes them. Excluded domains stay on the
+            gateway.
           </li>
           <li>Remove the extension or clear its data to remove its remaining local storage.</li>
           <li>Delete data already delivered using the controls provided by the paired gateway.</li>

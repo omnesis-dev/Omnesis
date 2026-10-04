@@ -162,6 +162,18 @@
           too when it answers a question.
         </p>
 
+        <p>
+          The Chrome extension's <strong>Find</strong> view uses this search pipeline for ordinary
+          document queries. When a decision model is enabled, it can instead route requests that
+          need link extraction, relationships, or calculations to the read-only Omnesis agent. The
+          extension shows the routing decision and streams the agent's explanation and tool
+          activity. Each query is a fresh search, with no follow-up conversation. After separate
+          gateway-owner approval, it searches your indexed sources and displays results with
+          browser-openable source links. Matching snippets and site icons help identify a result;
+          opening it switches to a safely matching tab or opens its source link in a new tab. See
+          <a href="/docs/setup#browser-extension-find">extension Find setup</a>.
+        </p>
+
         <h2 id="searching">Searching</h2>
         <p>
           A search runs your query two ways at once: as BM25 keyword matching over full-text chunks,

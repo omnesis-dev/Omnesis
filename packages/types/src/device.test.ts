@@ -315,3 +315,10 @@ test("notes:create is independent of corpus reads and source writes", () => {
   expect(scopeSatisfies([notes], SCOPE_ADMIN)).toBe(false);
   expect(scopeSatisfies([notes], writeScope(SourceType("web")))).toBe(false);
 });
+
+test("a separate browser read credential never acquires capture writes during repair", () => {
+  expect(missingHostedWriteScopes([SCOPE_READ], "browser")).toEqual([]);
+  expect(missingHostedWriteScopes([SCOPE_READ, writeScope(SourceType("web"))], "browser")).toEqual(
+    [],
+  );
+});

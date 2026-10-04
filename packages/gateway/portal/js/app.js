@@ -715,6 +715,8 @@ function App() {
               onThemeToggle=${handleThemeToggle}
               onLogout=${handleLogout}
             />`
+          : route.view === "browser-find"
+          ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} feature="find" />`
           : route.view === "browser-notes"
           ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} />`
           : route.view === "capture"

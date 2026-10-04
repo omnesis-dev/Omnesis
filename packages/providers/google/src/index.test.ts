@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test } from "vitest";
-import { buildCanonicalizerRegistry, normalizeUrl } from "@omnesis/core";
+import { buildCanonicalizerRegistry, browserUrlIdentity, normalizeUrl } from "@omnesis/core";
 import { validateDocumentTemporalProjectionContracts } from "@omnesis/source-sdk";
 import { TEMPORAL_KINDS, TEMPORAL_MODALITIES, TEMPORAL_STATUSES } from "@omnesis/types";
 import googleProvider from "./index.js";
@@ -132,4 +132,18 @@ describe("google-drive urlCanonicalizer — collapses every Drive/Docs URL flavo
       expect(normalizeUrl(v, registry)).toBe(canonical);
     });
   }
+});
+
+test("browser Gmail identities preserve explicit mailbox authority and folder aliases", () => {
+  const spec = googleProvider.sources.find((source) => source.id === "gmail")?.urlCanonicalizer;
+
+  const inbox =
+    "https://mail.google.com/mail/u/0/?authuser=observer%40example.org#inbox/abcdef1234";
+  const all = "https://mail.google.com/mail/u/1/?authuser=observer%40example.org#all/abcdef1234";
+  const other = "https://mail.google.com/mail/u/0/?authuser=other%40example.org#all/abcdef1234";
+  expect(browserUrlIdentity(inbox, spec)).toBe(browserUrlIdentity(all, spec));
+  expect(browserUrlIdentity(other, spec)).not.toBe(browserUrlIdentity(all, spec));
+  expect(browserUrlIdentity("https://mail.google.com/mail/u/0/#all/abcdef1234", spec)).not.toBe(
+    browserUrlIdentity(all, spec),
+  );
 });

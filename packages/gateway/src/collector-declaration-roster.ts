@@ -7,6 +7,7 @@ import { setExpectedKnownUrlPatternDeclarers } from "./known-url-patterns.js";
 import { setExpectedUrlGraphRoleDeclarers } from "./url-graph-roles.js";
 import { setExpectedLinkDeclarationKeys } from "./link-declaration-readiness.js";
 import { setExpectedUrlCanonicalizerDeclarers } from "./url-canonicalizers.js";
+import { setExpectedSourceAttributionDeclarers } from "./source-attributions.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -62,6 +63,7 @@ export function applyCollectorDeclarationRoster(ids: readonly string[]): void {
   setExpectedKnownUrlPatternDeclarers(ids);
   setExpectedUrlGraphRoleDeclarers(ids);
   setExpectedLinkDeclarationKeys(ids);
+  setExpectedSourceAttributionDeclarers(ids);
 }
 
 export function collectorRosterRevisionMatches(db: Db, expectedRevision: number): boolean {

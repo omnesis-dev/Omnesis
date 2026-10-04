@@ -82,7 +82,7 @@ export function initNotesPanel(document: Document, api: PanelChrome): void {
       const url = element<HTMLAnchorElement>("note-url");
       url.textContent = draft.url;
       url.href = draft.url;
-      textarea.focus();
+      if (!textarea.closest("[hidden]")) textarea.focus();
     } else if (!dirty && !submitting) {
       draft = view.draft;
       textarea.value = draft.text;
