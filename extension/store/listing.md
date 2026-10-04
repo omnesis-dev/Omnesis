@@ -22,6 +22,8 @@ Find returns browser-openable results from your Omnesis data, including captured
 
 An Omnesis gateway with a browser-trusted HTTPS certificate is required.
 
+With a compatible experimental gateway, type om followed by Space or Tab in Chrome's address bar to search Omnesis. Suggestions appear as you type; selecting one opens its source link or focuses a matching tab. Submit the query itself to open full-page Find and show decision-gated search with streamed agent work when needed. Suggestion typing does not invoke the decision model or agent, and text outside Omnesis keyword mode is not sent to your gateway.
+
 ## Category
 
 Productivity

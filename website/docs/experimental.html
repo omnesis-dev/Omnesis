@@ -234,16 +234,26 @@
           or click it, to switch to a matching tab and its window. If no safe match exists, the
           source link opens in a new tab. The separate new-tab action opens another copy. The query
           and results remain available when you reopen the panel. The configured decision model
-          chooses direct index search or a read-only agent search. The panel shows its decision,
-          streamed agent text and tool activity, then the structured search results. Without an
-          enabled decision model, Find uses direct search. Each query starts a fresh task, with no
-          timeline or follow-up conversation.
+          chooses direct index search or a read-only agent search. A blue indicator marks automatic
+          agentic mode. Search views show streamed agent text and tool activity, followed by
+          structured search results. Without an enabled decision model, Find uses direct search.
+          Each query starts a fresh task, with no timeline or follow-up conversation.
         </p>
         <p>
           Chrome requests tab and favicon access at installation or upgrade. Find matches open tabs
           and displays available site icons automatically. Tab URLs are compared locally; the tab
           list is not uploaded. Icons use Chrome's local favicon service, with a fallback when an
           icon is unavailable. Neither feature requests browser-history access.
+        </p>
+        <p>
+          In Chrome's address bar, type <code>om</code> followed by Space or Tab, then your query.
+          On compatible experimental gateways, Omnesis supplies search-index suggestions while you
+          type. Select a suggestion to focus its matching open tab or open its source link. Submit
+          the query itself to open full-page Find and run the configured decision-gated search,
+          including streamed agent work when needed. Suggestion typing does not invoke the decision
+          model or agent. Text entered outside Omnesis keyword mode is not sent to the gateway.
+          Older gateways without suggestion support can still open a supported Find panel on
+          submission.
         </p>
 
         <p>

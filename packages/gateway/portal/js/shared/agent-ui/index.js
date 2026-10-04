@@ -3,4 +3,5 @@
 
 export { createAgentToolRenderer } from "./tools.js";
 export { AssistantMarkdown } from "./assistant-markdown.js";
+export { ThinkingDots } from "./thinking-dots.js";
 export { render, h } from "preact";

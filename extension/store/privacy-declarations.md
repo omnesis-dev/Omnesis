@@ -40,6 +40,8 @@ Because capture can be enabled on signed-in HTTPS pages, select every Chrome Web
 
 ## Data use and transfer
 
+While the user is in Chrome's Omnesis keyword mode (`om` followed by Space or Tab), query edits are sent to the paired experimental gateway for search-index suggestions. Preview results stay in memory for that input session; text outside keyword mode is never forwarded. Suggestion typing does not invoke the decision model or agent. Submitting the query itself opens Find and uses its configured decision-gated search.
+
 Data is used only to provide browser capture, page notes, Find, delivery retries, status and user controls. Search queries go to the paired gateway; tab matching stays local. Favicon URLs are not sent to a third-party icon service. Captured data goes directly to the gateway the user chooses. It is not sold, used for advertising, or used for credit or lending. If the selected gateway is operated by the developer, the developer receives the data as its operator. The extension contains no analytics, advertising or crash-reporting SDK.
 
 The paired gateway's operator controls data received by that gateway. Optional inference configured on the gateway can send selected indexed content to the model provider chosen by that operator; this does not happen in the extension itself.

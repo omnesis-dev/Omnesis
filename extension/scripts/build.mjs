@@ -61,6 +61,15 @@ async function main() {
   // Static assets: manifest, HTML, CSS, and the committed brand icons under
   // public/icons/ — copied verbatim into the loadable bundle.
   await cp(join(root, "public"), outdir, { recursive: true });
+  // Both entry points use the same Find markup and bundled components.
+  const panelHtml = await readFile(join(root, "public/notes.html"), "utf8");
+  await writeFile(
+    join(outdir, "find.html"),
+    panelHtml
+      .replace('<body class="notes-panel">', '<body class="notes-panel find-page">')
+      .replace('<section id="find-section" hidden>', '<section id="find-section">')
+      .replace('<section id="notes-section">', '<section id="notes-section" hidden>'),
+  );
 
   const sharedStyles = await readFile(
     fileURLToPath(import.meta.resolve("@omnesis/gateway/agent-ui/styles.css")),

@@ -96,6 +96,22 @@ describe("Find worker entrypoints", () => {
     expect(view).toMatchObject({ supported: true, enabled: true });
     expect(JSON.stringify(view)).not.toContain("read-token");
     expect(JSON.stringify(stored[FIND_STATE_KEY])).not.toContain("read-token");
+    const fullPage = { id: "test", url: "chrome-extension://test/find.html?q=invented%20query" };
+    const updated = await new Promise((resolve) => {
+      expect(
+        background.message({ type: "find-update", query: "invented query" }, fullPage, resolve),
+      ).toBe(true);
+    });
+    expect(updated).toMatchObject({ enabled: true, query: "invented query" });
+    expect(background.message({ type: "find-open", tabId: 9 }, fullPage, vi.fn())).toBe(false);
+    expect(background.message({ type: "notes-begin" }, fullPage, vi.fn())).toBe(false);
+    expect(
+      background.message(
+        { type: "find-view" },
+        { id: "test", url: "https://example.org/find.html?q=anything" },
+        vi.fn(),
+      ),
+    ).toBe(false);
     await background.clear();
     expect(stored[FIND_TOKEN_KEY]).toBeNull();
     expect(stored[FIND_STATE_KEY]).toBeNull();

@@ -3,6 +3,7 @@
 
 import type { ComponentChildren, VNode } from "preact";
 export { render, h } from "preact";
+export function ThinkingDots(): VNode;
 export interface AgentUiPart {
   kind: "text" | "tool" | "thinking";
   text?: string;

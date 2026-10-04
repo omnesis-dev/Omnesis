@@ -770,6 +770,46 @@ describe("SearchPipeline (injection ports)", () => {
   });
 });
 
+describe("SearchPipeline typed index previews", () => {
+  test("last-token preview keeps configured semantic retrieval alongside prefix keyword matches", async () => {
+    const { db } = createTestDb();
+    let calls = 0;
+    const vector = new Float32Array(EMBEDDING_DIM).fill(0.01);
+    const pipeline = new SearchPipeline({
+      indexDb: db,
+      embeddingModelId: "scripted-embedding",
+      embedder: {
+        async embed(texts) {
+          return texts.map(() => vector);
+        },
+        async embedQuery() {
+          calls++;
+          return vector;
+        },
+      },
+      usearchRead: {
+        search: () => [],
+        maybeRefresh: () => {},
+        reopen: () => {},
+        close: () => {},
+        size: () => 0,
+      } as unknown as import("../indexer/usearch-index.js").UsearchReadHandle,
+    });
+    try {
+      const response = await pipeline.search({ text: "budg", limit: 5 }, undefined, {
+        prefixLastToken: true,
+      });
+      expect(response.results.length).toBeGreaterThan(0);
+      expect(response.stages?.bm25?.status).toBe("ran");
+      expect(response.stages?.vector?.status).toBe("ran");
+      expect(response.models?.embedding).toBe("scripted-embedding");
+      expect(calls).toBe(1);
+    } finally {
+      closeTempDb(db);
+    }
+  });
+});
+
 describe("SearchPipeline (embedder attached — stage reporting)", () => {
   test("embedder attached → bm25 + vector both ran, fusion=rrf", async () => {
     const { db } = createTestDb();

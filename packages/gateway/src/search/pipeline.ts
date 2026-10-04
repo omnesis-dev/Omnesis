@@ -290,6 +290,7 @@ export class SearchPipeline {
     },
     options?: {
       agentContext?: boolean;
+      prefixLastToken?: boolean;
       /** Enrich ordinary ranked hits without changing their membership or order. */
       graphContext?: boolean;
       excludeDocumentIds?: readonly string[] | (() => readonly string[]);
@@ -430,6 +431,7 @@ export class SearchPipeline {
     const cg = await this.candidateGen({
       mode,
       bm25Text: effectiveText,
+      prefixLastToken: options?.prefixLastToken,
       embedderPresent: !!this.embedder,
       queryVector,
       embedMs,

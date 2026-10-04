@@ -34,6 +34,7 @@ import {
 } from "../capture/policy.js";
 import { installNotesEditBackground } from "./notes-edit-background.js";
 import { installFindBackground } from "./find-background.js";
+import { installOmniboxBackground } from "./omnibox-background.js";
 import { installNotesBackground } from "./notes-background.js";
 import { PAIRING_ATTEMPT_KEY, resolvePairingAttempt } from "./pairing-attempt.js";
 import {
@@ -705,6 +706,7 @@ function handlePairingState(
             await Promise.all([
               notesBackground.clear(),
               findBackground.clear(),
+              Promise.resolve(omniboxBackground.clear()),
               notesEditBackground.clear(),
             ]);
             await clearConfig();
@@ -727,6 +729,7 @@ function handlePairingState(
           await Promise.all([
             notesBackground.clear(),
             findBackground.clear(),
+            Promise.resolve(omniboxBackground.clear()),
             notesEditBackground.clear(),
           ]);
           await clearConfig();
@@ -920,5 +923,6 @@ runEvent(refreshBadge());
 
 const notesBackground = installNotesBackground();
 const findBackground = installFindBackground();
+const omniboxBackground = installOmniboxBackground(findBackground);
 
 const notesEditBackground = installNotesEditBackground(findBackground.ensureRead);

@@ -161,14 +161,35 @@ declare global {
         title?: string;
         incognito?: boolean;
       }
-      function create(details: { url: string }): Promise<Tab>;
+      function create(details: { url: string; active?: boolean }): Promise<Tab>;
       function query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<Tab[]>;
-      function update(tabId: number, details: { active: boolean }): Promise<Tab>;
+      function update(tabId: number, details: { active?: boolean; url?: string }): Promise<Tab>;
+      function update(details: { active?: boolean; url?: string }): Promise<Tab>;
       function sendMessage<T = unknown>(tabId: number, message: unknown): Promise<T>;
     }
     namespace windows {
+      const WINDOW_ID_CURRENT: number;
       function update(windowId: number, details: { focused: boolean }): Promise<unknown>;
       function getCurrent(): Promise<{ id?: number }>;
+    }
+
+    namespace omnibox {
+      type OnInputEnteredDisposition = "currentTab" | "newForegroundTab" | "newBackgroundTab";
+      interface SuggestResult {
+        content: string;
+        description: string;
+      }
+      function setDefaultSuggestion(suggestion: { description: string }): Promise<void>;
+      const onInputStarted: { addListener(callback: () => void): void };
+      const onInputChanged: {
+        addListener(
+          callback: (text: string, suggest: (results: SuggestResult[]) => void) => void,
+        ): void;
+      };
+      const onInputEntered: {
+        addListener(callback: (text: string, disposition: OnInputEnteredDisposition) => void): void;
+      };
+      const onInputCancelled: { addListener(callback: () => void): void };
     }
 
     namespace commands {
@@ -194,7 +215,7 @@ declare global {
     }
     namespace sidePanel {
       function setOptions(details: { enabled: boolean; path?: string }): Promise<void>;
-      function open(details: { tabId: number }): Promise<void>;
+      function open(details: { tabId: number } | { windowId: number }): Promise<void>;
       function close(details: { windowId?: number; tabId?: number }): Promise<void>;
       const onOpened: {
         addListener(

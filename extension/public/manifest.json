@@ -59,5 +59,8 @@
       },
       "description": "Find an Omnesis result and switch to its open tab"
     }
+  },
+  "omnibox": {
+    "keyword": "om"
   }
 }

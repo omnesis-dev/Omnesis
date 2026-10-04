@@ -4,7 +4,7 @@
 import { experimentalEnabled } from "@omnesis/core";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
-import { browserFindSearchBody } from "../schemas/browser-find.js";
+import { browserFindSearchBody, browserFindSuggestBody } from "../schemas/browser-find.js";
 import { authorizationBody } from "../schemas/browser-notes.js";
 import type { BrowserFindStreamService } from "../services/BrowserFindStreamService.js";
 import type { RouteApp } from "./types.js";
@@ -53,6 +53,16 @@ export function mountBrowserFindRoutes(
     await service.approve(c.req.param("id"));
     return c.json({ ok: true });
   });
+  app.post(
+    "/browser/find/suggest",
+    scope.read(),
+    validateJson(browserFindSuggestBody),
+    async (c) => {
+      c.header("Cache-Control", "no-store");
+      const { version: _version, ...input } = c.req.valid("json");
+      return c.json(await service.suggest(c.get("auth"), input, c.req.raw.signal));
+    },
+  );
   app.post("/browser/find/search", scope.read(), validateJson(browserFindSearchBody), (c) =>
     searches.stream(c.get("auth"), c.req.valid("json"), c.req.raw.signal),
   );

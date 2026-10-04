@@ -12,7 +12,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-function panel() {
+function panel(options: { fullPage?: boolean; initialQuery?: string } = {}) {
   const { document, window } = parseHTML(
     readFileSync(new URL("../../public/notes.html", import.meta.url), "utf8"),
   );
@@ -99,6 +99,7 @@ function panel() {
       },
     },
     activated,
+    options,
   );
   return {
     document,
@@ -114,9 +115,39 @@ function panel() {
       view = { ...view, ...next };
       changed?.({ [FIND_STATE_KEY]: { newValue: {} } }, "local");
     },
+    mode: (mode: "notes" | "find") => {
+      changed?.({ "omnesis.panel.view.v1": { newValue: mode } }, "local");
+    },
   };
 }
 describe("Find panel", () => {
+  it("opens a submitted full-page query using shared Find and keeps its workflow independent", async () => {
+    const p = panel({ fullPage: true, initialQuery: "invented full-page query" });
+    await vi.waitFor(() =>
+      expect(p.send).toHaveBeenCalledWith({
+        type: "find-query",
+        query: "invented full-page query",
+        more: false,
+      }),
+    );
+    expect(p.input.value).toBe("invented full-page query");
+    const result = p.document.querySelector(".find-result-open")!;
+    p.focus(result);
+    p.mode("notes");
+    expect(p.document.activeElement).toBe(result);
+    expect(p.document.getElementById("find-section")?.hidden).toBe(false);
+    expect(p.document.getElementById("notes-section")?.hidden).toBe(true);
+    expect(p.document.querySelector(".brand-title")?.textContent).toBe("Omnesis");
+  });
+  it("does not auto-submit a full-page query edited while initial status is loading", async () => {
+    const p = panel({ fullPage: true, initialQuery: "invented original query" });
+    p.input.value = "a different unfinished thought";
+    p.input.dispatchEvent(new p.window.Event("input"));
+    await vi.waitFor(() => expect(p.document.getElementById("find-form")?.hidden).toBe(false));
+    expect(
+      p.send.mock.calls.some(([message]) => (message as { type: string }).type === "find-query"),
+    ).toBe(false);
+  });
   it("dismisses only after a successful result activation and leaves the panel open on failure", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
@@ -170,9 +201,9 @@ describe("Find panel", () => {
     img.dispatchEvent(new p.window.Event("load"));
     expect(img.hidden).toBe(false);
     expect(fallback.hidden).toBe(true);
-    expect(p.document.getElementById("find-decision")?.textContent).toContain(
-      "Decision model not configured",
-    );
+    expect(p.document.getElementById("find-mode")?.hidden).toBe(true);
+    expect(p.document.querySelector('label[for="find-query"]')).toBeNull();
+    expect(p.input.getAttribute("aria-label")).toBe("Find in Omnesis");
   });
   it("opens stable result identity with arrow/Enter and offers an explicit new copy", async () => {
     const p = panel();
@@ -243,11 +274,25 @@ describe("Find panel", () => {
       expect(p.document.getElementById("find-agent")?.textContent).toContain("invented link"),
     );
     expect(p.document.getElementById("find-cancel")?.hidden).toBe(false);
+    expect(p.document.getElementById("find-mode")?.hidden).toBe(false);
+    expect(p.document.getElementById("find-mode")?.textContent).toContain(
+      "Agentic mode auto enabled",
+    );
+    expect(p.document.getElementById("find-mode")?.textContent).not.toContain(
+      "A relationship requires investigation",
+    );
+    expect(p.document.querySelectorAll("#find-mode-progress .agent-typing > span")).toHaveLength(3);
+    expect(p.document.querySelector("#find-mode svg path")).not.toBeNull();
+    expect(p.document.getElementById("find-status")?.hidden).toBe(true);
     expect(p.document.querySelector(".agent-ephemeral")?.textContent).toContain("Search");
     p.update({ running: false });
+    await vi.waitFor(() =>
+      expect(p.document.getElementById("find-mode-progress")?.hidden).toBe(true),
+    );
+    expect(p.document.getElementById("find-mode")?.hidden).toBe(false);
     p.input.value = "different";
     p.input.dispatchEvent(new p.window.Event("input"));
-    expect(p.document.getElementById("find-decision")?.hidden).toBe(true);
+    expect(p.document.getElementById("find-mode")?.hidden).toBe(true);
     expect(p.document.getElementById("find-agent")?.hidden).toBe(true);
     expect(p.document.querySelectorAll(".agent-ephemeral")).toHaveLength(0);
     expect(p.document.querySelectorAll(".find-result")).toHaveLength(0);

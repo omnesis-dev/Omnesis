@@ -78,6 +78,7 @@ const expectedFiles = [
   "THIRD_PARTY_NOTICES.txt",
   "background.js",
   "content.js",
+  "find.html",
   "fonts/InterVariable.woff2",
   "icons/icon-128.png",
   "icons/icon-16.png",

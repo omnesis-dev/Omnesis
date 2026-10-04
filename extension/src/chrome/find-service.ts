@@ -92,6 +92,9 @@ class FindHttpError extends Error {
 export class FindService {
   private lane: Promise<unknown> = Promise.resolve();
   private searchGeneration = 0;
+  private suggestionGeneration = 0;
+  private suggestionAbort?: AbortController;
+  private suggestionsSupported = false;
   private searchAbort?: AbortController;
   private transcript?: { query: string; id: string; progress: FindProgress };
   private active?: { generation: number; query: string; activity?: string; tools: FindProgress };
@@ -196,18 +199,23 @@ export class FindService {
     return JSON.parse(
       await readBoundedResponseText(
         response,
-        path === "/search" || path === "/browser/find" ? 2000000 : 100000,
+        ["/search", "/browser/find", "/browser/find/suggest"].includes(path) ? 2000000 : 100000,
       ),
     ) as unknown;
   }
-  private async refresh(config: ExtensionConfig, state: FindState): Promise<void> {
+  private async refresh(
+    config: ExtensionConfig,
+    state: FindState,
+    signal?: AbortSignal,
+  ): Promise<void> {
     let checking = "health";
     try {
-      const health = (await this.request(config, "/health")) as {
+      const health = (await this.request(config, "/health", undefined, undefined, signal)) as {
         experimental?: unknown;
         capabilities?: {
           browserFind?: { min?: unknown; max?: unknown };
           browserFeatures?: { min?: unknown; max?: unknown };
+          browserFindSuggest?: { min?: unknown; max?: unknown };
         };
       };
       const range = health?.capabilities?.browserFind;
@@ -233,6 +241,16 @@ export class FindService {
       state.automatic = automatic;
       state.experimental = health?.experimental === true;
       state.supported = compatible && automatic && state.experimental;
+      const suggest = health?.capabilities?.browserFindSuggest;
+      this.suggestionsSupported =
+        state.supported &&
+        typeof suggest?.min === "number" &&
+        typeof suggest.max === "number" &&
+        Number.isInteger(suggest.min) &&
+        Number.isInteger(suggest.max) &&
+        suggest.min > 0 &&
+        suggest.min <= 1 &&
+        suggest.max >= 1;
 
       if (!state.supported) this.searchAbort?.abort();
 
@@ -240,9 +258,15 @@ export class FindService {
         checking = "automatic authorization";
         state.requestId ??= crypto.randomUUID();
         await this.persist(config, state);
-        const response = (await this.request(config, "/browser/find/enable", config.token, {
-          id: state.requestId,
-        })) as {
+        const response = (await this.request(
+          config,
+          "/browser/find/enable",
+          config.token,
+          {
+            id: state.requestId,
+          },
+          signal,
+        )) as {
           status?: unknown;
           credential?: { token?: unknown; tokenId?: unknown; deviceId?: unknown; scopes?: unknown };
         };
@@ -266,7 +290,13 @@ export class FindService {
       }
       if (state.supported && state.token) {
         checking = "credential";
-        const validation = (await this.request(config, "/browser/find", state.token)) as {
+        const validation = (await this.request(
+          config,
+          "/browser/find",
+          state.token,
+          undefined,
+          signal,
+        )) as {
           enabled?: unknown;
           canonicalizers?: unknown;
           sourceLabels?: unknown;
@@ -281,6 +311,8 @@ export class FindService {
       }
       delete state.error;
     } catch (error) {
+      if (signal?.aborted) throw error;
+      this.suggestionsSupported = false;
       if (error instanceof FindHttpError && [401, 403, 404, 410].includes(error.status)) {
         if (checking === "health") {
           state.supported = false;
@@ -344,7 +376,78 @@ export class FindService {
       return this.view(loaded.state);
     });
   }
+  /** Address-bar previews use configured retrieval without decision or agent turns and never become the durable Find conversation. */
+  async suggest(query: string, signal?: AbortSignal): Promise<FindResult[]> {
+    const generation = ++this.suggestionGeneration;
+    this.suggestionAbort?.abort();
+    const controller = new AbortController();
+    this.suggestionAbort = controller;
+    const abort = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    query = query.slice(0, MAX_FIND_QUERY).trim();
+    let authority: { config: ExtensionConfig; token: string } | undefined;
+    try {
+      if (!query) return [];
+      const loaded = await this.run(async () => {
+        abort.throwIfAborted();
+        const loaded = await this.load();
+        if (!loaded) return null;
+        await this.refresh(loaded.config, loaded.state, abort);
+        return loaded;
+      });
+      abort.throwIfAborted();
+      if (!loaded || !this.suggestionsSupported || !this.view(loaded.state).enabled) return [];
+      const { config, state } = loaded;
+      authority = { config, token: state.token! };
+      const response = (await this.request(
+        config,
+        "/browser/find/suggest",
+        state.token,
+        { version: 1, text: query, limit: 5 },
+        abort,
+      )) as { results?: unknown };
+      abort.throwIfAborted();
+      if (!Array.isArray(response?.results)) throw new Error("Invalid Find suggestions response");
+      const latest = await this.load();
+      if (
+        generation !== this.suggestionGeneration ||
+        !latest ||
+        pairing(latest.config) !== pairing(config) ||
+        latest.config.token !== config.token ||
+        latest.state.token !== state.token ||
+        !this.view(latest.state).enabled
+      )
+        return [];
+      return dedupeFindResults(
+        parseFindResults(response.results, state.sourceLabels, query, state.sourceAttributions),
+        state.canonicalizers,
+      ).slice(0, 5);
+    } catch (error) {
+      if (abort.aborted || generation !== this.suggestionGeneration) return [];
+      if (error instanceof FindHttpError && [401, 403, 404, 410].includes(error.status)) {
+        await this.run(async () => {
+          const loaded = await this.load();
+          if (
+            !loaded ||
+            !authority ||
+            pairing(loaded.config) !== pairing(authority.config) ||
+            loaded.config.token !== authority.config.token ||
+            loaded.state.token !== authority.token
+          )
+            return;
+          eraseRetrievedCache(loaded.state);
+          delete loaded.state.token;
+          loaded.state.supported = false;
+          this.suggestionsSupported = false;
+          await this.persist(loaded.config, loaded.state);
+        });
+      }
+      return [];
+    } finally {
+      if (this.suggestionAbort === controller) this.suggestionAbort = undefined;
+    }
+  }
   async search(query: string, more = false): Promise<FindView> {
+    this.suggestionAbort?.abort();
     query = query.slice(0, MAX_FIND_QUERY);
     const generation = ++this.searchGeneration;
     this.searchAbort?.abort();
@@ -532,6 +635,9 @@ export class FindService {
 
   clear(): Promise<void> {
     this.searchGeneration++;
+    this.suggestionGeneration++;
+    this.suggestionAbort?.abort();
+    this.suggestionsSupported = false;
     this.searchAbort?.abort();
     this.active = undefined;
     this.transcript = undefined;

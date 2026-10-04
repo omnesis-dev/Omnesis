@@ -15,6 +15,7 @@ function harness() {
     revoked = false;
   let broker: unknown = { min: 1, max: 1 };
   let experimental: unknown = true;
+  let suggestCapability: unknown = { min: 1, max: 1 };
   let capability: unknown = { min: 1, max: 1 };
   let config: ExtensionConfig | null = {
     gatewayUrl: "https://gateway.example.org",
@@ -34,7 +35,11 @@ function harness() {
     if (path === "/health")
       return respond({
         experimental,
-        capabilities: { browserFind: capability, browserFeatures: broker },
+        capabilities: {
+          browserFind: capability,
+          browserFeatures: broker,
+          browserFindSuggest: suggestCapability,
+        },
       });
     if (path === "/browser/find/enable")
       return revoked
@@ -59,6 +64,8 @@ function harness() {
         },
         sourceAttributions: { "example-provider": "Example attribution" },
       });
+    if (path === "/browser/find/suggest")
+      return search(JSON.parse(String(init?.body)), init?.signal);
     if (path === "/browser/find/search") {
       const body = JSON.parse(String(init?.body));
       const response = await search(body, init?.signal);
@@ -92,6 +99,9 @@ function harness() {
   };
   return {
     service: new FindService(deps),
+    suggestionCapability: (value: unknown) => {
+      suggestCapability = value;
+    },
     setExperimental: (value: unknown) => {
       experimental = value;
     },
@@ -594,5 +604,98 @@ describe("Find authorization and durable results", () => {
         : original(input, init),
     );
     expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+  });
+});
+
+describe("address-bar retrieval previews", () => {
+  it("uses the separate read route with a bounded limit and never changes durable query/results", async () => {
+    const p = harness();
+    p.search(async () => p.respond({ results: [hit("saved", "https://example.org/saved")] }));
+    await p.service.search("saved query");
+    const prior = await p.service.status(false);
+    p.search(async () =>
+      p.respond({
+        results: [
+          hit("preview", "https://example.org/preview"),
+          hit("duplicate", "https://example.org/preview"),
+          hit("native", "notes://invented"),
+        ],
+      }),
+    );
+    const previews = await p.service.suggest("preview query");
+    expect(previews.map((row) => row.id)).toEqual(["preview"]);
+    const call = p.fetch.mock.calls
+      .filter(([url]) => String(url).endsWith("/browser/find/suggest"))
+      .at(-1)!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({
+      version: 1,
+      text: "preview query",
+      limit: 5,
+    });
+    expect(call[1]?.headers).toMatchObject({ authorization: "Bearer read-token" });
+    const after = await p.service.status(false);
+    expect(after.query).toBe(prior.query);
+    expect(after.resultsQuery).toBe(prior.resultsQuery);
+    expect(after.results).toEqual(prior.results);
+    expect(
+      p.fetch.mock.calls.filter(([url]) => String(url).endsWith("/browser/find/search")),
+    ).toHaveLength(1);
+  });
+
+  it("suppresses previews without the negotiated capability or experimental flag while preserving ordinary Find compatibility", async () => {
+    const p = harness();
+    p.suggestionCapability(undefined);
+    expect(await p.service.suggest("invented query")).toEqual([]);
+    expect((await p.service.status()).enabled).toBe(true);
+    p.suggestionCapability({ min: 1, max: 1 });
+    p.setExperimental(false);
+    expect(await p.service.suggest("invented query")).toEqual([]);
+    expect(p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/suggest"))).toBe(
+      false,
+    );
+  });
+
+  it("cancels a slow preview and never delivers stale results over the latest query", async () => {
+    const p = harness();
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    p.search(async (body, signal) => {
+      if (body.text === "slow") {
+        started();
+        return new Promise<Response>((_resolve, reject) =>
+          signal!.addEventListener("abort", () => reject(new Error("Cancelled")), { once: true }),
+        );
+      }
+      return p.respond({ results: [hit("latest", "https://example.org/latest")] });
+    });
+    const slow = p.service.suggest("slow");
+    await entered;
+    const latest = p.service.suggest("latest");
+    expect(await slow).toEqual([]);
+    expect((await latest).map((row) => row.id)).toEqual(["latest"]);
+  });
+
+  it("erases retrieved cache on explicit preview credential rejection", async () => {
+    const p = harness();
+    p.search(async () => p.respond({ results: [hit("saved", "https://example.org/saved")] }));
+    await p.service.search("saved query");
+    p.search(async () => p.respond({}, 403));
+    expect(await p.service.suggest("preview")).toEqual([]);
+    const state = await p.service.status(false);
+    expect(state.enabled).toBe(false);
+    expect(state.results).toEqual([]);
+    expect(state.resultsQuery).toBe("");
+    expect(state.query).toBe("saved query");
+  });
+
+  it("does not return preview data after pairing changes during the request", async () => {
+    const p = harness();
+    p.search(async () => {
+      p.unpair();
+      return p.respond({ results: [hit("old", "https://example.org/old")] });
+    });
+    expect(await p.service.suggest("invented query")).toEqual([]);
   });
 });

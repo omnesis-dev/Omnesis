@@ -16,11 +16,11 @@
 
     <section id="find-section" hidden>
       <form id="find-form" hidden>
-        <label for="find-query">Find in your Omnesis</label>
         <div class="find-search-box">
           <span aria-hidden="true">⌕</span>
           <input
             id="find-query"
+            aria-label="Find in Omnesis"
             type="search"
             maxlength="1024"
             placeholder="What are you looking for?"
@@ -34,7 +34,26 @@
       <button id="find-cancel" type="button" class="secondary" hidden>Cancel search</button>
       <p id="find-status" class="find-status" role="status" aria-live="polite">Opening Find…</p>
       <button id="find-settings" type="button" class="secondary" hidden>Open settings</button>
-      <p id="find-decision" class="find-decision" role="status" hidden></p>
+      <div id="find-mode" class="find-mode" role="status" hidden>
+        <!-- Astroid glyph from Lucide, ISC; see THIRD_PARTY_NOTICES.txt. -->
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path
+            d="M12.983 21.186a1 1 0 0 1-1.966 0 10 10 0 0 0-8.203-8.203 1 1 0 0 1 0-1.966 10 10 0 0 0 8.203-8.203 1 1 0 0 1 1.966 0 10 10 0 0 0 8.203 8.203 1 1 0 0 1 0 1.966 10 10 0 0 0-8.203 8.203"
+          />
+        </svg>
+        <span>Agentic mode auto enabled</span>
+        <span id="find-mode-progress" hidden></span>
+      </div>
       <div id="find-agent" class="find-agent" hidden></div>
       <ol id="find-results" class="find-results" aria-label="Search results"></ol>
       <button id="find-more" type="button" class="secondary" hidden>Search more results</button>

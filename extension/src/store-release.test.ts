@@ -102,6 +102,7 @@ describe("Chrome Web Store release contract", () => {
       "favicon",
     ]);
     expect(manifest.incognito).toBe("not_allowed");
+    expect(manifest.omnibox).toEqual({ keyword: "om" });
     expect(manifest.background).toEqual({ service_worker: "background.js", type: "module" });
     expect(manifest).not.toHaveProperty("content_security_policy");
     expect(manifest).not.toHaveProperty("externally_connectable");
@@ -158,6 +159,7 @@ describe("Chrome Web Store release contract", () => {
         "THIRD_PARTY_NOTICES.txt",
         "background.js",
         "content.js",
+        "find.html",
         "fonts/InterVariable.woff2",
         "icons/icon-128.png",
         "icons/icon-16.png",
@@ -185,6 +187,10 @@ describe("Chrome Web Store release contract", () => {
       expect(packagedManifest.permissions).toEqual(expect.arrayContaining(["tabs", "favicon"]));
       expect(packagedManifest.side_panel).toEqual({ default_path: "notes.html" });
       expect(await archive.file("notes.html")?.async("string")).toContain('src="notes.js"');
+      expect(await archive.file("find.html")?.async("string")).toContain(
+        'class="notes-panel find-page"',
+      );
+      expect(await archive.file("find.html")?.async("string")).toContain('src="notes.js"');
       expect(await archive.file("notes.js")?.async("string")).toContain("notes-submit");
       expect(await archive.file("THIRD_PARTY_NOTICES.txt")?.async("string")).toContain(
         "Copyright (c) 2025 Steph Ango",

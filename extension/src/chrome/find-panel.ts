@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { h, render as renderComponent, ThinkingDots } from "@omnesis/gateway/agent-ui";
 import { createFindConversation } from "./find-conversation.js";
 import { findQueryTerms } from "./find-results.js";
 import { FIND_STATE_KEY, type FindResult, type FindView } from "./find-service.js";
@@ -63,6 +64,7 @@ export function initFindPanel(
   document: Document,
   api: PanelApi,
   onActivated?: () => Promise<void> | void,
+  options: { fullPage?: boolean; initialQuery?: string } = {},
 ): void {
   const element = <T extends HTMLElement>(id: string): T => {
     const value = document.getElementById(id);
@@ -81,7 +83,8 @@ export function initFindPanel(
     generation = 0,
     searching = false;
   let mode: "find" | "notes" = "notes";
-  let dirtyInput = false;
+  let dirtyInput = options.initialQuery !== undefined;
+  if (dirtyInput) input.value = options.initialQuery!;
   let refreshGeneration = 0;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   const cancel = element<HTMLButtonElement>("find-cancel");
@@ -90,9 +93,11 @@ export function initFindPanel(
     void api.runtime.openOptionsPage?.();
   });
   function selectMode(next: "find" | "notes"): void {
+    if (options.fullPage) next = "find";
     mode = next;
     const title = document.querySelector<HTMLElement>(".brand-title");
-    if (title) title.textContent = next === "find" ? "Find" : "Tell Omnesis";
+    if (title)
+      title.textContent = options.fullPage ? "Omnesis" : next === "find" ? "Find" : "Tell Omnesis";
     findSection.hidden = next !== "find";
     notesSection.hidden = next !== "notes";
     if (next === "find") {
@@ -159,15 +164,17 @@ export function initFindPanel(
     const currentResults = next.resultsQuery === input.value;
     cancel.hidden = !next.running || !currentResults;
     more.hidden ||= !currentResults;
+    const agentic = next.enabled && currentResults && next.decision?.mode === "agentic";
+    status.hidden = agentic && next.running;
     status.textContent = !next.supported
       ? "Find is unavailable on this gateway."
       : !next.enabled
         ? "Find is unavailable. Check the gateway connection and experimental mode."
         : next.running && currentResults
-          ? next.activity
-            ? `Omnesis · ${next.activity}`
-            : next.decision?.mode === "agentic"
-              ? "Omnesis is investigating…"
+          ? agentic
+            ? ""
+            : next.activity
+              ? `Omnesis · ${next.activity}`
               : "Searching your Omnesis…"
           : ((currentResults ? next.error : undefined) ??
             (next.interrupted && currentResults
@@ -180,11 +187,10 @@ export function initFindPanel(
                 : !next.results.length
                   ? "No browser links found. Try a different query or search more results."
                   : `${next.results.length} ${next.results.length === 1 ? "result" : "results"} · ↑ ↓ to choose · Enter to open`));
-    const decision = element("find-decision");
-    decision.hidden = !next.decision || !currentResults;
-    decision.textContent = next.decision
-      ? `${next.decision.mode === "agentic" ? "Agent search" : "Direct search"}${next.decision.model ? ` · ${next.decision.model}` : ""} · ${next.decision.reason}`
-      : "";
+    element("find-mode").hidden = !agentic;
+    const modeProgress = element("find-mode-progress");
+    modeProgress.hidden = !agentic || !next.running;
+    renderComponent(agentic && next.running ? h(ThinkingDots, {}) : null, modeProgress);
     conversation.render(currentResults && next.enabled ? next : undefined);
     const focusedResult = (document.activeElement?.closest(".find-result") as HTMLElement | null)
       ?.dataset.resultId;
@@ -381,16 +387,26 @@ export function initFindPanel(
   api.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (
-      changes[PANEL_VIEW_KEY]?.newValue === "find" ||
-      changes[PANEL_VIEW_KEY]?.newValue === "notes"
+      !options.fullPage &&
+      (changes[PANEL_VIEW_KEY]?.newValue === "find" ||
+        changes[PANEL_VIEW_KEY]?.newValue === "notes")
     )
       selectMode(changes[PANEL_VIEW_KEY]!.newValue as "find" | "notes");
     if (FIND_STATE_KEY in changes) void refresh(true);
   });
-  void api.storage.local.get(PANEL_VIEW_KEY).then((state) => {
-    selectMode(state[PANEL_VIEW_KEY] === "find" ? "find" : "notes");
-  });
+  if (options.fullPage) selectMode("find");
+  else
+    void api.storage.local.get(PANEL_VIEW_KEY).then((state) => {
+      selectMode(state[PANEL_VIEW_KEY] === "find" ? "find" : "notes");
+    });
   void refresh().then(() => {
+    if (
+      options.initialQuery?.trim() &&
+      view?.enabled &&
+      generation === 0 &&
+      input.value === options.initialQuery
+    )
+      void search();
     if (mode === "find") input.focus();
   });
 }

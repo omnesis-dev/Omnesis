@@ -129,6 +129,13 @@
             Open-tab URLs are compared locally and the tab list is not uploaded.
           </li>
           <li>
+            <strong>Address-bar suggestions</strong> — after you enter <code>om</code> followed by
+            Space or Tab, query edits are sent to your paired experimental gateway to retrieve index
+            suggestions. Preview results remain in memory for that input session. Typing suggestions
+            does not invoke the decision model or agent. Submitting the query itself opens Find and
+            uses its configured search behavior. Text outside Omnesis keyword mode is not forwarded.
+          </li>
+          <li>
             <strong>Local controls and delivery state</strong> — Chrome profile label, the paired
             gateway's reported version, recent status, a bounded retry queue, and a copy of the
             capture settings the paired gateway holds (pause, excluded domains, pages you deleted

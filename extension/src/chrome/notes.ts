@@ -9,6 +9,13 @@ import { connectPanelPage } from "./panel-surface.js";
 import { initPanelDismiss } from "./panel-dismiss.js";
 
 document.addEventListener("DOMContentLoaded", () => {
+  if (location.pathname === "/find.html") {
+    initFindPanel(document, chrome, undefined, {
+      fullPage: true,
+      initialQuery: new URL(location.href).searchParams.get("q") ?? undefined,
+    });
+    return;
+  }
   let flushNotes: () => Promise<void> = async () => {};
   let flushEdits: () => Promise<void> = async () => {};
   const scope: { windowId?: number; tabId?: number } = {};

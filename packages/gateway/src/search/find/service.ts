@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { directFindResults } from "./direct-results.js";
 import { decideFindRoute } from "./decision.js";
 import { buildBrowserFindRuntime } from "./runtime.js";
 import type { DecisionCapability } from "@omnesis/core";
 import type { AgentService } from "../../agent/service.js";
 import type { SearchPipeline } from "../pipeline.js";
-import type { FindSearchExecution, FindSearchInput, FindSearchResult } from "./types.js";
+import type { FindSearchExecution, FindSearchInput } from "./types.js";
 
 /** A fresh, read-only search task; it never creates a conversation or follow-up session. */
 export class FindSearchService {
@@ -40,15 +41,7 @@ export class FindSearchService {
           limit: input.limit ?? 25,
         });
         signal.throwIfAborted();
-        const results: FindSearchResult[] = response.results.map((hit) => ({
-          id: hit.documentId,
-          documentId: hit.documentId,
-          title: hit.title,
-          sourceUrl: hit.sourceUrl,
-          sourceId: hit.sourceId,
-          chunkText: hit.chunkText,
-          sourceCreatedAt: hit.sourceCreatedAt,
-        }));
+        const results = directFindResults(response.results);
         emit({
           type: "find.results",
           payload: {

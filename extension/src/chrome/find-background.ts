@@ -2,7 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { loadConfig } from "./storage.js";
-import { FIND_STATE_KEY, MAX_FIND_QUERY, FindService, type FindView } from "./find-service.js";
+import {
+  FIND_STATE_KEY,
+  MAX_FIND_QUERY,
+  FindService,
+  type FindView,
+  type FindResult,
+} from "./find-service.js";
 import { FIND_TOKEN_KEY } from "./find-credential.js";
 import { activateFindResult, findOpenTab } from "./find-tabs.js";
 import {
@@ -15,6 +21,7 @@ import {
 export function installFindBackground(): {
   clear(): Promise<void>;
   ensureRead(): Promise<FindView>;
+  suggest(query: string, signal?: AbortSignal): Promise<FindResult[]>;
   message(
     message: unknown,
     sender: chrome.runtime.MessageSender,
@@ -105,10 +112,14 @@ export function installFindBackground(): {
     sender: chrome.runtime.MessageSender,
     respond: (value?: unknown) => void,
   ): boolean => {
+    const senderPage = sender.url?.split(/[?#]/, 1)[0];
+    const findPage = ["notes.html", "find.html"].some(
+      (path) => senderPage === chrome.runtime.getURL(path),
+    );
     if (
       sender.id !== chrome.runtime.id ||
-      !["popup.html", "options.html", "notes.html"].some(
-        (path) => sender.url === chrome.runtime.getURL(path),
+      !["popup.html", "options.html", "notes.html", "find.html"].some(
+        (path) => senderPage === chrome.runtime.getURL(path),
       ) ||
       !message ||
       typeof message !== "object"
@@ -136,7 +147,7 @@ export function installFindBackground(): {
     )
       task = open(msg.tabId);
     else if (
-      sender.url === chrome.runtime.getURL("notes.html") &&
+      findPage &&
       (msg.type === "find-update" || msg.type === "find-query") &&
       typeof msg.query === "string" &&
       msg.query.length <= MAX_FIND_QUERY
@@ -147,7 +158,7 @@ export function installFindBackground(): {
           : service.update(msg.query)
       ).then(() => viewWithTabs());
     else if (
-      sender.url === chrome.runtime.getURL("notes.html") &&
+      findPage &&
       msg.type === "find-progress-flush" &&
       typeof msg.toolCallId === "string" &&
       msg.toolCallId.length <= 128 &&
@@ -155,13 +166,9 @@ export function installFindBackground(): {
       msg.progressId.length <= 128
     )
       task = service.flushProgress(msg.toolCallId, msg.progressId).then(() => viewWithTabs());
-    else if (sender.url === chrome.runtime.getURL("notes.html") && msg.type === "find-cancel")
+    else if (findPage && msg.type === "find-cancel")
       task = service.cancel().then(() => viewWithTabs());
-    else if (
-      sender.url === chrome.runtime.getURL("notes.html") &&
-      msg.type === "find-result" &&
-      typeof msg.resultId === "string"
-    )
+    else if (findPage && msg.type === "find-result" && typeof msg.resultId === "string")
       task = service.status().then(async (view) => {
         if (!view.enabled) throw new Error("Find access is no longer available");
         const result = view.results.find((result) => result.id === msg.resultId);
@@ -191,7 +198,12 @@ export function installFindBackground(): {
   );
   return {
     message,
-    ensureRead: () => service.status(),
+    ensureRead: () => refresh(),
+    suggest: async (query, signal) => {
+      const results = await service.suggest(query, signal);
+      await refresh(false);
+      return results;
+    },
     alarm: (name) => {
       if (name === "omnesis-find-refresh") detached(refresh());
     },

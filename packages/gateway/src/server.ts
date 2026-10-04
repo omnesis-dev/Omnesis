@@ -1648,6 +1648,7 @@ export function createServer(
     opts.onOmnesisNotesRuntime(runtime);
   }
   const browserFind = new BrowserFindService({
+    searchPipeline: opts?.searchPipeline,
     devices: deviceService,
     writeGate: w,
     scope: "read",

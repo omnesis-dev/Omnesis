@@ -10,18 +10,21 @@ import {
 } from "../../views/agent-reducer.js";
 import { initialState, reducer } from "./reducer.js";
 import { AssistantMarkdown as portalMarkdown } from "../../components/agent/assistant-markdown.js";
-import { AssistantMarkdown } from "./index.js";
+import { AssistantMarkdown, ThinkingDots } from "./index.js";
+import { ThinkingDots as portalThinkingDots } from "../../components/thinking-dots.js";
 
 describe("shared browser agent presentation contract", () => {
   it("keeps portal imports on the exact shared reducer and Markdown functions", () => {
     expect(portalState).toBe(initialState);
     expect(portalReducer).toBe(reducer);
     expect(portalMarkdown).toBe(AssistantMarkdown);
+    expect(portalThinkingDots).toBe(ThinkingDots);
   });
   it("uses one CSS source and keeps the Chrome export free of gateway services", () => {
     const styles = readFileSync(new URL("../../../css/style.css", import.meta.url), "utf8");
     expect(styles).toContain('@import url("../js/shared/agent-ui/styles.css")');
     expect(styles).not.toContain(".agent-ephemeral {");
+    expect(styles).not.toContain(".agent-typing {");
     for (const file of readdirSync(new URL(".", import.meta.url)).filter((file) =>
       file.endsWith(".js"),
     )) {
