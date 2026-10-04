@@ -61,3 +61,6 @@ export interface VocabularyApplyResult {
 /** JSON avoids collisions from delimiters inside provider-issued thread identifiers. */
 export const vocabularyConversationKey = (sourceId: string, threadId: string): string =>
   JSON.stringify([sourceId, threadId]);
+
+/** A single free-text document cannot corroborate its own vocabulary. */
+export const MIN_VOCABULARY_DOCUMENTS = 2;

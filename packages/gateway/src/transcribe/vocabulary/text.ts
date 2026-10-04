@@ -1,13 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { layoutReplyText } from "../../ocr/http-vlm-ocr.js";
+
 /**
  * Project rendered Markdown into vocabulary evidence without guessing who
  * authored it. Ambiguous prose, signatures and unmarked quoted replies stay.
  * Input and output are bounded independently of the caller's document cap.
  */
 export function vocabularyText(content: string): string {
-  const lines = content.slice(0, 65536).split(/\r?\n/u);
+  const bounded = content.slice(0, 65536);
+  const trimmed = bounded.trimStart();
+  let prose = bounded;
+  if (trimmed.startsWith("[")) {
+    try {
+      prose = layoutReplyText(trimmed);
+      // A malformed layout whose first field is category or text is not handled by
+      // the OCR parser's truncated-bbox recovery. Do not tokenize its schema.
+      if (prose === trimmed && /^\[\s*\{\s*"(?:bbox|category|text)"/u.test(trimmed)) prose = "";
+      else if (prose === trimmed) prose = bounded;
+    } catch {
+      // An invalid escape in a truncated region must neither abort the batch
+      // nor turn raw JSON into vocabulary. This only affects hint extraction.
+      prose = "";
+    }
+  }
+  const lines = prose.split(/\r?\n/u);
   const metadata = /^\*\*[^*\n]{1,64}:\*\*[^\n]*$/u;
   const separator = /^\s{0,3}---\s*$/u;
   let start = 0;

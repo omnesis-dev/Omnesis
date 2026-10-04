@@ -10,6 +10,7 @@ import {
 } from "./types.js";
 
 import { isCommonVocabularyWord } from "./common-words.js";
+import { cleanVocabularyName } from "./names.js";
 import { vocabularyText } from "./text.js";
 
 // Consume the complete lexical run before applying the length cap. A bounded
@@ -53,26 +54,24 @@ export function extractTranscriptionVocabulary(
       if (!existing || existing.benefit < benefit)
         candidates.set(term, { term, text: clean, benefit });
     };
-    // Names are independently grounded, including names written in scripts
-    // without upper/lower case. Limit names as well as scanned text.
-    for (const person of doc.people.slice(0, 16)) {
-      if (person.name.length <= 80) {
-        // People without a display name can legitimately use an email as
-        // their canonical name. Neither it nor its fragments are vocabulary.
-        const name = stripIdentifiers(person.name.split(/\s+\|\s+/u)[0])
-          .replace(/\([^()]*\)|\[[^\[\]]*\]/gu, " ")
-          .replace(/[<>()[\]{}]/gu, " ")
-          .replace(/\s+/gu, " ")
-          .trim();
-        add(name, 4);
-        for (const word of name.match(WORD) ?? []) {
-          if (withinWordLimit(word)) add(word, 2);
-        }
-      }
-    }
     const text = stripIdentifiers(
       `${vocabularyText(doc.title.slice(0, 256))}\n${vocabularyText(doc.content.slice(0, settings.maxDocumentChars))}`,
     );
+    // A people link supplies spelling, not an occurrence. Preserve full names
+    // (including common components) only when the cleaned prose contains them.
+    // They still need corroboration like every other materialized phrase.
+    const normalizedText = normalize(text).replace(/\s+/gu, " ");
+    for (const person of doc.people.slice(0, 16)) {
+      const name = cleanVocabularyName(person.name);
+      if (!name) continue;
+      const escaped = normalize(name).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      if (
+        new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, "u").test(
+          normalizedText,
+        )
+      )
+        add(name, 2.5);
+    }
     const words = new Map<string, { text: string; benefit: number }>();
     const wholeWordStarts = new Set<number>();
     const wholeWordEnds = new Set<number>();
@@ -96,7 +95,7 @@ export function extractTranscriptionVocabulary(
       if (!prior || prior.benefit < benefit) words.set(key, { text: word, benefit });
     }
     for (const word of words.values()) {
-      // Weak terms need support across independent documents before
+      // Learned terms need support across distinct documents before
       // inference uses them; the repository enforces that selection rule.
       add(word.text, word.benefit);
     }

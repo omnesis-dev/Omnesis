@@ -129,7 +129,7 @@ describe("vocabulary materialization", () => {
       getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries.map(
         (entry) => entry.text,
       ),
-    ).toEqual(["Orvelion"]);
+    ).toEqual([]);
   });
 
   test("schema setup installs the indexed recent stream on existing vocabulary tables", () => {
@@ -187,14 +187,38 @@ describe("vocabulary materialization", () => {
   test("overlapping frequency and recent streams do not double a profile score", () => {
     const db = database();
     insert(db, "single-profile");
-    applyTranscriptionVocabularyBatch(db, [extracted("single-profile", ["Orvelion"])]);
+    insert(db, "second-profile");
+    applyTranscriptionVocabularyBatch(db, [
+      extracted("single-profile", ["Orvelion"]),
+      extracted("second-profile", ["Orvelion"]),
+    ]);
     const result = getTranscriptionVocabulary(
       db,
       { purpose: "dictation", recordedAt: "2026-01-01" },
       settings,
     );
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].score).toBeCloseTo((3 * Math.log1p(1)) / (1 + Math.log1p(1)), 10);
+    expect(result.entries[0].score).toBeCloseTo((3 * Math.log1p(2)) / (1 + Math.log1p(2)), 10);
+  });
+
+  test("singleton noise cannot crowd corroborated terms out of bounded lookup", () => {
+    const db = database();
+    for (let i = 0; i < 300; i++) {
+      const id = `noise-${i}`;
+      insert(db, id);
+      const doc = extracted(id, [`Anoise${i}`]);
+      doc.terms[0].benefit = 2.5;
+      applyTranscriptionVocabularyBatch(db, [doc]);
+    }
+    for (const id of ["support-a", "support-b"]) {
+      insert(db, id);
+      const doc = extracted(id, ["Zeralith"]);
+      doc.terms[0].benefit = 1;
+      applyTranscriptionVocabularyBatch(db, [doc]);
+    }
+    expect(
+      getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries.map((e) => e.text),
+    ).toEqual(["Zeralith"]);
   });
 
   test("indexed pending fetch bounds text; resolved people are required", () => {
@@ -216,10 +240,11 @@ describe("vocabulary materialization", () => {
   test("generic conversationId matches source-audio context and long identifiers", () => {
     const db = database();
     insert(db, "conversation");
+    insert(db, "conversation-second");
     const threadId = "fictional-thread-" + "q".repeat(700);
-    db.prepare("UPDATE documents SET metadata=? WHERE id='conversation'").run(
-      JSON.stringify({ extra: { conversationId: threadId } }),
-    );
+    db.prepare(
+      "UPDATE documents SET metadata=? WHERE id IN ('conversation','conversation-second')",
+    ).run(JSON.stringify({ extra: { conversationId: threadId } }));
     const docs = fetchTranscriptionVocabularyBatch(db, settings);
     expect(docs[0].threadId).toBe(threadId);
     applyTranscriptionVocabularyBatch(db, extractTranscriptionVocabulary(docs, settings));
@@ -310,6 +335,71 @@ describe("vocabulary materialization", () => {
 });
 
 describe("context dictionary", () => {
+  test("trusted identity hints work without corpus counts and stay behind both gates", () => {
+    const db = database();
+    db.prepare(
+      `INSERT INTO people(id,canonical_name,source,is_self,first_seen,last_seen,created_at,updated_at)
+      VALUES ('self','You','fictional',1,'2026-01-01','2026-01-01','2026-01-01','2026-01-01')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO person_aliases(id,person_id,alias,alias_type,source_id,created_at,occurrence_count)
+      VALUES ('trusted','self','Maya Reeves','name','fictional:contacts','2026-01-01',1000000)`,
+    ).run();
+    expect(
+      getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries.map((e) => e.text),
+    ).toEqual(["Maya Reeves"]);
+    expect(
+      getTranscriptionVocabulary(db, { purpose: "agent" }, settings).entries.map((e) => e.text),
+    ).toEqual(["Maya Reeves"]);
+    expect(getTranscriptionVocabulary(db, { purpose: "source-audio" }, settings).entries).toEqual(
+      [],
+    );
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        { purpose: "source-audio", participants: [{ isSelf: true }] },
+        settings,
+      ).entries.map((e) => e.text),
+    ).toEqual(["Maya Reeves"]);
+    expect(
+      getTranscriptionVocabulary(db, { purpose: "dictation" }, { ...settings, enabled: false })
+        .entries,
+    ).toEqual([]);
+    db.prepare(
+      `INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at)
+      VALUES ('speaker','Jamie Lopez','fictional','2026-01-01','2026-01-01','2026-01-01','2026-01-01'),
+      ('participant','Sarah Mendez','fictional','2026-01-01','2026-01-01','2026-01-01','2026-01-01')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO person_aliases(id,person_id,alias,alias_type,created_at,occurrence_count)
+      VALUES ('speaker-name','speaker','Jamie Lopez','name','2026-01-01',1000000),
+      ('participant-name','participant','Sarah Mendez','name','2026-01-01',1000000)`,
+    ).run();
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        {
+          purpose: "source-audio",
+          speaker: { personId: "speaker" },
+          participants: [{ isSelf: true }, { personId: "participant" }],
+        },
+        settings,
+      ).entries.map((e) => e.text),
+    ).toEqual(["Maya Reeves", "Jamie Lopez"]);
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        {
+          purpose: "source-audio",
+          speaker: { personId: "self" },
+        },
+        settings,
+      ).entries.map((e) => e.text),
+    ).toEqual(["Maya Reeves"]);
+    db.prepare("UPDATE transcription_vocabulary_state SET phase='terms'").run();
+    expect(getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries).toEqual([]);
+  });
+
   test("conversation and linked cross-platform person vocabulary outrank global", () => {
     const db = database();
     insert(db, "global");
@@ -331,6 +421,19 @@ describe("context dictionary", () => {
         "conversation",
       ),
     ]);
+    for (const [id, text, key, kind] of [
+      ["global-second", "Globularix", "", "global"],
+      ["person-second", "Nimbrax", "canonical", "person"],
+      [
+        "thread-second",
+        "Quorvex",
+        JSON.stringify(["fictional:messages", "thread"]),
+        "conversation",
+      ],
+    ] as const) {
+      insert(db, id);
+      applyTranscriptionVocabularyBatch(db, [extracted(id, [text], key, kind)]);
+    }
     const result = getTranscriptionVocabulary(
       db,
       {
@@ -355,12 +458,16 @@ describe("context dictionary", () => {
   test("canonical merge resolves historical person vocabulary", () => {
     const db = database();
     insert(db, "historic");
+    insert(db, "historic-second");
     const person = db.prepare(
       "INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at,merged_into) VALUES (?,?,'fictional','2026-01-01','2026-01-01','2026-01-01','2026-01-01',?)",
     );
     person.run("winner", "Maya Reeves", null);
     person.run("loser", "Maya Reeves", "winner");
-    applyTranscriptionVocabularyBatch(db, [extracted("historic", ["Quorvex"], "loser", "person")]);
+    applyTranscriptionVocabularyBatch(db, [
+      extracted("historic", ["Quorvex"], "loser", "person"),
+      extracted("historic-second", ["Quorvex"], "loser", "person"),
+    ]);
     expect(
       getTranscriptionVocabulary(
         db,
@@ -369,19 +476,26 @@ describe("context dictionary", () => {
       ).entries.map((e) => e.text),
     ).toEqual(["Quorvex"]);
   });
-  test("weak lower-case terms require independent document support", () => {
-    const db = database();
-    insert(db, "a");
-    insert(db, "b");
-    const weak = extracted("a", ["quorvex"]);
-    weak.terms[0].benefit = 1;
-    applyTranscriptionVocabularyBatch(db, [weak]);
-    expect(getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries).toEqual([]);
-    applyTranscriptionVocabularyBatch(db, [{ ...weak, id: "b" }]);
-    expect(
-      getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries.map((e) => e.text),
-    ).toEqual(["quorvex"]);
-  });
+  test.each([1, 2, 2.5, 4])(
+    "terms require distinct document support regardless of benefit %s",
+    (benefit) => {
+      const db = database();
+      insert(db, "a");
+      insert(db, "b");
+      const weak = extracted("a", ["quorvex"]);
+      weak.terms[0].benefit = benefit;
+      applyTranscriptionVocabularyBatch(db, [weak]);
+      expect(getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries).toEqual(
+        [],
+      );
+      applyTranscriptionVocabularyBatch(db, [{ ...weak, id: "b" }]);
+      expect(
+        getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries.map(
+          (e) => e.text,
+        ),
+      ).toEqual(["quorvex"]);
+    },
+  );
   test("stronger grounded evidence upgrades a term without recounting its document", () => {
     const db = database();
     insert(db, "upgrade");
@@ -393,7 +507,7 @@ describe("context dictionary", () => {
     expect(count(db)).toBe(1);
     expect(
       getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries.map((e) => e.text),
-    ).toEqual(["Quorvex"]);
+    ).toEqual([]);
   });
 });
 
@@ -425,7 +539,7 @@ describe("vocabulary extraction", () => {
       revision: 0,
       generation: 1,
       title: "",
-      content: "Hello the garden maison casa Haus Quorvex Nimbrax quorvex quorvex",
+      content: "Hello the garden maison casa Haus Quorvex Nimbrax quorvex quorvex. Zélor Vantix.",
       sourceId: "fictional:messages",
       threadId: "thread",
       recordedAt: "2026-01-01",
@@ -435,6 +549,11 @@ describe("vocabulary extraction", () => {
     };
     const result = extractTranscriptionVocabulary([doc], settings)[0];
     expect(result.terms.map((t) => t.text)).toContain("Zélor Vantix");
+    const absent = extractTranscriptionVocabulary(
+      [{ ...doc, content: "Hello the garden" }],
+      settings,
+    )[0];
+    expect(absent.terms.map((t) => t.text)).not.toContain("Zélor Vantix");
     expect(result.terms.map((t) => t.text)).toContain("Quorvex");
     for (const common of ["the", "garden", "maison", "casa", "Haus"])
       expect(result.terms.map((t) => t.term)).not.toContain(common.toLowerCase());
