@@ -2,8 +2,19 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceId, TokenId, Scope } from "@omnesis/types";
+import { runSchemaSetup } from "../../data/schema.js";
+import { createDevice } from "../../data/repositories/DeviceRepository.js";
+import { createToken } from "../../data/repositories/TokenRepository.js";
+import { directWriteGate } from "../../write-gate.js";
+import { bootOmnesisNotes } from "../../sources/omnesis-notes/index.js";
+import { getNoteEntry } from "../../sources/omnesis-notes/storage.js";
+import {
+  browserNoteContext,
+  browserNoteRevision,
+} from "../../sources/omnesis-notes/browser-note.js";
 import { BrowserAuthorizationService } from "./BrowserAuthorizationService.js";
 import { BrowserNotesService } from "./BrowserNotesService.js";
 import type { AuthContext } from "../routes/types.js";
@@ -272,6 +283,84 @@ describe("browser notes optional authority", () => {
       }),
     ).rejects.toThrow("fit within 8192");
   });
+  test("ambiguous creation retries acknowledge later browser and portal edits without replacing them", async () => {
+    const db = new Database(":memory:");
+    runSchemaSetup(db);
+    const device = createDevice(db, { name: "Example browser", kind: "browser" });
+    const sibling = createDevice(db, { name: "Second example browser", kind: "browser" });
+    const create = createToken(db, device.id, [Scope("notes:create")]);
+    const update = createToken(db, sibling.id, [Scope("notes:update")]);
+    const activeTokens = new Set([create.id, update.id]);
+    const writeGate = directWriteGate(db);
+    const runtime = bootOmnesisNotes({
+      writeGate,
+      readDb: db,
+      ingest: async () => {},
+      deleteByIds: async () => {},
+      debounceMs: 0,
+    });
+    const service = new BrowserNotesService({
+      devices: {
+        getById: () => device,
+        tokenIsActive: (id: TokenId) => activeTokens.has(id),
+      } as unknown as DeviceService,
+      writeGate,
+      runtime: () => runtime,
+    });
+    const auth: AuthContext = {
+      authMethod: "bearer",
+      deviceId: device.id,
+      tokenId: create.id,
+      scopes: [Scope("notes:create")],
+    };
+    const input = {
+      id: randomUUID(),
+      text: "Original thought",
+      page: {
+        url: "https://example.org/article",
+        title: "Example article",
+        selection: "Quoted passage",
+      },
+    };
+    try {
+      const first = await service.capture(auth, input);
+      expect(first.page).toEqual(input.page);
+      const stored = getNoteEntry(db, first.id)!;
+      expect(stored.page?.captureDigest).toMatch(/^[a-f0-9]{64}$/);
+      const edit = await runtime.editBrowser({
+        id: first.id,
+        url: input.page.url,
+        text: "Sibling browser edit",
+        revision: browserNoteRevision(stored),
+        authority: { deviceId: sibling.id, tokenId: update.id },
+      });
+      expect(edit.outcome).toBe("updated");
+      expect((await service.capture(auth, input)).text).toContain("Sibling browser edit");
+      await runtime.edit(first.id, "Portal editor's final thought");
+      const retry = await service.capture(auth, input);
+      expect(retry.text).toBe("Portal editor's final thought");
+      expect(retry.page).toEqual(input.page);
+      await expect(
+        service.capture(auth, { ...input, text: "Changed original payload" }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(getNoteEntry(db, first.id)?.text).toBe("Portal editor's final thought");
+      // A pending legacy capture can establish the digest before its first portal edit.
+      const legacy = { ...input, id: randomUUID() };
+      await runtime.capture({
+        ...legacy,
+        text: `${legacy.text}${browserNoteContext(legacy.page)}`,
+        surface: "chrome-extension",
+        deviceId: device.id,
+      });
+      await runtime.edit(legacy.id, "Legacy capture revised in portal");
+      expect((await service.capture(auth, legacy)).text).toBe("Legacy capture revised in portal");
+    } finally {
+      await runtime.flushAll();
+      runtime.dispose();
+      db.close();
+    }
+  });
+
   test("page capture authority cannot create notes, and notes preserve explicit context", async () => {
     const f = fixture();
     const input = {

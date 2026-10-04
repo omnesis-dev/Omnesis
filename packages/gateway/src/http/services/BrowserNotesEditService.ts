@@ -6,6 +6,7 @@ import { BadRequestError, ForbiddenError, HttpError, NotFoundError } from "../er
 import {
   browserNoteRevision,
   browserNoteUserText,
+  publicBrowserNoteEntry,
 } from "../../sources/omnesis-notes/browser-note.js";
 import { BrowserAuthorizationService } from "./BrowserAuthorizationService.js";
 import type { AuthContext } from "../routes/types.js";
@@ -35,7 +36,7 @@ export class BrowserNotesEditService extends BrowserAuthorizationService {
       revision: browserNoteRevision(entry),
       capturedAt: entry.capturedAt,
       updatedAt: entry.updatedAt,
-      page: entry.page ?? null,
+      page: publicBrowserNoteEntry(entry).page ?? null,
       editable: true,
     };
   }

@@ -16,7 +16,12 @@
 
 import { experimentalEnabled } from "@omnesis/core";
 import { recordMcpToolInvocationAudit } from "../../access/store-audit.js";
-import { browserNoteRevision, browserNoteContext, browserNoteMatchesPage } from "./browser-note.js";
+import {
+  browserNoteRevision,
+  browserNoteContext,
+  browserNoteMatchesPage,
+  browserNoteCaptureDigest,
+} from "./browser-note.js";
 import type Database from "better-sqlite3";
 import type { DeviceId, TokenId, NoteCaptureContext } from "@omnesis/types";
 import type { McpToolInvocationAuditInput } from "../../access/types.js";
@@ -30,6 +35,8 @@ export interface BrowserNoteAuthority {
 }
 
 export interface NotePageContext {
+  /** Gateway-owned original capture identity; never supplied by a browser request. */
+  captureDigest?: string;
   url: string;
   title?: string;
   selection?: string;
@@ -253,10 +260,23 @@ export function insertNoteEntry(
  * row with that id exists.
  */
 export function updateNoteEntryText(db: Db, id: string, text: string, nowIso: string): boolean {
-  const result = db
-    .prepare(`UPDATE note_entries SET text = ?, updated_at = ? WHERE id = ?`)
-    .run(text, nowIso, id);
-  return result.changes > 0;
+  return db.transaction(() => {
+    const entry = getNoteEntry(db, id);
+    if (!entry) return false;
+    // Legacy browser entries can still establish their original identity before
+    // their first edit. Already edited entries cannot safely reconstruct it.
+    const page =
+      entry.page &&
+      entry.surface === "chrome-extension" &&
+      !entry.page.captureDigest &&
+      entry.updatedAt === entry.capturedAt
+        ? { ...entry.page, captureDigest: browserNoteCaptureDigest(entry.text, entry.page) }
+        : entry.page;
+    const result = db
+      .prepare(`UPDATE note_entries SET text = ?, updated_at = ?, page_context = ? WHERE id = ?`)
+      .run(text, nowIso, page ? JSON.stringify(page) : null, id);
+    return result.changes > 0;
+  })();
 }
 
 /** Page-bound optimistic update; all permission checks run in the writer transaction. */
@@ -269,10 +289,11 @@ export interface BrowserNoteEditInput {
 }
 export type BrowserNoteEditResult =
   | { outcome: "updated"; entry: NoteEntry; documentId: string | null }
-  | { outcome: "missing" | "conflict" };
+  | { outcome: "missing" }
+  | { outcome: "conflict" };
 
 export function updateBrowserNoteEntry(db: Db, input: BrowserNoteEditInput): BrowserNoteEditResult {
-  return db.transaction(() => {
+  return db.transaction((): BrowserNoteEditResult => {
     if (!experimentalEnabled()) {
       const error = new Error("Browser notes feature is unavailable");
       error.name = "BrowserNotesUnavailableError";
@@ -305,7 +326,7 @@ export function updateBrowserNoteEntry(db: Db, input: BrowserNoteEditInput): Bro
           { id: string }
         >("SELECT id FROM documents WHERE provider_id = 'system' AND source_id = 'omnesis-notes' AND external_id = ?")
         .get(entry.day)?.id ?? null;
-    return { outcome: "updated", entry: { ...entry, text, updatedAt: now }, documentId };
+    return { outcome: "updated", entry: getNoteEntry(db, entry.id)!, documentId };
   })();
 }
 

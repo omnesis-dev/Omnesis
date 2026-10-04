@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { normalizeUrl } from "@omnesis/core";
-import { browserNoteContext } from "../../sources/omnesis-notes/browser-note.js";
+import {
+  browserNoteContext,
+  browserNoteCaptureDigest,
+  publicBrowserNoteEntry,
+} from "../../sources/omnesis-notes/browser-note.js";
 import { BadRequestError, ForbiddenError, HttpError, NotFoundError } from "../errors.js";
 import { BrowserAuthorizationService } from "./BrowserAuthorizationService.js";
 import type { AuthContext } from "../routes/types.js";
@@ -57,6 +61,7 @@ export class BrowserNotesService {
     url.password = "";
     const page = { ...input.page, url: normalizeUrl(url.href) };
     const text = `${input.text.trim()}${browserNoteContext(page)}`;
+    page.captureDigest = browserNoteCaptureDigest(text, page);
     if (text.length > 8192)
       throw new BadRequestError("Note, page context and quotation must fit within 8192 characters");
     const entry = await this.deps
@@ -81,12 +86,14 @@ export class BrowserNotesService {
     if (entry.deviceId !== browser.deviceId)
       throw new ForbiddenError("Note id belongs to another capture");
     if (
-      entry.text !== text ||
+      (entry.page?.captureDigest
+        ? entry.page.captureDigest !== page.captureDigest
+        : entry.text !== text) ||
       entry.page?.url !== page.url ||
       entry.page?.title !== page.title ||
       entry.page?.selection !== page.selection
     )
       throw new HttpError(409, "NOTE_ID_CONFLICT", "Note id already used with different content");
-    return entry;
+    return publicBrowserNoteEntry(entry);
   }
 }

@@ -37,3 +37,17 @@ export function browserNoteMatchesPage(entry: NoteEntry, url: string): boolean {
     extractUrls(entry.text).some((candidate) => normalizeUrl(candidate) === url)
   );
 }
+
+/** Immutable capture identity is independent of later edits to the saved text. */
+export function browserNoteCaptureDigest(text: string, page: NotePageContext): string {
+  return createHash("sha256")
+    .update(JSON.stringify([text, page.url, page.title ?? null, page.selection ?? null]))
+    .digest("hex");
+}
+
+/** Internal capture identity never appears in a client-facing note or page object. */
+export function publicBrowserNoteEntry(entry: NoteEntry): NoteEntry {
+  if (!entry.page?.captureDigest) return entry;
+  const { captureDigest: _digest, ...page } = entry.page;
+  return { ...entry, page };
+}
