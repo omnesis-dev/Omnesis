@@ -2,14 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { HttpError } from "../errors.js";
+import {
+  BROWSER_FIND_TIMEOUT_MS,
+  type FindSearchInput,
+  type FindSearchExecution,
+  type FindStreamEvent,
+} from "../../search/find/types.js";
 import type { AuthContext } from "../routes/types.js";
 import type { BrowserFindService } from "./BrowserFindService.js";
 
-import type {
-  FindSearchInput,
-  FindSearchExecution,
-  FindStreamEvent,
-} from "../../search/find/types.js";
 
 export interface BrowserFindSearchRunner {
   search(input: FindSearchInput, context: FindSearchExecution): Promise<void>;
@@ -103,7 +104,7 @@ export class BrowserFindStreamService {
                 `data: ${JSON.stringify({ type: "find.error", payload: { message: "Find search exceeded its time limit. Try a narrower query.", code: "FIND_TIMEOUT" } })}\n\n`,
               );
               terminate();
-            }, this.deps.timeoutMs ?? 180_000);
+            }, this.deps.timeoutMs ?? BROWSER_FIND_TIMEOUT_MS);
             deadline.unref();
           }
           void (async () => {
