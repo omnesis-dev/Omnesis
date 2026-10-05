@@ -87,7 +87,6 @@ export function initFindPanel(
   if (dirtyInput) input.value = initial.text;
   let refreshGeneration = 0;
   let keepalive: ReturnType<typeof setInterval> | undefined;
-  const cancel = element<HTMLButtonElement>("find-cancel");
   const settings = element<HTMLButtonElement>("find-settings");
   settings.addEventListener("click", () => {
     void api.runtime.openOptionsPage?.();
@@ -150,7 +149,6 @@ export function initFindPanel(
     }
     const currentResults =
       next.resultsQuery === input.value && (next.resultsMode ?? null) === (mode ?? null);
-    cancel.hidden = !next.running || !currentResults;
     const agentic = next.enabled && currentResults && next.decision?.mode === "agentic";
     status.hidden = agentic && next.running;
     status.textContent = !next.supported
@@ -385,9 +383,6 @@ export function initFindPanel(
       event.preventDefault();
       void activate(view.results[selected]!, true);
     }
-  });
-  cancel.addEventListener("click", () => {
-    void api.runtime.sendMessage({ type: "find-cancel" }).then(() => refresh(true));
   });
   api.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;

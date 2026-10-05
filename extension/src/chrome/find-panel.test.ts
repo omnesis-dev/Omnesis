@@ -173,6 +173,18 @@ describe("Find panel", () => {
       p.send.mock.calls.some(([message]) => (message as { type: string }).type === "find-query"),
     ).toBe(false);
   });
+  it("clears a running query through the search field without a separate cancel button", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    p.update({ running: true });
+    p.input.value = "";
+    p.input.dispatchEvent(new p.window.Event("input"));
+    await vi.waitFor(() =>
+      expect(p.send).toHaveBeenCalledWith({ type: "find-update", query: "", mode: null }),
+    );
+    expect(p.document.querySelectorAll(".find-result")).toHaveLength(0);
+    expect(p.document.getElementById("find-cancel")).toBeNull();
+  });
   it("renders destination links without copy buttons and shows opening failures", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
@@ -194,7 +206,10 @@ describe("Find panel", () => {
     const select = vi.mocked(p.input.select);
     select.mockClear();
     p.update({ running: true, agentText: "Invented progress" });
-    await vi.waitFor(() => expect(p.document.getElementById("find-cancel")?.hidden).toBe(false));
+    await vi.waitFor(() =>
+      expect(p.document.getElementById("find-agent")?.textContent).toContain("Invented progress"),
+    );
+    expect(p.document.getElementById("find-cancel")).toBeNull();
     expect(select).not.toHaveBeenCalled();
     p.update({ running: false, enabled: false });
     await vi.waitFor(() => expect(p.document.getElementById("find-settings")?.hidden).toBe(false));
@@ -337,7 +352,7 @@ describe("Find panel", () => {
     await vi.waitFor(() =>
       expect(p.document.getElementById("find-agent")?.textContent).toContain("invented link"),
     );
-    expect(p.document.getElementById("find-cancel")?.hidden).toBe(false);
+    expect(p.document.getElementById("find-cancel")).toBeNull();
     expect(p.document.getElementById("find-mode")?.hidden).toBe(false);
     expect(p.document.getElementById("find-mode")?.textContent).toContain(
       "Agentic mode auto enabled",
