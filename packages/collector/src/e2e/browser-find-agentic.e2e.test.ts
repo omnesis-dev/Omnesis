@@ -458,14 +458,13 @@ describe("Browser Find agentic destinations through scripted production backends
                 pairedAt: Date.now(),
               }),
               "omnesis.token.v1": browser.token,
-              "omnesis.panel.view.v1": "find",
             });
           },
           { gatewayUrl: harness.gatewayUrl, browser: browserCredential },
         );
         const panel = await context.newPage();
-        await panel.setViewportSize({ width: 380, height: 820 });
-        await panel.goto(`chrome-extension://${TEST_EXTENSION_ID}/notes.html`);
+        await panel.setViewportSize({ width: 1100, height: 820 });
+        await panel.goto(`chrome-extension://${TEST_EXTENSION_ID}/find.html`);
         await expect
           .poll(() => panel.locator("#find-query").isEnabled(), { timeout: 30_000 })
           .toBe(true);

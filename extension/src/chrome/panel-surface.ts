@@ -49,11 +49,13 @@ function installPanelConnections(): void {
     if (panel) panel.visible = false;
   });
   chrome.runtime.onConnect.addListener((port) => {
+    const sender = port.sender;
     if (
       port.name !== PANEL_PORT ||
-      port.sender?.id !== chrome.runtime.id ||
-      port.sender.url !== chrome.runtime.getURL("notes.html") ||
-      !port.sender.documentId
+      !sender ||
+      sender.id !== chrome.runtime.id ||
+      sender.url !== chrome.runtime.getURL("notes.html") ||
+      !sender.documentId
     )
       return;
     let feature: PanelFeature | undefined;
@@ -77,7 +79,7 @@ function installPanelConnections(): void {
     });
     // A notes.html browser tab must never be mistaken for the native side panel.
     void chrome.runtime
-      .getContexts({ documentIds: [port.sender.documentId], contextTypes: ["SIDE_PANEL"] })
+      .getContexts({ documentIds: [sender.documentId], contextTypes: ["SIDE_PANEL"] })
       .then((contexts) => {
         if (disconnected || contexts.length !== 1) return;
         windowId = contexts[0]!.windowId;

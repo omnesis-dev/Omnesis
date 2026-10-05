@@ -783,9 +783,11 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       )
       .toBe(true);
     const options = await openPage(optionsUrl);
-    const discovered = await options.evaluate(() =>
+    const findAccess = await openPage(`chrome-extension://${TEST_EXTENSION_ID}/find.html`);
+    const discovered = await findAccess.evaluate(() =>
       chrome.runtime.sendMessage({ type: "find-status" }),
     );
+    await findAccess.close();
     expect(discovered).toMatchObject({ supported: true, enabled: true });
     await expect
       .poll(
@@ -940,10 +942,15 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       await options.check("#capture-consent");
       await options.click("#pair-submit");
       await options.locator("#paired").waitFor({ state: "visible", timeout: 30_000 });
-      const support = await options.evaluate(async () => ({
-        notes: await chrome.runtime.sendMessage({ type: "notes-status" }),
-        find: await chrome.runtime.sendMessage({ type: "find-status" }),
-      }));
+      const notes = await options.evaluate(() =>
+        chrome.runtime.sendMessage({ type: "notes-status" }),
+      );
+      const findPage = await openPage(`chrome-extension://${TEST_EXTENSION_ID}/find.html`);
+      const find = await findPage.evaluate(() =>
+        chrome.runtime.sendMessage({ type: "find-status" }),
+      );
+      await findPage.close();
+      const support = { notes, find };
       expect(support).toMatchObject({ notes: { supported: false }, find: { supported: false } });
       expect(await options.locator("#notes-entry").isVisible()).toBe(false);
       expect(await options.locator("#find-entry").isVisible()).toBe(false);

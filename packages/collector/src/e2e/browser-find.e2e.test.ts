@@ -65,7 +65,7 @@ describe("Browser Find owner-approved standard read (spawned gateway)", () => {
   }
   test("negotiates Find without changing the legacy capture grant", async () => {
     expect(await (await fetch(`${harness.gatewayUrl}/health`)).json()).toMatchObject({
-      capabilities: { browserFind: { min: 1, max: 1 } },
+      capabilities: { browserFind: { min: 1, max: 2 } },
     });
     expect(browser.scopes).toEqual(["write:web"]);
     expect((await request("/search", browser.token, { text: "orbit", limit: 25 })).status).toBe(

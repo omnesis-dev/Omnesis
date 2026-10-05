@@ -61,10 +61,25 @@ async function setup(native = true) {
   connect(port);
   message({ feature: "notes", visible: true });
   await Promise.resolve();
-  return { surface, port, message, disconnect, opened, closed };
+  return { surface, port, message, disconnect, opened, closed, connect };
 }
 
 describe("native shortcut toggle", () => {
+  it("ignores connections without sender metadata", async () => {
+    const p = await setup();
+    vi.mocked(chrome.runtime.getContexts).mockClear();
+    const port = {
+      ...p.port,
+      sender: undefined,
+      onMessage: { addListener: vi.fn() },
+      onDisconnect: { addListener: vi.fn() },
+    };
+    expect(() => p.connect(port)).not.toThrow();
+    expect(chrome.runtime.getContexts).not.toHaveBeenCalled();
+    expect(port.onMessage.addListener).not.toHaveBeenCalled();
+    expect(port.onDisconnect.addListener).not.toHaveBeenCalled();
+  });
+
   it("closes Tell only in its own native window and ignores retired Find reports", async () => {
     const p = await setup();
     expect(p.surface.togglePanelShortcut("notes", { id: 1, windowId: 10 })).toBe(true);
