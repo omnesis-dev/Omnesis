@@ -525,6 +525,21 @@ describe("browser extension pairing", () => {
     expect(apiMocks.pairDevice).toHaveBeenCalledWith({ kind: "browser" });
   });
 
+  test("a portal pairing shows its code once", async () => {
+    apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486", expiresAt: Date.now() + 60000 });
+    await act(async () => {
+      render(h(DevicesView, { pairKindRequest: "portal" }), host);
+    });
+    await act(async () => {
+      (host.querySelector(".devices-pair-form") as HTMLFormElement).dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    const result = host.querySelector(".devices-pair-result")?.textContent ?? "";
+    expect(result.split("FICTION-2486").length - 1).toBe(1);
+    expect(result).toContain("paste the pairing code above into its login screen");
+  });
+
   test("a phone's pairing code is carried by the QR, not shown on its own", async () => {
     apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486", expiresAt: Date.now() + 60000 });
     apiMocks.getPairAddresses.mockResolvedValue({
@@ -548,6 +563,9 @@ describe("browser extension pairing", () => {
         expect(host.textContent).toMatch(/This code expires in \d+s\./);
       } else {
         expect(code?.textContent).toBe("FICTION-2486");
+        expect(code?.closest(".copy-value")?.querySelector("button.copy-value-btn")?.getAttribute("title")).toBe(
+          "Copy pairing code",
+        );
       }
       render(null, host);
     }
@@ -737,6 +755,54 @@ describe("browser extension pairing", () => {
     expect(link?.getAttribute("target")).toBe("_blank");
   });
 
+  test("every command and value a pairing asks the user to enter has a copy button for exactly that text", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    try {
+      for (const kind of ["agent", "collector", "integration", "portal", "browser", "cli"]) {
+        await act(async () => {
+          render(
+            h(PairInstructions, {
+              pairResult: { kind, pairingCode: "FICTION-2486" },
+              identities: [],
+              selectedHostIdx: 0,
+              setSelectedHostIdx: () => {},
+            }),
+            host,
+          );
+        });
+        // No bare command block: every <pre> is a copy block.
+        const pres = [...host.querySelectorAll("pre")];
+        expect(pres.every((pre) => pre.classList.contains("copy-block-code")), kind).toBe(true);
+        const copyables = [
+          ...[...host.querySelectorAll(".copy-block")].map((block) => ({
+            text: block.querySelector("pre")!.textContent,
+            button: block.querySelector("button.copy-block-btn") as HTMLButtonElement,
+          })),
+          ...[...host.querySelectorAll(".copy-value")].map((value) => ({
+            text: value.querySelector("code")!.textContent,
+            button: value.querySelector("button.copy-value-btn") as HTMLButtonElement,
+          })),
+        ];
+        expect(copyables.length, kind).toBeGreaterThan(0);
+        for (const { text, button } of copyables) {
+          writeText.mockClear();
+          await act(async () => {
+            button.click();
+          });
+          expect(writeText, kind).toHaveBeenCalledWith(text);
+        }
+        // The browser and portal steps point at the code shown above them instead of repeating it.
+        if (kind !== "browser" && kind !== "portal") {
+          expect(copyables.some(({ text }) => text?.includes("FICTION-2486")), kind).toBe(true);
+        }
+        render(null, host);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   describe("phone pairing", () => {
     const local = {
       gatewayUrl: "https://192.0.2.42:7600",
@@ -843,6 +909,15 @@ describe("browser extension pairing", () => {
       expect(raw()).toContain("Can't scan the code?");
       expect(raw()).toContain(`fictional-qr-payload for ${trustedName.gatewayUrl}`);
       expect(raw()).toContain(`type the gateway URL ${trustedName.gatewayUrl} and the pairing code FICTION-2486`);
+      const rawPanel = host.querySelector(".devices-phone-qr-raw")!;
+      expect(rawPanel.querySelector(".copy-block pre")?.textContent).toBe(
+        `fictional-qr-payload for ${trustedName.gatewayUrl}`,
+      );
+      expect(rawPanel.querySelector(".copy-block button.copy-block-btn")).not.toBeNull();
+      expect([...rawPanel.querySelectorAll(".copy-value code")].map((code) => code.textContent)).toEqual([
+        trustedName.gatewayUrl,
+        "FICTION-2486",
+      ]);
 
       const localChoice = host.querySelector(`input[value="${local.gatewayUrl}"]`) as HTMLInputElement;
       await act(async () => {

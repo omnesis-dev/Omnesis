@@ -33,7 +33,7 @@ const CHECK_SVG = html`<svg
 /**
  * A copy-to-clipboard icon button with a transient "copied" state (checkmark
  * for 1.5s). The layout around it is the caller's — pass the `class` the view
- * styles (e.g. `copy-block-btn`, `creds-wizard-copy-btn`) so this stays a bare,
+ * styles (e.g. `copy-block-btn`, `copy-value-btn`) so this stays a bare,
  * position-agnostic primitive shared across views.
  *
  * @param {object} props

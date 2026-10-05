@@ -53,7 +53,7 @@ import { joinCandidates } from "../lib/join-candidates.js";
 import { KindIcon } from "../lib/device-kind-icon.js";
 import { AuthStep, useAuthFlow } from "../components/auth-flow.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
-import { CopyIconButton } from "../components/copy-button.js";
+import { CopyBlock } from "../components/copy-button.js";
 import { CredentialsWizard } from "./credentials-wizard.js";
 
 // Prefer the descriptor's own icon (freshest — pushed from collector over WS)
@@ -1270,18 +1270,6 @@ export function AddSourceModal({ onClose, onAdded }) {
 }
 
 // ---- Sub-components ----
-
-// A copyable command block: the text in a <pre>, with the shared copy-icon
-// button in the corner. Only the block layout is local here; the button
-// (clipboard call + copied state + icons) is the shared `CopyIconButton`.
-function CopyBlock({ text }) {
-  return html`
-    <div class="copy-block">
-      <pre class="copy-block-code">${text}</pre>
-      <${CopyIconButton} text=${text} class="copy-block-btn" />
-    </div>
-  `;
-}
 
 function NoCollectorHint() {
   const gwUrl = window.location.origin;

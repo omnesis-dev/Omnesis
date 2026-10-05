@@ -10,7 +10,7 @@ import {
   publicBaseUrlFromAdminConfig,
   expandSpecTokens,
 } from "@omnesis/core/credentials-tokens";
-import { CopyIconButton } from "../components/copy-button.js";
+import { CopyValue } from "../components/copy-button.js";
 
 /**
  * Modal wizard for configuring a provider's credentials. Spec-driven
@@ -191,7 +191,7 @@ export function CredentialsWizard({ entry, deviceId, saveCredentials, collectOnl
       const parts = line.split(/`([^`]+)`/g).map((seg, j) => {
         if (j % 2 === 0) return seg;
         return gatewayOrigin && seg.includes(gatewayOrigin)
-          ? html`<span class="creds-wizard-code-copy" key=${j}><code>${seg}</code><${CopyIconButton} text=${seg} class="creds-wizard-copy-btn" /></span>`
+          ? html`<${CopyValue} key=${j} text=${seg} />`
           : html`<code key=${j}>${seg}</code>`;
       });
       return html`<p key=${i}>${parts}</p>`;
