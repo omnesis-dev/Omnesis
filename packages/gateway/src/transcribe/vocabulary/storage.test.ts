@@ -54,7 +54,7 @@ function extracted(
   id: string,
   terms: string[],
   scopeKey = "",
-  kind: "global" | "person" | "conversation" = "global",
+  kind: "global" | "person" | "conversation" | "self" = "global",
 ): ExtractedVocabularyDocument {
   return {
     id,
@@ -108,6 +108,7 @@ describe("vocabulary materialization", () => {
         PRIMARY KEY (document_id, scope_kind, scope_key, term)
       );
     `);
+    createTranscriptionVocabularyTables(db);
     insert(db, "existing-ledger");
     const batch = [extracted("existing-ledger", ["Orvelion"])];
     applyTranscriptionVocabularyBatch(db, batch);
@@ -334,6 +335,492 @@ describe("vocabulary materialization", () => {
   });
 });
 
+describe("source-declared automation confidence", () => {
+  function observe(db: Db, id: string, text: string, automatedEvidence: boolean): void {
+    insert(db, id, text);
+    applyTranscriptionVocabularyBatch(db, [{ ...extracted(id, [text]), automatedEvidence }]);
+  }
+  function replay(db: Db, doc: ExtractedVocabularyDocument): void {
+    db.prepare("UPDATE documents SET vocabulary_processed_at=NULL WHERE id=?").run(doc.id);
+    applyTranscriptionVocabularyBatch(db, [doc]);
+  }
+  function support(db: Db, term: string): unknown {
+    return db
+      .prepare(
+        `SELECT document_count,evidence_count,ordinary_document_count
+      FROM transcription_vocabulary_terms WHERE scope_kind='global' AND term=?`,
+      )
+      .get(term);
+  }
+  function entries(db: Db, overrides: Partial<VocabularySettings> = {}) {
+    return getTranscriptionVocabulary(
+      db,
+      { purpose: "dictation", recordedAt: "2026-01-01" },
+      { ...settings, ...overrides },
+    ).entries;
+  }
+
+  test("many automated repetitions rank below independently corroborated ordinary evidence", () => {
+    const db = database();
+    for (let index = 0; index < 80; index++) observe(db, `automated-${index}`, "Quorvex", true);
+    observe(db, "ordinary-a", "Nimbrax", false);
+    observe(db, "ordinary-b", "Nimbrax", false);
+    expect(entries(db).map((entry) => entry.text)).toEqual(["Nimbrax", "Quorvex"]);
+    expect(entries(db, { machineEvidenceWeight: 1 })[0].text).toBe("Quorvex");
+  });
+
+  test("the bounded corroborated stream protects ordinary terms from automated candidate crowding", () => {
+    const db = database();
+    const noise = Array.from({ length: 140 }, (_, index) => `Quorvex${index}`);
+    for (const suffix of ["a", "b", "c"]) {
+      // Each extraction page is limited to 128 candidates, so use two pages.
+      for (const [page, terms] of [noise.slice(0, 128), noise.slice(128)].entries()) {
+        const id = `machine-${suffix}-${page}`;
+        insert(db, id);
+        applyTranscriptionVocabularyBatch(db, [
+          { ...extracted(id, terms), automatedEvidence: true },
+        ]);
+      }
+    }
+    for (const suffix of ["a", "b"]) {
+      const id = `ordinary-${suffix}`;
+      insert(db, id);
+      applyTranscriptionVocabularyBatch(db, [
+        {
+          ...extracted(id, ["Zorvella"]),
+          automatedEvidence: false,
+          recordedAt: "2025-12-31",
+        },
+      ]);
+    }
+    expect(entries(db, { maxTerms: 1 }).map((entry) => entry.text)).toEqual(["Zorvella"]);
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT term FROM transcription_vocabulary_terms
+      WHERE scope_kind='global' AND scope_key='' AND ordinary_document_count>=2
+      ORDER BY ordinary_document_count DESC,term LIMIT 128`,
+      )
+      .all() as Array<{ detail: string }>;
+    expect(plan.map((row) => row.detail).join(" ")).toContain(
+      "idx_transcription_vocabulary_ordinary",
+    );
+    expect(plan.map((row) => row.detail).join(" ")).not.toContain("TEMP B-TREE");
+  });
+
+  test("two distinct unmarked documents restore confidence without replay manufacturing support", () => {
+    const db = database();
+    observe(db, "marked-a", "Quorvex", true);
+    observe(db, "marked-b", "Quorvex", true);
+    observe(db, "ordinary-a", "Quorvex", false);
+    const doc = { ...extracted("ordinary-a", ["Quorvex"]), automatedEvidence: false };
+    replay(db, doc);
+    replay(db, doc);
+    expect(support(db, "quorvex")).toEqual({
+      document_count: 3,
+      evidence_count: 3,
+      ordinary_document_count: 1,
+    });
+    expect(entries(db, { machineEvidenceWeight: 0 })).toEqual([]);
+    observe(db, "ordinary-b", "Quorvex", false);
+    expect(support(db, "quorvex")).toEqual({
+      document_count: 4,
+      evidence_count: 4,
+      ordinary_document_count: 2,
+    });
+    expect(entries(db, { machineEvidenceWeight: 0 }).map((entry) => entry.text)).toEqual([
+      "Quorvex",
+    ]);
+  });
+
+  test("classification corrections update confidence without duplicating document or spelling votes", () => {
+    const db = database();
+    observe(db, "marked-a", "Quorvex", true);
+    observe(db, "marked-b", "Quorvex", true);
+    const corrected = { ...extracted("marked-a", ["Quorvex"]), automatedEvidence: false };
+    replay(db, corrected);
+    replay(db, corrected);
+    expect(support(db, "quorvex")).toEqual({
+      document_count: 2,
+      evidence_count: 2,
+      ordinary_document_count: 1,
+    });
+    corrected.automatedEvidence = true;
+    replay(db, corrected);
+    replay(db, corrected);
+    expect(support(db, "quorvex")).toEqual({
+      document_count: 2,
+      evidence_count: 2,
+      ordinary_document_count: 0,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT document_count FROM transcription_vocabulary_spellings
+      WHERE scope_kind='global' AND term='quorvex'`,
+        )
+        .get(),
+    ).toEqual({ document_count: 2 });
+  });
+
+  test("unknown legacy support remains usable until classified evidence arrives", () => {
+    const db = database();
+    observe(db, "legacy-a", "Quorvex", true);
+    observe(db, "legacy-b", "Quorvex", true);
+    db.prepare(
+      `UPDATE transcription_vocabulary_terms SET evidence_count=0,ordinary_document_count=0,spelling_count=0`,
+    ).run();
+    db.prepare(
+      `UPDATE transcription_vocabulary_document_terms SET observed_text=NULL,observed_automated=NULL`,
+    ).run();
+    db.prepare("DELETE FROM transcription_vocabulary_spellings").run();
+    expect(entries(db, { machineEvidenceWeight: 0 }).map((entry) => entry.text)).toEqual([
+      "Quorvex",
+    ]);
+    replay(db, { ...extracted("legacy-a", ["Quorvex"]), automatedEvidence: true });
+    expect(support(db, "quorvex")).toEqual({
+      document_count: 2,
+      evidence_count: 1,
+      ordinary_document_count: 0,
+    });
+    expect(entries(db, { machineEvidenceWeight: 0 })).toEqual([]);
+  });
+
+  test("verified own text retains confidence even when its document carries automation markers", () => {
+    const db = database();
+    for (const suffix of ["a", "b"]) {
+      insert(db, `own-${suffix}`);
+      applyTranscriptionVocabularyBatch(db, [
+        {
+          ...extracted(`own-${suffix}`, ["Quorvex"]),
+          automatedEvidence: true,
+          selfTerms: [{ term: "quorvex", text: "Quorvex", benefit: 3, recordedAt: "2026-01-01" }],
+        },
+      ]);
+    }
+    expect(entries(db, { machineEvidenceWeight: 0 }).map((entry) => entry.text)).toEqual([
+      "Quorvex",
+    ]);
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        { purpose: "source-audio", recordedAt: "2026-01-01" },
+        { ...settings, machineEvidenceWeight: 0 },
+      ).entries,
+    ).toEqual([]);
+  });
+
+  test.each([
+    [{ bulkMail: true }, true],
+    [{ automatedSender: true }, true],
+    [{ bulkMail: false, automatedSender: true }, true],
+    [{ bulkMail: "true", automatedSender: 1 }, false],
+    [{}, false],
+  ])(
+    "fetch recognizes only explicitly typed generic automation markers: %j",
+    (metadata, automated) => {
+      const db = database();
+      insert(db, "marker");
+      db.prepare("UPDATE documents SET metadata=? WHERE id='marker'").run(JSON.stringify(metadata));
+      const docs = fetchTranscriptionVocabularyBatch(db, settings);
+      expect(docs[0].automatedEvidence).toBe(automated);
+      expect(extractTranscriptionVocabulary(docs, settings)[0].automatedEvidence).toBe(automated);
+    },
+  );
+});
+
+describe("authored vocabulary evidence", () => {
+  function authored(db: Db, id: string, text: string, recordedAt: string): void {
+    insert(db, id, text);
+    const doc = extracted(id, []);
+    doc.selfTerms = [{ term: text.toLowerCase(), text, benefit: 2, recordedAt }];
+    applyTranscriptionVocabularyBatch(db, [doc]);
+  }
+
+  test("recent personally authored words outrank equally supported old words", () => {
+    const db = database();
+    for (const suffix of ["a", "b"]) {
+      authored(db, `recent-${suffix}`, "Quorvex", "2026-01-01T00:00:00.000Z");
+      authored(db, `old-${suffix}`, "Nimbrax", "2010-01-01T00:00:00.000Z");
+    }
+    const result = getTranscriptionVocabulary(
+      db,
+      { purpose: "dictation", recordedAt: "2026-01-01" },
+      settings,
+    );
+    expect(result.entries.map((entry) => entry.text)).toEqual(["Quorvex", "Nimbrax"]);
+    expect(result.entries[0].score).toBeGreaterThan(result.entries[1].score * 100);
+  });
+
+  test("one new use does not rejuvenate a lifetime of old personally authored support", () => {
+    const db = database();
+    for (let index = 0; index < 20; index++)
+      authored(db, `history-${index}`, "Quorvex", "2010-01-01T00:00:00.000Z");
+    authored(db, "history-new", "Quorvex", "2026-01-01T00:00:00.000Z");
+    for (let index = 0; index < 3; index++)
+      authored(db, `current-${index}`, "Nimbrax", "2026-01-01T00:00:00.000Z");
+    const mass = db
+      .prepare(
+        "SELECT document_count,recent_mass FROM transcription_vocabulary_terms WHERE scope_kind='self' AND term='quorvex'",
+      )
+      .get() as { document_count: number; recent_mass: number };
+    expect(mass.document_count).toBe(21);
+    expect(mass.recent_mass).toBeCloseTo(1, 6);
+    const result = getTranscriptionVocabulary(
+      db,
+      { purpose: "dictation", recordedAt: "2026-01-01" },
+      settings,
+    );
+    expect(result.entries.map((entry) => entry.text)).toEqual(["Nimbrax", "Quorvex"]);
+    // Re-reading the new document cannot add a second recent vote.
+    db.prepare("UPDATE documents SET vocabulary_processed_at=NULL WHERE id='history-new'").run();
+    const replay = extracted("history-new", []);
+    replay.selfTerms = [
+      { term: "quorvex", text: "Quorvex", benefit: 2, recordedAt: "2026-01-01T00:00:00.000Z" },
+    ];
+    applyTranscriptionVocabularyBatch(db, [replay]);
+    expect(
+      db
+        .prepare(
+          "SELECT document_count,recent_mass FROM transcription_vocabulary_terms WHERE scope_kind='self' AND term='quorvex'",
+        )
+        .get(),
+    ).toEqual(mass);
+  });
+
+  test("decayed support admits a current term even when lifetime and recent streams are crowded", () => {
+    const db = database();
+    const crowded = Array.from(
+      { length: 130 },
+      (_, index) => `Dormant${String.fromCharCode(97 + Math.floor(index / 26), 97 + (index % 26))}`,
+    );
+    for (let page = 0; page < 2; page++) {
+      const terms = crowded.slice(page * 65, (page + 1) * 65);
+      for (let index = 0; index < 21; index++) {
+        const id = `crowded-${page}-${index}`;
+        insert(db, id);
+        const doc = extracted(id, []);
+        doc.selfTerms = terms.map((text) => ({
+          term: text.toLowerCase(),
+          text,
+          benefit: 2,
+          recordedAt: index === 20 ? "2026-01-01T00:00:00.000Z" : "2010-01-01T00:00:00.000Z",
+        }));
+        applyTranscriptionVocabularyBatch(db, [doc]);
+      }
+    }
+    for (let index = 0; index < 3; index++)
+      authored(db, `current-${index}`, "Nimbrax", "2025-12-31T00:00:00.000Z");
+    // All 130 stale-history terms have a newer last_seen, but only one recent
+    // vote apiece. The recent stream cannot admit this older, better-supported term.
+    expect(
+      db
+        .prepare(
+          "SELECT term FROM transcription_vocabulary_terms WHERE scope_kind='self' ORDER BY last_seen DESC,term LIMIT 128",
+        )
+        .all(),
+    ).not.toContainEqual({ term: "nimbrax" });
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        { purpose: "dictation", recordedAt: "2026-01-01" },
+        { ...settings, maxTerms: 1 },
+      ).entries.map((entry) => entry.text),
+    ).toEqual(["Nimbrax"]);
+  });
+
+  test("a recent received occurrence never refreshes the personally authored clock", () => {
+    const db = database();
+    for (const suffix of ["a", "b"])
+      authored(db, `old-${suffix}`, "Quorvex", "2010-01-01T00:00:00.000Z");
+    const ownBefore = db
+      .prepare(
+        "SELECT * FROM transcription_vocabulary_terms WHERE scope_kind='self' AND term='quorvex'",
+      )
+      .get();
+    for (const suffix of ["a", "b"]) {
+      const id = `received-${suffix}`;
+      insert(db, id);
+      const doc = extracted(id, ["Quorvex"]);
+      doc.recordedAt = "2026-01-01T00:00:00.000Z";
+      applyTranscriptionVocabularyBatch(db, [doc]);
+    }
+    expect(
+      db
+        .prepare(
+          "SELECT * FROM transcription_vocabulary_terms WHERE scope_kind='self' AND term='quorvex'",
+        )
+        .get(),
+    ).toEqual(ownBefore);
+    expect(
+      db
+        .prepare(
+          "SELECT last_seen FROM transcription_vocabulary_terms WHERE scope_kind='global' AND term='quorvex'",
+        )
+        .get(),
+    ).toEqual({ last_seen: "2026-01-01T00:00:00.000Z" });
+  });
+
+  test("another source-audio speaker never receives the operator's authored bonus", () => {
+    const db = database();
+    db.prepare(
+      `INSERT INTO people(id,canonical_name,source,is_self,first_seen,last_seen,created_at,updated_at)
+      VALUES ('self','You','fictional',1,'2026-01-01','2026-01-01','2026-01-01','2026-01-01'),
+      ('speaker','Maya Reeves','fictional',0,'2026-01-01','2026-01-01','2026-01-01','2026-01-01')`,
+    ).run();
+    authored(db, "own-a", "Quorvex", "2026-01-01");
+    authored(db, "own-b", "Quorvex", "2026-01-01");
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        {
+          purpose: "source-audio",
+          speaker: { personId: "speaker" },
+          participants: [{ isSelf: true }],
+          recordedAt: "2026-01-01",
+        },
+        settings,
+      ).entries,
+    ).toEqual([]);
+    for (const speaker of [{ isSelf: true }, { personId: "self" }])
+      expect(
+        getTranscriptionVocabulary(
+          db,
+          { purpose: "source-audio", speaker, recordedAt: "2026-01-01" },
+          settings,
+        ).entries.map((entry) => entry.text),
+      ).toEqual(["Quorvex"]);
+  });
+
+  test("zero authored weight excludes authored-only terms rather than emitting zero-score hints", () => {
+    const db = database();
+    authored(db, "own-a", "Quorvex", "2026-01-01");
+    authored(db, "own-b", "Quorvex", "2026-01-01");
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        { purpose: "dictation", recordedAt: "2026-01-01" },
+        { ...settings, authoredWeight: 0 },
+      ).entries,
+    ).toEqual([]);
+  });
+
+  test("stronger same-spelling evidence upgrades benefit without adding a document vote", () => {
+    const db = database();
+    insert(db, "grounded-a");
+    insert(db, "grounded-b");
+    const ordinary = extracted("grounded-a", ["Quorvex"]);
+    ordinary.terms[0].benefit = 2;
+    applyTranscriptionVocabularyBatch(db, [ordinary, { ...ordinary, id: "grounded-b" }]);
+    db.prepare("UPDATE documents SET vocabulary_processed_at=NULL WHERE id='grounded-a'").run();
+    const grounded = extracted("grounded-a", ["Quorvex"]);
+    grounded.terms[0].benefit = 3;
+    applyTranscriptionVocabularyBatch(db, [grounded]);
+    expect(
+      db
+        .prepare(
+          "SELECT text,document_count,benefit FROM transcription_vocabulary_terms WHERE scope_kind='global'",
+        )
+        .get(),
+    ).toEqual({ text: "Quorvex", document_count: 2, benefit: 3 });
+    expect(
+      db
+        .prepare(
+          "SELECT document_count,benefit FROM transcription_vocabulary_spellings WHERE scope_kind='global'",
+        )
+        .get(),
+    ).toEqual({ document_count: 2, benefit: 3 });
+  });
+
+  test("authored singleton support and replays retain the two-document requirement", () => {
+    const db = database();
+    authored(db, "own-a", "Quorvex", "2026-01-01");
+    expect(getTranscriptionVocabulary(db, { purpose: "dictation" }, settings).entries).toEqual([]);
+    db.prepare("UPDATE documents SET vocabulary_processed_at=NULL WHERE id='own-a'").run();
+    const replay = extracted("own-a", []);
+    replay.selfTerms = [{ term: "quorvex", text: "Quorvex", benefit: 2, recordedAt: "2026-01-01" }];
+    applyTranscriptionVocabularyBatch(db, [replay]);
+    expect(
+      db
+        .prepare(
+          "SELECT document_count FROM transcription_vocabulary_terms WHERE scope_kind='self'",
+        )
+        .get(),
+    ).toEqual({ document_count: 1 });
+    expect(
+      db
+        .prepare(
+          "SELECT document_count FROM transcription_vocabulary_spellings WHERE scope_kind='self'",
+        )
+        .get(),
+    ).toEqual({ document_count: 1 });
+    authored(db, "own-b", "Quorvex", "2026-01-01");
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        { purpose: "agent", recordedAt: "2026-01-01" },
+        settings,
+      ).entries.map((entry) => entry.text),
+    ).toEqual(["Quorvex"]);
+  });
+
+  test.each([
+    null,
+    "untrusted",
+    42,
+    {},
+    [{ text: "Quorvex", recordedAt: "not-a-date" }],
+    [{ text: 42, recordedAt: "2026-01-01" }],
+    [{ text: "x".repeat(140000), recordedAt: "2026-01-01" }],
+  ])("malformed or truncated authored metadata supplies no evidence: %j", (selfAuthoredText) => {
+    const db = database();
+    insert(db, "malformed");
+    db.prepare("UPDATE documents SET metadata=? WHERE id='malformed'").run(
+      JSON.stringify({ selfAuthoredText }),
+    );
+    const docs = fetchTranscriptionVocabularyBatch(db, settings);
+    expect(docs[0].selfAuthoredText).toEqual([]);
+    const extracted = extractTranscriptionVocabulary(docs, settings);
+    expect(extracted[0].selfTerms ?? []).toEqual([]);
+  });
+
+  test("clean spelling wins by distinct-document support and spelling updates never inflate counts", () => {
+    const db = database();
+    for (const [id, text] of [
+      ["clean-a", "quorvex"],
+      ["clean-b", "quorvex"],
+      ["clean-c", "quorvex"],
+      ["mixed", "quorVex"],
+    ]) {
+      insert(db, id);
+      const doc = extracted(id, [text]);
+      doc.terms[0].benefit = text === "quorvex" ? 1 : 2.5;
+      applyTranscriptionVocabularyBatch(db, [doc]);
+    }
+    const row = () =>
+      db
+        .prepare(
+          "SELECT text,document_count,benefit FROM transcription_vocabulary_terms WHERE scope_kind='global' AND term='quorvex'",
+        )
+        .get();
+    expect(row()).toEqual({ text: "quorvex", document_count: 4, benefit: 1 });
+    db.prepare("UPDATE documents SET vocabulary_processed_at=NULL WHERE id='mixed'").run();
+    applyTranscriptionVocabularyBatch(db, [extracted("mixed", ["quorVex"])]);
+    expect(row()).toEqual({ text: "quorvex", document_count: 4, benefit: 1 });
+    db.prepare("UPDATE documents SET vocabulary_processed_at=NULL WHERE id='mixed'").run();
+    const corrected = extracted("mixed", ["quorvex"]);
+    corrected.terms[0].benefit = 1;
+    applyTranscriptionVocabularyBatch(db, [corrected]);
+    expect(row()).toEqual({ text: "quorvex", document_count: 4, benefit: 1 });
+    expect(
+      db
+        .prepare(
+          "SELECT text,document_count FROM transcription_vocabulary_spellings WHERE scope_kind='global'",
+        )
+        .all(),
+    ).toEqual([{ text: "quorvex", document_count: 4 }]);
+  });
+});
+
 describe("context dictionary", () => {
   test("trusted identity hints work without corpus counts and stay behind both gates", () => {
     const db = database();
@@ -554,7 +1041,7 @@ describe("vocabulary extraction", () => {
       settings,
     )[0];
     expect(absent.terms.map((t) => t.text)).not.toContain("Zélor Vantix");
-    expect(result.terms.map((t) => t.text)).toContain("Quorvex");
+    expect(result.terms.map((t) => t.text)).toContain("quorvex");
     for (const common of ["the", "garden", "maison", "casa", "Haus"])
       expect(result.terms.map((t) => t.term)).not.toContain(common.toLowerCase());
     expect(result.scopes).toContainEqual({ kind: "person", key: "fictional-person" });

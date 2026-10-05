@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { boundedSelfAuthoredText, ProviderId, SourceId } from "@omnesis/types";
+
 import {
   computeContentHash,
   normalizePhone,
@@ -10,7 +12,6 @@ import {
   formatLid,
   WHATSAPP_LID_PLATFORM,
 } from "@omnesis/core";
-import { ProviderId, SourceId } from "@omnesis/types";
 import type {
   DocumentInput,
   ProviderId as ProviderIdType,
@@ -452,6 +453,7 @@ export function normalizeDayChat(
   // page) to avoid paying O(totalContacts) per day-chat — important now that
   // resync / backfill re-render the whole archive in 200-day-chat pages.
   prebuiltContactsByLidJid?: Map<string, StoredContact>,
+  transcriptionVocabularyEnabled = false,
 ): DocumentInput {
   // Classify the chat by JID shape — used in several places below
   // (self-JID handling, 1:1 other-party resolution, group seeding).
@@ -679,6 +681,24 @@ export function normalizeDayChat(
     content,
     contentHash,
     metadata: {
+      ...(transcriptionVocabularyEnabled
+        ? {
+            selfAuthoredText: boundedSelfAuthoredText(
+              messages.flatMap((msg) => {
+                if (!msg.fromMe || msg.deleted) return [];
+                const text =
+                  msg.type === "audio"
+                    ? msg.transcript
+                    : ["text", "image", "video", "media"].includes(msg.type)
+                      ? msg.text
+                      : undefined;
+                return text
+                  ? [{ text, recordedAt: new Date(msg.timestamp * 1000).toISOString() }]
+                  : [];
+              }),
+            ),
+          }
+        : {}),
       sourceUrl: whatsappSourceUrl(chatJid),
       tags: chat?.isGroup ? ["group"] : [],
       documentType: "conversation",

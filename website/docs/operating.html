@@ -628,24 +628,44 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>inference.transcriptionVocabulary.enabled</code> to <code>true</code> in
           <code>omnesis.json</code>. The gateway learns a small vocabulary from indexed documents,
           prioritizing distinctive names and terms from the current conversation and its people
-          across sources. Sent and received text both contribute; structurally marked metadata,
-          Markdown block quotes and fenced code blocks are excluded, and structured OCR layouts
-          contribute their readable text. Learned terms need at least two distinct supporting
-          documents. Repetition within one document does not count as corroboration, although copies
-          stored as separate documents can still count. Configured and contact-curated names for the
-          current people supply separate identity hints. Linking a person to a document does not
-          itself count as an occurrence of their name. Vocabulary builds in bounded background
-          batches; transcription does not wait for a full build. When an extraction update requires
-          a rebuild, the gateway temporarily supplies no hints while it clears the old dictionary,
-          then repopulates it incrementally. Gateway Whisper uses these hints locally. Paired mobile
-          apps with bulk corpus read access can also fetch a small dictionary for on-device speech
-          recognition, independently of the gateway dictation setting. Apps keep hints in memory,
-          refresh due hints in the background on foreground or status activity after 30 minutes, and
-          stop using them after 24 hours without a successful refresh. Recording never waits for a
-          dictionary request. Setting the flag to <code>false</code> stops vocabulary computation
-          and hint lookup; connected apps clear cached hints when they observe the change. Pairing
-          changes also clear the cache. Switching the flag back on resumes the backlog. Vocabulary
-          entries may remain after their source documents are edited or deleted.
+          across sources. Sent and received text both contribute. Recent source-verified words you
+          authored receive an additional relevance weight of 4 by default, configurable with
+          <code>inference.transcriptionVocabulary.authoredWeight</code>; setting it to
+          <code>0</code> removes this bonus. Authored evidence uses original message or capture
+          dates and decays with a 90-day half-life, so editing or reindexing an old document does
+          not make its wording recent. WhatsApp and iMessage supply your own message text and voice
+          transcripts. Gmail supplies conservative unquoted plain-text prefixes of sent messages
+          whose sender matches the account. Tell Omnesis supplies your own entries, excluding agent
+          captures and retained webpage content. Unsupported or uncertain authorship supplies no
+          bonus. Contextual terms are compared with their prevalence across the corpus, with
+          smoothing to avoid exaggerating evidence from sparse conversations. Automated and
+          bulk-distributed evidence receives a lower weight until ordinary documents independently
+          corroborate the same term, configurable through
+          <code>machineEvidenceWeight</code> (default <code>0.15</code>);
+          <code>contextPriorDocuments</code> controls contextual smoothing strength (default
+          <code>10</code>). Both settings live under <code>inference.transcriptionVocabulary</code>.
+          These defaults are initial calibration choices; they do not establish improved speech
+          accuracy for every corpus. Existing WhatsApp archives are reprojected in bounded pages
+          without resetting media; historical Gmail and iMessage evidence is not automatically
+          replayed. Structurally marked metadata, Markdown block quotes and fenced code blocks are
+          excluded, and structured OCR layouts contribute their readable text. Learned terms need at
+          least two distinct supporting documents. Repetition within one document does not count as
+          corroboration, although copies stored as separate documents can still count. Configured
+          and contact-curated names for the current people supply separate identity hints. Linking a
+          person to a document does not itself count as an occurrence of their name. Vocabulary
+          builds in bounded background batches; transcription does not wait for a full build. When
+          an extraction update requires a rebuild, the gateway temporarily supplies no hints while
+          it clears the old dictionary, then repopulates it incrementally. Evidence and spelling
+          refreshes enroll bounded pages without clearing the available dictionary. Gateway Whisper
+          uses these hints locally. Paired mobile apps with bulk corpus read access can also fetch a
+          small dictionary for on-device speech recognition, independently of the gateway dictation
+          setting. Apps keep hints in memory, refresh due hints in the background on foreground or
+          status activity after 30 minutes, and stop using them after 24 hours without a successful
+          refresh. Recording never waits for a dictionary request. Setting the flag to
+          <code>false</code> stops vocabulary computation and hint lookup; connected apps clear
+          cached hints when they observe the change. Pairing changes also clear the cache. Switching
+          the flag back on resumes the backlog. Vocabulary entries may remain after their source
+          documents are edited or deleted.
         </p>
         <p>
           The local engine depends on the role. The <code>embedder</code> runs a GGUF model in the

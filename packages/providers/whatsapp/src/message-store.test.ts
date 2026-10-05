@@ -56,6 +56,108 @@ describe("MessageStore (durable SQLite)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("enrolls bounded normalization pages durably without resetting cached media", () => {
+    store.addMessages(
+      Array.from({ length: 201 }, (_, index) =>
+        msg({
+          id: `entry-${String(index).padStart(3, "0")}`,
+          timestamp: ts("2026-01-01") + index * 86400,
+          fromMe: true,
+          type: index === 0 ? "audio" : "text",
+        }),
+      ),
+    );
+    store.recordMediaOutcome("111@s.whatsapp.net", "entry-000", {
+      kind: "transcribed",
+      text: "Lanternshift",
+    });
+    let page = store.drain();
+    while (page.morePending) page = store.drain({ committedSeq: page.emitSeq });
+    store.drain({ committedSeq: page.emitSeq });
+    expect(store.dirtyCount).toBe(0);
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(true);
+    expect(store.dirtyCount).toBe(200);
+    page = store.drain();
+    const cached = [...page.messagesByKey.values()]
+      .flat()
+      .find((message) => message.id === "entry-000");
+    expect(cached?.transcript).toBe("Lanternshift");
+    expect(cached?.mediaState).toBe("done");
+    store.close();
+    store = new MessageStore(dir);
+    // Resume the persisted enrollment cursor, even before the first POST is acknowledged.
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(false);
+    // dirtyCount counts un-emitted rows; the first 200 remain durably pending
+    // acknowledgement and must still replay after reopening the store.
+    expect(store.dirtyCount).toBe(1);
+    const retried = store.drain();
+    expect(retried.messagesByKey.size).toBe(200);
+    expect(retried.morePending).toBe(true);
+    const remaining = store.drain({ committedSeq: retried.emitSeq });
+    expect([...remaining.messagesByKey.values()].flat().map((message) => message.id)).toEqual([
+      "entry-200",
+    ]);
+    store.drain({ committedSeq: remaining.emitSeq });
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(false);
+    expect(store.dirtyCount).toBe(0);
+  });
+
+  it("does not settle a completed enrollment while its dirty pages still exceed the drain budget", () => {
+    store.addMessages(
+      Array.from({ length: 201 }, (_, index) =>
+        msg({
+          id: `entry-${String(index).padStart(3, "0")}`,
+          timestamp: ts("2026-01-01") + index * 86400,
+          fromMe: true,
+        }),
+      ),
+    );
+    // The two enrollment pages can finish before the final drain is accepted.
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(true);
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(false);
+    const first = store.drain();
+    expect(first.morePending).toBe(true);
+    store.recordSelfAuthoredTextNormalizationEmission(first.emitSeq, !first.morePending);
+    store.reconcileSelfAuthoredTextNormalization(first.emitSeq, false);
+    const ordinary = store.drain({ committedSeq: first.emitSeq });
+    store.drain({ committedSeq: ordinary.emitSeq });
+    expect(store.dirtyCount).toBe(0);
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(true);
+    expect(store.dirtyCount).toBe(200);
+  });
+
+  it("persists unfinished normalization recovery across restart and settles only acknowledged pages", () => {
+    store.addMessages([
+      msg({ id: "own-text", timestamp: ts("2026-01-01"), fromMe: true, text: "Lanternshift" }),
+    ]);
+    const original = store.drain();
+    store.drain({ committedSeq: original.emitSeq });
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(false);
+    const failed = store.drain();
+    store.recordSelfAuthoredTextNormalizationEmission(failed.emitSeq, true);
+    store.close();
+    store = new MessageStore(dir);
+    // Only the old ordinary page was accepted. Disabled replay cannot settle
+    // the enabled normalization even if that ordinary replay then succeeds.
+    store.reconcileSelfAuthoredTextNormalization(original.emitSeq, false);
+    const ordinary = store.drain({ committedSeq: original.emitSeq });
+    store.drain({ committedSeq: ordinary.emitSeq });
+    expect(store.dirtyCount).toBe(0);
+    store.close();
+    store = new MessageStore(dir);
+    store.reconcileSelfAuthoredTextNormalization(ordinary.emitSeq, true);
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(false);
+    expect(store.dirtyCount).toBe(1);
+    const recovered = store.drain({ committedSeq: ordinary.emitSeq });
+    store.recordSelfAuthoredTextNormalizationEmission(recovered.emitSeq, true);
+    // Confirming the enabled page while disabling is enough to settle it.
+    store.reconcileSelfAuthoredTextNormalization(recovered.emitSeq, false);
+    store.drain({ committedSeq: recovered.emitSeq });
+    store.reconcileSelfAuthoredTextNormalization(recovered.emitSeq, true);
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(false);
+    expect(store.dirtyCount).toBe(0);
+  });
+
   describe("LID→phone conflict guard", () => {
     it("contests a LID seen mapping to a second phone (emits LID-only thereafter)", () => {
       store.setLIDPhone("111@lid", "+15550100301");

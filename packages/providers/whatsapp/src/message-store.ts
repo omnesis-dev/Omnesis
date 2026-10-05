@@ -1341,8 +1341,80 @@ export class MessageStore {
   }
 
   /**
+   * Enroll one indexed archive page for a metadata-only normalization revision.
+   * Dirty-day acknowledgements remain owned by drain(), so a failed gateway
+   * POST cannot lose work. Media lifecycle state is never reset.
+   */
+  enrollSelfAuthoredTextNormalization(): boolean {
+    const versionKey = "self_authored_text_normalization";
+    const cursorKey = "self_authored_text_normalization_cursor";
+    if (this.getMeta(versionKey) === "1") return false;
+    this.setMeta("self_authored_text_normalization_active", "1");
+    const saved = safeJsonParse(this.getMeta(cursorKey) ?? "[]", []) as unknown;
+    const after =
+      Array.isArray(saved) && saved.length === 2 && saved.every((part) => typeof part === "string")
+        ? (saved as [string, string])
+        : ["", ""];
+    const rows = this.db
+      .prepare(
+        `SELECT chat_jid, id, ts, deleted FROM messages
+       WHERE (chat_jid, id) > (?, ?) ORDER BY chat_jid, id LIMIT ?`,
+      )
+      .all(after[0], after[1], DEFAULT_DRAIN_LIMIT + 1) as Array<{
+      chat_jid: string;
+      id: string;
+      ts: number;
+      deleted: number;
+    }>;
+    const page = rows.slice(0, DEFAULT_DRAIN_LIMIT);
+    const more = rows.length > DEFAULT_DRAIN_LIMIT;
+    this.db.transaction(() => {
+      for (const row of page) {
+        if (!row.deleted) this.markDirtyRow(row.chat_jid, messageDate(row.ts));
+      }
+      const last = page.at(-1);
+      if (last) this.setMeta(cursorKey, JSON.stringify([last.chat_jid, last.id]));
+      if (!more) this.setMeta(versionKey, "1");
+    })();
+    return more;
+  }
+
+  /**
+   * Completed enrollment is durable only after its final enabled page lands.
+   * If disabled while a page is unacknowledged, replay may omit the projection;
+   * restart that interrupted enrollment on enable without repeating settled work.
+   */
+  reconcileSelfAuthoredTextNormalization(committedSeq: number, enabled: boolean): void {
+    if (this.getMeta("self_authored_text_normalization_active") !== "1") return;
+    const emitted = Number(this.getMeta("self_authored_text_normalization_emit_seq") ?? "0");
+    const settled =
+      this.getMeta("self_authored_text_normalization") === "1" &&
+      emitted > 0 &&
+      Number.isSafeInteger(committedSeq) &&
+      committedSeq >= emitted &&
+      committedSeq <= this.emitSeqCounter;
+    if (!settled && enabled) return;
+    this.db.transaction(() => {
+      this.setMeta("self_authored_text_normalization_active", "0");
+      this.setMeta("self_authored_text_normalization_emit_seq", "0");
+      if (!settled) {
+        this.setMeta("self_authored_text_normalization", "0");
+        this.setMeta("self_authored_text_normalization_cursor", "[]");
+      }
+    })();
+  }
+
+  recordSelfAuthoredTextNormalizationEmission(emitSeq: number, allPagesEmitted: boolean): void {
+    if (this.getMeta("self_authored_text_normalization_active") === "1")
+      this.setMeta(
+        "self_authored_text_normalization_emit_seq",
+        allPagesEmitted ? String(emitSeq) : "0",
+      );
+  }
+
+  /**
    * Re-mark every day that has messages as dirty, so a forced resync re-emits
-   * the whole archive. Paginated by `drain()` like any other dirty set.
+   * the whole archive. Paginated by drain() like any other dirty set.
    */
   markAllDirty(): void {
     this.db

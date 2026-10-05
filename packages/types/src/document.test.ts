@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect } from "vitest";
+import { boundedSelfAuthoredText } from "./document.js";
 import type { DocumentMetadata } from "./document.js";
 
 /**
@@ -71,5 +72,50 @@ describe("DocumentMetadata source lifecycle status", () => {
 
     expect(task.status).toBe("canceled");
     expect(approval.status).toBe("approved");
+  });
+});
+
+describe("bounded self-authored evidence", () => {
+  test("keeps the newest segments and ignores invalid dates and blank text", () => {
+    const segments = Array.from({ length: 140 }, (_, index) => ({
+      text: `word-${index}`,
+      recordedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+    }));
+    const result = boundedSelfAuthoredText([
+      ...segments,
+      { text: "invalid", recordedAt: "unknown" },
+      { text: "  ", recordedAt: "2026-01-02T00:00:00Z" },
+    ]);
+    expect(result).toHaveLength(128);
+    expect(result[0].text).toBe("word-139");
+    expect(result[127].text).toBe("word-12");
+  });
+
+  test("large unordered input retains newest evidence with stable ties", () => {
+    const segments = Array.from({ length: 2000 }, (_, index) => ({
+      text: `entry-${index}`,
+      recordedAt: new Date(Date.UTC(2026, 0, 1, 0, (index * 37) % 2000)).toISOString(),
+    }));
+    const expected = segments
+      .map((segment, index) => ({ ...segment, index }))
+      .sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt) || a.index - b.index)
+      .slice(0, 128)
+      .map(({ text, recordedAt }) => ({ text, recordedAt }));
+    expect(boundedSelfAuthoredText(segments)).toEqual(expected);
+    const tied = segments.map((segment) => ({
+      ...segment,
+      recordedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    expect(boundedSelfAuthoredText(tied)).toEqual(tied.slice(0, 128));
+  });
+
+  test("caps total characters without manufacturing a partial final word", () => {
+    const result = boundedSelfAuthoredText([
+      { text: "word ".repeat(7000), recordedAt: "2026-01-02T00:00:00Z" },
+      { text: "older", recordedAt: "2026-01-01T00:00:00Z" },
+    ]);
+    expect(result.reduce((sum, item) => sum + item.text.length, 0)).toBeLessThanOrEqual(32768);
+    expect(result[0].text.endsWith("word ")).toBe(true);
+    expect(result[0].recordedAt).toBe("2026-01-02T00:00:00.000Z");
   });
 });

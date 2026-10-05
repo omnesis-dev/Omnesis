@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, beforeEach, vi } from "vitest";
-import { addsToMessage, messageDate } from "./gmail-message.js";
+import { addsToMessage, messageDate, selfAuthoredMailText } from "./gmail-message.js";
 import { createMockGmail, createGmailSource, makeGmailMessage } from "./testing/mock-google.js";
 import type { DocumentInput } from "@omnesis/types";
 
@@ -291,5 +291,43 @@ describe("addsToMessage", () => {
   test("a few words the message never uses are new, one or two are not", () => {
     expect(addsToMessage("Award winner", message)).toBe(false);
     expect(addsToMessage("registered office above the old bakery", message)).toBe(true);
+  });
+});
+
+describe("self-authored vocabulary text", () => {
+  test("keeps only the author prefix and conservatively omits HTML-only mail", () => {
+    expect(
+      selfAuthoredMailText({ text: "New term\n\nOn Tuesday, someone wrote:\nOld quote" }),
+    ).toBe("New term");
+    expect(selfAuthoredMailText({ text: "New term\n> quoted text\nmore" })).toBe("New term");
+    expect(selfAuthoredMailText({ text: "New term\nFrom: other@example.com\nold text" })).toBe(
+      "New term",
+    );
+    expect(selfAuthoredMailText({ text: "New term\n-- \nsignature" })).toBe("New term");
+    expect(selfAuthoredMailText({ html: "<p>New term</p><blockquote>old</blockquote>" })).toBe("");
+    expect(selfAuthoredMailText({ text: "<p>markup</p>" })).toBe("");
+    expect(selfAuthoredMailText({ text: "a".repeat(100_000) })).toBe("");
+    expect(selfAuthoredMailText({ text: " ".repeat(32_764) + "Velquorin" })).toBe("");
+  });
+  test("requires enabled flag, SENT, and the account sender", async () => {
+    const gmail = createMockGmail();
+    gmail.users.messages.list = vi.fn(async () => ({ data: { messages: [{ id: "authored" }] } }));
+    const message = makeGmailMessage("authored", { from: "test@example.com", labelIds: ["SENT"] });
+    message.payload.body.data = b64("Fresh lexical clue\n> stale quote");
+    gmail.users.messages.get = vi.fn(async () => ({ data: message }));
+    let enabled = false;
+    const source = createGmailSource(gmail, { isTranscriptionVocabularyEnabled: () => enabled });
+    expect((await source.sync(null)).documents[0]?.metadata.selfAuthoredText).toBeUndefined();
+    enabled = true;
+    const doc = (await source.sync(null)).documents[0]!;
+    expect(doc.metadata.selfAuthoredText).toEqual([
+      { text: "Fresh lexical clue", recordedAt: doc.sourceCreatedAt },
+    ]);
+    gmail.users.messages.get = vi.fn(async () => ({ data: { ...message, labelIds: ["INBOX"] } }));
+    expect((await source.sync(null)).documents[0]?.metadata.selfAuthoredText).toBeUndefined();
+    gmail.users.messages.get = vi.fn(async () => ({
+      data: makeGmailMessage("authored", { from: "other@example.com", labelIds: ["SENT"] }),
+    }));
+    expect((await source.sync(null)).documents[0]?.metadata.selfAuthoredText).toBeUndefined();
   });
 });

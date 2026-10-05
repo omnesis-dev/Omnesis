@@ -817,3 +817,46 @@ describe("normalizeDayChat", () => {
     });
   });
 });
+
+describe("self-authored vocabulary evidence", () => {
+  test("keeps own body and transcript timestamps, excluding received and system text", () => {
+    const messages = [
+      makeMsg({
+        isFromMe: true,
+        text: "Lanternshift",
+        attachments: [
+          {
+            filename: "filenameprefix",
+            mimeType: "audio/mp4",
+            filePath: null,
+            totalBytes: 0,
+            transcript: "Cobaltfinch",
+          },
+        ],
+      }),
+      makeMsg({ rowId: 2, text: "Receivedprefix" }),
+      makeMsg({ rowId: 3, isFromMe: true, isSystemMessage: true, text: "Systemprefix" }),
+    ];
+    const disabled = normalizeDayChat(
+      "2024-03-08",
+      messages,
+      oneToOneChat,
+      ProviderId("apple"),
+      SourceId("apple-imessage"),
+    );
+    const enabled = normalizeDayChat(
+      "2024-03-08",
+      messages,
+      oneToOneChat,
+      ProviderId("apple"),
+      SourceId("apple-imessage"),
+      true,
+    );
+    expect(disabled.metadata.selfAuthoredText).toBeUndefined();
+    expect(enabled.content).toBe(disabled.content);
+    expect(enabled.contentHash).toBe(disabled.contentHash);
+    expect(enabled.metadata.selfAuthoredText).toEqual([
+      { text: "Lanternshift\nCobaltfinch", recordedAt: "2024-03-08T10:30:00.000Z" },
+    ]);
+  });
+});

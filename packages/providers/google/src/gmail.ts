@@ -12,6 +12,7 @@ import {
   isAutoSubmittedGenerated,
   mailHeaderRelevancePenalty,
   parseEmailHeader,
+  splitEmailList,
   chooseMailBody,
   charsetOfContentType,
   pMap,
@@ -24,7 +25,12 @@ import {
   isInlineDecorationImage,
 } from "@omnesis/core";
 import { makeCursorValidator, applyDataCutoff } from "@omnesis/source-sdk";
-import { SourceId, ProviderId, isTransientSyncError } from "@omnesis/types";
+import {
+  SourceId,
+  ProviderId,
+  isTransientSyncError,
+  boundedSelfAuthoredText,
+} from "@omnesis/types";
 import {
   GOOGLE_PAGE_SIZE,
   GMAIL_LABEL_CACHE_TTL_MS,
@@ -40,6 +46,7 @@ import {
   messageParts,
   messagePeople,
   partHeader,
+  selfAuthoredMailText,
 } from "./gmail-message.js";
 import type {
   AttachmentInfo,
@@ -232,6 +239,7 @@ interface AttachmentPartInfo {
 }
 
 export interface GmailSourceOptions {
+  isTranscriptionVocabularyEnabled?: () => boolean;
   attachmentConfig?: AttachmentExtractionConfig;
   extractAttachment?: AttachmentExtractFn;
 }
@@ -298,6 +306,7 @@ export class GmailSource {
   // The account email (== accountId for multi-account sources). Used to pin
   // "open in Gmail" links to the right account via `?authuser=`.
   private accountEmail?: string;
+  private readonly isTranscriptionVocabularyEnabled: () => boolean;
   constructor(
     auth: OAuth2Client,
     accountId?: string,
@@ -308,6 +317,7 @@ export class GmailSource {
     this.id = SourceId(accountId ? `gmail:${accountId}` : "gmail");
     this.providerId = ProviderId(accountId ? `google:${accountId}` : "google");
     this.accountEmail = accountId;
+    this.isTranscriptionVocabularyEnabled = opts?.isTranscriptionVocabularyEnabled ?? (() => false);
     this.attachmentConfig = opts?.attachmentConfig ?? resolveAttachmentConfig();
     this.extractAttachment = opts?.extractAttachment;
     if (dataCutoff) {
@@ -828,7 +838,8 @@ export class GmailSource {
     const parts = messageParts(payload);
     const body = chooseMailBody(parts);
     const schemaDates = parts.html ? extractSchemaOrgDatesFromHtml(parts.html) : {};
-    const sourceDate = messageDate(date, msg.internalDate, Date.now(), getHeader("Received"));
+    const normalizationNow = Date.now();
+    const sourceDate = messageDate(date, msg.internalDate, normalizationNow, getHeader("Received"));
     const people = messagePeople({ from, to, cc, bcc }, body);
 
     // Generic automated-notification marker: a no-reply / notifications sender
@@ -859,6 +870,18 @@ export class GmailSource {
         sourceUrl: gmailMessageUrl(msg.id, this.accountEmail),
         tags: await this.resolveLabels(labels),
         documentType: "email",
+        ...(this.isTranscriptionVocabularyEnabled() &&
+        labels.includes("SENT") &&
+        Date.parse(sourceDate) !== normalizationNow &&
+        splitEmailList(from).length === 1 &&
+        this.accountEmail &&
+        senderEmail?.toLowerCase() === this.accountEmail.toLowerCase()
+          ? {
+              selfAuthoredText: boundedSelfAuthoredText([
+                { text: selfAuthoredMailText(parts), recordedAt: sourceDate },
+              ]),
+            }
+          : {}),
         relevanceScore: this.computeRelevanceScore(labels, {
           listUnsubscribe,
           precedence,

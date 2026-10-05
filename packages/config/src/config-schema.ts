@@ -3004,6 +3004,30 @@ const transcriptionVocabularySettings = z
         "Use personal vocabulary hints for gateway transcription and build vocabulary in background. Disabled by default; requires enabled: true.",
       )
       .optional(),
+    authoredWeight: z
+      .number()
+      .min(0)
+      .max(32)
+      .describe(
+        "Additional relevance weight for recent source-verified self-authored vocabulary evidence. Default 4; 0 disables this bonus.",
+      )
+      .optional(),
+    machineEvidenceWeight: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe(
+        "Relative vocabulary evidence from automated or bulk-distributed documents. Default 0.15.",
+      )
+      .optional(),
+    contextPriorDocuments: z
+      .number()
+      .min(0.1)
+      .max(10000)
+      .describe(
+        "Smoothing strength for contextual vocabulary specificity in document units. Default 10.",
+      )
+      .optional(),
     maxTerms: z
       .number()
       .int()

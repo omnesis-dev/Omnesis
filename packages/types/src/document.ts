@@ -276,11 +276,82 @@ export interface Document {
   updatedAt: Date;
 }
 
+/** Source-owned, independently timestamped words the operator actually authored. */
+export interface SelfAuthoredTextSegment {
+  text: string;
+  recordedAt: string;
+}
+
+/** Keep recent evidence first, with fixed bounds independent of provider volume. */
+export function boundedSelfAuthoredText(
+  segments: readonly SelfAuthoredTextSegment[],
+): SelfAuthoredTextSegment[] {
+  type RankedSegment = { text: string; time: number; index: number };
+  // The oldest retained segment is the heap root. Keep only 128 references
+  // while scanning a large day, then sort that bounded set for the budget.
+  const recent: RankedSegment[] = [];
+  const older = (a: RankedSegment, b: RankedSegment): boolean =>
+    a.time < b.time || (a.time === b.time && a.index > b.index);
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    const time = Date.parse(segment.recordedAt);
+    if (!Number.isFinite(time) || !segment.text.trim()) continue;
+    const candidate = { text: segment.text, time, index };
+    if (recent.length < 128) {
+      recent.push(candidate);
+      let position = recent.length - 1;
+      while (position > 0) {
+        const parent = Math.floor((position - 1) / 2);
+        if (!older(recent[position], recent[parent])) break;
+        [recent[position], recent[parent]] = [recent[parent], recent[position]];
+        position = parent;
+      }
+    } else if (older(recent[0], candidate)) {
+      recent[0] = candidate;
+      let position = 0;
+      while (position * 2 + 1 < recent.length) {
+        let child = position * 2 + 1;
+        if (child + 1 < recent.length && older(recent[child + 1], recent[child])) child++;
+        if (!older(recent[child], recent[position])) break;
+        [recent[position], recent[child]] = [recent[child], recent[position]];
+        position = child;
+      }
+    }
+  }
+  recent.sort((a, b) => b.time - a.time || a.index - b.index);
+  const result: SelfAuthoredTextSegment[] = [];
+  let remaining = 32768;
+  for (const segment of recent) {
+    if (result.length === 128 || remaining === 0) break;
+    let text = segment.text.slice(0, remaining);
+    // Do not split a UTF-16 surrogate pair at the aggregate budget boundary.
+    if (/[\uD800-\uDBFF]$/.test(text)) text = text.slice(0, -1);
+    if (
+      segment.text.length > text.length &&
+      /[\p{L}\p{M}\p{N}’'.-]/u.test(segment.text[text.length] ?? "")
+    )
+      text = text.replace(/[\p{L}\p{M}\p{N}’'.-]+$/u, "");
+    if (!text.trim()) continue;
+    result.push({ text, recordedAt: new Date(segment.time).toISOString() });
+    remaining -= text.length;
+  }
+  return result;
+}
+
 /**
  * Metadata attached to a document. Common fields are typed;
  * source-specific fields go in `extra`.
  */
 export interface DocumentMetadata {
+  /**
+   * Bounded source-owned evidence of the operator's own words, excluding quoted
+   * messages, presentation headers and generated/received content. Present
+   * only when transcription vocabulary is enabled. Unknown authorship is
+   * omitted; an empty list explicitly means no self-authored text.
+   * Producers use boundedSelfAuthoredText (128 segments, 32768 characters).
+   */
+  selfAuthoredText?: SelfAuthoredTextSegment[];
+
   /**
    * Reliable web or desktop destination represented by this document. This is
    * normally the exact source item; reference sources may link to the resource

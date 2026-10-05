@@ -13,7 +13,7 @@ describe("bundled common-word evidence", () => {
       commonWordsData: {
         get languages() {
           reads++;
-          return { en: "ordinary", fr: "travail" };
+          return { en: "ordinary a", fr: "travail été" };
         },
       },
     }));
@@ -24,6 +24,9 @@ describe("bundled common-word evidence", () => {
       expect(reads).toBe(1);
       expect(lexical.isCommonVocabularyWord("travail")).toBe(true);
       expect(lexical.isCommonVocabularyWord("ordinary", ["fr"])).toBe(false);
+      // Independent components in different languages cannot manufacture a
+      // frequent elision that no single lexical list supports.
+      expect(lexical.isCommonVocabularyWord("a'été")).toBe(false);
       expect(reads).toBe(1);
     } finally {
       vi.doUnmock("./common-words-data.js");
@@ -54,6 +57,29 @@ describe("bundled common-word evidence", () => {
     expect(isCommonVocabularyWord("e\u0301te\u0301", ["fr"])).toBe(true);
     expect(isCommonVocabularyWord("trabajo", ["ja"])).toBe(false);
     expect(isCommonVocabularyWord("two words", ["en"])).toBe(false);
+  });
+
+  test("frequent contractions and elisions share quote normalization without losing rare names", () => {
+    for (const word of ["don't", "don’t", "don‘t", "we're", "we’re", "I'm", "I’m"])
+      expect(isCommonVocabularyWord(word, ["en"])).toBe(true);
+    for (const word of [
+      "c'est",
+      "c’est",
+      "c‘est",
+      "j'ai",
+      "j’ai",
+      "l'été",
+      "l’été",
+      "l'heure",
+      "qu'un",
+      "aujourd’hui",
+    ])
+      expect(isCommonVocabularyWord(word, ["fr"])).toBe(true);
+    for (const word of ["d'Orvelion", "d’Orvelion", "O'Zorvella", "O’Zorvella", "l'Élanor"])
+      expect(isCommonVocabularyWord(word)).toBe(false);
+    expect(isCommonVocabularyWord("c’est", ["ja"])).toBe(false);
+    expect(isCommonVocabularyWord("l'été", ["fr"])).toBe(true);
+    expect(isCommonVocabularyWord("l'Élanor", ["fr"])).toBe(false);
   });
 
   test("ships bounded lexical lists and notices alongside the derived data", () => {

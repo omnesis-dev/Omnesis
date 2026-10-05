@@ -67,6 +67,8 @@ export interface OmnesisNotesBootDeps {
    * cascades. The direct WriteGate path would skip all three.
    */
   deleteByIds: (providerId: string, sourceId: string, externalIds: string[]) => Promise<unknown>;
+  /** Live opt-in gate for source-owned authored vocabulary evidence. */
+  isTranscriptionVocabularyEnabled?: () => boolean;
   /** Optional override of the debounce window. Tests pass 0. */
   debounceMs?: number;
   /** Optional scheduler override for unit tests with fake timers. */
@@ -176,6 +178,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
     deleteDayDoc: async (day) => {
       await deps.deleteByIds(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID, [day]);
     },
+    isTranscriptionVocabularyEnabled: deps.isTranscriptionVocabularyEnabled,
     debounceMs: deps.debounceMs,
     scheduler: deps.scheduler,
   });

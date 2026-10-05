@@ -1637,6 +1637,8 @@ export function createServer(
     omnesisNotesRuntime = bootOmnesisNotes({
       writeGate: w,
       readDb: db,
+      isTranscriptionVocabularyEnabled: () =>
+        opts?.transcriptionVocabularyService?.enabled() ?? false,
       ingest: (docs) => documentService.ingest(docs),
       deleteByIds: (providerId, sourceId, externalIds) =>
         documentService.deleteByIds(providerId, sourceId, externalIds),

@@ -3,7 +3,7 @@
 
 import { expect, test } from "vitest";
 import { extractTranscriptionVocabulary } from "./extract.js";
-import type { VocabularyDocument, VocabularySettings } from "./types.js";
+import type { VocabularyCandidate, VocabularyDocument, VocabularySettings } from "./types.js";
 
 const settings: VocabularySettings = {
   enabled: true,
@@ -16,7 +16,7 @@ const settings: VocabularySettings = {
   idlePeriodMs: 60000,
 };
 
-function terms(content: string, names: string[] = []): string[] {
+function candidates(content: string, names: string[] = []): VocabularyCandidate[] {
   const doc: VocabularyDocument = {
     id: "fictional-document",
     contentHash: "fictional-hash",
@@ -35,7 +35,11 @@ function terms(content: string, names: string[] = []): string[] {
       role: "sender",
     })),
   };
-  return extractTranscriptionVocabulary([doc], settings)[0].terms.map((term) => term.term);
+  return extractTranscriptionVocabulary([doc], settings)[0].terms;
+}
+
+function terms(content: string, names: string[] = []): string[] {
+  return candidates(content, names).map((candidate) => candidate.term);
 }
 
 test("removes complete identifiers while preserving surrounding uncommon vocabulary", () => {
@@ -165,4 +169,182 @@ test("linked names need a complete occurrence in cleaned prose", () => {
   );
   expect(terms("Will Maybe", ["Will May"])).not.toContain("will may");
   expect(terms("will   may arrived", ["Will May"])).toContain("will may");
+});
+
+test("repeated actual spelling beats one variant with a higher capitalization benefit", () => {
+  expect(candidates("Velquorin vElQuOrIn Velquorin")).toContainEqual({
+    term: "velquorin",
+    text: "Velquorin",
+    benefit: 2,
+  });
+  expect(candidates("vElQuOrIn velquorin velquorin")).toContainEqual({
+    term: "velquorin",
+    text: "velquorin",
+    benefit: 1,
+  });
+});
+
+test("preserves consistently observed mixed-case products and their selected benefit", () => {
+  const selected = candidates("ZiLora ZiLora Zilora myOS myOS MYOS");
+  expect(selected).toContainEqual({ term: "zilora", text: "ZiLora", benefit: 2.5 });
+  expect(selected).toContainEqual({ term: "myos", text: "myOS", benefit: 2.5 });
+});
+
+test("grounded names preserve observed spelling without manufacturing canonical votes", () => {
+  const selected = candidates("nexularis virellune; nexularis virellune; NeXuLaRiS ViReLlUnE", [
+    "Nexularis Virellune",
+    "Nexularis Virellune",
+  ]);
+  expect(selected).toContainEqual({
+    term: "nexularis virellune",
+    text: "nexularis virellune",
+    benefit: 2.5,
+  });
+});
+
+test("grounded Unicode names retain apostrophes and whitespace normalization", () => {
+  expect(candidates("Zélor   O'Vantix", ["Zélor O'Vantix"])).toContainEqual({
+    term: "zélor o'vantix",
+    text: "Zélor O'Vantix",
+    benefit: 2.5,
+  });
+});
+
+function authoredDocument(overrides: Partial<VocabularyDocument> = {}): VocabularyDocument {
+  return {
+    id: "invented-authored-document",
+    contentHash: "invented-authored-hash",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+    revision: 0,
+    generation: 1,
+    title: "",
+    content: "Receivedquorin; Nexularis",
+    sourceId: "fictional:mixed",
+    threadId: "fictional-thread",
+    recordedAt: "2026-10-01T00:00:00.000Z",
+    people: [{ personId: "self", name: "You", isSelf: true, role: "author" }],
+    ...overrides,
+  };
+}
+
+test("mixed conversations promote only authored terms with their original timestamps", () => {
+  const [result] = extractTranscriptionVocabulary(
+    [
+      authoredDocument({
+        selfAuthoredText: [
+          { text: "Nexularis", recordedAt: "2024-02-01T00:00:00.000Z" },
+          { text: "Velquorin; Nexularis", recordedAt: "2026-09-28T01:00:00+01:00" },
+        ],
+      }),
+    ],
+    settings,
+  );
+  expect(result.terms.map((candidate) => candidate.term)).toContain("receivedquorin");
+  expect(result.selfTerms).toEqual(
+    expect.arrayContaining([
+      { term: "nexularis", text: "Nexularis", benefit: 2, recordedAt: "2026-09-28T00:00:00.000Z" },
+      { term: "velquorin", text: "Velquorin", benefit: 2, recordedAt: "2026-09-28T00:00:00.000Z" },
+    ]),
+  );
+  expect(result.selfTerms).toHaveLength(2);
+});
+
+test("self author role and document timestamps supply no inferred authored evidence", () => {
+  expect(
+    extractTranscriptionVocabulary([authoredDocument()], settings)[0].selfTerms,
+  ).toBeUndefined();
+  expect(
+    extractTranscriptionVocabulary([authoredDocument({ selfAuthoredText: [] })], settings)[0]
+      .selfTerms,
+  ).toEqual([]);
+  expect(
+    extractTranscriptionVocabulary(
+      [authoredDocument({ selfAuthoredText: [{ text: "Velquorin", recordedAt: "invalid" }] })],
+      settings,
+    )[0].selfTerms,
+  ).toEqual([]);
+  expect(
+    extractTranscriptionVocabulary([authoredDocument()], { ...settings, enabled: false }),
+  ).toEqual([]);
+});
+
+test("authored spelling votes aggregate genuine occurrences across segments and deduplicate terms", () => {
+  const [result] = extractTranscriptionVocabulary(
+    [
+      authoredDocument({
+        selfAuthoredText: [
+          { text: "Velquorin; Velquorin", recordedAt: "2026-09-20T00:00:00.000Z" },
+          { text: "vElQuOrIn", recordedAt: "2026-09-25T00:00:00.000Z" },
+        ],
+      }),
+    ],
+    settings,
+  );
+  expect(result.selfTerms).toEqual([
+    { term: "velquorin", text: "Velquorin", benefit: 2, recordedAt: "2026-09-25T00:00:00.000Z" },
+  ]);
+});
+
+test("authored evidence obeys the same identifier and lexical safety and output cap", () => {
+  const [result] = extractTranscriptionVocabulary(
+    [
+      authoredDocument({
+        selfAuthoredText: [
+          {
+            text:
+              "Velquorin; Nexularis https://hiddenquorin.example.com hiddenquorin@example.com " +
+              "Z".repeat(200),
+            recordedAt: "2026-09-25T00:00:00.000Z",
+          },
+        ],
+      }),
+    ],
+    { ...settings, maxTermsPerDocument: 1 },
+  );
+  expect(result.selfTerms).toHaveLength(1);
+  expect(result.selfTerms?.[0].term).toBe("nexularis");
+});
+
+test("ordinary French and English contractions never become recent authored vocabulary", () => {
+  const prose =
+    "C’est l’été, j’ai l’heure. Aujourd’hui, qu’un ami arrive. We're here; I’m ready, don’t wait. d’Orvelion O’Zorvella";
+  const [result] = extractTranscriptionVocabulary(
+    [
+      authoredDocument({
+        title: "",
+        content: prose,
+        people: [],
+        selfAuthoredText: [{ text: prose, recordedAt: "2026-10-01T00:00:00.000Z" }],
+      }),
+    ],
+    settings,
+  );
+  expect(result.terms.map((candidate) => candidate.text).sort()).toEqual(
+    ["O’Zorvella", "d’Orvelion"].sort(),
+  );
+  expect(result.selfTerms?.map((candidate) => candidate.text).sort()).toEqual(
+    ["O’Zorvella", "d’Orvelion"].sort(),
+  );
+});
+
+test("left-curly apostrophes preserve uncommon names while ordinary contractions stay filtered", () => {
+  const prose = "C‘est l‘été; don‘t wait. d‘Orvelion; O‘Zorvella.";
+  const [result] = extractTranscriptionVocabulary(
+    [
+      authoredDocument({
+        title: "",
+        content: prose,
+        people: [],
+        selfAuthoredText: [{ text: prose, recordedAt: "2026-10-01T00:00:00.000Z" }],
+      }),
+    ],
+    settings,
+  );
+  for (const selected of [result.terms, result.selfTerms ?? []]) {
+    expect(selected.map((candidate) => candidate.text).sort()).toEqual(
+      ["O‘Zorvella", "d‘Orvelion"].sort(),
+    );
+    expect(selected.map((candidate) => candidate.term)).not.toContain("zorvella");
+    expect(selected.map((candidate) => candidate.term)).not.toContain("orvelion");
+  }
 });

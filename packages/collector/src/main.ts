@@ -593,6 +593,8 @@ export async function main() {
   };
   const unifiedConfig = await fetchConfigWithBackoff(configFetchContext);
   let ocrEnabled = ocrEnabledFromConfig(unifiedConfig);
+  let transcriptionVocabularyEnabled =
+    unifiedConfig.inference?.transcriptionVocabulary?.enabled === true;
   gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(unifiedConfig));
   const config = toLegacyConfig(unifiedConfig);
 
@@ -614,6 +616,7 @@ export async function main() {
       transcribe: transcribeAudio,
     }),
     transcribeAudio,
+    isTranscriptionVocabularyEnabled: () => transcriptionVocabularyEnabled,
     configDir,
     ingestionContext,
   });
@@ -714,6 +717,7 @@ export async function main() {
 
   const refreshConfig = createConfigRefreshQueue(configFetchContext, async (next) => {
     ocrEnabled = ocrEnabledFromConfig(next);
+    transcriptionVocabularyEnabled = next.inference?.transcriptionVocabulary?.enabled === true;
     gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(next));
     await manager.handleConfigChange(toLegacyConfig(next));
   });

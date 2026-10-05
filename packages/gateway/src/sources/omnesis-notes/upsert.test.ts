@@ -304,3 +304,29 @@ describe("NotesDayUpserter", () => {
     expect(sched.size()).toBe(0);
   });
 });
+
+describe("self-authored vocabulary evidence", () => {
+  test("is opt-in and excludes agent captures and retained page content", () => {
+    const entries = [
+      makeEntry({
+        id: "user",
+        text: "Current user wording",
+        updatedAt: "2026-07-01T12:00:00.000Z",
+      }),
+      makeEntry({
+        id: "agent",
+        text: "Agent wording",
+        captureContext: captureContext("fixture", "Assistant"),
+      }),
+      makeEntry({
+        id: "page",
+        text: "Shared page wording",
+        page: { url: "https://example.com/article" },
+      }),
+    ];
+    expect(buildNotesDayDocument("2026-06-15", entries).metadata.selfAuthoredText).toBeUndefined();
+    expect(buildNotesDayDocument("2026-06-15", entries, true).metadata.selfAuthoredText).toEqual([
+      { text: "Current user wording", recordedAt: "2026-06-15T09:30:00.000Z" },
+    ]);
+  });
+});
