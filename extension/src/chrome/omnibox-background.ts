@@ -28,6 +28,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
   let sessionGeneration = 0;
   let session = false;
   let activeTab: chrome.tabs.Tab | undefined;
+  let tabLookup: Promise<chrome.tabs.Tab | undefined> | undefined;
   let view: FindView | undefined;
   let ready: Promise<void> = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -52,6 +53,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
     sessionGeneration++;
     session = false;
     activeTab = undefined;
+    tabLookup = undefined;
     view = undefined;
     cancelPending();
     defaultSuggestion(false);
@@ -60,17 +62,13 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
     clear();
     session = true;
     const request = sessionGeneration;
-    ready = Promise.all([
-      chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
-        if (session && request === sessionGeneration)
-          activeTab = tabs.find((tab) => tab.id !== undefined && !tab.incognito);
-        return tabs;
-      }),
-      find.ensureRead(),
-    ])
-      .then(([tabs, current]) => {
+    tabLookup = chrome.tabs
+      .query({ active: true, lastFocusedWindow: true })
+      .then((tabs) => tabs.find((tab) => tab.id !== undefined && !tab.incognito));
+    ready = Promise.all([tabLookup, find.ensureRead()])
+      .then(([tab, current]) => {
         if (!session || request !== sessionGeneration) return;
-        activeTab = tabs.find((tab) => tab.id !== undefined && !tab.incognito);
+        activeTab = tab;
         view = current;
         defaultSuggestion(current.enabled);
       })
@@ -129,16 +127,34 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
       await chrome.tabs.create({ url, active: disposition === "newForegroundTab" });
       return;
     }
+    if (tabId === undefined) return;
     try {
-      if (tabId === undefined) await chrome.tabs.create({ url });
-      else await chrome.tabs.update(tabId, { url });
+      await chrome.tabs.update(tabId, { url });
     } catch {
-      if (request === generation) await chrome.tabs.create({ url });
+      // A temporary edit failure is not a reason to navigate a different tab.
+      // Only replace a tab that Chrome confirms has actually disappeared.
+      const exists = await chrome.tabs.get(tabId).then(
+        () => true,
+        () => false,
+      );
+      if (!exists && request === generation) await chrome.tabs.create({ url });
     }
   }
   chrome.omnibox.onInputEntered.addListener((text, disposition) => {
     const selectedUrl = browserUrl(text);
-    const tabId = activeTab?.id;
+    // Capture the session's pending lookup before Enter ends the input session.
+    // Awaiting gateway authorization must not lose the originating tab identity.
+    const origin = activeTab
+      ? Promise.resolve(activeTab)
+      : (tabLookup ??
+        chrome.tabs
+          .query({ active: true, lastFocusedWindow: true })
+          .then((tabs) => tabs.find((tab) => tab.id !== undefined && !tab.incognito)));
+    const originId = origin.then(
+      (tab) => tab?.id,
+      () => undefined,
+    );
+
     cancelPending();
     session = false;
     generation++;
@@ -149,7 +165,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
         .ensureRead()
         .then(async (current) => {
           if (!current.enabled || selectionGeneration !== generation) return;
-          await navigate(selectedUrl, disposition, tabId, selectionGeneration);
+          await navigate(selectedUrl, disposition, await originId, selectionGeneration);
         })
         .catch(() => undefined);
       return;
@@ -170,7 +186,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
         if (!current.enabled || selectionGeneration !== generation) return;
         const url = new URL(chrome.runtime.getURL("find.html"));
         url.searchParams.set("q", query);
-        await navigate(url.href, disposition, tabId, selectionGeneration);
+        await navigate(url.href, disposition, await originId, selectionGeneration);
       })
       .catch(() => defaultSuggestion(false));
   });

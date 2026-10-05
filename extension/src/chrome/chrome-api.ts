@@ -162,7 +162,12 @@ declare global {
         incognito?: boolean;
       }
       function create(details: { url: string; active?: boolean }): Promise<Tab>;
-      function query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<Tab[]>;
+      function query(queryInfo: {
+        active?: boolean;
+        currentWindow?: boolean;
+        lastFocusedWindow?: boolean;
+      }): Promise<Tab[]>;
+      function get(tabId: number): Promise<Tab>;
       function update(tabId: number, details: { active?: boolean; url?: string }): Promise<Tab>;
       function update(details: { active?: boolean; url?: string }): Promise<Tab>;
       function sendMessage<T = unknown>(tabId: number, message: unknown): Promise<T>;

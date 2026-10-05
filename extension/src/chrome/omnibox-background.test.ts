@@ -21,7 +21,10 @@ function harness() {
   const defaultSuggestion = vi.fn(async () => undefined);
   const create = vi.fn(async () => ({}));
   const update = vi.fn(async () => ({}));
-  const queryTabs = vi.fn(async () => [{ id: 7, windowId: 1, url: "https://example.org/article" }]);
+  const get = vi.fn(async () => ({ id: 7, windowId: 1 }));
+  const queryTabs = vi.fn<() => Promise<chrome.tabs.Tab[]>>(async () => [
+    { id: 7, windowId: 1, url: "https://example.org/article" },
+  ]);
   vi.stubGlobal("chrome", {
     runtime: { getURL: (path: string) => `chrome-extension://test/${path}` },
     omnibox: {
@@ -49,6 +52,7 @@ function harness() {
     },
     tabs: {
       query: queryTabs,
+      get,
       create,
       update,
     },
@@ -58,6 +62,7 @@ function harness() {
   return {
     view,
     queryTabs,
+    get,
     ensureRead,
     suggest,
     defaultSuggestion,
@@ -139,7 +144,10 @@ describe("Omnesis omnibox", () => {
     h.enter("https://example.org/a-saved-page");
     await vi.advanceTimersByTimeAsync(0);
     expect(h.ensureRead).toHaveBeenCalledOnce();
-    expect(h.create).toHaveBeenCalledExactlyOnceWith({ url: "https://example.org/a-saved-page" });
+    expect(h.update).toHaveBeenCalledExactlyOnceWith(7, {
+      url: "https://example.org/a-saved-page",
+    });
+    expect(h.create).not.toHaveBeenCalled();
   });
   it("navigates the originating tab even when the destination is already open elsewhere", async () => {
     vi.useFakeTimers();
@@ -171,6 +179,17 @@ describe("Omnesis omnibox", () => {
     expect(h.update).toHaveBeenCalledExactlyOnceWith(7, { url });
     expect(h.create).not.toHaveBeenCalled();
   });
+  it("does not open a different tab when Chrome temporarily rejects editing the originating tab", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.start();
+    await vi.advanceTimersByTimeAsync(0);
+    h.update.mockRejectedValueOnce(new Error("Tabs cannot be edited right now"));
+    h.enter("https://example.org/another-guide");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.get).toHaveBeenCalledExactlyOnceWith(7);
+    expect(h.create).not.toHaveBeenCalled();
+  });
   it("opens a replacement tab if the originating tab closed before navigation", async () => {
     vi.useFakeTimers();
     const h = harness();
@@ -178,6 +197,7 @@ describe("Omnesis omnibox", () => {
     h.start();
     await vi.advanceTimersByTimeAsync(0);
     h.update.mockRejectedValueOnce(new Error("Tab closed"));
+    h.get.mockRejectedValueOnce(new Error("No such tab"));
     h.enter(url);
     await vi.advanceTimersByTimeAsync(0);
     expect(h.create).toHaveBeenCalledExactlyOnceWith({ url });
@@ -204,17 +224,55 @@ describe("Omnesis omnibox", () => {
       expect(h.suggest).not.toHaveBeenCalled();
     },
   );
-  it("opens a fresh tab for fast Enter rather than overwriting an unconfirmed current tab", async () => {
+  it.each(["a query entered immediately", "https://example.org/another-guide"])(
+    "waits for the originating tab lookup on fast Enter: %s",
+    async (text) => {
+      vi.useFakeTimers();
+      const h = harness();
+      let finish: ((tabs: chrome.tabs.Tab[]) => void) | undefined;
+      h.queryTabs.mockImplementation(
+        async () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      h.start();
+      h.enter(text);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.create).not.toHaveBeenCalled();
+      expect(h.update).not.toHaveBeenCalled();
+      finish?.([{ id: 7, windowId: 1 }]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.update).toHaveBeenCalledExactlyOnceWith(7, {
+        url: text.startsWith("https:")
+          ? text
+          : "chrome-extension://test/find.html?q=a+query+entered+immediately",
+      });
+      expect(h.queryTabs).toHaveBeenCalledExactlyOnceWith({
+        active: true,
+        lastFocusedWindow: true,
+      });
+      expect(h.create).not.toHaveBeenCalled();
+    },
+  );
+  it("does not navigate a delayed tab lookup after unpair invalidates the request", async () => {
     vi.useFakeTimers();
     const h = harness();
-    h.queryTabs.mockImplementation(async () => new Promise(() => undefined));
+    let finish: ((tabs: chrome.tabs.Tab[]) => void) | undefined;
+    h.queryTabs.mockImplementation(
+      async () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
     h.start();
     h.enter("a query entered immediately");
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.create).toHaveBeenCalledExactlyOnceWith({
-      url: "chrome-extension://test/find.html?q=a+query+entered+immediately",
-    });
+    h.controller.clear();
+    finish?.([{ id: 7, windowId: 1 }]);
+    await vi.advanceTimersByTimeAsync(0);
     expect(h.update).not.toHaveBeenCalled();
+    expect(h.create).not.toHaveBeenCalled();
   });
   it("does not overwrite the current tab when fresh gateway verification closes Find", async () => {
     vi.useFakeTimers();
