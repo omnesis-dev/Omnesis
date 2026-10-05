@@ -13,7 +13,7 @@ import {
   getTranscriptionVocabulary,
 } from "./storage.js";
 import type { Db } from "../../data/types.js";
-import type { TranscriptionContext } from "@omnesis/types";
+import type { TranscriptionContext } from "@omnesis/core";
 import type { VocabularySettings } from "./types.js";
 
 const NOW = "2026-10-01T12:00:00.000Z";
