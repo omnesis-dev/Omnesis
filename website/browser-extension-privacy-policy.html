@@ -202,20 +202,16 @@
             <strong>Context menus</strong> adds Tell Omnesis to the page and selection right-click
             menus when the feature is enabled.
           </li>
+          <li><strong>Side panel</strong> displays the note composer alongside the page.</li>
           <li>
-            <strong>Side panel</strong> displays the note composer and Find results alongside the
-            page.
+            <strong>Tabs</strong> lets Find indicate source links already open across the Chrome
+            profile. Matching stays local and the tab list is not uploaded. Chrome requests this
+            permission at installation or upgrade. Browser-history access is not requested.
           </li>
           <li>
-            <strong>Optional tabs</strong> lets Find match source links against open tabs across the
-            Chrome profile after you choose <strong>Enable open-tab matching</strong>. Existing
-            page-access grants allow matching those sites without this permission. Browser-history
-            access is not requested.
-          </li>
-          <li>
-            <strong>Optional favicon</strong> displays site icons through Chrome's favicon service.
-            Find does not prompt for this permission; available source icons or a fallback are used
-            without it. The extension sends no result URLs to a third-party icon service.
+            <strong>Favicon</strong> displays site icons through Chrome's local favicon service.
+            Chrome grants this permission at installation or upgrade. Missing icons use a fallback;
+            the extension sends no result URLs to a third-party icon service.
           </li>
         </ul>
 
@@ -233,9 +229,9 @@
           queue refuses new submissions instead of evicting previously submitted notes.
         </p>
         <p>
-          Find keeps the current results and bounded agent explanation locally when the panel closes
-          or the gateway is temporarily unavailable. When the gateway reports that Find permission
-          is revoked, the extension removes that cached result content.
+          Find keeps the current results and bounded agent explanation locally when the Find page
+          closes or the gateway is temporarily unavailable. When the gateway reports that Find
+          permission is revoked, the extension removes that cached result content.
         </p>
         <ul>
           <li>

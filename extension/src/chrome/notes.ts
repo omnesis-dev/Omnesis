@@ -10,8 +10,7 @@ import { initPanelDismiss } from "./panel-dismiss.js";
 
 document.addEventListener("DOMContentLoaded", () => {
   if (location.pathname === "/find.html") {
-    initFindPanel(document, chrome, undefined, {
-      fullPage: true,
+    initFindPanel(document, chrome, {
       initialQuery: new URL(location.href).searchParams.get("q") ?? undefined,
     });
     return;
@@ -31,6 +30,5 @@ document.addEventListener("DOMContentLoaded", () => {
   const notes = initNotesPanel(document, chrome, dismiss);
   flushNotes = notes.flush;
   flushEdits = initNotesEditPanel(document, chrome, dismiss, notes.show, notes.flush);
-  initFindPanel(document, chrome, dismiss);
   connectPanelPage(document, dismiss, scope);
 });

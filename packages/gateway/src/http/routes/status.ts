@@ -128,8 +128,9 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
           ? {
               browserFeatures: { min: 1, max: 1 },
               browserNotes: { min: 1, max: 1 },
-              browserFind: { min: 1, max: 1 },
+              browserFind: { min: 1, max: 2 },
               browserFindSuggest: { min: 1, max: 1 },
+              browserFindMode: { min: 1, max: 1 },
               browserNotesEdit: { min: 1, max: 1 },
             }
           : {}),

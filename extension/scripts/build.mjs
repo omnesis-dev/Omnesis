@@ -61,14 +61,21 @@ async function main() {
   // Static assets: manifest, HTML, CSS, and the committed brand icons under
   // public/icons/ — copied verbatim into the loadable bundle.
   await cp(join(root, "public"), outdir, { recursive: true });
-  // Both entry points use the same Find markup and bundled components.
+  // Render independent pages from one template, using the same bundled components.
   const panelHtml = await readFile(join(root, "public/notes.html"), "utf8");
+  const withoutSection = (html, section) => {
+    const block = new RegExp(
+      `    <!-- ${section}:start -->[\\s\\S]*?    <!-- ${section}:end -->\\n`,
+    );
+    if (!block.test(html)) throw new Error(`Missing ${section} section in panel template.`);
+    return html.replace(block, "");
+  };
+  await writeFile(join(outdir, "notes.html"), withoutSection(panelHtml, "find"));
   await writeFile(
     join(outdir, "find.html"),
-    panelHtml
+    withoutSection(panelHtml, "notes")
       .replace('<body class="notes-panel">', '<body class="notes-panel find-page">')
-      .replace('<section id="find-section" hidden>', '<section id="find-section">')
-      .replace('<section id="notes-section">', '<section id="notes-section" hidden>'),
+      .replace('<section id="find-section" hidden>', '<section id="find-section">'),
   );
 
   const sharedStyles = await readFile(

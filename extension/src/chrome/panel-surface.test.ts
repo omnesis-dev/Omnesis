@@ -65,14 +65,13 @@ async function setup(native = true) {
 }
 
 describe("native shortcut toggle", () => {
-  it("closes the same live workflow only in its own window and switches other workflows", async () => {
+  it("closes Tell only in its own native window and ignores retired Find reports", async () => {
     const p = await setup();
     expect(p.surface.togglePanelShortcut("notes", { id: 1, windowId: 10 })).toBe(true);
     expect(p.port.postMessage).toHaveBeenLastCalledWith({ type: "dismiss" });
-    expect(p.surface.togglePanelShortcut("find", { id: 1, windowId: 10 })).toBe(false);
     expect(p.surface.togglePanelShortcut("notes", { id: 2, windowId: 20 })).toBe(false);
     p.message({ feature: "find", visible: true });
-    expect(p.surface.togglePanelShortcut("find", { id: 1, windowId: 10 })).toBe(true);
+    expect(p.surface.togglePanelShortcut("notes", { id: 1, windowId: 10 })).toBe(true);
   });
 
   it("forgets manual closure/disconnection and tracks tab-specific scope", async () => {
@@ -138,7 +137,7 @@ it("reconnects the live panel after worker eviction and routes toggle through du
     scope,
   );
   await Promise.resolve();
-  expect(reports).toContainEqual({ feature: "find", visible: true });
+  expect(reports).toContainEqual({ feature: "notes", visible: true });
   listeners[0]!.disconnect!();
   await Promise.resolve();
   expect(connect).toHaveBeenCalledTimes(2);

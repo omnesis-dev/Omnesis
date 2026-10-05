@@ -12,7 +12,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-function panel(options: { fullPage?: boolean; initialQuery?: string } = {}) {
+function panel(options: { initialQuery?: string } = {}) {
   const { document, window } = parseHTML(
     readFileSync(new URL("../../public/notes.html", import.meta.url), "utf8"),
   );
@@ -61,7 +61,6 @@ function panel(options: { fullPage?: boolean; initialQuery?: string } = {}) {
   let changed:
     | ((changes: Record<string, { newValue?: unknown }>, area: string) => void)
     | undefined;
-  const activated = vi.fn();
   const openOptionsPage = vi.fn().mockResolvedValue(undefined);
   const send = vi.fn(async (message: unknown) => {
     const msg = message as { type: string; query?: string };
@@ -98,13 +97,11 @@ function panel(options: { fullPage?: boolean; initialQuery?: string } = {}) {
         },
       },
     },
-    activated,
     options,
   );
   return {
     document,
     window,
-    activated,
     openOptionsPage,
     input,
     send,
@@ -122,7 +119,7 @@ function panel(options: { fullPage?: boolean; initialQuery?: string } = {}) {
 }
 describe("Find panel", () => {
   it("opens a submitted full-page query using shared Find and keeps its workflow independent", async () => {
-    const p = panel({ fullPage: true, initialQuery: "invented full-page query" });
+    const p = panel({ initialQuery: "invented full-page query" });
     await vi.waitFor(() =>
       expect(p.send).toHaveBeenCalledWith({
         type: "find-query",
@@ -140,7 +137,7 @@ describe("Find panel", () => {
     expect(p.document.querySelector(".brand-title")?.textContent).toBe("Omnesis");
   });
   it("does not auto-submit a full-page query edited while initial status is loading", async () => {
-    const p = panel({ fullPage: true, initialQuery: "invented original query" });
+    const p = panel({ initialQuery: "invented original query" });
     p.input.value = "a different unfinished thought";
     p.input.dispatchEvent(new p.window.Event("input"));
     await vi.waitFor(() => expect(p.document.getElementById("find-form")?.hidden).toBe(false));
@@ -148,19 +145,20 @@ describe("Find panel", () => {
       p.send.mock.calls.some(([message]) => (message as { type: string }).type === "find-query"),
     ).toBe(false);
   });
-  it("dismisses only after a successful result activation and leaves the panel open on failure", async () => {
+  it("renders destination links without copy buttons and shows opening failures", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
-    p.document.querySelector<HTMLButtonElement>(".find-result-open")!.click();
-    await vi.waitFor(() => expect(p.activated).toHaveBeenCalledTimes(1));
+    const link = p.document.querySelector<HTMLAnchorElement>(".find-result-open")!;
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe("https://example.org/guide");
+    expect(p.document.querySelector(".find-new-copy")).toBeNull();
     p.send.mockRejectedValueOnce(new Error("Invented opening failure"));
-    p.document.querySelector<HTMLButtonElement>(".find-result-open")!.click();
+    link.click();
     await vi.waitFor(() =>
       expect(p.document.getElementById("find-status")?.textContent).toBe(
         "Invented opening failure",
       ),
     );
-    expect(p.activated).toHaveBeenCalledTimes(1);
   });
   it("keeps the query selection stable during progress and offers settings only for supported missing authority", async () => {
     const p = panel();
@@ -205,7 +203,7 @@ describe("Find panel", () => {
     expect(p.document.querySelector('label[for="find-query"]')).toBeNull();
     expect(p.input.getAttribute("aria-label")).toBe("Find in Omnesis");
   });
-  it("opens stable result identity with arrow/Enter and offers an explicit new copy", async () => {
+  it("opens stable result identity with arrow/Enter and supports modified Enter", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
     function key(key: string) {
@@ -222,11 +220,13 @@ describe("Find panel", () => {
         newCopy: false,
       }),
     );
-    p.document.querySelector(".find-new-copy")!.dispatchEvent(new p.window.Event("click"));
+    const modified = new p.window.Event("keydown", { cancelable: true });
+    Object.assign(modified, { key: "Enter", ctrlKey: true });
+    p.input.dispatchEvent(modified);
     await vi.waitFor(() =>
       expect(p.send).toHaveBeenCalledWith({
         type: "find-result",
-        resultId: "first",
+        resultId: "second",
         newCopy: true,
       }),
     );
@@ -234,7 +234,7 @@ describe("Find panel", () => {
   it("tracks a result focused with native tab before ctrl/command+enter", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
-    const copy = p.document.querySelectorAll(".find-new-copy")[1]!;
+    const copy = p.document.querySelectorAll(".find-result-open")[1]!;
     p.focus(copy);
     copy.dispatchEvent(new p.window.Event("focusin", { bubbles: true }));
     const event = new p.window.Event("keydown", { bubbles: true, cancelable: true });
@@ -300,10 +300,10 @@ describe("Find panel", () => {
       expect(p.send).toHaveBeenCalledWith({ type: "find-update", query: "different" }),
     );
   });
-  it("preserves focus on the new-copy action while live result updates render", async () => {
+  it("preserves focus on a result link while live result updates render", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
-    const copy = p.document.querySelector(".find-new-copy")!;
+    const copy = p.document.querySelector(".find-result-open")!;
     p.focus(copy);
     // A browser's native button focus is modeled for newly rendered nodes.
     p.document.addEventListener("focus", (event) => p.focus(event.target as Element));
@@ -315,7 +315,7 @@ describe("Find panel", () => {
     try {
       p.update({ running: true });
       await vi.waitFor(() => {
-        expect(p.document.activeElement?.classList.contains("find-new-copy")).toBe(true);
+        expect(p.document.activeElement?.classList.contains("find-result-open")).toBe(true);
         expect(p.document.activeElement).not.toBe(copy);
       });
     } finally {
@@ -388,6 +388,17 @@ describe("Find panel", () => {
     );
     expect(snippet.querySelector("script")).toBeNull();
     expect(snippet.textContent).toBe("<script>invented</script>");
+  });
+  it("excludes routing commands from snippet highlighting", () => {
+    const { document } = parseHTML("<p></p>");
+    const target = document.querySelector("p")!;
+    highlightFindText(
+      document as unknown as Document,
+      target as unknown as HTMLElement,
+      "An agent wrote the search guide",
+      "/agent guide",
+    );
+    expect([...target.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["guide"]);
   });
   it("highlights meaningful terms without highlighting every common function word", () => {
     const { document } = parseHTML("<div id='target'></div>");

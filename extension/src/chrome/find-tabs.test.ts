@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { activateFindResult, browserIdentity, findOpenTab } from "./find-tabs.js";
+import { describe, expect, it } from "vitest";
+import { browserIdentity, findOpenTab } from "./find-tabs.js";
 import type { FindResult } from "./find-service.js";
 
 const result: FindResult = {
@@ -13,7 +13,6 @@ const result: FindResult = {
   snippet: "",
   source: "Example",
 };
-afterEach(() => vi.unstubAllGlobals());
 describe("local document tab identity", () => {
   it("matches capture-equivalent trailing slashes without discarding query or fragment state", () => {
     const url = "https://example.org/guide/?edition=1#overview";
@@ -69,40 +68,5 @@ describe("local document tab identity", () => {
         canonicalizers,
       )?.id,
     ).toBe(3);
-  });
-  it("focuses the matching tab and its window, while new copy explicitly creates a tab", async () => {
-    const update = vi.fn().mockResolvedValue({}),
-      focus = vi.fn().mockResolvedValue({}),
-      create = vi.fn().mockResolvedValue({});
-    vi.stubGlobal("chrome", {
-      tabs: {
-        query: vi.fn().mockResolvedValue([{ id: 9, windowId: 4, url: result.url }]),
-        update,
-        create,
-      },
-      windows: { update: focus },
-    });
-    await activateFindResult(result, []);
-    expect(update).toHaveBeenCalledWith(9, { active: true });
-    expect(focus).toHaveBeenCalledWith(4, { focused: true });
-    expect(create).not.toHaveBeenCalled();
-    await activateFindResult(result, [], true);
-    expect(create).toHaveBeenCalledWith({ url: result.url });
-  });
-  it("opens the source if the exact tab closes, but does not create duplicates on window focus errors", async () => {
-    const create = vi.fn().mockResolvedValue({}),
-      update = vi.fn().mockRejectedValueOnce(new Error("closed")).mockResolvedValue({});
-    vi.stubGlobal("chrome", {
-      tabs: {
-        query: vi.fn().mockResolvedValue([{ id: 9, windowId: 4, url: result.url }]),
-        update,
-        create,
-      },
-      windows: { update: vi.fn().mockRejectedValue(new Error("focus failed")) },
-    });
-    await activateFindResult(result, []);
-    expect(create).toHaveBeenCalledTimes(1);
-    await expect(activateFindResult(result, [])).rejects.toThrow("focus failed");
-    expect(create).toHaveBeenCalledTimes(1);
   });
 });

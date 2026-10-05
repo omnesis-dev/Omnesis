@@ -409,8 +409,9 @@ describe("health endpoint", () => {
         subscriptions: true,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         browserNotes: { min: 1, max: 1 },
-        browserFind: { min: 1, max: 1 },
+        browserFind: { min: 1, max: 2 },
         browserFindSuggest: { min: 1, max: 1 },
+        browserFindMode: { min: 1, max: 1 },
         browserFeatures: { min: 1, max: 1 },
         browserNotesEdit: { min: 1, max: 1 },
       });

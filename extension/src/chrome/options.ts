@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./chrome-api.js";
-import { initFindEntry } from "./find-entry.js";
 import { confirmNotesUnpair, initNotesEntry } from "./notes-entry.js";
 import { initOptions } from "./options-page.js";
 
@@ -14,5 +13,3 @@ document.addEventListener("DOMContentLoaded", () =>
 );
 
 document.addEventListener("DOMContentLoaded", () => initNotesEntry(document, chrome));
-
-document.addEventListener("DOMContentLoaded", () => initFindEntry(document, chrome));

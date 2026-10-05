@@ -9,7 +9,7 @@ import { PAIRING_KEY, TOKEN_KEY } from "./storage.js";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("Find worker entrypoints", () => {
-  it("opens a cold command synchronously, fences content messages and keeps read credentials out of views", async () => {
+  it("accepts only full-page Find messages and navigates its originating tab", async () => {
     const identity = "https://gateway.example.org\0" + "11111111-1111-4111-8111-111111111111";
     const stored: Record<string, unknown> = {
       [PAIRING_KEY]: JSON.stringify({
@@ -25,11 +25,21 @@ describe("Find worker entrypoints", () => {
         experimental: true,
         automatic: true,
         query: "",
-        results: [],
+        results: [
+          {
+            id: "first",
+            title: "Invented guide",
+            url: "https://example.org/guide",
+            source: "Example",
+            snippet: "Invented passage",
+          },
+        ],
       },
       [FIND_TOKEN_KEY]: { pairing: identity, token: "read-token" },
     };
-    let command: ((name: string, tab?: chrome.tabs.Tab) => void) | undefined;
+    const commandListener = vi.fn();
+    const update = vi.fn().mockResolvedValue({});
+    const create = vi.fn().mockResolvedValue({});
     const open = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("chrome", {
       storage: {
@@ -44,16 +54,10 @@ describe("Find worker entrypoints", () => {
         },
       },
       runtime: { id: "test", getURL: (path: string) => `chrome-extension://test/${path}` },
-      commands: {
-        onCommand: {
-          addListener: (value: typeof command) => {
-            command = value;
-          },
-        },
-      },
+      commands: { onCommand: { addListener: commandListener } },
       sidePanel: { open, setOptions: vi.fn().mockResolvedValue(undefined) },
       alarms: { create: vi.fn() },
-      tabs: { query: vi.fn().mockResolvedValue([]), create: vi.fn().mockResolvedValue({}) },
+      tabs: { query: vi.fn().mockResolvedValue([]), create, update },
       permissions: { contains: vi.fn().mockResolvedValue(false) },
     });
     vi.stubGlobal("fetch", function (this: unknown, input: string | URL | Request) {
@@ -75,8 +79,8 @@ describe("Find worker entrypoints", () => {
       );
     });
     const background = installFindBackground();
-    command?.("find-omnesis", { id: 9, url: "https://example.org/guide" });
-    expect(open).toHaveBeenCalledWith({ tabId: 9 });
+    expect(commandListener).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
     expect(
       background.message(
         { type: "find-status" },
@@ -88,7 +92,7 @@ describe("Find worker entrypoints", () => {
       expect(
         background.message(
           { type: "find-status" },
-          { id: "test", url: "chrome-extension://test/popup.html" },
+          { id: "test", url: "chrome-extension://test/find.html?q=invented", tab: { id: 17 } },
           resolve,
         ),
       ).toBe(true);
@@ -96,7 +100,36 @@ describe("Find worker entrypoints", () => {
     expect(view).toMatchObject({ supported: true, enabled: true });
     expect(JSON.stringify(view)).not.toContain("read-token");
     expect(JSON.stringify(stored[FIND_STATE_KEY])).not.toContain("read-token");
-    const fullPage = { id: "test", url: "chrome-extension://test/find.html?q=invented%20query" };
+    const fullPage = {
+      id: "test",
+      url: "chrome-extension://test/find.html?q=invented%20query",
+      tab: { id: 17 },
+    };
+    const result = await new Promise((resolve) => {
+      expect(
+        background.message({ type: "find-result", resultId: "first" }, fullPage, resolve),
+      ).toBe(true);
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(update).toHaveBeenCalledExactlyOnceWith(17, { url: "https://example.org/guide" });
+    expect(create).not.toHaveBeenCalled();
+    await new Promise((resolve) =>
+      background.message(
+        { type: "find-result", resultId: "first", newCopy: true },
+        fullPage,
+        resolve,
+      ),
+    );
+    expect(create).toHaveBeenCalledExactlyOnceWith({ url: "https://example.org/guide" });
+    for (const page of ["notes.html", "popup.html", "options.html"])
+      expect(
+        background.message(
+          { type: "find-view" },
+          { id: "test", url: `chrome-extension://test/${page}` },
+          vi.fn(),
+        ),
+      ).toBe(false);
+
     const updated = await new Promise((resolve) => {
       expect(
         background.message({ type: "find-update", query: "invented query" }, fullPage, resolve),
@@ -115,8 +148,6 @@ describe("Find worker entrypoints", () => {
     await background.clear();
     expect(stored[FIND_TOKEN_KEY]).toBeNull();
     expect(stored[FIND_STATE_KEY]).toBeNull();
-    const count = open.mock.calls.length;
-    command?.("find-omnesis", { id: 9 });
-    expect(open).toHaveBeenCalledTimes(count);
+    expect(open).not.toHaveBeenCalled();
   });
 });

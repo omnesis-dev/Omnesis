@@ -5,6 +5,8 @@ import type { AgentEvent } from "@omnesis/core";
 
 export interface FindSearchInput {
   text: string;
+  /** Omitted selects automatic routing; explicit modes bypass the routing model. */
+  mode?: "direct" | "agentic";
   limit?: number;
   timeZone?: string;
 }
@@ -30,6 +32,7 @@ export interface FindDecision {
   reason: string;
   model?: string;
   confidence?: number;
+  requested?: boolean;
 }
 export type FindStreamEvent =
   | AgentEvent

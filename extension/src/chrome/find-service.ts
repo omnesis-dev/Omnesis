@@ -13,6 +13,7 @@ import {
 import type { UrlCanonicalizerSpec } from "@omnesis/core/url-normalize";
 export { browserUrl, findSnippet, readCanonicalizers, type FindResult } from "./find-results.js";
 import { FindProgress, type FindToolCard } from "./find-progress.js";
+import { parseFindQuery } from "./find-query.js";
 import { readFindStream } from "./find-stream.js";
 import { readBoundedResponseText } from "../push/response-body.js";
 import type { ExtensionConfig } from "./storage.js";
@@ -24,12 +25,14 @@ export interface FindDecision {
   status: "decided" | "not_configured" | "unavailable";
   reason: string;
   model?: string;
+  requested?: boolean;
 }
 interface FindState {
   pairing: string;
   supported: boolean;
   experimental?: boolean;
   automatic?: boolean;
+  manualModes?: boolean;
   canonicalizers: UrlCanonicalizerSpec[];
   sourceLabels: Record<string, string>;
   sourceAttributions: Record<string, string>;
@@ -129,6 +132,7 @@ export class FindService {
         ...empty,
         supported: raw.supported === true && raw.experimental === true && raw.automatic === true,
         automatic: raw.automatic === true,
+        manualModes: raw.manualModes === true,
         experimental: raw.experimental === true,
         canonicalizers: readCanonicalizers(raw.canonicalizers),
         sourceLabels: readSourceLabels(raw.sourceLabels),
@@ -162,7 +166,7 @@ export class FindService {
         ...(raw.decision &&
         ["direct", "agentic"].includes(raw.decision.mode) &&
         typeof raw.decision.reason === "string"
-          ? { decision: raw.decision }
+          ? { decision: { ...raw.decision, requested: raw.decision.requested === true } }
           : {}),
         ...(typeof raw.agentText === "string" ? { agentText: raw.agentText.slice(0, 32000) } : {}),
         ...(typeof raw.error === "string" ? { error: raw.error } : {}),
@@ -216,6 +220,7 @@ export class FindService {
           browserFind?: { min?: unknown; max?: unknown };
           browserFeatures?: { min?: unknown; max?: unknown };
           browserFindSuggest?: { min?: unknown; max?: unknown };
+          browserFindMode?: { min?: unknown; max?: unknown };
         };
       };
       const range = health?.capabilities?.browserFind;
@@ -241,6 +246,16 @@ export class FindService {
       state.automatic = automatic;
       state.experimental = health?.experimental === true;
       state.supported = compatible && automatic && state.experimental;
+      const modes = health?.capabilities?.browserFindMode;
+      state.manualModes =
+        state.supported &&
+        typeof modes?.min === "number" &&
+        typeof modes.max === "number" &&
+        Number.isInteger(modes.min) &&
+        Number.isInteger(modes.max) &&
+        modes.min > 0 &&
+        modes.min <= 1 &&
+        modes.max >= 1;
       const suggest = health?.capabilities?.browserFindSuggest;
       this.suggestionsSupported =
         state.supported &&
@@ -383,7 +398,7 @@ export class FindService {
     const controller = new AbortController();
     this.suggestionAbort = controller;
     const abort = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-    query = query.slice(0, MAX_FIND_QUERY).trim();
+    query = parseFindQuery(query.slice(0, MAX_FIND_QUERY)).text.trim();
     let authority: { config: ExtensionConfig; token: string } | undefined;
     try {
       if (!query) return [];
@@ -449,6 +464,7 @@ export class FindService {
   async search(query: string, more = false): Promise<FindView> {
     this.suggestionAbort?.abort();
     query = query.slice(0, MAX_FIND_QUERY);
+    const parsed = parseFindQuery(query);
     const generation = ++this.searchGeneration;
     this.searchAbort?.abort();
     const controller = new AbortController();
@@ -511,21 +527,35 @@ export class FindService {
       };
       await publish();
       try {
-        if (!query.trim()) state.complete = true;
+        if (parsed.mode && !state.manualModes)
+          throw new Error(
+            "This gateway does not support /search or /agent. Update the gateway to choose a search mode.",
+          );
+        if (parsed.mode && !parsed.text.trim())
+          throw new Error("Enter a query after /search or /agent.");
+        if (!parsed.text.trim()) state.complete = true;
         else {
           controller.signal.throwIfAborted();
-          const response = await this.deps.fetch(`${config.gatewayUrl}/browser/find/search`, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${state.token}` },
-            body: JSON.stringify({
-              text: query,
-              limit,
-              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-            }),
-            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]),
-            redirect: "error",
-            credentials: "omit",
-          });
+          const response = await this.deps.fetch(
+            `${config.gatewayUrl}/browser/find/search${parsed.mode ? "/v2" : ""}`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: `Bearer ${state.token}`,
+              },
+              body: JSON.stringify({
+                version: parsed.mode ? 2 : 1,
+                text: parsed.text,
+                ...(parsed.mode ? { mode: parsed.mode } : {}),
+                limit,
+                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              }),
+              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]),
+              redirect: "error",
+              credentials: "omit",
+            },
+          );
           if (!response.ok) throw new FindHttpError(response.status);
           await readFindStream(
             response,
@@ -545,6 +575,7 @@ export class FindService {
                     ? (payload.status as FindDecision["status"])
                     : "unavailable",
                   reason: payload.reason.slice(0, 2000),
+                  ...(payload.requested === true ? { requested: true } : {}),
                   ...(typeof payload.model === "string"
                     ? { model: payload.model.slice(0, 128) }
                     : {}),

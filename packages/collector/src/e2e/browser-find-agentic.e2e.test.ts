@@ -274,11 +274,11 @@ describe("Browser Find agentic destinations through scripted production backends
     await puppet?.close();
     await decision?.close();
   }, 30_000);
-  async function search(text: string): Promise<Event[]> {
-    const response = await fetch(`${harness.gatewayUrl}/browser/find/search`, {
+  async function search(text: string, mode?: "direct" | "agentic"): Promise<Event[]> {
+    const response = await fetch(`${harness.gatewayUrl}/browser/find/search${mode ? "/v2" : ""}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${readToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ text, timeZone: "UTC" }),
+      body: JSON.stringify({ text, timeZone: "UTC", ...(mode ? { version: 2, mode } : {}) }),
     });
     expect(response.status).toBe(200);
     return (await response.text())
@@ -343,6 +343,38 @@ describe("Browser Find agentic destinations through scripted production backends
     expect(tools).toContain("fetch_many");
     expect(tools).toContain("present_browser_results");
   }, 120_000);
+  test("manual modes bypass the scripted decision while preserving index and grounded agent execution", async () => {
+    const health = await harness.gatewayJson<{ capabilities: { browserFindMode?: unknown } }>(
+      "/health",
+    );
+    expect(health.capabilities.browserFindMode).toEqual({ min: 1, max: 1 });
+    const calls = decision.calls.length;
+    const direct = await search("the link Maya shared yesterday", "direct");
+    expect(direct[0]).toMatchObject({
+      type: "find.decision",
+      payload: { mode: "direct", requested: true },
+    });
+    expect(direct.some((event) => event.type === "agent.tool.start")).toBe(false);
+    expect(direct.at(-1)).toEqual({ type: "find.complete", payload: { mode: "direct" } });
+    expect(decision.calls).toHaveLength(calls);
+    const agentic = await search("the link Maya shared yesterday", "agentic");
+    expect(agentic[0]).toMatchObject({
+      type: "find.decision",
+      payload: { mode: "agentic", requested: true },
+    });
+    expect(
+      agentic.filter((event) => event.type === "find.error"),
+      diagnostics.join("\n"),
+    ).toEqual([]);
+    expect(
+      agentic
+        .filter((event) => event.type === "find.results")
+        .flatMap((event) => event.payload.results as Array<{ sourceUrl: string }>),
+    ).toContainEqual(expect.objectContaining({ sourceUrl: link }));
+    expect(agentic.at(-1)).toEqual({ type: "find.complete", payload: { mode: "agentic" } });
+    expect(decision.calls).toHaveLength(calls);
+  }, 120_000);
+
   test("computes the longest run through real read-only SQL and resolves its source-bound document", async () => {
     const events = await search("my longest Strava run");
     expect(proseQueries).toContain("my longest Strava run");

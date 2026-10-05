@@ -584,10 +584,12 @@ button.secondary:hover {
   border-color: rgba(88, 166, 255, 0.22);
 }
 .find-result-open {
+  text-decoration: none;
+  border-radius: 10px;
   font-weight: 400;
   display: flex;
   gap: 11px;
-  padding: 14px 44px 14px 10px;
+  padding: 14px 10px;
   width: 100%;
   margin: 0;
   text-align: left;
@@ -666,21 +668,6 @@ button.secondary:hover {
   border-radius: 2px;
   font-weight: 600;
 }
-.find-new-copy {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  position: absolute;
-  right: 8px;
-  top: 12px;
-  padding: 0;
-  margin: 0;
-  border: 0;
-  background: transparent;
-  font-size: 15px;
-  color: var(--text-secondary);
-}
 .find-footer {
   margin-top: 18px;
   line-height: 1.6;
@@ -708,6 +695,7 @@ button.secondary:hover {
   padding: 36px 24px;
 }
 .find-page .brand {
+  justify-content: center;
   margin-bottom: 26px;
 }
 .find-page .find-search-box {

@@ -30,6 +30,33 @@ describe("Find routing", () => {
     expect(result.model).toBeUndefined();
   });
 
+  it("explicit modes bypass routing inference and decision spend", async () => {
+    const model = capability();
+    const resolve = vi.fn(() => model);
+    const spend = vi.fn();
+    const signal = new AbortController().signal;
+    expect(
+      await decideFindRoute({ text: "a page", mode: "direct" }, resolve, signal, spend),
+    ).toMatchObject({ mode: "direct", status: "decided", requested: true });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(
+      await decideFindRoute({ text: "a page", mode: "agentic" }, resolve, signal, spend),
+    ).toMatchObject({ mode: "agentic", status: "decided", requested: true });
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(model.decide).not.toHaveBeenCalled();
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it("forced agentic routing still requires enabled decision configuration", async () => {
+    expect(
+      await decideFindRoute(
+        { text: "a page", mode: "agentic" },
+        () => null,
+        new AbortController().signal,
+      ),
+    ).toMatchObject({ mode: "agentic", status: "not_configured", requested: true });
+  });
+
   it("uses the configured typed decision and sends only query context", async () => {
     const model = capability();
     const result = await decideFindRoute(

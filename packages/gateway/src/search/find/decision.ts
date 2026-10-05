@@ -67,6 +67,35 @@ export async function decideFindRoute(
   recordSpend?: (modelId: string, inputTokens: number) => Promise<void>,
 ): Promise<FindDecision> {
   signal.throwIfAborted();
+  if (input.mode === "direct")
+    return {
+      mode: "direct",
+      status: "decided",
+      requested: true,
+      reason: "You requested index search.",
+    };
+  if (input.mode === "agentic") {
+    try {
+      const configured = getDecision() !== null;
+      return {
+        mode: "agentic",
+        requested: true,
+        status: configured ? "decided" : "not_configured",
+        reason: configured
+          ? "You requested agent research."
+          : "Agentic search requires an enabled decision model.",
+      };
+    } catch {
+      signal.throwIfAborted();
+      return {
+        mode: "agentic",
+        status: "unavailable",
+        requested: true,
+        reason:
+          "Agentic search is unavailable because decision model configuration could not be checked.",
+      };
+    }
+  }
   try {
     const decision = getDecision();
     if (!decision)

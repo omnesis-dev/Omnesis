@@ -17,6 +17,7 @@ function harness() {
   let experimental: unknown = true;
   let suggestCapability: unknown = { min: 1, max: 1 };
   let capability: unknown = { min: 1, max: 1 };
+  let modeCapability: unknown = { min: 1, max: 1 };
   let config: ExtensionConfig | null = {
     gatewayUrl: "https://gateway.example.org",
     deviceId: "11111111-1111-4111-8111-111111111111",
@@ -25,7 +26,7 @@ function harness() {
     pairedAt: 1,
   };
   let search: (
-    body: { text: string; limit: number },
+    body: { text: string; limit: number; mode?: "direct" | "agentic" },
     signal?: AbortSignal | null,
   ) => Promise<Response> = async () => respond({ results: [] });
   const respond = (value: unknown, status = 200): Response =>
@@ -37,6 +38,7 @@ function harness() {
         experimental,
         capabilities: {
           browserFind: capability,
+          browserFindMode: modeCapability,
           browserFeatures: broker,
           browserFindSuggest: suggestCapability,
         },
@@ -66,7 +68,7 @@ function harness() {
       });
     if (path === "/browser/find/suggest")
       return search(JSON.parse(String(init?.body)), init?.signal);
-    if (path === "/browser/find/search") {
+    if (path === "/browser/find/search" || path === "/browser/find/search/v2") {
       const body = JSON.parse(String(init?.body));
       const response = await search(body, init?.signal);
       if (response.headers.get("content-type")?.includes("text/event-stream")) return response;
@@ -99,6 +101,9 @@ function harness() {
   };
   return {
     service: new FindService(deps),
+    modeCapability: (value: unknown) => {
+      modeCapability = value;
+    },
     suggestionCapability: (value: unknown) => {
       suggestCapability = value;
     },
@@ -697,5 +702,100 @@ describe("address-bar retrieval previews", () => {
       return p.respond({ results: [hit("old", "https://example.org/old")] });
     });
     expect(await p.service.suggest("invented query")).toEqual([]);
+  });
+});
+
+describe("explicit Find query modes", () => {
+  it("never retries an automatic search if a gateway loses the manual endpoint after discovery", async () => {
+    const p = harness();
+    p.search(async () => p.respond({}, 404));
+    const view = await p.service.search("/agent invented query");
+    expect(view.error).toContain("HTTP 404");
+    expect(
+      p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search/v2")),
+    ).toBe(true);
+    expect(p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search"))).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ["/search invented query", "direct"],
+    ["/AGENT invented query", "agentic"],
+  ] as const)("sends %s without its prefix and retains the display query", async (query, mode) => {
+    const p = harness();
+    p.search(async (body) => {
+      expect(body).toMatchObject({ version: 2, text: "invented query", mode });
+      return sse([
+        {
+          type: "find.decision",
+          payload: { mode, status: "decided", reason: "Requested mode", requested: true },
+        },
+        { type: "find.results", payload: { results: [], complete: true } },
+        { type: "find.complete", payload: { mode } },
+      ]);
+    });
+    const view = await p.service.search(query);
+    expect(
+      p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search/v2")),
+    ).toBe(true);
+    expect(p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search"))).toBe(
+      false,
+    );
+    expect(view.query).toBe(query);
+    expect(view.resultsQuery).toBe(query);
+    expect(view.decision).toMatchObject({ mode, requested: true });
+    expect((await new FindService(p.deps).status(false)).decision).toMatchObject({
+      requested: true,
+    });
+  });
+
+  it.each([undefined, { min: 2, max: 2 }, { min: 1, max: 0 }])(
+    "rejects unsupported manual modes without running automatic search",
+    async (capability) => {
+      const p = harness();
+      p.modeCapability(capability);
+      const view = await p.service.search("/agent invented query");
+      expect(view.error).toContain("does not support /search or /agent");
+      expect(view.query).toBe("/agent invented query");
+      expect(p.fetch.mock.calls.some(([url]) => String(url).includes("/browser/find/search"))).toBe(
+        false,
+      );
+      expect((await p.service.search("plain invented query")).error).toBeUndefined();
+      const request = p.fetch.mock.calls.find(([url]) =>
+        String(url).endsWith("/browser/find/search"),
+      )!;
+      expect(JSON.parse(String(request[1]?.body))).not.toHaveProperty("mode");
+      expect(JSON.parse(String(request[1]?.body))).toHaveProperty("version", 1);
+    },
+  );
+
+  it("refreshes mode support after a gateway downgrade and rejects empty forced queries", async () => {
+    const p = harness();
+    await p.service.status();
+    p.modeCapability(undefined);
+    expect((await p.service.search("/search invented query")).error).toContain("does not support");
+    p.modeCapability({ min: 1, max: 1 });
+    expect((await p.service.search("/agent ")).error).toContain("Enter a query");
+    expect(p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search"))).toBe(
+      false,
+    );
+  });
+
+  it("strips either prefix for index previews without sending a mode or changing durable query", async () => {
+    const p = harness();
+    p.search(async () => p.respond({ results: [] }));
+    for (const query of ["/search invented query", "/agent invented query"]) {
+      await p.service.suggest(query);
+      const call = p.fetch.mock.calls
+        .filter(([url]) => String(url).endsWith("/browser/find/suggest"))
+        .at(-1)!;
+      expect(JSON.parse(String(call[1]?.body))).toEqual({
+        version: 1,
+        text: "invented query",
+        limit: 5,
+      });
+    }
+    expect((await p.service.status(false)).query).toBe("");
   });
 });

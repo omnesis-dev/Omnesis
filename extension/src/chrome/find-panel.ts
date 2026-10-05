@@ -3,9 +3,9 @@
 
 import { h, render as renderComponent, ThinkingDots } from "@omnesis/gateway/agent-ui";
 import { createFindConversation } from "./find-conversation.js";
+import { parseFindQuery } from "./find-query.js";
 import { findQueryTerms } from "./find-results.js";
 import { FIND_STATE_KEY, type FindResult, type FindView } from "./find-service.js";
-import { PANEL_VIEW_KEY } from "./panel-surface.js";
 
 export interface FindPanelView extends FindView {
   openResults?: string[];
@@ -38,7 +38,7 @@ export function highlightFindText(
   text: string,
   query: string,
 ): void {
-  const words = findQueryTerms(query);
+  const words = findQueryTerms(parseFindQuery(query).text);
   element.replaceChildren();
   if (!words.length) {
     element.textContent = text;
@@ -63,8 +63,7 @@ export function highlightFindText(
 export function initFindPanel(
   document: Document,
   api: PanelApi,
-  onActivated?: () => Promise<void> | void,
-  options: { fullPage?: boolean; initialQuery?: string } = {},
+  options: { initialQuery?: string } = {},
 ): void {
   const element = <T extends HTMLElement>(id: string): T => {
     const value = document.getElementById(id);
@@ -77,12 +76,11 @@ export function initFindPanel(
   const status = element("find-status");
   const more = element<HTMLButtonElement>("find-more");
   const findSection = element("find-section"),
-    notesSection = element("notes-section");
+    notesSection = document.getElementById("notes-section");
   let view: FindPanelView | undefined,
     selected = 0,
     generation = 0,
     searching = false;
-  let mode: "find" | "notes" = "notes";
   let dirtyInput = options.initialQuery !== undefined;
   if (dirtyInput) input.value = options.initialQuery!;
   let refreshGeneration = 0;
@@ -92,22 +90,10 @@ export function initFindPanel(
   settings.addEventListener("click", () => {
     void api.runtime.openOptionsPage?.();
   });
-  function selectMode(next: "find" | "notes"): void {
-    if (options.fullPage) next = "find";
-    mode = next;
-    const title = document.querySelector<HTMLElement>(".brand-title");
-    if (title)
-      title.textContent = options.fullPage ? "Omnesis" : next === "find" ? "Find" : "Tell Omnesis";
-    findSection.hidden = next !== "find";
-    notesSection.hidden = next !== "notes";
-    if (next === "find") {
-      input.focus();
-      input.select?.();
-    } else {
-      const textarea = document.getElementById("note-text") as HTMLTextAreaElement | null;
-      if (textarea && !textarea.closest("[hidden]")) textarea.focus();
-    }
-  }
+  findSection.hidden = false;
+  if (notesSection) notesSection.hidden = true;
+  const title = document.querySelector<HTMLElement>(".brand-title");
+  if (title) title.textContent = "Omnesis";
   const conversation = createFindConversation(element("find-agent"), (toolCallId, progressId) => {
     void api.runtime
       .sendMessage({ type: "find-progress-flush", toolCallId, progressId })
@@ -124,8 +110,7 @@ export function initFindPanel(
       );
     }
     if (scroll) rows[selected]?.scrollIntoView?.({ block: "nearest" });
-    if (focus)
-      (rows[selected]?.querySelector(".find-result-open") as HTMLButtonElement | null)?.focus();
+    if (focus) (rows[selected]?.querySelector(".find-result-open") as HTMLElement | null)?.focus();
   }
   async function activate(result: FindResult, newCopy = false): Promise<void> {
     try {
@@ -135,9 +120,9 @@ export function initFindPanel(
         newCopy,
       });
       if (!response?.ok) throw new Error(response?.reason ?? "This result could not open");
-      await onActivated?.();
       void refresh(true);
     } catch (error) {
+      status.hidden = false;
       status.textContent = error instanceof Error ? error.message : "Try again";
     }
   }
@@ -188,15 +173,15 @@ export function initFindPanel(
                   ? "No browser links found. Try a different query or search more results."
                   : `${next.results.length} ${next.results.length === 1 ? "result" : "results"} · ↑ ↓ to choose · Enter to open`));
     element("find-mode").hidden = !agentic;
+    element("find-mode-label").textContent = next.decision?.requested
+      ? "Agentic mode enabled"
+      : "Agentic mode auto enabled";
     const modeProgress = element("find-mode-progress");
     modeProgress.hidden = !agentic || !next.running;
     renderComponent(agentic && next.running ? h(ThinkingDots, {}) : null, modeProgress);
     conversation.render(currentResults && next.enabled ? next : undefined);
     const focusedResult = (document.activeElement?.closest(".find-result") as HTMLElement | null)
       ?.dataset.resultId;
-    const focusedAction = document.activeElement?.classList.contains("find-new-copy")
-      ? ".find-new-copy"
-      : ".find-result-open";
     list.replaceChildren();
     if (!next.enabled || !currentResults) {
       return;
@@ -206,8 +191,8 @@ export function initFindPanel(
       row.id = `find-result-${index}`;
       row.className = "find-result";
       row.dataset.resultId = result.id;
-      const open = document.createElement("button");
-      open.type = "button";
+      const open = document.createElement("a");
+      open.href = result.url;
       open.className = "find-result-open";
       const icon = document.createElement("span");
       icon.className = "find-icon";
@@ -271,20 +256,13 @@ export function initFindPanel(
         body.appendChild(footer);
       }
       open.append(icon, body);
-      open.addEventListener("click", () => {
+      open.addEventListener("click", (event) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
         select(index);
         void activate(result);
       });
-      const copy = document.createElement("button");
-      copy.type = "button";
-      copy.className = "find-new-copy secondary";
-      copy.textContent = "↗";
-      copy.title = "Open a new copy";
-      copy.setAttribute("aria-label", `Open a new copy of ${result.title}`);
-      copy.addEventListener("click", () => {
-        void activate(result, true);
-      });
-      row.append(open, copy);
+      row.append(open);
       list.appendChild(row);
     }
     select(selected, false, false);
@@ -292,7 +270,7 @@ export function initFindPanel(
       (
         [...list.children]
           .find((row) => (row as HTMLElement).dataset.resultId === focusedResult)
-          ?.querySelector(focusedAction) as HTMLButtonElement | null
+          ?.querySelector(".find-result-open") as HTMLElement | null
       )?.focus({ preventScroll: true });
   }
   async function refresh(cached = false): Promise<void> {
@@ -386,19 +364,8 @@ export function initFindPanel(
   });
   api.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
-    if (
-      !options.fullPage &&
-      (changes[PANEL_VIEW_KEY]?.newValue === "find" ||
-        changes[PANEL_VIEW_KEY]?.newValue === "notes")
-    )
-      selectMode(changes[PANEL_VIEW_KEY]!.newValue as "find" | "notes");
     if (FIND_STATE_KEY in changes) void refresh(true);
   });
-  if (options.fullPage) selectMode("find");
-  else
-    void api.storage.local.get(PANEL_VIEW_KEY).then((state) => {
-      selectMode(state[PANEL_VIEW_KEY] === "find" ? "find" : "notes");
-    });
   void refresh().then(() => {
     if (
       options.initialQuery?.trim() &&
@@ -407,6 +374,6 @@ export function initFindPanel(
       input.value === options.initialQuery
     )
       void search();
-    if (mode === "find") input.focus();
+    input.focus();
   });
 }

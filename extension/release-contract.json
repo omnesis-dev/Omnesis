@@ -98,6 +98,16 @@
     },
     {
       "method": "POST",
+      "path": "/browser/find/search/v2",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/browser/find/suggest",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
       "path": "/browser/notes/enable",
       "authenticated": true
     },

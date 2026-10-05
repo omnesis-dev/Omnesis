@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { browserUrl, dedupeFindResults, type FindResult } from "./find-results.js";
+import { parseFindQuery, type FindMode } from "./find-query.js";
 import type { FindView } from "./find-service.js";
 
 interface OmniboxFind {
@@ -30,14 +31,19 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
   let activeTab: chrome.tabs.Tab | undefined;
   let tabLookup: Promise<chrome.tabs.Tab | undefined> | undefined;
   let view: FindView | undefined;
+  let inputMode: FindMode | undefined;
   let ready: Promise<void> = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
-  const defaultSuggestion = (enabled: boolean): void => {
+  const defaultSuggestion = (enabled: boolean, mode?: FindMode): void => {
     void chrome.omnibox
       .setDefaultSuggestion({
         description: enabled
-          ? "Find in Omnesis"
+          ? mode === "direct"
+            ? "Search directly in Omnesis"
+            : mode === "agentic"
+              ? "Agentic search in Omnesis"
+              : "Find in Omnesis"
           : "<dim>Find is unavailable on this paired gateway</dim>",
       })
       .catch(() => undefined);
@@ -55,6 +61,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
     activeTab = undefined;
     tabLookup = undefined;
     view = undefined;
+    inputMode = undefined;
     cancelPending();
     defaultSuggestion(false);
   }
@@ -70,7 +77,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
         if (!session || request !== sessionGeneration) return;
         activeTab = tab;
         view = current;
-        defaultSuggestion(current.enabled);
+        defaultSuggestion(current.enabled, inputMode);
       })
       .catch(() => {
         if (request === sessionGeneration) defaultSuggestion(false);
@@ -81,7 +88,10 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
     const request = ++generation;
     // InputStarted's gate belongs to this session even after its text changes.
     const query = text.trim();
-    if (!session || !query || query.length > 1024) {
+    const parsed = parseFindQuery(query);
+    inputMode = parsed.mode;
+    if (view) defaultSuggestion(view.enabled, inputMode);
+    if (!session || !parsed.text || query.length > 1024) {
       suggest([]);
       return;
     }

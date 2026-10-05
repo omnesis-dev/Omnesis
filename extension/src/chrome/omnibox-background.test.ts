@@ -90,6 +90,26 @@ afterEach(() => {
 });
 
 describe("Omnesis omnibox", () => {
+  it.each([
+    ["/search invented guide", "Search directly in Omnesis"],
+    ["/agent invented guide", "Agentic search in Omnesis"],
+  ])("preserves the explicit mode when submitting %s", async (query, label) => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.start();
+    await vi.advanceTimersByTimeAsync(0);
+    h.change(query, vi.fn());
+    await vi.advanceTimersByTimeAsync(150);
+    expect(h.defaultSuggestion).toHaveBeenLastCalledWith(
+      expect.objectContaining({ description: expect.stringContaining(label) }),
+    );
+    h.enter(query);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.update).toHaveBeenCalledWith(7, {
+      url: `chrome-extension://test/find.html?q=${new URLSearchParams({ q: query }).toString().slice(2)}`,
+    });
+    expect(h.create).not.toHaveBeenCalled();
+  });
   it("debounces index previews, escapes markup, deduplicates destinations and bounds URL suggestions", async () => {
     vi.useFakeTimers();
     const h = harness();

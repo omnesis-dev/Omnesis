@@ -72,6 +72,8 @@ describe("Chrome Web Store release contract", () => {
       { method: "GET", path: "/browser/find/authorization/:id", authenticated: true },
       { method: "GET", path: "/browser/find", authenticated: true },
       { method: "POST", path: "/browser/find/search", authenticated: true },
+      { method: "POST", path: "/browser/find/search/v2", authenticated: true },
+      { method: "POST", path: "/browser/find/suggest", authenticated: true },
       { method: "POST", path: "/browser/notes/enable", authenticated: true },
       { method: "POST", path: "/browser/find/enable", authenticated: true },
       { method: "POST", path: "/browser/notes/edit/enable", authenticated: true },
@@ -109,15 +111,12 @@ describe("Chrome Web Store release contract", () => {
     expect(manifest).not.toHaveProperty("web_accessible_resources");
   });
 
-  it("uses the physical macOS Control key for both panel commands", () => {
+  it("retains the Tell shortcut and offers Find only through the omnibox", () => {
     expect(manifest.commands["tell-omnesis"].suggested_key).toEqual({
       default: "Alt+Shift+N",
       mac: "MacCtrl+Command+T",
     });
-    expect(manifest.commands["find-omnesis"].suggested_key).toEqual({
-      default: "Alt+Shift+F",
-      mac: "MacCtrl+Command+K",
-    });
+    expect(manifest.commands).not.toHaveProperty("find-omnesis");
   });
 
   it("produces the same allowlisted archive across timezone and umask differences", async () => {
@@ -186,7 +185,15 @@ describe("Chrome Web Store release contract", () => {
       expect(packagedManifest).not.toHaveProperty("optional_permissions");
       expect(packagedManifest.permissions).toEqual(expect.arrayContaining(["tabs", "favicon"]));
       expect(packagedManifest.side_panel).toEqual({ default_path: "notes.html" });
-      expect(await archive.file("notes.html")?.async("string")).toContain('src="notes.js"');
+      const notesHtml = await archive.file("notes.html")?.async("string");
+      expect(notesHtml).toContain('src="notes.js"');
+      expect(notesHtml).toContain('id="notes-section"');
+      expect(notesHtml).not.toContain('id="find-section"');
+      const findHtml = await archive.file("find.html")?.async("string");
+      expect(findHtml).toContain('id="find-section"');
+      expect(findHtml).not.toContain('id="notes-section"');
+      expect(await archive.file("popup.html")?.async("string")).not.toContain("find-omnesis");
+      expect(await archive.file("options.html")?.async("string")).not.toContain("find-omnesis");
       expect(await archive.file("find.html")?.async("string")).toContain(
         'class="notes-panel find-page"',
       );

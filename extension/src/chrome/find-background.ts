@@ -10,13 +10,8 @@ import {
   type FindResult,
 } from "./find-service.js";
 import { FIND_TOKEN_KEY } from "./find-credential.js";
-import { activateFindResult, findOpenTab } from "./find-tabs.js";
-import {
-  registerPanelFeature,
-  selectPanelView,
-  setPanelFeature,
-  togglePanelShortcut,
-} from "./panel-surface.js";
+import { findOpenTab } from "./find-tabs.js";
+import { browserUrl } from "./find-results.js";
 
 export function installFindBackground(): {
   clear(): Promise<void>;
@@ -29,7 +24,6 @@ export function installFindBackground(): {
   ): boolean;
   alarm(name: string): void;
 } {
-  registerPanelFeature("find");
   const service = new FindService({
     config: loadConfig,
     read: async () => {
@@ -62,35 +56,12 @@ export function installFindBackground(): {
     },
     fetch: (input, init) => fetch(input, init),
   });
-  let enabled: boolean | undefined;
-  let clearing = false;
   const detached = (task: Promise<unknown>): void => {
     void task.catch(() => undefined);
   };
-  async function refresh(fresh = true): Promise<FindView> {
-    const view = await service.status(fresh);
-    enabled = !clearing && view.enabled;
-    await setPanelFeature("find", enabled);
-    return view;
+  function refresh(fresh = true): Promise<FindView> {
+    return service.status(fresh);
   }
-  async function open(tabId: number): Promise<{ ok: true }> {
-    if (enabled === false || clearing) throw new Error("Enable Find in the extension settings");
-    // The platform's persisted enabled gate supports a cold worker without losing the gesture.
-    const opening = chrome.sidePanel.open({ tabId });
-    await opening;
-    const view = await refresh();
-    if (view.enabled) await selectPanelView("find");
-    return { ok: true };
-  }
-  chrome.commands.onCommand.addListener((command, tab) => {
-    if (
-      command === "find-omnesis" &&
-      tab?.id !== undefined &&
-      !tab.incognito &&
-      !togglePanelShortcut("find", tab)
-    )
-      detached(open(tab.id));
-  });
   async function viewWithTabs(
     fresh = false,
   ): Promise<
@@ -113,17 +84,8 @@ export function installFindBackground(): {
     respond: (value?: unknown) => void,
   ): boolean => {
     const senderPage = sender.url?.split(/[?#]/, 1)[0];
-    const findPage = ["notes.html", "find.html"].some(
-      (path) => senderPage === chrome.runtime.getURL(path),
-    );
-    if (
-      sender.id !== chrome.runtime.id ||
-      !["popup.html", "options.html", "notes.html", "find.html"].some(
-        (path) => senderPage === chrome.runtime.getURL(path),
-      ) ||
-      !message ||
-      typeof message !== "object"
-    )
+    const findPage = senderPage === chrome.runtime.getURL("find.html");
+    if (sender.id !== chrome.runtime.id || !findPage || !message || typeof message !== "object")
       return false;
     const msg = message as {
       type?: string;
@@ -138,14 +100,6 @@ export function installFindBackground(): {
     let task: Promise<unknown>;
     if (msg.type === "find-status") task = viewWithTabs(true);
     else if (msg.type === "find-view") task = viewWithTabs();
-    else if (
-      msg.type === "find-open" &&
-      sender.url === chrome.runtime.getURL("popup.html") &&
-      typeof msg.tabId === "number" &&
-      Number.isInteger(msg.tabId) &&
-      msg.tabId > 0
-    )
-      task = open(msg.tabId);
     else if (
       findPage &&
       (msg.type === "find-update" || msg.type === "find-query") &&
@@ -173,7 +127,15 @@ export function installFindBackground(): {
         if (!view.enabled) throw new Error("Find access is no longer available");
         const result = view.results.find((result) => result.id === msg.resultId);
         if (!result) throw new Error("This result is no longer available. Search again.");
-        await activateFindResult(result, view.canonicalizers, msg.newCopy === true);
+        const url = browserUrl(result.url);
+        if (!url) throw new Error("This result cannot open in a browser");
+        if (msg.newCopy === true) await chrome.tabs.create({ url });
+        else {
+          const tabId = sender.tab?.id;
+          if (tabId === undefined || tabId < 0)
+            throw new Error("Open Find in a browser tab to use this result");
+          await chrome.tabs.update(tabId, { url });
+        }
         return { ok: true };
       });
     else return false;
@@ -208,11 +170,7 @@ export function installFindBackground(): {
       if (name === "omnesis-find-refresh") detached(refresh());
     },
     clear: async () => {
-      enabled = false;
-      clearing = true;
       await service.clear();
-      await setPanelFeature("find", false);
-      clearing = false;
     },
   };
 }

@@ -570,23 +570,18 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       .toBe(true);
     expect(await popup.locator(".brand-title").textContent()).toBe("Omnesis");
     expect(await popup.locator(".brand-actions #tell-omnesis").count()).toBe(1);
-    expect(await popup.locator(".brand-actions #find-omnesis").count()).toBe(1);
+    expect(await popup.locator("#find-omnesis").count()).toBe(0);
     expect(await popup.locator("#tell-omnesis").getAttribute("aria-label")).toBe("Tell Omnesis");
-    expect(await popup.locator("#find-omnesis").getAttribute("aria-label")).toBe("Find in Omnesis");
     const commands = await popup.evaluate(() => chrome.commands.getAll());
-    for (const [id, label] of [
-      ["tell-omnesis", "Tell Omnesis"],
-      ["find-omnesis", "Find in Omnesis"],
-    ]) {
-      const shortcut = commands.find((command) => command.name === id)?.shortcut;
-      await expect
-        .poll(() => popup.locator(`#${id}`).getAttribute("title"))
-        .toBe(
-          shortcut
-            ? `${label} · ${shortcut}`
-            : `${label} · Assign a shortcut in chrome://extensions/shortcuts`,
-        );
-    }
+    expect(commands.some((command) => command.name === "find-omnesis")).toBe(false);
+    const shortcut = commands.find((command) => command.name === "tell-omnesis")?.shortcut;
+    await expect
+      .poll(() => popup.locator("#tell-omnesis").getAttribute("title"))
+      .toBe(
+        shortcut
+          ? `Tell Omnesis · ${shortcut}`
+          : "Tell Omnesis · Assign a shortcut in chrome://extensions/shortcuts",
+      );
     // The popup caches the article before the trusted click gives this test tab focus.
     await popup.locator("#tell-omnesis").click();
     await expect
@@ -716,7 +711,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     await article.close();
   }, 120_000);
 
-  test("Find searches browser links and focuses existing tabs while preserving notes", async () => {
+  test("Find opens browser links in its own tab while preserving notes", async () => {
     const articleUrl = `${FIXTURE_ORIGIN}/find-waypoint`;
     const webTitle = "Waypoint research notebook";
     const notionTitle =
@@ -800,23 +795,10 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     });
     await options.close();
     const article = await openPage(articleUrl);
-    const popup = await openPage(popupUrl);
-    await article.bringToFront();
-    await popup.reload();
-    await popup.locator("#find-omnesis").waitFor({ state: "visible", timeout: 20_000 });
-    await popup.locator("#find-omnesis").click();
-    await expect
-      .poll(async () => (await extensionStorage())["omnesis.panel.view.v1"], {
-        timeout: 10_000,
-        interval: 100,
-      })
-      .toBe("find");
-    await popup.close();
-    const panel = await openPage(`chrome-extension://${TEST_EXTENSION_ID}/notes.html`);
-    await panel.setViewportSize({ width: 380, height: 820 });
+    const findUrl = `chrome-extension://${TEST_EXTENSION_ID}/find.html?q=Waypoint`;
+    const panel = await openPage(findUrl);
+    await panel.setViewportSize({ width: 1100, height: 820 });
     await panel.locator("#find-section").waitFor({ state: "visible", timeout: 20_000 });
-    await panel.locator("#find-query").fill("Waypoint");
-    await panel.locator("#find-query").press("Enter");
     // The active fixture page may also be captured under its canonical URL hash.
     // Verify the intended destinations individually rather than counting unrelated captures.
     for (const title of [webTitle, notionTitle, "Waypoint email guide"])
@@ -842,25 +824,24 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     await expect.poll(() => row.locator(".find-open-badge").textContent()).toBe("Open tab");
     expect(await panel.locator("#find-results mark").count()).toBeGreaterThan(0);
     await panel.screenshot({ path: "/tmp/omnesis-extension-find-results.png", fullPage: true });
+    expect(await panel.locator(".find-new-copy").count()).toBe(0);
+    expect(await row.locator(".find-result-open").getAttribute("href")).toBe(articleUrl);
     const pageCount = context.pages().length;
-    await row.locator(".find-result-open").click();
-    await expect
-      .poll(
-        async () =>
-          worker.evaluate(async (url) => {
-            const tabs = await chrome.tabs.query({ active: true });
-            return tabs.some((tab) => tab.url === url);
-          }, articleUrl),
-        { timeout: 10_000, interval: 100 },
-      )
-      .toBe(true);
-    expect(context.pages()).toHaveLength(pageCount);
+    // The keyboard modifier still opens another tab without a dedicated button.
+    await row.locator(".find-result-open").focus();
+    await panel.locator("#find-query").focus();
     const newPage = context.waitForEvent("page");
-    await row.locator(".find-new-copy").click();
+    await panel.locator("#find-query").press("Control+Enter");
     const copy = await newPage;
     await expect.poll(() => copy.url(), { timeout: 10_000, interval: 100 }).toBe(articleUrl);
     expect(context.pages()).toHaveLength(pageCount + 1);
+    expect(panel.url()).toBe(findUrl);
     await copy.close();
+    // A normal card click navigates this Find tab even when the destination is already open.
+    await row.locator(".find-result-open").click();
+    await expect.poll(() => panel.url(), { timeout: 10_000, interval: 100 }).toBe(articleUrl);
+    expect(article.url()).toBe(articleUrl);
+    expect(context.pages()).toHaveLength(pageCount);
     await panel.close();
     await article.close();
   }, 180_000);

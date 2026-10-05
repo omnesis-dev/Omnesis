@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-export const PANEL_VIEW_KEY = "omnesis.panel.view.v1";
-const features: Partial<Record<"notes" | "find", boolean | undefined>> = {};
-export function registerPanelFeature(feature: "notes" | "find"): void {
+const features: Partial<Record<"notes", boolean | undefined>> = {};
+export function registerPanelFeature(feature: "notes"): void {
   features[feature] = undefined;
   installPanelConnections();
 }
 let lane: Promise<unknown> = Promise.resolve();
 
-/** One native panel serves independently authorized features, including cold worker gestures. */
-export function setPanelFeature(feature: "notes" | "find", enabled: boolean): Promise<void> {
+/** The native panel serves Tell Omnesis, including cold worker gestures. */
+export function setPanelFeature(feature: "notes", enabled: boolean): Promise<void> {
   features[feature] = enabled;
   const task = lane.then(async () => {
     if (Object.values(features).some((value) => value === true))
@@ -22,12 +21,8 @@ export function setPanelFeature(feature: "notes" | "find", enabled: boolean): Pr
   return task;
 }
 
-export function selectPanelView(view: "notes" | "find"): Promise<void> {
-  return chrome.storage.local.set({ [PANEL_VIEW_KEY]: view });
-}
-
 export const PANEL_PORT = "omnesis-panel";
-type PanelFeature = "notes" | "find";
+type PanelFeature = "notes";
 const panels = new Map<
   number,
   { port: chrome.runtime.Port; feature?: PanelFeature; visible: boolean; tabId?: number }
@@ -67,7 +62,7 @@ function installPanelConnections(): void {
     let disconnected = false;
     port.onMessage.addListener((message) => {
       const value = message as { feature?: unknown; visible?: unknown } | null;
-      if (value?.feature !== "notes" && value?.feature !== "find") return;
+      if (value?.feature !== "notes") return;
       feature = value.feature;
       visible = value.visible === true;
       const panel = windowId === undefined ? undefined : panels.get(windowId);
@@ -120,7 +115,7 @@ export function connectPanelPage(
 ): void {
   let port: chrome.runtime.Port;
   let stopped = false;
-  let feature: PanelFeature | undefined;
+  const feature: PanelFeature = "notes";
   const report = () => {
     if (stopped) return;
     try {
@@ -151,17 +146,6 @@ export function connectPanelPage(
     report();
   }
   connect();
-  void chrome.storage.local.get(PANEL_VIEW_KEY).then((stored) => {
-    feature = stored[PANEL_VIEW_KEY] === "find" ? "find" : "notes";
-    report();
-  });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    const view = changes[PANEL_VIEW_KEY]?.newValue;
-    if (area === "local" && (view === "notes" || view === "find")) {
-      feature = view;
-      report();
-    }
-  });
   document.addEventListener("visibilitychange", report);
   globalThis.addEventListener(
     "pagehide",

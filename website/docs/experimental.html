@@ -228,24 +228,31 @@
           access.
         </p>
         <p>
-          Press <strong>Alt + Shift + F</strong> (<strong>Control + Command + K</strong> on macOS)
-          or choose <strong>Find</strong> in the popup. Search results show titles, matching
-          snippets, site icons and source links. Select a result with the keyboard and press Enter,
-          or click it, to switch to a matching tab and its window. If no safe match exists, the
-          source link opens in a new tab. The separate new-tab action opens another copy. The query
-          and results remain available when you reopen the panel. The configured decision model
-          chooses direct index search or a read-only agent search. A blue indicator marks automatic
-          agentic mode. Search views show streamed agent text and tool activity, followed by
-          structured search results. Without an enabled decision model, Find uses direct search.
-          Each query starts a fresh task, with no timeline or follow-up conversation. Results can
-          also link directly to a source record when its provider supplies a browser URL; a
-          separately captured web page is not required.
+          Open Find through <code>om</code> followed by Space or Tab in Chrome's address bar. Search
+          results show titles, matching snippets, site icons and source links. Select a result with
+          the keyboard and press Enter, or click it, to navigate that same Find tab. Ctrl or Command
+          + Enter opens another tab. Query and result state remain available. The configured
+          decision model chooses direct index search or a read-only agent search. A blue indicator
+          marks automatic agentic mode. Search views show streamed agent text and tool activity,
+          followed by structured search results. Without an enabled decision model, Find uses direct
+          search. Each query starts a fresh task, with no timeline or follow-up conversation.
+          Results can also link directly to a source record when its provider supplies a browser
+          URL; a separately captured web page is not required.
         </p>
         <p>
-          Chrome requests tab and favicon access at installation or upgrade. Find matches open tabs
-          and displays available site icons automatically. Tab URLs are compared locally; the tab
-          list is not uploaded. Icons use Chrome's local favicon service, with a fallback when an
-          icon is unavailable. Neither feature requests browser-history access.
+          Use <code>om /search your query</code> for direct index search, or
+          <code>om /agent your query</code> for agent research. Both bypass the decision model's
+          routing judgement; plain <code>om your query</code> keeps automatic routing. Agent
+          research requires an enabled decision model. Gateways without explicit-mode support report
+          that limitation instead of silently choosing another mode. Suggestions always use the
+          index.
+        </p>
+        <p>
+          Chrome requests tab and favicon access at installation or upgrade. Find indicates source
+          links already open in other tabs and displays available site icons automatically. Tab URLs
+          are compared locally; the tab list is not uploaded. Icons use Chrome's local favicon
+          service, with a fallback when an icon is unavailable. Neither feature requests
+          browser-history access.
         </p>
         <p>
           In Chrome's address bar, type <code>om</code> followed by Space or Tab, then your query.

@@ -34,6 +34,8 @@ export class FindSearchService {
     signal.throwIfAborted();
     emit({ type: "find.decision", payload: decision });
     try {
+      if (decision.requested && decision.mode === "agentic" && decision.status !== "decided")
+        throw new Error(decision.reason);
       if (decision.mode === "direct") {
         if (!this.deps.searchPipeline) throw new Error("The search index is unavailable.");
         const response = await this.deps.searchPipeline.search({

@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./chrome-api.js";
-import { initFindEntry } from "./find-entry.js";
 import { initNotesEntry } from "./notes-entry.js";
 import { initPopup } from "./popup-page.js";
 import { initEntryShortcuts } from "./entry-shortcuts.js";
@@ -11,6 +10,5 @@ import { initEntryShortcuts } from "./entry-shortcuts.js";
 document.addEventListener("DOMContentLoaded", () => {
   initPopup(document, chrome);
   initNotesEntry(document, chrome);
-  initFindEntry(document, chrome);
   initEntryShortcuts(document, chrome.commands);
 });

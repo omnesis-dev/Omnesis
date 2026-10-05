@@ -202,6 +202,23 @@ const recipes: Record<RouteKey, Recipe> = {
     expected: 200,
     findCredential: true,
   },
+  "POST /browser/find/search/v2": {
+    build: () => ({
+      path: "/browser/find/search/v2",
+      init: json("POST", { version: 2, mode: "direct", text: "example", limit: 25 }),
+    }),
+    expected: 200,
+    findCredential: true,
+  },
+  "POST /browser/find/suggest": {
+    build: () => ({
+      path: "/browser/find/suggest",
+      init: json("POST", { version: 1, text: "example", limit: 5 }),
+    }),
+    // This fixture deliberately has no search index; authority and boundary pass before availability.
+    expected: 503,
+    findCredential: true,
+  },
   "POST /browser/find/authorization": {
     build: () => ({
       path: "/browser/find/authorization",
@@ -459,6 +476,11 @@ describe("optional browser features require explicit experimental mode", () => {
         })
       ).status,
     ).toBe(404);
+    for (const [path, body] of [
+      ["/browser/find/search/v2", { version: 2, mode: "agentic", text: "hidden query" }],
+      ["/browser/find/suggest", { version: 1, text: "hidden query" }],
+    ] as const)
+      expect((await call(path, findToken, json("POST", body))).status).toBe(404);
     expect(
       (
         await call("/browser/notes", notesToken, {

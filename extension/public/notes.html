@@ -14,6 +14,7 @@
       </div>
     </header>
 
+    <!-- find:start -->
     <section id="find-section" hidden>
       <form id="find-form" hidden>
         <div class="find-search-box">
@@ -51,7 +52,7 @@
             d="M12.983 21.186a1 1 0 0 1-1.966 0 10 10 0 0 0-8.203-8.203 1 1 0 0 1 0-1.966 10 10 0 0 0 8.203-8.203 1 1 0 0 1 1.966 0 10 10 0 0 0 8.203 8.203 1 1 0 0 1 0 1.966 10 10 0 0 0-8.203 8.203"
           />
         </svg>
-        <span>Agentic mode auto enabled</span>
+        <span id="find-mode-label">Agentic mode auto enabled</span>
         <span id="find-mode-progress" hidden></span>
       </div>
       <div id="find-agent" class="find-agent" hidden></div>
@@ -61,6 +62,8 @@
         ↑ ↓ to choose · Enter to open · Ctrl / ⌘ + Enter for a new copy.
       </p>
     </section>
+    <!-- find:end -->
+    <!-- notes:start -->
     <section id="notes-section">
       <p id="notes-status" role="status" aria-live="polite">Opening your note…</p>
       <div id="notes-rejected"></div>
@@ -107,6 +110,7 @@
         <p class="hint">Ctrl / ⌘ + Enter to save. Drafts are kept in this browser.</p>
       </form>
     </section>
+    <!-- notes:end -->
     <script type="module" src="notes.js"></script>
   </body>
 </html>

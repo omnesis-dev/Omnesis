@@ -9,10 +9,7 @@ export function initEntryShortcuts(
   void commands
     .getAll()
     .then((configured) => {
-      for (const [id, name, label] of [
-        ["tell-omnesis", "tell-omnesis", "Tell Omnesis"],
-        ["find-omnesis", "find-omnesis", "Find in Omnesis"],
-      ] as const) {
+      for (const [id, name, label] of [["tell-omnesis", "tell-omnesis", "Tell Omnesis"]] as const) {
         const button = document.getElementById(id);
         if (!button) continue;
         const shortcut = configured.find((command) => command.name === name)?.shortcut;

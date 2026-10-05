@@ -2,6 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  browserFindSearchBody,
+  browserFindModeSearchBody,
+} from "../../http/schemas/browser-find.js";
 import { FindSearchService } from "./service.js";
 import type { DecisionCapability } from "@omnesis/core";
 import type { SearchResponse } from "../types.js";
@@ -65,6 +69,54 @@ describe("Find search orchestration", () => {
     ).toEqual(["https://example.org/guide", "mobilenotes://note/fictional"]);
     expect(f.getAgentService).not.toHaveBeenCalled();
     expect(f.search).toHaveBeenCalledWith({ text: "ownership", limit: 25 });
+  });
+
+  it("forced direct search does not resolve or call a decision model", async () => {
+    const resolve = vi.fn(() => {
+      throw new Error("Must not resolve a model");
+    });
+    const f = fixture(resolve);
+    await f.service.search({ text: "ownership", mode: "direct" }, f.execution);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(f.getAgentService).not.toHaveBeenCalled();
+    expect(f.search).toHaveBeenCalledOnce();
+    expect(f.events[0]).toMatchObject({
+      type: "find.decision",
+      payload: { mode: "direct", requested: true },
+    });
+    expect(f.events.at(-1)).toEqual({ type: "find.complete", payload: { mode: "direct" } });
+  });
+
+  it("rejects forced agent research without enabled decision configuration rather than falling back", async () => {
+    const f = fixture();
+    await f.service.search({ text: "a page", mode: "agentic" }, f.execution);
+    expect(f.events.map((event) => event.type)).toEqual(["find.decision", "find.error"]);
+    expect(f.events[0]).toMatchObject({
+      payload: { mode: "agentic", status: "not_configured", requested: true },
+    });
+    expect(f.search).not.toHaveBeenCalled();
+    expect(f.getAgentService).not.toHaveBeenCalled();
+  });
+
+  it("keeps old mode-less request bodies compatible and rejects invalid requested modes", () => {
+    expect(browserFindSearchBody.parse({ text: "a page" })).toEqual({ text: "a page", limit: 25 });
+    expect(browserFindSearchBody.parse({ text: "a page", version: 2, mode: "agentic" }).mode).toBe(
+      "agentic",
+    );
+    expect(
+      browserFindSearchBody.safeParse({ text: "a page", version: 1, mode: "agentic" }).success,
+    ).toBe(false);
+    expect(browserFindSearchBody.safeParse({ text: "a page", mode: "agentic" }).success).toBe(
+      false,
+    );
+    expect(browserFindSearchBody.safeParse({ text: "a page", version: 2 }).success).toBe(false);
+    expect(browserFindModeSearchBody.safeParse({ text: "a page" }).success).toBe(false);
+    expect(
+      browserFindModeSearchBody.parse({ text: "a page", version: 2, mode: "direct" }).mode,
+    ).toBe("direct");
+    expect(browserFindSearchBody.safeParse({ text: "a page", mode: "invented" }).success).toBe(
+      false,
+    );
   });
 
   it("shows the actual agentic decision when the agent is unavailable, without claiming a completed search", async () => {

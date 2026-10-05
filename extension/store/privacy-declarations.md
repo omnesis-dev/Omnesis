@@ -16,7 +16,7 @@ Page notes and Find are experimental and hidden unless the paired gateway runs w
 - `scripting`: registers and repairs the capture content script after the user grants optional HTTPS page access. The popup uses that same optional host grant to explain whether the current HTTPS page is being watched.
 - `activeTab`: reads the current page context and selected passage after the user explicitly invokes Tell Omnesis.
 - `contextMenus`: offers Tell Omnesis for the current page or selected text when the paired gateway advertises compatible notes support and experimental mode.
-- `sidePanel`: hosts the note composer and Find results alongside the current page.
+- `sidePanel`: hosts the note composer alongside the current page.
 - `tabs`: lets Find compare source links against the URLs of open tabs across the profile automatically. Matching happens locally; the tab list is not sent to the gateway. Chrome requests this permission at installation or upgrade.
 - `favicon`: displays site icons through Chrome’s local favicon service automatically. Chrome grants this permission at installation or upgrade; Find does not request another permission while searching. Missing icons use a fallback.
 - Optional `https://*/*` host access: reads rendered HTTPS pages after an explicit Chrome permission prompt. It is optional at installation, requested during pairing, and removed on unpair. Incognito is disabled.

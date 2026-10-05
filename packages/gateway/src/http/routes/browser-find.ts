@@ -4,7 +4,11 @@
 import { experimentalEnabled } from "@omnesis/core";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
-import { browserFindSearchBody, browserFindSuggestBody } from "../schemas/browser-find.js";
+import {
+  browserFindSearchBody,
+  browserFindModeSearchBody,
+  browserFindSuggestBody,
+} from "../schemas/browser-find.js";
 import { authorizationBody } from "../schemas/browser-notes.js";
 import type { BrowserFindStreamService } from "../services/BrowserFindStreamService.js";
 import type { RouteApp } from "./types.js";
@@ -62,6 +66,9 @@ export function mountBrowserFindRoutes(
       const { version: _version, ...input } = c.req.valid("json");
       return c.json(await service.suggest(c.get("auth"), input, c.req.raw.signal));
     },
+  );
+  app.post("/browser/find/search/v2", scope.read(), validateJson(browserFindModeSearchBody), (c) =>
+    searches.stream(c.get("auth"), c.req.valid("json"), c.req.raw.signal),
   );
   app.post("/browser/find/search", scope.read(), validateJson(browserFindSearchBody), (c) =>
     searches.stream(c.get("auth"), c.req.valid("json"), c.req.raw.signal),

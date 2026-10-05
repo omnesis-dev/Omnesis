@@ -51,13 +51,6 @@
         "mac": "MacCtrl+Command+T"
       },
       "description": "Tell Omnesis about the current page or selection"
-    },
-    "find-omnesis": {
-      "suggested_key": {
-        "default": "Alt+Shift+F",
-        "mac": "MacCtrl+Command+K"
-      },
-      "description": "Find an Omnesis result and switch to its open tab"
     }
   },
   "omnibox": {
