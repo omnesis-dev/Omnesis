@@ -561,6 +561,14 @@ button.secondary:hover {
   background: transparent;
   color: var(--accent);
 }
+.find-search-box button:disabled {
+  color: var(--text-secondary);
+  opacity: 0.45;
+  cursor: default;
+}
+.find-search-box button svg {
+  display: block;
+}
 .find-status {
   color: var(--text-secondary);
   font-size: 12px;

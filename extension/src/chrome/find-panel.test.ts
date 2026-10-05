@@ -305,6 +305,123 @@ describe("Find panel", () => {
       "first",
     );
   });
+  it.each(["button", "input", "result", "page"])(
+    "reruns direct results in agent mode from the %s without opening a result",
+    async (trigger) => {
+      const p = panel();
+      await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+      const button = p.document.getElementById("find-agent-search")!;
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(button.getAttribute("title")).toBe("Search with agent mode");
+      if (trigger === "button") button.click();
+      else {
+        const target =
+          trigger === "input"
+            ? p.input
+            : trigger === "result"
+              ? p.document.querySelector(".find-result-open")!
+              : p.document.body;
+        const event = new p.window.Event("keydown", { bubbles: true, cancelable: true });
+        Object.assign(event, { key: "Enter", shiftKey: true });
+        target.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+      }
+      await vi.waitFor(() =>
+        expect(p.send).toHaveBeenCalledWith({
+          type: "find-query",
+          query: "invented",
+          mode: "agentic",
+        }),
+      );
+      expect(
+        p.send.mock.calls.some(([message]) => (message as { type: string }).type === "find-result"),
+      ).toBe(false);
+    },
+  );
+  it("overrides a direct command and suppresses duplicate agent submissions", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    p.input.value = "/search invented";
+    p.input.dispatchEvent(new p.window.Event("input"));
+    const button = p.document.getElementById("find-agent-search")!;
+    button.click();
+    button.click();
+    expect(
+      p.send.mock.calls.filter(([message]) => (message as { type: string }).type === "find-query"),
+    ).toEqual([[{ type: "find-query", query: "invented", mode: "agentic" }]]);
+    expect(p.input.value).toBe("invented");
+  });
+  it("allows retry after an agent request fails", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    const button = p.document.getElementById("find-agent-search")!;
+    p.send.mockRejectedValueOnce(new Error("Gateway unavailable"));
+    button.click();
+    await vi.waitFor(() =>
+      expect(p.document.getElementById("find-status")?.textContent).toBe("Gateway unavailable"),
+    );
+    expect(button.hasAttribute("disabled")).toBe(false);
+    button.click();
+    await vi.waitFor(() =>
+      expect(
+        p.send.mock.calls.filter(
+          ([message]) => (message as { type: string }).type === "find-query",
+        ),
+      ).toHaveLength(2),
+    );
+  });
+  it.each([false, true])(
+    "does not rerun an already agentic query (requested=%s)",
+    async (requested) => {
+      const p = panel();
+      await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+      p.update({ decision: { mode: "agentic", status: "decided", reason: "Research", requested } });
+      const button = p.document.getElementById("find-agent-search")!;
+      await vi.waitFor(() => expect(button.hasAttribute("disabled")).toBe(true));
+      const event = new p.window.Event("keydown", { bubbles: true, cancelable: true });
+      Object.assign(event, { key: "Enter", shiftKey: true });
+      p.input.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(
+        p.send.mock.calls.some(([message]) =>
+          ["find-query", "find-result"].includes((message as { type: string }).type),
+        ),
+      ).toBe(false);
+      p.input.value = "another invented query";
+      p.input.dispatchEvent(new p.window.Event("input"));
+      expect(button.hasAttribute("disabled")).toBe(false);
+    },
+  );
+  it("disables agent search for empty input and while the current query runs", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    const button = p.document.getElementById("find-agent-search")!;
+    p.update({ running: true });
+    await vi.waitFor(() => expect(button.hasAttribute("disabled")).toBe(true));
+    p.update({ running: false });
+    await vi.waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+    p.input.value = "   ";
+    p.input.dispatchEvent(new p.window.Event("input"));
+    expect(button.hasAttribute("disabled")).toBe(true);
+    button.click();
+    expect(
+      p.send.mock.calls.some(([message]) => (message as { type: string }).type === "find-query"),
+    ).toBe(false);
+  });
+  it.each([{ isComposing: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }])(
+    "leaves modified/composing Shift+Enter alone (%j)",
+    async (modifiers) => {
+      const p = panel();
+      await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+      const event = new p.window.Event("keydown", { bubbles: true, cancelable: true });
+      Object.assign(event, { key: "Enter", shiftKey: true, ...modifiers });
+      p.input.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(
+        p.send.mock.calls.some(([message]) => (message as { type: string }).type === "find-query"),
+      ).toBe(false);
+    },
+  );
   it("does not offer a search-more control", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
