@@ -10,11 +10,12 @@ export const BROWSER_FIND_AGENT_RESULT_LIMIT = 30;
 export const BROWSER_FIND_TIMEOUT_MS = 180_000;
 
 /**
- * How long a Browser Find agent task waits out a provider rate limit. A search
- * is one task the user cannot reply to, so a per-minute token quota that resets
- * within a minute should delay it rather than fail it and throw away its
- * research. The wait is capped at half the search deadline so the turn still
- * has time to finish once the quota resets.
+ * How long each model request of a Browser Find agent task waits out a provider
+ * rate limit. A search is one task the user cannot reply to, so a per-minute
+ * token quota that resets within a minute should delay it rather than fail it
+ * and throw away its research. One request's wait is capped at half the search
+ * deadline so the search can still finish after a reset; the deadline itself
+ * bounds the whole search however many requests it makes.
  */
 export const BROWSER_FIND_RATE_LIMIT_PATIENCE: Readonly<Required<RateLimitPatience>> = {
   maxAttempts: 4,

@@ -105,6 +105,24 @@ describe("TypeSafeDecision", () => {
     expect(sleeps).toEqual([2000, 1000]);
   });
 
+  it("stops waiting out a rate limit when the caller cancels", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(429, "slow down", { "retry-after": "10" }));
+    const controller = new AbortController();
+    const started = Date.now();
+    // The production sleep, not the helper's instant one: the wait itself must end on abort.
+    const decided = new TypeSafeDecision({
+      url: "http://127.0.0.1:9/v1/systemone",
+      model: "jev-1.13.0",
+      apiKey: TEST_KEY,
+      allowRemoteInference: false,
+      fetchFn: fetchFn as unknown as typeof fetch,
+    }).decide(request, { signal: controller.signal });
+    setTimeout(() => controller.abort(new Error("search canceled")), 20);
+    await expect(decided).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it("throws on a rejected key without retrying", async () => {
     const fetchFn = vi.fn(async () =>
       jsonResponse(401, "invalid key", { "x-typesafe-request-id": "req_abc" }),

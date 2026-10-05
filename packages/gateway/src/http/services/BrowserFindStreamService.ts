@@ -11,7 +11,6 @@ import {
 import type { AuthContext } from "../routes/types.js";
 import type { BrowserFindService } from "./BrowserFindService.js";
 
-
 export interface BrowserFindSearchRunner {
   search(input: FindSearchInput, context: FindSearchExecution): Promise<void>;
 }

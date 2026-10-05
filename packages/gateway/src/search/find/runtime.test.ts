@@ -18,7 +18,7 @@ import {
   createBrowserResultsTool,
 } from "./results-tool.js";
 import { buildBrowserFindRuntime } from "./runtime.js";
-import { BROWSER_FIND_RATE_LIMIT_PATIENCE } from "./types.js";
+import { BROWSER_FIND_RATE_LIMIT_PATIENCE, BROWSER_FIND_TIMEOUT_MS } from "./types.js";
 import type { AgentEvent } from "@omnesis/core";
 
 const document: DocumentPort = {
@@ -711,12 +711,12 @@ describe("ephemeral read-only browser search", () => {
         onEvent: () => {},
         onResults: () => {},
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("could not present supported search results");
     expect(backend.inputs).toHaveLength(3);
     for (const input of backend.inputs)
       expect(input.rateLimitPatience).toEqual(BROWSER_FIND_RATE_LIMIT_PATIENCE);
-    // The patience must leave the search time to finish before its deadline.
-    expect(BROWSER_FIND_RATE_LIMIT_PATIENCE.maxTotalDelayMs).toBeGreaterThanOrEqual(60_000);
+    // One request's wait must leave the search time to finish before its deadline.
+    expect(BROWSER_FIND_RATE_LIMIT_PATIENCE.maxTotalDelayMs).toBeLessThan(BROWSER_FIND_TIMEOUT_MS);
     await service.dispose();
   });
 
