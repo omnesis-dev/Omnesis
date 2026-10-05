@@ -44,8 +44,6 @@ interface FindState {
   resultsQuery: string;
   resultsMode?: FindMode;
   results: FindResult[];
-  limit: number;
-  hasMore: boolean;
   decision?: FindDecision;
   agentText?: string;
   complete: boolean;
@@ -62,7 +60,6 @@ export interface FindView {
   resultsQuery: string;
   resultsMode?: FindMode;
   results: FindResult[];
-  hasMore: boolean;
   decision?: FindDecision;
   agentText?: string;
   activity?: string;
@@ -83,7 +80,6 @@ interface FindDeps {
 function eraseRetrievedCache(state: FindState): void {
   state.results = [];
   state.resultsQuery = "";
-  state.hasMore = false;
   state.complete = true;
   delete state.agentText;
   delete state.decision;
@@ -131,8 +127,6 @@ export class FindService {
       query: "",
       resultsQuery: "",
       results: [],
-      limit: 25,
-      hasMore: false,
       complete: true,
     };
     if (raw?.pairing !== empty.pairing) return { config, state: empty };
@@ -180,8 +174,6 @@ export class FindService {
               readCanonicalizers(raw.canonicalizers),
             )
           : [],
-        limit: [25, 50, 100, 200].includes(raw.limit ?? 0) ? raw.limit! : 25,
-        hasMore: raw.hasMore === true,
         complete: raw.complete !== false,
         progressRevision: typeof raw.progressRevision === "number" ? raw.progressRevision : 0,
         ...(raw.decision &&
@@ -378,7 +370,6 @@ export class FindService {
       resultsMode: state?.resultsMode,
       resultsQuery: state?.resultsQuery ?? "",
       results: enabled ? state!.results : [],
-      hasMore: enabled && !!state?.hasMore,
       decision: enabled ? state?.decision : undefined,
       agentText: enabled ? state?.agentText : undefined,
       activity: enabled ? this.active?.activity : undefined,
@@ -504,7 +495,7 @@ export class FindService {
       if (this.suggestionAbort === controller) this.suggestionAbort = undefined;
     }
   }
-  async search(query: string, more = false, mode?: FindMode | null): Promise<FindView> {
+  async search(query: string, mode?: FindMode | null): Promise<FindView> {
     this.suggestionAbort?.abort();
     query = query.slice(0, MAX_FIND_QUERY);
     const parsed = parseFindQuery(query);
@@ -544,15 +535,11 @@ export class FindService {
       if (this.active?.generation === generation) this.active.mode = requestedMode;
       if (this.transcript?.query === query) this.transcript.mode = requestedMode;
       const authorizationToken = state.token;
-      const limit =
-        more && state.resultsQuery === query && state.resultsMode === requestedMode
-          ? Math.min(state.limit * 2, 200)
-          : 25;
+      const limit = 30;
       state.resultsQuery = query;
       state.resultsMode = requestedMode;
       state.results = [];
       state.complete = false;
-      state.hasMore = false;
       state.agentText = "";
       delete state.decision;
       delete state.error;
@@ -646,8 +633,6 @@ export class FindService {
                   [...state.results, ...cards],
                   state.canonicalizers,
                 );
-                state.hasMore = payload.hasMore === true && limit < 200;
-                state.limit = limit;
               } else if (type === "find.complete") state.complete = true;
               else if (type === "find.error" || type === "agent.error") {
                 if (payload.code === "FIND_PERMISSION_REVOKED") throw new FindHttpError(401);

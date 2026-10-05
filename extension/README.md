@@ -132,4 +132,6 @@ Chrome's address bar accepts **om + Space/Tab**, then a query. Search-pipeline s
 
 On compatible experimental gateways, `om /search your query` forces direct index retrieval and `om /agent your query` forces agent research, bypassing the routing judgement. Plain `om your query` uses automatic routing. Forced agent research still requires an enabled decision model. Older gateways report unsupported explicit modes; they do not silently change the requested mode. Suggestions always use the index.
 
-Routing commands are removed from the displayed query; the selected mode is retained separately when editing, resubmitting or loading more results. Find is a standalone task: the agent cannot ask follow-up questions. Opening Tell Omnesis with a selected passage immediately focuses the composer, and saving dismisses the note pane.
+Routing commands are removed from the displayed query; the selected mode is retained separately when editing or resubmitting. Find is a standalone task: the agent cannot ask follow-up questions. Opening Tell Omnesis with a selected passage immediately focuses the composer, and saving dismisses the note pane.
+
+Each submitted Find query requests up to 30 results in one pass. Arrow keys navigate the visible cards from the query field or elsewhere on the page.

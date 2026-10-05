@@ -238,7 +238,7 @@ describe("Find authorization and durable results", () => {
     expect(init?.headers).toMatchObject({ authorization: "Bearer read-token" });
     expect(JSON.parse(String(init?.body))).toMatchObject({
       text: "invented",
-      limit: 25,
+      limit: 30,
       timeZone: expect.any(String),
     });
     const reopened = new FindService(h.deps);
@@ -287,7 +287,7 @@ describe("Find authorization and durable results", () => {
     h.unpair();
     expect(await h.service.status()).toMatchObject({ enabled: false, results: [] });
   });
-  it("overfetches bounded ranked results after client filtering rather than claiming pagination", async () => {
+  it("requests thirty ranked results on every query without a pagination affordance", async () => {
     const h = harness();
     await enable(h);
     const limits: number[] = [];
@@ -299,11 +299,12 @@ describe("Find authorization and durable results", () => {
         ),
       });
     });
-    expect(await h.service.search("guide")).toMatchObject({ hasMore: true, results: [] });
-    expect((await h.service.search("guide", true)).results).toHaveLength(25);
-    await h.service.search("guide", true);
-    expect(await h.service.search("guide", true)).toMatchObject({ hasMore: false });
-    expect(limits).toEqual([25, 50, 100, 200]);
+    for (const query of ["guide", "guide", "another guide"]) {
+      const view = await h.service.search(query);
+      expect(view.results).toHaveLength(5);
+      expect(view).not.toHaveProperty("hasMore");
+    }
+    expect(limits).toEqual([30, 30, 30]);
   });
   it("uses provider type attribution without exposing account identifiers", async () => {
     const h = harness();
@@ -359,20 +360,23 @@ describe("Find authorization and durable results", () => {
       "last",
     ]);
   });
-  it("keeps one strongest card per direct destination when expanding the ranked pool", async () => {
+  it("keeps one strongest card per direct destination on repeated searches", async () => {
     const h = harness();
     await enable(h);
-    h.search(async ({ limit }) =>
+    h.search(async () =>
       h.respond({
         results: [
           hit("strongest", "https://example.org/guide"),
           hit("same-page-chunk", "https://example.org/guide/"),
-          ...(limit > 25 ? [hit("new-page", "https://example.org/new")] : []),
+          hit("new-page", "https://example.org/new"),
         ],
       }),
     );
-    expect((await h.service.search("guide")).results.map((card) => card.id)).toEqual(["strongest"]);
-    expect((await h.service.search("guide", true)).results.map((card) => card.id)).toEqual([
+    expect((await h.service.search("guide")).results.map((card) => card.id)).toEqual([
+      "strongest",
+      "new-page",
+    ]);
+    expect((await h.service.search("guide")).results.map((card) => card.id)).toEqual([
       "strongest",
       "new-page",
     ]);
@@ -445,7 +449,6 @@ describe("Find authorization and durable results", () => {
       query: "guide",
       results: [],
       resultsQuery: "",
-      hasMore: false,
     });
     expect(restored.agentText).toBeUndefined();
     expect(restored.decision).toBeUndefined();
@@ -809,7 +812,7 @@ describe("explicit Find query modes", () => {
   });
 });
 
-it("preserves the stripped mode through typing, restart, resubmit and more", async () => {
+it("preserves the stripped mode through typing, restart and resubmit", async () => {
   const p = harness();
   p.search(async () =>
     p.respond({
@@ -823,7 +826,7 @@ it("preserves the stripped mode through typing, restart, resubmit and more", asy
     mode: "direct",
   });
   await restored.search("edited query");
-  await restored.search("edited query", true);
+  await restored.search("edited query");
   const calls = p.fetch.mock.calls.filter(([url]) =>
     String(url).endsWith("/browser/find/search/v2"),
   );
@@ -831,7 +834,7 @@ it("preserves the stripped mode through typing, restart, resubmit and more", asy
   expect(JSON.parse(String(calls[2]![1]?.body))).toMatchObject({
     text: "edited query",
     mode: "direct",
-    limit: 50,
+    limit: 30,
   });
   expect((await restored.status(false)).resultsQuery).toBe("edited query");
 });
@@ -839,7 +842,7 @@ it("preserves the stripped mode through typing, restart, resubmit and more", asy
 it("resets a retained forced mode for a new automatic full-page query", async () => {
   const p = harness();
   await p.service.search("/agent invented query");
-  const view = await p.service.search("fresh automatic query", false, null);
+  const view = await p.service.search("fresh automatic query", null);
   expect(view.mode).toBeUndefined();
   expect(view.query).toBe("fresh automatic query");
   const call = p.fetch.mock.calls

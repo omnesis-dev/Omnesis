@@ -90,7 +90,6 @@ export function installFindBackground(): {
     const msg = message as {
       type?: string;
       query?: unknown;
-      more?: unknown;
       mode?: unknown;
       tabId?: unknown;
       resultId?: unknown;
@@ -113,7 +112,7 @@ export function installFindBackground(): {
     )
       task = (
         msg.type === "find-query"
-          ? service.search(msg.query, msg.more === true, msg.mode)
+          ? service.search(msg.query, msg.mode)
           : service.update(msg.query, msg.mode)
       ).then(() => viewWithTabs());
     else if (

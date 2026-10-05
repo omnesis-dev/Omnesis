@@ -32,7 +32,6 @@ function mount() {
     resultsQuery: "invented",
     results: [],
     canonicalizers: [],
-    hasMore: false,
     running: true,
     interrupted: false,
   };

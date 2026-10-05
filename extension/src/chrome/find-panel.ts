@@ -74,7 +74,6 @@ export function initFindPanel(
   const form = element<HTMLFormElement>("find-form");
   const list = element<HTMLOListElement>("find-results");
   const status = element("find-status");
-  const more = element<HTMLButtonElement>("find-more");
   const findSection = element("find-section"),
     notesSection = document.getElementById("notes-section");
   let view: FindPanelView | undefined,
@@ -149,11 +148,9 @@ export function initFindPanel(
       input.value = parseFindQuery(next.query).text;
       mode = next.mode ?? null;
     }
-    more.hidden = !next.enabled || !next.hasMore;
     const currentResults =
       next.resultsQuery === input.value && (next.resultsMode ?? null) === (mode ?? null);
     cancel.hidden = !next.running || !currentResults;
-    more.hidden ||= !currentResults;
     const agentic = next.enabled && currentResults && next.decision?.mode === "agentic";
     status.hidden = agentic && next.running;
     status.textContent = !next.supported
@@ -175,7 +172,7 @@ export function initFindPanel(
               : !currentResults
                 ? "Press Enter to search."
                 : !next.results.length
-                  ? "No browser links found. Try a different query or search more results."
+                  ? "No browser links found. Try a different query."
                   : `${next.results.length} ${next.results.length === 1 ? "result" : "results"} · ↑ ↓ to choose · Enter to open`));
     element("find-mode").hidden = !agentic;
     element("find-mode-label").textContent = next.decision?.requested
@@ -290,7 +287,7 @@ export function initFindPanel(
         status.textContent = error instanceof Error ? error.message : "Gateway unavailable";
     }
   }
-  async function search(moreResults = false): Promise<void> {
+  async function search(): Promise<void> {
     const request = ++generation,
       parsed = parseFindQuery(input.value),
       query = parsed.text;
@@ -302,7 +299,7 @@ export function initFindPanel(
     form.setAttribute("aria-busy", "true");
     try {
       const next = await api.runtime.sendMessage<FindPanelView & { ok?: boolean; reason?: string }>(
-        { type: "find-query", query, more: moreResults, ...(mode !== undefined ? { mode } : {}) },
+        { type: "find-query", query, ...(mode !== undefined ? { mode } : {}) },
       );
       if (request !== generation) return;
       if (next?.ok === false) throw new Error(next.reason ?? "Search failed");
@@ -334,12 +331,40 @@ export function initFindPanel(
     event.preventDefault();
     void search();
   });
-  input.addEventListener("keydown", (event) => {
-    if (event.isComposing) return;
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+  // Navigation remains available when focus is on the page or streamed agent output.
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      )
+        return;
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const target = (event.target as Element | null)?.closest ? (event.target as Element) : null;
+      if (
+        target !== input &&
+        target?.closest("input, textarea, select, [contenteditable], [role=textbox]")
+      )
+        return;
+      if (
+        !view?.enabled ||
+        view.resultsQuery !== input.value ||
+        (view.resultsMode ?? null) !== (mode ?? null) ||
+        !list.children.length
+      )
+        return;
       event.preventDefault();
       select(selected + (event.key === "ArrowDown" ? 1 : -1), true);
-    } else if (
+    },
+    true,
+  );
+  input.addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (
       event.key === "Enter" &&
       view?.resultsQuery === input.value &&
       view.results[selected] &&
@@ -356,23 +381,13 @@ export function initFindPanel(
   });
   list.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      select(selected + (event.key === "ArrowDown" ? 1 : -1), true);
-    } else if (
-      event.key === "Enter" &&
-      (event.metaKey || event.ctrlKey) &&
-      view?.results[selected]
-    ) {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && view?.results[selected]) {
       event.preventDefault();
       void activate(view.results[selected]!, true);
     }
   });
   cancel.addEventListener("click", () => {
     void api.runtime.sendMessage({ type: "find-cancel" }).then(() => refresh(true));
-  });
-  more.addEventListener("click", () => {
-    void search(true);
   });
   api.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;

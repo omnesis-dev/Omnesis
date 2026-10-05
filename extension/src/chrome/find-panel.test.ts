@@ -33,7 +33,6 @@ function panel(options: { initialQuery?: string; initialMode?: FindMode | null }
     pendingApproval: false,
     query: "invented",
     resultsQuery: "invented",
-    hasMore: false,
     running: false,
     interrupted: false,
     tabsPermission: false,
@@ -128,7 +127,6 @@ describe("Find panel", () => {
       expect(p.send).toHaveBeenCalledWith({
         type: "find-query",
         query: "invented full-page query",
-        more: false,
         mode: null,
       }),
     );
@@ -150,7 +148,6 @@ describe("Find panel", () => {
           type: "find-query",
           query: "invented guide",
           mode,
-          more: false,
         }),
       );
       expect(p.input.value).toBe("invented guide");
@@ -163,7 +160,6 @@ describe("Find panel", () => {
         type: "find-query",
         query: "invented guide",
         mode: "agentic",
-        more: false,
       }),
     );
     expect(p.input.value).toBe("invented guide");
@@ -239,7 +235,7 @@ describe("Find panel", () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
     function key(key: string) {
-      const event = new p.window.Event("keydown", { cancelable: true });
+      const event = new p.window.Event("keydown", { bubbles: true, cancelable: true });
       Object.assign(event, { key });
       p.input.dispatchEvent(event);
     }
@@ -252,7 +248,7 @@ describe("Find panel", () => {
         newCopy: false,
       }),
     );
-    const modified = new p.window.Event("keydown", { cancelable: true });
+    const modified = new p.window.Event("keydown", { bubbles: true, cancelable: true });
     Object.assign(modified, { key: "Enter", ctrlKey: true });
     p.input.dispatchEvent(modified);
     await vi.waitFor(() =>
@@ -262,6 +258,42 @@ describe("Find panel", () => {
         newCopy: true,
       }),
     );
+  });
+  it("navigates results after focus moves from the search box to the page or agent output", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    for (const [target, key, expected] of [
+      [p.document.body, "ArrowDown", "second"],
+      [p.document.getElementById("find-agent")!, "ArrowUp", "first"],
+      [p.document.querySelector(".find-result-open")!, "ArrowDown", "second"],
+    ] as const) {
+      const event = new p.window.Event("keydown", { bubbles: true, cancelable: true });
+      Object.assign(event, { key });
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(
+        p.document.querySelector(".find-result.selected")?.getAttribute("data-result-id"),
+      ).toBe(expected);
+      expect(p.document.querySelectorAll(".find-result.selected")).toHaveLength(1);
+    }
+  });
+  it("leaves arrow keys available in other editable controls", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    const field = p.document.createElement("textarea");
+    p.document.body.appendChild(field);
+    const event = new p.window.Event("keydown", { bubbles: true, cancelable: true });
+    Object.assign(event, { key: "ArrowDown" });
+    field.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(p.document.querySelector(".find-result.selected")?.getAttribute("data-result-id")).toBe(
+      "first",
+    );
+  });
+  it("does not offer a search-more control", async () => {
+    const p = panel();
+    await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+    expect(p.document.getElementById("find-more")).toBeNull();
   });
   it("tracks a result focused with native tab before ctrl/command+enter", async () => {
     const p = panel();
@@ -366,7 +398,7 @@ describe("Find panel", () => {
       p.update({ running: true, agentText: "Invented progress" });
       await vi.waitFor(() => expect(p.document.querySelector(".find-result")).not.toBe(row));
       expect(scroll).not.toHaveBeenCalled();
-      const event = new p.window.Event("keydown", { cancelable: true });
+      const event = new p.window.Event("keydown", { bubbles: true, cancelable: true });
       Object.assign(event, { key: "ArrowDown" });
       p.input.dispatchEvent(event);
       expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
@@ -406,7 +438,6 @@ describe("Find panel", () => {
     expect(p.send).toHaveBeenCalledWith({
       type: "find-query",
       query: "A new invented question",
-      more: false,
     });
   });
   it("treats indexed HTML as text", () => {
