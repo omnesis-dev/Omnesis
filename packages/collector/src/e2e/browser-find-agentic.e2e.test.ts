@@ -473,7 +473,10 @@ describe("Browser Find agentic destinations through scripted production backends
         await expect
           .poll(() => panel.locator(".find-result-open").count(), { timeout: 120_000 })
           .toBe(1);
-        expect(await panel.locator("#find-decision").textContent()).toContain("Agent");
+        await expect.poll(() => panel.locator("#find-mode-label").isVisible()).toBe(true);
+        expect(await panel.locator("#find-mode-label").textContent()).toBe(
+          "Agentic mode auto enabled",
+        );
         await expect
           .poll(() => panel.locator("#find-agent").textContent(), { timeout: 30_000 })
           .toContain("Found the requested destination");

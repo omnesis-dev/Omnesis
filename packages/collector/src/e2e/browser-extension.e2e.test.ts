@@ -819,9 +819,8 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
           interval: 250,
         })
         .toBe(1);
-    await expect
-      .poll(() => panel.locator("#find-decision").textContent())
-      .toContain("Direct search");
+    expect(await panel.locator("#find-mode").isVisible()).toBe(false);
+    expect(await panel.locator("#find-agent").isVisible()).toBe(false);
     await expect.poll(() => panel.locator("#find-results").textContent()).toContain(notionTitle);
     await expect
       .poll(() => panel.locator("#find-results").textContent())
