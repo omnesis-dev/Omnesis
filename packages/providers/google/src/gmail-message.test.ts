@@ -312,6 +312,12 @@ describe("self-authored vocabulary text", () => {
     // final retained character or the first character beyond the cap.
     for (const padding of [32_759, 32_760])
       expect(selfAuthoredMailText({ text: " ".repeat(padding) + "Orvelion‘Tail" })).toBe("");
+    // Supplementary letters continue the same lexical run, including when the
+    // character's surrogate pair straddles the UTF-16 character budget.
+    for (const padding of [32_759, 32_760])
+      expect(selfAuthoredMailText({ text: " ".repeat(padding) + "Orvelion\u{10400}Tail" })).toBe(
+        "",
+      );
   });
   test("requires enabled flag, SENT, and the account sender", async () => {
     const gmail = createMockGmail();

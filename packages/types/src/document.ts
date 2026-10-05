@@ -328,7 +328,7 @@ export function boundedSelfAuthoredText(
     if (/[\uD800-\uDBFF]$/.test(text)) text = text.slice(0, -1);
     if (
       segment.text.length > text.length &&
-      /[\p{L}\p{M}\p{N}‘’'.-]/u.test(segment.text[text.length] ?? "")
+      /[\p{L}\p{M}\p{N}‘’'.-]/u.test(String.fromCodePoint(segment.text.codePointAt(text.length)!))
     )
       text = text.replace(/[\p{L}\p{M}\p{N}‘’'.-]+$/u, "");
     if (!text.trim()) continue;

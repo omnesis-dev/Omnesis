@@ -118,12 +118,12 @@ describe("bounded self-authored evidence", () => {
     expect(result[0].text.endsWith("word ")).toBe(true);
     expect(result[0].recordedAt).toBe("2026-01-02T00:00:00.000Z");
   });
-  test("a character cap preserves complete words across apostrophe glyphs", () => {
-    for (const quote of ["'", "‘", "’"]) {
+  test("a character cap preserves complete words across apostrophes and astral letters", () => {
+    for (const continuation of ["'", "‘", "’", "\u{10400}"]) {
       for (const retainedCharacters of [4, 5]) {
         const prefix = "ordinary ".repeat(3640) + " ".repeat(8 - retainedCharacters);
         const result = boundedSelfAuthoredText([
-          { text: prefix + `rare${quote}Zorvella`, recordedAt: "2026-01-01T00:00:00Z" },
+          { text: prefix + `rare${continuation}Zorvella`, recordedAt: "2026-01-01T00:00:00Z" },
         ]);
         expect(result[0].text).toBe(prefix);
       }

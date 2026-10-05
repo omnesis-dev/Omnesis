@@ -205,7 +205,14 @@ const MIN_FRESH_WORDS = 4;
 export function selfAuthoredMailText(parts: { text?: string; html?: string }): string {
   const source = parts.text ?? "";
   let text = source.slice(0, 32_768);
-  if (source.length > text.length && /[\p{L}\p{M}\p{N}‘’'.-]/u.test(source[text.length] ?? ""))
+  if (/[\uD800-\uDBFF]$/u.test(text)) text = text.slice(0, -1);
+  const nextCodePoint = source.codePointAt(text.length);
+  if (
+    source.length > text.length &&
+    /[\p{L}\p{M}\p{N}‘’'.-]/u.test(
+      nextCodePoint === undefined ? "" : String.fromCodePoint(nextCodePoint),
+    )
+  )
     text = text.replace(/[\p{L}\p{M}\p{N}‘’'.-]+$/u, "");
   if (/<\/?[a-z][^>]*>/i.test(text)) return "";
   const lines = text.split(/\r?\n/);
