@@ -72,6 +72,7 @@ export function initFindPanel(
   };
   const input = element<HTMLInputElement>("find-query");
   const form = element<HTMLFormElement>("find-form");
+  const agentSearch = element<HTMLButtonElement>("find-agent-search");
   const list = element<HTMLOListElement>("find-results");
   const status = element("find-status");
   const findSection = element("find-section"),
@@ -127,6 +128,24 @@ export function initFindPanel(
       status.textContent = error instanceof Error ? error.message : "Try again";
     }
   }
+  function canSearchWithAgent(): boolean {
+    const parsed = parseFindQuery(input.value);
+    const current =
+      view?.resultsQuery === parsed.text &&
+      (view.resultsMode ?? null) === (parsed.mode ?? mode ?? null);
+    return (
+      !!view?.enabled &&
+      !!parsed.text &&
+      !searching &&
+      !(current && (view.running || view.decision?.mode === "agentic"))
+    );
+  }
+  function searchWithAgent(): void {
+    if (!canSearchWithAgent()) return;
+    dirtyInput = true;
+    void search("agentic");
+  }
+  agentSearch.addEventListener("click", searchWithAgent);
   function render(next: FindPanelView): void {
     if (!next || typeof next.supported !== "boolean") return;
     view = next;
@@ -147,6 +166,7 @@ export function initFindPanel(
       input.value = parseFindQuery(next.query).text;
       mode = next.mode ?? null;
     }
+    agentSearch.disabled = !canSearchWithAgent();
     const currentResults =
       next.resultsQuery === input.value && (next.resultsMode ?? null) === (mode ?? null);
     const agentic = next.enabled && currentResults && next.decision?.mode === "agentic";
@@ -285,13 +305,14 @@ export function initFindPanel(
         status.textContent = error instanceof Error ? error.message : "Gateway unavailable";
     }
   }
-  async function search(): Promise<void> {
+  async function search(forcedMode?: FindMode): Promise<void> {
     const request = ++generation,
       parsed = parseFindQuery(input.value),
       query = parsed.text;
-    if (parsed.mode) mode = parsed.mode;
+    if (forcedMode ?? parsed.mode) mode = forcedMode ?? parsed.mode;
     input.value = query;
     searching = true;
+    agentSearch.disabled = true;
     selected = 0;
     status.textContent = "Searching your Omnesis…";
     form.setAttribute("aria-busy", "true");
@@ -309,7 +330,10 @@ export function initFindPanel(
         status.textContent = error instanceof Error ? error.message : "Search failed. Try again.";
       }
     } finally {
-      if (request === generation) form.setAttribute("aria-busy", "false");
+      if (request === generation) {
+        form.setAttribute("aria-busy", "false");
+        agentSearch.disabled = !canSearchWithAgent();
+      }
     }
   }
   input.addEventListener("input", () => {
@@ -341,13 +365,19 @@ export function initFindPanel(
         event.metaKey
       )
         return;
-      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+
       const target = (event.target as Element | null)?.closest ? (event.target as Element) : null;
       if (
         target !== input &&
         target?.closest("input, textarea, select, [contenteditable], [role=textbox]")
       )
         return;
+      if (event.key === "Enter" && event.shiftKey) {
+        event.preventDefault();
+        searchWithAgent();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
       if (
         !view?.enabled ||
         view.resultsQuery !== input.value ||
@@ -361,7 +391,7 @@ export function initFindPanel(
     true,
   );
   input.addEventListener("keydown", (event) => {
-    if (event.isComposing) return;
+    if (event.isComposing || event.shiftKey || event.defaultPrevented) return;
     if (
       event.key === "Enter" &&
       view?.resultsQuery === input.value &&
