@@ -6,6 +6,7 @@ import { parseHTML } from "linkedom";
 import { describe, expect, it, vi } from "vitest";
 import { initNotesEditPanel } from "./notes-edit-panel.js";
 import type { NotesEditView } from "./notes-edit-service.js";
+import type { NotesView } from "./notes-service.js";
 function panel(
   writtenDraft = "",
   beforeNewNote?: () => Promise<void>,
@@ -44,7 +45,7 @@ function panel(
       original: "Invented saved thought",
     };
   const accepted = vi.fn();
-  const showNewNote = vi.fn((notes: { draft?: { text: string } }) => {
+  const showNewNote = vi.fn((notes: NotesView) => {
     newText.value = notes.draft?.text ?? "";
     document.getElementById("notes-form")!.hidden = false;
   });
