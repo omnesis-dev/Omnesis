@@ -822,6 +822,46 @@ describe("authored vocabulary evidence", () => {
 });
 
 describe("context dictionary", () => {
+  test.each([0, 2])("retained frequent words are excluded with %i fresh observations", (fresh) => {
+    const db = database();
+    const seed = db.prepare(
+      `INSERT INTO transcription_vocabulary_terms
+      (scope_kind,scope_key,term,text,document_count,benefit,base_score,last_seen,evidence_count)
+      VALUES ('global','',?,?,2,2.5,3,'2026-01-01',?)`,
+    );
+    for (const text of ["c’est", "c'est", "l'été", "the"]) seed.run(text, text, fresh);
+    const [evidence] = extractTranscriptionVocabulary(
+      [
+        {
+          id: "fictional-name-evidence",
+          contentHash: "hash",
+          updatedAt: "2026-01-01",
+          revision: 0,
+          generation: 1,
+          title: "",
+          content: "Will Green explores l'umbriolet",
+          sourceId: "fictional:messages",
+          threadId: null,
+          recordedAt: "2026-01-01",
+          people: [
+            { personId: "fictional-person", name: "Will Green", isSelf: false, role: "sender" },
+          ],
+        },
+      ],
+      settings,
+    );
+    expect(evidence!.terms.map((term) => term.text)).toContain("Will Green");
+    expect(evidence!.terms.map((term) => term.text)).toContain("l'umbriolet");
+    for (const text of ["Will Green", "l'umbriolet"]) seed.run(text.toLowerCase(), text, fresh);
+    const entries = getTranscriptionVocabulary(
+      db,
+      { purpose: "source-audio", recordedAt: "2026-01-01" },
+      settings,
+    ).entries.map((entry) => entry.text);
+    expect(entries).toEqual(expect.arrayContaining(["Will Green", "l'umbriolet"]));
+    expect(entries).toHaveLength(2);
+  });
+
   test("trusted identity hints work without corpus counts and stay behind both gates", () => {
     const db = database();
     db.prepare(

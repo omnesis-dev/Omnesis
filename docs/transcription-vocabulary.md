@@ -35,6 +35,12 @@ document can choose its spelling but cannot corroborate it. High-frequency words
 are filtered using the bundled multilingual frequency lists; membership is not a
 prediction of recognizer accuracy. Accents remain significant.
 
+Dictionary reads apply the same high-frequency filter to retained terms, even
+when evidence refresh no longer extracts those terms. This avoids preserving
+obsolete lexical artifacts without clearing learned evidence. Filtering stays
+within the bounded admitted candidates; it does not refill through an unbounded
+scan. Frequent excluded terms can therefore leave a shorter dictionary.
+
 Exact spellings also retain distinct-document support. An isolated mixed-case
 variant cannot permanently replace a corroborated spelling. Corroborated
 context-specific spelling can override the global spelling when its context

@@ -7,6 +7,7 @@ import { createVoiceNoteTables } from "../../voice-notes/storage.js";
 import { findPersonByAlias } from "../../data/repositories/PersonRepository.js";
 import { contextualVocabularyLift, authoredDecay } from "./ranking.js";
 import { ordinaryEvidenceQuality } from "./evidence-quality.js";
+import { isCommonVocabularyWord } from "./common-words.js";
 import { contextualVocabularyNames } from "./identity.js";
 import {
   createTranscriptionVocabularyState,
@@ -313,6 +314,7 @@ export function getTranscriptionVocabulary(
     (profileCount.get("global", "") as { document_count: number } | undefined)?.document_count ?? 0;
   const selected = new Map<string, { text: string; score: number }>();
   const spellingEvidence = new Map<string, { score: number; count: number }>();
+  const commonTerms = new Map<string, boolean>();
   const parsedTime = Date.parse(context.recordedAt ?? "");
   const anchor = Number.isFinite(parsedTime) ? parsedTime : Date.now();
   const limit = Math.min(256, Math.max(32, settings.maxTerms * 2));
@@ -346,6 +348,14 @@ export function getTranscriptionVocabulary(
       if (seen.has(row.term)) continue;
       seen.add(row.term);
       if (row.document_count < MIN_VOCABULARY_DOCUMENTS) continue;
+      // Retained evidence must obey the same lexical filter as extraction.
+      // Terms are normalized keys; overlapping profiles share this lookup.
+      let common = commonTerms.get(row.term);
+      if (common === undefined) {
+        common = isCommonVocabularyWord(row.term);
+        commonTerms.set(row.term, common);
+      }
+      if (common) continue;
       let background = globalCounts.get(row.term);
       if (!background) {
         background = (global.get(row.term) as

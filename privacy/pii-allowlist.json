@@ -11969,6 +11969,11 @@
       "value": "Untrusted Label",
       "paths": ["packages/gateway/src/transcribe/vocabulary/identity.test.ts"],
       "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Will Green",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/storage.test.ts"],
+      "reason": "Invented name composed of frequent words for the grounded phrase regression."
     }
   ],
   "secretFixtures": [
