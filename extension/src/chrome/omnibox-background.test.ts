@@ -133,7 +133,7 @@ describe("Omnesis omnibox", () => {
     expect(h.suggest).toHaveBeenCalledExactlyOnceWith("guide revised", expect.any(AbortSignal));
     expect(first).not.toHaveBeenCalled();
     const suggestions = second.mock.calls[0]?.[0] as chrome.omnibox.SuggestResult[];
-    expect(suggestions).toHaveLength(5);
+    expect(suggestions).toHaveLength(6);
     expect(suggestions[0]?.content).toBe("https://example.org/article");
     expect(suggestions[0]?.description).toContain("&lt;guide&gt; &amp;");
     h.enter(suggestions[0]!.content);

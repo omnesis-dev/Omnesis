@@ -422,6 +422,18 @@ const searchBm25 = z
         "Drop BM25 tokens appearing in more than this fraction of chunks. 0 disables. Default 0.1.",
       )
       .optional(),
+    /**
+     * Rank BM25 from an in-memory copy of the full-text postings instead of
+     * from SQLite pages. Costs memory roughly proportional to the corpus
+     * (about 0.7 GB per 800k chunks) and turns multi-second queries over
+     * common words into milliseconds. Default true.
+     */
+    memoryIndex: z
+      .boolean()
+      .describe(
+        "Hold the full-text postings in memory so BM25 ranks in milliseconds. Uses memory proportional to the corpus. Default true.",
+      )
+      .optional(),
   })
   .strict();
 

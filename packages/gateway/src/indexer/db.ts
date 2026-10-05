@@ -222,6 +222,36 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
     END
   `);
 
+  // Change log of chunk text for the in-memory lexical index (see
+  // search/lexical-index.ts): every insert, delete and text update appends the
+  // chunk's rowid, and each in-memory ranker tails the log to re-read exactly
+  // the chunks that changed since its index was built. Rowids are reused after
+  // deletes and rewritten in place on updates, so "rowids above the build" would
+  // miss both. The log prunes itself every 10,000 entries, keeping the newest
+  // 500,000 — far more than accumulate between index rebuilds; a ranker that
+  // finds itself pruned past declines and FTS5 answers until the next build.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chunks_fts_changes (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      chunk_rowid INTEGER NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_ai AFTER INSERT ON chunks BEGIN
+      INSERT INTO chunks_fts_changes(chunk_rowid) VALUES (new.rowid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_ad AFTER DELETE ON chunks BEGIN
+      INSERT INTO chunks_fts_changes(chunk_rowid) VALUES (old.rowid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_au AFTER UPDATE OF content, title ON chunks
+      WHEN old.content IS NOT new.content OR old.title IS NOT new.title OR old.rowid != new.rowid BEGIN
+      INSERT INTO chunks_fts_changes(chunk_rowid) VALUES (old.rowid);
+      INSERT INTO chunks_fts_changes(chunk_rowid) SELECT new.rowid WHERE new.rowid != old.rowid;
+    END;
+    CREATE TRIGGER IF NOT EXISTS chunks_fts_changes_prune AFTER INSERT ON chunks_fts_changes
+      WHEN new.seq % 10000 = 0 BEGIN
+      DELETE FROM chunks_fts_changes WHERE seq <= new.seq - 500000;
+    END;
+  `);
+
   // One-shot FTS5 tokenizer migration. Older installs were created with
   // a bare `unicode61` tokenizer (no Porter stemming, no diacritic
   // folding), so `recipe` didn't match `recipes` and `ceremonie` didn't

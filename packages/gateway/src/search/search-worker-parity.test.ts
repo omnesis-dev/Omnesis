@@ -31,6 +31,7 @@ import { UsearchReadRegistry } from "../indexer/usearch-read-registry.js";
 import { SearchWorkerPool } from "../workers/search-pool.js";
 import { SearchPipeline } from "./pipeline.js";
 import { runCandidateGen, type CandidateGenRequest } from "./candidate-gen.js";
+import { LexicalIndex } from "./lexical-index.js";
 import {
   resolveDiversityConfig,
   resolveSearchSettings,
@@ -392,6 +393,31 @@ describe("search worker — real thread parity", () => {
     expect({ ...remote.contentHashByDoc }).toEqual({ ...local.contentHashByDoc });
     expect(remote.vectorDegraded).toBe(local.vectorDegraded);
     expect(remote.notices).toEqual(local.notices);
+  });
+
+  test("a worker ranks with the shared in-memory lexical index, identically to FTS5", async () => {
+    const req = noEmbedderRequest();
+    const viaFts = await pool.candidateGen(req);
+
+    const index = LexicalIndex.build(inProcDb, { shared: true });
+    pool.setLexicalIndex(index.data);
+    const viaMemory = await pool.candidateGen(req);
+    const local = runCandidateGen(
+      {
+        indexDb: inProcDb,
+        usearchRead: new UsearchReadRegistry(inProcDb, configDir),
+        lexicalRanker: new LexicalIndex(index.data),
+      },
+      req,
+    );
+
+    expect(viaMemory.stageReports.bm25?.engine).toBe("memory");
+    expect(viaFts.stageReports.bm25?.engine).toBe("fts5");
+    expect(viaMemory.results).toEqual(local.results);
+    expect(viaMemory.results.map((r) => r.documentId)).toEqual(
+      viaFts.results.map((r) => r.documentId),
+    );
+    expect(viaMemory.results.length).toBeGreaterThan(0);
   });
 
   test("saturation gate on the real pool exposes a truthful inflight count", async () => {

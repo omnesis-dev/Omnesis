@@ -24,6 +24,7 @@
  * restriction in their candidate SQL directly.
  */
 
+import type { LexicalRanker } from "./bm25.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import {
@@ -139,6 +140,7 @@ export class SearchPipeline {
   private queryEnricher?: QueryEnricher;
   private linkRefSource?: LinkRefSource;
   private usearchRead?: import("../indexer/usearch-index.js").VectorReadSource;
+  private lexicalRanker?: LexicalRanker;
   private inflightSummary?: SearchPipelineOptions["inflightSummary"];
   private getSourcePriorDefaults: () => Record<string, number>;
   private getSourceDocCounts: () => readonly SourceDocCount[];
@@ -191,6 +193,14 @@ export class SearchPipeline {
   /** Inject (or replace) the link-ref source. */
   setLinkRefSource(source: LinkRefSource): void {
     this.linkRefSource = source;
+  }
+
+  /**
+   * Attach the in-memory lexical index used to rank BM25 candidates on this
+   * thread, replacing any earlier one. FTS5 ranks until one is attached.
+   */
+  setLexicalRanker(ranker: LexicalRanker): void {
+    this.lexicalRanker = ranker;
   }
 
   /** Attach the gateway database for ref count lookups in search results. */
@@ -246,7 +256,11 @@ export class SearchPipeline {
 
   /** The main-thread candidate-gen substrate — the fallback for a worker fault. */
   private mainResources(): CandidateGenResources {
-    return { indexDb: this.indexDb, usearchRead: this.usearchRead };
+    return {
+      indexDb: this.indexDb,
+      usearchRead: this.usearchRead,
+      lexicalRanker: this.lexicalRanker,
+    };
   }
 
   /**

@@ -170,6 +170,15 @@
           either list, so a document that matches your exact words or only your meaning still
           surfaces near the top.
         </p>
+        <p>
+          Keyword matching ranks from a copy of the full-text index that the gateway holds in
+          memory, so it takes milliseconds even for queries made of common words. The copy is built
+          in the background after the gateway starts and rebuilt as your corpus changes; until it is
+          ready, searches rank from the index on disk. It uses memory in proportion to your corpus,
+          about 0.7 GB for 200,000 emails, files and messages, and up to twice that while a rebuild
+          runs. Set <code>search.bm25.memoryIndex</code> to <code>false</code> in
+          <code>omnesis.json</code> and restart the gateway to rank from disk only.
+        </p>
         <figure class="diagram diagram-flat diagram-branches diagram-nested">
           <ol class="flow">
             <li class="flow-step">

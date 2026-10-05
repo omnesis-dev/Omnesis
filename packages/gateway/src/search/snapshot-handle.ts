@@ -253,6 +253,9 @@ export function openSearchSnapshotHandle(
     cacheSizeBytes: opts.cacheSizeBytes,
     encryptionKey: opts.encryptionKey ?? null,
   });
+  // Searches stage text in TEMP tables (large document-id sets, the lexical
+  // index's tokenizer); in memory they never reach disk unencrypted.
+  db.exec("PRAGMA temp_store = MEMORY");
   if (holdSnapshot) {
     db.exec("BEGIN");
     anchorSnapshot(db);

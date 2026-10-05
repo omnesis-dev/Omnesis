@@ -30,7 +30,7 @@
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { createLogger } from "@omnesis/core";
-import { bm25Search } from "./bm25.js";
+import { bm25Search, type LexicalRanker } from "./bm25.js";
 import { browseByRecency } from "./browse.js";
 import { fetchContentHashByDoc } from "./dedupe.js";
 import { rrfFuse, singleStageFuse } from "./fusion.js";
@@ -73,6 +73,8 @@ type StageReports = NonNullable<SearchResponse["stages"]>;
 export interface CandidateGenResources {
   indexDb: Db;
   usearchRead?: VectorReadSource;
+  /** In-memory BM25 ranker; when absent (or unable to serve a query) FTS5 ranks. */
+  lexicalRanker?: LexicalRanker;
 }
 
 /**
@@ -171,7 +173,7 @@ export function runCandidateGen(
   } else {
     // BM25 lane — always runs.
     const start = Date.now();
-    const { candidates, droppedTokens } = bm25Search(
+    const { candidates, droppedTokens, ranker } = bm25Search(
       res.indexDb,
       req.bm25Text,
       req.filters,
@@ -180,6 +182,7 @@ export function runCandidateGen(
         documentIds: req.allowedDocumentIds,
         commonTokenThreshold: req.commonTokenThreshold,
         prefixLastToken: req.prefixLastToken,
+        ranker: res.lexicalRanker,
       },
     );
     const bm25Candidates = candidates;
@@ -190,6 +193,7 @@ export function runCandidateGen(
       status: "ran",
       durationMs,
       candidates: candidates.length,
+      engine: ranker,
       droppedTokens: droppedTokens.length > 0 ? droppedTokens : undefined,
     };
 

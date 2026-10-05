@@ -214,7 +214,7 @@ export interface SearchStageReport {
   embedMs?: number;
   /** ms spent in the HNSW search + JOIN SQL (vector stage only). */
   sqlMs?: number;
-  /** Vector engine used (always "hnsw"). */
+  /** Engine that ranked: "hnsw" for the vector stage; "memory" or "fts5" for BM25. */
   engine?: string;
   /** Tokens dropped from BM25 MATCH for exceeding the common-token threshold. */
   droppedTokens?: string[];

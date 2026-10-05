@@ -93,6 +93,54 @@ describe("schema", () => {
   });
 });
 
+describe("chunk text change log", () => {
+  const changes = () =>
+    db
+      .prepare<[], { chunk_rowid: number }>(
+        "SELECT chunk_rowid FROM chunks_fts_changes ORDER BY seq",
+      )
+      .all()
+      .map((r) => r.chunk_rowid);
+  const base = {
+    chunkIndex: 0,
+    embedding: makeEmbedding(1),
+    sourceId: "notes",
+    documentType: "note",
+    title: "Budget",
+    sourceCreatedAt: "2026-03-10T00:00:00Z",
+  };
+
+  test("records inserts, text rewrites and deletes, but not embedding writes or unchanged text", () => {
+    upsertChunks(db, [{ ...base, id: "c1", documentId: "d1", content: "budget review" }]);
+    upsertChunks(db, [{ ...base, id: "c2", documentId: "d2", content: "marathon training" }]);
+    expect(changes()).toEqual([1, 2]);
+
+    db.prepare("UPDATE chunks SET embedding = NULL WHERE rowid = 1").run();
+    db.prepare("UPDATE chunks SET relevance_score = 0.5 WHERE rowid = 1").run();
+    expect(changes()).toEqual([1, 2]);
+
+    upsertChunks(db, [{ ...base, id: "c1", documentId: "d1", content: "budget review" }]);
+    expect(changes()).toEqual([1, 2]);
+
+    upsertChunks(db, [{ ...base, id: "c1", documentId: "d1", content: "budget approved" }]);
+    db.prepare("DELETE FROM chunks WHERE rowid = 2").run();
+    expect(changes()).toEqual([1, 2, 1, 2]);
+  });
+
+  test("keeps only the newest 500,000 entries", () => {
+    const insert = db.prepare("INSERT INTO chunks_fts_changes(seq, chunk_rowid) VALUES (?, 7)");
+    insert.run(1);
+    insert.run(9_999);
+    insert.run(10_001);
+    insert.run(510_000);
+    const seqs = db
+      .prepare<[], { seq: number }>("SELECT seq FROM chunks_fts_changes ORDER BY seq")
+      .all()
+      .map((r) => r.seq);
+    expect(seqs).toEqual([10_001, 510_000]);
+  });
+});
+
 describe("gateway schema reconciliation", () => {
   test("rejects invalid batch sizes", () => {
     const gatewayDb = new Database(":memory:");
