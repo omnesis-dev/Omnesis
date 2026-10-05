@@ -121,12 +121,24 @@ describe("seeded-state artifacts", () => {
       INSERT INTO transcription_vocabulary_document_terms (
         document_id, scope_kind, scope_key, term
       ) VALUES ('doc-1', 'global', '', 'quorvex');
+      INSERT INTO transcription_vocabulary_profiles VALUES ('global','',1);
+      INSERT INTO transcription_vocabulary_document_profiles VALUES ('doc-1','global','');
+      INSERT INTO transcription_vocabulary_spellings VALUES ('global','','quorvex','Quorvex',1,3);
+      UPDATE transcription_vocabulary_terms SET recent_mass=1,evidence_count=1,
+        ordinary_document_count=1,spelling_count=1;
+      UPDATE transcription_vocabulary_document_terms SET observed_text='Quorvex',
+        observed_at='2026-01-01T00:00:00.000Z',observed_automated=0;
+      UPDATE transcription_vocabulary_refresh_state SET cursor='doc-1',done=0;
     `);
     source.close();
     const tables = [
       "transcription_vocabulary_terms",
       "transcription_vocabulary_document_terms",
       "transcription_vocabulary_state",
+      "transcription_vocabulary_refresh_state",
+      "transcription_vocabulary_profiles",
+      "transcription_vocabulary_document_profiles",
+      "transcription_vocabulary_spellings",
     ];
     createSeededStateArtifact(
       {
@@ -147,6 +159,24 @@ describe("seeded-state artifacts", () => {
     expect(
       output
         .prepare(
+          "SELECT recent_mass,evidence_count,ordinary_document_count,spelling_count FROM transcription_vocabulary_terms",
+        )
+        .get(),
+    ).toEqual({ recent_mass: 1, evidence_count: 1, ordinary_document_count: 1, spelling_count: 1 });
+    expect(
+      output
+        .prepare(
+          "SELECT observed_text,observed_at,observed_automated FROM transcription_vocabulary_document_terms",
+        )
+        .get(),
+    ).toEqual({
+      observed_text: "Quorvex",
+      observed_at: "2026-01-01T00:00:00.000Z",
+      observed_automated: 0,
+    });
+    expect(
+      output
+        .prepare(
           "SELECT wr FROM pragma_table_list WHERE name='transcription_vocabulary_document_terms'",
         )
         .get(),
@@ -154,6 +184,20 @@ describe("seeded-state artifacts", () => {
     expect(
       output.prepare("SELECT algorithm_version, phase FROM transcription_vocabulary_state").get(),
     ).toEqual({ algorithm_version: 1, phase: "ready" });
+    expect(
+      output.prepare("SELECT cursor,done FROM transcription_vocabulary_refresh_state").get(),
+    ).toEqual({ cursor: "doc-1", done: 0 });
+    expect(
+      output.prepare("SELECT document_count FROM transcription_vocabulary_profiles").get(),
+    ).toEqual({ document_count: 1 });
+    expect(
+      output.prepare("SELECT document_id FROM transcription_vocabulary_document_profiles").get(),
+    ).toEqual({ document_id: "doc-1" });
+    expect(
+      output
+        .prepare("SELECT text,document_count,benefit FROM transcription_vocabulary_spellings")
+        .get(),
+    ).toEqual({ text: "Quorvex", document_count: 1, benefit: 3 });
     output.close();
   });
 

@@ -164,6 +164,40 @@ describe("history-only vocabulary relevance in crowded independent scenarios", (
     },
   );
 
+  test("recent own wording beyond a mixed daily rollup's visible window is recovered independently", () => {
+    const target = "miraQorven";
+    // Received messages precede the user's own utterance in each daily body.
+    // Source-owned segments preserve it even when the generic window cannot.
+    const received = "ordinary message ".repeat(2200);
+    expect(received.length).toBeGreaterThan(settings.maxDocumentChars);
+    const db = materialize([
+      ...crowdedHistory(),
+      ...["2026-09-28T12:00:00.000Z", RECENT].map((date) => ({
+        text: received + target,
+        own: target,
+        date,
+      })),
+    ]);
+    const result = measure(db, [target]);
+    expect(result.dictionary.entries.some((entry) => entry.text === target)).toBe(true);
+    expect(result.coverage).toBe(1);
+    expect(result.smallCoverage).toBe(1);
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        { purpose: "dictation", recordedAt: NOW },
+        { ...settings, authoredWeight: 0 },
+      ).entries.map((entry) => entry.text),
+    ).not.toContain(target);
+    expect(
+      getTranscriptionVocabulary(
+        db,
+        { purpose: "dictation", recordedAt: NOW },
+        { ...settings, enabled: false },
+      ).entries,
+    ).toEqual([]);
+  });
+
   test("genuine repeated entities survive automated and bulk prose", () => {
     // More than one candidate-stream page of eligible machine terms must not
     // exclude a genuine entity before the final score or recognizer budget.
