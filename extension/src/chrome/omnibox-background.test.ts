@@ -105,10 +105,11 @@ describe("Omnesis omnibox", () => {
     );
     h.enter(query);
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.update).toHaveBeenCalledWith(7, {
+    expect(h.create).toHaveBeenCalledExactlyOnceWith({
       url: `chrome-extension://test/find.html?q=invented+guide&mode=${mode}`,
+      active: true,
     });
-    expect(h.create).not.toHaveBeenCalled();
+    expect(h.update).not.toHaveBeenCalled();
   });
   it("debounces index previews, escapes markup, deduplicates destinations and bounds URL suggestions", async () => {
     vi.useFakeTimers();
@@ -233,13 +234,11 @@ describe("Omnesis omnibox", () => {
       h.enter("the link shared yesterday", disposition);
       await vi.advanceTimersByTimeAsync(0);
       const url = "chrome-extension://test/find.html?q=the+link+shared+yesterday";
-      if (disposition === "currentTab")
-        expect(h.update).toHaveBeenCalledExactlyOnceWith(7, { url });
-      else
-        expect(h.create).toHaveBeenCalledExactlyOnceWith({
-          url,
-          active: disposition === "newForegroundTab",
-        });
+      expect(h.create).toHaveBeenCalledExactlyOnceWith({
+        url,
+        active: disposition !== "newBackgroundTab",
+      });
+      expect(h.update).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(300);
       expect(h.suggest).not.toHaveBeenCalled();
     },
@@ -263,16 +262,20 @@ describe("Omnesis omnibox", () => {
       expect(h.update).not.toHaveBeenCalled();
       finish?.([{ id: 7, windowId: 1 }]);
       await vi.advanceTimersByTimeAsync(0);
-      expect(h.update).toHaveBeenCalledExactlyOnceWith(7, {
-        url: text.startsWith("https:")
-          ? text
-          : "chrome-extension://test/find.html?q=a+query+entered+immediately",
-      });
+      if (text.startsWith("https:")) {
+        expect(h.update).toHaveBeenCalledExactlyOnceWith(7, { url: text });
+        expect(h.create).not.toHaveBeenCalled();
+      } else {
+        expect(h.create).toHaveBeenCalledExactlyOnceWith({
+          url: "chrome-extension://test/find.html?q=a+query+entered+immediately",
+          active: true,
+        });
+        expect(h.update).not.toHaveBeenCalled();
+      }
       expect(h.queryTabs).toHaveBeenCalledExactlyOnceWith({
         active: true,
         lastFocusedWindow: true,
       });
-      expect(h.create).not.toHaveBeenCalled();
     },
   );
   it("does not navigate a delayed tab lookup after unpair invalidates the request", async () => {

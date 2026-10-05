@@ -189,7 +189,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
     )
       return;
     // Full-page Find does not depend on a native side-panel gesture. Verify
-    // the gateway before replacing a tab; the page runs the normal search.
+    // the gateway before opening Find; the page runs the normal search.
     void find
       .ensureRead()
       .then(async (current) => {
@@ -198,7 +198,12 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
         const parsed = parseFindQuery(query);
         url.searchParams.set("q", parsed.text);
         if (parsed.mode) url.searchParams.set("mode", parsed.mode);
-        await navigate(url.href, disposition, await originId, selectionGeneration);
+        await navigate(
+          url.href,
+          disposition === "newBackgroundTab" ? "newBackgroundTab" : "newForegroundTab",
+          await originId,
+          selectionGeneration,
+        );
       })
       .catch(() => defaultSuggestion(false));
   });
