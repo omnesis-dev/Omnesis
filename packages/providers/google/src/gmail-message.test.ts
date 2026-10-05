@@ -308,6 +308,10 @@ describe("self-authored vocabulary text", () => {
     expect(selfAuthoredMailText({ text: "<p>markup</p>" })).toBe("");
     expect(selfAuthoredMailText({ text: "a".repeat(100_000) })).toBe("");
     expect(selfAuthoredMailText({ text: " ".repeat(32_764) + "Velquorin" })).toBe("");
+    // The lexical run remains incomplete whether the curly apostrophe is the
+    // final retained character or the first character beyond the cap.
+    for (const padding of [32_759, 32_760])
+      expect(selfAuthoredMailText({ text: " ".repeat(padding) + "Orvelion‘Tail" })).toBe("");
   });
   test("requires enabled flag, SENT, and the account sender", async () => {
     const gmail = createMockGmail();
