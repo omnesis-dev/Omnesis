@@ -12,7 +12,7 @@ import {
 } from "./lifecycle.js";
 import { LOOP_GLYPH, BRIEF_GLYPH, CLOCK_GLYPH, DOC_GLYPH } from "./glyphs.js";
 
-function actionToolLabel(tool) {
+export function actionToolLabel(tool) {
   return (
     {
       open_loop_search: "Search loops",

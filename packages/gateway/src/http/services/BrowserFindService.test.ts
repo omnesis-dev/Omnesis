@@ -69,7 +69,6 @@ test("suggestions call the index pipeline directly and filter unsafe or duplicat
   );
   expect(response.results.map((hit) => hit.id)).toEqual(["guide", "second"]);
   expect(f.search).toHaveBeenCalledExactlyOnceWith({ text: "guid", limit: 50 }, undefined, {
-    indexOnly: true,
     prefixLastToken: true,
   });
 });

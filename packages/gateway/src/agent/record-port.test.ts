@@ -245,6 +245,7 @@ describe("createGatewayRecordPort", () => {
       [
         {
           id: "row-1",
+          auth_token: "fictional-test-secret",
           merchant: "Stored destination",
           amount: 8,
           occurred_at: "2026-05-02T10:00:00.000Z",
@@ -267,6 +268,7 @@ describe("createGatewayRecordPort", () => {
     expect(resolved.browserUrls).toEqual(["https://example.org/records/1"]);
     expect(resolved.title).toBe("Stored destination");
     expect(resolved.snapshot.browser_url).toBe("https://example.org/records/1");
+    expect(resolved.snapshot.auth_token).toBe(REDACTED_VALUE);
   });
 
   test("rejects an unknown table", async () => {

@@ -621,5 +621,5 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
       }[part.tool] ?? EphemeralActionCard;
     return html`<${Component} key=${key} call=${part} dispatch=${dispatch} />`;
   }
-  return { renderToolPart };
+  return { renderToolPart, deriveBatchChildren };
 }

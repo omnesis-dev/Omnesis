@@ -354,9 +354,10 @@ beforeEach(async () => {
   });
   resetOwnedWebDomains();
   browserToken = mintToken("browser", [writeScope(SourceType("web"))]);
-  notesToken = mintToken("browser", [Scope("notes:create")]);
-  findToken = mintToken("browser", [SCOPE_READ]);
-  editToken = mintToken("browser", [Scope("notes:update")]);
+  const featureBrowser = createDevice(db, { name: "invented feature browser", kind: "browser" });
+  notesToken = createToken(db, featureBrowser.id, [Scope("notes:create")]).token;
+  findToken = createToken(db, featureBrowser.id, [SCOPE_READ]).token;
+  editToken = createToken(db, featureBrowser.id, [Scope("notes:update")]).token;
   adminToken = mintToken("cli", [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
 });
 

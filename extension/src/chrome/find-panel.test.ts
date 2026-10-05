@@ -376,7 +376,7 @@ describe("Find panel", () => {
     expect(p.document.querySelectorAll(".agent-ephemeral")).toHaveLength(0);
     expect(p.document.querySelectorAll(".find-result")).toHaveLength(0);
     await vi.waitFor(() =>
-      expect(p.send).toHaveBeenCalledWith({ type: "find-update", query: "different" }),
+      expect(p.send).toHaveBeenCalledWith({ type: "find-update", query: "different", mode: null }),
     );
   });
   it("preserves focus on a result link while live result updates render", async () => {
@@ -442,7 +442,11 @@ describe("Find panel", () => {
     p.input.value = "A new invented question";
     p.input.dispatchEvent(new p.window.Event("input"));
     await vi.advanceTimersByTimeAsync(2000);
-    expect(p.send).toHaveBeenCalledWith({ type: "find-update", query: "A new invented question" });
+    expect(p.send).toHaveBeenCalledWith({
+      type: "find-update",
+      query: "A new invented question",
+      mode: null,
+    });
     expect(
       p.send.mock.calls.some(([message]) => (message as { type: string }).type === "find-query"),
     ).toBe(false);
@@ -453,6 +457,7 @@ describe("Find panel", () => {
     expect(p.send).toHaveBeenCalledWith({
       type: "find-query",
       query: "A new invented question",
+      mode: null,
     });
   });
   it("treats indexed HTML as text", () => {

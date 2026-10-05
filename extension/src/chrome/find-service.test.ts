@@ -71,6 +71,7 @@ function harness() {
     if (path === "/browser/find/search" || path === "/browser/find/search/v2") {
       const body = JSON.parse(String(init?.body));
       const response = await search(body, init?.signal);
+      if (!response.ok) return response;
       if (response.headers.get("content-type")?.includes("text/event-stream")) return response;
       const value = (await response.json()) as { results: unknown[] };
       return sse([

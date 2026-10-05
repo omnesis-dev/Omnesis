@@ -21,6 +21,17 @@ export function createAgentToolRenderer(options?: {
   sourceIcon?(sourceId: string, options?: { size?: number }): ComponentChildren;
   renderLoopRow?(loop: Record<string, unknown>): ComponentChildren;
 }): {
+  deriveBatchChildren(
+    part: AgentUiPart,
+    childTool: string,
+  ): Array<{
+    index: number;
+    tool: string;
+    argsSummary: string;
+    result: Record<string, unknown> | null;
+    timeText: string | null;
+    rawPayload?: unknown;
+  }>;
   renderToolPart(
     part: AgentUiPart,
     key: string | number,

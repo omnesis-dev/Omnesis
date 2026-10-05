@@ -84,6 +84,7 @@ const expectedFiles = [
   "icons/icon-16.png",
   "icons/icon-32.png",
   "icons/icon-48.png",
+  "icons/omnesis-mark.svg",
   "manifest.json",
   "notes.html",
   "notes.js",

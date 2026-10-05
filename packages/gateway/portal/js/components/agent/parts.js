@@ -13,8 +13,9 @@
 
 import { html } from "htm/preact";
 import { createAgentToolRenderer, flattenTrailDocs, normaliseRow, formatSqlCell } from "../../shared/agent-ui/tools.js";
-import { EPHEMERAL_HOLD_MS, EPHEMERAL_FADE_MS, EPHEMERAL_SEARCH_RESULTS_MAX, EPHEMERAL_SQL_ROWS_MAX } from "../../shared/agent-ui/lifecycle.js";
+import { EphemeralHeader, EPHEMERAL_HOLD_MS, EPHEMERAL_FADE_MS, EPHEMERAL_SEARCH_RESULTS_MAX, EPHEMERAL_SQL_ROWS_MAX } from "../../shared/agent-ui/lifecycle.js";
 import { SEARCH_GLYPH, DOC_GLYPH, SQL_GLYPH, TRAIL_GLYPH, BOLT_GLYPH, PEOPLE_GLYPH, LINK_GLYPH, LOOP_GLYPH, CLOCK_GLYPH } from "../../shared/agent-ui/glyphs.js";
+import { actionToolLabel } from "../../shared/agent-ui/actions.js";
 export { ephemeralResultArrived } from "../../shared/agent-ui/lifecycle.js";
 
 import { useState, useRef, useEffect } from "preact/hooks";
@@ -200,6 +201,15 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       if (turnDone) return null;
       return html`<${SubagentCard} key=${key} card=${part} dispatch=${dispatch} />`;
     case "tool":
+      if (!live && (part.tool === "search_many" || part.tool === "fetch_many")) {
+        const childTool = part.tool === "search_many" ? "search_documents" : "fetch_document";
+        return sharedTools.deriveBatchChildren(part, childTool).map((child) =>
+          renderPart(
+            { ...part, tool: child.tool, args: null, argsSummary: child.argsSummary, result: child.result },
+            `${key}-${child.index}`, citations, dispatch, pillRuns, thinkingActive, false, turnDone, plainValueFences,
+          ),
+        );
+      }
       // `annotate` is silent in the transcript — the unified Timeline
       // sidebar owns the visible payload. But while the model is
       // streaming the annotate tool_use args (a verbatim quote, up to
@@ -440,7 +450,6 @@ const EPHEMERAL_ACTION_TOOLS = new Set([
   "schedule_agent_run",
 ]);
 
-/** Human verb for each ephemeral action; the raw name for anything new. */
 function docHref(documentId) {
   return `/portal/doc/${encodeURIComponent(documentId)}`;
 }
