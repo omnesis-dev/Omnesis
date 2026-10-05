@@ -526,9 +526,10 @@ describe("ephemeral read-only browser search", () => {
         yield { type: "agent.message.end", payload: { ...payload, stopReason: "end_turn" } };
       },
     };
+    const search = vi.fn(async () => ({ query: "", durationMs: 0, results: [] }));
     const service = new AgentService({
       backendFactory: () => backend,
-      ports: { document },
+      ports: { document, search: { search } },
       systemPrompt: "Corpus prompt",
     });
     const onResults = vi.fn();
@@ -547,6 +548,7 @@ describe("ephemeral read-only browser search", () => {
     expect(inputs[0]!.systemPrompt).toContain('For a greeting such as "hi"');
     expect(inputs[0]!.systemPrompt).toContain("call present_browser_results with an empty array");
     expect(onResults).toHaveBeenCalledExactlyOnceWith([]);
+    expect(search).not.toHaveBeenCalled();
     await service.dispose();
   });
 
