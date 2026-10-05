@@ -28,6 +28,7 @@ import {
   setDeviceAccessLevel,
 } from "../api.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
+import { CopyBlock, CopyValue } from "../components/copy-button.js";
 import { navigate } from "../lib/router.js";
 import { accessLevels, accessRules, errorMessage, overviewPolicies } from "./access/shared.js";
 import { answerPrivacySummary, reachSummary } from "./access/terms.js";
@@ -473,9 +474,9 @@ function PhonePairQr({ pairingCode, kind }) {
         <details class="devices-phone-qr-raw">
           <summary>Can't scan the code?</summary>
           <p>In the Omnesis app, choose <strong>Paste JSON</strong> and paste:</p>
-          <pre><code>${payload}</code></pre>
+          <${CopyBlock} text=${payload} title="Copy pairing JSON" />
           ${selected.systemTrust && html`
-            <p>Or choose <strong>Manual entry</strong> and type the gateway URL <code>${selected.gatewayUrl}</code> and the pairing code <code>${pairingCode}</code>.</p>
+            <p>Or choose <strong>Manual entry</strong> and type the gateway URL <${CopyValue} text=${selected.gatewayUrl} title="Copy gateway URL" /> and the pairing code <${CopyValue} text=${pairingCode} title="Copy pairing code" />.</p>
           `}
         </details>
       `}
@@ -1048,7 +1049,7 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
       <div class="devices-pair-snippet">
         <span class="devices-pair-label">In the Omnesis browser extension, open Options and enter the gateway URL below plus the pairing code shown above:</span>
         <ul class="devices-pair-ext-steps">
-          <li>Gateway URL: <code>${origin}</code></li>
+          <li>Gateway URL: <${CopyValue} text=${origin} title="Copy gateway URL" /></li>
         </ul>
         <p class="devices-pair-ext-note">The extension redeems the code itself and stores its credential. Don't have it yet? <a href=${CHROME_WEB_STORE_URL} target="_blank" rel="noreferrer noopener">Install it from the Chrome Web Store</a>.</p>
       </div>
@@ -1079,7 +1080,7 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
           ${commands.map(({ label, command }) => html`
             <div class="devices-agent-command" key=${label}>
               <span class="devices-pair-label">${label}</span>
-              <pre><code>${command}</code></pre>
+              <${CopyBlock} text=${command} title="Copy command" />
             </div>
           `)}
         </div>
@@ -1091,10 +1092,10 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
     return html`
       <div class="devices-pair-snippet">
         <span class="devices-pair-label">On a machine that has no Omnesis yet, one line installs the CLI, redeems this code and registers the collector service:</span>
-        <pre><code>curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector --gateway-url ${origin}</code></pre>
+        <${CopyBlock} text=${`curl -fsSL https://omnesis.dev/install.sh | sh -s -- --collector --gateway-url ${origin}`} title="Copy command" />
         <p class="devices-pair-ext-note">It asks for the code above. Add <code>--trust-fingerprint</code> with this gateway's certificate fingerprint to verify it rather than trust it on sight — the gateway's own install printed the whole line.</p>
         <span class="devices-pair-label">On a machine that already has the CLI, redeem it by hand instead:</span>
-        <pre><code>omnesis pair ${code} --gateway-url ${origin} --save ~/.config/omnesis/collector-token</code></pre>
+        <${CopyBlock} text=${`omnesis pair ${code} --gateway-url ${origin} --save ~/.config/omnesis/collector-token`} title="Copy command" />
       </div>
     `;
   }
@@ -1102,11 +1103,11 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
     return html`
       <div class="devices-pair-snippet">
         <span class="devices-pair-label">On the machine the integration runs on, redeem the code into a token file it reads:</span>
-        <pre><code>omnesis devices redeem ${code} --gateway-url ${origin} --save ~/.config/omnesis/integration.token</code></pre>
+        <${CopyBlock} text=${`omnesis devices redeem ${code} --gateway-url ${origin} --save ~/.config/omnesis/integration.token`} title="Copy command" />
         <p class="devices-pair-ext-note">No Omnesis CLI there? Redeem the code directly and keep the returned token:</p>
-        <pre><code>curl -X POST ${origin}/devices/pair \\
+        <${CopyBlock} text=${`curl -X POST ${origin}/devices/pair \\
   -H 'Content-Type: application/json' \\
-  -d '{"pairingCode":"${code}","kind":"integration"}'</code></pre>
+  -d '{"pairingCode":"${code}","kind":"integration"}'`} title="Copy command" />
         <p class="devices-pair-ext-note">${pairResult.accessLevelName
           ? pairResult.repair
             ? `It comes back on the access level “${pairResult.accessLevelName}”.`
@@ -1124,8 +1125,8 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
       <div class="devices-pair-snippet">
         <span class="devices-pair-label">Open the Omnesis portal on the new device and paste this code into its login screen:</span>
         <ul class="devices-pair-ext-steps">
-          <li>Portal URL: <code>${origin}</code></li>
-          <li>Pairing code: <code>${code}</code></li>
+          <li>Portal URL: <${CopyValue} text=${origin} title="Copy portal URL" /></li>
+          <li>Pairing code: <${CopyValue} text=${code} title="Copy pairing code" /></li>
         </ul>
         <p class="devices-pair-ext-note">The portal redeems the code itself into a browser session — nothing to run in a terminal.</p>
       </div>
@@ -1134,11 +1135,11 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
   return html`
     <div class="devices-pair-snippet">
       <span class="devices-pair-label">On the new device, run:</span>
-      <pre><code>omnesis pair ${code} --gateway-url ${origin}</code></pre>
+      <${CopyBlock} text=${`omnesis pair ${code} --gateway-url ${origin}`} title="Copy command" />
       <p class="devices-pair-ext-note">No Omnesis CLI on that device? Redeem the code directly:</p>
-      <pre><code>curl -X POST ${origin}/devices/pair \\
+      <${CopyBlock} text=${`curl -X POST ${origin}/devices/pair \\
   -H 'Content-Type: application/json' \\
-  -d '{"pairingCode":"${code}"}'</code></pre>
+  -d '{"pairingCode":"${code}"}'`} title="Copy command" />
     </div>
   `;
 }
@@ -1242,7 +1243,9 @@ function PairModal({
                 </p>`
               : html`<div class="devices-pair-code-row">
                   <span class="devices-pair-label">Pairing code</span>
-                  <code class="devices-pair-code">${pairResult.pairingCode}</code>
+                  <${CopyValue} text=${pairResult.pairingCode} title="Copy pairing code">
+                    <code class="devices-pair-code">${pairResult.pairingCode}</code>
+                  <//>
                   <span class="devices-pair-expiry">expires in ${Math.max(0, Math.floor((pairResult.expiresAt - Date.now()) / 1000))}s</span>
                 </div>`}
             <${PairInstructions}

@@ -1620,8 +1620,8 @@ a:hover { text-decoration: underline; }
 .access-phone-qr { flex: 0 0 auto; border-radius: 6px; }
 .access-phone-copy { display: grid; gap: 8px; min-width: 200px; }
 .access-phone-copy p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.access-phone-copy .copy-value { justify-self: start; }
 .access-phone-code {
-  justify-self: start;
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -4841,19 +4841,6 @@ p.devices-pair-expiry {
   flex-direction: column;
   gap: 8px;
 }
-.devices-pair-snippet pre {
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-primary);
-  margin: 0;
-  overflow-x: auto;
-  white-space: pre;
-}
-.devices-pair-snippet pre code { background: transparent; padding: 0; }
 .devices-agent-command-list,
 .devices-agent-command {
   display: flex;
@@ -5074,9 +5061,8 @@ p.devices-pair-expiry {
   margin: 8px 0 0;
   line-height: 1.5;
 }
-.devices-phone-qr-raw pre {
-  margin-top: 6px;
-  overflow-x: auto;
+.devices-phone-qr-raw .copy-block { margin-top: 6px; }
+.devices-phone-qr-raw .copy-block-code {
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -9548,6 +9534,9 @@ div.source-activity-popover-link:hover {
   position: absolute;
   top: 6px;
   right: 6px;
+}
+.copy-block-btn,
+.copy-value-btn {
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -9557,7 +9546,19 @@ div.source-activity-popover-link:hover {
   line-height: 1;
   transition: color 0.15s, border-color 0.15s;
 }
-.copy-block-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.copy-block-btn:hover,
+.copy-value-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+/* Copyable inline value: the value, then the copy button beside it */
+.copy-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+  max-width: 100%;
+}
+.copy-value > code { overflow-wrap: anywhere; }
+.copy-value-btn { display: inline-flex; align-items: center; flex: none; }
 
 /* Picker */
 
@@ -13184,35 +13185,6 @@ div.source-activity-popover-link:hover {
   border: 1px solid var(--border);
 }
 
-.creds-wizard-code-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  vertical-align: middle;
-}
-
-.creds-wizard-copy-btn {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px);
-  padding: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.creds-wizard-copy-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.creds-wizard-copy-btn:active {
-  background: var(--border);
-}
-
 /* ─── Models view ──────────────────────────────────────────────── */
 
 .models-view .models-back {
@@ -13626,19 +13598,6 @@ div.source-activity-popover-link:hover {
 .codex-runtime-result--bad { border-color: rgba(248, 81, 73, 0.32); background: rgba(248, 81, 73, 0.07); }
 .codex-runtime-assignment { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .codex-runtime-actions { display: flex; justify-content: flex-end; }
-.codex-login-code { display: inline-flex; align-items: center; gap: 6px; }
-.codex-login-copy {
-  display: inline-flex;
-  align-items: center;
-  background: none;
-  border: 0;
-  padding: 0;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-.codex-login-copy svg { width: 1em; height: 1em; }
-.codex-login-copy:hover { color: var(--text-primary); }
 .codex-update-confirm p { margin: 0 0 10px; }
 .codex-update-confirm p:last-child { margin-bottom: 0; }
 .codex-model-target {

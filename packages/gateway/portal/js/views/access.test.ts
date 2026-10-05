@@ -3286,6 +3286,8 @@ describe("AccessView", () => {
     const panel = host.querySelector(".access-phone-panel")!;
     expect(toggle.getAttribute("aria-controls")).toBe(panel.id);
     expect(panel.querySelector(".access-phone-code")?.textContent).toBe("WXYZ-1234");
+    expect(panel.querySelector(".access-phone-code")?.closest(".copy-value")?.querySelector("button.copy-value-btn"))
+      .not.toBeNull();
     expect(panel.querySelector("canvas.access-phone-qr")).not.toBeNull();
     // The same payload the public consent page encodes.
     expect(qr.toCanvas).toHaveBeenCalledWith(

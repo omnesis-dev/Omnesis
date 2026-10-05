@@ -16,6 +16,7 @@ import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { decideAccessAuthorization } from "../../api.js";
+import { CopyValue } from "../../components/copy-button.js";
 import { CapabilityTriad } from "../../components/grant-builder.js";
 import { QrCanvas } from "../../components/qr-canvas.js";
 import {
@@ -179,7 +180,9 @@ function PhoneHandoff({ userCode, disabled }) {
       <${QrCanvas} payload=${authorizationQrPayload(userCode)} width=${160} class="access-phone-qr" />
       <div class="access-phone-copy">
         <p>Scan with the Omnesis app on your phone, or enter this code there.</p>
-        <code class="access-phone-code">${userCode}</code>
+        <${CopyValue} text=${userCode} title="Copy code">
+          <code class="access-phone-code">${userCode}</code>
+        <//>
         <p>The request stays open here until it is decided on either.</p>
       </div>
     </div>`}
