@@ -35,9 +35,12 @@ const RESERVED_TARGETS = new Set([SEEDED_STATE_MANIFEST, SEEDED_STATE_MARKER, IN
 // The FTS index and vocabulary, plus FTS5's implementation-private shadow
 // tables, are derived from `chunks`. Shipping them would couple artifacts to
 // SQLite's internal representation; the index database boot path recreates
-// and rebuilds them from the canonical chunk rows when they are absent.
+// and rebuilds them from the canonical chunk rows when they are absent. The
+// chunk change log only tells running in-memory search indexes what changed
+// since they were built; the boot path recreates it empty.
 const REBUILT_TABLES = new Set([
   "chunks_fts",
+  "chunks_fts_changes",
   "chunks_fts_config",
   "chunks_fts_data",
   "chunks_fts_docsize",
