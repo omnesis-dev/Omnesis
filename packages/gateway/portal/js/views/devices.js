@@ -1123,10 +1123,9 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
     // portal login can't use.
     return html`
       <div class="devices-pair-snippet">
-        <span class="devices-pair-label">Open the Omnesis portal on the new device and paste this code into its login screen:</span>
+        <span class="devices-pair-label">Open the Omnesis portal on the new device and paste the pairing code above into its login screen:</span>
         <ul class="devices-pair-ext-steps">
           <li>Portal URL: <${CopyValue} text=${origin} title="Copy portal URL" /></li>
-          <li>Pairing code: <${CopyValue} text=${code} title="Copy pairing code" /></li>
         </ul>
         <p class="devices-pair-ext-note">The portal redeems the code itself into a browser session — nothing to run in a terminal.</p>
       </div>

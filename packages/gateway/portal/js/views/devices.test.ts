@@ -525,6 +525,21 @@ describe("browser extension pairing", () => {
     expect(apiMocks.pairDevice).toHaveBeenCalledWith({ kind: "browser" });
   });
 
+  test("a portal pairing shows its code once", async () => {
+    apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486", expiresAt: Date.now() + 60000 });
+    await act(async () => {
+      render(h(DevicesView, { pairKindRequest: "portal" }), host);
+    });
+    await act(async () => {
+      (host.querySelector(".devices-pair-form") as HTMLFormElement).dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    const result = host.querySelector(".devices-pair-result")?.textContent ?? "";
+    expect(result.split("FICTION-2486").length - 1).toBe(1);
+    expect(result).toContain("paste the pairing code above into its login screen");
+  });
+
   test("a phone's pairing code is carried by the QR, not shown on its own", async () => {
     apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486", expiresAt: Date.now() + 60000 });
     apiMocks.getPairAddresses.mockResolvedValue({
@@ -777,7 +792,10 @@ describe("browser extension pairing", () => {
           });
           expect(writeText, kind).toHaveBeenCalledWith(text);
         }
-        if (kind !== "browser") expect(copyables.some(({ text }) => text?.includes("FICTION-2486")), kind).toBe(true);
+        // The browser and portal steps point at the code shown above them instead of repeating it.
+        if (kind !== "browser" && kind !== "portal") {
+          expect(copyables.some(({ text }) => text?.includes("FICTION-2486")), kind).toBe(true);
+        }
         render(null, host);
       }
     } finally {
