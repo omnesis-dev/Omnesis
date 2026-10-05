@@ -45,7 +45,7 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
 declare const chrome: {
   runtime: { sendMessage(message: unknown): Promise<unknown> };
   commands: { getAll(): Promise<Array<{ name?: string; shortcut?: string }>> };
-  storage: { local: { get(keys: null): Promise<Record<string, unknown>> } };
+  storage: { local: { get(keys: null | string): Promise<Record<string, unknown>> } };
   permissions: { getAll(): Promise<{ origins?: string[] }> };
   windows: { getCurrent(): Promise<{ id?: number }> };
   sidePanel: {
