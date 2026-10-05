@@ -20,6 +20,12 @@ import type { ExtensionConfig } from "./storage.js";
 
 export const FIND_STATE_KEY = "omnesis.find.state.v1";
 export const MAX_FIND_QUERY = 1024;
+/**
+ * The gateway ends a search after three minutes with its own explanation; the
+ * browser waits a little longer so that explanation, not a bare timeout, is
+ * what the user reads.
+ */
+const FIND_SEARCH_TIMEOUT_MS = 195_000;
 /** Suggestions per omnibox keystroke: Chrome displays at most six from an extension. */
 export const OMNIBOX_SUGGESTIONS = 6;
 export interface FindDecision {
@@ -594,7 +600,10 @@ export class FindService {
                 limit,
                 timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
               }),
-              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]),
+              signal: AbortSignal.any([
+                controller.signal,
+                AbortSignal.timeout(FIND_SEARCH_TIMEOUT_MS),
+              ]),
               redirect: "error",
               credentials: "omit",
             },

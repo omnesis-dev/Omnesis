@@ -1,10 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { AgentEvent } from "@omnesis/core";
+import type { AgentEvent, RateLimitPatience } from "@omnesis/core";
 
 /** Bounded structured destinations per ephemeral Browser Find agent task. */
 export const BROWSER_FIND_AGENT_RESULT_LIMIT = 30;
+
+/** How long one Browser Find search may run before its stream reports a timeout. */
+export const BROWSER_FIND_TIMEOUT_MS = 180_000;
+
+/**
+ * How long each model request of a Browser Find agent task waits out a provider
+ * rate limit. A search is one task the user cannot reply to, so a per-minute
+ * token quota that resets within a minute should delay it rather than fail it
+ * and throw away its research. One request's wait is capped at half the search
+ * deadline so the search can still finish after a reset; the deadline itself
+ * bounds the whole search however many requests it makes.
+ */
+export const BROWSER_FIND_RATE_LIMIT_PATIENCE: Readonly<Required<RateLimitPatience>> = {
+  maxAttempts: 4,
+  maxTotalDelayMs: BROWSER_FIND_TIMEOUT_MS / 2,
+};
 
 export interface FindSearchInput {
   text: string;

@@ -13,6 +13,7 @@
  * capability contract is "throw rather than guess" and callers fail open.
  */
 
+import { setTimeout as delay } from "node:timers/promises";
 import {
   createLogger,
   fetchWithInferenceUrlPolicy,
@@ -35,7 +36,7 @@ export interface TypeSafeDecisionOptions {
   maxRetries?: number;
   /** Test seams. */
   fetchFn?: typeof fetch;
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -53,7 +54,7 @@ export class TypeSafeDecision implements DecisionCapability {
     this.opts = {
       timeoutMs: DEFAULT_TIMEOUT_MS,
       maxRetries: DEFAULT_MAX_RETRIES,
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      sleep: (ms, signal) => delay(ms, undefined, signal ? { signal } : {}),
       ...opts,
     };
   }
@@ -94,7 +95,7 @@ export class TypeSafeDecision implements DecisionCapability {
         if (callOpts?.signal?.aborted) throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
         if (attempt < this.opts.maxRetries) {
-          await this.opts.sleep(backoffMs(attempt, null));
+          await this.opts.sleep(backoffMs(attempt, null), callOpts?.signal);
           continue;
         }
         break;
@@ -108,7 +109,7 @@ export class TypeSafeDecision implements DecisionCapability {
       if (!isRetryable(response.status) || attempt >= this.opts.maxRetries) break;
       const wait = backoffMs(attempt, response.headers.get("retry-after"));
       log.debug(`TypeSafe ${response.status}; retrying in ${wait}ms`);
-      await this.opts.sleep(wait);
+      await this.opts.sleep(wait, callOpts?.signal);
     }
     throw lastError ?? new Error("TypeSafe request failed");
   }

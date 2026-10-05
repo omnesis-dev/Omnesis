@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { BrowserFindEvidence, createBrowserResultsTool } from "./results-tool.js";
-import { BROWSER_FIND_AGENT_RESULT_LIMIT, type FindSearchResult } from "./types.js";
+import {
+  BROWSER_FIND_AGENT_RESULT_LIMIT,
+  BROWSER_FIND_RATE_LIMIT_PATIENCE,
+  type FindSearchResult,
+} from "./types.js";
 import type { AgentEvent, AgentUsage } from "@omnesis/core";
 import type { AgentService } from "../../agent/service.js";
 
@@ -80,6 +84,7 @@ export async function buildBrowserFindRuntime(input: {
     timeZone: input.timeZone,
     tools: [tool],
     wrapRetrievalTool: (retrieval) => evidence.wrap(retrieval),
+    rateLimitPatience: BROWSER_FIND_RATE_LIMIT_PATIENCE,
   });
   // A successful response requires the presentation tool, not just a model end_turn.
   // Preserve the research history/receipts for a private, presentation-only repair
@@ -152,6 +157,7 @@ export async function buildBrowserFindRuntime(input: {
         initialHistory: history,
         retrieval: false,
         tools: [tool],
+        rateLimitPatience: BROWSER_FIND_RATE_LIMIT_PATIENCE,
       });
       for (let attempt = 0; attempt < 2 && !presented; attempt++) {
         await run(

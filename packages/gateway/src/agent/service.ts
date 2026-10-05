@@ -2288,6 +2288,8 @@ export class AgentService {
     retrieval?: boolean;
     tools: readonly ToolHandle[];
     wrapRetrievalTool?: (tool: ToolHandle) => ToolHandle;
+    /** How long each turn may wait out a provider rate limit; the interactive default when omitted. */
+    rateLimitPatience?: RateLimitPatience;
   }): Promise<AgentSession> {
     const backend = this.backendFactory("agent");
     if (!backend) throw new AgentError("agent_unconfigured", "no agent model is assigned");
@@ -2325,6 +2327,7 @@ export class AgentService {
       timeZone: options.timeZone,
       initialHistory: options.initialHistory,
       caller: { kind: "operator" },
+      ...(options.rateLimitPatience ? { rateLimitPatience: options.rateLimitPatience } : {}),
     });
   }
 

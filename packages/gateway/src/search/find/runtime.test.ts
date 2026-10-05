@@ -18,6 +18,7 @@ import {
   createBrowserResultsTool,
 } from "./results-tool.js";
 import { buildBrowserFindRuntime } from "./runtime.js";
+import { BROWSER_FIND_RATE_LIMIT_PATIENCE, BROWSER_FIND_TIMEOUT_MS } from "./types.js";
 import type { AgentEvent } from "@omnesis/core";
 
 const document: DocumentPort = {
@@ -689,6 +690,53 @@ describe("ephemeral read-only browser search", () => {
       usage: { inputTokens: 30, outputTokens: 6 },
       completed: false,
     });
+    await service.dispose();
+  });
+
+  it("waits out a provider rate limit on the research and every finalization turn", async () => {
+    const backend = new FinalizationBackend(false);
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+    });
+    await expect(
+      buildBrowserFindRuntime({
+        query: "Find route",
+        agent: service,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+        onResults: () => {},
+      }),
+    ).rejects.toThrow("could not present supported search results");
+    expect(backend.inputs).toHaveLength(3);
+    for (const input of backend.inputs)
+      expect(input.rateLimitPatience).toEqual(BROWSER_FIND_RATE_LIMIT_PATIENCE);
+    // One request's wait must leave the search time to finish before its deadline.
+    expect(BROWSER_FIND_RATE_LIMIT_PATIENCE.maxTotalDelayMs).toBeLessThan(BROWSER_FIND_TIMEOUT_MS);
+    await service.dispose();
+  });
+
+  it("keeps the interactive rate-limit default for a read-only session that names no patience", async () => {
+    const backend = new FinalizationBackend();
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: {
+        document,
+        search: { search: async () => ({ query: "", durationMs: 0, results: [] }) },
+      },
+      systemPrompt: "Corpus prompt",
+    });
+    const session = await service.buildReadOnlySearchSession({
+      systemPromptSuffix: "One read-only search",
+      tools: [],
+    });
+    await session.send("Find route").completion;
+    expect(backend.inputs[0]?.rateLimitPatience).toBeUndefined();
+    await session.dispose();
     await service.dispose();
   });
 
