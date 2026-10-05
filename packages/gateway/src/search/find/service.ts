@@ -4,10 +4,14 @@
 import { directFindResults } from "./direct-results.js";
 import { decideFindRoute } from "./decision.js";
 import { buildBrowserFindRuntime } from "./runtime.js";
+import {
+  BROWSER_FIND_AGENT_RESULT_LIMIT,
+  type FindSearchExecution,
+  type FindSearchInput,
+} from "./types.js";
 import type { DecisionCapability } from "@omnesis/core";
 import type { AgentService } from "../../agent/service.js";
 import type { SearchPipeline } from "../pipeline.js";
-import type { FindSearchExecution, FindSearchInput } from "./types.js";
 
 /** A fresh, read-only search task; it never creates a conversation or follow-up session. */
 export class FindSearchService {
@@ -60,7 +64,10 @@ export class FindSearchService {
           );
         const result = await buildBrowserFindRuntime({
           agent,
-          limit: Math.min(input.limit ?? 20, 20),
+          limit: Math.min(
+            input.limit ?? BROWSER_FIND_AGENT_RESULT_LIMIT,
+            BROWSER_FIND_AGENT_RESULT_LIMIT,
+          ),
           query: input.text,
           beforeModelCall: execution.beforeModelCall,
           timeZone: input.timeZone,

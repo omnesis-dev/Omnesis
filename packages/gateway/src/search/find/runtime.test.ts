@@ -305,6 +305,52 @@ describe("browser result evidence boundaries", () => {
     expect(f.onResults).not.toHaveBeenCalled();
   });
 
+  it("allows thirty grounded destinations across batches but atomically rejects the thirty-first", async () => {
+    const evidence = new BrowserFindEvidence();
+    evidence.documentIds.add("doc-many");
+    const urls = Array.from(
+      { length: 31 },
+      (_, index) => `https://example.org/destinations/${index + 1}`,
+    );
+    const onResults = vi.fn();
+    const tool = createBrowserResultsTool({
+      evidence,
+      limit: 200,
+      onResults,
+      ports: {
+        document: {
+          fetch: async () => ({
+            ref: {
+              documentId: "doc-many",
+              title: "Destination directory",
+              sourceId: "demo:one",
+              sourceType: "demo",
+            },
+            document: { id: "doc-many", content: urls.join("\n") },
+          }),
+        },
+      },
+    });
+    const items = urls.map((destinationUrl) => ({
+      destinationUrl,
+      title: "Destination directory",
+      evidence: { documentIds: ["doc-many"] },
+    }));
+    expect(await tool.invoke({ results: items.slice(0, 21) }, context)).toMatchObject({
+      kind: "structured",
+    });
+    expect(await tool.invoke({ results: items.slice(21, 30) }, context)).toMatchObject({
+      kind: "structured",
+    });
+    expect(onResults.mock.lastCall?.[0]).toHaveLength(30);
+    expect(await tool.invoke({ results: items.slice(30) }, context)).toMatchObject({
+      kind: "error",
+      code: "too_many_results",
+    });
+    expect(onResults).toHaveBeenCalledTimes(2);
+    expect(browserResultsSchema.safeParse({ results: items }).success).toBe(false);
+  });
+
   it("retains balanced URL parentheses and sends only the original SQL reference to the port", async () => {
     const f = fixture();
     f.evidence.documentIds.add("doc-1");
@@ -525,6 +571,7 @@ describe("ephemeral read-only browser search", () => {
     expect(
       await buildBrowserFindRuntime({
         query: "Find my route",
+        limit: 30,
         agent: service,
         timeZone: "Europe/Paris",
         signal: new AbortController().signal,
@@ -532,6 +579,8 @@ describe("ephemeral read-only browser search", () => {
         onResults,
       }),
     ).toEqual({ presented: true });
+    expect(backend.systemPrompt).toContain("Present up to 30 relevant, grounded destinations");
+    expect(backend.systemPrompt).toContain("return fewer when the evidence supports fewer");
     expect(factory).toHaveBeenLastCalledWith("agent");
     expect(prompt).toHaveBeenCalledWith("answer", { timeZone: "Europe/Paris" });
     expect(backend.tools).toEqual(

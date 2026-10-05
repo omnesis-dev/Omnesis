@@ -3,6 +3,9 @@
 
 import type { AgentEvent } from "@omnesis/core";
 
+/** Bounded structured destinations per ephemeral Browser Find agent task. */
+export const BROWSER_FIND_AGENT_RESULT_LIMIT = 30;
+
 export interface FindSearchInput {
   text: string;
   /** Omitted selects automatic routing; explicit modes bypass the routing model. */

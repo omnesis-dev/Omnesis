@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { BrowserFindEvidence, createBrowserResultsTool } from "./results-tool.js";
+import { BROWSER_FIND_AGENT_RESULT_LIMIT, type FindSearchResult } from "./types.js";
 import type { AgentEvent, AgentUsage } from "@omnesis/core";
 import type { AgentService } from "../../agent/service.js";
-import type { FindSearchResult } from "./types.js";
 
 const FIND_PROMPT = `
 You are the Chrome extension's Find engine. This is a standalone task with
@@ -60,18 +60,23 @@ export async function buildBrowserFindRuntime(input: {
   onResults(results: FindSearchResult[]): void;
 }): Promise<{ presented: boolean }> {
   const evidence = new BrowserFindEvidence();
+  const limit = Math.max(
+    1,
+    Math.min(input.limit ?? BROWSER_FIND_AGENT_RESULT_LIMIT, BROWSER_FIND_AGENT_RESULT_LIMIT),
+  );
+  const systemPrompt = `${FIND_PROMPT}\nPresent up to ${limit} relevant, grounded destinations in total. This is a maximum, not a quota: return fewer when the evidence supports fewer. Never fill the list with irrelevant or unsupported destinations.`;
   let presented = false;
   const tool = createBrowserResultsTool({
     evidence,
     ports: input.agent.readOnlySearchEvidencePorts(),
-    limit: input.limit,
+    limit,
     onResults: (results) => {
       presented = true;
       input.onResults(results);
     },
   });
   const session = await input.agent.buildReadOnlySearchSession({
-    systemPromptSuffix: FIND_PROMPT,
+    systemPromptSuffix: systemPrompt,
     timeZone: input.timeZone,
     tools: [tool],
     wrapRetrievalTool: (retrieval) => evidence.wrap(retrieval),
@@ -142,7 +147,7 @@ export async function buildBrowserFindRuntime(input: {
       await session.dispose();
       input.signal.throwIfAborted();
       finalizer = await input.agent.buildReadOnlySearchSession({
-        systemPromptSuffix: `${FIND_PROMPT}\nResearch is complete. Only present_browser_results is available.\nConvert the retained evidence into clickable results now. Do not repeat the prose answer.`,
+        systemPromptSuffix: `${systemPrompt}\nResearch is complete. Only present_browser_results is available.\nConvert the retained evidence into clickable results now. Do not repeat the prose answer.`,
         timeZone: input.timeZone,
         initialHistory: history,
         retrieval: false,

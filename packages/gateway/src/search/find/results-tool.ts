@@ -4,8 +4,8 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { docBodySchema, type ToolResult, type TrailEvent } from "@omnesis/core";
+import { BROWSER_FIND_AGENT_RESULT_LIMIT, type FindSearchResult } from "./types.js";
 import type { RecordPort, ToolHandle, ToolPorts } from "@omnesis/agent";
-import type { FindSearchResult } from "./types.js";
 
 const referenceSchema = z.object({
   table: z.string().min(1).max(256),
@@ -63,7 +63,7 @@ export const browserResultsSchema = z.object({
           }),
       }),
     )
-    .max(20),
+    .max(BROWSER_FIND_AGENT_RESULT_LIMIT),
 });
 
 type Reference = z.infer<typeof referenceSchema>;
@@ -215,7 +215,10 @@ export function createBrowserResultsTool(options: {
   onResults(results: FindSearchResult[]): void;
 }): ToolHandle {
   const presented = new Map<string, FindSearchResult>();
-  const limit = Math.max(1, Math.min(20, options.limit ?? 20));
+  const limit = Math.max(
+    1,
+    Math.min(BROWSER_FIND_AGENT_RESULT_LIMIT, options.limit ?? BROWSER_FIND_AGENT_RESULT_LIMIT),
+  );
   return {
     name: "present_browser_results",
     mutates: false,
