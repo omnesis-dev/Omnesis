@@ -152,6 +152,7 @@ export const CONFIG_DEFAULTS = {
     },
     bm25: {
       commonTokenThreshold: 0.1,
+      memoryIndex: true,
     },
     snapshot: {
       enabled: true,

@@ -157,6 +157,9 @@ import {
 import { SearchPipeline } from "./search/pipeline.js";
 import { SearchWorkerPool } from "./workers/search-pool.js";
 import { startSearchCacheWarm, type SearchCacheWarm } from "./workers/search-warm.js";
+import { startLexicalIndexBuild } from "./workers/lexical-index-build.js";
+import { LexicalIndex } from "./search/lexical-index.js";
+import { LexicalIndexService } from "./search/lexical-index-service.js";
 import { openSearchSnapshotHandle, type SearchSnapshotHandle } from "./search/snapshot-handle.js";
 import {
   type SearchConfig,
@@ -469,6 +472,11 @@ const ioWorker = resolveWorkerEntry("./workers/io-worker.ts", import.meta.url, R
 const cpuWorker = resolveWorkerEntry("./workers/cpu-worker.ts", import.meta.url, REGISTER_TSX);
 const searchWorker = resolveWorkerEntry(
   "./workers/search-worker.ts",
+  import.meta.url,
+  REGISTER_TSX,
+);
+const lexicalIndexBuildWorker = resolveWorkerEntry(
+  "./workers/lexical-index-build-worker.ts",
   import.meta.url,
   REGISTER_TSX,
 );
@@ -901,6 +909,7 @@ let searchCacheWarm: SearchCacheWarm | undefined;
 function scheduleSearchCachePrewarm(): void {
   if (!prewarmEnabled) {
     log.info("search cache pre-warm disabled by config");
+    lexicalIndexService?.start();
     return;
   }
 
@@ -928,6 +937,8 @@ function scheduleSearchCachePrewarm(): void {
     )
     .finally(() => {
       searchCacheWarm = undefined;
+      // Build after the warm, not alongside it: both read the whole FTS index.
+      lexicalIndexService?.start();
     });
 }
 // Surface the embedder model name in SearchResponse.models.embedding so
@@ -1065,6 +1076,38 @@ if (runtime.searchWorkerConcurrency > 0) {
     await pool.dispose().catch(() => {});
   });
 }
+
+// In-memory BM25 postings, built off-thread on shared memory and handed to the
+// main-thread fallback and every search worker. Until the first build lands,
+// and whenever one fails, BM25 ranks with FTS5.
+const lexicalIndexService =
+  (config.search?.bm25?.memoryIndex ?? CONFIG_DEFAULTS.search.bm25.memoryIndex)
+    ? new LexicalIndexService({
+        build: () =>
+          startLexicalIndexBuild({
+            indexDbPath,
+            indexDbKeyHex: storageEncryption.indexDbKeyHex,
+            cacheSizeBytes: SEARCH_WARM_PAGE_CACHE_BYTES,
+            backgroundWorkerNice: runtime.backgroundWorkerNice,
+            workerUrl: lexicalIndexBuildWorker.url,
+            workerExecArgv: lexicalIndexBuildWorker.execArgv,
+          }),
+        // seq is contiguous (AUTOINCREMENT under the single writer), so the
+        // newest seq counts the changes since a build without scanning them.
+        countChanges: (changeSeq) =>
+          Math.max(
+            0,
+            (searchIndexDb
+              .prepare<[], { seq: number | null }>("SELECT max(seq) AS seq FROM chunks_fts_changes")
+              .get()?.seq ?? 0) - changeSeq,
+          ),
+        publish: (data) => {
+          searchPipeline.setLexicalRanker(new LexicalIndex(data));
+          searchWorkerPool?.setLexicalIndex(data);
+        },
+      })
+    : undefined;
+if (!lexicalIndexService) log.info("in-memory BM25 index disabled by config");
 
 // Per-process metrics + analytics DB are initialised here (earlier than
 // most other subsystems) so the agent harness — which constructs its
@@ -3223,7 +3266,9 @@ const doShutdown = async (): Promise<void> => {
   const httpDrained = await httpShutdown.close(server, 5_000);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
   // A warm still scanning competes with the sidecar persist below for I/O and
-  // the shutdown budget; its thread is throwaway, so stop it first.
+  // the shutdown budget; its thread is throwaway, so stop it first — after the
+  // lexical index service, because a settled warm starts the service's build.
+  await lexicalIndexService?.stop();
   await searchCacheWarm?.terminate();
   // Stop accepting compiles first, so nothing new starts while the rest of this
   // runs. A compile accepted now cannot finish, and reaches its caller as a

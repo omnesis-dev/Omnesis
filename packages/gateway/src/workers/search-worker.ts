@@ -38,9 +38,11 @@ import { parentPort } from "node:worker_threads";
 
 import { assertNever } from "@omnesis/core";
 import { runCandidateGen } from "../search/candidate-gen.js";
+import { LexicalIndex } from "../search/lexical-index.js";
 import { openIndexDb } from "../indexer/db.js";
 import { UsearchReadRegistry } from "../indexer/usearch-read-registry.js";
 import { deprioritizeBackgroundWorker } from "./worker-priority.js";
+import type { LexicalIndexData } from "../search/lexical-index-data.js";
 
 import type Database from "better-sqlite3";
 type Db = Database.Database;
@@ -86,9 +88,13 @@ function openSearchIndexConn(
   return db;
 }
 
+/** The lexical index sent before `init` finished, attached once the handle exists. */
+let pendingLexical: LexicalIndexData | undefined;
+
 let state: {
   indexDb: Db;
   usearchRead: UsearchReadRegistry;
+  lexical?: LexicalIndex;
   heartbeatInterval: ReturnType<typeof setInterval>;
   shuttingDown: boolean;
 } | null = null;
@@ -110,6 +116,7 @@ async function handleInit(init: SearchInit): Promise<void> {
     }, init.heartbeatIntervalMs);
 
     state = { indexDb, usearchRead, heartbeatInterval, shuttingDown: false };
+    if (pendingLexical) attachLexicalIndex(pendingLexical);
 
     // Yield CPU to real-time work under contention. Search candidate-gen is
     // user-facing, but it runs at the same OS priority as the main loop and the
@@ -167,7 +174,7 @@ function handleCall(id: number, request: CandidateGenRequest, enqueueMs: number)
   const cpuBefore = process.cpuUsage();
   try {
     const value = runCandidateGen(
-      { indexDb: state.indexDb, usearchRead: state.usearchRead },
+      { indexDb: state.indexDb, usearchRead: state.usearchRead, lexicalRanker: state.lexical },
       request,
     );
     const execMs = Date.now() - dequeueMs;
@@ -197,6 +204,16 @@ function handleCall(id: number, request: CandidateGenRequest, enqueueMs: number)
       cpuSystemUs: cpuDelta.system,
     });
   }
+}
+
+function attachLexicalIndex(data: LexicalIndexData): void {
+  if (!state) {
+    pendingLexical = data;
+    return;
+  }
+  pendingLexical = undefined;
+  state.lexical = new LexicalIndex(data);
+  log("info", "search-worker", `lexical index attached (${data.docCount} chunks)`);
 }
 
 async function handleShutdown(): Promise<void> {
@@ -229,6 +246,9 @@ parentPort.on("message", (msg: MainToSearch) => {
       break;
     case "call":
       handleCall(msg.id, msg.request, msg.enqueueMs);
+      break;
+    case "lexicalIndex":
+      attachLexicalIndex(msg.data);
       break;
     case "shutdown":
       void handleShutdown();

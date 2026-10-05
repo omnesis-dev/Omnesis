@@ -27,6 +27,7 @@
  */
 
 import type { CandidateGenRequest, CandidateGenResult } from "../search/candidate-gen.js";
+import type { LexicalIndexData } from "../search/lexical-index-data.js";
 import type { WorkerLogMessage } from "./protocol.js";
 
 export type SearchInit = {
@@ -57,7 +58,13 @@ export type SearchCall = {
   enqueueMs: number;
 };
 
-export type MainToSearch = SearchInit | SearchCall | { type: "shutdown" };
+/**
+ * Attach the in-memory lexical index, replacing any earlier one. Its arrays live
+ * on `SharedArrayBuffer`s, so every worker reads the one copy the builder made.
+ */
+export type SearchLexicalIndex = { type: "lexicalIndex"; data: LexicalIndexData };
+
+export type MainToSearch = SearchInit | SearchCall | SearchLexicalIndex | { type: "shutdown" };
 
 export type SearchResult =
   | {

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import {
@@ -209,6 +209,32 @@ describe("filterCommonTokens", () => {
     const { filtered, dropped } = filterCommonTokens(db, "report wombat", 0.5);
     expect(dropped).toEqual(["report"]);
     expect(filtered).toBe("wombat");
+  });
+
+  test("reuses corpus statistics for five minutes, then reads them again", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const rows: ChunkUpsertInput[] = [];
+      for (let i = 0; i < 8; i++) {
+        rows.push(chunk({ id: `r${i}`, documentId: `dr${i}`, content: "quarterly report data" }));
+      }
+      rows.push(chunk({ id: "w0", documentId: "dw0", content: "wombat sighting log" }));
+      upsertChunks(db, rows);
+      expect(filterCommonTokens(db, "report wombat", 0.5).dropped).toEqual(["report"]);
+
+      // "report" falls to 8 of 40 chunks: no longer common, but the cache holds.
+      const more: ChunkUpsertInput[] = [];
+      for (let i = 0; i < 31; i++) {
+        more.push(chunk({ id: `m${i}`, documentId: `dm${i}`, content: "marathon entry form" }));
+      }
+      upsertChunks(db, more);
+      expect(filterCommonTokens(db, "report wombat", 0.5).dropped).toEqual(["report"]);
+
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      expect(filterCommonTokens(db, "report wombat", 0.5).dropped).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("single-token query is never filtered, even when the token is common", () => {

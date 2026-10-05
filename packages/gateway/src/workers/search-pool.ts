@@ -37,6 +37,7 @@ import { Worker } from "node:worker_threads";
 import { createLogger } from "@omnesis/core";
 import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { DEFAULT_BACKGROUND_WORKER_NICE } from "./worker-priority.js";
+import type { LexicalIndexData } from "../search/lexical-index-data.js";
 import type { CandidateGenRequest, CandidateGenResult } from "../search/candidate-gen.js";
 import type { MainToSearch, SearchInit, SearchToMain } from "./search-protocol.js";
 
@@ -106,6 +107,21 @@ interface WorkerSlot {
   unresponsiveSince: number | null;
 }
 
+/**
+ * The candidate with the fewest calls in flight. Ties rotate with `turn`, so an
+ * idle pool spreads calls across workers as round-robin would.
+ */
+export function leastLoaded<T>(candidates: readonly T[], inflight: readonly T[], turn: number): T {
+  const load = new Map<T, number>();
+  for (const s of inflight) load.set(s, (load.get(s) ?? 0) + 1);
+  let best = candidates[turn % candidates.length];
+  for (let i = 1; i < candidates.length; i++) {
+    const c = candidates[(turn + i) % candidates.length];
+    if ((load.get(c) ?? 0) < (load.get(best) ?? 0)) best = c;
+  }
+  return best;
+}
+
 export class SearchWorkerPool {
   readonly concurrency: number;
   readonly maxInflightBeforeFallback: number;
@@ -120,6 +136,8 @@ export class SearchWorkerPool {
   private rejectReady!: (err: Error) => void;
   private nextId = 1;
   private inflight = new Map<number, Pending>();
+  /** The lexical index every worker ranks with; re-sent to respawned workers. */
+  private lexicalIndex: LexicalIndexData | undefined;
   private readonly opts: Required<
     Omit<SearchWorkerPoolOptions, "indexDbKeyHex" | "cacheSizeBytes">
   > & {
@@ -205,11 +223,12 @@ export class SearchWorkerPool {
   }
 
   /**
-   * Run candidate generation on a worker. Round-robins across the slots whose
-   * worker is ready and correlates the reply by id. Rejects if the pool is
-   * disposed, no worker is ready, or the worker fails — the caller
-   * (`SearchPipeline.candidateGen`) catches and falls back to the identical
-   * `runCandidateGen` on main.
+   * Run candidate generation on a worker. Picks the ready worker with the
+   * fewest calls in flight (ties rotate), so a fast query never waits behind a
+   * slow one while another worker sits idle, and correlates the reply by id.
+   * Rejects if the pool is disposed, no worker is ready, or the worker fails —
+   * the caller (`SearchPipeline.candidateGen`) catches and falls back to the
+   * identical `runCandidateGen` on main.
    */
   async candidateGen(request: CandidateGenRequest): Promise<CandidateGenResult> {
     if (this.disposed) throw new Error("search worker pool disposed");
@@ -217,7 +236,11 @@ export class SearchWorkerPool {
     const live = this.slots.filter((s) => s.ready && s.worker !== null);
     if (live.length === 0) throw new Error("no search worker is ready");
     const id = this.nextId++;
-    const slot = live[id % live.length];
+    const slot = leastLoaded(
+      live,
+      [...this.inflight.values()].map((p) => p.slot),
+      id,
+    );
     const enqueueMs = Date.now();
     // Captured here, in the caller's async chain: the reply handler cannot
     // see the ambient profiler (cross-thread event), so the reference
@@ -258,6 +281,18 @@ export class SearchWorkerPool {
 
     await Promise.all(shutdowns);
     this.rejectAllInflight(new Error("search worker pool shut down"));
+  }
+
+  /**
+   * Hand every worker the lexical index, replacing any earlier one. The arrays
+   * are shared memory, so this costs no copy; a worker spawned later receives
+   * the same index right after its `init`.
+   */
+  setLexicalIndex(data: LexicalIndexData): void {
+    this.lexicalIndex = data;
+    for (const slot of this.slots) {
+      slot.worker?.postMessage({ type: "lexicalIndex", data } satisfies MainToSearch);
+    }
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -309,6 +344,9 @@ export class SearchWorkerPool {
       ...(this.opts.cacheSizeBytes != null ? { cacheSizeBytes: this.opts.cacheSizeBytes } : {}),
     };
     worker.postMessage(init);
+    if (this.lexicalIndex) {
+      worker.postMessage({ type: "lexicalIndex", data: this.lexicalIndex } satisfies MainToSearch);
+    }
   }
 
   /** Take a slot out of rotation and fail the calls it was serving. */

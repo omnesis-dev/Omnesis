@@ -30,6 +30,7 @@ import {
   createIndexDatabase,
   setIndexedDocument,
   upsertChunks,
+  openIndexDb,
 } from "../indexer/db.js";
 import {
   resolveDiversityConfig,
@@ -37,7 +38,8 @@ import {
   resolveSourcePriorsConfig,
   resolveVectorConfig,
 } from "../search/search-config.js";
-import { SearchWorkerPool } from "./search-pool.js";
+import { LexicalIndex } from "../search/lexical-index.js";
+import { leastLoaded, SearchWorkerPool } from "./search-pool.js";
 import type { Worker } from "node:worker_threads";
 import type { CandidateGenRequest } from "../search/candidate-gen.js";
 
@@ -221,6 +223,20 @@ describe("SearchWorkerPool respawn", () => {
     expect(after.results).toEqual(before.results);
   });
 
+  test("the lexical index reaches a worker started after it was set, and its replacement after a crash", async () => {
+    const db = openIndexDb(dbPath, { readonly: true, mmapBytes: 0 });
+    const { data } = LexicalIndex.build(db, { shared: true });
+    db.close();
+    pool = makePool();
+    pool.setLexicalIndex(data);
+    await pool.start();
+    expect((await pool.candidateGen(request())).stageReports.bm25?.engine).toBe("memory");
+
+    await workerOf(pool, 0).terminate();
+    await waitFor("the pool to become ready again after the crash", () => pool!.isReady);
+    expect((await pool.candidateGen(request())).stageReports.bm25?.engine).toBe("memory");
+  });
+
   test("a worker that dies every time it comes back is respawned a bounded number of times, then abandoned with one line", async () => {
     pool = makePool({ maxRespawnStreak: 2 });
     await pool.start();
@@ -354,5 +370,18 @@ describe("SearchWorkerPool respawn", () => {
     await new Promise((r) => setTimeout(r, 800));
     expect(poolLog()).not.toContain(RESPAWNED_LINE);
     pool = undefined;
+  });
+});
+
+describe("leastLoaded", () => {
+  test("picks the candidate with the fewest calls in flight", () => {
+    expect(leastLoaded(["a", "b", "c"], ["a", "a", "c"], 0)).toBe("b");
+    expect(leastLoaded(["a", "b"], ["a"], 0)).toBe("b");
+    expect(leastLoaded(["a", "b"], ["b", "b"], 1)).toBe("a");
+  });
+
+  test("rotates among equally loaded candidates", () => {
+    const picks = [0, 1, 2, 3].map((turn) => leastLoaded(["a", "b"], [], turn));
+    expect(picks).toEqual(["a", "b", "a", "b"]);
   });
 });

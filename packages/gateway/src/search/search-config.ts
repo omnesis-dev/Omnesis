@@ -176,7 +176,7 @@ export interface SearchConfig {
   defaultFilters?: SearchFilters;
   /** Vector-stage knobs. */
   vector?: SearchVectorConfig;
-  bm25?: { commonTokenThreshold?: number };
+  bm25?: { commonTokenThreshold?: number; memoryIndex?: boolean };
   /**
    * Snapshot isolation for the search-handle index.db connection.
    * When enabled, search reads run through a dedicated long-lived
