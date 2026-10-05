@@ -6,7 +6,11 @@ import { parseHTML } from "linkedom";
 import { describe, expect, it, vi } from "vitest";
 import { initNotesEditPanel } from "./notes-edit-panel.js";
 import type { NotesEditView } from "./notes-edit-service.js";
-function panel(writtenDraft = "", beforeNewNote?: () => Promise<void>) {
+function panel(
+  writtenDraft = "",
+  beforeNewNote?: () => Promise<void>,
+  options: { restoredEdit?: boolean; emptyNotes?: boolean; rejectSave?: boolean } = {},
+) {
   const { document, window } = parseHTML(
     readFileSync(new URL("../../public/notes.html", import.meta.url), "utf8"),
   );
@@ -30,6 +34,15 @@ function panel(writtenDraft = "", beforeNewNote?: () => Promise<void>) {
       },
     ],
   };
+  if (options.emptyNotes) view.notes = [];
+  if (options.restoredEdit)
+    view.draft = {
+      id: "note",
+      url: view.url,
+      revision: "1".repeat(64),
+      text: "Invented previous edit",
+      original: "Invented saved thought",
+    };
   const accepted = vi.fn();
   const showNewNote = vi.fn((notes: { draft?: { text: string } }) => {
     newText.value = notes.draft?.text ?? "";
@@ -50,6 +63,8 @@ function panel(writtenDraft = "", beforeNewNote?: () => Promise<void>) {
           };
     if (msg.type === "notes-view")
       return { enabled: true, draft: { id: "new", text: "", url: view.url } };
+    if (msg.type === "notes-edit-save" && options.rejectSave)
+      return { ok: false, reason: "Invented update failure" };
     if (msg.type === "notes-edit-select")
       view = {
         ...view,
@@ -105,6 +120,44 @@ function panel(writtenDraft = "", beforeNewNote?: () => Promise<void>) {
   };
 }
 describe("saved-note editor", () => {
+  it("keeps new-note composition immediate even when a saved edit was left open", async () => {
+    const p = panel("", undefined, { restoredEdit: true });
+    await vi.waitFor(() => expect(p.document.querySelectorAll("[data-note-id]")).toHaveLength(1));
+    expect(p.document.getElementById("saved-note-new")?.hidden).toBe(true);
+    expect(p.document.getElementById("saved-note-editor")?.hidden).toBe(true);
+    expect(p.document.getElementById("notes-form")?.hidden).toBe(false);
+    p.document.querySelector<HTMLButtonElement>("[data-note-id]")!.click();
+    await vi.waitFor(() =>
+      expect(p.document.getElementById("saved-note-editor")?.hidden).toBe(false),
+    );
+    expect(p.document.getElementById("saved-note-new")?.hidden).toBe(false);
+  });
+  it("omits an empty saved-notes message and redundant new-note button while composing", async () => {
+    const p = panel("", undefined, { emptyNotes: true });
+    await vi.waitFor(() => expect(p.document.getElementById("saved-notes")?.hidden).toBe(false));
+    expect(p.document.getElementById("saved-notes-status")?.textContent).toBe("");
+    expect(p.document.getElementById("saved-note-new")?.hidden).toBe(true);
+  });
+  it("dismisses only a successfully saved edit", async () => {
+    for (const rejected of [false, true]) {
+      const p = panel("", undefined, { rejectSave: rejected });
+      await vi.waitFor(() => expect(p.document.querySelectorAll("[data-note-id]")).toHaveLength(1));
+      p.document.querySelector<HTMLButtonElement>("[data-note-id]")!.click();
+      await vi.waitFor(() => expect(p.textarea.value).toBe("Invented saved thought"));
+      p.document
+        .getElementById("saved-note-editor")!
+        .dispatchEvent(new p.window.Event("submit", { cancelable: true }));
+      await vi.waitFor(() => expect(p.send).toHaveBeenCalledWith({ type: "notes-edit-save" }));
+      if (rejected) {
+        await vi.waitFor(() =>
+          expect(p.document.getElementById("saved-notes-status")?.textContent).toBe(
+            "Invented update failure",
+          ),
+        );
+        expect(p.accepted).not.toHaveBeenCalled();
+      } else await vi.waitFor(() => expect(p.accepted).toHaveBeenCalledOnce());
+    }
+  });
   it("selects a saved note explicitly, keeps writes durable before dismissal and returns to the creation composer", async () => {
     const p = panel();
     await vi.waitFor(() => expect(p.document.querySelectorAll("[data-note-id]")).toHaveLength(1));

@@ -7,12 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
 import { highlightFindText, initFindPanel, type FindPanelView } from "./find-panel.js";
 import { FIND_STATE_KEY } from "./find-service.js";
+import type { FindMode } from "./find-query.js";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-function panel(options: { initialQuery?: string } = {}) {
+function panel(options: { initialQuery?: string; initialMode?: FindMode | null } = {}) {
   const { document, window } = parseHTML(
     readFileSync(new URL("../../public/notes.html", import.meta.url), "utf8"),
   );
@@ -63,14 +64,17 @@ function panel(options: { initialQuery?: string } = {}) {
     | undefined;
   const openOptionsPage = vi.fn().mockResolvedValue(undefined);
   const send = vi.fn(async (message: unknown) => {
-    const msg = message as { type: string; query?: string };
+    const msg = message as { type: string; query?: string; mode?: FindMode | null };
     if (msg.type === "notes-view") return { enabled: true };
     if (msg.type === "find-result") return { ok: true };
     if (msg.type === "find-update" || msg.type === "find-query")
       view = {
         ...view,
         query: msg.query!,
-        ...(msg.type === "find-query" ? { resultsQuery: msg.query! } : {}),
+        mode: msg.mode ?? undefined,
+        ...(msg.type === "find-query"
+          ? { resultsQuery: msg.query!, resultsMode: msg.mode ?? undefined }
+          : {}),
       };
     return view;
   });
@@ -125,6 +129,7 @@ describe("Find panel", () => {
         type: "find-query",
         query: "invented full-page query",
         more: false,
+        mode: null,
       }),
     );
     expect(p.input.value).toBe("invented full-page query");
@@ -134,7 +139,34 @@ describe("Find panel", () => {
     expect(p.document.activeElement).toBe(result);
     expect(p.document.getElementById("find-section")?.hidden).toBe(false);
     expect(p.document.getElementById("notes-section")?.hidden).toBe(true);
-    expect(p.document.querySelector(".brand-title")?.textContent).toBe("Omnesis");
+    expect(p.document.querySelector(".brand-title")?.textContent).toBe("OMNESIS");
+  });
+  it.each(["direct", "agentic"] as const)(
+    "keeps %s mode separate from the visible query",
+    async (mode) => {
+      const p = panel({ initialQuery: "invented guide", initialMode: mode });
+      await vi.waitFor(() =>
+        expect(p.send).toHaveBeenCalledWith({
+          type: "find-query",
+          query: "invented guide",
+          mode,
+          more: false,
+        }),
+      );
+      expect(p.input.value).toBe("invented guide");
+    },
+  );
+  it("cleans a legacy prefixed link while keeping its mode", async () => {
+    const p = panel({ initialQuery: "/agent invented guide" });
+    await vi.waitFor(() =>
+      expect(p.send).toHaveBeenCalledWith({
+        type: "find-query",
+        query: "invented guide",
+        mode: "agentic",
+        more: false,
+      }),
+    );
+    expect(p.input.value).toBe("invented guide");
   });
   it("does not auto-submit a full-page query edited while initial status is loading", async () => {
     const p = panel({ initialQuery: "invented original query" });

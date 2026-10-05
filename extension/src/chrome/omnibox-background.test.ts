@@ -91,9 +91,9 @@ afterEach(() => {
 
 describe("Omnesis omnibox", () => {
   it.each([
-    ["/search invented guide", "Search directly in Omnesis"],
-    ["/agent invented guide", "Agentic search in Omnesis"],
-  ])("preserves the explicit mode when submitting %s", async (query, label) => {
+    ["/search invented guide", "Search directly in Omnesis", "direct"],
+    ["/agent invented guide", "Agentic search in Omnesis", "agentic"],
+  ])("preserves the explicit mode when submitting %s", async (query, label, mode) => {
     vi.useFakeTimers();
     const h = harness();
     h.start();
@@ -106,7 +106,7 @@ describe("Omnesis omnibox", () => {
     h.enter(query);
     await vi.advanceTimersByTimeAsync(0);
     expect(h.update).toHaveBeenCalledWith(7, {
-      url: `chrome-extension://test/find.html?q=${new URLSearchParams({ q: query }).toString().slice(2)}`,
+      url: `chrome-extension://test/find.html?q=invented+guide&mode=${mode}`,
     });
     expect(h.create).not.toHaveBeenCalled();
   });

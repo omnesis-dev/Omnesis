@@ -78,6 +78,11 @@ async function main() {
       .replace('<section id="find-section" hidden>', '<section id="find-section">'),
   );
 
+  await cp(
+    join(root, "../packages/gateway/portal/img/omnesis-mark.svg"),
+    join(outdir, "icons/omnesis-mark.svg"),
+  );
+
   const sharedStyles = await readFile(
     fileURLToPath(import.meta.resolve("@omnesis/gateway/agent-ui/styles.css")),
     "utf8",

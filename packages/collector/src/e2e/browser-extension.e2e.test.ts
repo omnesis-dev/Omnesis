@@ -609,7 +609,16 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     ).toBe(true);
     const thought = "Use this invented logbook structure for the next fictional observation.";
     await panel.fill("#note-text", thought);
-    await expect.poll(() => panel.locator("#note-draft-status").textContent()).toBe("Draft saved");
+    await expect
+      .poll(() =>
+        panel.evaluate(async () => {
+          const stored = await chrome.storage.local.get("omnesis.notes.state.v1");
+          return (stored["omnesis.notes.state.v1"] as { draft?: { text?: string } } | undefined)
+            ?.draft?.text;
+        }),
+      )
+      .toBe(thought);
+    expect(await panel.locator("#note-draft-status").textContent()).toBe("");
     await panel.setViewportSize({ width: 380, height: 820 });
     await panel.screenshot({
       path: join(tmpdir(), "omnesis-extension-notes-composer.png"),

@@ -113,7 +113,7 @@ export function initNotesPanel(
     const remaining = MAX_NOTE_CHARS - renderedNoteLength({ ...draft, text: textarea.value });
     element("note-budget").textContent =
       remaining < 0
-        ? `${-remaining} characters over the limit. Shorten your note or remove the quotation.`
+        ? `${-remaining} characters over the limit. Shorten your note or quotation.`
         : `${remaining} characters left, including page and quotation`;
     send.disabled = submitting || remaining < 0 || !textarea.value.trim();
   }
@@ -133,7 +133,7 @@ export function initNotesPanel(
         if (result?.ok === false) throw new Error(result.reason);
         if (draft?.id === id && textarea.value === text && draft.selection === selection) {
           dirty = false;
-          element("note-draft-status").textContent = "Draft saved";
+          element("note-draft-status").textContent = "";
         }
       })
       .catch(() => {
@@ -144,12 +144,6 @@ export function initNotesPanel(
     void updates.catch(() => undefined);
   }
   textarea.addEventListener("input", saveDraft);
-  element("remove-selection").addEventListener("click", () => {
-    if (!draft) return;
-    draft.selection = "";
-    element("note-quotation").hidden = true;
-    saveDraft();
-  });
   element("note-discard").addEventListener("click", () => {
     if (!draft || submitting) return;
     const id = draft.id;
@@ -194,10 +188,12 @@ export function initNotesPanel(
           id,
         });
         if (view?.ok === false) throw new Error(view.reason);
+        if (!view?.enabled || view.draft !== null)
+          throw new Error("Your note was not saved. Your draft is kept.");
         draft = null;
         dirty = false;
         render(view);
-        if (view?.ok === true) await onAccepted?.();
+        await onAccepted?.();
       } catch (error) {
         status.textContent =
           error instanceof Error ? error.message : "Your note was not sent. Your draft is kept.";

@@ -10,8 +10,11 @@ import { initPanelDismiss } from "./panel-dismiss.js";
 
 document.addEventListener("DOMContentLoaded", () => {
   if (location.pathname === "/find.html") {
+    const params = new URL(location.href).searchParams;
+    const mode = params.get("mode");
     initFindPanel(document, chrome, {
-      initialQuery: new URL(location.href).searchParams.get("q") ?? undefined,
+      initialQuery: params.get("q") ?? undefined,
+      initialMode: mode === "direct" || mode === "agentic" ? mode : null,
     });
     return;
   }

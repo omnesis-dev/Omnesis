@@ -9,8 +9,10 @@
   <body class="notes-panel">
     <header class="brand">
       <img class="brand-logo" src="icons/icon-128.png" alt="" />
+      <span class="find-brand-mark" aria-hidden="true"></span>
       <div>
         <div class="brand-title">Omnesis</div>
+        <div class="find-brand-sub">Personal index</div>
       </div>
     </header>
 
@@ -70,7 +72,7 @@
       <section id="saved-notes" hidden>
         <p id="saved-notes-status" class="hint" role="status" aria-live="polite"></p>
         <div id="saved-notes-list"></div>
-        <button id="saved-note-new" type="button" class="secondary">New note</button>
+        <button id="saved-note-new" type="button" class="secondary" hidden>New note</button>
         <form id="saved-note-editor" hidden>
           <label for="saved-note-text">Edit saved note</label>
           <a id="saved-note-url" target="_blank" rel="noopener noreferrer"></a>
@@ -88,11 +90,9 @@
           <strong id="note-title"></strong
           ><a id="note-url" target="_blank" rel="noopener noreferrer"></a>
         </div>
-        <p class="hint">This note stays attached to this page when you switch tabs.</p>
         <details id="note-quotation" open>
           <summary>Selected passage</summary>
           <blockquote id="note-selection"></blockquote>
-          <button id="remove-selection" type="button" class="secondary">Remove quotation</button>
         </details>
         <label for="note-text">Your note</label>
         <textarea

@@ -35,11 +35,14 @@ export function initNotesEditPanel(
     saving = false;
   let writes: Promise<unknown> = Promise.resolve();
   let showEditor = false;
+  let creationId: string | undefined;
+  let composing = false;
   let initial = true;
   function editing(active: boolean): void {
     element("notes-section").dataset.savedEdit = String(active);
     showEditor = active;
     editor.hidden = !active;
+    newNote.hidden = composing && !active;
     const creationStatus = element("notes-status");
     creationStatus.hidden =
       active && creationStatus.textContent === "Write a note about this page.";
@@ -57,9 +60,7 @@ export function initNotesEditPanel(
       editing(false);
       return;
     }
-    status.textContent =
-      next.error ??
-      (next.notes.length ? "Saved notes on this page" : "No saved notes on this page yet.");
+    status.textContent = next.error ?? (next.notes.length ? "Saved notes on this page" : "");
     list.replaceChildren();
     for (const note of next.notes) {
       const button = document.createElement("button");
@@ -103,22 +104,27 @@ export function initNotesEditPanel(
   }
   async function refresh(): Promise<void> {
     const request = ++generation;
-    const stored = await api.storage.local.get(NOTES_PAGE_KEY);
-    const page = stored[NOTES_PAGE_KEY] as { url?: unknown } | null;
-    if (typeof page?.url === "string") url = page.url;
-    if (!url) {
-      const notes = await api.runtime.sendMessage<NotesView>({ type: "notes-view" });
-      url = notes?.draft?.url ?? "";
-    }
-    if (!url) return;
     try {
+      const stored = await api.storage.local.get(NOTES_PAGE_KEY);
+      const page = stored[NOTES_PAGE_KEY] as { url?: unknown } | null;
+      if (typeof page?.url === "string") url = page.url;
+      const notes = await api.runtime.sendMessage<NotesView>({ type: "notes-view" });
+      if (request !== generation) return;
+      if (!url) url = notes?.draft?.url ?? "";
+      composing = !!notes?.enabled && !!notes.draft;
+      if (notes?.draft?.id !== creationId) {
+        creationId = notes?.draft?.id;
+        if (composing) editing(false);
+      }
+      newNote.hidden = composing && !showEditor;
+      if (!url) return;
       const next = await api.runtime.sendMessage<NotesEditView & { ok?: boolean }>({
         type: "notes-edit-list",
         url,
       });
       if (request !== generation || !next || typeof next.enabled !== "boolean") return;
       render(next);
-      if (initial && next.draft) showEditor = true;
+      if (initial && next.draft && !composing) showEditor = true;
       initial = false;
       if (showEditor && next.draft && !dirty && !saving) {
         text.value = next.draft.text;
@@ -126,7 +132,8 @@ export function initNotesEditPanel(
         if (document.activeElement?.closest("[hidden]")) text.focus();
       }
     } catch {
-      status.textContent = "Saved notes are unavailable. Your edit is kept.";
+      if (request === generation)
+        status.textContent = "Saved notes are unavailable. Your edit is kept.";
     }
   }
   text.addEventListener("input", () => {

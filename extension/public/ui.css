@@ -572,7 +572,7 @@ button.secondary:hover {
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 7px;
+  gap: 4px;
 }
 .find-result {
   position: relative;
@@ -589,7 +589,7 @@ button.secondary:hover {
   font-weight: 400;
   display: flex;
   gap: 11px;
-  padding: 14px 10px;
+  padding: 9px 10px;
   width: 100%;
   margin: 0;
   text-align: left;
@@ -598,8 +598,15 @@ button.secondary:hover {
   background: transparent;
   box-shadow: none;
 }
-.find-result-open:hover {
+.find-result:hover {
   background: rgba(88, 166, 255, 0.04);
+}
+.find-result-open:focus {
+  outline: none;
+}
+.find-result:focus-within {
+  background: rgba(88, 166, 255, 0.07);
+  border-color: rgba(88, 166, 255, 0.22);
 }
 .find-icon {
   position: relative;
@@ -622,7 +629,7 @@ button.secondary:hover {
 .find-result-body {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 3px;
 }
 .find-result-title {
   font-size: 14px;
@@ -705,14 +712,15 @@ button.secondary:hover {
   font-size: 17px;
 }
 .find-page .find-result {
-  padding: 16px 0;
+  padding: 0;
 }
 .find-page .find-result-title {
-  font-size: 16px;
+  font-size: 15px;
 }
 .find-page .find-snippet {
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-line-clamp: 2;
 }
 @media (max-width: 600px) {
   .find-page {
@@ -758,4 +766,38 @@ button.secondary:hover {
 .saved-note-item[aria-current="true"] {
   border-color: var(--accent);
   background: rgba(88, 166, 255, 0.07);
+}
+
+.find-brand-mark,
+.find-brand-sub {
+  display: none;
+}
+.find-page .brand {
+  gap: 10px;
+}
+.find-page .brand-logo {
+  display: none;
+}
+.find-page .find-brand-mark {
+  display: block;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  background-color: #58a6ff;
+  -webkit-mask: url(icons/omnesis-mark.svg) no-repeat center / contain;
+  mask: url(icons/omnesis-mark.svg) no-repeat center / contain;
+}
+.find-page .brand-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+.find-page .find-brand-sub {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+  text-transform: uppercase;
 }

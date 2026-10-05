@@ -3,7 +3,7 @@
 
 import { h, render as renderComponent, ThinkingDots } from "@omnesis/gateway/agent-ui";
 import { createFindConversation } from "./find-conversation.js";
-import { parseFindQuery } from "./find-query.js";
+import { parseFindQuery, type FindMode } from "./find-query.js";
 import { findQueryTerms } from "./find-results.js";
 import { FIND_STATE_KEY, type FindResult, type FindView } from "./find-service.js";
 
@@ -63,7 +63,7 @@ export function highlightFindText(
 export function initFindPanel(
   document: Document,
   api: PanelApi,
-  options: { initialQuery?: string } = {},
+  options: { initialQuery?: string; initialMode?: FindMode | null } = {},
 ): void {
   const element = <T extends HTMLElement>(id: string): T => {
     const value = document.getElementById(id);
@@ -82,7 +82,10 @@ export function initFindPanel(
     generation = 0,
     searching = false;
   let dirtyInput = options.initialQuery !== undefined;
-  if (dirtyInput) input.value = options.initialQuery!;
+  const initial = parseFindQuery(options.initialQuery ?? "");
+  let mode: FindMode | null | undefined =
+    options.initialQuery !== undefined ? (initial.mode ?? options.initialMode ?? null) : undefined;
+  if (dirtyInput) input.value = initial.text;
   let refreshGeneration = 0;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   const cancel = element<HTMLButtonElement>("find-cancel");
@@ -93,7 +96,7 @@ export function initFindPanel(
   findSection.hidden = false;
   if (notesSection) notesSection.hidden = true;
   const title = document.querySelector<HTMLElement>(".brand-title");
-  if (title) title.textContent = "Omnesis";
+  if (title) title.textContent = "OMNESIS";
   const conversation = createFindConversation(element("find-agent"), (toolCallId, progressId) => {
     void api.runtime
       .sendMessage({ type: "find-progress-flush", toolCallId, progressId })
@@ -143,10 +146,12 @@ export function initFindPanel(
     if (footer)
       footer.hidden = !next.enabled || next.resultsQuery !== input.value || !next.results.length;
     if (!dirtyInput) {
-      input.value = next.query;
+      input.value = parseFindQuery(next.query).text;
+      mode = next.mode ?? null;
     }
     more.hidden = !next.enabled || !next.hasMore;
-    const currentResults = next.resultsQuery === input.value;
+    const currentResults =
+      next.resultsQuery === input.value && (next.resultsMode ?? null) === (mode ?? null);
     cancel.hidden = !next.running || !currentResults;
     more.hidden ||= !currentResults;
     const agentic = next.enabled && currentResults && next.decision?.mode === "agentic";
@@ -287,14 +292,17 @@ export function initFindPanel(
   }
   async function search(moreResults = false): Promise<void> {
     const request = ++generation,
-      query = input.value;
+      parsed = parseFindQuery(input.value),
+      query = parsed.text;
+    if (parsed.mode) mode = parsed.mode;
+    input.value = query;
     searching = true;
     selected = 0;
     status.textContent = "Searching your Omnesis…";
     form.setAttribute("aria-busy", "true");
     try {
       const next = await api.runtime.sendMessage<FindPanelView & { ok?: boolean; reason?: string }>(
-        { type: "find-query", query, more: moreResults },
+        { type: "find-query", query, more: moreResults, ...(mode !== undefined ? { mode } : {}) },
       );
       if (request !== generation) return;
       if (next?.ok === false) throw new Error(next.reason ?? "Search failed");
@@ -314,7 +322,11 @@ export function initFindPanel(
     generation++;
     searching = false;
     void api.runtime
-      .sendMessage({ type: "find-update", query: input.value })
+      .sendMessage({
+        type: "find-update",
+        query: input.value,
+        ...(mode !== undefined ? { mode } : {}),
+      })
       .catch(() => undefined);
     if (view) render(view);
   });
@@ -371,7 +383,7 @@ export function initFindPanel(
       options.initialQuery?.trim() &&
       view?.enabled &&
       generation === 0 &&
-      input.value === options.initialQuery
+      input.value === initial.text
     )
       void search();
     input.focus();

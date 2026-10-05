@@ -722,33 +722,38 @@ describe("explicit Find query modes", () => {
   it.each([
     ["/search invented query", "direct"],
     ["/AGENT invented query", "agentic"],
-  ] as const)("sends %s without its prefix and retains the display query", async (query, mode) => {
-    const p = harness();
-    p.search(async (body) => {
-      expect(body).toMatchObject({ version: 2, text: "invented query", mode });
-      return sse([
-        {
-          type: "find.decision",
-          payload: { mode, status: "decided", reason: "Requested mode", requested: true },
-        },
-        { type: "find.results", payload: { results: [], complete: true } },
-        { type: "find.complete", payload: { mode } },
-      ]);
-    });
-    const view = await p.service.search(query);
-    expect(
-      p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search/v2")),
-    ).toBe(true);
-    expect(p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search"))).toBe(
-      false,
-    );
-    expect(view.query).toBe(query);
-    expect(view.resultsQuery).toBe(query);
-    expect(view.decision).toMatchObject({ mode, requested: true });
-    expect((await new FindService(p.deps).status(false)).decision).toMatchObject({
-      requested: true,
-    });
-  });
+  ] as const)(
+    "sends %s without its prefix and stores mode separately from the visible query",
+    async (query, mode) => {
+      const p = harness();
+      p.search(async (body) => {
+        expect(body).toMatchObject({ version: 2, text: "invented query", mode });
+        return sse([
+          {
+            type: "find.decision",
+            payload: { mode, status: "decided", reason: "Requested mode", requested: true },
+          },
+          { type: "find.results", payload: { results: [], complete: true } },
+          { type: "find.complete", payload: { mode } },
+        ]);
+      });
+      const view = await p.service.search(query);
+      expect(
+        p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search/v2")),
+      ).toBe(true);
+      expect(p.fetch.mock.calls.some(([url]) => String(url).endsWith("/browser/find/search"))).toBe(
+        false,
+      );
+      expect(view.query).toBe("invented query");
+      expect(view.mode).toBe(mode);
+      expect(view.resultsQuery).toBe("invented query");
+      expect(view.resultsMode).toBe(mode);
+      expect(view.decision).toMatchObject({ mode, requested: true });
+      expect((await new FindService(p.deps).status(false)).decision).toMatchObject({
+        requested: true,
+      });
+    },
+  );
 
   it.each([undefined, { min: 2, max: 2 }, { min: 1, max: 0 }])(
     "rejects unsupported manual modes without running automatic search",
@@ -757,12 +762,16 @@ describe("explicit Find query modes", () => {
       p.modeCapability(capability);
       const view = await p.service.search("/agent invented query");
       expect(view.error).toContain("does not support /search or /agent");
-      expect(view.query).toBe("/agent invented query");
+      expect(view.query).toBe("invented query");
+      expect(view.mode).toBe("agentic");
       expect(p.fetch.mock.calls.some(([url]) => String(url).includes("/browser/find/search"))).toBe(
         false,
       );
-      expect((await p.service.search("plain invented query")).error).toBeUndefined();
-      const request = p.fetch.mock.calls.find(([url]) =>
+      // A fresh service state without a retained manual mode stays compatible.
+      const automatic = harness();
+      automatic.modeCapability(capability);
+      expect((await automatic.service.search("plain invented query")).error).toBeUndefined();
+      const request = automatic.fetch.mock.calls.find(([url]) =>
         String(url).endsWith("/browser/find/search"),
       )!;
       expect(JSON.parse(String(request[1]?.body))).not.toHaveProperty("mode");
@@ -797,5 +806,61 @@ describe("explicit Find query modes", () => {
       });
     }
     expect((await p.service.status(false)).query).toBe("");
+  });
+});
+
+it("preserves the stripped mode through typing, restart, resubmit and more", async () => {
+  const p = harness();
+  p.search(async () =>
+    p.respond({
+      results: Array.from({ length: 25 }, (_, i) => hit(String(i), `https://example.org/${i}`)),
+    }),
+  );
+  await p.service.search("/search invented query");
+  const restored = new FindService(p.deps);
+  expect(await restored.update("edited query")).toMatchObject({
+    query: "edited query",
+    mode: "direct",
+  });
+  await restored.search("edited query");
+  await restored.search("edited query", true);
+  const calls = p.fetch.mock.calls.filter(([url]) =>
+    String(url).endsWith("/browser/find/search/v2"),
+  );
+  expect(calls).toHaveLength(3);
+  expect(JSON.parse(String(calls[2]![1]?.body))).toMatchObject({
+    text: "edited query",
+    mode: "direct",
+    limit: 50,
+  });
+  expect((await restored.status(false)).resultsQuery).toBe("edited query");
+});
+
+it("resets a retained forced mode for a new automatic full-page query", async () => {
+  const p = harness();
+  await p.service.search("/agent invented query");
+  const view = await p.service.search("fresh automatic query", false, null);
+  expect(view.mode).toBeUndefined();
+  expect(view.query).toBe("fresh automatic query");
+  const call = p.fetch.mock.calls
+    .filter(([url]) => String(url).endsWith("/browser/find/search"))
+    .at(-1)!;
+  expect(JSON.parse(String(call[1]?.body))).not.toHaveProperty("mode");
+});
+
+it("migrates a cached prefixed query to separate text and mode", async () => {
+  const p = harness();
+  await p.service.status();
+  const state = (await p.deps.read()) as Record<string, unknown>;
+  await p.deps.write({
+    ...state,
+    query: "/agent invented query",
+    resultsQuery: "/agent invented query",
+  });
+  expect(await new FindService(p.deps).status(false)).toMatchObject({
+    query: "invented query",
+    mode: "agentic",
+    resultsQuery: "invented query",
+    resultsMode: "agentic",
   });
 });

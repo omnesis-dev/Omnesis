@@ -195,7 +195,9 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
       .then(async (current) => {
         if (!current.enabled || selectionGeneration !== generation) return;
         const url = new URL(chrome.runtime.getURL("find.html"));
-        url.searchParams.set("q", query);
+        const parsed = parseFindQuery(query);
+        url.searchParams.set("q", parsed.text);
+        if (parsed.mode) url.searchParams.set("mode", parsed.mode);
         await navigate(url.href, disposition, await originId, selectionGeneration);
       })
       .catch(() => defaultSuggestion(false));

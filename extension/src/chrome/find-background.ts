@@ -91,6 +91,7 @@ export function installFindBackground(): {
       type?: string;
       query?: unknown;
       more?: unknown;
+      mode?: unknown;
       tabId?: unknown;
       resultId?: unknown;
       toolCallId?: unknown;
@@ -104,12 +105,16 @@ export function installFindBackground(): {
       findPage &&
       (msg.type === "find-update" || msg.type === "find-query") &&
       typeof msg.query === "string" &&
-      msg.query.length <= MAX_FIND_QUERY
+      msg.query.length <= MAX_FIND_QUERY &&
+      (msg.mode === undefined ||
+        msg.mode === null ||
+        msg.mode === "direct" ||
+        msg.mode === "agentic")
     )
       task = (
         msg.type === "find-query"
-          ? service.search(msg.query, msg.more === true)
-          : service.update(msg.query)
+          ? service.search(msg.query, msg.more === true, msg.mode)
+          : service.update(msg.query, msg.mode)
       ).then(() => viewWithTabs());
     else if (
       findPage &&

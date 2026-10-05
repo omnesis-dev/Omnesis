@@ -461,6 +461,49 @@ describe("ephemeral read-only browser search", () => {
     await service.dispose();
   });
 
+  it("supplies the standalone no-reply policy for a greeting and accepts explicit empty results", async () => {
+    const inputs: TurnInput[] = [];
+    const backend: ChatBackend = {
+      name: "puppet",
+      model: "puppet",
+      async *runTurn(input): AsyncIterable<AgentEvent> {
+        inputs.push(input);
+        const payload = { sessionId: input.sessionId, messageId: input.messageId };
+        yield { type: "agent.message.start", payload: { ...payload, role: "assistant" } };
+        yield {
+          type: "agent.text.delta",
+          payload: { ...payload, delta: "There is no search target in this greeting." },
+        };
+        await input.tools
+          .find((tool) => tool.name === "present_browser_results")!
+          .invoke({ results: [] }, context);
+        yield { type: "agent.message.end", payload: { ...payload, stopReason: "end_turn" } };
+      },
+    };
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { document },
+      systemPrompt: "Corpus prompt",
+    });
+    const onResults = vi.fn();
+    const result = await buildBrowserFindRuntime({
+      query: "hi",
+      agent: service,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+      onResults,
+    });
+    expect(result).toEqual({ presented: true });
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]!.systemPrompt).toContain("exactly one user message and one final response");
+    expect(inputs[0]!.systemPrompt).toContain("The user cannot reply");
+    expect(inputs[0]!.systemPrompt).toContain("Never ask a question");
+    expect(inputs[0]!.systemPrompt).toContain('For a greeting such as "hi"');
+    expect(inputs[0]!.systemPrompt).toContain("call present_browser_results with an empty array");
+    expect(onResults).toHaveBeenCalledExactlyOnceWith([]);
+    await service.dispose();
+  });
+
   it("streams one grounded turn, hot-resolves the agent, excludes writes and conversation side effects", async () => {
     const backend = new PuppetBackend();
     const factory = vi.fn(() => backend);

@@ -13,7 +13,7 @@ import {
 import type { UrlCanonicalizerSpec } from "@omnesis/core/url-normalize";
 export { browserUrl, findSnippet, readCanonicalizers, type FindResult } from "./find-results.js";
 import { FindProgress, type FindToolCard } from "./find-progress.js";
-import { parseFindQuery } from "./find-query.js";
+import { parseFindQuery, type FindMode } from "./find-query.js";
 import { readFindStream } from "./find-stream.js";
 import { readBoundedResponseText } from "../push/response-body.js";
 import type { ExtensionConfig } from "./storage.js";
@@ -40,7 +40,9 @@ interface FindState {
   token?: string;
   requestId?: string;
   query: string;
+  mode?: FindMode;
   resultsQuery: string;
+  resultsMode?: FindMode;
   results: FindResult[];
   limit: number;
   hasMore: boolean;
@@ -56,7 +58,9 @@ export interface FindView {
   enabled: boolean;
   pendingApproval: boolean;
   query: string;
+  mode?: FindMode;
   resultsQuery: string;
+  resultsMode?: FindMode;
   results: FindResult[];
   hasMore: boolean;
   decision?: FindDecision;
@@ -99,8 +103,14 @@ export class FindService {
   private suggestionAbort?: AbortController;
   private suggestionsSupported = false;
   private searchAbort?: AbortController;
-  private transcript?: { query: string; id: string; progress: FindProgress };
-  private active?: { generation: number; query: string; activity?: string; tools: FindProgress };
+  private transcript?: { query: string; mode?: FindMode; id: string; progress: FindProgress };
+  private active?: {
+    generation: number;
+    query: string;
+    mode?: FindMode;
+    activity?: string;
+    tools: FindProgress;
+  };
   constructor(private readonly deps: FindDeps) {}
   private run<T>(work: () => Promise<T>): Promise<T> {
     const task = this.lane.then(work, work);
@@ -140,9 +150,20 @@ export class FindService {
         sourceIcons: readSourceIcons(raw.sourceIcons),
         ...(typeof raw.token === "string" ? { token: raw.token } : {}),
         ...(typeof raw.requestId === "string" ? { requestId: raw.requestId } : {}),
-        query: typeof raw.query === "string" ? raw.query.slice(0, MAX_FIND_QUERY) : "",
-        resultsQuery:
+        query: parseFindQuery(
+          typeof raw.query === "string" ? raw.query.slice(0, MAX_FIND_QUERY) : "",
+        ).text,
+        mode:
+          raw.mode === "direct" || raw.mode === "agentic"
+            ? raw.mode
+            : parseFindQuery(typeof raw.query === "string" ? raw.query : "").mode,
+        resultsMode:
+          raw.resultsMode === "direct" || raw.resultsMode === "agentic"
+            ? raw.resultsMode
+            : parseFindQuery(typeof raw.resultsQuery === "string" ? raw.resultsQuery : "").mode,
+        resultsQuery: parseFindQuery(
           typeof raw.resultsQuery === "string" ? raw.resultsQuery.slice(0, MAX_FIND_QUERY) : "",
+        ).text,
         results: Array.isArray(raw.results)
           ? dedupeFindResults(
               raw.results
@@ -353,6 +374,8 @@ export class FindService {
       enabled,
       pendingApproval: false,
       query: state?.query ?? "",
+      mode: state?.mode,
+      resultsMode: state?.resultsMode,
       resultsQuery: state?.resultsQuery ?? "",
       results: enabled ? state!.results : [],
       hasMore: enabled && !!state?.hasMore,
@@ -360,16 +383,27 @@ export class FindService {
       agentText: enabled ? state?.agentText : undefined,
       activity: enabled ? this.active?.activity : undefined,
       tools:
-        enabled && this.transcript?.query === state?.resultsQuery
+        enabled &&
+        this.transcript?.query === state?.resultsQuery &&
+        this.transcript?.mode === state?.resultsMode
           ? this.transcript.progress.snapshot()
           : [],
       progressId:
-        enabled && this.transcript?.query === state?.resultsQuery ? this.transcript.id : undefined,
+        enabled &&
+        this.transcript?.query === state?.resultsQuery &&
+        this.transcript?.mode === state?.resultsMode
+          ? this.transcript.id
+          : undefined,
       sourceLabels: enabled ? state?.sourceLabels : {},
       sourceIcons: enabled ? state?.sourceIcons : {},
-      running: enabled && this.active?.query === state?.resultsQuery,
+      running:
+        enabled &&
+        this.active?.query === state?.resultsQuery &&
+        this.active?.mode === state?.resultsMode,
       interrupted:
-        enabled && state?.complete === false && this.active?.query !== state?.resultsQuery,
+        enabled &&
+        state?.complete === false &&
+        (this.active?.query !== state?.resultsQuery || this.active?.mode !== state?.resultsMode),
       error: state?.error,
     };
   }
@@ -381,12 +415,21 @@ export class FindService {
       return this.view(loaded.state);
     });
   }
-  update(query: string): Promise<FindView> {
-    if (this.active && query !== this.active.query) this.searchAbort?.abort();
+  update(query: string, mode?: FindMode | null): Promise<FindView> {
+    const parsed = parseFindQuery(query.slice(0, MAX_FIND_QUERY));
+    query = parsed.text;
+    if (
+      this.active &&
+      (query !== this.active.query ||
+        ((parsed.mode ?? mode) !== undefined &&
+          (parsed.mode ?? mode ?? undefined) !== this.active.mode))
+    )
+      this.searchAbort?.abort();
     return this.run(async () => {
       const loaded = await this.load();
       if (!loaded) return this.view();
-      loaded.state.query = query.slice(0, MAX_FIND_QUERY);
+      loaded.state.query = query;
+      loaded.state.mode = parsed.mode ?? (mode === null ? undefined : (mode ?? loaded.state.mode));
       await this.persist(loaded.config, loaded.state);
       return this.view(loaded.state);
     });
@@ -461,10 +504,11 @@ export class FindService {
       if (this.suggestionAbort === controller) this.suggestionAbort = undefined;
     }
   }
-  async search(query: string, more = false): Promise<FindView> {
+  async search(query: string, more = false, mode?: FindMode | null): Promise<FindView> {
     this.suggestionAbort?.abort();
     query = query.slice(0, MAX_FIND_QUERY);
     const parsed = parseFindQuery(query);
+    query = parsed.text;
     const generation = ++this.searchGeneration;
     this.searchAbort?.abort();
     const controller = new AbortController();
@@ -477,6 +521,8 @@ export class FindService {
         const loaded = await this.load();
         if (!loaded) return null;
         loaded.state.query = query;
+        loaded.state.mode =
+          parsed.mode ?? (mode === null ? undefined : (mode ?? loaded.state.mode));
         await this.persist(loaded.config, loaded.state);
         await this.refresh(loaded.config, loaded.state);
         return loaded;
@@ -494,9 +540,16 @@ export class FindService {
         this.active = undefined;
         return this.view(state);
       }
+      const requestedMode = state.mode;
+      if (this.active?.generation === generation) this.active.mode = requestedMode;
+      if (this.transcript?.query === query) this.transcript.mode = requestedMode;
       const authorizationToken = state.token;
-      const limit = more && state.resultsQuery === query ? Math.min(state.limit * 2, 200) : 25;
+      const limit =
+        more && state.resultsQuery === query && state.resultsMode === requestedMode
+          ? Math.min(state.limit * 2, 200)
+          : 25;
       state.resultsQuery = query;
+      state.resultsMode = requestedMode;
       state.results = [];
       state.complete = false;
       state.hasMore = false;
@@ -519,6 +572,7 @@ export class FindService {
           const next = {
             ...state,
             query: latest.state.query,
+            mode: latest.state.mode,
             progressRevision: (latest.state.progressRevision ?? 0) + 1,
           };
           await this.persist(config, next);
@@ -527,17 +581,17 @@ export class FindService {
       };
       await publish();
       try {
-        if (parsed.mode && !state.manualModes)
+        if (requestedMode && !state.manualModes)
           throw new Error(
             "This gateway does not support /search or /agent. Update the gateway to choose a search mode.",
           );
-        if (parsed.mode && !parsed.text.trim())
+        if (requestedMode && !parsed.text.trim())
           throw new Error("Enter a query after /search or /agent.");
         if (!parsed.text.trim()) state.complete = true;
         else {
           controller.signal.throwIfAborted();
           const response = await this.deps.fetch(
-            `${config.gatewayUrl}/browser/find/search${parsed.mode ? "/v2" : ""}`,
+            `${config.gatewayUrl}/browser/find/search${requestedMode ? "/v2" : ""}`,
             {
               method: "POST",
               headers: {
@@ -545,9 +599,9 @@ export class FindService {
                 authorization: `Bearer ${state.token}`,
               },
               body: JSON.stringify({
-                version: parsed.mode ? 2 : 1,
+                version: requestedMode ? 2 : 1,
                 text: parsed.text,
-                ...(parsed.mode ? { mode: parsed.mode } : {}),
+                ...(requestedMode ? { mode: requestedMode } : {}),
                 limit,
                 timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
               }),
