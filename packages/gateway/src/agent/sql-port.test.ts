@@ -149,6 +149,31 @@ describe("createGatewaySqlPort — per-row identity", () => {
     expect(res.rowIdentities).toBeUndefined();
   });
 
+  test("unrelated tables sharing a primary-key name cannot suppress real row receipts", async () => {
+    await db.ensureTable({ ...posSchema, tableName: "unrelated_balances" }, "demo:other");
+    await db.insertRecords(
+      "unrelated_balances",
+      [{ balance_id: "different-row", amount: 1 }],
+      ["balance_id"],
+    );
+    const port = createGatewaySqlPort(db);
+    const direct = await port.run("SELECT balance_id, amount FROM bank_balances");
+    expect(direct.rowIdentities?.[0]?.table).toBe("bank_balances");
+    expect(direct.rowIdentities?.[0]?.recordKey).toBe(analyticsRowKey("bank_balances", "bal-1"));
+    const nested = await port.run(
+      "WITH selected AS (SELECT balance_id, amount FROM bank_balances) SELECT * FROM selected /* JOIN unrelated_balances */",
+    );
+    expect(nested.rowIdentities).toEqual(direct.rowIdentities);
+    const uppercase = await port.run('SELECT balance_id, amount FROM "BANK_BALANCES"');
+    expect(uppercase.rowIdentities).toEqual(direct.rowIdentities);
+    const joined = await port.run(
+      "SELECT a.balance_id FROM bank_balances a CROSS JOIN unrelated_balances b",
+    );
+    expect(joined.rowIdentities).toBeUndefined();
+    const tableless = await port.run("SELECT 'bal-1' AS balance_id /* FROM bank_balances */");
+    expect(tableless.rowIdentities).toBeUndefined();
+  });
+
   test("a single-PK table surfaces identity too", async () => {
     const port = createGatewaySqlPort(db);
     const res = await port.run("SELECT balance_id, amount FROM bank_balances");
@@ -459,14 +484,13 @@ describe("createGatewaySqlPort — source-scoped run_sql", () => {
     expect(res.rowIdentities![0]!.table).toBe("bank_transactions");
   });
 
-  test("the unscoped port still attributes and identifies every table", async () => {
+  test("the unscoped port attributes catalog metadata but cannot invent row receipts", async () => {
     await scopedPort();
     const port = createGatewaySqlPort(db);
     const commented = await port.run("SELECT 1 /* FROM other_store_events */");
     expect(commented.sources?.map((s) => s.sourceId)).toEqual(["other:remote"]);
     expect(commented.subjects).toEqual(["Other Store Events"]);
     const aliased = await port.run("SELECT 1 AS event_id");
-    expect(aliased.rowIdentities).toHaveLength(1);
-    expect(aliased.rowIdentities![0]!.table).toBe("other_store_events");
+    expect(aliased.rowIdentities).toBeUndefined();
   });
 });

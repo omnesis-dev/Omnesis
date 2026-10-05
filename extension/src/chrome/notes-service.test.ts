@@ -20,13 +20,12 @@ function harness() {
     pairedAt: 1,
   };
   let supported = true,
-    approved = false,
     revoked = false,
     offline = false,
     failSubmit = false;
-  let requestId = "";
   let rejectSubmit = false,
     badAck = false;
+  let experimental: unknown = true;
   let capability: unknown = { min: 1, max: 2 };
   const accepted = new Map<string, unknown>();
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -34,27 +33,23 @@ function harness() {
     const url = String(input);
     const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
     if (url.endsWith("/health"))
-      return respond({ capabilities: supported ? { browserNotes: capability } : {} });
-    if (url.endsWith("/authorization")) {
-      requestId = JSON.parse(String(init?.body)).id;
-      return respond({ requestId, approvalPath: `/portal/browser-notes?id=${requestId}` });
-    }
-    if (url.includes("/authorization/"))
-      return respond(
-        revoked
-          ? { status: "revoked" }
-          : approved
-            ? {
-                status: "approved",
-                credential: {
-                  deviceId: config!.deviceId,
-                  token: "note-token",
-                  scopes: ["notes:create"],
-                },
-              }
-            : { status: "pending" },
-      );
+      return respond({
+        experimental,
+        capabilities: supported
+          ? { browserNotes: capability, browserFeatures: { min: 1, max: 1 } }
+          : {},
+      });
     if (revoked) return respond({ error: "revoked" }, 401);
+    if (url.endsWith("/browser/notes/enable"))
+      return respond({
+        status: "approved",
+        credential: {
+          deviceId: config!.deviceId,
+          token: "note-token",
+          tokenId: "note-token-id",
+          scopes: ["notes:create"],
+        },
+      });
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body)) as { id: string };
       if (rejectSubmit) return respond({ error: "conflict" }, 409);
@@ -79,6 +74,9 @@ function harness() {
   const service = new NotesService(deps);
   return {
     service,
+    setExperimental: (value: unknown) => {
+      experimental = value;
+    },
     fetch,
     accepted,
     mutateStored: (fn: (state: Record<string, unknown>) => void) =>
@@ -96,9 +94,6 @@ function harness() {
     setSupported: (value: boolean) => {
       supported = value;
     },
-    setApproved: () => {
-      approved = true;
-    },
     setOffline: (value: boolean) => {
       offline = value;
     },
@@ -114,8 +109,6 @@ function harness() {
   };
 }
 async function enabled(h: ReturnType<typeof harness>) {
-  await h.service.activate();
-  h.setApproved();
   await h.service.status();
 }
 
@@ -125,19 +118,14 @@ describe("browser notes", () => {
     h.setSupported(false);
     expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
     expect((await h.service.begin(PAGE)).draft).toBeNull();
-    await expect(h.service.activate()).rejects.toThrow("does not support");
     expect(h.fetch.mock.calls.every(([url]) => String(url).endsWith("/health"))).toBe(true);
   });
-  it("requires owner approval and stores a separate create-only credential", async () => {
+  it("automatically enables a separate create-only credential without changing capture pairing", async () => {
     const h = harness();
-    await h.service.activate();
-    expect(await h.service.status()).toMatchObject({
-      supported: true,
-      enabled: false,
-      pendingApproval: true,
-    });
-    h.setApproved();
-    expect(await h.service.status()).toMatchObject({ enabled: true, pendingApproval: false });
+    expect(await h.service.status()).toMatchObject({ supported: true, enabled: true });
+    const grant = h.fetch.mock.calls.find(([url]) => String(url).endsWith("/browser/notes/enable"));
+    expect(grant?.[1]?.headers).toMatchObject({ authorization: "Bearer web-token" });
+    expect(h.fetch.mock.calls.some(([url]) => String(url).includes("/authorization"))).toBe(false);
     await h.service.begin(PAGE);
     const draft = (await h.service.status()).draft!;
     await h.service.update(draft.id, "My invented note");
@@ -165,6 +153,18 @@ describe("browser notes", () => {
       selection: "Another passage",
     });
     expect(view.draft).toMatchObject({ ...PAGE, text: "An unfinished thought", id: draft.id });
+  });
+  it("moves empty and whitespace-only drafts to the current page without losing written thoughts", async () => {
+    for (const text of ["", " \n\t"]) {
+      const h = harness();
+      await enabled(h);
+      const previous = (await h.service.begin(PAGE)).draft!;
+      await h.service.update(previous.id, text);
+      const page = { ...PAGE, url: "https://example.org/current", selection: "Current quotation" };
+      const current = (await h.restart().begin(page)).draft!;
+      expect(current.id).not.toBe(previous.id);
+      expect(current).toMatchObject({ ...page, text: "" });
+    }
   });
   it("persists queued notes offline and retries the exact ID after an ambiguous response", async () => {
     const h = harness();
@@ -216,7 +216,7 @@ describe("browser notes", () => {
       token: "new-web-token",
       pairedAt: 2,
     });
-    expect(await h.service.drain()).toMatchObject({ pending: 0, enabled: false, draft: null });
+    expect(await h.service.drain()).toMatchObject({ pending: 0, enabled: true, draft: null });
     expect(h.accepted.size).toBe(0);
   });
   it("serializes concurrent draft updates and refuses stale panel submissions", async () => {
@@ -340,5 +340,82 @@ describe("browser notes", () => {
   it("rejects unsafe page contexts", () => {
     for (const url of ["javascript:alert(1)", "https://user:pass@example.org", "file:///tmp/a"])
       expect(notePage({ ...PAGE, url })).toBeNull();
+  });
+  it("requires explicit experimental true alongside the notes capability", async () => {
+    for (const flag of [undefined, false, null, 1, "true", {}]) {
+      const h = harness();
+      h.setExperimental(flag);
+      expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+      expect((await h.service.begin(PAGE)).draft).toBeNull();
+    }
+  });
+  it("keeps queued notes and drafts while the experimental flag disables existing grants", async () => {
+    const h = harness();
+    await enabled(h);
+    const note = (await h.service.begin(PAGE)).draft!;
+    await h.service.update(note.id, "A queued fictional note");
+    await h.service.submit(note.id);
+    const draft = (await h.service.begin({ ...PAGE, url: "https://example.org/another" })).draft!;
+    await h.service.update(draft.id, "A fictional draft");
+    h.setExperimental(false);
+    expect(await h.service.drain()).toMatchObject({
+      supported: false,
+      enabled: false,
+      pending: 1,
+      draft: { id: draft.id, text: "A fictional draft" },
+    });
+    expect(h.accepted.size).toBe(0);
+    expect(await h.restart().status(false)).toMatchObject({ enabled: false, pending: 1 });
+    await expect(h.service.submit(draft.id)).rejects.toThrow("unavailable");
+    h.setExperimental(true);
+    expect(await h.service.drain()).toMatchObject({ enabled: true, pending: 0 });
+    expect(h.accepted.size).toBe(1);
+  });
+  it("does not trust legacy cached grants before experimental verification", async () => {
+    const h = harness();
+    await enabled(h);
+    h.mutateStored((state) => {
+      delete state.experimental;
+    });
+    h.setOffline(true);
+    expect(await h.restart().status(false)).toMatchObject({ supported: false, enabled: false });
+    expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+  });
+  it("does not trust a cached manual grant without automatic broker verification", async () => {
+    const h = harness();
+    await enabled(h);
+    h.mutateStored((state) => {
+      delete state.automatic;
+    });
+    h.setOffline(true);
+    expect(await h.restart().status(false)).toMatchObject({ supported: false, enabled: false });
+    expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+  });
+  it("hides notes on an experimental gateway without the automatic browser contract", async () => {
+    const h = harness();
+    await enabled(h);
+    const original = h.fetch.getMockImplementation()!;
+    h.fetch.mockImplementation(async (input, init) =>
+      String(input).endsWith("/health")
+        ? new Response(
+            JSON.stringify({
+              experimental: true,
+              capabilities: { browserNotes: { min: 1, max: 1 } },
+            }),
+          )
+        : original(input, init),
+    );
+    expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
+  });
+  it("closes discovery when health access is explicitly rejected", async () => {
+    const h = harness();
+    await enabled(h);
+    const original = h.fetch.getMockImplementation()!;
+    h.fetch.mockImplementation(async (input, init) =>
+      String(input).endsWith("/health")
+        ? new Response("{}", { status: 403 })
+        : original(input, init),
+    );
+    expect(await h.service.status()).toMatchObject({ supported: false, enabled: false });
   });
 });

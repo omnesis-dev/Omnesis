@@ -698,6 +698,7 @@ async function setupSourceDefinition(
             // keyed by the full sourceId.
             icon: instance.icon ?? def.icon,
             family: { name: def.name, icon: def.icon },
+            attribution: def.attribution,
             urlPatterns: def.urlPatterns,
             urlCanonicalizer: def.urlCanonicalizer,
             defaultSourcePrior: def.defaultSourcePrior,
@@ -993,6 +994,7 @@ async function setupProviderDefinition(
           providerId,
           icon: instance.icon ?? sourceDef.icon,
           family: { name: sourceDef.name, icon: sourceDef.icon },
+          attribution: sourceDef.attribution,
           urlPatterns: sourceDef.urlPatterns,
           urlCanonicalizer: sourceDef.urlCanonicalizer,
           defaultSourcePrior: sourceDef.defaultSourcePrior,

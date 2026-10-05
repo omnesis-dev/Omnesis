@@ -225,6 +225,52 @@ describe("createGatewayRecordPort", () => {
     expect(resolved.boundDocumentId).toBeNull();
   });
 
+  test("hydrates provider-declared browser URLs from the stored row, not a forged projection", async () => {
+    const schema: AnalyticsTableSchema = {
+      ...txnSchema,
+      tableName: "demo_browser_records",
+      columns: [
+        ...txnSchema.columns,
+        {
+          name: "browser_url",
+          type: "VARCHAR",
+          description: "Browser destination",
+          references: "url",
+        },
+      ],
+    };
+    await analytics.ensureTable(schema, "demo:acct1");
+    await analytics.insertRecords(
+      schema.tableName,
+      [
+        {
+          id: "row-1",
+          auth_token: "fictional-test-secret",
+          merchant: "Stored destination",
+          amount: 8,
+          occurred_at: "2026-05-02T10:00:00.000Z",
+          browser_url: "https://example.org/records/1",
+        },
+      ],
+      schema.primaryKey,
+    );
+    const resolved = await createGatewayRecordPort(db, analytics).resolve({
+      reference: recordReference(schema.tableName, [{ name: "id", value: "row-1" }]),
+      snapshot: {
+        id: "row-1",
+        merchant: "Fabricated title",
+        occurred_at: "2026-05-02T10:00:00.000Z",
+        browser_url: "https://example.org/invented",
+      },
+      includeBrowserUrls: true,
+    });
+    expect(resolved.boundDocumentId).toBeNull();
+    expect(resolved.browserUrls).toEqual(["https://example.org/records/1"]);
+    expect(resolved.title).toBe("Stored destination");
+    expect(resolved.snapshot.browser_url).toBe("https://example.org/records/1");
+    expect(resolved.snapshot.auth_token).toBe(REDACTED_VALUE);
+  });
+
   test("rejects an unknown table", async () => {
     const port = createGatewayRecordPort(db, analytics);
     await expect(

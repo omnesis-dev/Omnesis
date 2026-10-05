@@ -14,6 +14,7 @@ import type { UrlCanonicalizerSpec } from "@omnesis/core";
 import type {
   DocumentTemporalProjectionSpec,
   SourceIcon,
+  SourceAttribution,
   SourceInstance,
   SelfIdentitySpec,
   ConnectionState,
@@ -88,6 +89,7 @@ export interface RegisteredSource {
    */
   multiDeviceMode?: MultiDeviceMode;
   icon?: SourceIcon;
+  attribution?: SourceAttribution;
   /**
    * The identity of the source's family — the definition-level name and icon,
    * before any per-instance override.

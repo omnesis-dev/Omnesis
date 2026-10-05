@@ -32,6 +32,9 @@ import {
   readCachedPolicy,
   writeCachedPolicy,
 } from "../capture/policy.js";
+import { installNotesEditBackground } from "./notes-edit-background.js";
+import { installFindBackground } from "./find-background.js";
+import { installOmniboxBackground } from "./omnibox-background.js";
 import { installNotesBackground } from "./notes-background.js";
 import { PAIRING_ATTEMPT_KEY, resolvePairingAttempt } from "./pairing-attempt.js";
 import {
@@ -700,7 +703,12 @@ function handlePairingState(
             // data. A mid-transition storage failure can then neither drain an
             // old queue with the new credential nor leave a half-cleared old
             // pairing claiming to be healthy.
-            await notesBackground.clear();
+            await Promise.all([
+              notesBackground.clear(),
+              findBackground.clear(),
+              Promise.resolve(omniboxBackground.clear()),
+              notesEditBackground.clear(),
+            ]);
             await clearConfig();
             await clearPushQueue(chromeLocalStore);
             await clearPushObservability(chromeLocalStore);
@@ -718,7 +726,12 @@ function handlePairingState(
           // pairing into a failure acknowledgement.
           await saveConfig(config, profileLabel);
         } else {
-          await notesBackground.clear();
+          await Promise.all([
+            notesBackground.clear(),
+            findBackground.clear(),
+            Promise.resolve(omniboxBackground.clear()),
+            notesEditBackground.clear(),
+          ]);
           await clearConfig();
           await clearPushQueue(chromeLocalStore);
           await clearPushObservability(chromeLocalStore);
@@ -805,6 +818,7 @@ function runEvent(task: Promise<unknown>): void {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   notesBackground.alarm(alarm.name);
+  findBackground.alarm(alarm.name);
   if (alarm.name === PERIODIC_DRAIN_ALARM || alarm.name === RETRY_DRAIN_ALARM) {
     runEvent(
       (async () => {
@@ -863,6 +877,8 @@ chrome.permissions.onRemoved.addListener((permissions) => {
 chrome.runtime.onMessage.addListener(
   (message, sender, sendResponse) =>
     notesBackground.message(message, sender, sendResponse) ||
+    findBackground.message(message, sender, sendResponse) ||
+    notesEditBackground.message(message, sender, sendResponse) ||
     routeBackgroundMessage(message, sender, sendResponse, {
       runtimeId: chrome.runtime.id ?? "",
       popupUrl: chrome.runtime.getURL("popup.html"),
@@ -906,3 +922,7 @@ runEvent(
 runEvent(refreshBadge());
 
 const notesBackground = installNotesBackground();
+const findBackground = installFindBackground();
+const omniboxBackground = installOmniboxBackground(findBackground);
+
+const notesEditBackground = installNotesEditBackground(findBackground.ensureRead);

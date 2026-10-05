@@ -49,9 +49,22 @@ interface Bm25Row {
  *   operators aren't a documented part of the query language, so
  *   treating them as noise rather than syntax is the safer default.
  */
-export function toFts5Query(query: string): string {
+export function toFts5Query(query: string, prefixLastToken = false): string {
   const trimmed = query.trim();
   if (!trimmed) return "";
+
+  if (prefixLastToken) {
+    // Suggestions never accept raw FTS syntax. Quote generated literal terms,
+    // and append the only wildcard outside the final term's quoted boundary.
+    const terms = trimmed
+      .replace(/[^\p{L}\p{N}_\s]/gu, " ")
+      .split(/\s+/)
+      .map(sanitizeFts5Term)
+      .filter(Boolean);
+    return terms
+      .map((term, index) => `"${term}"${index === terms.length - 1 ? "*" : ""}`)
+      .join(" OR ");
+  }
 
   // Already-quoted phrase passes through verbatim (length > 1 so a lone `"`
   // doesn't qualify and slip an unbalanced quote into MATCH).
@@ -191,6 +204,7 @@ export function bm25Search(
      */
     documentIds?: readonly string[];
     commonTokenThreshold?: number;
+    prefixLastToken?: boolean;
   },
 ): { candidates: SearchCandidate[]; droppedTokens: string[] } {
   let effectiveQuery = query;
@@ -201,7 +215,7 @@ export function bm25Search(
     droppedTokens = result.dropped;
   }
 
-  const ftsQuery = toFts5Query(effectiveQuery);
+  const ftsQuery = toFts5Query(effectiveQuery, opts?.prefixLastToken);
   if (!ftsQuery) return { candidates: [], droppedTokens };
 
   const docIds = opts?.documentIds;

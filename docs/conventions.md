@@ -153,6 +153,27 @@ copies retain their required SQLite sidecars; source originals remain read-only.
 - Worker lifetime: `packages/providers/whatsapp/src/import/importer.ts`
 - Storage inventory and limitations: `docs/collector-storage.md`
 
+### Browser-openable search is a client presentation filter
+
+Chrome notes and Find require strict gateway `experimentalEnabled()` (`OMNESIS_EXPERIMENTAL=1`), including discovery, owner approval and previously approved credentials. Synthetic mode alone does not enable them. Automatic capture and ordinary portal/mobile notes are unaffected.
+
+Extension Find uses an independently owner-approved ordinary `read` credential;
+page capture keeps `write:web` and note creation keeps `notes:create`. Filtering
+search results by HTTP(S) `sourceUrl` does not narrow that read authority. Approval
+must disclose search across indexed sources. Find uses direct retrieval unless the configured decision capability selects
+read-only agent research. The gate receives query context, not corpus contents.
+Agent research runs in an ephemeral single-turn session with a fixed retrieval
+allowlist and a grounded `present_browser_results` tool, never an ordinary
+interactive conversation. SSE preserves the existing `agent.*` event shape alongside
+Find decision and result events. No source-specific filtering belongs in the route.
+
+Browser tab matching consumes provider-declared account-preserving identity selectors.
+Document-link canonicalizers may discard account routing and must not be reused
+for activating tabs. Browser identity selectors are structured data; matching runs
+only trusted fixed operations and never executes provider-supplied regular expressions.
+Unprovable account aliases open the source link instead of selecting a possibly
+unrelated tab. The tab list stays in Chrome.
+
 ### Transient-buffer pattern for unbounded provider state
 
 When a provider library forces state into your process (chat-history libraries, browser-history snapshots), reframe that state as a **drain-and-GC buffer** between the upstream library and the gateway, not a permanent in-memory store. Drain events to gateway documents, then GC the buffer after a TTL. Persistence lives in the gateway DB, not in the provider's volatile process.

@@ -9,6 +9,7 @@ import {
   createLogger,
   devModeEnabled,
   experimentalVisible,
+  experimentalEnabled,
   materializeConfigSecrets,
   type ConfigHealth,
   type ConfigSecretMaterialization,
@@ -123,7 +124,16 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       experimental: experimentalVisible(),
       capabilities: {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
-        browserNotes: { min: 1, max: 1 },
+        ...(experimentalEnabled()
+          ? {
+              browserFeatures: { min: 1, max: 1 },
+              browserNotes: { min: 1, max: 1 },
+              browserFind: { min: 1, max: 2 },
+              browserFindSuggest: { min: 1, max: 1 },
+              browserFindMode: { min: 1, max: 1 },
+              browserNotesEdit: { min: 1, max: 1 },
+            }
+          : {}),
         // Watch management and Watch-reaction delivery sit on the Watch
         // runtime, which is still experimental. The rest of the agent
         // integration — transcript ingestion and Answer through /mcp — is

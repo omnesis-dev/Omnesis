@@ -163,6 +163,12 @@ describe("website docs", () => {
     const experimental = html["experimental.html"];
     expect(idsOf("experimental.html").has("brain")).toBe(true);
     expect(idsOf("experimental.html").has("watch")).toBe(true);
+    expect(idsOf("experimental.html").has("browser-extension")).toBe(true);
+    for (const id of ["browser-extension-find", "browser-extension-notes"]) {
+      expect(idsOf("experimental.html").has(id)).toBe(true);
+      for (const page of ORDER.filter((page) => page !== "experimental.html"))
+        expect(idsOf(page).has(id), `${page}: ${id}`).toBe(false);
+    }
     expect(idsOf("experimental.html").has("gateway-dictation")).toBe(false);
     expect(idsOf("apps.html").has("gateway-dictation")).toBe(true);
     expect(idsOf("experimental.html").has("plaid")).toBe(false);
@@ -173,7 +179,11 @@ describe("website docs", () => {
 
     const sidebar = experimental.match(/<aside class="docs-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
     const subnav = sidebar.match(/<ul class="side-sub">[\s\S]*?<\/ul>/)?.[0] ?? "";
-    expect([...subnav.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual(["#brain", "#watch"]);
+    expect([...subnav.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual([
+      "#browser-extension",
+      "#brain",
+      "#watch",
+    ]);
   });
 
   it.each(sharedChromePages)("%s: carries the shared chrome", (f) => {

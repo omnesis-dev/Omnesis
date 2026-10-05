@@ -97,6 +97,7 @@ export function isDeviceKind(s: string): s is DeviceKind {
  *   - "admin"                 — manage sources, devices, tokens
  *   - "push:claim"            — claim notifications for this token's device
  *   - "notes:create"          — append notes through the browser capture boundary
+ *   - "notes:update"          — edit page-associated notes through the browser boundary
  *   - "write:*"               — push documents for any source type
  *   - "write:<source-type>"   — push documents for a specific source type
  *
@@ -109,7 +110,7 @@ export function Scope(s: string): Scope {
     throw new BrandedIdError(
       "Scope",
       String(s),
-      "must be one of read|read:bulk|answer|admin|push:claim|subscriptions:manage|subscriptions:receive|subscriptions:answer|subscriptions:outcome|notes:create|write:*|write:<source-type>",
+      "must be one of read|read:bulk|answer|admin|push:claim|subscriptions:manage|subscriptions:receive|subscriptions:answer|subscriptions:outcome|notes:create|notes:update|write:*|write:<source-type>",
     );
   }
   return s as Scope;
@@ -165,6 +166,7 @@ export function isValidScope(s: string): boolean {
     s === "admin" ||
     s === "push:claim" ||
     s === "notes:create" ||
+    s === "notes:update" ||
     s === "subscriptions:manage" ||
     s === "subscriptions:receive" ||
     s === "subscriptions:answer" ||
@@ -312,9 +314,16 @@ export function defaultScopesForDeviceKind(kind: DeviceKind): Scope[] {
  */
 export function missingHostedWriteScopes(granted: readonly Scope[], kind: DeviceKind): Scope[] {
   const held = new Set(granted);
+  // Optional browser read credentials are not capture credentials. Repairing
+  // their device's ingestion grant would turn owner-approved reads into writes.
+  if (kind === "browser" && held.has(SCOPE_READ) && !granted.some((s) => s.startsWith("write:")))
+    return [];
   // Capability-only note credentials are separate from source ingestion; a
   // device handshake must never upgrade them to its default capture grant.
-  if (held.has(Scope("notes:create")) && !granted.some((scope) => scope.startsWith("write:")))
+  if (
+    (held.has(Scope("notes:create")) || held.has(Scope("notes:update"))) &&
+    !granted.some((scope) => scope.startsWith("write:"))
+  )
     return [];
   if (held.has(SCOPE_WRITE_ALL)) return [];
   return DEVICE_HOSTED_SOURCE_TYPES[kind].map(writeScope).filter((s) => !held.has(s));
@@ -328,6 +337,7 @@ export type ScopeClass =
   | { kind: "admin" }
   | { kind: "push-claim" }
   | { kind: "notes-create" }
+  | { kind: "notes-update" }
   | { kind: "subscriptions-manage" }
   | { kind: "subscriptions-receive" }
   | { kind: "subscriptions-answer" }
@@ -351,6 +361,7 @@ export function classifyScope(scope: Scope): ScopeClass | null {
   if (scope === "admin") return { kind: "admin" };
   if (scope === "push:claim") return { kind: "push-claim" };
   if (scope === "notes:create") return { kind: "notes-create" };
+  if (scope === "notes:update") return { kind: "notes-update" };
   if (scope === "subscriptions:manage") return { kind: "subscriptions-manage" };
   if (scope === "subscriptions:receive") return { kind: "subscriptions-receive" };
   if (scope === "subscriptions:answer") return { kind: "subscriptions-answer" };

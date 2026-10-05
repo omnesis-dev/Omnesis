@@ -81,6 +81,7 @@ import {
 } from "./deep-research.js";
 import {
   INTERACTIVE_SPEND_MECHANISM,
+  BROWSER_FIND_SPEND_MECHANISM,
   WATCH_FIRING_OPENING_SPEND_MECHANISM,
   type AgentSpendRecorder,
 } from "./spend-recorder.js";
@@ -837,6 +838,7 @@ export class AgentService {
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
   private readonly documentPort: DocumentPort;
+  private readonly searchRecordPort: ToolPorts["record"];
   private readonly systemPrompt:
     | string
     | ((profile: AgentPromptProfile, context: AgentPromptContext) => string | Promise<string>);
@@ -1025,6 +1027,7 @@ export class AgentService {
       experimental: experimentalVisible(),
     });
     this.documentPort = deps.ports.document;
+    this.searchRecordPort = deps.ports.record;
     this.systemPrompt = deps.systemPrompt;
     this.externalAnswerScope = deps.externalAnswerScope;
     this.broadcastEvent = deps.broadcastEvent;
@@ -2256,6 +2259,73 @@ export class AgentService {
         );
       });
     return { messageId: started.messageId, userMessageId: started.userMessageId };
+  }
+
+  /** Authoritative read ports used to ground browser search destinations. */
+  readOnlySearchEvidencePorts(): Pick<ToolPorts, "document" | "record"> {
+    return { document: this.documentPort, record: this.searchRecordPort };
+  }
+
+  recordReadOnlySearchSpend(sample: {
+    modelId: string;
+    usage: AgentUsage;
+    completed: boolean;
+  }): void {
+    try {
+      this.recordSpend?.({ ...sample, mechanism: BROWSER_FIND_SPEND_MECHANISM });
+    } catch (err) {
+      log.warn(
+        `browser search spend recording failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** An ephemeral, single-turn retrieval surface with no conversation side effects. */
+  async buildReadOnlySearchSession(options: {
+    systemPromptSuffix: string;
+    timeZone?: string;
+    initialHistory?: ReadonlyArray<ChatMessage>;
+    retrieval?: boolean;
+    tools: readonly ToolHandle[];
+    wrapRetrievalTool?: (tool: ToolHandle) => ToolHandle;
+  }): Promise<AgentSession> {
+    const backend = this.backendFactory("agent");
+    if (!backend) throw new AgentError("agent_unconfigured", "no agent model is assigned");
+    const basePrompt =
+      typeof this.systemPrompt === "function"
+        ? await this.systemPrompt("answer", { timeZone: options.timeZone })
+        : this.systemPrompt;
+    // Builtin retrieval handles use undefined as their read-only default. The
+    // selector excludes mutates:true; this fixed allowlist also excludes citation,
+    // planning and delegation handles whose effects are unsuitable for Find.
+    const retrieval = selectSubagentTools(this.tools, [
+      "search_many",
+      "fetch_many",
+      "search_documents",
+      "fetch_document",
+      "lookup_people",
+      "trace_connections",
+      "run_sql",
+      "temporal_query",
+      "lookup_document_by_url",
+    ]);
+    if (options.tools.some((tool) => tool.mutates !== false)) {
+      throw new AgentError("agent_unavailable", "search presentation tools must be read-only");
+    }
+    return new AgentSession({
+      sessionId: this.sessionIdGen(),
+      backend,
+      tools: [
+        ...(options.retrieval === false
+          ? []
+          : retrieval.map((tool) => options.wrapRetrievalTool?.(tool) ?? tool)),
+        ...options.tools,
+      ],
+      systemPrompt: `${basePrompt}\n${options.systemPromptSuffix}`,
+      timeZone: options.timeZone,
+      initialHistory: options.initialHistory,
+      caller: { kind: "operator" },
+    });
   }
 
   /**

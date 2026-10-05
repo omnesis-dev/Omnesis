@@ -1,11 +1,11 @@
-# Omnesis Browser Capture (Chrome extension)
+# Omnesis (Chrome extension)
 
 The Manifest V3 extension that adds the web pages you read to your Omnesis
 index. It pairs once with a gateway you run, then captures the readable text of
 each HTTPS page you keep open long enough to count as a visit, and pushes it to
-that gateway with a token that can add pages and nothing else. Everything the
-user sees is in `website/docs/setup.html` (the browser-extension section) and
-`website/browser-extension-privacy-policy.html`; this file is for people
+that gateway with a token that can add pages and nothing else. Stable setup is documented in `website/docs/setup.html` and data handling in
+`website/browser-extension-privacy-policy.html`. Experimental page notes and Find
+are documented only in `website/docs/experimental.html`; this file is for people
 changing the code.
 
 ## Layout
@@ -31,7 +31,7 @@ code run under Node in the spawned-gateway E2E and byte for byte in the worker.
 ## How it works
 
 - **Pairing.** The options page redeems a one-time code (`omnesis devices pair --kind browser`)
-  against `POST /devices/pair` after reading `GET /health` and refusing a gateway older than the fixed capture-contract minimum (0.5.0). Optional notes use
+  against `POST /devices/pair` after reading `GET /health` and refusing a gateway older than the fixed capture-contract minimum (0.5.0). Experimental notes and Find use
   explicit capability discovery rather than product-minor comparisons. The gateway returns a `write:web` token, stored under its own key so the content
   script — which imports `pairing-record.ts` only — never sees it (`bundle-boundaries.test.ts`
   asserts the content bundle names neither the token key nor the legacy combined record). A retry
@@ -85,6 +85,13 @@ certificate.
 `src/storage-keys.test.ts` pins every literal. Renaming one needs a worker-start
 migration in the same commit.
 
+The Notes and Find workers require `GET /health` reporting both a compatible feature capability and
+`experimental: true`. They persist this verification
+separately from older capability caches. Previously verified notes may still be
+queued during a network outage; an explicit disabled experimental flag hides
+both features, stops delivery and preserves drafts and unsent notes. Native
+panel entrypoints revalidate before exposing either composer or search results.
+
 ## Releasing
 
 `docs/releasing.md` § "Chrome Web Store artifact" is the recipe. In short:
@@ -105,6 +112,26 @@ the setup page when the store listing goes live.
 
 ## Tell Omnesis
 
-On gateways advertising browser notes support, choose **Enable Tell Omnesis** in the popup or pairing settings and approve the create-only browser grant in the gateway portal. Existing page-capture pairing stays unchanged. Older gateways continue capturing pages without offering notes.
+This feature is unstable and requires `OMNESIS_EXPERIMENTAL=1` on the gateway. On compatible gateways, an already paired browser automatically receives a separate note credential. Existing page-capture pairing stays unchanged. Older gateways continue capturing pages without offering notes.
 
-Use **Alt/Option + Shift + N**, the popup's **Tell Omnesis** button, or the page/selection context menu. The native side panel freezes the page context and includes any selected text. **Ctrl/Cmd + Enter** saves; Enter inserts a newline. Unfinished drafts survive closing the panel and switching tabs. Unsent notes survive browser restarts and retry with stable IDs. A full 100-note queue refuses new saves and keeps the draft. Gateway-rejected notes can be reopened for editing. Chrome lets users change the shortcut at `chrome://extensions/shortcuts`.
+Use **Alt + Shift + N** (**Control + Command + T** on macOS), the popup's **Tell Omnesis** icon, or the page/selection context menu. The native side panel fixes the page context for the note and includes any selected text. **Ctrl/Cmd + Enter** saves; Enter inserts a newline. Written drafts survive closing the panel and retain their original page when switching tabs. An untouched empty draft follows the page where you next invoke Tell Omnesis. Unsent notes survive browser restarts and retry with stable IDs. A full 100-note queue refuses new saves and keeps the draft. Gateway-rejected notes can be reopened for editing. Chrome lets users change the shortcut at `chrome://extensions/shortcuts`.
+
+## Find
+
+Find is unstable and requires `OMNESIS_EXPERIMENTAL=1` on the gateway. An already paired browser enables Find automatically on compatible gateways. This stores a separate `read` credential; capture stays on `write:web`, note creation stays on `notes:create`, and saved-note editing uses `notes:update`. The read credential allows ordinary search across all indexed sources. The extension filters results for browser-openable HTTP(S) source links; that display filter is not an authorization restriction. Gateways without Find support keep capturing pages and do not offer Find.
+
+Find is entered through **om + Space/Tab** in Chrome's address bar. Suggestions open source links in the current tab. Submitting a query opens full-page Find in a new active tab with keyboard focus. Results show titles, matching snippets, favicons and source links. Clicking a result or pressing Enter navigates that same Find tab. Ctrl/Cmd + Enter opens a result in another tab; native link actions also remain available. Query and result state are retained locally.
+
+Chrome grants tab and favicon access at installation or upgrade. Find can indicate source links already open in another tab, using local comparisons that do not upload the tab list. Icons use Chrome's local favicon service; missing icons use a fallback. Browser-history access is not requested. The configured decision model chooses direct index retrieval or read-only agent search. Without an enabled decision model, Find uses the index. Full-page Find shows streamed agent text and the same ephemeral tool-card components used by the portal; the agent emits grounded destinations through a structured result tool. Each query is a fresh task, with no timeline or follow-up conversation.
+
+The popup's Tell Omnesis icon shows its configured shortcut. Escape closes the note pane. Durably accepting a note (including offline queuing) or updating a saved note closes it; failed saves keep the text. Tell Omnesis lists notes associated with the current page through the gateway graph. Selecting a saved note opens an editor, using a separate `notes:update` credential and revision checks to prevent overwriting concurrent edits. Browser note edits retain the original page and selected passage. **New note** returns to the creation draft. Editing requires no additional Chrome permission.
+
+Chrome may keep previously assigned shortcuts after an extension upgrade or reload. Change them at `chrome://extensions/shortcuts`; popup icon tooltips show the active bindings.
+
+Chrome's address bar accepts **om + Space/Tab**, then a query. Search-pipeline suggestions are bounded and debounced, stay in memory for that input session, and do not invoke the decision model or agent. Select a suggestion to navigate the current tab to its source link; submit the query itself to open Find in a new active tab with the ordinary decision gate and SSE stream. Suggestions require the gateway's `browserFindSuggest` capability and experimental mode. Gateways that support Find without suggestions retain query submission. Chrome registers the keyword through the manifest; an unavailable gateway leaves it inactive for private search. Text outside keyword mode is never forwarded.
+
+On compatible experimental gateways, `om /search your query` forces direct index retrieval and `om /agent your query` forces agent research, bypassing the routing judgement. Plain `om your query` uses automatic routing. Forced agent research still requires an enabled decision model. Older gateways report unsupported explicit modes; they do not silently change the requested mode. Suggestions always use the index.
+
+Routing commands are removed from the displayed query; the selected mode is retained separately when editing or resubmitting. Find is a standalone task: the agent cannot ask follow-up questions. Opening Tell Omnesis with a selected passage immediately focuses the composer, and saving dismisses the note pane.
+
+Each submitted Find query requests up to 30 results in one pass. Arrow keys navigate the visible cards from the query field or elsewhere on the page.

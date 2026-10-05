@@ -421,6 +421,18 @@ export const urlCanonicalizersBody = z.object({
     .array(
       z.object({
         hosts: z.array(z.string().trim().min(1).max(253)).nonempty().max(16),
+        browserIdentity: z
+          .object({
+            canonicalHost: z.string().trim().min(1).max(253).optional(),
+            pathPrefix: z.string().startsWith("/").max(512).optional(),
+            part: z.enum(["path", "fragment"]),
+            format: z.enum(["uuid-suffix", "hex-segment"]),
+            requiredQuery: z
+              .array(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/))
+              .max(8)
+              .optional(),
+          })
+          .optional(),
         rules: z
           .array(
             z.object({
@@ -541,7 +553,15 @@ export type KnownUrlPatternsBody = z.infer<typeof knownUrlPatternsBody>;
 /** One collector generation of every declaration that affects URL linking. */
 export const linkDeclarationsBody = urlCanonicalizersBody
   .and(urlGraphRolesBody)
-  .and(knownUrlPatternsBody);
+  .and(knownUrlPatternsBody)
+  .and(
+    z.object({
+      sourceAttributions: z
+        .record(sourceTypePrefix, z.string().min(1).max(1024))
+        .refine((values) => Object.keys(values).length <= 256, "too many source attributions")
+        .optional(),
+    }),
+  );
 export type LinkDeclarationsBody = z.infer<typeof linkDeclarationsBody>;
 
 // POST /admin/owned-web-domains — collector pushes the web hosts owned by

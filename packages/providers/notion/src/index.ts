@@ -115,6 +115,17 @@ export default defineProvider<NotionContext>({
       // are already ingested here, so the browser-capture source skips
       // the Notion UI.
       ownedWebDomains: ["notion.so"],
+      urlCanonicalizer: {
+        hosts: ["notion.so", "www.notion.so"],
+        rules: [
+          {
+            match:
+              "^https://(?:www\\.)?notion\\.so/[^?#]*?([a-f0-9]{8})-?([a-f0-9]{4})-?([a-f0-9]{4})-?([a-f0-9]{4})-?([a-f0-9]{12})(?:[?#].*)?$",
+            replacement: "https://www.notion.so/$1$2$3$4$5",
+          },
+        ],
+        browserIdentity: { part: "path", format: "uuid-suffix", canonicalHost: "www.notion.so" },
+      },
       icon: notionIcon,
       contract: {
         // The host resolves the stored cursor against this before `sync`

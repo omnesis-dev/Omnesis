@@ -14,7 +14,14 @@
  * gateway's read handle.
  */
 
+import { experimentalEnabled } from "@omnesis/core";
 import { recordMcpToolInvocationAudit } from "../../access/store-audit.js";
+import {
+  browserNoteRevision,
+  browserNoteContext,
+  browserNoteMatchesPage,
+  browserNoteCaptureDigest,
+} from "./browser-note.js";
 import type Database from "better-sqlite3";
 import type { DeviceId, TokenId, NoteCaptureContext } from "@omnesis/types";
 import type { McpToolInvocationAuditInput } from "../../access/types.js";
@@ -28,6 +35,8 @@ export interface BrowserNoteAuthority {
 }
 
 export interface NotePageContext {
+  /** Gateway-owned original capture identity; never supplied by a browser request. */
+  captureDigest?: string;
   url: string;
   title?: string;
   selection?: string;
@@ -181,6 +190,11 @@ export function insertNoteEntry(
   // snapshot cannot fence a token revoked while the capture waited in the queue.
   if (browserAuthority) {
     return db.transaction(() => {
+      if (!experimentalEnabled()) {
+        const error = new Error("Browser notes feature is unavailable");
+        error.name = "BrowserNotesUnavailableError";
+        throw error;
+      }
       const authorized = db
         .prepare<
           [string, string, number],
@@ -246,10 +260,101 @@ export function insertNoteEntry(
  * row with that id exists.
  */
 export function updateNoteEntryText(db: Db, id: string, text: string, nowIso: string): boolean {
-  const result = db
-    .prepare(`UPDATE note_entries SET text = ?, updated_at = ? WHERE id = ?`)
-    .run(text, nowIso, id);
-  return result.changes > 0;
+  return db.transaction(() => {
+    const entry = getNoteEntry(db, id);
+    if (!entry) return false;
+    // Legacy browser entries can still establish their original identity before
+    // their first edit. Already edited entries cannot safely reconstruct it.
+    const page =
+      entry.page &&
+      entry.surface === "chrome-extension" &&
+      !entry.page.captureDigest &&
+      entry.updatedAt === entry.capturedAt
+        ? { ...entry.page, captureDigest: browserNoteCaptureDigest(entry.text, entry.page) }
+        : entry.page;
+    const result = db
+      .prepare(`UPDATE note_entries SET text = ?, updated_at = ?, page_context = ? WHERE id = ?`)
+      .run(text, nowIso, page ? JSON.stringify(page) : null, id);
+    return result.changes > 0;
+  })();
+}
+
+/** Page-bound optimistic update; all permission checks run in the writer transaction. */
+export interface BrowserNoteEditInput {
+  id: string;
+  url: string;
+  text: string;
+  revision: string;
+  authority: BrowserNoteAuthority;
+}
+export type BrowserNoteEditResult =
+  | { outcome: "updated"; entry: NoteEntry; documentId: string | null }
+  | { outcome: "missing" }
+  | { outcome: "conflict" };
+
+export function updateBrowserNoteEntry(db: Db, input: BrowserNoteEditInput): BrowserNoteEditResult {
+  return db.transaction((): BrowserNoteEditResult => {
+    if (!experimentalEnabled()) {
+      const error = new Error("Browser notes feature is unavailable");
+      error.name = "BrowserNotesUnavailableError";
+      throw error;
+    }
+    const token = db
+      .prepare<[string, string, number], { scopes: string }>(
+        `SELECT tokens.scopes FROM tokens JOIN devices ON devices.id = tokens.device_id
+       WHERE tokens.id = ? AND tokens.device_id = ? AND devices.kind = 'browser'
+       AND devices.revoked_at IS NULL AND (tokens.expires_at IS NULL OR tokens.expires_at > ?)`,
+      )
+      .get(input.authority.tokenId, input.authority.deviceId, Date.now());
+    if (!token || !(JSON.parse(token.scopes) as string[]).includes("notes:update")) {
+      const error = new Error("Browser note authority is no longer active");
+      error.name = "BrowserNoteAuthorizationError";
+      throw error;
+    }
+    const entry = getNoteEntry(db, input.id);
+    if (!entry || !browserNoteMatchesPage(entry, input.url)) return { outcome: "missing" };
+    if (browserNoteRevision(entry) !== input.revision) return { outcome: "conflict" };
+    // Always advance the revision, even for two edits within one clock tick.
+    const now = new Date(Math.max(Date.now(), Date.parse(entry.updatedAt) + 1)).toISOString();
+    const text = `${input.text.trim()}${entry.page ? browserNoteContext(entry.page) : ""}`;
+    if (text.length > 8192) throw new Error("BrowserNoteTextTooLong");
+    updateNoteEntryText(db, entry.id, text, now);
+    const documentId =
+      db
+        .prepare<
+          [string],
+          { id: string }
+        >("SELECT id FROM documents WHERE provider_id = 'system' AND source_id = 'omnesis-notes' AND external_id = ?")
+        .get(entry.day)?.id ?? null;
+    return { outcome: "updated", entry: getNoteEntry(db, entry.id)!, documentId };
+  })();
+}
+
+export interface BrowserPageNote {
+  documentId: string | null;
+  entry: NoteEntry;
+}
+
+/** Graph-backed daily notes, plus pending browser entries before projection finishes. */
+export function listBrowserPageNotes(db: Db, deviceId: DeviceId, url: string): BrowserPageNote[] {
+  const rows = db
+    .prepare<
+      [string, string, string, string, string, string],
+      NoteEntryRow & { document_id: string | null }
+    >(
+      `SELECT n.*, d.id AS document_id FROM note_entries n
+     LEFT JOIN documents d ON d.provider_id = 'system' AND d.source_id = 'omnesis-notes' AND d.external_id = n.day
+     WHERE (n.device_id = ? AND n.surface = 'chrome-extension' AND json_extract(n.page_context, '$.url') = ?)
+       OR (d.id IN (SELECT l.source_doc_id FROM document_links l WHERE l.normalized_target = ?
+          OR l.target_doc_id IN (SELECT id FROM documents WHERE source_url = ?))
+          AND (json_extract(n.page_context, '$.url') = ? OR (n.page_context IS NULL AND instr(n.text, ?) > 0)))
+     ORDER BY n.captured_at DESC, n.id ASC LIMIT 200`,
+    )
+    .all(deviceId, url, url, url, url, url);
+  return rows
+    .map((row) => ({ documentId: row.document_id, entry: rowToEntry(row) }))
+    .filter(({ entry }) => browserNoteMatchesPage(entry, url))
+    .slice(0, 20);
 }
 
 /**

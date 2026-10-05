@@ -52,6 +52,42 @@ describe("transformManifest", () => {
     });
   });
 
+  test("preserves browser-only assets and declarations while rewriting the default entry", () => {
+    const assets = {
+      types: "./portal/js/shared/agent-ui/index.d.ts",
+      default: "./portal/js/shared/agent-ui/index.js",
+    };
+    const out = transformManifest(
+      {
+        name: "@omnesis/gateway",
+        version: VERSION,
+        exports: {
+          ".": "./src/index.ts",
+          "./*": "./*",
+          "./agent-ui": assets,
+          "./agent-ui/styles.css": "./portal/js/shared/agent-ui/styles.css",
+        },
+      },
+      VERSION,
+    );
+    expect(out.exports["./*"]).toBe("./*");
+    expect(out.exports["./agent-ui"]).toEqual(assets);
+    expect(out.exports["./agent-ui/styles.css"]).toBe("./portal/js/shared/agent-ui/styles.css");
+    expect(out.exports["."]).toEqual({ types: "./dist/index.d.ts", default: "./dist/index.js" });
+    for (const target of [
+      "../outside.js",
+      "./portal/../outside.js",
+      "/absolute.js",
+      "./portal/script.ts",
+    ])
+      expect(() =>
+        transformManifest(
+          { name: "example", version: VERSION, exports: { "./asset": target } },
+          VERSION,
+        ),
+      ).toThrow();
+  });
+
   test("rewrites bin entries", () => {
     const out = transformManifest(
       { name: "omnesis", version: VERSION, bin: { omnesis: "src/index.ts" } },

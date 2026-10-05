@@ -561,6 +561,7 @@ export interface GatewayClient {
     fallbackRepresentationPrefixes: string[];
     referenceOnlyPrefixes: string[];
     patterns: Array<{ regex: string }>;
+    sourceAttributions?: Record<string, string>;
   }): Promise<void>;
 
   /**

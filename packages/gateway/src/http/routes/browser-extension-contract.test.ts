@@ -11,7 +11,7 @@
  *
  * For every contract route: it is registered on the app under exactly the
  * contract's method and path pattern; a well-formed request from the browser's
- * own `write:web` token, optional `notes:create` credential, or no token for a
+ * own `write:web` token, optional `notes:create` or `read` credential, or no token for a
  * public route is served; an
  * authenticated route refuses a missing token with 401 while a public route
  * never does; and the recipe table below stays in lockstep with the contract.
@@ -19,7 +19,7 @@
 
 import { readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import webSource from "@omnesis/provider-web";
 import {
   SCOPE_ADMIN,
@@ -49,6 +49,8 @@ interface ReleaseContract {
   deviceKind: string;
   tokenScopes: string[];
   optionalNotesTokenScopes: string[];
+  optionalFindTokenScopes: string[];
+  optionalNotesEditTokenScopes: string[];
   gatewayRoutes: ContractRoute[];
 }
 
@@ -76,6 +78,8 @@ interface Recipe {
   ): Promise<{ path: string; init: RequestInit }> | { path: string; init: RequestInit };
   expected: number;
   notesCredential?: boolean;
+  findCredential?: boolean;
+  editCredential?: boolean;
 }
 
 let db: Db;
@@ -85,6 +89,8 @@ let analyticsPath: string;
 let analyticsDb: AnalyticsDb;
 let browserToken: string;
 let notesToken: string;
+let findToken: string;
+let editToken: string;
 let notesRuntime: import("../../sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
 let adminToken: string;
 
@@ -137,6 +143,101 @@ function pairingBody(pairingCode: string) {
 const pageVisitsSchema = webSource.analyticsSchemas?.find((s) => s.tableName === "page_visits");
 
 const recipes: Record<RouteKey, Recipe> = {
+  ...Object.fromEntries(
+    ["/browser/notes/enable", "/browser/find/enable", "/browser/notes/edit/enable"].map((path) => [
+      `POST ${path}`,
+      { build: () => ({ path, init: json("POST", { id: randomUUID() }) }), expected: 200 },
+    ]),
+  ),
+  "GET /browser/notes/edit": {
+    build: () => ({
+      path: "/browser/notes/edit?url=https%3A%2F%2Fexample.org%2Farticle",
+      init: { method: "GET" },
+    }),
+    expected: 200,
+    findCredential: true,
+  },
+  "PATCH /browser/notes/edit/:id": {
+    build: async () => {
+      const id = randomUUID();
+      const url = "https://example.org/article";
+      const created = await call(
+        "/browser/notes",
+        notesToken,
+        json("POST", {
+          version: 1,
+          id,
+          text: "An invented original thought",
+          page: { url },
+        }),
+      );
+      expect(created.status).toBe(201);
+      const listed = await call(`/browser/notes/edit?url=${encodeURIComponent(url)}`, findToken);
+      const { notes } = (await listed.json()) as { notes: { id: string; revision: string }[] };
+      const entry = notes.find((note) => note.id === id);
+      expect(entry).toBeDefined();
+      return {
+        path: `/browser/notes/edit/${id}`,
+        init: json("PATCH", {
+          version: 1,
+          url,
+          text: "An invented revised thought",
+          revision: entry?.revision,
+        }),
+      };
+    },
+    expected: 200,
+    editCredential: true,
+  },
+  "GET /browser/find": {
+    build: () => ({ path: "/browser/find", init: { method: "GET" } }),
+    expected: 200,
+    findCredential: true,
+  },
+  "POST /browser/find/search": {
+    build: () => ({
+      path: "/browser/find/search",
+      init: json("POST", { text: "example", limit: 25 }),
+    }),
+    expected: 200,
+    findCredential: true,
+  },
+  "POST /browser/find/search/v2": {
+    build: () => ({
+      path: "/browser/find/search/v2",
+      init: json("POST", { version: 2, mode: "direct", text: "example", limit: 25 }),
+    }),
+    expected: 200,
+    findCredential: true,
+  },
+  "POST /browser/find/suggest": {
+    build: () => ({
+      path: "/browser/find/suggest",
+      init: json("POST", { version: 1, text: "example", limit: 5 }),
+    }),
+    // This fixture deliberately has no search index; authority and boundary pass before availability.
+    expected: 503,
+    findCredential: true,
+  },
+  "POST /browser/find/authorization": {
+    build: () => ({
+      path: "/browser/find/authorization",
+      init: json("POST", { id: randomUUID() }),
+    }),
+    expected: 201,
+  },
+  "GET /browser/find/authorization/:id": {
+    build: async (token = browserToken) => {
+      const result = await call(
+        "/browser/find/authorization",
+        token,
+        json("POST", { id: randomUUID() }),
+      );
+      const { requestId } = (await result.json()) as { requestId: string };
+      return { path: `/browser/find/authorization/${requestId}`, init: { method: "GET" } };
+    },
+    expected: 200,
+  },
   "GET /browser/notes": {
     build: () => ({ path: "/browser/notes", init: { method: "GET" } }),
     expected: 200,
@@ -238,6 +339,7 @@ function recipeFor(route: ContractRoute): Recipe {
 }
 
 beforeEach(async () => {
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   dbPath = `/tmp/omnesis-extension-contract-${randomUUID()}.db`;
   analyticsPath = `/tmp/omnesis-extension-contract-${randomUUID()}.duckdb`;
   db = createDatabase(dbPath);
@@ -252,7 +354,10 @@ beforeEach(async () => {
   });
   resetOwnedWebDomains();
   browserToken = mintToken("browser", [writeScope(SourceType("web"))]);
-  notesToken = mintToken("browser", [Scope("notes:create")]);
+  const featureBrowser = createDevice(db, { name: "invented feature browser", kind: "browser" });
+  notesToken = createToken(db, featureBrowser.id, [Scope("notes:create")]).token;
+  findToken = createToken(db, featureBrowser.id, [SCOPE_READ]).token;
+  editToken = createToken(db, featureBrowser.id, [Scope("notes:update")]).token;
   adminToken = mintToken("cli", [SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
 });
 
@@ -265,6 +370,7 @@ afterEach(async () => {
   rmSync(analyticsPath, { force: true });
   rmSync(`${analyticsPath}.wal`, { force: true });
   resetOwnedWebDomains();
+  vi.unstubAllEnvs();
 });
 
 describe("the contract file", () => {
@@ -272,6 +378,8 @@ describe("the contract file", () => {
     expect(contract.deviceKind).toBe("browser");
     expect(contract.tokenScopes).toEqual([writeScope(SourceType("web"))]);
     expect(contract.optionalNotesTokenScopes).toEqual(["notes:create"]);
+    expect(contract.optionalFindTokenScopes).toEqual(["read"]);
+    expect(contract.optionalNotesEditTokenScopes).toEqual(["notes:update"]);
     expect(contract.gatewayRoutes.length).toBeGreaterThan(0);
     expect(pageVisitsSchema, "the web provider publishes a page_visits schema").toBeDefined();
   });
@@ -298,12 +406,103 @@ describe("a well-formed request is served", () => {
     const { path, init } = await recipe.build();
     const res = await call(
       path,
-      route.authenticated ? (recipe.notesCredential ? notesToken : browserToken) : null,
+      route.authenticated
+        ? recipe.editCredential
+          ? editToken
+          : recipe.notesCredential
+            ? notesToken
+            : recipe.findCredential
+              ? findToken
+              : browserToken
+        : null,
       init,
     );
     expect(res.status, `${keyOf(route)} answered ${res.status}: ${await res.text()}`).toBe(
       recipe.expected,
     );
+  });
+});
+
+describe("optional browser features require explicit experimental mode", () => {
+  test("synthetic mode alone hides feature routes even for existing optional tokens", async () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+    vi.stubEnv("OMNESIS_SYNTHETIC", "1");
+    for (const feature of ["notes", "find"]) {
+      for (const [path, token, init] of [
+        [`/browser/${feature}`, feature === "notes" ? notesToken : findToken, undefined],
+        [
+          `/browser/${feature}/authorization`,
+          browserToken,
+          { method: "POST", body: JSON.stringify({ id: randomUUID() }) },
+        ],
+        [`/browser/${feature}/authorization/${randomUUID()}`, browserToken, undefined],
+        [`/admin/browser-${feature}/authorizations/${randomUUID()}`, adminToken, undefined],
+        [
+          `/admin/browser-${feature}/authorizations/${randomUUID()}/approve`,
+          adminToken,
+          { method: "POST" },
+        ],
+      ] as const)
+        expect((await call(path, token, init)).status, path).toBe(404);
+    }
+    for (const path of [
+      "/browser/notes/enable",
+      "/browser/find/enable",
+      "/browser/notes/edit/enable",
+    ]) {
+      expect((await call(path, browserToken, json("POST", { id: randomUUID() }))).status).toBe(404);
+    }
+    expect(
+      (await call("/browser/notes/edit?url=https%3A%2F%2Fexample.org", findToken)).status,
+    ).toBe(404);
+    expect(
+      (
+        await call(
+          `/browser/notes/edit/${randomUUID()}`,
+          editToken,
+          json("PATCH", {
+            version: 1,
+            url: "https://example.org",
+            text: "A hidden revision",
+            revision: "0".repeat(64),
+          }),
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await call("/browser/find/search", findToken, {
+          method: "POST",
+          body: JSON.stringify({ text: "hidden query" }),
+        })
+      ).status,
+    ).toBe(404);
+    for (const [path, body] of [
+      ["/browser/find/search/v2", { version: 2, mode: "agentic", text: "hidden query" }],
+      ["/browser/find/suggest", { version: 1, text: "hidden query" }],
+    ] as const)
+      expect((await call(path, findToken, json("POST", body))).status).toBe(404);
+    expect(
+      (
+        await call("/browser/notes", notesToken, {
+          method: "POST",
+          body: JSON.stringify({
+            version: 1,
+            id: randomUUID(),
+            text: "hidden note",
+            page: { url: "https://example.org/hidden" },
+          }),
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await call("/documents", browserToken, {
+          method: "POST",
+          body: JSON.stringify({ documents: [] }),
+        })
+      ).status,
+    ).toBe(200);
   });
 });
 
@@ -341,14 +540,16 @@ describe("pairing", () => {
     expect(body.device.name).toBe("invented browser profile");
     expect(body.scopes).toEqual(contract.tokenScopes);
 
-    // Default pairing opens capture and optional authorization requests;
-    // note capture itself requires the separately approved credential.
+    // Default pairing opens capture and automatic credential brokers;
+    // feature operations still require their separate narrow credentials.
     for (const route of contract.gatewayRoutes.filter((r) => r.authenticated)) {
       const recipe = recipeFor(route);
       const { path, init } = await recipe.build(body.token);
       const reply = await call(path, body.token, init);
       expect(reply.status, `${keyOf(route)} with the paired token`).toBe(
-        recipe.notesCredential ? 403 : recipe.expected,
+        recipe.notesCredential || recipe.findCredential || recipe.editCredential
+          ? 403
+          : recipe.expected,
       );
     }
   });

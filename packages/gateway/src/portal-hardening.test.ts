@@ -22,8 +22,13 @@ function readPortal(rel: string): string {
 }
 
 describe("portal markdown sanitization", () => {
+  test("portal markdown facade uses the shared sanitized renderer", () => {
+    expect(readPortal("js/lib/markdown.js")).toMatch(
+      /export \* from ["']\.\.\/shared\/agent-ui\/markdown\.js["']/,
+    );
+  });
   test("renderMarkdown imports DOMPurify and runs marked output through sanitize()", () => {
-    const src = readPortal("js/lib/markdown.js");
+    const src = readPortal("js/shared/agent-ui/markdown.js");
     expect(src).toMatch(/import\s+DOMPurify\s+from\s+["']dompurify["']/);
     expect(src).toMatch(/marked\.parse\s*\(/);
     expect(src).toMatch(/DOMPurify\.sanitize\s*\(/);
@@ -37,7 +42,7 @@ describe("portal markdown sanitization", () => {
   });
 
   test("DOMPurify config disables data attributes + unknown protocols", () => {
-    const src = readPortal("js/lib/markdown.js");
+    const src = readPortal("js/shared/agent-ui/markdown.js");
     expect(src).toMatch(/ALLOW_DATA_ATTR\s*:\s*false/);
     expect(src).toMatch(/ALLOW_UNKNOWN_PROTOCOLS\s*:\s*false/);
   });

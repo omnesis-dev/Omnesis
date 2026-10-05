@@ -21,6 +21,19 @@ const contract = JSON.parse(
 const extensionRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 describe("Chrome Web Store release contract", () => {
+  it("pre-grants HTTPS only in the isolated headless test manifest and keeps required tab/icon access", async () => {
+    const { applyTestManifest } = await import(
+      pathToFileURL(join(extensionRoot, "scripts", "test-manifest.mjs")).href
+    );
+    const testManifest = applyTestManifest(manifest);
+    expect(testManifest.permissions).toEqual(expect.arrayContaining(["tabs", "favicon"]));
+    expect(testManifest).not.toHaveProperty("optional_permissions");
+    expect(testManifest.host_permissions).toEqual(["https://*/*"]);
+    expect(testManifest.key).toBeTruthy();
+    expect(manifest.permissions).toEqual(expect.arrayContaining(["tabs", "favicon"]));
+    expect(manifest).not.toHaveProperty("optional_permissions");
+  });
+
   it("packages against one caller-recorded commit without refreshing a shared ref", () => {
     const packageScript = readFileSync(join(extensionRoot, "scripts", "package-store.mjs"), "utf8");
     expect(packageScript).toContain("OMNESIS_EXTENSION_RELEASE_COMMIT");
@@ -36,7 +49,7 @@ describe("Chrome Web Store release contract", () => {
     expect(contract.sourceRepository).toBe("https://github.com/omnesis-dev/Omnesis");
   });
 
-  it("declares exactly the gateway routes browser capture and notes use", () => {
+  it("declares exactly the gateway routes browser capture, notes and Find use", () => {
     expect(contract.gatewayRoutes).toEqual([
       { method: "GET", path: "/health", authenticated: false },
       { method: "POST", path: "/devices/pair", authenticated: false },
@@ -55,9 +68,22 @@ describe("Chrome Web Store release contract", () => {
       { method: "GET", path: "/browser/notes/authorization/:id", authenticated: true },
       { method: "GET", path: "/browser/notes", authenticated: true },
       { method: "POST", path: "/browser/notes", authenticated: true },
+      { method: "POST", path: "/browser/find/authorization", authenticated: true },
+      { method: "GET", path: "/browser/find/authorization/:id", authenticated: true },
+      { method: "GET", path: "/browser/find", authenticated: true },
+      { method: "POST", path: "/browser/find/search", authenticated: true },
+      { method: "POST", path: "/browser/find/search/v2", authenticated: true },
+      { method: "POST", path: "/browser/find/suggest", authenticated: true },
+      { method: "POST", path: "/browser/notes/enable", authenticated: true },
+      { method: "POST", path: "/browser/find/enable", authenticated: true },
+      { method: "POST", path: "/browser/notes/edit/enable", authenticated: true },
+      { method: "GET", path: "/browser/notes/edit", authenticated: true },
+      { method: "PATCH", path: "/browser/notes/edit/:id", authenticated: true },
     ]);
     expect(contract.tokenScopes).toEqual(["write:web"]);
     expect(contract.optionalNotesTokenScopes).toEqual(["notes:create"]);
+    expect(contract.optionalFindTokenScopes).toEqual(["read"]);
+    expect(contract.optionalNotesEditTokenScopes).toEqual(["notes:update"]);
     expect(contract.deviceKind).toBe("browser");
   });
 
@@ -65,6 +91,7 @@ describe("Chrome Web Store release contract", () => {
     expect(manifest.manifest_version).toBe(3);
     expect(manifest.minimum_chrome_version).toBe("130");
     expect(manifest.optional_host_permissions).toEqual(["https://*/*"]);
+    expect(manifest).not.toHaveProperty("optional_permissions");
     expect(manifest.permissions).toEqual([
       "storage",
       "unlimitedStorage",
@@ -73,12 +100,23 @@ describe("Chrome Web Store release contract", () => {
       "activeTab",
       "contextMenus",
       "sidePanel",
+      "tabs",
+      "favicon",
     ]);
     expect(manifest.incognito).toBe("not_allowed");
+    expect(manifest.omnibox).toEqual({ keyword: "om" });
     expect(manifest.background).toEqual({ service_worker: "background.js", type: "module" });
     expect(manifest).not.toHaveProperty("content_security_policy");
     expect(manifest).not.toHaveProperty("externally_connectable");
     expect(manifest).not.toHaveProperty("web_accessible_resources");
+  });
+
+  it("retains the Tell shortcut and offers Find only through the omnibox", () => {
+    expect(manifest.commands["tell-omnesis"].suggested_key).toEqual({
+      default: "Alt+Shift+N",
+      mac: "MacCtrl+Command+T",
+    });
+    expect(manifest.commands).not.toHaveProperty("find-omnesis");
   });
 
   it("produces the same allowlisted archive across timezone and umask differences", async () => {
@@ -120,10 +158,13 @@ describe("Chrome Web Store release contract", () => {
         "THIRD_PARTY_NOTICES.txt",
         "background.js",
         "content.js",
+        "find.html",
+        "fonts/InterVariable.woff2",
         "icons/icon-128.png",
         "icons/icon-16.png",
         "icons/icon-32.png",
         "icons/icon-48.png",
+        "icons/omnesis-mark.svg",
         "manifest.json",
         "notes.html",
         "notes.js",
@@ -134,16 +175,30 @@ describe("Chrome Web Store release contract", () => {
         "ui.css",
       ]);
       expect(Object.keys(archive.files).some((path) => path.endsWith(".map"))).toBe(false);
-      // The headless E2E's test manifest pre-grants host access and pins the
-      // extension id; neither may ever reach the store.
+      // The isolated headless manifest pre-grants HTTPS host access and pins
+      // the extension id; production requests page access during pairing.
       const packagedManifest = JSON.parse(
         (await archive.file("manifest.json")?.async("string")) ?? "{}",
       ) as Record<string, unknown>;
       expect(packagedManifest).not.toHaveProperty("key");
       expect(packagedManifest).not.toHaveProperty("host_permissions");
       expect(packagedManifest.optional_host_permissions).toEqual(["https://*/*"]);
+      expect(packagedManifest).not.toHaveProperty("optional_permissions");
+      expect(packagedManifest.permissions).toEqual(expect.arrayContaining(["tabs", "favicon"]));
       expect(packagedManifest.side_panel).toEqual({ default_path: "notes.html" });
-      expect(await archive.file("notes.html")?.async("string")).toContain('src="notes.js"');
+      const notesHtml = await archive.file("notes.html")?.async("string");
+      expect(notesHtml).toContain('src="notes.js"');
+      expect(notesHtml).toContain('id="notes-section"');
+      expect(notesHtml).not.toContain('id="find-section"');
+      const findHtml = await archive.file("find.html")?.async("string");
+      expect(findHtml).toContain('id="find-section"');
+      expect(findHtml).not.toContain('id="notes-section"');
+      expect(await archive.file("popup.html")?.async("string")).not.toContain("find-omnesis");
+      expect(await archive.file("options.html")?.async("string")).not.toContain("find-omnesis");
+      expect(await archive.file("find.html")?.async("string")).toContain(
+        'class="notes-panel find-page"',
+      );
+      expect(await archive.file("find.html")?.async("string")).toContain('src="notes.js"');
       expect(await archive.file("notes.js")?.async("string")).toContain("notes-submit");
       expect(await archive.file("THIRD_PARTY_NOTICES.txt")?.async("string")).toContain(
         "Copyright (c) 2025 Steph Ango",

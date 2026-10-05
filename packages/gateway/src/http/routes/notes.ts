@@ -13,6 +13,7 @@
  * `scope.read()`.
  */
 
+import { publicBrowserNoteEntry } from "../../sources/omnesis-notes/browser-note.js";
 import { DAY_KEY_RE, dayKeyFor } from "../../sources/omnesis-notes/index.js";
 import { notesRateLimiter } from "../../rate-limit.js";
 import { BadRequestError, NotFoundError } from "../errors.js";
@@ -100,9 +101,11 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
     typeof deps.runtime === "function" ? deps.runtime() : deps.runtime;
   const markPending = (entries: NoteEntry[]): ListedNote[] => {
     const pending = deps.pendingTranscriptions?.(entries.map((entry) => entry.id));
-    if (!pending || pending.size === 0) return entries;
+    if (!pending || pending.size === 0) return entries.map(publicBrowserNoteEntry);
     return entries.map((entry) =>
-      pending.has(entry.id) ? { ...entry, transcription: "pending" as const } : entry,
+      pending.has(entry.id)
+        ? { ...publicBrowserNoteEntry(entry), transcription: "pending" as const }
+        : publicBrowserNoteEntry(entry),
     );
   };
 
@@ -131,7 +134,7 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
       longitude: body.longitude,
       placeName: body.placeName,
     });
-    return c.json(entry, 201);
+    return c.json(publicBrowserNoteEntry(entry), 201);
   });
 
   app.get("/notes", scope.read(), async (c) => {
@@ -193,7 +196,7 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
     const { text } = c.req.valid("json");
     const entry = await runtime().edit(c.req.param("id"), text);
     if (!entry) throw new NotFoundError("Note entry not found");
-    return c.json(entry);
+    return c.json(publicBrowserNoteEntry(entry));
   });
 
   app.delete("/notes/:id", scope.writeAny(), async (c) => {

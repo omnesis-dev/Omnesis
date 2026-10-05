@@ -11,9 +11,11 @@
 
 export {
   normalizeUrl,
+  browserUrlIdentity,
   buildCanonicalizerRegistry,
   hostIsOwned,
   TRACKING_PARAMS,
   CREDENTIAL_PARAMS,
   type UrlCanonicalizerSpec,
+  type BrowserUrlIdentitySpec,
 } from "../url-normalize.js";

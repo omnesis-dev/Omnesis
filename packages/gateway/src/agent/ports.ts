@@ -51,6 +51,7 @@ import { OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID } from "../sources/omn
 import { mergeFilters } from "../search/filters.js";
 import { graphContextPolicy } from "../search/graph-context-policy.js";
 import { parseQuery, type ParsedFilterToken } from "../search/query-parser.js";
+import { hydrateBrowserRecord } from "./record-browser-urls.js";
 import type Database from "better-sqlite3";
 import type {
   Breadcrumb,
@@ -651,6 +652,7 @@ export function createGatewaySqlPort(
       let result: Awaited<ReturnType<AnalyticsDb["executeQuery"]>>;
       try {
         result = await analytics.executeQuery(sql, {
+          includeReadTables: true,
           limit: maxRows + 1,
           timeoutMs: AGENT_SQL_QUERY_TIMEOUT_MS,
           signal: runOpts?.signal,
@@ -685,7 +687,15 @@ export function createGatewaySqlPort(
         ? fullCatalog.filter((entry) => permitted.has(entry.sourceId))
         : fullCatalog;
       const { sources, subjects } = enrichSqlWithCatalog(catalog, sql);
-      const rowIdentities = deriveRowIdentities(catalog, result.columns, result.rows);
+      // Identity comes only from tables the engine actually read. Unrelated
+      // catalog tables often share a key name such as id; comments and CTE
+      // aliases must not add phantom candidates or hide the actual row.
+      const readTables = new Set((result.readTables ?? []).map((table) => table.toLowerCase()));
+      const rowIdentities = deriveRowIdentities(
+        catalog.filter((entry) => readTables.has(entry.tableName.toLowerCase())),
+        result.columns,
+        result.rows,
+      );
       return {
         sql,
         columns: [...result.columns],
@@ -809,6 +819,7 @@ export function createGatewayRecordPort(db: Database.Database, analytics: Analyt
         recordKey: reference.recordKey,
         primaryKeyColumns: reference.primaryKeyColumns,
         snapshot,
+        includeBrowserUrls: input.includeBrowserUrls,
       });
       if (resolved.kind === "unknown_table") {
         throw new RecordPortError({ reason: "unknown_table", table: reference.table });
@@ -851,6 +862,7 @@ async function resolveRecordCitation(
     recordKey: string;
     primaryKeyColumns: ReadonlyArray<{ name: string; value: string; castType?: string }>;
     snapshot: Record<string, string | number | boolean | null>;
+    includeBrowserUrls?: boolean;
   },
 ): Promise<RecordResolveResult> {
   const table = await analytics.getRecordTableSchema(input.table);
@@ -864,6 +876,9 @@ async function resolveRecordCitation(
     return { kind: "not_timeline_eligible" };
   }
 
+  const browserRecord = input.includeBrowserUrls
+    ? await hydrateBrowserRecord(analytics, table, input.primaryKeyColumns)
+    : undefined;
   const fields = deriveRecordCitationFields(
     {
       displayName: table.displayName,
@@ -871,7 +886,7 @@ async function resolveRecordCitation(
       record: table.record,
       semanticTimeColumn: table.semanticTimeColumn,
     },
-    input.snapshot,
+    browserRecord?.snapshot ?? input.snapshot,
   );
 
   // The declared column exists but this row's value is empty → not a
@@ -897,6 +912,7 @@ async function resolveRecordCitation(
       sourceType,
       tableDisplayName: table.displayName,
       boundDocumentId,
+      ...(browserRecord ? { browserUrls: browserRecord.urls } : {}),
     },
   };
 }

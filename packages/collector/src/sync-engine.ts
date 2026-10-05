@@ -474,6 +474,7 @@ export class SyncEngine {
     const canonicalizers: Array<{
       hosts: string[];
       rules: { match: string; replacement: string }[];
+      browserIdentity?: import("@omnesis/core").BrowserUrlIdentitySpec;
     }> = [];
     let totalSources = 0;
     let withSpec = 0;
@@ -486,6 +487,7 @@ export class SyncEngine {
       seen.add(spec);
       canonicalizers.push({
         hosts: [...spec.hosts],
+        ...(spec.browserIdentity ? { browserIdentity: spec.browserIdentity } : {}),
         rules: spec.rules.map((r) => ({ match: r.match, replacement: r.replacement })),
       });
     }
@@ -518,13 +520,17 @@ export class SyncEngine {
     const canonicalizers: Array<{
       hosts: string[];
       rules: { match: string; replacement: string }[];
+      browserIdentity?: import("@omnesis/core").BrowserUrlIdentitySpec;
     }> = [];
+    const sourceAttributions: Record<string, string> = {};
     const seenCanonicalizers = new WeakSet<object>();
     const traversalHubPrefixes = new Set<string>();
     const fallbackRepresentationPrefixes = new Set<string>();
     const referenceOnlyPrefixes = new Set<string>();
     for (const { source } of sources) {
       const prefix = parseSourceId(source.id).sourceType;
+      if (source.attribution?.itemFooter)
+        sourceAttributions[prefix] = source.attribution.itemFooter;
       if (source.urlHub) traversalHubPrefixes.add(prefix);
       if (source.urlTargetRole === "fallback") fallbackRepresentationPrefixes.add(prefix);
       if (source.urlTargetRole === "reference") referenceOnlyPrefixes.add(prefix);
@@ -533,6 +539,7 @@ export class SyncEngine {
       seenCanonicalizers.add(spec);
       canonicalizers.push({
         hosts: [...spec.hosts],
+        ...(spec.browserIdentity ? { browserIdentity: spec.browserIdentity } : {}),
         rules: spec.rules.map((rule) => ({ match: rule.match, replacement: rule.replacement })),
       });
     }
@@ -542,6 +549,7 @@ export class SyncEngine {
       fallbackRepresentationPrefixes: [...fallbackRepresentationPrefixes].sort(),
       referenceOnlyPrefixes: [...referenceOnlyPrefixes].sort(),
       patterns,
+      sourceAttributions,
     };
     const publication = this.linkDeclarationPushQueue.then(async () => {
       await this.gateway.setLinkDeclarations(declaration);

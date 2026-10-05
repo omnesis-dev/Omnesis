@@ -1253,3 +1253,6 @@ export {
   tailscaleIsRunningStatus,
   type TailscaleCliCandidate,
 } from "./tailscale-cli.js";
+
+export { browserUrlIdentity } from "./url-normalize.js";
+export type { BrowserUrlIdentitySpec } from "./url-normalize.js";

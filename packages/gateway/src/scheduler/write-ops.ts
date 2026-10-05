@@ -549,6 +549,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // writes; the default budget is fine.
   { name: "notes.appendEntry", priority: "user" },
   { name: "notes.updateEntry", priority: "user" },
+  { name: "notes.updateBrowserEntry", priority: "user" },
   { name: "notes.deleteEntry", priority: "user" },
   // A voice note's transcript, written by the background queue rather than a
   // waiting person: a compare-and-set on one row.

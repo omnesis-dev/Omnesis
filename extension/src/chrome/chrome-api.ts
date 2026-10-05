@@ -39,9 +39,24 @@ declare global {
     }
 
     namespace runtime {
+      interface Port {
+        name: string;
+        sender?: MessageSender;
+        postMessage(message: unknown): void;
+        disconnect(): void;
+        onMessage: { addListener(callback: (message: unknown) => void): void };
+        onDisconnect: { addListener(callback: () => void): void };
+      }
+      function connect(details: { name: string }): Port;
+      const onConnect: { addListener(callback: (port: Port) => void): void };
+      function getContexts(filter: {
+        documentIds: string[];
+        contextTypes: string[];
+      }): Promise<Array<{ windowId: number; tabId: number }>>;
       const onInstalled: { addListener(callback: () => void): void };
       interface MessageSender {
         id?: string;
+        documentId?: string;
         url?: string;
         tab?: { id?: number; url?: string; incognito?: boolean };
       }
@@ -141,16 +156,49 @@ declare global {
     namespace tabs {
       interface Tab {
         id?: number;
+        windowId?: number;
         url?: string;
         title?: string;
         incognito?: boolean;
       }
-      function create(details: { url: string }): Promise<Tab>;
-      function query(queryInfo: { active: boolean; currentWindow: boolean }): Promise<Tab[]>;
+      function create(details: { url: string; active?: boolean }): Promise<Tab>;
+      function query(queryInfo: {
+        active?: boolean;
+        currentWindow?: boolean;
+        lastFocusedWindow?: boolean;
+      }): Promise<Tab[]>;
+      function get(tabId: number): Promise<Tab>;
+      function update(tabId: number, details: { active?: boolean; url?: string }): Promise<Tab>;
+      function update(details: { active?: boolean; url?: string }): Promise<Tab>;
       function sendMessage<T = unknown>(tabId: number, message: unknown): Promise<T>;
+    }
+    namespace windows {
+      const WINDOW_ID_CURRENT: number;
+      function update(windowId: number, details: { focused: boolean }): Promise<unknown>;
+      function getCurrent(): Promise<{ id?: number }>;
+    }
+
+    namespace omnibox {
+      type OnInputEnteredDisposition = "currentTab" | "newForegroundTab" | "newBackgroundTab";
+      interface SuggestResult {
+        content: string;
+        description: string;
+      }
+      function setDefaultSuggestion(suggestion: { description: string }): Promise<void>;
+      const onInputStarted: { addListener(callback: () => void): void };
+      const onInputChanged: {
+        addListener(
+          callback: (text: string, suggest: (results: SuggestResult[]) => void) => void,
+        ): void;
+      };
+      const onInputEntered: {
+        addListener(callback: (text: string, disposition: OnInputEnteredDisposition) => void): void;
+      };
+      const onInputCancelled: { addListener(callback: () => void): void };
     }
 
     namespace commands {
+      function getAll(): Promise<Array<{ name?: string; shortcut?: string }>>;
       const onCommand: { addListener(callback: (command: string, tab?: tabs.Tab) => void): void };
     }
     namespace contextMenus {
@@ -172,7 +220,18 @@ declare global {
     }
     namespace sidePanel {
       function setOptions(details: { enabled: boolean; path?: string }): Promise<void>;
-      function open(details: { tabId: number }): Promise<void>;
+      function open(details: { tabId: number } | { windowId: number }): Promise<void>;
+      function close(details: { windowId?: number; tabId?: number }): Promise<void>;
+      const onOpened: {
+        addListener(
+          callback: (info: { windowId: number; tabId?: number; path: string }) => void,
+        ): void;
+      };
+      const onClosed: {
+        addListener(
+          callback: (info: { windowId: number; tabId?: number; path: string }) => void,
+        ): void;
+      };
     }
     namespace extension {
       /** True when this context runs in an incognito (private) window. */

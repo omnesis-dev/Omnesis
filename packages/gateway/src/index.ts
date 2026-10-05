@@ -2280,6 +2280,15 @@ const app = createServer(db, DB_PATH, {
   mentionWorthGateActive,
   searchSnapshot,
   agentRouteDeps: agentLifecycle.routeDeps,
+  getDecision: () => decisionService.get(),
+  recordFindDecisionSpend: (modelId, inputTokens) =>
+    recordDecisionSpend(
+      writeGate,
+      cognitionSpendDay(Date.now()),
+      "browser-find-decision",
+      modelId,
+      inputTokens,
+    ),
   privacyPolicyStore: subscriptionsPolicyStore,
   analyticsDb,
   backupService,

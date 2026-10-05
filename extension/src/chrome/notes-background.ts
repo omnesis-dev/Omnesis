@@ -3,6 +3,7 @@
 
 import "./chrome-api.js";
 import { normalizeCaptureUrl, preferCanonicalUrl } from "../capture/normalize.js";
+import { registerPanelFeature, setPanelFeature, togglePanelShortcut } from "./panel-surface.js";
 import { loadConfig } from "./storage.js";
 import {
   NOTES_STATE_KEY,
@@ -12,6 +13,7 @@ import {
   type NotePage,
 } from "./notes-service.js";
 
+import { NOTES_EDIT_STATE_KEY, NOTES_PAGE_KEY } from "./notes-edit-service.js";
 import { NOTES_TOKEN_KEY } from "./notes-credential.js";
 
 /** Only extension-owned surfaces may invoke this worker's create-only notes credential. */
@@ -24,6 +26,7 @@ export function installNotesBackground(): {
   ): boolean;
   alarm(name: string): void;
 } {
+  registerPanelFeature("notes");
   const service = new NotesService({
     config: loadConfig,
     read: async () => {
@@ -74,7 +77,7 @@ export function installNotesBackground(): {
     return serializeSurface(async () => {
       const state = fresh ? await service.drain() : await service.status(false);
       if (clearing || state.enabled === menusEnabled) return;
-      await chrome.sidePanel.setOptions({ enabled: state.enabled, path: "notes.html" });
+      await setPanelFeature("notes", state.enabled);
       if (clearing) return;
       await chrome.contextMenus.removeAll();
       if (clearing) return;
@@ -107,7 +110,8 @@ export function installNotesBackground(): {
     };
     if (!notePage(page)) return;
     // Open before network work: Chrome's side panel API requires the invocation's user gesture.
-    await chrome.sidePanel.open({ tabId: tab.id });
+    const opening = chrome.sidePanel.open({ tabId: tab.id });
+    await opening;
     if (!pageUrl || pageUrl === tab.url) {
       try {
         const results = await chrome.scripting.executeScript({
@@ -129,10 +133,12 @@ export function installNotesBackground(): {
       }
     }
     page.url = normalizeCaptureUrl(page.url);
+    await chrome.storage.local.set({ [NOTES_PAGE_KEY]: { url: page.url, title: page.title } });
     await service.begin(page);
   }
   chrome.commands.onCommand.addListener((command, tab) => {
-    if (command === "tell-omnesis" && tab) detached(open(tab));
+    if (command === "tell-omnesis" && tab && !togglePanelShortcut("notes", tab))
+      detached(open(tab));
   });
   chrome.contextMenus.onClicked.addListener((info, tab) => {
     if (tab && ["omnesis-note-page", "omnesis-note-selection"].includes(String(info.menuItemId)))
@@ -165,12 +171,28 @@ export function installNotesBackground(): {
         await refresh(false);
         return state;
       });
-    else if (msg.type === "notes-view") task = service.status(false);
-    else if (msg.type === "notes-activate")
-      task = service.activate().then(async (url) => {
-        await chrome.tabs.create({ url });
-        return { ok: true };
+    else if (msg.type === "notes-view")
+      task = service.status(false).then(async (view) => {
+        const stored = await chrome.storage.local.get(NOTES_EDIT_STATE_KEY);
+        const state = stored[NOTES_EDIT_STATE_KEY] as {
+          draft?: { text?: unknown; original?: unknown };
+        } | null;
+        return {
+          ...view,
+          pendingEdit:
+            typeof state?.draft?.text === "string" && state.draft.text !== state.draft.original,
+        };
       });
+    else if (msg.type === "notes-begin" && sender.url === chrome.runtime.getURL("notes.html"))
+      task = (async () => {
+        const stored = await chrome.storage.local.get(NOTES_PAGE_KEY);
+        const context = stored[NOTES_PAGE_KEY];
+        const page = notePage(
+          context && typeof context === "object" ? { ...context, selection: "" } : null,
+        );
+        if (!page) throw new Error("Reopen Tell Omnesis from the page to start a note.");
+        return service.begin(page);
+      })();
     else if (
       msg.type === "notes-open" &&
       sender.url === chrome.runtime.getURL("popup.html") &&
@@ -210,8 +232,15 @@ export function installNotesBackground(): {
   chrome.alarms.create("omnesis-notes-refresh", { periodInMinutes: 1 });
 
   async function restoreSurfaces(): Promise<void> {
+    const stored = await chrome.storage.local.get([NOTES_STATE_KEY, NOTES_TOKEN_KEY]);
+    const previous = stored[NOTES_STATE_KEY] as { supported?: unknown } | null;
     const cached = await service.status(false);
-    await refresh(cached.supported || cached.pendingApproval || cached.pending > 0);
+    await refresh(
+      !!stored[NOTES_TOKEN_KEY] ||
+        previous?.supported === true ||
+        cached.pendingApproval ||
+        cached.pending > 0,
+    );
   }
   chrome.runtime.onInstalled.addListener(() => {
     menusEnabled = false;
@@ -235,7 +264,7 @@ export function installNotesBackground(): {
       clearing = true;
       return serializeSurface(async () => {
         await service.clear();
-        await chrome.sidePanel.setOptions({ enabled: false, path: "notes.html" });
+        await setPanelFeature("notes", false);
         await chrome.contextMenus.removeAll();
         menusEnabled = false;
         clearing = false;

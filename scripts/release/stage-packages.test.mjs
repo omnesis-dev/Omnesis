@@ -107,6 +107,70 @@ describe("release package runtime assets", () => {
     }
   });
 
+  test("validates export replacement patterns without weakening concrete assets or main/bin paths", () => {
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-export-pattern-test-"));
+    try {
+      mkdirSync(join(temp, "dist/nested"), { recursive: true });
+      mkdirSync(join(temp, "empty"));
+      writeFileSync(join(temp, "dist/nested/index.js"), "export {};\n");
+      const exports = { "./*": "./*", "./modules/*": "./dist/*.js" };
+      expect(() => assertExportsAreStaged("example", { exports }, temp)).not.toThrow();
+      expect(() =>
+        assertExportsAreStaged(
+          "example",
+          {
+            exports: {
+              ...exports,
+              "./agent-ui": {
+                types: "./portal/agent-ui/index.d.ts",
+                default: "./dist/nested/index.js",
+              },
+            },
+          },
+          temp,
+        ),
+      ).toThrow(/portal\/agent-ui\/index\.d\.ts/);
+      for (const target of [
+        "./missing/*",
+        "./empty/*",
+        "./dist/*.css",
+        "./dist/../*",
+        "./dist/nested/[a-z]*.js",
+      ])
+        expect(() =>
+          assertExportsAreStaged("example", { exports: { "./*": target } }, temp),
+        ).toThrow(/missing from the staged package/);
+      expect(() => assertExportsAreStaged("example", { exports, main: "./*" }, temp)).toThrow(
+        /missing from the staged package/,
+      );
+      expect(() =>
+        assertExportsAreStaged("example", { exports, bin: { example: "./*" } }, temp),
+      ).toThrow(/missing from the staged package/);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  test("requires repeated stars to use the same subpath substitution", () => {
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-export-repeat-test-"));
+    try {
+      mkdirSync(join(temp, "dist/first"), { recursive: true });
+      writeFileSync(join(temp, "dist/first/other.js"), "export {};\n");
+      const manifest = { exports: { "./*": "./dist/*/*.js" } };
+      expect(() => assertExportsAreStaged("example", manifest, temp)).toThrow(
+        /missing from the staged package/,
+      );
+      writeFileSync(join(temp, "dist/first/first.js"), "export {};\n");
+      expect(() => assertExportsAreStaged("example", manifest, temp)).not.toThrow();
+      writeFileSync(join(temp, "dist/first/first2.js"), "export {};\n");
+      expect(() =>
+        assertExportsAreStaged("example", { exports: { "./*": "./dist/*/*2.js" } }, temp),
+      ).not.toThrow();
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
   test("ships both agent harness entry points with the shared integration package", () => {
     const assets = runtimeAssetsFor("@omnesis/agent-integration");
     expect(assets).toEqual([

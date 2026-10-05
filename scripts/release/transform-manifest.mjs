@@ -25,6 +25,15 @@ function distPaths(value, what) {
 
 function transformExportsValue(value, what) {
   if (typeof value === "string") {
+    // Preserve packages that previously allowed internal subpath imports.
+    if (value === "./*") return value;
+    // Browser-only source assets ship verbatim; reject absolute/traversing paths.
+    if (
+      /^\.\/(?:[\w-]+\/)*[\w.-]+\.(?:js|css|d\.ts)$/.test(value) &&
+      !value.split("/").includes("..") &&
+      !value.startsWith("./src/")
+    )
+      return value;
     const { js, dts } = distPaths(value, what);
     return { types: dts, default: js };
   }

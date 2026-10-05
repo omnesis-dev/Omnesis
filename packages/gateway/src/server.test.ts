@@ -394,9 +394,14 @@ describe("health endpoint", () => {
       expect(off.capabilities).toEqual({
         subscriptions: false,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
-        browserNotes: { min: 1, max: 1 },
       });
 
+      process.env.OMNESIS_SYNTHETIC = "1";
+      const syntheticOnly = await (await app.request("/health")).json();
+      expect(syntheticOnly.capabilities).not.toHaveProperty("browserNotes");
+      expect(syntheticOnly.capabilities).not.toHaveProperty("browserFind");
+      expect(syntheticOnly.capabilities).not.toHaveProperty("browserFeatures");
+      expect(syntheticOnly.capabilities).not.toHaveProperty("browserNotesEdit");
       process.env.OMNESIS_EXPERIMENTAL = "1";
       const on = await (await app.request("/health")).json();
       expect(on.experimental).toBe(true);
@@ -404,6 +409,11 @@ describe("health endpoint", () => {
         subscriptions: true,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         browserNotes: { min: 1, max: 1 },
+        browserFind: { min: 1, max: 2 },
+        browserFindSuggest: { min: 1, max: 1 },
+        browserFindMode: { min: 1, max: 1 },
+        browserFeatures: { min: 1, max: 1 },
+        browserNotesEdit: { min: 1, max: 1 },
       });
     } finally {
       if (originalExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
@@ -6598,6 +6608,8 @@ describe("POST /admin/url-graph-roles", () => {
     const { resetKnownUrlPatterns } = await import("./known-url-patterns.js");
     const { resetUrlCanonicalizers } = await import("./url-canonicalizers.js");
     const { resetLinkDeclarationBundleReadiness } = await import("./link-declaration-readiness.js");
+    const { resetSourceAttributions } = await import("./source-attributions.js");
+    resetSourceAttributions();
     resetUrlGraphRoles();
     resetKnownUrlPatterns();
     resetUrlCanonicalizers();
@@ -6623,9 +6635,12 @@ describe("POST /admin/url-graph-roles", () => {
         fallbackRepresentationPrefixes: ["web"],
         referenceOnlyPrefixes: ["chrome-bookmarks"],
         patterns: [{ regex: "code[.]example[.]org/pull/[0-9]+" }],
+        sourceAttributions: { "demo-notes": "Data from example.org" },
       }),
     });
     expect(post.status).toBe(200);
+    const { getSourceAttributions } = await import("./source-attributions.js");
+    expect(getSourceAttributions()).toEqual({ "demo-notes": "Data from example.org" });
 
     const roles = (await (await req("/admin/url-graph-roles")).json()) as {
       traversalHubPrefixes: string[];
@@ -6653,6 +6668,20 @@ describe("POST /admin/url-graph-roles", () => {
 
     const { linkDeclarationBundlesReady } = await import("./link-declaration-readiness.js");
     expect(linkDeclarationBundlesReady()).toBe(true);
+
+    // A collector running an older wire contract cannot erase newer display metadata.
+    const legacy = await req("/admin/link-declarations", {
+      method: "POST",
+      body: JSON.stringify({
+        canonicalizers: [],
+        traversalHubPrefixes: [],
+        fallbackRepresentationPrefixes: [],
+        referenceOnlyPrefixes: [],
+        patterns: [],
+      }),
+    });
+    expect(legacy.status).toBe(200);
+    expect(getSourceAttributions()).toEqual({ "demo-notes": "Data from example.org" });
   });
 
   test("rejects an oversized streamed declaration before unknown JSON fields are parsed", async () => {

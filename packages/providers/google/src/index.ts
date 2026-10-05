@@ -130,6 +130,13 @@ export default defineProvider<GoogleContext>({
       // (eval YAML, agent tool, CLI) pasted.
       urlCanonicalizer: {
         hosts: ["mail.google.com"],
+        // Account-index routes alone cannot prove which mailbox a tab displays.
+        browserIdentity: {
+          part: "fragment",
+          format: "hex-segment",
+          pathPrefix: "/mail/",
+          requiredQuery: ["authuser"],
+        },
         rules: [
           {
             // `(?:/u/[^/]+)?` matches `/u/0`, `/u/foo@example.com`,

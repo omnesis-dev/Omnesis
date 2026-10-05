@@ -29,8 +29,9 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
  *
  * The extension is built with the TEST manifest (`extension/scripts/
  * test-manifest.mjs`): the wildcard-HTTPS host permission is granted at install
- * time instead of through the native dialog no automation can click, and the
- * extension id is pinned. The store ZIP is asserted never to carry that
+ * time instead of through the native dialog no automation can click. API
+ * permissions match the production manifest, and the extension id is pinned.
+ * The store ZIP is asserted never to carry that
  * variant. The gateway serves a self-signed certificate; the worker's `fetch`
  * does not honour Playwright's `ignoreHTTPSErrors`, so Chromium runs with
  * `--ignore-certificate-errors` — a test-lane concession the real extension
@@ -43,8 +44,19 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
 /** The slice of the `chrome.*` API the assertions read from inside the worker. */
 declare const chrome: {
   runtime: { sendMessage(message: unknown): Promise<unknown> };
-  storage: { local: { get(keys: null): Promise<Record<string, unknown>> } };
+  commands: { getAll(): Promise<Array<{ name?: string; shortcut?: string }>> };
+  storage: { local: { get(keys: null | string): Promise<Record<string, unknown>> } };
   permissions: { getAll(): Promise<{ origins?: string[] }> };
+  windows: { getCurrent(): Promise<{ id?: number }> };
+  sidePanel: {
+    open(options: { windowId: number }): Promise<void>;
+    onClosed: { addListener(listener: () => void): void };
+  };
+  tabs: {
+    query(query: {
+      active?: boolean;
+    }): Promise<Array<{ id?: number; url?: string; active?: boolean }>>;
+  };
 };
 
 const require = createRequire(import.meta.url);
@@ -83,7 +95,10 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
   const popupUrl = `chrome-extension://${TEST_EXTENSION_ID}/popup.html`;
 
   beforeAll(async () => {
-    harness = new SyntheticE2EHarness({ gatewayMode: "stable" });
+    harness = new SyntheticE2EHarness({
+      gatewayMode: "synthetic-experimental",
+      embedderBackend: "fake",
+    });
     await harness.start();
 
     dist = await mkdtemp(join(tmpdir(), "omnesis-extension-e2e-dist-"));
@@ -514,7 +529,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     CAPTURE_WAIT_MS * 2 + 60_000,
   );
 
-  test("Tell Omnesis preserves a selected-page draft and saves through the create-only grant", async () => {
+  test("Tell Omnesis automatically enables and preserves a selected-page draft through the create-only grant", async () => {
     const options = await openPage(optionsUrl);
     const health = await fetch(`${harness.gatewayUrl}/health`);
     expect(await health.json()).toMatchObject({
@@ -523,46 +538,17 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     const discovered = await options.evaluate(() =>
       chrome.runtime.sendMessage({ type: "notes-status" }),
     );
-    expect(discovered).toMatchObject({ supported: true, enabled: false });
-    await options.locator("#enable-notes").waitFor({ state: "visible", timeout: 20_000 });
-    await options.click("#enable-notes");
-    let requestId = "";
+    expect(discovered).toMatchObject({ supported: true, enabled: true });
     await expect
       .poll(
-        async () => {
-          const state = (await extensionStorage())["omnesis.notes.state.v1"] as
-            | { requestId?: string }
-            | undefined;
-          requestId = state?.requestId ?? "";
-          return requestId;
-        },
+        async () =>
+          ((await extensionStorage())["omnesis.notes.token.v1"] as { token?: string } | undefined)
+            ?.token,
         { timeout: 20_000 },
       )
-      .toMatch(/^[0-9a-f-]{36}$/);
-
-    const login = await context.request.post(`${harness.gatewayUrl}/portal/api/login`, {
-      data: { token: harness.apiKey },
-    });
-    expect(login.status()).toBe(200);
-    const approval = await openPage(
-      `${harness.gatewayUrl}/portal/browser-notes?request=${requestId}`,
-    );
-    await approval
-      .getByRole("button", { name: "Enable Tell Omnesis", exact: true })
-      .waitFor({ state: "visible", timeout: 20_000 });
-    await approval.screenshot({
-      path: join(tmpdir(), "omnesis-browser-notes-approval.png"),
-      fullPage: true,
-    });
-    await approval.getByRole("button", { name: "Enable Tell Omnesis", exact: true }).click();
-    await approval
-      .getByRole("heading", { name: "Tell Omnesis is enabled", exact: true })
-      .waitFor({ state: "visible", timeout: 20_000 });
-    await approval.screenshot({
-      path: join(tmpdir(), "omnesis-browser-notes-approved.png"),
-      fullPage: true,
-    });
-    await approval.close();
+      .toBeTruthy();
+    expect(await options.locator("#enable-notes").count()).toBe(0);
+    expect(await options.locator("#enable-find").count()).toBe(0);
     await options.close();
 
     const article = await openPage(`${FIXTURE_ORIGIN}/notes-six`);
@@ -582,13 +568,25 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     await expect
       .poll(() => popup.locator("#tell-omnesis").isVisible(), { timeout: 20_000 })
       .toBe(true);
+    expect(await popup.locator(".brand-title").textContent()).toBe("Omnesis");
+    expect(await popup.locator(".brand-actions #tell-omnesis").count()).toBe(1);
+    expect(await popup.locator("#find-omnesis").count()).toBe(0);
+    expect(await popup.locator("#tell-omnesis").getAttribute("aria-label")).toBe("Tell Omnesis");
+    const commands = await popup.evaluate(() => chrome.commands.getAll());
+    expect(commands.some((command) => command.name === "find-omnesis")).toBe(false);
+    const shortcut = commands.find((command) => command.name === "tell-omnesis")?.shortcut;
+    await expect
+      .poll(() => popup.locator("#tell-omnesis").getAttribute("title"))
+      .toBe(
+        shortcut
+          ? `Tell Omnesis · ${shortcut}`
+          : "Tell Omnesis · Assign a shortcut in chrome://extensions/shortcuts",
+      );
     // The popup caches the article before the trusted click gives this test tab focus.
     await popup.locator("#tell-omnesis").click();
     await expect
       .poll(
         async () => {
-          const hint = await popup.locator("#notes-entry-hint").textContent();
-          if (hint?.includes("sidePanel.open")) throw new Error(hint);
           const state = (await extensionStorage())["omnesis.notes.state.v1"] as
             | { draft?: { selection: string } }
             | undefined;
@@ -597,7 +595,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
         { timeout: 20_000 },
       )
       .toBe(quotation);
-    await popup.close();
+    await expect.poll(() => popup.isClosed(), { timeout: 20_000 }).toBe(true);
 
     // Open the same extension document as a tab so Playwright can inspect the composer.
     // Chrome's native side panel is outside Playwright's ordinary page target list.
@@ -611,11 +609,64 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     ).toBe(true);
     const thought = "Use this invented logbook structure for the next fictional observation.";
     await panel.fill("#note-text", thought);
-    await expect.poll(() => panel.locator("#note-draft-status").textContent()).toBe("Draft saved");
+    await expect
+      .poll(() =>
+        panel.evaluate(async () => {
+          const stored = await chrome.storage.local.get("omnesis.notes.state.v1");
+          return (stored["omnesis.notes.state.v1"] as { draft?: { text?: string } } | undefined)
+            ?.draft?.text;
+        }),
+      )
+      .toBe(thought);
+    expect(await panel.locator("#note-draft-status").textContent()).toBe("");
     await panel.setViewportSize({ width: 380, height: 820 });
     await panel.screenshot({
       path: join(tmpdir(), "omnesis-extension-notes-composer.png"),
       fullPage: true,
+    });
+    // Open a real native panel in this window from a trusted test click. The
+    // rendered extension document then exercises its production Escape handler.
+    await panel.evaluate(async () => {
+      const window = await chrome.windows.getCurrent();
+      const windowId = window.id;
+      if (windowId === undefined) throw new Error("The browser window ID is unavailable");
+      let closed = 0;
+      chrome.sidePanel.onClosed.addListener(() => {
+        document.body.dataset.nativeClosed = String(++closed);
+      });
+      const open = document.createElement("button");
+      open.id = "e2e-open-native-panel";
+      open.textContent = "Open test panel";
+      open.addEventListener("click", () => {
+        void chrome.sidePanel.open({ windowId }).then(
+          () => {
+            document.body.dataset.nativeOpened = "true";
+          },
+          (error: unknown) => {
+            document.body.dataset.nativeOpenError = String(error);
+          },
+        );
+      });
+      document.body.append(open);
+    });
+    await panel.locator("#e2e-open-native-panel").click();
+    await expect
+      .poll(
+        async () => {
+          const error = await panel.locator("body").getAttribute("data-native-open-error");
+          if (error) throw new Error(error);
+          return panel.locator("body").getAttribute("data-native-opened");
+        },
+        { timeout: 10_000 },
+      )
+      .toBe("true");
+    await panel.locator("#note-text").press("Escape");
+    await expect
+      .poll(() => panel.locator("body").getAttribute("data-native-closed"), { timeout: 10_000 })
+      .toBe("1");
+    expect(await panel.inputValue("#note-text")).toBe(thought);
+    expect((await extensionStorage())["omnesis.notes.state.v1"]).toMatchObject({
+      draft: { text: thought },
     });
     await panel.close();
 
@@ -629,7 +680,12 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       .poll(() => reopened.locator("#notes-status").textContent(), { timeout: 30_000 })
       .toBe("Saved to Omnesis.");
     const notes = await harness.gatewayJson<{
-      entries: Array<{ text: string; surface: string; page?: { url: string; selection: string } }>;
+      entries: Array<{
+        id: string;
+        text: string;
+        surface: string;
+        page?: { url: string; selection: string };
+      }>;
     }>("/notes");
     const saved = notes.entries.filter((note) => note.text.includes(thought));
     expect(saved).toHaveLength(1);
@@ -637,10 +693,168 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
       surface: "chrome-extension",
       page: { url: article.url(), selection: quotation },
     });
+    const savedId = saved[0]!.id;
+    const savedButton = reopened.locator(`#saved-notes-list button[data-note-id="${savedId}"]`);
+    await savedButton.waitFor({ state: "visible", timeout: 30_000 });
+    await savedButton.click();
+    await reopened.locator("#saved-note-editor").waitFor({ state: "visible" });
+    expect(await reopened.inputValue("#saved-note-text")).toBe(thought);
+    expect(await reopened.locator("#saved-note-url").getAttribute("href")).toBe(article.url());
+    const revised =
+      "Keep this revised fictional observation without changing its selected passage.";
+    await reopened.fill("#saved-note-text", revised);
+    await reopened.locator("#saved-note-text").press("Control+Enter");
+    await expect
+      .poll(() => reopened.locator("#saved-notes-status").textContent(), { timeout: 30_000 })
+      .toBe("Changes saved to Omnesis.");
+    const edited = await harness.gatewayJson<{
+      entries: Array<{ id: string; text: string; page?: { url: string; selection: string } }>;
+    }>("/notes");
+    const entry = edited.entries.find((note) => note.id === savedId);
+    expect(entry?.text).toContain(revised);
+    expect(entry?.text).not.toContain(thought);
+    expect(entry?.page).toMatchObject({ url: article.url(), selection: quotation });
+    expect(edited.entries.filter((note) => note.id === savedId)).toHaveLength(1);
     await reopened.close();
     await other.close();
     await article.close();
   }, 120_000);
+
+  test("Find opens browser links in its own tab while preserving notes", async () => {
+    const articleUrl = `${FIXTURE_ORIGIN}/find-waypoint`;
+    const webTitle = "Waypoint research notebook";
+    const notionTitle =
+      "Waypoint architecture review with an unusually long fictional title for a compact results panel";
+    const gmailUrl =
+      "https://mail.google.com/mail/u/0/?authuser=find%40example.org#all/abcdef123456";
+    const notionUrl = "https://www.notion.so/123456781234123412341234567890ab";
+    const fixtureDocs = [
+      {
+        sourceId: "web",
+        providerId: "web",
+        externalId: "find-waypoint",
+        title: webTitle,
+        url: articleUrl,
+      },
+      {
+        sourceId: "gmail:find@example.org",
+        providerId: "google:find@example.org",
+        externalId: "find-email",
+        title: "Waypoint email guide",
+        url: gmailUrl,
+      },
+      {
+        sourceId: "notion-pages:find-workspace",
+        providerId: "notion:find-workspace",
+        externalId: "find-notion",
+        title: notionTitle,
+        url: notionUrl,
+      },
+      {
+        sourceId: "apple-notes:find-notebook",
+        providerId: "apple:find-notebook",
+        externalId: "find-native",
+        title: "Waypoint native notebook",
+        url: "mobilenotes://showNote?identifier=fictional",
+      },
+    ];
+    await harness.pushDocuments(
+      fixtureDocs.map((doc) => ({
+        sourceId: doc.sourceId,
+        providerId: doc.providerId,
+        externalId: doc.externalId,
+        title: doc.title,
+        content: `${doc.title}. Waypoint observations are entirely invented for this browser test.`,
+        metadata: { sourceUrl: doc.url },
+      })),
+    );
+    await expect
+      .poll(
+        async () => {
+          await harness.refreshSearchSnapshot();
+          const response = await harness.gatewayJson<{
+            results: Array<{ documentId: string; title: string }>;
+          }>("/search", { method: "POST", body: JSON.stringify({ text: "Waypoint", limit: 200 }) });
+          return fixtureDocs.every((doc) =>
+            response.results.some((hit) => hit.title === doc.title),
+          );
+        },
+        { timeout: 120_000, interval: 500 },
+      )
+      .toBe(true);
+    const options = await openPage(optionsUrl);
+    const findAccess = await openPage(`chrome-extension://${TEST_EXTENSION_ID}/find.html`);
+    const discovered = await findAccess.evaluate(() =>
+      chrome.runtime.sendMessage({ type: "find-status" }),
+    );
+    await findAccess.close();
+    expect(discovered).toMatchObject({ supported: true, enabled: true });
+    await expect
+      .poll(
+        async () =>
+          ((await extensionStorage())["omnesis.find.token.v1"] as { token?: string } | undefined)
+            ?.token,
+        { timeout: 20_000, interval: 250 },
+      )
+      .toBeTruthy();
+    expect(await options.locator("#enable-notes").count()).toBe(0);
+    expect(await options.locator("#enable-find").count()).toBe(0);
+    const storage = await extensionStorage();
+    expect(storage["omnesis.notes.token.v1"]).toBeTruthy();
+    expect(JSON.parse(String(storage["omnesis.pairing.v1"]))).toMatchObject({
+      scopes: ["write:web"],
+    });
+    await options.close();
+    const article = await openPage(articleUrl);
+    const findUrl = `chrome-extension://${TEST_EXTENSION_ID}/find.html?q=Waypoint`;
+    const panel = await openPage(findUrl);
+    await panel.setViewportSize({ width: 1100, height: 820 });
+    await panel.locator("#find-section").waitFor({ state: "visible", timeout: 20_000 });
+    // The active fixture page may also be captured under its canonical URL hash.
+    // Verify the intended destinations individually rather than counting unrelated captures.
+    for (const title of [webTitle, notionTitle, "Waypoint email guide"])
+      await expect
+        .poll(() => panel.locator(".find-result-title").filter({ hasText: title }).count(), {
+          timeout: 30_000,
+          interval: 250,
+        })
+        .toBe(1);
+    expect(await panel.locator("#find-mode").isVisible()).toBe(false);
+    expect(await panel.locator("#find-agent").isVisible()).toBe(false);
+    await expect.poll(() => panel.locator("#find-results").textContent()).toContain(notionTitle);
+    await expect
+      .poll(() => panel.locator("#find-results").textContent())
+      .toContain("Waypoint email guide");
+    expect(await panel.locator("#find-results").textContent()).not.toContain(
+      "Waypoint native notebook",
+    );
+    const row = panel
+      .locator(".find-result")
+      .filter({ has: panel.locator(".find-result-title", { hasText: webTitle }) });
+    await expect.poll(() => row.locator(".find-open-badge").textContent()).toBe("Open tab");
+    expect(await panel.locator("#find-results mark").count()).toBeGreaterThan(0);
+    await panel.screenshot({ path: "/tmp/omnesis-extension-find-results.png", fullPage: true });
+    expect(await panel.locator(".find-new-copy").count()).toBe(0);
+    expect(await row.locator(".find-result-open").getAttribute("href")).toBe(articleUrl);
+    const pageCount = context.pages().length;
+    // The keyboard modifier still opens another tab without a dedicated button.
+    await row.locator(".find-result-open").focus();
+    await panel.locator("#find-query").focus();
+    const newPage = context.waitForEvent("page");
+    await panel.locator("#find-query").press("Control+Enter");
+    const copy = await newPage;
+    await expect.poll(() => copy.url(), { timeout: 10_000, interval: 100 }).toBe(articleUrl);
+    expect(context.pages()).toHaveLength(pageCount + 1);
+    expect(panel.url()).toBe(findUrl);
+    await copy.close();
+    // A normal card click navigates this Find tab even when the destination is already open.
+    await row.locator(".find-result-open").click();
+    await expect.poll(() => panel.url(), { timeout: 10_000, interval: 100 }).toBe(articleUrl);
+    expect(article.url()).toBe(articleUrl);
+    expect(context.pages()).toHaveLength(pageCount);
+    await panel.close();
+    await article.close();
+  }, 180_000);
 
   test("when the gateway revokes the device the popup says to re-pair", async () => {
     const storage = await extensionStorage();
@@ -705,4 +919,79 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     expect(await popup.locator("body").getAttribute("data-warn")).toBe("false");
     await popup.close();
   }, 60_000);
+  test("Browser Find and notes stay hidden on a stable gateway while page capture works", async () => {
+    const stable = new SyntheticE2EHarness({
+      gatewayMode: "stable",
+      universe: "e2e-minimal",
+      embedderBackend: "fake",
+    });
+    await stable.start();
+    try {
+      const minted = await stable.gatewayJson<{ pairingCode: string }>("/admin/devices/pair", {
+        method: "POST",
+        body: JSON.stringify({ kind: "browser", name: "Stable browser" }),
+      });
+      const options = await openPage(optionsUrl);
+      // This also supports running the stable regression after only selected feature tests.
+      if (await options.locator("#unpair").isVisible()) await options.locator("#unpair").click();
+      await options.locator("#pair-form").waitFor({ state: "visible" });
+      await options.fill("#profile-label", "Stable browser");
+      await options.fill("#gateway-url", stable.gatewayUrl);
+      await options.fill("#pairing-code", minted.pairingCode);
+      await options.check("#capture-consent");
+      await options.click("#pair-submit");
+      await options.locator("#paired").waitFor({ state: "visible", timeout: 30_000 });
+      const notes = await options.evaluate(() =>
+        chrome.runtime.sendMessage({ type: "notes-status" }),
+      );
+      const findPage = await openPage(`chrome-extension://${TEST_EXTENSION_ID}/find.html`);
+      const find = await findPage.evaluate(() =>
+        chrome.runtime.sendMessage({ type: "find-status" }),
+      );
+      await findPage.close();
+      const support = { notes, find };
+      expect(support).toMatchObject({ notes: { supported: false }, find: { supported: false } });
+      expect(await options.locator("#notes-entry").isVisible()).toBe(false);
+      expect(await options.locator("#find-entry").isVisible()).toBe(false);
+      const login = await context.request.post(`${stable.gatewayUrl}/portal/api/login`, {
+        data: { token: stable.apiKey },
+      });
+      expect(login.ok()).toBe(true);
+      for (const feature of ["notes", "find"]) {
+        const approval = await openPage(
+          `${stable.gatewayUrl}/portal/browser-${feature}?request=00000000-0000-4000-8000-000000000001`,
+        );
+        await approval
+          .getByRole("heading", { name: "Browser authorization", exact: true })
+          .waitFor({ state: "visible", timeout: 20_000 });
+        expect(await approval.getByRole("button", { name: /^Enable / }).count()).toBe(0);
+        expect(await approval.locator("h1").textContent()).toBe("Browser authorization");
+        await approval.close();
+      }
+      const popup = await openPage(popupUrl);
+      await expect
+        .poll(() => popup.locator("#state").getAttribute("data-state"), { timeout: 30_000 })
+        .toBe("ready");
+      expect(await popup.locator("#notes-entry").isVisible()).toBe(false);
+      expect(await popup.locator("#find-entry").isVisible()).toBe(false);
+      await popup.close();
+      const article = await openPage(`${FIXTURE_ORIGIN}/notes-stable`);
+      await article.bringToFront();
+      await expect
+        .poll(
+          async () => (await stable.gatewayJson<{ count: number }>("/documents/count/web")).count,
+          { timeout: CAPTURE_WAIT_MS, interval: 500 },
+        )
+        .toBeGreaterThanOrEqual(1);
+      const storage = await extensionStorage();
+      expect(
+        (JSON.parse(String(storage["omnesis.pairing.v1"])) as { scopes: string[] }).scopes,
+      ).toEqual(["write:web"]);
+      await article.close();
+      await options.locator("#unpair").click();
+      await options.close();
+    } finally {
+      await stable.destroy();
+    }
+  }, 240_000);
 });

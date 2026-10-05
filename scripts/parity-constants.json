@@ -26,7 +26,7 @@
       "canonicalMs": 350,
       "surfaces": {
         "portal": {
-          "file": "packages/gateway/portal/js/components/agent/parts.js",
+          "file": "packages/gateway/portal/js/shared/agent-ui/lifecycle.js",
           "unit": "ms"
         },
         "ios": {
@@ -44,7 +44,7 @@
       "canonicalMs": 450,
       "surfaces": {
         "portal": {
-          "file": "packages/gateway/portal/js/components/agent/parts.js",
+          "file": "packages/gateway/portal/js/shared/agent-ui/lifecycle.js",
           "unit": "ms"
         },
         "ios": {
@@ -62,7 +62,7 @@
       "canonicalMs": 300,
       "surfaces": {
         "portal": {
-          "file": "packages/gateway/portal/js/components/agent/parts.js",
+          "file": "packages/gateway/portal/js/shared/agent-ui/lifecycle.js",
           "unit": "ms"
         },
         "ios": {
@@ -80,7 +80,7 @@
       "canonicalMs": 500,
       "surfaces": {
         "portal": {
-          "file": "packages/gateway/portal/js/components/agent/parts.js",
+          "file": "packages/gateway/portal/js/shared/agent-ui/lifecycle.js",
           "unit": "ms"
         },
         "ios": {

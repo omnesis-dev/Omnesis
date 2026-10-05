@@ -163,8 +163,8 @@ travels with the upstream project at <https://github.com/rsms/inter>.
 
 ## 3. Bundled icon glyphs
 
-Source packages and the web portal bundle selected SVG glyphs from [Lucide](https://lucide.dev),
-including the generic voicemail glyph used for Apple Voicemail. Lucide is
+Source packages, the web portal and the Chrome extension bundle selected SVG glyphs from [Lucide](https://lucide.dev),
+including the generic voicemail glyph and the Astroid glyph for agentic browser search. Lucide is
 licensed under ISC:
 
 > Copyright (c) 2026 Lucide Icons and Contributors

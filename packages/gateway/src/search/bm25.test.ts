@@ -393,3 +393,24 @@ describe("bm25Search — tokenizer (Porter stemming + diacritic folding)", () =>
     expect(res[0].documentId).toBe("d1");
   });
 });
+
+describe("typed lexical previews", () => {
+  test("last-token prefixes match partial words without accepting raw FTS syntax", () => {
+    upsertChunks(db, [
+      chunk({ id: "prefix-guide", documentId: "guide", content: "budget review" }),
+      chunk({ id: "other-guide", documentId: "other", content: "meeting agenda" }),
+    ]);
+    expect(bm25Search(db, "budg", {}, 5).candidates).toEqual([]);
+    expect(
+      bm25Search(db, "budg", {}, 5, { prefixLastToken: true }).candidates.map(
+        (hit) => hit.documentId,
+      ),
+    ).toEqual(["guide"]);
+    expect(toFts5Query('"budg" OR title:review* NEAR(x)', true)).toBe(
+      '"budg" OR "title" OR "review" OR "x"*',
+    );
+    expect(() =>
+      bm25Search(db, '"budg" OR title:review* NEAR(x)', {}, 5, { prefixLastToken: true }),
+    ).not.toThrow();
+  });
+});

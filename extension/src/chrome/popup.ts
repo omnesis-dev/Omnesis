@@ -4,9 +4,11 @@
 import "./chrome-api.js";
 import { initNotesEntry } from "./notes-entry.js";
 import { initPopup } from "./popup-page.js";
+import { initEntryShortcuts } from "./entry-shortcuts.js";
 
 /** Popup entry: hands the real popup document and `chrome` to the controller. */
 document.addEventListener("DOMContentLoaded", () => {
   initPopup(document, chrome);
   initNotesEntry(document, chrome);
+  initEntryShortcuts(document, chrome.commands);
 });

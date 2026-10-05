@@ -3,45 +3,112 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tell Omnesis</title>
+    <title>Omnesis</title>
     <link rel="stylesheet" href="ui.css" />
   </head>
   <body class="notes-panel">
     <header class="brand">
       <img class="brand-logo" src="icons/icon-128.png" alt="" />
+      <span class="find-brand-mark" aria-hidden="true"></span>
       <div>
-        <div class="brand-title">Tell Omnesis</div>
-        <div class="brand-sub">A thought worth keeping</div>
+        <div class="brand-title">Omnesis</div>
+        <div class="find-brand-sub">Personal index</div>
       </div>
     </header>
-    <p id="notes-status" role="status" aria-live="polite">Opening your note…</p>
-    <div id="notes-rejected"></div>
-    <form id="notes-form" hidden>
-      <div class="note-context">
-        <strong id="note-title"></strong
-        ><a id="note-url" target="_blank" rel="noopener noreferrer"></a>
+
+    <!-- find:start -->
+    <section id="find-section" hidden>
+      <form id="find-form" hidden>
+        <div class="find-search-box">
+          <span aria-hidden="true">⌕</span>
+          <input
+            id="find-query"
+            aria-label="Find in Omnesis"
+            type="search"
+            maxlength="1024"
+            placeholder="What are you looking for?"
+            autocomplete="off"
+            spellcheck="false"
+            aria-controls="find-results"
+          />
+          <button type="submit" class="secondary" aria-label="Search">↵</button>
+        </div>
+      </form>
+      <p id="find-status" class="find-status" role="status" aria-live="polite">Opening Find…</p>
+      <button id="find-settings" type="button" class="secondary" hidden>Open settings</button>
+      <div id="find-mode" class="find-mode" role="status" hidden>
+        <!-- Astroid glyph from Lucide, ISC; see THIRD_PARTY_NOTICES.txt. -->
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path
+            d="M12.983 21.186a1 1 0 0 1-1.966 0 10 10 0 0 0-8.203-8.203 1 1 0 0 1 0-1.966 10 10 0 0 0 8.203-8.203 1 1 0 0 1 1.966 0 10 10 0 0 0 8.203 8.203 1 1 0 0 1 0 1.966 10 10 0 0 0-8.203 8.203"
+          />
+        </svg>
+        <span id="find-mode-label">Agentic mode auto enabled</span>
+        <span id="find-mode-progress" hidden></span>
       </div>
-      <p class="hint">This note stays attached to this page when you switch tabs.</p>
-      <details id="note-quotation" open>
-        <summary>Selected passage</summary>
-        <blockquote id="note-selection"></blockquote>
-        <button id="remove-selection" type="button" class="secondary">Remove quotation</button>
-      </details>
-      <label for="note-text">Your note</label>
-      <textarea
-        id="note-text"
-        rows="10"
-        maxlength="8192"
-        placeholder="What would you like to remember?"
-      ></textarea>
-      <p id="note-budget" class="hint"></p>
-      <p id="note-draft-status" class="hint" aria-live="polite"></p>
-      <div class="btn-row">
-        <button id="note-send" type="submit">Save to Omnesis</button>
-        <button id="note-discard" type="button" class="secondary">Discard draft</button>
-      </div>
-      <p class="hint">Ctrl / ⌘ + Enter to save. Drafts are kept in this browser.</p>
-    </form>
+      <div id="find-agent" class="find-agent" hidden></div>
+      <ol id="find-results" class="find-results" aria-label="Search results"></ol>
+      <p class="hint find-footer">
+        ↑ ↓ to choose · Enter to open · Ctrl / ⌘ + Enter for a new copy.
+      </p>
+    </section>
+    <!-- find:end -->
+    <!-- notes:start -->
+    <section id="notes-section">
+      <p id="notes-status" role="status" aria-live="polite">Opening your note…</p>
+      <div id="notes-rejected"></div>
+      <section id="saved-notes" hidden>
+        <p id="saved-notes-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="saved-notes-list"></div>
+        <button id="saved-note-new" type="button" class="secondary" hidden>New note</button>
+        <form id="saved-note-editor" hidden>
+          <label for="saved-note-text">Edit saved note</label>
+          <a id="saved-note-url" target="_blank" rel="noopener noreferrer"></a>
+          <textarea id="saved-note-text" rows="8" maxlength="8192"></textarea>
+          <p class="hint">The original page and selected passage stay attached.</p>
+          <div class="btn-row">
+            <button id="saved-note-save" type="submit">Save changes</button>
+            <button id="saved-note-discard" type="button" class="secondary">Discard changes</button>
+          </div>
+          <p class="hint">Ctrl / ⌘ + Enter to save. Edits are kept in this browser.</p>
+        </form>
+      </section>
+      <form id="notes-form" hidden>
+        <div class="note-context">
+          <strong id="note-title"></strong
+          ><a id="note-url" target="_blank" rel="noopener noreferrer"></a>
+        </div>
+        <details id="note-quotation" open>
+          <summary>Selected passage</summary>
+          <blockquote id="note-selection"></blockquote>
+        </details>
+        <label for="note-text">Your note</label>
+        <textarea
+          id="note-text"
+          rows="10"
+          maxlength="8192"
+          placeholder="What would you like to remember?"
+        ></textarea>
+        <p id="note-budget" class="hint"></p>
+        <p id="note-draft-status" class="hint" aria-live="polite"></p>
+        <div class="btn-row">
+          <button id="note-send" type="submit">Save to Omnesis</button>
+          <button id="note-discard" type="button" class="secondary">Discard draft</button>
+        </div>
+        <p class="hint">Ctrl / ⌘ + Enter to save. Drafts are kept in this browser.</p>
+      </form>
+    </section>
+    <!-- notes:end -->
     <script type="module" src="notes.js"></script>
   </body>
 </html>

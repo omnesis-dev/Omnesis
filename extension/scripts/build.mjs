@@ -61,6 +61,40 @@ async function main() {
   // Static assets: manifest, HTML, CSS, and the committed brand icons under
   // public/icons/ — copied verbatim into the loadable bundle.
   await cp(join(root, "public"), outdir, { recursive: true });
+  // Render independent pages from one template, using the same bundled components.
+  const panelHtml = await readFile(join(root, "public/notes.html"), "utf8");
+  const withoutSection = (html, section) => {
+    const block = new RegExp(
+      `    <!-- ${section}:start -->[\\s\\S]*?    <!-- ${section}:end -->\\n`,
+    );
+    if (!block.test(html)) throw new Error(`Missing ${section} section in panel template.`);
+    return html.replace(block, "");
+  };
+  await writeFile(join(outdir, "notes.html"), withoutSection(panelHtml, "find"));
+  await writeFile(
+    join(outdir, "find.html"),
+    withoutSection(panelHtml, "notes")
+      .replace('<body class="notes-panel">', '<body class="notes-panel find-page">')
+      .replace('<section id="find-section" hidden>', '<section id="find-section">'),
+  );
+
+  await cp(
+    join(root, "../packages/gateway/portal/img/omnesis-mark.svg"),
+    join(outdir, "icons/omnesis-mark.svg"),
+  );
+
+  const sharedStyles = await readFile(
+    fileURLToPath(import.meta.resolve("@omnesis/gateway/agent-ui/styles.css")),
+    "utf8",
+  );
+  await mkdir(join(outdir, "fonts"), { recursive: true });
+  await cp(
+    join(root, "../packages/gateway/portal/fonts/InterVariable.woff2"),
+    join(outdir, "fonts/InterVariable.woff2"),
+  );
+  const fontStyles = `@font-face { font-family: "Inter"; src: url("fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }`;
+  const cssPath = join(outdir, "ui.css");
+  await writeFile(cssPath, `${await readFile(cssPath, "utf8")}\n${fontStyles}\n${sharedStyles}`);
 
   if (testBuild) {
     const manifestPath = join(outdir, "manifest.json");

@@ -667,6 +667,10 @@ export interface SourceDefinition<
    * canonical form) and at lookup time (so `/documents/by-url` matches
    * a user's pasted URL against the stored row). Keeps all host-specific
    * URL knowledge inside the source package — core stays generic.
+   * Optional `browserIdentity` on the spec declare safe browser-tab identities.
+   * They must preserve account context whenever the resource identifier alone
+   * cannot prove a tab belongs to the same account. Document-link rules are
+   * never implicitly reused for browser activation.
    */
   urlCanonicalizer?: UrlCanonicalizerSpec;
   /**

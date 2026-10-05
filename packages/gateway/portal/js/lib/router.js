@@ -114,6 +114,10 @@ export function parseRoute() {
     return { view: "sources" };
   }
 
+  if (path === "/portal/browser-find" || path === "/portal/browser-find/") {
+    return { view: "browser-find", requestId: new URLSearchParams(location.search).get("request") };
+  }
+
   if (path === "/portal/browser-notes" || path === "/portal/browser-notes/") {
     return { view: "browser-notes", requestId: new URLSearchParams(location.search).get("request") };
   }

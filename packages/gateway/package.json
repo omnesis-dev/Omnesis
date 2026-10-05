@@ -70,5 +70,18 @@
     "dist",
     "portal",
     "models-dev"
-  ]
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./agent-ui": {
+      "types": "./portal/js/shared/agent-ui/index.d.ts",
+      "default": "./portal/js/shared/agent-ui/index.js"
+    },
+    "./agent-ui/reducer": {
+      "types": "./portal/js/shared/agent-ui/reducer.d.ts",
+      "default": "./portal/js/shared/agent-ui/reducer.js"
+    },
+    "./agent-ui/styles.css": "./portal/js/shared/agent-ui/styles.css",
+    "./*": "./*"
+  }
 }

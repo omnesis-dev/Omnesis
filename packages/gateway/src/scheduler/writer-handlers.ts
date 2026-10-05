@@ -409,6 +409,8 @@ import {
 import {
   insertNoteEntry,
   updateNoteEntryText,
+  updateBrowserNoteEntry,
+  type BrowserNoteEditInput,
   deleteNoteEntry,
   applyNoteEntryTranscript,
   type NoteEntry,
@@ -1722,6 +1724,8 @@ export const writerHandlers = {
   ): boolean => insertNoteEntry(db, entry, audit, browserAuthority),
   "notes.updateEntry": (db: Db, id: string, text: string, nowIso: string): boolean =>
     updateNoteEntryText(db, id, text, nowIso),
+  "notes.updateBrowserEntry": (db: Db, input: BrowserNoteEditInput) =>
+    updateBrowserNoteEntry(db, input),
   "notes.deleteEntry": (db: Db, id: string) => deleteNoteEntry(db, id),
   // Voice notes waiting on the transcriber: queue one (the audio arrives
   // with the capture), record an attempt, and drop one when it is done with.

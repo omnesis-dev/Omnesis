@@ -114,7 +114,7 @@ omnesis sql "SELECT * FROM strava_activities LIMIT 5"
 
 **Mobile apps.** The iOS app is available through one external [TestFlight](https://testflight.apple.com/join/KpMV6HTy) group, which Apple limits to 10,000 testers. The Android app is in closed testing on Google Play: join the [tester group](https://groups.google.com/g/omnesis-alpha-testers), then [opt in](https://play.google.com/apps/testing/dev.omnesis.android) with the same Google account to install it. The Google Play app leaves out the Call Log source; build the app yourself from `android/` to include it. Both apps search, run the agent, capture notes by voice, and push on-device data such as health and photos to your gateway. See [Mobile apps](https://omnesis.dev/docs/apps).
 
-**The browser extension** captures the readable text of pages you read. Its token can add pages but never read your data. With gateway approval, Tell Omnesis adds page notes and selected quotations through a separate create-only credential. Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn); it needs a browser-trusted certificate for the gateway. See [Setup → Browser extension](https://omnesis.dev/docs/setup#browser-extension).
+**The browser extension** captures the readable text of pages you read. Its token can add pages but never read your data. Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn); it needs a browser-trusted certificate for the gateway. See [Setup → Browser extension](https://omnesis.dev/docs/setup#browser-extension).
 
 ## Privacy
 

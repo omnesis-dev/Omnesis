@@ -451,6 +451,9 @@ import {
 import {
   insertNoteEntry,
   updateNoteEntryText,
+  updateBrowserNoteEntry,
+  type BrowserNoteEditInput,
+  type BrowserNoteEditResult,
   deleteNoteEntry,
   applyNoteEntryTranscript,
   type NoteEntry,
@@ -2050,6 +2053,7 @@ export interface WriteGate {
    * the id is unknown.
    */
   updateNoteEntry(id: string, text: string, now: string): Promise<boolean>;
+  updateBrowserNoteEntry(input: BrowserNoteEditInput): Promise<BrowserNoteEditResult>;
   /**
    * Hard-delete one entry. Returns whether a row was deleted plus its
    * day so the caller can re-render that day's projected document.
@@ -2708,6 +2712,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     appendNoteEntry: (entry, audit, browserAuthority) =>
       call("notes.appendEntry", [entry, audit, browserAuthority]),
     updateNoteEntry: (id, text, now) => call("notes.updateEntry", [id, text, now]),
+    updateBrowserNoteEntry: (input) => call("notes.updateBrowserEntry", [input]),
     deleteNoteEntry: (id) => call("notes.deleteEntry", [id]),
     applyNoteEntryTranscript: (id, expected, text, now) =>
       call("notes.applyTranscript", [id, expected, text, now]),
@@ -3367,6 +3372,7 @@ export function directWriteGate(db: Db): WriteGate {
     appendNoteEntry: async (entry, audit, browserAuthority) =>
       insertNoteEntry(db, entry, audit, browserAuthority),
     updateNoteEntry: async (id, text, now) => updateNoteEntryText(db, id, text, now),
+    updateBrowserNoteEntry: async (input) => updateBrowserNoteEntry(db, input),
     deleteNoteEntry: async (id) => deleteNoteEntry(db, id),
     applyNoteEntryTranscript: async (id, expected, text, now) =>
       applyNoteEntryTranscript(db, id, expected, text, now),

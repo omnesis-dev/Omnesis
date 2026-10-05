@@ -15,7 +15,7 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("../lib/markdown.js", () => ({
+vi.mock("../shared/agent-ui/markdown.js", () => ({
   renderMarkdown: (value: string) => value,
   renderCopyableMarkdown: (value: string) => ({ html: value, targets: [] }),
 }));

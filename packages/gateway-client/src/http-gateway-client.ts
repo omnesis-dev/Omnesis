@@ -746,6 +746,7 @@ export class HttpGatewayClient implements GatewayClient {
     fallbackRepresentationPrefixes: string[];
     referenceOnlyPrefixes: string[];
     patterns: Array<{ regex: string }>;
+    sourceAttributions?: Record<string, string>;
   }): Promise<void> {
     await this.request("/admin/link-declarations", {
       method: "POST",

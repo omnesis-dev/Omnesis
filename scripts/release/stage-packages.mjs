@@ -160,17 +160,39 @@ export function listPublishablePackages() {
  */
 export function assertExportsAreStaged(pkgName, manifest, stageDir) {
   const targets = [];
-  const collect = (value) => {
+  const collect = (value, allowPattern = false) => {
     if (typeof value === "string") {
-      if (value.startsWith("./")) targets.push(value);
+      if (value.startsWith("./"))
+        targets.push({ value, pattern: allowPattern && value.includes("*") });
       return;
     }
-    if (value && typeof value === "object") for (const v of Object.values(value)) collect(v);
+    if (value && typeof value === "object")
+      for (const target of Object.values(value)) collect(target, allowPattern);
   };
-  collect(manifest.exports);
+  collect(manifest.exports, true);
   collect(manifest.main);
   collect(manifest.bin);
-  const missing = targets.filter((t) => !existsSync(join(stageDir, t)));
+  let files;
+  const stagedFiles = (directory, prefix = ".") =>
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const path = `${prefix}/${entry.name}`;
+      return entry.isDirectory() ? stagedFiles(join(directory, entry.name), path) : [path];
+    });
+  const missing = targets
+    .filter(({ value, pattern }) => {
+      if (!pattern) return !existsSync(join(stageDir, value));
+      // Node substitutes the same captured subpath for every star, including slashes.
+      // These are export replacement patterns, not filesystem glob syntax.
+      if (value.split("/").includes("..")) return true;
+      const parts = value.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      const expression = new RegExp(
+        `^${parts[0]}(?<subpath>.*)${parts.slice(1).join("\\k<subpath>")}$`,
+        "u",
+      );
+      files ??= stagedFiles(stageDir);
+      return !files.some((path) => expression.test(path));
+    })
+    .map(({ value }) => value);
   if (missing.length > 0) {
     throw new Error(
       `${pkgName}: manifest points at ${missing.length} path(s) missing from the staged package: ` +

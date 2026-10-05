@@ -42,3 +42,17 @@ export const browserNoteBody = z
     }
     return { ...result.data, id: body.id, version: body.version, page: body.page };
   });
+
+export const browserNotesPageQuery = z.object({ url: pageContext.shape.url }).strict();
+export const browserNoteEditBody = z
+  .object({
+    version: z.number().int().min(1).max(1),
+    url: pageContext.shape.url,
+    text: z
+      .string()
+      .min(1)
+      .max(8192)
+      .refine((text) => text.trim().length > 0),
+    revision: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();

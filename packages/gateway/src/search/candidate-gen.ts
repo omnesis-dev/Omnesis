@@ -85,6 +85,8 @@ export interface CandidateGenRequest {
   mode: "hybrid" | "browse";
   /** MATCH text for BM25. */
   bm25Text: string;
+  /** Escape literal terms and prefix-match the last one for typed previews. */
+  prefixLastToken?: boolean;
   /** Whether an embedder is attached; the vector lane runs only when it is. */
   embedderPresent: boolean;
   /** Query embedding at the current model's dim; null ⇒ vector is skipped. */
@@ -177,6 +179,7 @@ export function runCandidateGen(
       {
         documentIds: req.allowedDocumentIds,
         commonTokenThreshold: req.commonTokenThreshold,
+        prefixLastToken: req.prefixLastToken,
       },
     );
     const bm25Candidates = candidates;
