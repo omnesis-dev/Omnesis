@@ -3,7 +3,7 @@
 
 import { browserUrl, dedupeFindResults, type FindResult } from "./find-results.js";
 import { parseFindQuery, type FindMode } from "./find-query.js";
-import type { FindView } from "./find-service.js";
+import { OMNIBOX_SUGGESTIONS, type FindView } from "./find-service.js";
 
 interface OmniboxFind {
   ensureRead(): Promise<FindView>;
@@ -105,7 +105,7 @@ export function installOmniboxBackground(find: OmniboxFind): { clear(): void } {
           const cards = dedupeFindResults(
             await find.suggest(query, signal),
             view.canonicalizers,
-          ).slice(0, 5);
+          ).slice(0, OMNIBOX_SUGGESTIONS);
           if (!session || request !== generation || signal.aborted) return;
           suggest(
             cards.flatMap((card) => {

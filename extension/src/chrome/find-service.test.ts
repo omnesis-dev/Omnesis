@@ -639,7 +639,7 @@ describe("address-bar retrieval previews", () => {
     expect(JSON.parse(String(call[1]?.body))).toEqual({
       version: 1,
       text: "preview query",
-      limit: 5,
+      limit: 6,
     });
     expect(call[1]?.headers).toMatchObject({ authorization: "Bearer read-token" });
     const after = await p.service.status(false);
@@ -806,7 +806,7 @@ describe("explicit Find query modes", () => {
       expect(JSON.parse(String(call[1]?.body))).toEqual({
         version: 1,
         text: "invented query",
-        limit: 5,
+        limit: 6,
       });
     }
     expect((await p.service.status(false)).query).toBe("");

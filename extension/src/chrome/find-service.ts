@@ -20,6 +20,8 @@ import type { ExtensionConfig } from "./storage.js";
 
 export const FIND_STATE_KEY = "omnesis.find.state.v1";
 export const MAX_FIND_QUERY = 1024;
+/** Suggestions per omnibox keystroke: Chrome displays at most six from an extension. */
+export const OMNIBOX_SUGGESTIONS = 6;
 export interface FindDecision {
   mode: "direct" | "agentic";
   status: "decided" | "not_configured" | "unavailable";
@@ -451,7 +453,7 @@ export class FindService {
         config,
         "/browser/find/suggest",
         state.token,
-        { version: 1, text: query, limit: 5 },
+        { version: 1, text: query, limit: OMNIBOX_SUGGESTIONS },
         abort,
       )) as { results?: unknown };
       abort.throwIfAborted();
@@ -469,7 +471,7 @@ export class FindService {
       return dedupeFindResults(
         parseFindResults(response.results, state.sourceLabels, query, state.sourceAttributions),
         state.canonicalizers,
-      ).slice(0, 5);
+      ).slice(0, OMNIBOX_SUGGESTIONS);
     } catch (error) {
       if (abort.aborted || generation !== this.suggestionGeneration) return [];
       if (error instanceof FindHttpError && [401, 403, 404, 410].includes(error.status)) {
