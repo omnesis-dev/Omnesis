@@ -865,7 +865,7 @@ function OverviewTab({ pulse }) {
         ${!mechanismSpend.loading && spendByMechanism.length === 0
           ? html`<div class="debug-empty">No spend recorded.</div>`
           : html`
-            <table class="debug-table">
+            <div class="debug-table-scroll" role="region" aria-label="Brain diagnostics table" tabindex="0"><table class="debug-table">
               <thead>
                 <tr><th>Mechanism</th><th class="num">Runs</th><th class="num">Tokens</th></tr>
               </thead>
@@ -880,7 +880,7 @@ function OverviewTab({ pulse }) {
                   `,
                 )}
               </tbody>
-            </table>
+            </table></div>
           `}
       </section>
 
@@ -899,7 +899,7 @@ function OverviewTab({ pulse }) {
         ${!coverage.loading && coverage.items.length === 0
           ? html`<div class="debug-empty">No source has been reviewed yet.</div>`
           : html`
-            <table class="debug-table">
+            <div class="debug-table-scroll" role="region" aria-label="Brain diagnostics table" tabindex="0"><table class="debug-table">
               <thead>
                 <tr>
                   <th>Source</th><th>Workflow</th><th>Status</th><th>Unit</th>
@@ -920,7 +920,7 @@ function OverviewTab({ pulse }) {
                   `,
                 )}
               </tbody>
-            </table>
+            </table></div>
           `}
         <${LoadMore}
           hasMore=${coverage.hasMore}
@@ -1985,7 +1985,7 @@ function MemoryTab() {
         ${!retired.loading && !retired.error && (rows.length === 0
           ? html`<div class="debug-empty">No retired loops yet.</div>`
           : html`
-            <table class="debug-table">
+            <div class="debug-table-scroll" role="region" aria-label="Brain diagnostics table" tabindex="0"><table class="debug-table">
               <thead>
                 <tr>
                   <th>Title</th>
@@ -2011,7 +2011,7 @@ function MemoryTab() {
                   </tr>
                 `)}
               </tbody>
-            </table>
+            </table></div>
           `)}
         <${LoadMore}
           hasMore=${retired.hasMore}
