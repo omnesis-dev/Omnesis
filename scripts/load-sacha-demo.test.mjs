@@ -26,6 +26,7 @@ import {
   summarizeReadiness,
   waitReady,
   seed,
+  materializeUniverse,
 } from "./load-sacha-demo.mjs";
 
 test("fresh configuration preserves assignments/auth but excludes stores and mutable pools", async () => {
@@ -263,5 +264,44 @@ test("missing live root remains protected beneath a symlinked home config parent
     os.homedir = originalHome;
     syncBuiltinESMExports();
     await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("relative scenarios resolve to the London load day, even after preparing earlier", async () => {
+  const root = await mkdtemp(join(tmpdir(), "omnesis-load-day-test-"));
+  try {
+    const template = join(root, "template"),
+      dir = join(root, "fresh");
+    await mkdir(template);
+    await writeFile(join(template, "omnesis.json"), "{}");
+    await writeFile(join(template, "token"), "fictional-load-day-token");
+    await prepareInstance({ template, dir, port: 18762 });
+    assert.equal((await demoEnvironment(dir)).info.asOf, undefined);
+    const calls = [];
+    // UTC is still the previous day, while London is already after midnight.
+    const asOf = await materializeUniverse(dir, {
+      now: new Date("2027-07-12T23:30:00Z"),
+      build: async (options) => {
+        calls.push(options);
+      },
+    });
+    assert.equal(asOf, "2027-07-13");
+    assert.deepEqual(calls, [{ asOf: "2027-07-13", outDir: join(dir, "universe") }]);
+    assert.equal((await demoEnvironment(dir)).info.asOf, "2027-07-13");
+    const pinned = join(root, "pinned");
+    await prepareInstance({ template, dir: pinned, port: 18763, asOf: "2028-02-29" });
+    assert.equal(
+      await materializeUniverse(pinned, {
+        now: new Date("2027-07-12T23:30:00Z"),
+        build: async () => {},
+      }),
+      "2028-02-29",
+    );
+    await writeFile(join(dir, "omnesis.db"), "fictional-store-sentinel");
+    await assert.rejects(materializeUniverse(dir, { build: async () => {} }), /fresh prepared/);
+    // The materialised corpus retains its day rather than changing on a later read.
+    assert.equal((await demoEnvironment(dir)).info.asOf, "2027-07-13");
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

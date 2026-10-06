@@ -8,6 +8,7 @@ import {
   type MappedProjectionField,
   type TemporalProjectionSpec,
 } from "@omnesis/source-sdk";
+import { loadSourceFixtureJson, loadUniverse } from "@omnesis/providers-synth-common";
 import realGoogle from "@omnesis/provider-google";
 import { rowsFor, writesFor } from "@omnesis/source-sdk/testing";
 import { loadEmails, loadEvents, mapEmail, mapEventRecord, type EventEntry } from "./fixtures.js";
@@ -115,6 +116,27 @@ describe("synthetic Google temporal projection fixtures", () => {
 
     // A timed booking is an appointment; the all-day branch is covered below.
     const spec = calendarProjection();
+    expect(resolveMapped(spec.kind, row)).toBe("appointment");
+    expect(resolveMapped(spec.status ?? "active", row)).toBe("active");
+  });
+
+  it("projects the demo evening invitation through the production calendar declaration", () => {
+    const entries = loadSourceFixtureJson<EventEntry[]>(
+      loadUniverse("sacha-bellamy"),
+      "google-calendar",
+      "events.json",
+    );
+    const event = entries.find((entry) => entry.externalId === "sb-evening-calendar");
+    if (!event) throw new Error("missing evening invitation fixture");
+    const row = mapEventRecord(event, "sacha.bellamy@example.com");
+    const spec = calendarProjection();
+    expect(row).toMatchObject({
+      id: "sb-evening-calendar",
+      start_time: "2026-10-03T19:00:00.000Z",
+      end_time: "2026-10-03T21:00:00.000Z",
+      temporal_projection_eligible: true,
+      duration_minutes: 120,
+    });
     expect(resolveMapped(spec.kind, row)).toBe("appointment");
     expect(resolveMapped(spec.status ?? "active", row)).toBe("active");
   });

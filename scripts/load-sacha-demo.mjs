@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { request } from "node:https";
-import { recordingWeek } from "../evals/universes/sacha-bellamy/_build/shared.mjs";
+import { londonToday, recordingWeek } from "../evals/universes/sacha-bellamy/_build/shared.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const marker = "sacha-demo-instance.json";
@@ -58,15 +58,7 @@ export async function prepareInstance({ template, dir, port, asOf }) {
   assertPort(port);
   const source = await assertIsolated(template),
     destination = await assertIsolated(dir);
-  const day =
-    asOf ??
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Europe/London",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
-  recordingWeek(day);
+  if (asOf !== undefined) recordingWeek(asOf);
   // Exclusive mkdir makes an existing directory (including an empty one) a refusal.
   await mkdir(destination, { mode: 0o700 });
   const config = JSON.parse(await readFile(join(source, "omnesis.json"), "utf8"));
@@ -102,7 +94,7 @@ export async function prepareInstance({ template, dir, port, asOf }) {
     JSON.stringify({
       kind: "sacha-demo",
       port,
-      asOf: day,
+      ...(asOf === undefined ? {} : { asOf }),
       universe: join(destination, "universe"),
     }),
     { mode: 0o600 },
@@ -145,6 +137,20 @@ export async function demoEnvironment(dir) {
   };
 }
 
+/** Resolve relative fixture dates at materialisation, not when a template is prepared. */
+export async function materializeUniverse(dir, { now = new Date(), build } = {}) {
+  const { info } = await demoEnvironment(dir);
+  if (await exists(join(dir, "omnesis.db")))
+    throw new Error("Materialisation requires a fresh prepared directory");
+  const asOf = info.asOf ?? londonToday(now);
+  recordingWeek(asOf);
+  const builder =
+    build ?? (await import("../evals/universes/sacha-bellamy/_build/build.mjs")).buildUniverse;
+  await builder({ asOf, outDir: info.universe });
+  await writeFile(join(dir, marker), JSON.stringify({ ...info, asOf }), { mode: 0o600 });
+  return asOf;
+}
+
 async function startGateway(dir) {
   const { info, env } = await demoEnvironment(dir);
   if (await exists(join(dir, "omnesis.db")))
@@ -152,8 +158,7 @@ async function startGateway(dir) {
   // Reserve this generation before asynchronous work; competing launches must fail.
   const reservation = await open(join(dir, "start.guard"), "wx", 0o600);
   await reservation.close();
-  const { buildUniverse } = await import("../evals/universes/sacha-bellamy/_build/build.mjs");
-  await buildUniverse({ asOf: info.asOf, outDir: info.universe });
+  await materializeUniverse(dir);
   await new Promise((resolvePromise, reject) => {
     const probe = createServer();
     probe.once("error", reject);

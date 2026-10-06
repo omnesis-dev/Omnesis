@@ -452730,6 +452730,25 @@
     ]
   },
   {
+    "externalId": "sb-evening-pub-plan",
+    "chatId": "chat-p_thomas",
+    "chatTitle": "Thomas Ashford",
+    "date": "2026-10-02",
+    "counterparty": "p_thomas",
+    "messages": [
+      {
+        "from": "p_thomas",
+        "at": "2026-10-02T16:00:00.000Z",
+        "text": "Shall we meet at The Three Greyhounds, 25 Greek Street, London W1D 5DD tomorrow, 2026-10-03, at 7pm? A drink before our 8pm show at the Criterion."
+      },
+      {
+        "from": "self",
+        "at": "2026-10-02T16:05:00.000Z",
+        "text": "Yes, see you there at seven. I'll be coming from the short-let flat where I'm staying this week."
+      }
+    ]
+  },
+  {
     "externalId": "sb-wish-sketching-stool",
     "chatId": "chat-p_maya",
     "chatTitle": "Maya Bellamy",

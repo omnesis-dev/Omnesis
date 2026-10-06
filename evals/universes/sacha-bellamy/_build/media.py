@@ -112,9 +112,9 @@ def scan_pdf(path, text):
     pdf.save()
 
 
-def native_pdf(path, text):
+def native_pdf(path, text, title="Synthetic warranty document"):
     pdf = canvas.Canvas(str(path), pagesize=A4, invariant=1, pageCompression=1)
-    pdf.setTitle("Synthetic warranty document")
+    pdf.setTitle(title)
     cursor = pdf.beginText(50, A4[1] - 60)
     cursor.setFont("Helvetica", 12)
     for paragraph in text.splitlines():
@@ -180,6 +180,10 @@ def main():
     scan_pdf(out_dir / "receipt-wa8842.pdf", assets["receipt"])
     scan_pdf(out_dir / "oldest-tenancy.pdf", assets["tenancy"][0]["content"])
     native_pdf(out_dir / "ember-mini-warranty.pdf", assets["warranty"])
+    if assets.get("eveningTicket"):
+        native_pdf(out_dir / "evening-tickets.pdf", assets["eveningTicket"], "Synthetic demonstration tickets")
+    if assets.get("eveningTenancy"):
+        native_pdf(out_dir / "evening-shortlet.pdf", assets["eveningTenancy"], "Synthetic demonstration tenancy")
     spoken = spoken_dates(assets["audioText"])
     speech_wav(out_dir / "lantern-promise.wav", spoken)
     if assets.get("symptomAudioText"):

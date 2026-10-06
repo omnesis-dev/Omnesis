@@ -1,8 +1,8 @@
 # Sacha Bellamy demonstration universe
 
-This fictional household has source-native history and fifteen evidence questions. It uses a live conversational model. Expected facts are evaluation ground truth, not agent responses. The biography, street addresses, businesses, and financial accounts are invented. Route estimates to fictional addresses require disclosed fixtures.
+This fictional household has source-native history and sixteen evidence scenarios. It uses a live conversational model. Expected facts are evaluation ground truth, not agent responses. The biography, private addresses, businesses, and financial accounts are invented. The evening scenario uses real public theatre/pub locations and a public street junction as an approximate route origin; its performance, booking and short-let flat are fictional. Other route estimates to fictional addresses require disclosed fixtures.
 
-The authoring modules under `_build/` generate current recording-week commitments in the Europe/London calendar. Historic events retain their original dates. `build.mjs --as-of YYYY-MM-DD --out DIRECTORY` gives a reproducible anchor; the fresh launcher uses today's London date unless `--as-of` is supplied.
+The authoring modules under `_build/` generate current recording-week commitments in the Europe/London calendar. Historic events retain their original dates. `build.mjs --as-of YYYY-MM-DD --out DIRECTORY` gives a reproducible anchor; the fresh launcher resolves today's London date when `start` materialises the universe, rather than when `prepare` copies the template. `--as-of` remains an explicit reproducibility override. Dates stay fixed for that loaded instance.
 
 The practical demonstrations use Gmail as the household's email account, including original PDF and voice attachments. Other mailbox fixtures are background coverage, not extra corroboration for a demo. The birthday history includes a fictional Amazon order at a reserved example address and a separate recipient acknowledgement; buying a physical gift does not establish attendance at a workshop. Journey confirmations are spoken by the traveller, while bookings and calendar entries establish plans.
 
@@ -71,3 +71,11 @@ Run `wait-ready` before recording and verify each answer's cited evidence. Runti
 ## Party departure recording
 
 A11 must retrieve the latest organiser correction before calculating departure. Fictional addresses cannot establish a live Maps route. An external route tool with a suitable public location or a visibly disclosed fictional route fixture can supply the duration. For a fixture, label both the invented journey and buffer on screen: 35 minutes plus 10 minutes gives a 17:30 departure for 18:15 guest arrival. Cite source evidence for the corrected date, time and venue; attribute the durations to the fixture. This assumes an evening departure from home, separately from the 10:00 setup commitment. Refresh the party date from each newly materialized universe.
+
+## Tonight's departure and tickets
+
+A16 starts with “What time should I leave home tonight?” The load day's calendar and Gmail reservation establish an invented 20:00 performance at the Criterion Theatre, 218–223 Piccadilly, London. Thomas's separate WhatsApp conversation confirms a 19:00 drink at The Three Greyhounds, 25 Greek Street, London W1D 5DD. The earlier meeting is the departure target.
+
+The actual Gmail tenancy PDF identifies a temporary London flat on Gower Street for the loaded week; the permanent household's residence history continues unchanged. Its public entrance approximation is the junction of Gower Street and Chenies Street. A real route lookup can use that junction, but must describe it as an approximate origin rather than an actual numbered dwelling. Travel duration and a chosen arrival buffer determine departure; the corpus does not invent a live route duration.
+
+Follow up with “What seats do we have?” The actual attached ticket PDF holds Stalls Row H seats 12 and 13. Neither the email body, calendar nor WhatsApp repeats the seats or temporary address. Extraction must read the PDF bytes through the normal Gmail attachment pipeline. The reservation and PDFs clearly mark the performance and tickets as fictional, without implying a real scheduled show or valid admission.

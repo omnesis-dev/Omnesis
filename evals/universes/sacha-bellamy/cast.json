@@ -501,6 +501,13 @@
         "appleContactGuid": "SB-CONTACT-gift_orders",
         "githubLogin": "fictional-gift_orders"
       }
+    },
+    {
+      "id": "p_thomas",
+      "name": "Thomas Ashford",
+      "emails": ["thomas.ashford@example.com"],
+      "phones": ["+447700900180"],
+      "lids": ["800100080@lid"]
     }
   ],
   "orgs": [

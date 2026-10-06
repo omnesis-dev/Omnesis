@@ -80,6 +80,8 @@ class MediaTests(unittest.TestCase):
             receipt: 'Studio Northstar receipt SN-0042\\nPaper lantern lights: 42.00',
             tenancy: [{content: 'Oldest tenancy\\n42 Example Street\\nDeposit: 900.00'}],
             warranty: 'Stellar Sound warranty\\nCoverage through October 6, 2028',
+            eveningTicket: 'Fictional tickets\\nStalls, Row H, Seat 12\\nStalls, Row H, Seat 13',
+            eveningTenancy: 'Fictional short-let\\nFlat Example, Example House, Gower Street, Bloomsbury, London',
             audioText: 'Collect the lantern lights on Tuesday 2026-10-06 at five thirty.'
           });
         """
@@ -97,6 +99,12 @@ class MediaTests(unittest.TestCase):
             _, content = page_streams(root / "ember-mini-warranty.pdf")
             self.assertIn(b"Stellar Sound warranty", content)
             self.assertRegex(content, rb"\bTj\b")
+            _, ticket_content = page_streams(root / "evening-tickets.pdf")
+            self.assertIn(b"Seat 12", ticket_content)
+            self.assertIn(b"Seat 13", ticket_content)
+            _, tenancy_content = page_streams(root / "evening-shortlet.pdf")
+            self.assertIn(b"Gower Street", tenancy_content)
+            self.assertRegex(tenancy_content, rb"\bTj\b")
             with wave.open(str(root / "lantern-promise.wav"), "rb") as audio:
                 self.assertEqual(audio.getnchannels(), 1)
                 self.assertEqual(audio.getsampwidth(), 2)

@@ -2572,6 +2572,7 @@
     {
       "value": "Fictional Gardens",
       "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-evening.test.mjs",
         "evals/universes/sacha-bellamy/demo-facts.json",
         "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
         "evals/universes/sacha-bellamy/sources/gmail/messages.json",
@@ -2957,6 +2958,7 @@
     {
       "value": "Sacha Bellamy",
       "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
         "evals/universes/sacha-bellamy/cast.json",
         "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
         "evals/universes/sacha-bellamy/sources/github-commits/commits.json",
@@ -11969,6 +11971,97 @@
       "value": "Untrusted Label",
       "paths": ["packages/gateway/src/transcribe/vocabulary/identity.test.ts"],
       "reason": "Invented vocabulary extraction and identity regression fixture; not sourced from indexed data."
+    },
+    {
+      "value": "Chenies Street",
+      "paths": [
+        "evals/universes/sacha-bellamy/README.md",
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "Criterion Theatre",
+      "paths": [
+        "evals/universes/sacha-bellamy/README.md",
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-calendar/events.json"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "Example House",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/media_test.py",
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
+        "evals/universes/sacha-bellamy/demo-facts.json"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "Flat Example",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
+        "evals/universes/sacha-bellamy/demo-facts.json"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "Gower Street",
+      "paths": [
+        "evals/universes/sacha-bellamy/README.md",
+        "evals/universes/sacha-bellamy/_build/media_test.py",
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
+        "evals/universes/sacha-bellamy/demo-facts.json"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "Greek Street",
+      "paths": [
+        "evals/universes/sacha-bellamy/README.md",
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "Stalls Row",
+      "paths": ["evals/universes/sacha-bellamy/README.md"],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "The Clockmaker",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-calendar/events.json"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "The Three Greyhounds",
+      "paths": [
+        "evals/universes/sacha-bellamy/README.md",
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "Thomas Ashford",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-evening.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-evening.test.mjs",
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
     },
     {
       "value": "Will Green",
