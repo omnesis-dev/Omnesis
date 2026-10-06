@@ -62,10 +62,10 @@ function PageCard({ node, selectedId }) {
     href=${node.kind === "loop" ? loopLibraryPath(node.id) : knowledgePath(node.id)}
     aria-current=${selectedId === node.id ? "page" : undefined}
     ><div class="kn-card-meta">
-      <span><${KnowledgeIcon} kind=${node.kind} />${kindLabel(node.kind)}</span>${node.validity ===
+      <span>${kindLabel(node.kind)}</span>${node.validity ===
         "stale" && html`<span class="kn-needs-review">Needs review</span>`}
     </div>
-    <h3>${node.title}</h3>
+    <h3><${KnowledgeIcon} kind=${node.kind} />${node.title}</h3>
     ${node.kind === "loop" &&
     html`<div class="kn-loop-card-meta">
       <span>${node.canonicalFields?.state ?? "Outcome"}</span>${node.canonicalFields?.deadline &&
@@ -524,10 +524,10 @@ export function KnowledgeTab({ selectedId }) {
                   : root
                     ? html`<a class="kn-root-card" href=${knowledgePath(root.id)}
                         ><div class="kn-eyebrow">
-                          <${KnowledgeIcon} kind="root" />YOUR LIFE AT A GLANCE
+                          YOUR LIFE AT A GLANCE
                           <span aria-hidden="true">↗</span>
                         </div>
-                        <h3>${root.title}</h3>
+                        <h3><${KnowledgeIcon} kind="root" />${root.title}</h3>
                         <p>
                           ${preview(root.plainText).slice(0, 380) ||
                           "Your compact life overview is taking shape."}
