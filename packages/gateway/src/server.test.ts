@@ -8756,6 +8756,27 @@ describe("POST /sql", () => {
 });
 
 describe("GET /status", () => {
+  test("enables demo presentation only for OMNESIS_DEMO=1 and retains test identity", async () => {
+    const names = ["OMNESIS_DEMO", "OMNESIS_TEST_INSTANCE"] as const;
+    const saved = names.map((name) => process.env[name]);
+    try {
+      process.env.OMNESIS_TEST_INSTANCE = "1";
+      for (const value of [undefined, "0", "true", "1"]) {
+        if (value === undefined) delete process.env.OMNESIS_DEMO;
+        else process.env.OMNESIS_DEMO = value;
+        const response = await req("/status");
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ demo: value === "1", testInstance: {} });
+      }
+      expect((await app.request("/status")).status).toBe(401);
+    } finally {
+      names.forEach((name, index) => {
+        if (saved[index] === undefined) delete process.env[name];
+        else process.env[name] = saved[index];
+      });
+    }
+  });
+
   test("serves test labels only on authenticated status, never public health", async () => {
     const names = [
       "OMNESIS_TEST_INSTANCE",
