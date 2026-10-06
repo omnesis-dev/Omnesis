@@ -280,13 +280,44 @@ export interface Document {
 export interface SelfAuthoredTextSegment {
   text: string;
   recordedAt: string;
+  /** Missing on legacy evidence; only a producer can assert the original text medium. */
+  origin?: "written" | "transcription";
 }
 
 /** Keep recent evidence first, with fixed bounds independent of provider volume. */
+/** Bound UTF-16 text without turning a cut lexical run into an invented word. */
+export function truncateLexicalText(input: string, maxChars: number): string {
+  let text = input.slice(0, maxChars);
+  if (/[\uD800-\uDBFF]$/.test(text)) text = text.slice(0, -1);
+  if (
+    input.length > text.length &&
+    /[\p{L}\p{M}\p{N}‘’'.‐‑﹣－-]/u.test(String.fromCodePoint(input.codePointAt(text.length)!))
+  ) {
+    let end = text.length;
+    while (end > 0) {
+      let start = end - 1;
+      const last = text.charCodeAt(start);
+      if (last >= 0xdc00 && last <= 0xdfff && start > 0) {
+        const previous = text.charCodeAt(start - 1);
+        if (previous >= 0xd800 && previous <= 0xdbff) start--;
+      }
+      if (!/[\p{L}\p{M}\p{N}‘’'.‐‑﹣－-]/u.test(text.slice(start, end))) break;
+      end = start;
+    }
+    text = text.slice(0, end);
+  }
+  return text;
+}
+
 export function boundedSelfAuthoredText(
   segments: readonly SelfAuthoredTextSegment[],
 ): SelfAuthoredTextSegment[] {
-  type RankedSegment = { text: string; time: number; index: number };
+  type RankedSegment = {
+    text: string;
+    time: number;
+    index: number;
+    origin?: SelfAuthoredTextSegment["origin"];
+  };
   // The oldest retained segment is the heap root. Keep only 128 references
   // while scanning a large day, then sort that bounded set for the budget.
   const recent: RankedSegment[] = [];
@@ -296,7 +327,7 @@ export function boundedSelfAuthoredText(
     const segment = segments[index];
     const time = Date.parse(segment.recordedAt);
     if (!Number.isFinite(time) || !segment.text.trim()) continue;
-    const candidate = { text: segment.text, time, index };
+    const candidate = { text: segment.text, time, index, origin: segment.origin };
     if (recent.length < 128) {
       recent.push(candidate);
       let position = recent.length - 1;
@@ -323,16 +354,13 @@ export function boundedSelfAuthoredText(
   let remaining = 32768;
   for (const segment of recent) {
     if (result.length === 128 || remaining === 0) break;
-    let text = segment.text.slice(0, remaining);
-    // Do not split a UTF-16 surrogate pair at the aggregate budget boundary.
-    if (/[\uD800-\uDBFF]$/.test(text)) text = text.slice(0, -1);
-    if (
-      segment.text.length > text.length &&
-      /[\p{L}\p{M}\p{N}‘’'.-]/u.test(String.fromCodePoint(segment.text.codePointAt(text.length)!))
-    )
-      text = text.replace(/[\p{L}\p{M}\p{N}‘’'.-]+$/u, "");
+    const text = truncateLexicalText(segment.text, remaining);
     if (!text.trim()) continue;
-    result.push({ text, recordedAt: new Date(segment.time).toISOString() });
+    result.push({
+      text,
+      recordedAt: new Date(segment.time).toISOString(),
+      ...(segment.origin ? { origin: segment.origin } : {}),
+    });
     remaining -= text.length;
   }
   return result;
@@ -348,9 +376,22 @@ export interface DocumentMetadata {
    * messages, presentation headers and generated/received content. Present
    * only when transcription vocabulary is enabled. Unknown authorship is
    * omitted; an empty list explicitly means no self-authored text.
+   * Producers exclude known transcription output from written evidence and mark
+   * original written text with origin. Legacy missing origin is not proof of
+   * either medium and does not earn self-authored support; consumers require
+   * an explicit written origin. Ordinary rendered text remains the fallback.
    * Producers use boundedSelfAuthoredText (128 segments, 32768 characters).
    */
   selfAuthoredText?: SelfAuthoredTextSegment[];
+
+  /**
+   * Source-owned written-text projection for vocabulary extraction, excluding
+   * known ASR output in a mixed document. Bounded to 65536 characters and
+   * consumed only while transcription vocabulary is enabled. Undefined uses
+   * the ordinary rendered content; an empty string excludes all content.
+   * Search/display content is unaffected. Unknown origin is not proof of ASR.
+   */
+  vocabularyText?: string;
 
   /**
    * Reliable web or desktop destination represented by this document. This is

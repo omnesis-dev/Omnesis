@@ -7,6 +7,7 @@ import {
   observeVocabularySpelling,
   selectVocabularySpelling,
   vocabularySpellingBenefit,
+  vocabularySpellingConfidence,
   type VocabularySpellingObservation,
 } from "./spelling.js";
 
@@ -46,4 +47,51 @@ test("the selected spelling retains its own benefit, including genuine mixed-cas
   expect(vocabularySpellingBenefit("zélor")).toBe(1);
   expect(hasMixedVocabularyCase("myOS")).toBe(true);
   expect(hasMixedVocabularyCase("Zélor O'Vantix")).toBe(false);
+});
+
+test("frequent-word typos receive confidence penalties without becoming corrections", () => {
+  for (const text of ["becausse", "Becausse", "becuase", "improtante", "infromation", "peoplse"])
+    expect(vocabularySpellingConfidence(text)).toBeLessThan(1);
+  expect(vocabularySpellingConfidence("becausse")).toBe(0.25);
+  expect(vocabularySpellingConfidence("sequencex")).toBe(0.5);
+  expect(vocabularySpellingConfidence("because")).toBe(1);
+  expect(vocabularySpellingConfidence("x".repeat(10000))).toBe(1);
+});
+
+test("grounded names, short nicknames, accents, acronyms and deliberate casing avoid typo guesses", () => {
+  for (const text of ["Zorvella", "becausse", "Becausse"])
+    expect(vocabularySpellingConfidence(text, true)).toBe(1);
+  for (const text of [
+    "BECUASE",
+    "BeCuase",
+    "myOS",
+    "Zélor",
+    "Zorvexal",
+    "Véllora",
+    "bécausse",
+    "Coco",
+    "Lulu",
+  ])
+    expect(vocabularySpellingConfidence(text)).toBe(1);
+});
+
+test("typographic variants share a term key while evidence retains each original spelling", async () => {
+  const { normalizeVocabularyTerm } = await import("./common-words.js");
+  const byTerm = new Map<string, Map<string, VocabularySpellingObservation>>();
+  for (const text of [
+    "O’Zorvella",
+    "O'Zorvella",
+    "O’Zorvella",
+    "Zorvella‑Navrel",
+    "Zorvella-Navrel",
+  ]) {
+    const key = normalizeVocabularyTerm(text);
+    const variants = byTerm.get(key) ?? new Map<string, VocabularySpellingObservation>();
+    observeVocabularySpelling(variants, text);
+    byTerm.set(key, variants);
+  }
+  expect(byTerm.size).toBe(2);
+  expect(selectVocabularySpelling(byTerm.get("o'zorvella")!.values())?.text).toBe("O’Zorvella");
+  expect(byTerm.get("zorvella-navrel")?.size).toBe(2);
+  expect(normalizeVocabularyTerm("Zélor")).not.toBe(normalizeVocabularyTerm("Zelor"));
 });

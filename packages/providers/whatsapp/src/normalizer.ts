@@ -686,14 +686,18 @@ export function normalizeDayChat(
             selfAuthoredText: boundedSelfAuthoredText(
               messages.flatMap((msg) => {
                 if (!msg.fromMe || msg.deleted) return [];
-                const text =
-                  msg.type === "audio"
-                    ? msg.transcript
-                    : ["text", "image", "video", "media"].includes(msg.type)
-                      ? msg.text
-                      : undefined;
+                // Prior ASR output is searchable, but must not reinforce its own errors.
+                const text = ["text", "image", "video", "media"].includes(msg.type)
+                  ? msg.text
+                  : undefined;
                 return text
-                  ? [{ text, recordedAt: new Date(msg.timestamp * 1000).toISOString() }]
+                  ? [
+                      {
+                        text,
+                        recordedAt: new Date(msg.timestamp * 1000).toISOString(),
+                        origin: "written" as const,
+                      },
+                    ]
                   : [];
               }),
             ),

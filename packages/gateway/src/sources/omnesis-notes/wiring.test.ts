@@ -33,7 +33,9 @@ describe("bootOmnesisNotes", () => {
   let deleted: Array<{ providerId: string; sourceId: string; externalIds: string[] }>;
 
   /** Boot a runtime against the shared db with the standard test stubs. */
-  function boot(overrides: { writeGate?: WriteGate } = {}): OmnesisNotesRuntime {
+  function boot(
+    overrides: { writeGate?: WriteGate; vocabularyEnabled?: boolean } = {},
+  ): OmnesisNotesRuntime {
     return bootOmnesisNotes({
       writeGate: overrides.writeGate ?? gate,
       readDb: db,
@@ -46,6 +48,7 @@ describe("bootOmnesisNotes", () => {
         deleted.push({ providerId, sourceId, externalIds });
         await gate.deleteDocuments(providerId, sourceId, externalIds);
       },
+      isTranscriptionVocabularyEnabled: () => overrides.vocabularyEnabled === true,
       debounceMs: 0,
     });
   }
@@ -316,6 +319,32 @@ describe("bootOmnesisNotes", () => {
       >("SELECT label FROM sync_state WHERE source_id = 'omnesis-notes'")
       .get();
     expect(row?.label).toBe("Notes");
+  });
+
+  test("enrolls historical note projections once only when vocabulary is enabled", async () => {
+    const entry = await runtime.capture({
+      text: "Originalquorin",
+      capturedAt: "2026-02-03T09:00:00Z",
+    });
+    await runtime.flushAll();
+    await gate.upsertDocuments([buildNotesDayDocument(entry.day, [entry])]);
+    ingested = [];
+    const disabled = boot();
+    await disabled.flushAll();
+    disabled.dispose();
+    expect(ingested).toEqual([]);
+    const enabled = boot({ vocabularyEnabled: true });
+    await enabled.flushAll();
+    enabled.dispose();
+    expect(ingested.flat()).toHaveLength(1);
+    expect(ingested[0][0].metadata.vocabularyText).toBe("Originalquorin");
+    expect(ingested[0][0].metadata.selfAuthoredText?.[0].origin).toBe("written");
+    await gate.upsertDocuments(ingested[0]);
+    ingested = [];
+    const settled = boot({ vocabularyEnabled: true });
+    await settled.flushAll();
+    settled.dispose();
+    expect(ingested).toEqual([]);
   });
 
   test("boot reconciliation projects a stranded ledger row and drops a stale day doc", async () => {

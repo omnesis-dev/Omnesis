@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { boundedSelfAuthoredText } from "@omnesis/types";
+import { boundedSelfAuthoredText, truncateLexicalText } from "@omnesis/types";
 
 import {
   vocabularyConversationKey,
@@ -11,22 +11,24 @@ import {
   type ExtractedVocabularyDocument,
 } from "./types.js";
 
-import { isCommonVocabularyWord } from "./common-words.js";
+import { isCommonVocabularyWord, normalizeVocabularyTerm } from "./common-words.js";
 import { cleanVocabularyName } from "./names.js";
+import { vocabularyLexicalQuality } from "./lexical-quality.js";
 import { vocabularyText } from "./text.js";
 import {
   observeVocabularySpelling,
   selectVocabularySpelling,
   vocabularySpellingBenefit,
+  vocabularySpellingConfidence,
   type VocabularySpellingObservation,
 } from "./spelling.js";
 
 // Consume the complete lexical run before applying the length cap. A bounded
 // regex would turn oversized strings into several invented vocabulary hints.
-const WORD = /[\p{L}][\p{L}\p{M}\p{N}'‘’.-]+/gu;
+const WORD = /[\p{L}][\p{L}\p{M}\p{N}'‘’.‐‑﹣－-]+/gu;
 const withinWordLimit = (word: string): boolean =>
   word.length <= 48 || (word.length <= 96 && [...word].length <= 48);
-const normalize = (s: string): string => s.normalize("NFC").toLocaleLowerCase("und");
+const normalize = normalizeVocabularyTerm;
 const isCommon = (s: string): boolean => isCommonVocabularyWord(s);
 
 /** Remove complete identifiers before tokenization can split them into hints. */
@@ -47,6 +49,15 @@ function stripIdentifiers(text: string): string {
 
 type CandidateObservations = Map<string, Map<string, VocabularySpellingObservation>>;
 
+function groundedVocabularyWords(people: VocabularyDocument["people"]): Set<string> {
+  return new Set(
+    people.slice(0, 16).flatMap((person) => {
+      const name = cleanVocabularyName(person.name);
+      return name ? [normalize(name), ...name.split(/\s+/u).map(normalize)] : [];
+    }),
+  );
+}
+
 /** The same lexical safety and spelling evidence applies to received and authored prose. */
 function observeTextCandidates(
   text: string,
@@ -54,11 +65,14 @@ function observeTextCandidates(
   candidates: CandidateObservations,
   onObserve?: (term: string) => void,
 ): void {
+  const groundedWords = groundedVocabularyWords(people);
   const add = (text: string, benefit: number): void => {
-    const clean = text.normalize("NFC").replace(/^[.'‘’ -]+|[.'‘’ -]+$/gu, "");
+    const clean = text.normalize("NFC").replace(/^[.'‘’ ‐‑﹣－-]+|[.'‘’ ‐‑﹣－-]+$/gu, "");
     if (clean.length < 3 || clean.length > 80 || isCommon(clean)) return;
     if (!/\p{L}/u.test(clean) || /https?|www\.|@|\d{3}/iu.test(clean)) return;
     const term = normalize(clean);
+    const grounded = groundedWords.has(term);
+    if (vocabularyLexicalQuality(clean, { grounded }) === 0) return;
     let variants = candidates.get(term);
     if (!variants) {
       variants = new Map();
@@ -93,7 +107,7 @@ function observeTextCandidates(
     // Reject oversized runs before trimming: even a suffix regex can
     // rescan a long punctuation run when it is not at the string's end.
     if (match[0].length > 96) continue;
-    const word = match[0].replace(/[.'‘’ -]+$/gu, "");
+    const word = match[0].replace(/[.'‘’ ‐‑﹣－-]+$/gu, "");
     if (!withinWordLimit(word)) continue;
     wholeWordStarts.add(match.index);
     wholeWordEnds.add(match.index + word.length);
@@ -121,14 +135,26 @@ function observeTextCandidates(
 function selectedCandidates(
   candidates: CandidateObservations,
   limit: number,
+  people: VocabularyDocument["people"],
 ): VocabularyCandidate[] {
-  return [...candidates.entries()]
-    .map(([term, variants]): VocabularyCandidate => {
-      const selected = selectVocabularySpelling(variants.values())!;
-      return { term, text: selected.text, benefit: selected.benefit };
-    })
-    .sort((a, b) => b.benefit - a.benefit || a.term.localeCompare(b.term))
-    .slice(0, Math.min(limit, 128));
+  const groundedWords = groundedVocabularyWords(people);
+  return (
+    [...candidates.entries()]
+      .map(([term, variants]) => {
+        const selected = selectVocabularySpelling(variants.values())!;
+        return {
+          term,
+          text: selected.text,
+          benefit: selected.benefit,
+          priority:
+            selected.benefit * vocabularySpellingConfidence(selected.text, groundedWords.has(term)),
+        };
+      })
+      .sort((a, b) => b.priority - a.priority || a.term.localeCompare(b.term))
+      .slice(0, Math.min(limit, 128))
+      // Persist confidence once so transcription reads never build the typo index.
+      .map(({ term, text, priority }) => ({ term, text, benefit: priority }))
+  );
 }
 
 /** Bounded pure CPU work; the scheduler's CPU pool owns this function. */
@@ -140,7 +166,7 @@ export function extractTranscriptionVocabulary(
   return docs.slice(0, Math.min(settings.batchSize, 16)).map((doc) => {
     const candidates: CandidateObservations = new Map();
     const text = stripIdentifiers(
-      `${vocabularyText(doc.title.slice(0, 256))}\n${vocabularyText(doc.content.slice(0, settings.maxDocumentChars))}`,
+      `${doc.vocabularyText === "" ? "" : vocabularyText(truncateLexicalText(doc.title, 256))}\n${vocabularyText(truncateLexicalText(doc.vocabularyText ?? doc.content, settings.maxDocumentChars))}`,
     );
     observeTextCandidates(text, doc.people, candidates);
     // Only source-owned authored segments earn self evidence. A person link or
@@ -149,7 +175,9 @@ export function extractTranscriptionVocabulary(
     const selfCandidates: CandidateObservations = new Map();
     const recordedAtByTerm = new Map<string, string>();
     let hasSelfText = false;
-    for (const segment of boundedSelfAuthoredText(doc.selfAuthoredText ?? [])) {
+    for (const segment of boundedSelfAuthoredText(
+      (doc.selfAuthoredText ?? []).filter((segment) => segment.origin === "written"),
+    )) {
       const segmentText = stripIdentifiers(vocabularyText(segment.text));
       hasSelfText ||= /\p{L}/u.test(segmentText);
       observeTextCandidates(segmentText, doc.people, selfCandidates, (term) => {
@@ -184,12 +212,17 @@ export function extractTranscriptionVocabulary(
       hasText: /\p{L}/u.test(text) || hasSelfText,
       hasSelfText,
       automatedEvidence: doc.automatedEvidence,
-      terms: selectedCandidates(candidates, settings.maxTermsPerDocument),
+      terms: selectedCandidates(candidates, settings.maxTermsPerDocument, doc.people),
       ...(doc.selfAuthoredText !== undefined
         ? {
-            selfTerms: selectedCandidates(selfCandidates, settings.maxTermsPerDocument).map(
-              (candidate) => ({ ...candidate, recordedAt: recordedAtByTerm.get(candidate.term)! }),
-            ),
+            selfTerms: selectedCandidates(
+              selfCandidates,
+              settings.maxTermsPerDocument,
+              doc.people,
+            ).map((candidate) => ({
+              ...candidate,
+              recordedAt: recordedAtByTerm.get(candidate.term)!,
+            })),
           }
         : {}),
     };

@@ -1819,8 +1819,11 @@ describe("self-authored vocabulary evidence", () => {
     expect(enabled.content).toBe(disabled.content);
     expect(enabled.contentHash).toBe(disabled.contentHash);
     expect(enabled.metadata.selfAuthoredText).toEqual([
-      { text: "Cobaltfinch", recordedAt: new Date(1709900020000).toISOString() },
-      { text: "Lanternshift", recordedAt: new Date(1709900000000).toISOString() },
+      {
+        text: "Lanternshift",
+        recordedAt: new Date(1709900000000).toISOString(),
+        origin: "written",
+      },
     ]);
   });
 });

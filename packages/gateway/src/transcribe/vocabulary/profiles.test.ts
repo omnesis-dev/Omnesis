@@ -80,7 +80,7 @@ function apply(db: Db, doc: VocabularyDocument): ExtractedVocabularyDocument {
 test("common-only prose counts opportunities without inventing uncommon or authored terms", () => {
   const db = database();
   const doc = document(db, "common", "hello the and");
-  doc.selfAuthoredText = [{ text: "hello the and", recordedAt: "2026-01-01" }];
+  doc.selfAuthoredText = [{ origin: "written", text: "hello the and", recordedAt: "2026-01-01" }];
   const extracted = apply(db, doc);
   expect(extracted.terms).toEqual([]);
   expect(extracted.selfTerms).toEqual([]);

@@ -82,7 +82,11 @@ function materialize(history: History[]): Db {
       ...(item.automated ? { automatedSender: true } : {}),
       ...(item.bulk ? { bulkMail: true } : {}),
       ...(item.own !== undefined
-        ? { selfAuthoredText: [{ text: item.own, recordedAt: item.ownDate ?? date }] }
+        ? {
+            selfAuthoredText: [
+              { origin: "written", text: item.own, recordedAt: item.ownDate ?? date },
+            ],
+          }
         : {}),
     };
     insert.run(

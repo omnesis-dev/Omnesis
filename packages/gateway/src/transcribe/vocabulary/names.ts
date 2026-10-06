@@ -14,7 +14,7 @@ export function cleanVocabularyName(input: string): string | null {
     .trim();
   if (
     name.length < 3 ||
-    !/^[\p{L}\p{M}]+(?:[ '’.-][\p{L}\p{M}]+)*$/u.test(name) ||
+    !/^[\p{L}\p{M}]+(?:[ '‘’.‐‑﹣－-][\p{L}\p{M}]+)*$/u.test(name) ||
     /(?:https?|www)\b/iu.test(name) ||
     /\p{L}\.\p{L}/u.test(name) ||
     /^(?:you|self|me|unknown)$/iu.test(name) ||

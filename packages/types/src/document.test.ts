@@ -76,6 +76,20 @@ describe("DocumentMetadata source lifecycle status", () => {
 });
 
 describe("bounded self-authored evidence", () => {
+  test("retains producer medium while leaving legacy origin unknown", () => {
+    expect(
+      boundedSelfAuthoredText([
+        { text: "Solvarin", recordedAt: "2026-01-03T00:00:00Z", origin: "transcription" },
+        { text: "Merovex", recordedAt: "2026-01-02T00:00:00Z", origin: "written" },
+        { text: "Kelvarin", recordedAt: "2026-01-01T00:00:00Z" },
+      ]),
+    ).toEqual([
+      { text: "Solvarin", recordedAt: "2026-01-03T00:00:00.000Z", origin: "transcription" },
+      { text: "Merovex", recordedAt: "2026-01-02T00:00:00.000Z", origin: "written" },
+      { text: "Kelvarin", recordedAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+  });
+
   test("keeps the newest segments and ignores invalid dates and blank text", () => {
     const segments = Array.from({ length: 140 }, (_, index) => ({
       text: `word-${index}`,

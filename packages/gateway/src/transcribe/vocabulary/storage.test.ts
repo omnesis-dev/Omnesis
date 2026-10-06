@@ -76,6 +76,58 @@ function count(db: Db): number {
 }
 
 describe("vocabulary materialization", () => {
+  test("transcribed metadata cannot consume the verified written evidence budget", () => {
+    const db = database();
+    insert(db, "mixed-origins", "");
+    db.prepare("UPDATE documents SET metadata=? WHERE id='mixed-origins'").run(
+      JSON.stringify({
+        selfAuthoredText: [
+          { origin: "transcription", text: "Nimbrax ".repeat(4096), recordedAt: "2026-10-01" },
+          { text: "Orvelion", recordedAt: "2026-10-01" },
+          { origin: "written", text: "Quorvex", recordedAt: "2026-01-01" },
+        ],
+      }),
+    );
+    const batch = fetchTranscriptionVocabularyBatch(db, settings);
+    expect(
+      extractTranscriptionVocabulary(batch, settings)[0].selfTerms?.map((term) => term.text),
+    ).toEqual(["Quorvex"]);
+  });
+  test("fetched input preserves enough boundary evidence to omit a cut word", () => {
+    const db = database();
+    insert(db, "cut-run", "Orvelion QuorvexNimbrax");
+    const capped = { ...settings, maxDocumentChars: 14 };
+    const batch = fetchTranscriptionVocabularyBatch(db, capped);
+    expect(batch[0].content.length).toBeGreaterThan(capped.maxDocumentChars);
+    expect(extractTranscriptionVocabulary(batch, capped)[0].terms.map((term) => term.text)).toEqual(
+      ["Orvelion"],
+    );
+  });
+  test("generic transcription provenance excludes attachment text and respects written projections", () => {
+    const db = database();
+    for (const [id, metadata] of [
+      ["asr-child", { extra: { transcribed: true } }],
+      ["mixed-projection", { vocabularyText: "Orvelion" }],
+      ["untrusted-marker", { extra: { transcribed: "true" }, vocabularyText: 42 }],
+    ] as const) {
+      insert(db, id, "Nimbrax");
+      db.prepare("UPDATE documents SET metadata=? WHERE id=?").run(JSON.stringify(metadata), id);
+    }
+    const batch = fetchTranscriptionVocabularyBatch(db, settings);
+    const terms = new Map(
+      extractTranscriptionVocabulary(batch, settings).map((doc) => [
+        doc.id,
+        doc.terms.map((term) => term.text),
+      ]),
+    );
+    expect(terms.get("asr-child")).toEqual([]);
+    expect(terms.get("mixed-projection")).toEqual(["Orvelion"]);
+    expect(terms.get("untrusted-marker")).toEqual(["Nimbrax"]);
+    expect(fetchTranscriptionVocabularyBatch(db, { ...settings, enabled: false })).toEqual([]);
+    expect(db.prepare("SELECT content FROM documents WHERE id='asr-child'").get()).toEqual({
+      content: "Nimbrax",
+    });
+  });
   test("the contribution ledger stores its deduplication key in a single tree", () => {
     const db = database();
     expect(

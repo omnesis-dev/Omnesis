@@ -29,6 +29,7 @@ import {
   ProviderId,
   SourceId,
   boundedSelfAuthoredText,
+  truncateLexicalText,
   type DocumentInput,
   type PersonMention,
 } from "@omnesis/types";
@@ -181,10 +182,28 @@ export function buildNotesDayDocument(
       documentType: "note",
       ...(vocabularyEnabled
         ? {
+            // A later manual edit is independent written evidence; the exact
+            // transcript revision must not reinforce its own recognition errors.
+            vocabularyText: truncateLexicalText(
+              entries
+                .filter((entry) => !entry.transcribedAt || entry.updatedAt !== entry.transcribedAt)
+                .map((entry) => entry.text)
+                .join("\n\n"),
+              65536,
+            ),
             selfAuthoredText: boundedSelfAuthoredText(
               entries
-                .filter((entry) => !entry.captureContext && !entry.page)
-                .map((entry) => ({ text: entry.text, recordedAt: entry.capturedAt })),
+                .filter(
+                  (entry) =>
+                    !entry.captureContext &&
+                    !entry.page &&
+                    (!entry.transcribedAt || entry.updatedAt !== entry.transcribedAt),
+                )
+                .map((entry) => ({
+                  text: entry.text,
+                  recordedAt: entry.capturedAt,
+                  origin: "written" as const,
+                })),
             ),
           }
         : {}),

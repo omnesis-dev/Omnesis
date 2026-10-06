@@ -51,6 +51,7 @@ export type {
 
 export {
   boundedSelfAuthoredText,
+  truncateLexicalText,
   KNOWN_DOCUMENT_TYPES,
   PERSON_ROLES,
   PERSON_IDENTIFIER_KINDS,

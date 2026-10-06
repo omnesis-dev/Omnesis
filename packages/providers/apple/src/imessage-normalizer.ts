@@ -351,13 +351,17 @@ export function normalizeDayChat(
             selfAuthoredText: boundedSelfAuthoredText(
               regularMessages.flatMap((msg) => {
                 if (!msg.isFromMe || msg.isSystemMessage) return [];
-                const text = [
-                  msg.text,
-                  ...msg.attachments.map((attachment) => attachment.transcript ?? ""),
-                ]
-                  .filter(Boolean)
-                  .join("\n");
-                return text ? [{ text, recordedAt: msg.date.toISOString() }] : [];
+                // Attachment ASR remains searchable, but only original written body
+                // can provide independent vocabulary evidence.
+                return msg.text
+                  ? [
+                      {
+                        text: msg.text,
+                        recordedAt: msg.date.toISOString(),
+                        origin: "written" as const,
+                      },
+                    ]
+                  : [];
               }),
             ),
           }

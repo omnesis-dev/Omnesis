@@ -31,7 +31,37 @@ describe("transcription vocabulary settings", () => {
       authoredWeight: 4,
       machineEvidenceWeight: 0.15,
       contextPriorDocuments: 10,
+      rarityWeight: 0.5,
+      contextLiftWeight: 0.25,
     });
+  });
+  test("relevance blend weights have bounded overrides", () => {
+    for (const settings of [
+      { rarityWeight: 0, contextLiftWeight: 0 },
+      { rarityWeight: 1, contextLiftWeight: 1 },
+      { rarityWeight: 0.4, contextLiftWeight: 0.3 },
+    ]) {
+      expect(
+        resolveVocabularySettings(
+          omnesisConfigSchema.parse({
+            inference: { transcriptionVocabulary: settings },
+          }),
+        ),
+      ).toMatchObject(settings);
+    }
+    for (const settings of [
+      { rarityWeight: -0.1 },
+      { rarityWeight: 1.1 },
+      { contextLiftWeight: -0.1 },
+      { contextLiftWeight: 1.1 },
+      { rarityWeight: Number.POSITIVE_INFINITY },
+    ]) {
+      expect(
+        omnesisConfigSchema.safeParse({
+          inference: { transcriptionVocabulary: settings },
+        }).success,
+      ).toBe(false);
+    }
   });
   test("authored relevance weight is bounded and can disable the bonus", () => {
     for (const authoredWeight of [0, 2.5, 32]) {

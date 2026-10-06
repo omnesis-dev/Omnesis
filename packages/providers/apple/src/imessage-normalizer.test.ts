@@ -819,7 +819,7 @@ describe("normalizeDayChat", () => {
 });
 
 describe("self-authored vocabulary evidence", () => {
-  test("keeps own body and transcript timestamps, excluding received and system text", () => {
+  test("keeps original own written body, excluding ASR, received and system text", () => {
     const messages = [
       makeMsg({
         isFromMe: true,
@@ -856,7 +856,7 @@ describe("self-authored vocabulary evidence", () => {
     expect(enabled.content).toBe(disabled.content);
     expect(enabled.contentHash).toBe(disabled.contentHash);
     expect(enabled.metadata.selfAuthoredText).toEqual([
-      { text: "Lanternshift\nCobaltfinch", recordedAt: "2024-03-08T10:30:00.000Z" },
+      { text: "Lanternshift", recordedAt: "2024-03-08T10:30:00.000Z", origin: "written" },
     ]);
   });
 });

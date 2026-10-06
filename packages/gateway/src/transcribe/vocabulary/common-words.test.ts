@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test, vi } from "vitest";
-import { isCommonVocabularyWord } from "./common-words.js";
+import { isCommonVocabularyWord, normalizeVocabularyTerm } from "./common-words.js";
 import { commonWordsData } from "./common-words-data.js";
 
 describe("bundled common-word evidence", () => {
@@ -27,6 +27,7 @@ describe("bundled common-word evidence", () => {
       // Independent components in different languages cannot manufacture a
       // frequent elision that no single lexical list supports.
       expect(lexical.isCommonVocabularyWord("a'été")).toBe(false);
+      expect(lexical.isCommonVocabularyWord("ordinary-travail")).toBe(false);
       expect(reads).toBe(1);
     } finally {
       vi.doUnmock("./common-words-data.js");
@@ -80,6 +81,35 @@ describe("bundled common-word evidence", () => {
     expect(isCommonVocabularyWord("c’est", ["ja"])).toBe(false);
     expect(isCommonVocabularyWord("l'été", ["fr"])).toBe(true);
     expect(isCommonVocabularyWord("l'Élanor", ["fr"])).toBe(false);
+  });
+
+  test("frequent inflected words and hyphen components retain same-language evidence", () => {
+    for (const [word, language] of [
+      ["working", "en"],
+      ["travaux", "fr"],
+      ["arbeiten", "de"],
+      ["trabajos", "es"],
+      ["lavori", "it"],
+      ["trabalhos", "pt"],
+      ["werken", "nl"],
+    ])
+      expect(isCommonVocabularyWord(word!, [language!])).toBe(true);
+    expect(isCommonVocabularyWord("work-home", ["en"])).toBe(true);
+    expect(isCommonVocabularyWord("l’été-travail", ["fr"])).toBe(true);
+    expect(isCommonVocabularyWord("work‐home", ["en"])).toBe(true);
+    expect(isCommonVocabularyWord("work-Zorvella", ["en"])).toBe(false);
+    expect(isCommonVocabularyWord("Zorvella-Navrel")).toBe(false);
+    expect(isCommonVocabularyWord("work--home", ["en"])).toBe(false);
+  });
+
+  test("canonical keys unify equivalent typography without erasing lexical identity", () => {
+    expect(normalizeVocabularyTerm("O’Zorvella")).toBe("o'zorvella");
+    expect(normalizeVocabularyTerm("Zorvella‐Navrel")).toBe("zorvella-navrel");
+    expect(normalizeVocabularyTerm("Zorvella‑Navrel")).toBe("zorvella-navrel");
+    expect(normalizeVocabularyTerm("Zorvella－Navrel")).toBe("zorvella-navrel");
+    expect(normalizeVocabularyTerm("ZE\u0301LOR")).toBe("zélor");
+    expect(normalizeVocabularyTerm("Zélor")).not.toBe(normalizeVocabularyTerm("Zelor"));
+    expect(normalizeVocabularyTerm("Zorvella—Navrel")).toBe("zorvella—navrel");
   });
 
   test("ships bounded lexical lists and notices alongside the derived data", () => {

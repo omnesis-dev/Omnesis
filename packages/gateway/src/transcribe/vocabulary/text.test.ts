@@ -31,11 +31,11 @@ test("excludes explicit quotes, fenced code and image destinations but retains l
   expect(text).not.toMatch(/Old reply|unrelated|still code|diagram|example/u);
 });
 
-test("keeps captions and transcripts while removing timestamp bylines and reaction rows", () => {
+test("keeps written captions but excludes rendered ASR and reaction rows", () => {
   const text = vocabularyText(
     "**09:04** Elara Quill: [Clip, 1:02]: Discuss the zeralith\n  → someone 👍\n**09:05** Rohan Vale: [Reminder: keep this] a caption\n普通の文：残す",
   );
-  expect(text).toContain("Discuss the zeralith");
+  expect(text).not.toContain("Discuss the zeralith");
   expect(text).toContain("[Reminder: keep this] a caption");
   expect(text).toContain("普通の文：残す");
   expect(text).not.toMatch(/Elara|Rohan|09:|Clip|someone/u);
@@ -86,4 +86,35 @@ test("caps layout recovery before parsing and preserves ordinary bracketed prose
 
 test("omits text-first incomplete layouts rather than learning JSON escapes", () => {
   expect(vocabularyText('[{"text":"Virelith\\nQorven","bbox":[0')).toBe("");
+});
+
+test("excludes multiline transcripts with known, unknown and missing durations", () => {
+  for (const prefix of ["[Audio, 1:02]:", "[Voice note, ?]:", "[Audio]:"]) {
+    const text = vocabularyText(`**09:04** Elara Quill: ${prefix} Spokenquorin
+Transcripttail
+
+**09:05** Rohan Vale: Writtenquorin`);
+    expect(text).not.toMatch(/Spokenquorin|Transcripttail/u);
+    expect(text).toContain("Writtenquorin");
+  }
+});
+
+test("retains original written body before transcribed attachments", () => {
+  const text = vocabularyText(
+    "**09:04** Elara Quill: Writtenquorin\n[Audio]: Spokenquorin\nTranscripttail\n**09:05** Rohan Vale: Independentquorin",
+  );
+  expect(text).toContain("Writtenquorin");
+  expect(text).toContain("Independentquorin");
+  expect(text).not.toMatch(/Spokenquorin|Transcripttail/u);
+  expect(vocabularyText("[Audio]: ordinary unmarked prose")).toBe(
+    "[Audio]: ordinary unmarked prose",
+  );
+});
+
+test("unclosed markup inside ASR does not swallow the next written message", () => {
+  const text = vocabularyText(
+    "**09:04** Elara Quill: [Audio]: Spokenquorin\n```\nASRtail\n**09:05** Rohan Vale: Writtenquorin",
+  );
+  expect(text).not.toMatch(/Spokenquorin|ASRtail/u);
+  expect(text).toContain("Writtenquorin");
 });

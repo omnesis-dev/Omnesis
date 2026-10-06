@@ -20,6 +20,16 @@ history. Notes distinguish operator entries from agent captures and retained pag
 content. A document's participant list never establishes ownership of all its
 words. Missing ownership evidence remains unknown.
 
+Self evidence must also identify its origin as `written`. Marked transcription
+output and legacy segments with unknown origin receive no authored bonus. This
+prevents a recognizer's earlier mistakes from becoming independent written
+corroboration. Rendered transcript spans and transcribed attachment documents
+are excluded from ordinary vocabulary evidence too. Mixed notes supply a
+source-owned `vocabularyText` projection of their written entries, without
+changing the displayed document. A manual edit after transcription can supply
+written evidence; an untouched transcript cannot. Unmarked legacy rendered
+prose remains ordinary evidence when its medium cannot be established.
+
 Recent authored support is a sum of independently dated document contributions,
 with a 90-day half-life. Each document contributes at most once to each term; a
 later occurrence in that document replaces its earlier contribution. One new use
@@ -35,6 +45,17 @@ document can choose its spelling but cannot corroborate it. High-frequency words
 are filtered using the bundled multilingual frequency lists; membership is not a
 prediction of recognizer accuracy. Accents remain significant.
 
+Frequent hyphenated compounds require frequent components in one supported
+language. Structural laughter, stretched common words and word-shaped chat
+emoticons are omitted. Uncommon short nicknames and grounded names retain
+protection. A bounded, lazily built deletion index supplies a soft confidence
+penalty for ASCII words one edit away from frequent words, rather than correcting
+them or assuming that every unfamiliar word is a typo. Names grounded in the
+document's people, deliberate mixed-case terms and acronyms bypass this penalty.
+The index runs during background extraction; persisted benefits already include
+confidence, so dictionary lookup does not build or query it. Short and non-ASCII
+spellings are outside this conservative typo heuristic.
+
 Dictionary reads apply the same high-frequency filter to retained terms, even
 when evidence refresh no longer extracts those terms. This avoids preserving
 obsolete lexical artifacts without clearing learned evidence. Filtering stays
@@ -45,6 +66,9 @@ Exact spellings also retain distinct-document support. An isolated mixed-case
 variant cannot permanently replace a corroborated spelling. Corroborated
 context-specific spelling can override the global spelling when its context
 contributes more relevance. Identity priors retain their trusted spelling.
+Term keys canonicalize equivalent apostrophe and hyphen glyphs while preserving
+the observed output spelling. Accents are not folded and similar-sounding names
+are not merged.
 
 Source-declared `bulkMail` and `automatedSender` evidence receives a smaller
 weight until ordinary evidence independently corroborates it. Unmarked evidence
@@ -69,6 +93,14 @@ confident. Missing or inconsistent cohort evidence uses the fallback ranking.
 This is a document-frequency approximation, not a recognizer language-model
 probability.
 
+Distinctiveness refines support instead of cancelling it. `rarityWeight`
+defaults to 0.5, blending inverse-log global rarity with a neutral baseline;
+`contextLiftWeight` defaults to 0.25, compressing contextual lift to 1–1.5.
+Both accept 0–1: zero ignores the discriminator and one applies its full
+strength. Authored confidence uses decayed independent support and the existing
+document prior. It supplies no additive lifetime-score floor, so dormant words
+continue fading even when they had substantial historical support.
+
 Candidate admission combines bounded indexed streams for rank, recent usage and
 independently corroborated ordinary evidence. Applying a discount only after a
 rank limit would let frequent machine templates hide useful terms. The ordinary
@@ -92,6 +124,12 @@ complete after its final enabled page is acknowledged. Disabling during an
 unfinished enrollment allows ordinary sync to continue; enabling again retries
 that unfinished archive without repeating a completed enrollment. Historical
 Gmail and iMessage authored replay is not provided by this mechanism.
+Existing notes missing their written projection are reconciled when the gateway
+starts with vocabulary enabled. Enabling it during a running session repairs
+changed days immediately and unchanged historical days at the next restart.
+An extraction-version change clears previously learned terms through the
+bounded rebuild before serving new hints; ranking changes alone do not require
+this reset.
 
 V1 retains learned evidence after source document deletion. This policy also
 applies to opportunity counts so numerator and denominator populations remain

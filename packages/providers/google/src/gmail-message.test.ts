@@ -331,7 +331,7 @@ describe("self-authored vocabulary text", () => {
     enabled = true;
     const doc = (await source.sync(null)).documents[0]!;
     expect(doc.metadata.selfAuthoredText).toEqual([
-      { text: "Fresh lexical clue", recordedAt: doc.sourceCreatedAt },
+      { text: "Fresh lexical clue", recordedAt: doc.sourceCreatedAt, origin: "written" },
     ]);
     gmail.users.messages.get = vi.fn(async () => ({ data: { ...message, labelIds: ["INBOX"] } }));
     expect((await source.sync(null)).documents[0]?.metadata.selfAuthoredText).toBeUndefined();

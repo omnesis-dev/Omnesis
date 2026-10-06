@@ -232,8 +232,12 @@ test("mixed conversations promote only authored terms with their original timest
     [
       authoredDocument({
         selfAuthoredText: [
-          { text: "Nexularis", recordedAt: "2024-02-01T00:00:00.000Z" },
-          { text: "Velquorin; Nexularis", recordedAt: "2026-09-28T01:00:00+01:00" },
+          { origin: "written", text: "Nexularis", recordedAt: "2024-02-01T00:00:00.000Z" },
+          {
+            origin: "written",
+            text: "Velquorin; Nexularis",
+            recordedAt: "2026-09-28T01:00:00+01:00",
+          },
         ],
       }),
     ],
@@ -259,7 +263,11 @@ test("self author role and document timestamps supply no inferred authored evide
   ).toEqual([]);
   expect(
     extractTranscriptionVocabulary(
-      [authoredDocument({ selfAuthoredText: [{ text: "Velquorin", recordedAt: "invalid" }] })],
+      [
+        authoredDocument({
+          selfAuthoredText: [{ origin: "written", text: "Velquorin", recordedAt: "invalid" }],
+        }),
+      ],
       settings,
     )[0].selfTerms,
   ).toEqual([]);
@@ -268,13 +276,115 @@ test("self author role and document timestamps supply no inferred authored evide
   ).toEqual([]);
 });
 
+test("transcriptions and unknown origins cannot crowd verified written self evidence", () => {
+  const written = { origin: "written" as const, text: "Quorvex", recordedAt: "2026-01-01" };
+  const [result] = extractTranscriptionVocabulary(
+    [
+      authoredDocument({
+        content: "",
+        selfAuthoredText: [
+          written,
+          { text: "Orvelion", recordedAt: "2026-10-01" },
+          ...Array.from({ length: 128 }, () => ({
+            origin: "transcription" as const,
+            text: "Nimbrax ".repeat(4096),
+            recordedAt: "2026-10-01",
+          })),
+        ],
+      }),
+    ],
+    settings,
+  );
+  expect(result.selfTerms?.map((term) => term.text)).toEqual(["Quorvex"]);
+  expect(result.hasSelfText).toBe(true);
+  const unknown = extractTranscriptionVocabulary(
+    [
+      authoredDocument({
+        content: "",
+        selfAuthoredText: [{ text: "Orvelion", recordedAt: "2026-10-01" }],
+      }),
+    ],
+    settings,
+  )[0];
+  expect(unknown.selfTerms).toEqual([]);
+  expect(unknown.hasSelfText).toBe(false);
+});
+
+test("a written projection excludes recognizer output without altering the source document", () => {
+  const doc = authoredDocument({
+    title: "Quorvex",
+    content: "Nimbrax",
+    vocabularyText: "",
+  });
+  const empty = extractTranscriptionVocabulary([doc], settings)[0];
+  expect(empty.terms).toEqual([]);
+  expect(empty.hasText).toBe(false);
+  const projected = extractTranscriptionVocabulary(
+    [{ ...doc, title: "", vocabularyText: "Orvelion" }],
+    settings,
+  )[0];
+  expect(projected.terms.map((term) => term.text)).toEqual(["Orvelion"]);
+  expect(doc.content).toBe("Nimbrax");
+});
+
+test("chat artifacts and repeated typos cannot crowd a small lexical budget", () => {
+  expect(terms("helloooo rararara xPPP Quorvex")).toEqual(["quorvex"]);
+  const [selected] = extractTranscriptionVocabulary(
+    [authoredDocument({ title: "", content: "becausse Quorvex", people: [] })],
+    { ...settings, maxTermsPerDocument: 1 },
+  );
+  expect(selected.terms.map((term) => term.text)).toEqual(["Quorvex"]);
+  const typo = candidates("becausse")[0];
+  expect(typo.benefit).toBeLessThan(1);
+});
+
+test("equivalent hyphen and apostrophe typography contributes to one complete term", () => {
+  const selected = candidates(
+    "quorvex-nimbrax quorvex‑nimbrax quorvex‐nimbrax O'Zorvella O’Zorvella",
+  );
+  expect(selected.map((term) => term.term).sort()).toEqual(["o'zorvella", "quorvex-nimbrax"]);
+  expect(
+    selected.every(
+      (term) => term.text.includes("-") || term.text.includes("'") || term.text.includes("’"),
+    ),
+  ).toBe(true);
+});
+
+test("grounded names retain supported hyphen typography as complete phrases", () => {
+  expect(terms("Rulthena‑Varell Orvenna", ["Rulthena‑Varell Orvenna"])).toContain(
+    "rulthena-varell orvenna",
+  );
+});
+
+test.each(["QuorvexNimbrax", "Quorvex‑Nimbrax", "\u{10400}".repeat(12)])(
+  "a lexical run crossing the input cap is omitted whole: %s",
+  (word) => {
+    const content = "Orvelion " + word;
+    const [result] = extractTranscriptionVocabulary(
+      [
+        authoredDocument({
+          title: "",
+          content,
+          people: [],
+        }),
+      ],
+      { ...settings, maxDocumentChars: 14 },
+    );
+    expect(result.terms.map((term) => term.text)).toEqual(["Orvelion"]);
+  },
+);
+
 test("authored spelling votes aggregate genuine occurrences across segments and deduplicate terms", () => {
   const [result] = extractTranscriptionVocabulary(
     [
       authoredDocument({
         selfAuthoredText: [
-          { text: "Velquorin; Velquorin", recordedAt: "2026-09-20T00:00:00.000Z" },
-          { text: "vElQuOrIn", recordedAt: "2026-09-25T00:00:00.000Z" },
+          {
+            origin: "written",
+            text: "Velquorin; Velquorin",
+            recordedAt: "2026-09-20T00:00:00.000Z",
+          },
+          { origin: "written", text: "vElQuOrIn", recordedAt: "2026-09-25T00:00:00.000Z" },
         ],
       }),
     ],
@@ -294,6 +404,7 @@ test("authored evidence obeys the same identifier and lexical safety and output 
             text:
               "Velquorin; Nexularis https://hiddenquorin.example.com hiddenquorin@example.com " +
               "Z".repeat(200),
+            origin: "written",
             recordedAt: "2026-09-25T00:00:00.000Z",
           },
         ],
@@ -314,7 +425,9 @@ test("ordinary French and English contractions never become recent authored voca
         title: "",
         content: prose,
         people: [],
-        selfAuthoredText: [{ text: prose, recordedAt: "2026-10-01T00:00:00.000Z" }],
+        selfAuthoredText: [
+          { origin: "written", text: prose, recordedAt: "2026-10-01T00:00:00.000Z" },
+        ],
       }),
     ],
     settings,
@@ -335,7 +448,9 @@ test("left-curly apostrophes preserve uncommon names while ordinary contractions
         title: "",
         content: prose,
         people: [],
-        selfAuthoredText: [{ text: prose, recordedAt: "2026-10-01T00:00:00.000Z" }],
+        selfAuthoredText: [
+          { origin: "written", text: prose, recordedAt: "2026-10-01T00:00:00.000Z" },
+        ],
       }),
     ],
     settings,

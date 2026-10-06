@@ -2,7 +2,31 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { expect, test } from "vitest";
-import { contextualVocabularyLift } from "./ranking.js";
+import {
+  authoredDecay,
+  contextualVocabularyLift,
+  vocabularyDiscrimination,
+  vocabularyEvidenceConfidence,
+} from "./ranking.js";
+
+test("distinctiveness cannot erase established recognition support", () => {
+  expect(vocabularyDiscrimination(1000000, 1)).toBeGreaterThan(0.5);
+  expect(vocabularyDiscrimination(2, 3)).toBeLessThan(1.5);
+  expect(vocabularyDiscrimination(2, 3) / vocabularyDiscrimination(1000000, 1)).toBeLessThan(3);
+  expect(vocabularyDiscrimination(100, 3, 0, 0)).toBe(1);
+  expect(vocabularyDiscrimination(100, 3, 1, 1)).toBeCloseTo(3 / (1 + Math.log1p(100)));
+});
+
+test("independent authored evidence builds confidence without an additive historical score", () => {
+  expect(vocabularyEvidenceConfidence(2)).toBeLessThan(vocabularyEvidenceConfidence(100));
+  expect(vocabularyEvidenceConfidence(100)).toBeLessThan(1);
+  expect(vocabularyEvidenceConfidence(2, 0)).toBe(1);
+  expect(vocabularyEvidenceConfidence(0)).toBe(0);
+  expect(vocabularyEvidenceConfidence(Number.NaN)).toBe(0);
+  const score = (anchor: string) =>
+    Math.log1p(100 * authoredDecay("2026-01-01", anchor)) * vocabularyEvidenceConfidence(100);
+  expect(score("2028-01-01")).toBeLessThan(score("2026-01-01") / 10);
+});
 
 test("the same term support is more distinctive in a small relationship profile", () => {
   const background = { globalOccurrences: 10, globalDocuments: 1000, profileOccurrences: 2 };

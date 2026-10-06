@@ -11974,6 +11974,16 @@
       "value": "Will Green",
       "paths": ["packages/gateway/src/transcribe/vocabulary/storage.test.ts"],
       "reason": "Invented name composed of frequent words for the grounded phrase regression."
+    },
+    {
+      "value": "Orvessa Talerin",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/balanced-ranking.test.ts"],
+      "reason": "Invented name for a deterministic contextual ranking regression."
+    },
+    {
+      "value": "Varell Orvenna",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented hyphenated-name fragment for Unicode typography extraction regression."
     }
   ],
   "secretFixtures": [

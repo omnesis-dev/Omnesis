@@ -102,6 +102,32 @@ describe("MessageStore (durable SQLite)", () => {
     expect(store.dirtyCount).toBe(0);
   });
 
+  it("replays earlier ASR-bearing projections once without stale cursor or media reset", () => {
+    store.addMessages([msg({ id: "written", timestamp: ts("2026-01-01"), fromMe: true })]);
+    const original = store.drain();
+    store.drain({ committedSeq: original.emitSeq });
+    store.close();
+    const db = new Database(join(dir, "store.db"));
+    const set = db.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)");
+    set.run("self_authored_text_normalization", "1");
+    set.run("self_authored_text_normalization_cursor", JSON.stringify(["zzz", "zzz"]));
+    set.run("self_authored_text_normalization_active", "1");
+    db.close();
+    store = new MessageStore(dir);
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(false);
+    const page = store.drain();
+    expect([...page.messagesByKey.values()].flat().map((message) => message.id)).toEqual([
+      "written",
+    ]);
+    store.recordSelfAuthoredTextNormalizationEmission(page.emitSeq, true);
+    store.reconcileSelfAuthoredTextNormalization(page.emitSeq, true);
+    store.drain({ committedSeq: page.emitSeq });
+    store.close();
+    store = new MessageStore(dir);
+    expect(store.enrollSelfAuthoredTextNormalization()).toBe(false);
+    expect(store.drain().messagesByKey.size).toBe(0);
+  });
+
   it("does not settle a completed enrollment while its dirty pages still exceed the drain budget", () => {
     store.addMessages(
       Array.from({ length: 201 }, (_, index) =>

@@ -193,7 +193,11 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
   // so `flushAll` can await it unconditionally.
   const reconciled = Promise.resolve()
     .then(() => {
-      for (const day of daysToReconcile(deps.readDb)) upserter.enqueue(day);
+      for (const day of daysToReconcile(
+        deps.readDb,
+        deps.isTranscriptionVocabularyEnabled?.() === true,
+      ))
+        upserter.enqueue(day);
     })
     .catch((err) => log.warn(`boot reconciliation threw: ${(err as Error).message ?? err}`));
 
@@ -309,7 +313,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
  * projected document, plus projected documents whose ledger days are
  * empty. Both converge through one `runUpsert` per day.
  */
-function daysToReconcile(db: Database.Database): string[] {
+function daysToReconcile(db: Database.Database, vocabularyEnabled = false): string[] {
   const unprojected = db
     .prepare<[string, string], { day: string }>(
       `SELECT DISTINCT day FROM note_entries
@@ -325,5 +329,18 @@ function daysToReconcile(db: Database.Database): string[] {
          AND external_id NOT IN (SELECT DISTINCT day FROM note_entries)`,
     )
     .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID);
-  return [...unprojected, ...stale].map((row) => row.day);
+  // Source-owned metadata-only enrollment: old day projections had no safe
+  // written-text view. Persist it once through the normal acknowledged write
+  // path; failed writes remain eligible at the next boot. Enabling mid-run
+  // updates newly changed days immediately and historical days at next boot.
+  const unmarked = vocabularyEnabled
+    ? db
+        .prepare<[string, string], { day: string }>(
+          `SELECT external_id AS day FROM documents
+         WHERE provider_id = ? AND source_id = ?
+           AND json_extract(metadata, '$.vocabularyText') IS NULL`,
+        )
+        .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID)
+    : [];
+  return [...new Set([...unprojected, ...stale, ...unmarked].map((row) => row.day))];
 }

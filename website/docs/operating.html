@@ -633,25 +633,34 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>inference.transcriptionVocabulary.authoredWeight</code>; setting it to
           <code>0</code> removes this bonus. Authored evidence uses original message or capture
           dates and decays with a 90-day half-life, so editing or reindexing an old document does
-          not make its wording recent. WhatsApp and iMessage supply your own message text and voice
-          transcripts. Gmail supplies conservative unquoted plain-text prefixes of sent messages
-          whose sender matches the account. Tell Omnesis supplies your own entries, excluding agent
-          captures and retained webpage content. Unsupported or uncertain authorship supplies no
-          bonus. Contextual terms are compared with their prevalence across the corpus, with
-          smoothing to avoid exaggerating evidence from sparse conversations. Automated and
-          bulk-distributed evidence receives a lower weight until ordinary documents independently
-          corroborate the same term, configurable through
-          <code>machineEvidenceWeight</code> (default <code>0.15</code>);
+          not make its wording recent. WhatsApp and iMessage supply your own written message text
+          and captions. Marked voice transcripts do not reinforce their own recognition errors.
+          Legacy evidence without a known written origin supplies no authored bonus. Gmail supplies
+          conservative unquoted plain-text prefixes of sent messages whose sender matches the
+          account. Tell Omnesis supplies your own entries, excluding agent captures and retained
+          webpage content. Unsupported or uncertain authorship supplies no bonus. Contextual terms
+          are compared with their prevalence across the corpus, with smoothing to avoid exaggerating
+          evidence from sparse conversations. Automated and bulk-distributed evidence receives a
+          lower weight until ordinary documents independently corroborate the same term,
+          configurable through <code>machineEvidenceWeight</code> (default <code>0.15</code>);
           <code>contextPriorDocuments</code> controls contextual smoothing strength (default
-          <code>10</code>). Both settings live under <code>inference.transcriptionVocabulary</code>.
-          These defaults are initial calibration choices; they do not establish improved speech
-          accuracy for every corpus. Existing WhatsApp archives are reprojected in bounded pages
-          without resetting media; historical Gmail and iMessage evidence is not automatically
-          replayed. Structurally marked metadata, Markdown block quotes and fenced code blocks are
-          excluded, and structured OCR layouts contribute their readable text. Learned terms need at
-          least two distinct supporting documents. Repetition within one document does not count as
-          corroboration, although copies stored as separate documents can still count. Configured
-          and contact-curated names for the current people supply separate identity hints. Linking a
+          <code>10</code>). Global rarity and contextual lift refine support without crowding out
+          established vocabulary; <code>rarityWeight</code> defaults to <code>0.5</code> and
+          <code>contextLiftWeight</code> to <code>0.25</code>. Both accept values from
+          <code>0</code> (ignore that discriminator) to <code>1</code> (full strength). These
+          settings live under <code>inference.transcriptionVocabulary</code>. These defaults are
+          initial calibration choices; they do not establish improved speech accuracy for every
+          corpus. Existing WhatsApp archives are reprojected in bounded pages without resetting
+          media; historical Gmail and iMessage evidence is not automatically replayed. Historical
+          Tell Omnesis written projections are refreshed at gateway startup when enabled; untouched
+          transcripts are excluded, while later manual edits may contribute. Common compounds,
+          structural chat noise and low-confidence near-common spellings receive filtering or
+          reduced weight, with safeguards for names and acronyms. Structurally marked metadata,
+          transcripts, Markdown block quotes and fenced code blocks are excluded, and structured OCR
+          layouts contribute their readable text. Learned terms need at least two distinct
+          supporting documents. Repetition within one document does not count as corroboration,
+          although copies stored as separate documents can still count. Configured and
+          contact-curated names for the current people supply separate identity hints. Linking a
           person to a document does not itself count as an occurrence of their name. Vocabulary
           builds in bounded background batches; transcription does not wait for a full build. When
           an extraction update requires a rebuild, the gateway temporarily supplies no hints while

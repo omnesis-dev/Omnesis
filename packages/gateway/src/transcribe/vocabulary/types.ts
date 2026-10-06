@@ -8,6 +8,8 @@ export interface VocabularySettings {
   authoredWeight?: number;
   machineEvidenceWeight?: number;
   contextPriorDocuments?: number;
+  rarityWeight?: number;
+  contextLiftWeight?: number;
   maxTerms: number;
   maxPromptTokens: number;
   batchSize: number;
@@ -31,6 +33,8 @@ export interface VocabularyDocument {
   generation: number;
   title: string;
   content: string;
+  /** Optional source-owned written projection; empty excludes transcribed content. */
+  vocabularyText?: string;
   sourceId: string;
   threadId: string | null;
   recordedAt: string;

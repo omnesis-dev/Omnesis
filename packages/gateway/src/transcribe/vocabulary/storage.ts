@@ -5,9 +5,14 @@ import { normalizeEmail } from "@omnesis/core";
 import { boundedSelfAuthoredText, type SelfAuthoredTextSegment } from "@omnesis/types";
 import { createVoiceNoteTables } from "../../voice-notes/storage.js";
 import { findPersonByAlias } from "../../data/repositories/PersonRepository.js";
-import { contextualVocabularyLift, authoredDecay } from "./ranking.js";
+import {
+  contextualVocabularyLift,
+  authoredDecay,
+  vocabularyEvidenceConfidence,
+  vocabularyDiscrimination,
+} from "./ranking.js";
 import { ordinaryEvidenceQuality } from "./evidence-quality.js";
-import { isCommonVocabularyWord } from "./common-words.js";
+import { isCommonVocabularyWord, normalizeVocabularyTerm } from "./common-words.js";
 import { contextualVocabularyNames } from "./identity.js";
 import {
   createTranscriptionVocabularyState,
@@ -135,8 +140,12 @@ export function fetchTranscriptionVocabularyBatch(
   if (generation === null) return [];
   const rows = db
     .prepare(
-      `SELECT id, content_hash, updated_at, vocabulary_revision, substr(title,1,256) AS title,
+      `SELECT id, content_hash, updated_at, vocabulary_revision, substr(title,1,258) AS title,
     substr(content,1,?) AS content, source_id, source_created_at,
+    CASE WHEN json_type(metadata,'$.extra.transcribed')='true' THEN ''
+      WHEN json_type(metadata,'$.vocabularyText')='text'
+      THEN substr(json_extract(metadata,'$.vocabularyText'),1,65538)
+      ELSE NULL END AS vocabulary_text,
     substr(json_extract(metadata,'$.selfAuthoredText'),1,131072) AS self_authored_text,
     (json_type(metadata,'$.bulkMail')='true' OR json_type(metadata,'$.automatedSender')='true') AS automated_evidence,
     substr(COALESCE(json_extract(metadata,'$.extra.conversationId'),json_extract(metadata,'$.extra.threadId')),1,1024) AS thread_id
@@ -144,13 +153,17 @@ export function fetchTranscriptionVocabularyBatch(
     WHERE vocabulary_processed_at IS NULL AND people_resolved_at IS NOT NULL
     ORDER BY id LIMIT ?`,
     )
-    .all(Math.min(settings.maxDocumentChars, 65536), Math.min(settings.batchSize, 16)) as Array<{
+    .all(
+      Math.min(settings.maxDocumentChars, 65536) + 2,
+      Math.min(settings.batchSize, 16),
+    ) as Array<{
     id: string;
     content_hash: string;
     updated_at: string;
     vocabulary_revision: number;
     title: string;
     content: string;
+    vocabulary_text: string | null;
     source_id: string;
     source_created_at: string;
     thread_id: string | null;
@@ -174,6 +187,7 @@ export function fetchTranscriptionVocabularyBatch(
     generation,
     title: row.title,
     content: row.content,
+    ...(row.vocabulary_text !== null ? { vocabularyText: row.vocabulary_text } : {}),
     sourceId: row.source_id,
     threadId: row.thread_id,
     recordedAt: row.source_created_at,
@@ -193,15 +207,16 @@ function parseAuthoredEvidence(payload: string | null): SelfAuthoredTextSegment[
     if (!Array.isArray(value)) return [];
     return boundedSelfAuthoredText(
       value
-        .slice(0, 128)
         .filter((segment): segment is SelfAuthoredTextSegment =>
           Boolean(
             segment &&
+            segment.origin === "written" &&
             typeof segment.text === "string" &&
             typeof segment.recordedAt === "string" &&
             Number.isFinite(Date.parse(segment.recordedAt)),
           ),
-        ),
+        )
+        .slice(0, 128),
     );
   } catch {
     return [];
@@ -379,14 +394,19 @@ export function getTranscriptionVocabulary(
       const ageDays = Math.max(0, (anchor - Date.parse(row.last_seen)) / 86400000);
       // Ordinary profiles retain a bounded last-seen recency factor.
       const recency = Number.isFinite(ageDays) ? 0.5 + 0.5 * Math.exp(-ageDays / 180) : 0.5;
-      const rarity = 1 / (1 + Math.log1p(total));
       // Authored support decays each original contribution with a 90-day
       // half-life; received material cannot refresh this separate profile.
+      const authoredMass =
+        profile.kind === "self"
+          ? row.recent_mass * authoredDecay(row.last_seen, new Date(anchor).toISOString())
+          : 0;
       const support =
         profile.kind === "self"
           ? row.benefit *
-            Math.log1p(
-              row.recent_mass * authoredDecay(row.last_seen, new Date(anchor).toISOString()),
+            Math.log1p(authoredMass) *
+            vocabularyEvidenceConfidence(
+              Math.min(row.document_count, authoredMass),
+              settings.contextPriorDocuments ?? 10,
             )
           : row.base_score * recency;
       const quality =
@@ -398,7 +418,16 @@ export function getTranscriptionVocabulary(
               settings.machineEvidenceWeight ?? 0.15,
             );
       if (quality === 0) continue;
-      const score = support * profile.weight * specificity * rarity * quality;
+      const score =
+        support *
+        profile.weight *
+        vocabularyDiscrimination(
+          total,
+          specificity,
+          settings.rarityWeight ?? 0.5,
+          settings.contextLiftWeight ?? 0.25,
+        ) *
+        quality;
       const prior = selected.get(row.term);
       const priorSpelling = spellingEvidence.get(row.term);
       const useSpelling =
@@ -429,7 +458,7 @@ export function getTranscriptionVocabulary(
   const identityScore =
     Math.max(0, ...[...selected.values()].map((term) => term.score).filter(Number.isFinite)) + 1;
   for (const [index, text] of identityNames.entries()) {
-    const term = text.normalize("NFC").toLocaleLowerCase("und");
+    const term = normalizeVocabularyTerm(text);
     selected.set(term, { text, score: identityScore + 1 / (index + 1) });
   }
   return {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { commonVocabularySpellingConfidence } from "./common-words.js";
+
 /** Counts within one document choose a spelling; they never corroborate a term. */
 export interface VocabularySpellingObservation {
   text: string;
@@ -43,4 +45,11 @@ export function selectVocabularySpelling(
     )
       selected = variant;
   return selected;
+}
+
+/** Grounded names and deliberate mixed-case/acronym spellings keep full trust. */
+export function vocabularySpellingConfidence(text: string, grounded = false): number {
+  if (grounded || hasMixedVocabularyCase(text) || (/\p{Lu}/u.test(text) && !/\p{Ll}/u.test(text)))
+    return 1;
+  return commonVocabularySpellingConfidence(text);
 }

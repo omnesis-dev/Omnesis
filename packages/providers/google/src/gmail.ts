@@ -878,7 +878,7 @@ export class GmailSource {
         senderEmail?.toLowerCase() === this.accountEmail.toLowerCase()
           ? {
               selfAuthoredText: boundedSelfAuthoredText([
-                { text: selfAuthoredMailText(parts), recordedAt: sourceDate },
+                { text: selfAuthoredMailText(parts), recordedAt: sourceDate, origin: "written" },
               ]),
             }
           : {}),
