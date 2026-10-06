@@ -1,1 +1,4 @@
 scripts/pii-scan.mjs text diff
+
+# Generated PDF objects retain byte offsets and are reviewed as binary assets.
+evals/universes/sacha-bellamy/assets/*.pdf binary

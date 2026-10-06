@@ -31,10 +31,12 @@ export default defineConfig({
     // under vitest from scripts/.
     include: [
       "evals/briefs/src/**/*.test.ts",
+      "evals/universes/**/_build/*.test.mjs",
       "extension/src/**/*.test.ts",
       "extension/scripts/**/*.test.mjs",
       "packages/**/*.test.ts",
       "skills/**/*.test.ts",
+      "scripts/demo-host/**/*.test.ts",
       "scripts/release/**/*.test.mjs",
       "scripts/install-e2e/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",

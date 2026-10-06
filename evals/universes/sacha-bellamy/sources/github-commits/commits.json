@@ -1,0 +1,4065 @@
+{
+  "repo": "fictional-sacha/hobby-catalogue",
+  "commits": [
+    {
+      "sha": "9615a87cfede3796b693891efac2142e902c41b0",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/9615a87cfede3796b693891efac2142e902c41b0",
+      "commit": {
+        "message": "Add storage category for sourdough\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-01-01T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-01-01T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 5, "deletions": 0, "total": 5 },
+      "files": [
+        {
+          "filename": "catalogue/category-0.json",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "636bb0d72d52dafbba1410e5c03daa71dc800e2b",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/636bb0d72d52dafbba1410e5c03daa71dc800e2b",
+      "commit": {
+        "message": "Add storage category for balcony herbs\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-01-16T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-01-16T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 6, "deletions": 1, "total": 7 },
+      "files": [
+        {
+          "filename": "catalogue/category-1.json",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "3ab71673a47496a268d668c881530471ca76ec0e",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/3ab71673a47496a268d668c881530471ca76ec0e",
+      "commit": {
+        "message": "Add storage category for board games\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-01-31T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-01-31T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 7, "deletions": 2, "total": 9 },
+      "files": [
+        {
+          "filename": "catalogue/category-2.json",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "d4d683f93efccac1dec1fbdbaaf9fb9f5ec7ce87",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/d4d683f93efccac1dec1fbdbaaf9fb9f5ec7ce87",
+      "commit": {
+        "message": "Add storage category for film photography\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-02-15T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-02-15T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 8, "deletions": 3, "total": 11 },
+      "files": [
+        {
+          "filename": "catalogue/category-3.json",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "6e88499cf1a096389d46dabc9fefd1ddd3b3a0c8",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/6e88499cf1a096389d46dabc9fefd1ddd3b3a0c8",
+      "commit": {
+        "message": "Add storage category for bicycle care\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-03-02T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-03-02T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 9, "deletions": 4, "total": 13 },
+      "files": [
+        {
+          "filename": "catalogue/category-4.json",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "4f8c600f29e711dd05710fad573af108f12fb57a",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/4f8c600f29e711dd05710fad573af108f12fb57a",
+      "commit": {
+        "message": "Add storage category for pasta night\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-03-17T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-03-17T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 10, "deletions": 0, "total": 10 },
+      "files": [
+        {
+          "filename": "catalogue/category-5.json",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "8cdc1d8f83b934e4064c92ab8dcd9119d8e66486",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/8cdc1d8f83b934e4064c92ab8dcd9119d8e66486",
+      "commit": {
+        "message": "Add storage category for jigsaw swap\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-04-01T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-04-01T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 11, "deletions": 1, "total": 12 },
+      "files": [
+        {
+          "filename": "catalogue/category-6.json",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "90ad86fa49287b7d601571cd56c584431a8c71b1",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/90ad86fa49287b7d601571cd56c584431a8c71b1",
+      "commit": {
+        "message": "Add storage category for bird spotting\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-04-16T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-04-16T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 12, "deletions": 2, "total": 14 },
+      "files": [
+        {
+          "filename": "catalogue/category-7.json",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "0e79b0fa1767bcd93f775c1b7c34db853b74ec63",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/0e79b0fa1767bcd93f775c1b7c34db853b74ec63",
+      "commit": {
+        "message": "Add storage category for language practice\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-05-01T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-05-01T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 13, "deletions": 3, "total": 16 },
+      "files": [
+        {
+          "filename": "catalogue/category-8.json",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "f5218b11f2b5ae44026b2af5f2b4b5ba13a79dc7",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/f5218b11f2b5ae44026b2af5f2b4b5ba13a79dc7",
+      "commit": {
+        "message": "Add storage category for coffee brewing\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-05-16T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-05-16T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 14, "deletions": 4, "total": 18 },
+      "files": [
+        {
+          "filename": "catalogue/category-9.json",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "6e6687047ac5be8e245427e84db3e15b465cc83b",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/6e6687047ac5be8e245427e84db3e15b465cc83b",
+      "commit": {
+        "message": "Add storage category for picnic lunches\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-06-01T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-06-01T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 15, "deletions": 0, "total": 15 },
+      "files": [
+        {
+          "filename": "catalogue/category-10.json",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "cd3678d3b1dd762a4d14e4c09528b964a1d686f0",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/cd3678d3b1dd762a4d14e4c09528b964a1d686f0",
+      "commit": {
+        "message": "Add storage category for chess puzzles\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-06-16T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-06-16T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 16, "deletions": 1, "total": 17 },
+      "files": [
+        {
+          "filename": "catalogue/category-11.json",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "8c8328b26183b054d2f5fa3a1ac626311263c244",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/8c8328b26183b054d2f5fa3a1ac626311263c244",
+      "commit": {
+        "message": "Add storage category for houseplants\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-07-01T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-07-01T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 17, "deletions": 2, "total": 19 },
+      "files": [
+        {
+          "filename": "catalogue/category-12.json",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "3c82a046380ba0da0a8a8d80413ef55eecc8492a",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/3c82a046380ba0da0a8a8d80413ef55eecc8492a",
+      "commit": {
+        "message": "Add storage category for bread baking\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-07-16T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-07-16T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 18, "deletions": 3, "total": 21 },
+      "files": [
+        {
+          "filename": "catalogue/category-13.json",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "8664f91dc3eaa734a77aca2d732e7066e9b74434",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/8664f91dc3eaa734a77aca2d732e7066e9b74434",
+      "commit": {
+        "message": "Add storage category for knitting circle\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-07-31T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-07-31T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 19, "deletions": 4, "total": 23 },
+      "files": [
+        {
+          "filename": "catalogue/category-14.json",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "e149062a6f406472535bcb397998b10156e9aa21",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/e149062a6f406472535bcb397998b10156e9aa21",
+      "commit": {
+        "message": "Add storage category for local history\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-08-15T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-08-15T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 20, "deletions": 0, "total": 20 },
+      "files": [
+        {
+          "filename": "catalogue/category-15.json",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "f6ef4974bb7812e0ece60414ae2fc61bf062c511",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/f6ef4974bb7812e0ece60414ae2fc61bf062c511",
+      "commit": {
+        "message": "Add storage category for repair cafe\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-08-30T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-08-30T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 21, "deletions": 1, "total": 22 },
+      "files": [
+        {
+          "filename": "catalogue/category-16.json",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "944e02968f333c49289f17c5598af2ce3abe0149",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/944e02968f333c49289f17c5598af2ce3abe0149",
+      "commit": {
+        "message": "Add storage category for bouldering basics\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-09-14T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-09-14T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 22, "deletions": 2, "total": 24 },
+      "files": [
+        {
+          "filename": "catalogue/category-17.json",
+          "status": "modified",
+          "additions": 22,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a4c919d9c297e3f39565e317ed6d7ccbe0de0291",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a4c919d9c297e3f39565e317ed6d7ccbe0de0291",
+      "commit": {
+        "message": "Add storage category for quiz night\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-09-29T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-09-29T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 23, "deletions": 3, "total": 26 },
+      "files": [
+        {
+          "filename": "catalogue/category-18.json",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "028f45e85e6cc164e62a1cb43c6b5a4566860b63",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/028f45e85e6cc164e62a1cb43c6b5a4566860b63",
+      "commit": {
+        "message": "Add storage category for drawing practice\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-10-15T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-10-15T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 24, "deletions": 4, "total": 28 },
+      "files": [
+        {
+          "filename": "catalogue/category-19.json",
+          "status": "modified",
+          "additions": 24,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "fcd3f35e488fb77909788ab8486b9d729e4e76c1",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/fcd3f35e488fb77909788ab8486b9d729e4e76c1",
+      "commit": {
+        "message": "Add storage category for secondhand books\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-10-30T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-10-30T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 25, "deletions": 0, "total": 25 },
+      "files": [
+        {
+          "filename": "catalogue/category-20.json",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "e92497e2f5d9b750fc2964201b783f9591cd779b",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/e92497e2f5d9b750fc2964201b783f9591cd779b",
+      "commit": {
+        "message": "Add storage category for batch cooking\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-11-14T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-11-14T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 5, "deletions": 1, "total": 6 },
+      "files": [
+        {
+          "filename": "catalogue/category-21.json",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "377caacb09f4e8410afd765b7fb7dbbf7ab3c55c",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/377caacb09f4e8410afd765b7fb7dbbf7ab3c55c",
+      "commit": {
+        "message": "Add storage category for sewing repairs\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-11-29T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-11-29T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 6, "deletions": 2, "total": 8 },
+      "files": [
+        {
+          "filename": "catalogue/category-22.json",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "70d4b41f56ac2a92b929592c164accb00c443d26",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/70d4b41f56ac2a92b929592c164accb00c443d26",
+      "commit": {
+        "message": "Add storage category for museum sketches\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-12-14T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-12-14T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 7, "deletions": 3, "total": 10 },
+      "files": [
+        {
+          "filename": "catalogue/category-23.json",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "30d937621bdc413ba08f3b9b2b516565df46a6f7",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/30d937621bdc413ba08f3b9b2b516565df46a6f7",
+      "commit": {
+        "message": "Add storage category for window cleaning\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-12-29T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2021-12-29T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 8, "deletions": 4, "total": 12 },
+      "files": [
+        {
+          "filename": "catalogue/category-24.json",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "bfce03aac76a0c6d3b1876ce86103530c5025c94",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/bfce03aac76a0c6d3b1876ce86103530c5025c94",
+      "commit": {
+        "message": "Add storage category for puzzle evenings\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-01-13T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-01-13T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 9, "deletions": 0, "total": 9 },
+      "files": [
+        {
+          "filename": "catalogue/category-25.json",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "98007a46ac44687634a570202c17ba0c4bfe9d50",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/98007a46ac44687634a570202c17ba0c4bfe9d50",
+      "commit": {
+        "message": "Add storage category for community gardening\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-01-28T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-01-28T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 10, "deletions": 1, "total": 11 },
+      "files": [
+        {
+          "filename": "catalogue/category-26.json",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "ba4f4f53e2705b9f9cd0529da6990344ad68b880",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/ba4f4f53e2705b9f9cd0529da6990344ad68b880",
+      "commit": {
+        "message": "Add storage category for music listening\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-02-12T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-02-12T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 11, "deletions": 2, "total": 13 },
+      "files": [
+        {
+          "filename": "catalogue/category-27.json",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "c751135de49a953a243843531b776499ce771314",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/c751135de49a953a243843531b776499ce771314",
+      "commit": {
+        "message": "Add storage category for badminton\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-02-28T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-02-28T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 12, "deletions": 3, "total": 15 },
+      "files": [
+        {
+          "filename": "catalogue/category-28.json",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "5f2edce890183da5007aeb4b1997b1c283c61b60",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/5f2edce890183da5007aeb4b1997b1c283c61b60",
+      "commit": {
+        "message": "Add storage category for paper folding\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-03-15T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-03-15T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 13, "deletions": 4, "total": 17 },
+      "files": [
+        {
+          "filename": "catalogue/category-29.json",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "f072079acd6f2576164694652b00cc029cb868e1",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/f072079acd6f2576164694652b00cc029cb868e1",
+      "commit": {
+        "message": "Add storage category for spice cupboard\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-03-30T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-03-30T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 14, "deletions": 0, "total": 14 },
+      "files": [
+        {
+          "filename": "catalogue/category-30.json",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "6f13d0008ca5dbf64471ba262d913eb094c6a240",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/6f13d0008ca5dbf64471ba262d913eb094c6a240",
+      "commit": {
+        "message": "Add storage category for walk planning\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-04-14T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-04-14T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 15, "deletions": 1, "total": 16 },
+      "files": [
+        {
+          "filename": "catalogue/category-31.json",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "f8cc07896a4382742d24d641767a91417cc5d658",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/f8cc07896a4382742d24d641767a91417cc5d658",
+      "commit": {
+        "message": "Add storage category for home shelving\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-04-29T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-04-29T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 16, "deletions": 2, "total": 18 },
+      "files": [
+        {
+          "filename": "catalogue/category-32.json",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "82acc1e8ad04f00254b51e844ad2eb4418802d79",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/82acc1e8ad04f00254b51e844ad2eb4418802d79",
+      "commit": {
+        "message": "Add storage category for card making\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-05-14T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-05-14T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 17, "deletions": 3, "total": 20 },
+      "files": [
+        {
+          "filename": "catalogue/category-33.json",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "f62219468f683f5cb41bbca96df40bed221e81f6",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/f62219468f683f5cb41bbca96df40bed221e81f6",
+      "commit": {
+        "message": "Add storage category for table tennis\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-05-29T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-05-29T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 18, "deletions": 4, "total": 22 },
+      "files": [
+        {
+          "filename": "catalogue/category-34.json",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "05cab81971cd8ac268509d90570eb7956aae5e52",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/05cab81971cd8ac268509d90570eb7956aae5e52",
+      "commit": {
+        "message": "Add storage category for soup experiments\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-06-13T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-06-13T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 19, "deletions": 0, "total": 19 },
+      "files": [
+        {
+          "filename": "catalogue/category-35.json",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "33d148c2a5b9f7a8d71418557d6dfb5df50b24f1",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/33d148c2a5b9f7a8d71418557d6dfb5df50b24f1",
+      "commit": {
+        "message": "Add storage category for seed saving\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-06-28T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-06-28T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 20, "deletions": 1, "total": 21 },
+      "files": [
+        {
+          "filename": "catalogue/category-36.json",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a89ef9ea0557137232d0a8ab8bca6dcfc7464c2f",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a89ef9ea0557137232d0a8ab8bca6dcfc7464c2f",
+      "commit": {
+        "message": "Add storage category for reusable containers\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-07-13T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-07-13T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 21, "deletions": 2, "total": 23 },
+      "files": [
+        {
+          "filename": "catalogue/category-37.json",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a28d03d472553d09e94d81494970ae935c2648a7",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a28d03d472553d09e94d81494970ae935c2648a7",
+      "commit": {
+        "message": "Add storage category for short stories\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-07-29T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-07-29T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 22, "deletions": 3, "total": 25 },
+      "files": [
+        {
+          "filename": "catalogue/category-38.json",
+          "status": "modified",
+          "additions": 22,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "3853f91f85f393c7a52e81913e773e2c3ded9a4f",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/3853f91f85f393c7a52e81913e773e2c3ded9a4f",
+      "commit": {
+        "message": "Add storage category for model building\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-08-13T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-08-13T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 23, "deletions": 4, "total": 27 },
+      "files": [
+        {
+          "filename": "catalogue/category-39.json",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "8d46b73e0ea57fd09a47d1c3fa2c84ecb6cde22d",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/8d46b73e0ea57fd09a47d1c3fa2c84ecb6cde22d",
+      "commit": {
+        "message": "Add storage category for grocery lists\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-08-28T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-08-28T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 24, "deletions": 0, "total": 24 },
+      "files": [
+        {
+          "filename": "catalogue/category-0.json",
+          "status": "modified",
+          "additions": 24,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "be9fb2e1f60ca4ae52a156085c9b550e585d2327",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/be9fb2e1f60ca4ae52a156085c9b550e585d2327",
+      "commit": {
+        "message": "Add storage category for parcel collection\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-09-12T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-09-12T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 25, "deletions": 1, "total": 26 },
+      "files": [
+        {
+          "filename": "catalogue/category-1.json",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "16a7fe57f9547232f4726a28fde5e57c89147acd",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/16a7fe57f9547232f4726a28fde5e57c89147acd",
+      "commit": {
+        "message": "Add storage category for laundry sorting\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-09-27T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-09-27T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 5, "deletions": 2, "total": 7 },
+      "files": [
+        {
+          "filename": "catalogue/category-2.json",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "e6f623469443ee5e364e2b4ccf93f80d8548d5f2",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/e6f623469443ee5e364e2b4ccf93f80d8548d5f2",
+      "commit": {
+        "message": "Add storage category for family video calls\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-10-12T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-10-12T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 6, "deletions": 3, "total": 9 },
+      "files": [
+        {
+          "filename": "catalogue/category-3.json",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "65c1151c858cee61b211f2d1a15fc24dfbf002ba",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/65c1151c858cee61b211f2d1a15fc24dfbf002ba",
+      "commit": {
+        "message": "Add storage category for weekly groceries\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-10-27T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-10-27T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 7, "deletions": 4, "total": 11 },
+      "files": [
+        {
+          "filename": "catalogue/category-4.json",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "89b02ba04e7dab73bab42970c37417fe5c8186ea",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/89b02ba04e7dab73bab42970c37417fe5c8186ea",
+      "commit": {
+        "message": "Add storage category for recycling rota\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-11-11T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-11-11T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 8, "deletions": 0, "total": 8 },
+      "files": [
+        {
+          "filename": "catalogue/category-5.json",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "56433247ada2b4b841f78ce0e273f927446e0c8a",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/56433247ada2b4b841f78ce0e273f927446e0c8a",
+      "commit": {
+        "message": "Add storage category for work lunch rota\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-11-26T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-11-26T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 9, "deletions": 1, "total": 10 },
+      "files": [
+        {
+          "filename": "catalogue/category-6.json",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "795e63d1386bf1ef43f36d0f0cb563a15e2d6b2c",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/795e63d1386bf1ef43f36d0f0cb563a15e2d6b2c",
+      "commit": {
+        "message": "Add storage category for desk ergonomics\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-12-12T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-12-12T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 10, "deletions": 2, "total": 12 },
+      "files": [
+        {
+          "filename": "catalogue/category-7.json",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "40957a0ae722bdd7b914609f2f80adf98ae8fee8",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/40957a0ae722bdd7b914609f2f80adf98ae8fee8",
+      "commit": {
+        "message": "Add storage category for team documentation\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-12-27T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2022-12-27T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 11, "deletions": 3, "total": 14 },
+      "files": [
+        {
+          "filename": "catalogue/category-8.json",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a757d0d66535964636e62c348fb8c22fbcf6ef81",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a757d0d66535964636e62c348fb8c22fbcf6ef81",
+      "commit": {
+        "message": "Add storage category for book club reminders\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-01-11T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-01-11T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 12, "deletions": 4, "total": 16 },
+      "files": [
+        {
+          "filename": "catalogue/category-9.json",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a7cf6f3a9415f9d165833cfb445722865283e004",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a7cf6f3a9415f9d165833cfb445722865283e004",
+      "commit": {
+        "message": "Add storage category for umbrella repair\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-01-26T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-01-26T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 13, "deletions": 0, "total": 13 },
+      "files": [
+        {
+          "filename": "catalogue/category-10.json",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a50409f3b04450054beaf00b6373c083d2694dbb",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a50409f3b04450054beaf00b6373c083d2694dbb",
+      "commit": {
+        "message": "Add storage category for linen cupboard\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-02-10T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-02-10T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 14, "deletions": 1, "total": 15 },
+      "files": [
+        {
+          "filename": "catalogue/category-11.json",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "1b8ad44ee0b22699291deda6d4053abbf3342612",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/1b8ad44ee0b22699291deda6d4053abbf3342612",
+      "commit": {
+        "message": "Add storage category for neighbour noticeboard\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-02-25T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-02-25T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 15, "deletions": 2, "total": 17 },
+      "files": [
+        {
+          "filename": "catalogue/category-12.json",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "24da5ed91f04970e2652a949c7675b31739ee26b",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/24da5ed91f04970e2652a949c7675b31739ee26b",
+      "commit": {
+        "message": "Add storage category for shared courtyard\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-03-12T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-03-12T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 16, "deletions": 3, "total": 19 },
+      "files": [
+        {
+          "filename": "catalogue/category-13.json",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "4b58a8636a3fa5f0f033c8f77fe9e13bc99aa62c",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/4b58a8636a3fa5f0f033c8f77fe9e13bc99aa62c",
+      "commit": {
+        "message": "Add storage category for laptop backups\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-03-27T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-03-27T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 17, "deletions": 4, "total": 21 },
+      "files": [
+        {
+          "filename": "catalogue/category-14.json",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "73bdc9ff4cef83d269d05153eb07b36f715eda50",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/73bdc9ff4cef83d269d05153eb07b36f715eda50",
+      "commit": {
+        "message": "Add storage category for train reading\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-04-11T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-04-11T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 18, "deletions": 0, "total": 18 },
+      "files": [
+        {
+          "filename": "catalogue/category-15.json",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "f61ebb65d8993fbd48d79a07ea996fcd4394794b",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/f61ebb65d8993fbd48d79a07ea996fcd4394794b",
+      "commit": {
+        "message": "Add storage category for lost scarf\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-04-27T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-04-27T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 19, "deletions": 1, "total": 20 },
+      "files": [
+        {
+          "filename": "catalogue/category-16.json",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "40f4f271990a0c0ba1cb7f30e024db82d8de5171",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/40f4f271990a0c0ba1cb7f30e024db82d8de5171",
+      "commit": {
+        "message": "Add storage category for potluck arrangements\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-05-12T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-05-12T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 20, "deletions": 2, "total": 22 },
+      "files": [
+        {
+          "filename": "catalogue/category-17.json",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a97856183aa4420617e716da0977d62339d44232",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a97856183aa4420617e716da0977d62339d44232",
+      "commit": {
+        "message": "Add storage category for plant watering rota\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-05-27T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-05-27T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 21, "deletions": 3, "total": 24 },
+      "files": [
+        {
+          "filename": "catalogue/category-18.json",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "2804b02d6134cd980e94e0a2bb30b09a72640f37",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/2804b02d6134cd980e94e0a2bb30b09a72640f37",
+      "commit": {
+        "message": "Add storage category for meeting room setup\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-06-11T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-06-11T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 22, "deletions": 4, "total": 26 },
+      "files": [
+        {
+          "filename": "catalogue/category-19.json",
+          "status": "modified",
+          "additions": 22,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "e40355722c593435cb0df7d58825dff2b44437e1",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/e40355722c593435cb0df7d58825dff2b44437e1",
+      "commit": {
+        "message": "Add storage category for market vegetables\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-06-26T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-06-26T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 23, "deletions": 0, "total": 23 },
+      "files": [
+        {
+          "filename": "catalogue/category-20.json",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "55ae30e19c56e3b708da6ba3b45ea24bf7781036",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/55ae30e19c56e3b708da6ba3b45ea24bf7781036",
+      "commit": {
+        "message": "Add storage category for spare keys\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-07-11T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-07-11T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 24, "deletions": 1, "total": 25 },
+      "files": [
+        {
+          "filename": "catalogue/category-21.json",
+          "status": "modified",
+          "additions": 24,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "3e29877d0a90777ed0468fd425a05df1f6450e68",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/3e29877d0a90777ed0468fd425a05df1f6450e68",
+      "commit": {
+        "message": "Add storage category for saturday errands\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-07-26T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-07-26T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 25, "deletions": 2, "total": 27 },
+      "files": [
+        {
+          "filename": "catalogue/category-22.json",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "236390784e1d8703adb7c4c25bf827dc140530f9",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/236390784e1d8703adb7c4c25bf827dc140530f9",
+      "commit": {
+        "message": "Add storage category for handwritten letters\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-08-10T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-08-10T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 5, "deletions": 3, "total": 8 },
+      "files": [
+        {
+          "filename": "catalogue/category-23.json",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "c6525feac9715f7a6b3830a84dc959eeb0d85d25",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/c6525feac9715f7a6b3830a84dc959eeb0d85d25",
+      "commit": {
+        "message": "Add storage category for sourdough\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-08-25T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-08-25T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 6, "deletions": 4, "total": 10 },
+      "files": [
+        {
+          "filename": "catalogue/category-24.json",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "c3571a83e7564df0e2249bf3e22410a271ff930c",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/c3571a83e7564df0e2249bf3e22410a271ff930c",
+      "commit": {
+        "message": "Add storage category for balcony herbs\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-09-10T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-09-10T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 7, "deletions": 0, "total": 7 },
+      "files": [
+        {
+          "filename": "catalogue/category-25.json",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "06c30a52b22b302bbdc9e9061bde805949ef817d",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/06c30a52b22b302bbdc9e9061bde805949ef817d",
+      "commit": {
+        "message": "Add storage category for board games\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-09-25T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-09-25T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 8, "deletions": 1, "total": 9 },
+      "files": [
+        {
+          "filename": "catalogue/category-26.json",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "96428138915f73c74455fdee478de842d96109e1",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/96428138915f73c74455fdee478de842d96109e1",
+      "commit": {
+        "message": "Add storage category for film photography\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-10-10T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-10-10T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 9, "deletions": 2, "total": 11 },
+      "files": [
+        {
+          "filename": "catalogue/category-27.json",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "66af654bcc4f159187db64a486e65c2319f72f79",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/66af654bcc4f159187db64a486e65c2319f72f79",
+      "commit": {
+        "message": "Add storage category for bicycle care\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-10-25T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-10-25T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 10, "deletions": 3, "total": 13 },
+      "files": [
+        {
+          "filename": "catalogue/category-28.json",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "79993ac392ec3ab3c64559813960c0b87cb49f99",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/79993ac392ec3ab3c64559813960c0b87cb49f99",
+      "commit": {
+        "message": "Add storage category for pasta night\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-11-09T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-11-09T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 11, "deletions": 4, "total": 15 },
+      "files": [
+        {
+          "filename": "catalogue/category-29.json",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "44778ebe50bbcfc0c0087ef59715ab30765566fb",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/44778ebe50bbcfc0c0087ef59715ab30765566fb",
+      "commit": {
+        "message": "Add storage category for jigsaw swap\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-11-24T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-11-24T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 12, "deletions": 0, "total": 12 },
+      "files": [
+        {
+          "filename": "catalogue/category-30.json",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "cb6157353eac94d665f52205f291570b5fbb791c",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/cb6157353eac94d665f52205f291570b5fbb791c",
+      "commit": {
+        "message": "Add storage category for bird spotting\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-12-09T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-12-09T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 13, "deletions": 1, "total": 14 },
+      "files": [
+        {
+          "filename": "catalogue/category-31.json",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "11d5113d10425754c91b6081ce591a670c52cf65",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/11d5113d10425754c91b6081ce591a670c52cf65",
+      "commit": {
+        "message": "Add storage category for language practice\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-12-24T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2023-12-24T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 14, "deletions": 2, "total": 16 },
+      "files": [
+        {
+          "filename": "catalogue/category-32.json",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "df8e7bc8544d0e6dbeebde234e4b3c94d21da2a7",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/df8e7bc8544d0e6dbeebde234e4b3c94d21da2a7",
+      "commit": {
+        "message": "Add storage category for coffee brewing\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-01-08T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-01-08T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 15, "deletions": 3, "total": 18 },
+      "files": [
+        {
+          "filename": "catalogue/category-33.json",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "86b3db2166998fee61157a59d569b936f6a7a373",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/86b3db2166998fee61157a59d569b936f6a7a373",
+      "commit": {
+        "message": "Add storage category for picnic lunches\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-01-23T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-01-23T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 16, "deletions": 4, "total": 20 },
+      "files": [
+        {
+          "filename": "catalogue/category-34.json",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "169d882dcd3d72fddfd29f94c8631961d8852ff0",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/169d882dcd3d72fddfd29f94c8631961d8852ff0",
+      "commit": {
+        "message": "Add storage category for chess puzzles\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-02-08T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-02-08T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 17, "deletions": 0, "total": 17 },
+      "files": [
+        {
+          "filename": "catalogue/category-35.json",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "d26f0b15e43b60f98d1192ff1389c6116def600a",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/d26f0b15e43b60f98d1192ff1389c6116def600a",
+      "commit": {
+        "message": "Add storage category for houseplants\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-02-23T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-02-23T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 18, "deletions": 1, "total": 19 },
+      "files": [
+        {
+          "filename": "catalogue/category-36.json",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "3d8c3160a07fd0ce774a5b081ae8ec73b9b7efac",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/3d8c3160a07fd0ce774a5b081ae8ec73b9b7efac",
+      "commit": {
+        "message": "Add storage category for bread baking\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-03-09T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-03-09T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 19, "deletions": 2, "total": 21 },
+      "files": [
+        {
+          "filename": "catalogue/category-37.json",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "9a546cba58f49d51e78e69fd248765c1f96d54cf",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/9a546cba58f49d51e78e69fd248765c1f96d54cf",
+      "commit": {
+        "message": "Add storage category for knitting circle\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-03-24T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-03-24T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 20, "deletions": 3, "total": 23 },
+      "files": [
+        {
+          "filename": "catalogue/category-38.json",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "fa6f2526d933bf21c0d00b2ec4685df59232107f",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/fa6f2526d933bf21c0d00b2ec4685df59232107f",
+      "commit": {
+        "message": "Add storage category for local history\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-04-08T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-04-08T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 21, "deletions": 4, "total": 25 },
+      "files": [
+        {
+          "filename": "catalogue/category-39.json",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "ae8a9cece9bab850860c069c6f43d173c1ed9ceb",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/ae8a9cece9bab850860c069c6f43d173c1ed9ceb",
+      "commit": {
+        "message": "Add storage category for repair cafe\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-04-23T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-04-23T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 22, "deletions": 0, "total": 22 },
+      "files": [
+        {
+          "filename": "catalogue/category-0.json",
+          "status": "modified",
+          "additions": 22,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "aeb7af2ccbcf386a03dc1903376ea9981bdf6a04",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/aeb7af2ccbcf386a03dc1903376ea9981bdf6a04",
+      "commit": {
+        "message": "Add storage category for bouldering basics\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-05-08T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-05-08T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 23, "deletions": 1, "total": 24 },
+      "files": [
+        {
+          "filename": "catalogue/category-1.json",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "82c91080b18fa9cb702ebc0168a8f4f11b753071",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/82c91080b18fa9cb702ebc0168a8f4f11b753071",
+      "commit": {
+        "message": "Add storage category for quiz night\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-05-23T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-05-23T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 24, "deletions": 2, "total": 26 },
+      "files": [
+        {
+          "filename": "catalogue/category-2.json",
+          "status": "modified",
+          "additions": 24,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "e6c87060bccae9de92d01c434a53844db03d642b",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/e6c87060bccae9de92d01c434a53844db03d642b",
+      "commit": {
+        "message": "Add storage category for drawing practice\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-06-07T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-06-07T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 25, "deletions": 3, "total": 28 },
+      "files": [
+        {
+          "filename": "catalogue/category-3.json",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "39ffbd228577c1e1e46873ae5256fd1d48c00226",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/39ffbd228577c1e1e46873ae5256fd1d48c00226",
+      "commit": {
+        "message": "Add storage category for secondhand books\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-06-23T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-06-23T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 5, "deletions": 4, "total": 9 },
+      "files": [
+        {
+          "filename": "catalogue/category-4.json",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "1d521412b7bfc2f0ba0ef5a901a34a6271ec25f2",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/1d521412b7bfc2f0ba0ef5a901a34a6271ec25f2",
+      "commit": {
+        "message": "Add storage category for batch cooking\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-07-08T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-07-08T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 6, "deletions": 0, "total": 6 },
+      "files": [
+        {
+          "filename": "catalogue/category-5.json",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "e319e72c5d8449141ae5826d7eaf8836fa6adf1e",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/e319e72c5d8449141ae5826d7eaf8836fa6adf1e",
+      "commit": {
+        "message": "Add storage category for sewing repairs\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-07-23T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-07-23T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 7, "deletions": 1, "total": 8 },
+      "files": [
+        {
+          "filename": "catalogue/category-6.json",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "ef421b84c476c69a6567ae7451f3ce777d007b37",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/ef421b84c476c69a6567ae7451f3ce777d007b37",
+      "commit": {
+        "message": "Add storage category for museum sketches\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-08-07T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-08-07T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 8, "deletions": 2, "total": 10 },
+      "files": [
+        {
+          "filename": "catalogue/category-7.json",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a5a57a37e47af8583377a7a7b54bef3742281a86",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a5a57a37e47af8583377a7a7b54bef3742281a86",
+      "commit": {
+        "message": "Add storage category for window cleaning\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-08-22T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-08-22T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 9, "deletions": 3, "total": 12 },
+      "files": [
+        {
+          "filename": "catalogue/category-8.json",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "9c6e7f7e594be60e23de1b6718e51483a6d181a1",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/9c6e7f7e594be60e23de1b6718e51483a6d181a1",
+      "commit": {
+        "message": "Add storage category for puzzle evenings\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-09-06T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-09-06T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 10, "deletions": 4, "total": 14 },
+      "files": [
+        {
+          "filename": "catalogue/category-9.json",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "aeba22684f6eefcf1aa740e048d681d983b8abdb",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/aeba22684f6eefcf1aa740e048d681d983b8abdb",
+      "commit": {
+        "message": "Add storage category for community gardening\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-09-21T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-09-21T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 11, "deletions": 0, "total": 11 },
+      "files": [
+        {
+          "filename": "catalogue/category-10.json",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "af2ac76d5e5731a1a23b0256f6ebebefdefdab1d",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/af2ac76d5e5731a1a23b0256f6ebebefdefdab1d",
+      "commit": {
+        "message": "Add storage category for music listening\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-10-06T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-10-06T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 12, "deletions": 1, "total": 13 },
+      "files": [
+        {
+          "filename": "catalogue/category-11.json",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "5f51900211843377f941c151f9fc1ac8be40269a",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/5f51900211843377f941c151f9fc1ac8be40269a",
+      "commit": {
+        "message": "Add storage category for badminton\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-10-21T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-10-21T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 13, "deletions": 2, "total": 15 },
+      "files": [
+        {
+          "filename": "catalogue/category-12.json",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "5e7fbdff59096f8f32a070b092fdfe448cb1f900",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/5e7fbdff59096f8f32a070b092fdfe448cb1f900",
+      "commit": {
+        "message": "Add storage category for paper folding\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-11-06T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-11-06T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 14, "deletions": 3, "total": 17 },
+      "files": [
+        {
+          "filename": "catalogue/category-13.json",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "800f1357ed104049d40502b3c673005e1a1cf9c8",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/800f1357ed104049d40502b3c673005e1a1cf9c8",
+      "commit": {
+        "message": "Add storage category for spice cupboard\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-11-21T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-11-21T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 15, "deletions": 4, "total": 19 },
+      "files": [
+        {
+          "filename": "catalogue/category-14.json",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "ee5d9a33ed0b97b92eb58d919ef330666b08f54b",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/ee5d9a33ed0b97b92eb58d919ef330666b08f54b",
+      "commit": {
+        "message": "Add storage category for walk planning\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-12-06T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-12-06T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 16, "deletions": 0, "total": 16 },
+      "files": [
+        {
+          "filename": "catalogue/category-15.json",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "e500b1efee0404b1753534c4aa99c5d20f403303",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/e500b1efee0404b1753534c4aa99c5d20f403303",
+      "commit": {
+        "message": "Add storage category for home shelving\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-12-21T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2024-12-21T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 17, "deletions": 1, "total": 18 },
+      "files": [
+        {
+          "filename": "catalogue/category-16.json",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "d56bb627ab64f7d52dc99020a16fabff62e1967c",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/d56bb627ab64f7d52dc99020a16fabff62e1967c",
+      "commit": {
+        "message": "Add storage category for card making\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-01-05T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-01-05T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 18, "deletions": 2, "total": 20 },
+      "files": [
+        {
+          "filename": "catalogue/category-17.json",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "3b1852236180412b62b9154d53b9e90fd627716d",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/3b1852236180412b62b9154d53b9e90fd627716d",
+      "commit": {
+        "message": "Add storage category for table tennis\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-01-20T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-01-20T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 19, "deletions": 3, "total": 22 },
+      "files": [
+        {
+          "filename": "catalogue/category-18.json",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "429237f7614bf3a0ac97d8d1dd7b90e7cff0b171",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/429237f7614bf3a0ac97d8d1dd7b90e7cff0b171",
+      "commit": {
+        "message": "Add storage category for soup experiments\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-02-04T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-02-04T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 20, "deletions": 4, "total": 24 },
+      "files": [
+        {
+          "filename": "catalogue/category-19.json",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "8811a8432435437627a1567915c42d7e8c15ede2",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/8811a8432435437627a1567915c42d7e8c15ede2",
+      "commit": {
+        "message": "Add storage category for seed saving\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-02-19T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-02-19T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 21, "deletions": 0, "total": 21 },
+      "files": [
+        {
+          "filename": "catalogue/category-20.json",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "bcc27f5c7ac7dd3e0dc255c8e674f18c1b6aa56f",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/bcc27f5c7ac7dd3e0dc255c8e674f18c1b6aa56f",
+      "commit": {
+        "message": "Add storage category for reusable containers\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-03-06T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-03-06T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 22, "deletions": 1, "total": 23 },
+      "files": [
+        {
+          "filename": "catalogue/category-21.json",
+          "status": "modified",
+          "additions": 22,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "95c8a4cc2b3dc9cdfc4abfb3629c5f91c2997b41",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/95c8a4cc2b3dc9cdfc4abfb3629c5f91c2997b41",
+      "commit": {
+        "message": "Add storage category for short stories\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-03-22T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-03-22T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 23, "deletions": 2, "total": 25 },
+      "files": [
+        {
+          "filename": "catalogue/category-22.json",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "9fcd66f4adaec0bb547409977e4c4cfcee497f74",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/9fcd66f4adaec0bb547409977e4c4cfcee497f74",
+      "commit": {
+        "message": "Add storage category for model building\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-04-06T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-04-06T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 24, "deletions": 3, "total": 27 },
+      "files": [
+        {
+          "filename": "catalogue/category-23.json",
+          "status": "modified",
+          "additions": 24,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "5512d64278af2438dc2d1b67b427d1fd7b8d8b63",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/5512d64278af2438dc2d1b67b427d1fd7b8d8b63",
+      "commit": {
+        "message": "Add storage category for grocery lists\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-04-21T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-04-21T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 25, "deletions": 4, "total": 29 },
+      "files": [
+        {
+          "filename": "catalogue/category-24.json",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "faacf792865e439c2ec2a3ce6386cfdc950f85f8",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/faacf792865e439c2ec2a3ce6386cfdc950f85f8",
+      "commit": {
+        "message": "Add storage category for parcel collection\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-05-06T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-05-06T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 5, "deletions": 0, "total": 5 },
+      "files": [
+        {
+          "filename": "catalogue/category-25.json",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "d704c74ab60cbbbcbfee1c22cc94b067fed57ef7",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/d704c74ab60cbbbcbfee1c22cc94b067fed57ef7",
+      "commit": {
+        "message": "Add storage category for laundry sorting\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-05-21T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-05-21T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 6, "deletions": 1, "total": 7 },
+      "files": [
+        {
+          "filename": "catalogue/category-26.json",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "e2cf6d7fdd9b60de3d2812c25f3293d878d6e3d6",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/e2cf6d7fdd9b60de3d2812c25f3293d878d6e3d6",
+      "commit": {
+        "message": "Add storage category for family video calls\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-06-05T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-06-05T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 7, "deletions": 2, "total": 9 },
+      "files": [
+        {
+          "filename": "catalogue/category-27.json",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "b982c4ed877299b00deba35a14c932f28af834f3",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/b982c4ed877299b00deba35a14c932f28af834f3",
+      "commit": {
+        "message": "Add storage category for weekly groceries\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-06-20T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-06-20T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 8, "deletions": 3, "total": 11 },
+      "files": [
+        {
+          "filename": "catalogue/category-28.json",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "955f5d9fd1b8c934c4ad7fd5d636c9d861680bd0",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/955f5d9fd1b8c934c4ad7fd5d636c9d861680bd0",
+      "commit": {
+        "message": "Add storage category for recycling rota\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-07-05T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-07-05T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 9, "deletions": 4, "total": 13 },
+      "files": [
+        {
+          "filename": "catalogue/category-29.json",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "b5ecf3031cb4d08d9faab8d5062753b7466ebcf7",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/b5ecf3031cb4d08d9faab8d5062753b7466ebcf7",
+      "commit": {
+        "message": "Add storage category for work lunch rota\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-07-20T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-07-20T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 10, "deletions": 0, "total": 10 },
+      "files": [
+        {
+          "filename": "catalogue/category-30.json",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "6a73fae131764313f9e7bc3339f091cd9b2898a3",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/6a73fae131764313f9e7bc3339f091cd9b2898a3",
+      "commit": {
+        "message": "Add storage category for desk ergonomics\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-08-04T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-08-04T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 11, "deletions": 1, "total": 12 },
+      "files": [
+        {
+          "filename": "catalogue/category-31.json",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "f533afb0604281168d703bf3ea621622797eba43",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/f533afb0604281168d703bf3ea621622797eba43",
+      "commit": {
+        "message": "Add storage category for team documentation\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-08-20T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-08-20T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 12, "deletions": 2, "total": 14 },
+      "files": [
+        {
+          "filename": "catalogue/category-32.json",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "6de3b593ec9e4c7ea14a2c0d91038197fb27fdea",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/6de3b593ec9e4c7ea14a2c0d91038197fb27fdea",
+      "commit": {
+        "message": "Add storage category for book club reminders\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-09-04T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-09-04T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 13, "deletions": 3, "total": 16 },
+      "files": [
+        {
+          "filename": "catalogue/category-33.json",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "bafdc1d4447ebb66d302493fa212891906ab5d01",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/bafdc1d4447ebb66d302493fa212891906ab5d01",
+      "commit": {
+        "message": "Add storage category for umbrella repair\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-09-19T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-09-19T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 14, "deletions": 4, "total": 18 },
+      "files": [
+        {
+          "filename": "catalogue/category-34.json",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a0c190f7f7718f68cd5270bbece33367d9ae24b3",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a0c190f7f7718f68cd5270bbece33367d9ae24b3",
+      "commit": {
+        "message": "Add storage category for linen cupboard\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-10-04T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-10-04T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 15, "deletions": 0, "total": 15 },
+      "files": [
+        {
+          "filename": "catalogue/category-35.json",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "154c75537aed96a4675e206d37f20b8354585eff",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/154c75537aed96a4675e206d37f20b8354585eff",
+      "commit": {
+        "message": "Add storage category for neighbour noticeboard\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-10-19T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-10-19T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 16, "deletions": 1, "total": 17 },
+      "files": [
+        {
+          "filename": "catalogue/category-36.json",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "5ffdb988ef8b46cb9bdf984131e7592ea749172c",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/5ffdb988ef8b46cb9bdf984131e7592ea749172c",
+      "commit": {
+        "message": "Add storage category for shared courtyard\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-11-03T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-11-03T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 17, "deletions": 2, "total": 19 },
+      "files": [
+        {
+          "filename": "catalogue/category-37.json",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "16b9fe9e4676f29cfb55c37edc2a48bdf4734fdd",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/16b9fe9e4676f29cfb55c37edc2a48bdf4734fdd",
+      "commit": {
+        "message": "Add storage category for laptop backups\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-11-18T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-11-18T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 18, "deletions": 3, "total": 21 },
+      "files": [
+        {
+          "filename": "catalogue/category-38.json",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "b194872262ccead2b6811040e7a0a85892a8ee4d",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/b194872262ccead2b6811040e7a0a85892a8ee4d",
+      "commit": {
+        "message": "Add storage category for train reading\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-12-03T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-12-03T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 19, "deletions": 4, "total": 23 },
+      "files": [
+        {
+          "filename": "catalogue/category-39.json",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "56aca2287e17d6d8ed8eb700e4d11e06457912ac",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/56aca2287e17d6d8ed8eb700e4d11e06457912ac",
+      "commit": {
+        "message": "Add storage category for lost scarf\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-12-18T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2025-12-18T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 20, "deletions": 0, "total": 20 },
+      "files": [
+        {
+          "filename": "catalogue/category-0.json",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "b26fba6153e8a6eff11e7db9023dd2586593ac14",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/b26fba6153e8a6eff11e7db9023dd2586593ac14",
+      "commit": {
+        "message": "Add storage category for potluck arrangements\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-01-03T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-01-03T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 21, "deletions": 1, "total": 22 },
+      "files": [
+        {
+          "filename": "catalogue/category-1.json",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "8869fe2870f33b5dd5950123a120a002ebddf1be",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/8869fe2870f33b5dd5950123a120a002ebddf1be",
+      "commit": {
+        "message": "Add storage category for plant watering rota\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-01-18T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-01-18T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 22, "deletions": 2, "total": 24 },
+      "files": [
+        {
+          "filename": "catalogue/category-2.json",
+          "status": "modified",
+          "additions": 22,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "b5c08e3d46773fd84d425dae52a9fcc82ab8a6e2",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/b5c08e3d46773fd84d425dae52a9fcc82ab8a6e2",
+      "commit": {
+        "message": "Add storage category for meeting room setup\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-02-02T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-02-02T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 23, "deletions": 3, "total": 26 },
+      "files": [
+        {
+          "filename": "catalogue/category-3.json",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "16c92cc79189ecc91da01edf3937dbf37ce648d6",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/16c92cc79189ecc91da01edf3937dbf37ce648d6",
+      "commit": {
+        "message": "Add storage category for market vegetables\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-02-17T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-02-17T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 24, "deletions": 4, "total": 28 },
+      "files": [
+        {
+          "filename": "catalogue/category-4.json",
+          "status": "modified",
+          "additions": 24,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "dd3fbb8ff0354cb9c8b27d5775c0e65471512f13",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/dd3fbb8ff0354cb9c8b27d5775c0e65471512f13",
+      "commit": {
+        "message": "Add storage category for spare keys\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-03-04T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-03-04T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 25, "deletions": 0, "total": 25 },
+      "files": [
+        {
+          "filename": "catalogue/category-5.json",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "04a07cda45ac613a71180cb64219a8b0fded7558",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/04a07cda45ac613a71180cb64219a8b0fded7558",
+      "commit": {
+        "message": "Add storage category for saturday errands\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-03-19T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-03-19T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 5, "deletions": 1, "total": 6 },
+      "files": [
+        {
+          "filename": "catalogue/category-6.json",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "2eb79a6261b685b1b12253fcd5f56d2d5a61ef6a",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/2eb79a6261b685b1b12253fcd5f56d2d5a61ef6a",
+      "commit": {
+        "message": "Add storage category for handwritten letters\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-04-03T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-04-03T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 6, "deletions": 2, "total": 8 },
+      "files": [
+        {
+          "filename": "catalogue/category-7.json",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "8bb6793b966fe356c7c2c9a0d941589c6cf39750",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/8bb6793b966fe356c7c2c9a0d941589c6cf39750",
+      "commit": {
+        "message": "Add storage category for sourdough\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-04-18T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-04-18T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 7, "deletions": 3, "total": 10 },
+      "files": [
+        {
+          "filename": "catalogue/category-8.json",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "742188bb3cbb4f72bfe388b61e1da34c57c0bb91",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/742188bb3cbb4f72bfe388b61e1da34c57c0bb91",
+      "commit": {
+        "message": "Add storage category for balcony herbs\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-05-03T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-05-03T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 8, "deletions": 4, "total": 12 },
+      "files": [
+        {
+          "filename": "catalogue/category-9.json",
+          "status": "modified",
+          "additions": 8,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "cc24b3a2f490977ff4826173160e6dcf97ed2bb6",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/cc24b3a2f490977ff4826173160e6dcf97ed2bb6",
+      "commit": {
+        "message": "Add storage category for board games\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-05-19T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-05-19T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 9, "deletions": 0, "total": 9 },
+      "files": [
+        {
+          "filename": "catalogue/category-10.json",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "c090ba0fdf0959084a8e5fe8c21fa80bbb8a88f0",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/c090ba0fdf0959084a8e5fe8c21fa80bbb8a88f0",
+      "commit": {
+        "message": "Add storage category for film photography\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-06-03T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-06-03T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 10, "deletions": 1, "total": 11 },
+      "files": [
+        {
+          "filename": "catalogue/category-11.json",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "41854fe868d78a466418cf8dd7536ee8f9c7a6ed",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/41854fe868d78a466418cf8dd7536ee8f9c7a6ed",
+      "commit": {
+        "message": "Add storage category for bicycle care\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-06-18T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-06-18T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 11, "deletions": 2, "total": 13 },
+      "files": [
+        {
+          "filename": "catalogue/category-12.json",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "6503ef8dcba362879efee0c29db238c1e975530e",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/6503ef8dcba362879efee0c29db238c1e975530e",
+      "commit": {
+        "message": "Add storage category for pasta night\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-07-03T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-07-03T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 12, "deletions": 3, "total": 15 },
+      "files": [
+        {
+          "filename": "catalogue/category-13.json",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "a3bd59489effe87a0582358b69a95944a8b735fe",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/a3bd59489effe87a0582358b69a95944a8b735fe",
+      "commit": {
+        "message": "Add storage category for jigsaw swap\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-07-18T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-07-18T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 13, "deletions": 4, "total": 17 },
+      "files": [
+        {
+          "filename": "catalogue/category-14.json",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "47b0f1157f8f8cd432d805dbbd52ff46877ae4f4",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/47b0f1157f8f8cd432d805dbbd52ff46877ae4f4",
+      "commit": {
+        "message": "Add storage category for bird spotting\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-08-02T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-08-02T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 14, "deletions": 0, "total": 14 },
+      "files": [
+        {
+          "filename": "catalogue/category-15.json",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 0
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "ef47399e19127619f855d6e3504d53749f588dde",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/ef47399e19127619f855d6e3504d53749f588dde",
+      "commit": {
+        "message": "Add storage category for language practice\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-08-17T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-08-17T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 15, "deletions": 1, "total": 16 },
+      "files": [
+        {
+          "filename": "catalogue/category-16.json",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 1
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "b1c80a2ecd69e1964afd300a2cf7700111389037",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/b1c80a2ecd69e1964afd300a2cf7700111389037",
+      "commit": {
+        "message": "Add storage category for coffee brewing\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-09-01T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-09-01T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 16, "deletions": 2, "total": 18 },
+      "files": [
+        {
+          "filename": "catalogue/category-17.json",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 2
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "da29b36399138e3f411754a12c9a5ccb0a86c980",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/da29b36399138e3f411754a12c9a5ccb0a86c980",
+      "commit": {
+        "message": "Add storage category for picnic lunches\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-09-16T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-09-16T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 17, "deletions": 3, "total": 20 },
+      "files": [
+        {
+          "filename": "catalogue/category-18.json",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 3
+        }
+      ],
+      "parents": []
+    },
+    {
+      "sha": "345f6018c491ec96367c5578f1265fe983d3acba",
+      "html_url": "https://github.com/fictional-sacha/hobby-catalogue/commit/345f6018c491ec96367c5578f1265fe983d3acba",
+      "commit": {
+        "message": "Add storage category for chess puzzles\n\nKeep handling notes separate from quantity.",
+        "author": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-10-02T12:00:00.000Z"
+        },
+        "committer": {
+          "name": "Sacha Bellamy",
+          "email": "sacha.bellamy@example.com",
+          "date": "2026-10-02T12:00:00.000Z"
+        }
+      },
+      "author": { "login": "fictional-sacha" },
+      "committer": { "login": "fictional-sacha" },
+      "stats": { "additions": 18, "deletions": 4, "total": 22 },
+      "files": [
+        {
+          "filename": "catalogue/category-19.json",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 4
+        }
+      ],
+      "parents": []
+    }
+  ]
+}

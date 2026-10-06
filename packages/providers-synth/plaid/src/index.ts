@@ -30,7 +30,12 @@ import {
   preDiscoveredAccounts,
   selfAccountId,
 } from "@omnesis/providers-synth-common";
-import { PLAID_DESCRIPTOR_ID, activeResponses, syntheticPlaidClient } from "./fixtures.js";
+import {
+  PLAID_DESCRIPTOR_ID,
+  activeResponses,
+  syntheticPlaidClient,
+  plaidFixtureSettings,
+} from "./fixtures.js";
 
 const { type: _type, ...rest } = realPlaid;
 
@@ -43,21 +48,17 @@ const { type: _type, ...rest } = realPlaid;
 const selfAccount = (): string => selfAccountId("extra", "plaidItemId");
 
 /**
- * Default UTC day the snapshot phases write to — repeated synth syncs re-emit
- * the same balances/holdings snapshot rows byte-stably (same composite PK,
- * overwrite not append), so a re-sync on the same day is exactly idempotent.
- */
-const DEFAULT_SYNTH_DAY = "2026-05-15";
-
-/**
- * Snapshot clock. Defaults to {@link DEFAULT_SYNTH_DAY}; an E2E can override the
+ * Snapshot clock uses the fixture day or the legacy default. An E2E overrides the
  * day via `OMNESIS_PLAID_SYNTH_DAY=YYYY-MM-DD` to drive a second snapshot and
  * prove balance-over-time accumulates a new day (point-in-time history is
  * retained, not overwritten). Read per-call so a test can change it between
  * syncs of the same gateway process.
  */
 function synthNow(): Date {
-  const day = process.env.OMNESIS_PLAID_SYNTH_DAY ?? DEFAULT_SYNTH_DAY;
+  const { snapshotDay: day } = plaidFixtureSettings(
+    activeResponses(),
+    process.env.OMNESIS_PLAID_SYNTH_DAY,
+  );
   return new Date(`${day}T12:00:00.000Z`);
 }
 
@@ -100,7 +101,7 @@ export default defineProvider<Record<string, never>>({
         sourceId,
         sourceAccountId,
         "access-synthetic-plaid",
-        { institutionName: "Northstar Bank", now: synthNow },
+        { institutionName: plaidFixtureSettings(activeResponses()).institutionName, now: synthNow },
       );
       return {
         sync: () => Promise.resolve(emptySync()),

@@ -9,8 +9,18 @@ import type { EdgeDeclaration } from "@omnesis/core";
 import type { DocumentInput, SourceId, ProviderId } from "@omnesis/types";
 import type { SynthCursor } from "./types.js";
 
-/** Default batch size — two round-trips for the V1 fixture size of 10 docs/source. */
+/** Default page size for small synthetic universes. */
 export const SYNTH_BATCH_SIZE = 5;
+
+/** A bounded demo-only override; explicit caller page sizes take precedence. */
+export function syntheticBatchSize(): number {
+  const raw = process.env.OMNESIS_SYNTH_BATCH_SIZE;
+  if (raw === undefined) return SYNTH_BATCH_SIZE;
+  if (!/^[1-9][0-9]*$/.test(raw) || Number(raw) > 500) {
+    throw new Error("OMNESIS_SYNTH_BATCH_SIZE must be an integer from 1 to 500");
+  }
+  return Number(raw);
+}
 
 /**
  * Slice the next batch out of an ordered fixture list using the persisted
@@ -19,7 +29,7 @@ export const SYNTH_BATCH_SIZE = 5;
 export function pageFromFixture<T>(
   entries: T[],
   cursor: SynthCursor | null,
-  batchSize: number = SYNTH_BATCH_SIZE,
+  batchSize: number = syntheticBatchSize(),
 ): { batch: T[]; newCursor: SynthCursor; hasMore: boolean; isFinalPage: boolean } {
   const offset = cursor?.offset ?? 0;
   const end = Math.min(offset + batchSize, entries.length);

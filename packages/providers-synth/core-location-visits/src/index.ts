@@ -9,6 +9,7 @@ import {
   type SynthCursor,
   impairEntries,
 } from "@omnesis/providers-synth-common";
+import { coreLocationVisitsIcon } from "./icons.js";
 import {
   loadLocationVisits,
   mapLocationVisitDocument,
@@ -29,10 +30,7 @@ export default defineStructuredSource<SynthCursor>({
   unitName: "visits",
   singleInstance: true,
   primaryCount: "analytics",
-  icon: {
-    sfSymbol: "location.fill",
-    color: "#5E5CE6",
-  },
+  icon: coreLocationVisitsIcon,
   analyticsSchemas: [LOCATION_VISITS_SCHEMA],
   discover: async () => preDiscoveredAccounts("core-location-visits", [accountId]),
   authFlow: async () => fakeLocalFlow("core-location-visits", accountId),

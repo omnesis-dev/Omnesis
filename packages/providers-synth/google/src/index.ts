@@ -12,6 +12,7 @@ import {
   type SynthCursor,
   impairEntries,
 } from "@omnesis/providers-synth-common";
+import { resolveAttachmentConfig } from "@omnesis/core";
 import {
   loadEmails,
   loadEvents,
@@ -23,6 +24,8 @@ import {
   mapDriveFile,
   mapContact,
 } from "./fixtures.js";
+import { createGmailFixtureSource } from "./gmail-source.js";
+import { hasBinaryAttachments } from "./gmail-attachments.js";
 import type { StructuredSyncResult } from "@omnesis/source-sdk";
 
 const { type: _type, ...rest } = realGoogle;
@@ -116,7 +119,22 @@ export default defineProvider<Record<string, never>>({
       // The double drives its own cursor; the real source's decoder does not
       // know it. Inheriting the declaration refuses that cursor on the next tick.
       contract: undefined,
-      async create({ sourceId, providerId }) {
+      async create({ sourceId, providerId, sourceConfig, host }) {
+        if (s.id === "gmail") {
+          const emails = loadEmails();
+          if (emails.some(hasBinaryAttachments))
+            return createGmailFixtureSource(
+              emails,
+              { sourceId, providerId },
+              {
+                extractAttachment: host?.extractAttachment,
+                attachmentConfig: resolveAttachmentConfig(sourceConfig, {
+                  defaultEnabled: true,
+                  includeAudioTypes: host?.includeAudioTypes,
+                }),
+              },
+            );
+        }
         const w = wiring[s.id];
         if (!w) throw new Error(`No synth wiring for google source: ${s.id}`);
         const entries = w.load();

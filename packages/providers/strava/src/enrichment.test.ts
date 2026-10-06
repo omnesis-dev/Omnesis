@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { deletionsFor, rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
-import { tableWrites, type PageTableWrites } from "@omnesis/source-sdk";
+import { tableWrites, type PageTableWrites, type SourceAnalyticsAccess } from "@omnesis/source-sdk";
 import { StravaActivitiesSource } from "./activities.js";
 import {
   StravaApplicationInactiveError,
@@ -21,7 +21,6 @@ import {
 } from "./enrichment.js";
 import { activityToDocument, activityToRecord } from "./normalizer.js";
 import { computeSummaryHash } from "./normalizer-detail.js";
-import type { SourceAnalyticsAccess } from "@omnesis/source-sdk";
 import type { ProviderId, SourceId } from "@omnesis/types";
 import type { QuotaPair } from "./quota.js";
 import type {

@@ -1,0 +1,2606 @@
+{
+  "repo": "fictional-sacha/hobby-catalogue",
+  "threads": [
+    {
+      "__typename": "Issue",
+      "number": 1,
+      "title": "Catalogue sourdough materials",
+      "body": "Add a simple record for sourdough. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2021-01-01T12:00:00.000Z",
+      "updatedAt": "2021-01-01T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/1",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For sourdough, the useful note is: use less water on the next batch.",
+            "createdAt": "2021-01-01T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/1#issuecomment-5000"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 2,
+      "title": "Catalogue balcony herbs materials",
+      "body": "Add a simple record for balcony herbs. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-01-22T12:00:00.000Z",
+      "updatedAt": "2021-01-22T12:00:00.000Z",
+      "closedAt": "2021-01-22T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/2",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For balcony herbs, the useful note is: keep the terracotta pot for thyme.",
+            "createdAt": "2021-01-22T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/2#issuecomment-5001"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 3,
+      "title": "Catalogue board games materials",
+      "body": "Add a simple record for board games. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-02-12T12:00:00.000Z",
+      "updatedAt": "2021-02-12T12:00:00.000Z",
+      "closedAt": "2021-02-12T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/3",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For board games, the useful note is: use a pencil tally instead.",
+            "createdAt": "2021-02-12T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/3#issuecomment-5002"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 4,
+      "title": "Catalogue film photography materials",
+      "body": "Add a simple record for film photography. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-03-05T12:00:00.000Z",
+      "updatedAt": "2021-03-05T12:00:00.000Z",
+      "closedAt": "2021-03-05T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/4",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For film photography, the useful note is: write the frame numbers on the edge.",
+            "createdAt": "2021-03-05T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/4#issuecomment-5003"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 5,
+      "title": "Catalogue bicycle care materials",
+      "body": "Add a simple record for bicycle care. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-03-26T12:00:00.000Z",
+      "updatedAt": "2021-03-26T12:00:00.000Z",
+      "closedAt": "2021-03-26T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/5",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For bicycle care, the useful note is: use an old toothbrush for the cassette.",
+            "createdAt": "2021-03-26T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/5#issuecomment-5004"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 6,
+      "title": "Catalogue pasta night materials",
+      "body": "Add a simple record for pasta night. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-04-17T12:00:00.000Z",
+      "updatedAt": "2021-04-17T12:00:00.000Z",
+      "closedAt": "2021-04-17T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/6",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For pasta night, the useful note is: reserve a cup of cooking water.",
+            "createdAt": "2021-04-17T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/6#issuecomment-5005"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 7,
+      "title": "Catalogue jigsaw swap materials",
+      "body": "Add a simple record for jigsaw swap. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-05-08T12:00:00.000Z",
+      "updatedAt": "2021-05-08T12:00:00.000Z",
+      "closedAt": "2021-05-08T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/7",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For jigsaw swap, the useful note is: put a coloured label on each lid.",
+            "createdAt": "2021-05-08T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/7#issuecomment-5006"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 8,
+      "title": "Catalogue bird spotting materials",
+      "body": "Add a simple record for bird spotting. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-05-29T12:00:00.000Z",
+      "updatedAt": "2021-05-29T12:00:00.000Z",
+      "closedAt": "2021-05-29T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/8",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For bird spotting, the useful note is: watch from behind the low wall.",
+            "createdAt": "2021-05-29T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/8#issuecomment-5007"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 9,
+      "title": "Catalogue language practice materials",
+      "body": "Add a simple record for language practice. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2021-06-19T12:00:00.000Z",
+      "updatedAt": "2021-06-19T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/9",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For language practice, the useful note is: play the sentence at half speed.",
+            "createdAt": "2021-06-19T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/9#issuecomment-5008"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 10,
+      "title": "Catalogue coffee brewing materials",
+      "body": "Add a simple record for coffee brewing. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-07-10T12:00:00.000Z",
+      "updatedAt": "2021-07-10T12:00:00.000Z",
+      "closedAt": "2021-07-10T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/10",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For coffee brewing, the useful note is: rinse and flatten it first.",
+            "createdAt": "2021-07-10T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/10#issuecomment-5009"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 11,
+      "title": "Catalogue picnic lunches materials",
+      "body": "Add a simple record for picnic lunches. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-08-01T12:00:00.000Z",
+      "updatedAt": "2021-08-01T12:00:00.000Z",
+      "closedAt": "2021-08-01T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/11",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For picnic lunches, the useful note is: wrap the lid in a cloth.",
+            "createdAt": "2021-08-01T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/11#issuecomment-5010"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 12,
+      "title": "Catalogue chess puzzles materials",
+      "body": "Add a simple record for chess puzzles. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-08-22T12:00:00.000Z",
+      "updatedAt": "2021-08-22T12:00:00.000Z",
+      "closedAt": "2021-08-22T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/12",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For chess puzzles, the useful note is: cover the solution before guessing.",
+            "createdAt": "2021-08-22T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/12#issuecomment-5011"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 13,
+      "title": "Catalogue houseplants materials",
+      "body": "Add a simple record for houseplants. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-09-12T12:00:00.000Z",
+      "updatedAt": "2021-09-12T12:00:00.000Z",
+      "closedAt": "2021-09-12T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/13",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For houseplants, the useful note is: check the soil before watering.",
+            "createdAt": "2021-09-12T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/13#issuecomment-5012"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 14,
+      "title": "Catalogue bread baking materials",
+      "body": "Add a simple record for bread baking. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-10-03T12:00:00.000Z",
+      "updatedAt": "2021-10-03T12:00:00.000Z",
+      "closedAt": "2021-10-03T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/14",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For bread baking, the useful note is: move the tray up one shelf.",
+            "createdAt": "2021-10-03T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/14#issuecomment-5013"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 15,
+      "title": "Catalogue knitting circle materials",
+      "body": "Add a simple record for knitting circle. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-10-24T12:00:00.000Z",
+      "updatedAt": "2021-10-24T12:00:00.000Z",
+      "closedAt": "2021-10-24T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/15",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For knitting circle, the useful note is: tie the swatch to its label.",
+            "createdAt": "2021-10-24T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/15#issuecomment-5014"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 16,
+      "title": "Catalogue local history materials",
+      "body": "Add a simple record for local history. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-11-15T12:00:00.000Z",
+      "updatedAt": "2021-11-15T12:00:00.000Z",
+      "closedAt": "2021-11-15T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/16",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For local history, the useful note is: note the map year beside the sketch.",
+            "createdAt": "2021-11-15T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/16#issuecomment-5015"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 17,
+      "title": "Catalogue repair cafe materials",
+      "body": "Add a simple record for repair cafe. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2021-12-06T12:00:00.000Z",
+      "updatedAt": "2021-12-06T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/17",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For repair cafe, the useful note is: measure the thread before replacing it.",
+            "createdAt": "2021-12-06T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/17#issuecomment-5016"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 18,
+      "title": "Catalogue bouldering basics materials",
+      "body": "Add a simple record for bouldering basics. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2021-12-27T12:00:00.000Z",
+      "updatedAt": "2021-12-27T12:00:00.000Z",
+      "closedAt": "2021-12-27T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/18",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For bouldering basics, the useful note is: shorten the loose end.",
+            "createdAt": "2021-12-27T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/18#issuecomment-5017"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 19,
+      "title": "Catalogue quiz night materials",
+      "body": "Add a simple record for quiz night. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-01-17T12:00:00.000Z",
+      "updatedAt": "2022-01-17T12:00:00.000Z",
+      "closedAt": "2022-01-17T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/19",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For quiz night, the useful note is: write it at the top of every page.",
+            "createdAt": "2022-01-17T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/19#issuecomment-5018"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 20,
+      "title": "Catalogue drawing practice materials",
+      "body": "Add a simple record for drawing practice. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-02-08T12:00:00.000Z",
+      "updatedAt": "2022-02-08T12:00:00.000Z",
+      "closedAt": "2022-02-08T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/20",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For drawing practice, the useful note is: rest a spare sheet under the hand.",
+            "createdAt": "2022-02-08T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/20#issuecomment-5019"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 21,
+      "title": "Catalogue secondhand books materials",
+      "body": "Add a simple record for secondhand books. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-03-01T12:00:00.000Z",
+      "updatedAt": "2022-03-01T12:00:00.000Z",
+      "closedAt": "2022-03-01T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/21",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For secondhand books, the useful note is: photograph the missing reference first.",
+            "createdAt": "2022-03-01T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/21#issuecomment-5020"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 22,
+      "title": "Catalogue batch cooking materials",
+      "body": "Add a simple record for batch cooking. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-03-22T12:00:00.000Z",
+      "updatedAt": "2022-03-22T12:00:00.000Z",
+      "closedAt": "2022-03-22T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/22",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For batch cooking, the useful note is: use the shallow containers.",
+            "createdAt": "2022-03-22T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/22#issuecomment-5021"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 23,
+      "title": "Catalogue sewing repairs materials",
+      "body": "Add a simple record for sewing repairs. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-04-12T12:00:00.000Z",
+      "updatedAt": "2022-04-12T12:00:00.000Z",
+      "closedAt": "2022-04-12T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/23",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For sewing repairs, the useful note is: try the stronger cotton reel.",
+            "createdAt": "2022-04-12T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/23#issuecomment-5022"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 24,
+      "title": "Catalogue museum sketches materials",
+      "body": "Add a simple record for museum sketches. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-05-03T12:00:00.000Z",
+      "updatedAt": "2022-05-03T12:00:00.000Z",
+      "closedAt": "2022-05-03T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/24",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For museum sketches, the useful note is: take the small softcover next time.",
+            "createdAt": "2022-05-03T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/24#issuecomment-5023"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 25,
+      "title": "Catalogue window cleaning materials",
+      "body": "Add a simple record for window cleaning. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2022-05-25T12:00:00.000Z",
+      "updatedAt": "2022-05-25T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/25",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For window cleaning, the useful note is: use a clean dry corner at the end.",
+            "createdAt": "2022-05-25T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/25#issuecomment-5024"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 26,
+      "title": "Catalogue puzzle evenings materials",
+      "body": "Add a simple record for puzzle evenings. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-06-15T12:00:00.000Z",
+      "updatedAt": "2022-06-15T12:00:00.000Z",
+      "closedAt": "2022-06-15T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/26",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For puzzle evenings, the useful note is: check the dictionary note.",
+            "createdAt": "2022-06-15T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/26#issuecomment-5025"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 27,
+      "title": "Catalogue community gardening materials",
+      "body": "Add a simple record for community gardening. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-07-06T12:00:00.000Z",
+      "updatedAt": "2022-07-06T12:00:00.000Z",
+      "closedAt": "2022-07-06T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/27",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For community gardening, the useful note is: set it aside for repair.",
+            "createdAt": "2022-07-06T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/27#issuecomment-5026"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 28,
+      "title": "Catalogue music listening materials",
+      "body": "Add a simple record for music listening. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-07-27T12:00:00.000Z",
+      "updatedAt": "2022-07-27T12:00:00.000Z",
+      "closedAt": "2022-07-27T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/28",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For music listening, the useful note is: move the chair to the centre.",
+            "createdAt": "2022-07-27T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/28#issuecomment-5027"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 29,
+      "title": "Catalogue badminton materials",
+      "body": "Add a simple record for badminton. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-08-17T12:00:00.000Z",
+      "updatedAt": "2022-08-17T12:00:00.000Z",
+      "closedAt": "2022-08-17T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/29",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For badminton, the useful note is: keep a spare in the tube.",
+            "createdAt": "2022-08-17T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/29#issuecomment-5028"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 30,
+      "title": "Catalogue paper folding materials",
+      "body": "Add a simple record for paper folding. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-09-08T12:00:00.000Z",
+      "updatedAt": "2022-09-08T12:00:00.000Z",
+      "closedAt": "2022-09-08T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/30",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For paper folding, the useful note is: use a thinner sheet.",
+            "createdAt": "2022-09-08T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/30#issuecomment-5029"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 31,
+      "title": "Catalogue spice cupboard materials",
+      "body": "Add a simple record for spice cupboard. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-09-29T12:00:00.000Z",
+      "updatedAt": "2022-09-29T12:00:00.000Z",
+      "closedAt": "2022-09-29T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/31",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For spice cupboard, the useful note is: leave the original packet clipped behind.",
+            "createdAt": "2022-09-29T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/31#issuecomment-5030"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 32,
+      "title": "Catalogue walk planning materials",
+      "body": "Add a simple record for walk planning. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-10-20T12:00:00.000Z",
+      "updatedAt": "2022-10-20T12:00:00.000Z",
+      "closedAt": "2022-10-20T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/32",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For walk planning, the useful note is: take the paved loop instead.",
+            "createdAt": "2022-10-20T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/32#issuecomment-5031"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 33,
+      "title": "Catalogue home shelving materials",
+      "body": "Add a simple record for home shelving. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2022-11-10T12:00:00.000Z",
+      "updatedAt": "2022-11-10T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/33",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For home shelving, the useful note is: mark both holes from the same edge.",
+            "createdAt": "2022-11-10T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/33#issuecomment-5032"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 34,
+      "title": "Catalogue card making materials",
+      "body": "Add a simple record for card making. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-12-02T12:00:00.000Z",
+      "updatedAt": "2022-12-02T12:00:00.000Z",
+      "closedAt": "2022-12-02T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/34",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For card making, the useful note is: use small dots at the corners.",
+            "createdAt": "2022-12-02T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/34#issuecomment-5033"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 35,
+      "title": "Catalogue table tennis materials",
+      "body": "Add a simple record for table tennis. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2022-12-23T12:00:00.000Z",
+      "updatedAt": "2022-12-23T12:00:00.000Z",
+      "closedAt": "2022-12-23T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/35",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For table tennis, the useful note is: carry a second ball.",
+            "createdAt": "2022-12-23T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/35#issuecomment-5034"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 36,
+      "title": "Catalogue soup experiments materials",
+      "body": "Add a simple record for soup experiments. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-01-13T12:00:00.000Z",
+      "updatedAt": "2023-01-13T12:00:00.000Z",
+      "closedAt": "2023-01-13T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/36",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For soup experiments, the useful note is: taste before adding seasoning.",
+            "createdAt": "2023-01-13T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/36#issuecomment-5035"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 37,
+      "title": "Catalogue seed saving materials",
+      "body": "Add a simple record for seed saving. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-02-03T12:00:00.000Z",
+      "updatedAt": "2023-02-03T12:00:00.000Z",
+      "closedAt": "2023-02-03T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/37",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For seed saving, the useful note is: add the month to each packet.",
+            "createdAt": "2023-02-03T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/37#issuecomment-5036"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 38,
+      "title": "Catalogue reusable containers materials",
+      "body": "Add a simple record for reusable containers. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-02-24T12:00:00.000Z",
+      "updatedAt": "2023-02-24T12:00:00.000Z",
+      "closedAt": "2023-02-24T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/38",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For reusable containers, the useful note is: keep each pair clipped together.",
+            "createdAt": "2023-02-24T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/38#issuecomment-5037"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 39,
+      "title": "Catalogue short stories materials",
+      "body": "Add a simple record for short stories. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-03-18T12:00:00.000Z",
+      "updatedAt": "2023-03-18T12:00:00.000Z",
+      "closedAt": "2023-03-18T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/39",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For short stories, the useful note is: mark the paragraph where the voice shifts.",
+            "createdAt": "2023-03-18T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/39#issuecomment-5038"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 40,
+      "title": "Catalogue model building materials",
+      "body": "Add a simple record for model building. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-04-08T12:00:00.000Z",
+      "updatedAt": "2023-04-08T12:00:00.000Z",
+      "closedAt": "2023-04-08T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/40",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For model building, the useful note is: use a tiny drop with a toothpick.",
+            "createdAt": "2023-04-08T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/40#issuecomment-5039"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 41,
+      "title": "Catalogue grocery lists materials",
+      "body": "Add a simple record for grocery lists. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2023-04-29T12:00:00.000Z",
+      "updatedAt": "2023-04-29T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/41",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For grocery lists, the useful note is: put the heavy tins in the canvas bag.",
+            "createdAt": "2023-04-29T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/41#issuecomment-5040"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 42,
+      "title": "Catalogue parcel collection materials",
+      "body": "Add a simple record for parcel collection. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-05-20T12:00:00.000Z",
+      "updatedAt": "2023-05-20T12:00:00.000Z",
+      "closedAt": "2023-05-20T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/42",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For parcel collection, the useful note is: read the branch line rather than the headline.",
+            "createdAt": "2023-05-20T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/42#issuecomment-5041"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 43,
+      "title": "Catalogue laundry sorting materials",
+      "body": "Add a simple record for laundry sorting. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-06-10T12:00:00.000Z",
+      "updatedAt": "2023-06-10T12:00:00.000Z",
+      "closedAt": "2023-06-10T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/43",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For laundry sorting, the useful note is: use the cooler setting.",
+            "createdAt": "2023-06-10T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/43#issuecomment-5042"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 44,
+      "title": "Catalogue family video calls materials",
+      "body": "Add a simple record for family video calls. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-07-02T12:00:00.000Z",
+      "updatedAt": "2023-07-02T12:00:00.000Z",
+      "closedAt": "2023-07-02T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/44",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For family video calls, the useful note is: check the permission icon first.",
+            "createdAt": "2023-07-02T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/44#issuecomment-5043"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 45,
+      "title": "Catalogue weekly groceries materials",
+      "body": "Add a simple record for weekly groceries. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-07-23T12:00:00.000Z",
+      "updatedAt": "2023-07-23T12:00:00.000Z",
+      "closedAt": "2023-07-23T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/45",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For weekly groceries, the useful note is: compare the unit price on the shelf.",
+            "createdAt": "2023-07-23T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/45#issuecomment-5044"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 46,
+      "title": "Catalogue recycling rota materials",
+      "body": "Add a simple record for recycling rota. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-08-13T12:00:00.000Z",
+      "updatedAt": "2023-08-13T12:00:00.000Z",
+      "closedAt": "2023-08-13T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/46",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For recycling rota, the useful note is: split the large boxes into smaller pieces.",
+            "createdAt": "2023-08-13T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/46#issuecomment-5045"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 47,
+      "title": "Catalogue work lunch rota materials",
+      "body": "Add a simple record for work lunch rota. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-09-03T12:00:00.000Z",
+      "updatedAt": "2023-09-03T12:00:00.000Z",
+      "closedAt": "2023-09-03T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/47",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For work lunch rota, the useful note is: turn the trays so everyone can read them.",
+            "createdAt": "2023-09-03T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/47#issuecomment-5046"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 48,
+      "title": "Catalogue desk ergonomics materials",
+      "body": "Add a simple record for desk ergonomics. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-09-24T12:00:00.000Z",
+      "updatedAt": "2023-09-24T12:00:00.000Z",
+      "closedAt": "2023-09-24T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/48",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For desk ergonomics, the useful note is: leave a little slack behind the monitor.",
+            "createdAt": "2023-09-24T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/48#issuecomment-5047"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 49,
+      "title": "Catalogue team documentation materials",
+      "body": "Add a simple record for team documentation. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2023-10-16T12:00:00.000Z",
+      "updatedAt": "2023-10-16T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/49",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For team documentation, the useful note is: write the full term at first use.",
+            "createdAt": "2023-10-16T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/49#issuecomment-5048"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 50,
+      "title": "Catalogue book club reminders materials",
+      "body": "Add a simple record for book club reminders. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-11-06T12:00:00.000Z",
+      "updatedAt": "2023-11-06T12:00:00.000Z",
+      "closedAt": "2023-11-06T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/50",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For book club reminders, the useful note is: include the opening sentence as well.",
+            "createdAt": "2023-11-06T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/50#issuecomment-5049"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 51,
+      "title": "Catalogue umbrella repair materials",
+      "body": "Add a simple record for umbrella repair. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-11-27T12:00:00.000Z",
+      "updatedAt": "2023-11-27T12:00:00.000Z",
+      "closedAt": "2023-11-27T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/51",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For umbrella repair, the useful note is: dry the mechanism before testing again.",
+            "createdAt": "2023-11-27T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/51#issuecomment-5050"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 52,
+      "title": "Catalogue linen cupboard materials",
+      "body": "Add a simple record for linen cupboard. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2023-12-18T12:00:00.000Z",
+      "updatedAt": "2023-12-18T12:00:00.000Z",
+      "closedAt": "2023-12-18T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/52",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For linen cupboard, the useful note is: use a paper band with the size written on it.",
+            "createdAt": "2023-12-18T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/52#issuecomment-5051"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 53,
+      "title": "Catalogue neighbour noticeboard materials",
+      "body": "Add a simple record for neighbour noticeboard. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-01-09T12:00:00.000Z",
+      "updatedAt": "2024-01-09T12:00:00.000Z",
+      "closedAt": "2024-01-09T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/53",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For neighbour noticeboard, the useful note is: use the existing pins.",
+            "createdAt": "2024-01-09T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/53#issuecomment-5052"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 54,
+      "title": "Catalogue shared courtyard materials",
+      "body": "Add a simple record for shared courtyard. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-01-30T12:00:00.000Z",
+      "updatedAt": "2024-01-30T12:00:00.000Z",
+      "closedAt": "2024-01-30T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/54",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For shared courtyard, the useful note is: borrow the stiff outdoor brush.",
+            "createdAt": "2024-01-30T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/54#issuecomment-5053"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 55,
+      "title": "Catalogue laptop backups materials",
+      "body": "Add a simple record for laptop backups. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-02-20T12:00:00.000Z",
+      "updatedAt": "2024-02-20T12:00:00.000Z",
+      "closedAt": "2024-02-20T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/55",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For laptop backups, the useful note is: replace that lead instead of bending it.",
+            "createdAt": "2024-02-20T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/55#issuecomment-5054"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 56,
+      "title": "Catalogue train reading materials",
+      "body": "Add a simple record for train reading. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-03-12T12:00:00.000Z",
+      "updatedAt": "2024-03-12T12:00:00.000Z",
+      "closedAt": "2024-03-12T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/56",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For train reading, the useful note is: save the issue for offline reading.",
+            "createdAt": "2024-03-12T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/56#issuecomment-5055"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 57,
+      "title": "Catalogue lost scarf materials",
+      "body": "Add a simple record for lost scarf. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2024-04-02T12:00:00.000Z",
+      "updatedAt": "2024-04-02T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/57",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For lost scarf, the useful note is: check the coat lining too.",
+            "createdAt": "2024-04-02T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/57#issuecomment-5056"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 58,
+      "title": "Catalogue potluck arrangements materials",
+      "body": "Add a simple record for potluck arrangements. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-04-24T12:00:00.000Z",
+      "updatedAt": "2024-04-24T12:00:00.000Z",
+      "closedAt": "2024-04-24T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/58",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For potluck arrangements, the useful note is: take a spare from the kitchen.",
+            "createdAt": "2024-04-24T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/58#issuecomment-5057"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 59,
+      "title": "Catalogue plant watering rota materials",
+      "body": "Add a simple record for plant watering rota. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-05-15T12:00:00.000Z",
+      "updatedAt": "2024-05-15T12:00:00.000Z",
+      "closedAt": "2024-05-15T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/59",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For plant watering rota, the useful note is: tick the card only after watering.",
+            "createdAt": "2024-05-15T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/59#issuecomment-5058"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 60,
+      "title": "Catalogue meeting room setup materials",
+      "body": "Add a simple record for meeting room setup. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-06-05T12:00:00.000Z",
+      "updatedAt": "2024-06-05T12:00:00.000Z",
+      "closedAt": "2024-06-05T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/60",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For meeting room setup, the useful note is: keep the correct adapter with the cable.",
+            "createdAt": "2024-06-05T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/60#issuecomment-5059"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 61,
+      "title": "Catalogue market vegetables materials",
+      "body": "Add a simple record for market vegetables. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-06-26T12:00:00.000Z",
+      "updatedAt": "2024-06-26T12:00:00.000Z",
+      "closedAt": "2024-06-26T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/61",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For market vegetables, the useful note is: measure the tray before buying.",
+            "createdAt": "2024-06-26T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/61#issuecomment-5060"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 62,
+      "title": "Catalogue spare keys materials",
+      "body": "Add a simple record for spare keys. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-07-17T12:00:00.000Z",
+      "updatedAt": "2024-07-17T12:00:00.000Z",
+      "closedAt": "2024-07-17T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/62",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For spare keys, the useful note is: test each one before putting it away.",
+            "createdAt": "2024-07-17T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/62#issuecomment-5061"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 63,
+      "title": "Catalogue saturday errands materials",
+      "body": "Add a simple record for saturday errands. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-08-08T12:00:00.000Z",
+      "updatedAt": "2024-08-08T12:00:00.000Z",
+      "closedAt": "2024-08-08T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/63",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For saturday errands, the useful note is: hand the book to the desk staff.",
+            "createdAt": "2024-08-08T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/63#issuecomment-5062"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 64,
+      "title": "Catalogue handwritten letters materials",
+      "body": "Add a simple record for handwritten letters. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-08-29T12:00:00.000Z",
+      "updatedAt": "2024-08-29T12:00:00.000Z",
+      "closedAt": "2024-08-29T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/64",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For handwritten letters, the useful note is: use a lighter sheet for the enclosure.",
+            "createdAt": "2024-08-29T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/64#issuecomment-5063"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 65,
+      "title": "Catalogue sourdough materials",
+      "body": "Add a simple record for sourdough. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2024-09-19T12:00:00.000Z",
+      "updatedAt": "2024-09-19T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/65",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For sourdough, the useful note is: use less water on the next batch.",
+            "createdAt": "2024-09-19T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/65#issuecomment-5064"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 66,
+      "title": "Catalogue balcony herbs materials",
+      "body": "Add a simple record for balcony herbs. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-10-10T12:00:00.000Z",
+      "updatedAt": "2024-10-10T12:00:00.000Z",
+      "closedAt": "2024-10-10T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/66",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For balcony herbs, the useful note is: keep the terracotta pot for thyme.",
+            "createdAt": "2024-10-10T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/66#issuecomment-5065"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 67,
+      "title": "Catalogue board games materials",
+      "body": "Add a simple record for board games. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-11-01T12:00:00.000Z",
+      "updatedAt": "2024-11-01T12:00:00.000Z",
+      "closedAt": "2024-11-01T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/67",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For board games, the useful note is: use a pencil tally instead.",
+            "createdAt": "2024-11-01T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/67#issuecomment-5066"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 68,
+      "title": "Catalogue film photography materials",
+      "body": "Add a simple record for film photography. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-11-22T12:00:00.000Z",
+      "updatedAt": "2024-11-22T12:00:00.000Z",
+      "closedAt": "2024-11-22T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/68",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For film photography, the useful note is: write the frame numbers on the edge.",
+            "createdAt": "2024-11-22T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/68#issuecomment-5067"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 69,
+      "title": "Catalogue bicycle care materials",
+      "body": "Add a simple record for bicycle care. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2024-12-13T12:00:00.000Z",
+      "updatedAt": "2024-12-13T12:00:00.000Z",
+      "closedAt": "2024-12-13T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/69",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For bicycle care, the useful note is: use an old toothbrush for the cassette.",
+            "createdAt": "2024-12-13T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/69#issuecomment-5068"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 70,
+      "title": "Catalogue pasta night materials",
+      "body": "Add a simple record for pasta night. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-01-03T12:00:00.000Z",
+      "updatedAt": "2025-01-03T12:00:00.000Z",
+      "closedAt": "2025-01-03T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/70",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For pasta night, the useful note is: reserve a cup of cooking water.",
+            "createdAt": "2025-01-03T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/70#issuecomment-5069"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 71,
+      "title": "Catalogue jigsaw swap materials",
+      "body": "Add a simple record for jigsaw swap. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-01-24T12:00:00.000Z",
+      "updatedAt": "2025-01-24T12:00:00.000Z",
+      "closedAt": "2025-01-24T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/71",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For jigsaw swap, the useful note is: put a coloured label on each lid.",
+            "createdAt": "2025-01-24T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/71#issuecomment-5070"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 72,
+      "title": "Catalogue bird spotting materials",
+      "body": "Add a simple record for bird spotting. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-02-15T12:00:00.000Z",
+      "updatedAt": "2025-02-15T12:00:00.000Z",
+      "closedAt": "2025-02-15T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/72",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For bird spotting, the useful note is: watch from behind the low wall.",
+            "createdAt": "2025-02-15T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/72#issuecomment-5071"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 73,
+      "title": "Catalogue language practice materials",
+      "body": "Add a simple record for language practice. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2025-03-08T12:00:00.000Z",
+      "updatedAt": "2025-03-08T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/73",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For language practice, the useful note is: play the sentence at half speed.",
+            "createdAt": "2025-03-08T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/73#issuecomment-5072"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 74,
+      "title": "Catalogue coffee brewing materials",
+      "body": "Add a simple record for coffee brewing. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-03-29T12:00:00.000Z",
+      "updatedAt": "2025-03-29T12:00:00.000Z",
+      "closedAt": "2025-03-29T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/74",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For coffee brewing, the useful note is: rinse and flatten it first.",
+            "createdAt": "2025-03-29T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/74#issuecomment-5073"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 75,
+      "title": "Catalogue picnic lunches materials",
+      "body": "Add a simple record for picnic lunches. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-04-19T12:00:00.000Z",
+      "updatedAt": "2025-04-19T12:00:00.000Z",
+      "closedAt": "2025-04-19T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/75",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For picnic lunches, the useful note is: wrap the lid in a cloth.",
+            "createdAt": "2025-04-19T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/75#issuecomment-5074"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 76,
+      "title": "Catalogue chess puzzles materials",
+      "body": "Add a simple record for chess puzzles. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-05-10T12:00:00.000Z",
+      "updatedAt": "2025-05-10T12:00:00.000Z",
+      "closedAt": "2025-05-10T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/76",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For chess puzzles, the useful note is: cover the solution before guessing.",
+            "createdAt": "2025-05-10T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/76#issuecomment-5075"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 77,
+      "title": "Catalogue houseplants materials",
+      "body": "Add a simple record for houseplants. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-06-01T12:00:00.000Z",
+      "updatedAt": "2025-06-01T12:00:00.000Z",
+      "closedAt": "2025-06-01T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/77",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For houseplants, the useful note is: check the soil before watering.",
+            "createdAt": "2025-06-01T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/77#issuecomment-5076"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 78,
+      "title": "Catalogue bread baking materials",
+      "body": "Add a simple record for bread baking. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-06-22T12:00:00.000Z",
+      "updatedAt": "2025-06-22T12:00:00.000Z",
+      "closedAt": "2025-06-22T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/78",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For bread baking, the useful note is: move the tray up one shelf.",
+            "createdAt": "2025-06-22T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/78#issuecomment-5077"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 79,
+      "title": "Catalogue knitting circle materials",
+      "body": "Add a simple record for knitting circle. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-07-13T12:00:00.000Z",
+      "updatedAt": "2025-07-13T12:00:00.000Z",
+      "closedAt": "2025-07-13T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/79",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For knitting circle, the useful note is: tie the swatch to its label.",
+            "createdAt": "2025-07-13T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/79#issuecomment-5078"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 80,
+      "title": "Catalogue local history materials",
+      "body": "Add a simple record for local history. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-08-03T12:00:00.000Z",
+      "updatedAt": "2025-08-03T12:00:00.000Z",
+      "closedAt": "2025-08-03T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/80",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For local history, the useful note is: note the map year beside the sketch.",
+            "createdAt": "2025-08-03T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/80#issuecomment-5079"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 81,
+      "title": "Catalogue repair cafe materials",
+      "body": "Add a simple record for repair cafe. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2025-08-24T12:00:00.000Z",
+      "updatedAt": "2025-08-24T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/81",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For repair cafe, the useful note is: measure the thread before replacing it.",
+            "createdAt": "2025-08-24T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/81#issuecomment-5080"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 82,
+      "title": "Catalogue bouldering basics materials",
+      "body": "Add a simple record for bouldering basics. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-09-15T12:00:00.000Z",
+      "updatedAt": "2025-09-15T12:00:00.000Z",
+      "closedAt": "2025-09-15T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/82",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For bouldering basics, the useful note is: shorten the loose end.",
+            "createdAt": "2025-09-15T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/82#issuecomment-5081"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 83,
+      "title": "Catalogue quiz night materials",
+      "body": "Add a simple record for quiz night. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-10-06T12:00:00.000Z",
+      "updatedAt": "2025-10-06T12:00:00.000Z",
+      "closedAt": "2025-10-06T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/83",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For quiz night, the useful note is: write it at the top of every page.",
+            "createdAt": "2025-10-06T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/83#issuecomment-5082"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 84,
+      "title": "Catalogue drawing practice materials",
+      "body": "Add a simple record for drawing practice. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-10-27T12:00:00.000Z",
+      "updatedAt": "2025-10-27T12:00:00.000Z",
+      "closedAt": "2025-10-27T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/84",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For drawing practice, the useful note is: rest a spare sheet under the hand.",
+            "createdAt": "2025-10-27T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/84#issuecomment-5083"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 85,
+      "title": "Catalogue secondhand books materials",
+      "body": "Add a simple record for secondhand books. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-11-17T12:00:00.000Z",
+      "updatedAt": "2025-11-17T12:00:00.000Z",
+      "closedAt": "2025-11-17T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/85",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For secondhand books, the useful note is: photograph the missing reference first.",
+            "createdAt": "2025-11-17T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/85#issuecomment-5084"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 86,
+      "title": "Catalogue batch cooking materials",
+      "body": "Add a simple record for batch cooking. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-12-09T12:00:00.000Z",
+      "updatedAt": "2025-12-09T12:00:00.000Z",
+      "closedAt": "2025-12-09T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/86",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For batch cooking, the useful note is: use the shallow containers.",
+            "createdAt": "2025-12-09T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/86#issuecomment-5085"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 87,
+      "title": "Catalogue sewing repairs materials",
+      "body": "Add a simple record for sewing repairs. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2025-12-30T12:00:00.000Z",
+      "updatedAt": "2025-12-30T12:00:00.000Z",
+      "closedAt": "2025-12-30T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/87",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For sewing repairs, the useful note is: try the stronger cotton reel.",
+            "createdAt": "2025-12-30T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/87#issuecomment-5086"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 88,
+      "title": "Catalogue museum sketches materials",
+      "body": "Add a simple record for museum sketches. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-01-20T12:00:00.000Z",
+      "updatedAt": "2026-01-20T12:00:00.000Z",
+      "closedAt": "2026-01-20T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/88",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For museum sketches, the useful note is: take the small softcover next time.",
+            "createdAt": "2026-01-20T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/88#issuecomment-5087"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 89,
+      "title": "Catalogue window cleaning materials",
+      "body": "Add a simple record for window cleaning. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2026-02-10T12:00:00.000Z",
+      "updatedAt": "2026-02-10T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/89",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For window cleaning, the useful note is: use a clean dry corner at the end.",
+            "createdAt": "2026-02-10T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/89#issuecomment-5088"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 90,
+      "title": "Catalogue puzzle evenings materials",
+      "body": "Add a simple record for puzzle evenings. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-03-03T12:00:00.000Z",
+      "updatedAt": "2026-03-03T12:00:00.000Z",
+      "closedAt": "2026-03-03T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/90",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For puzzle evenings, the useful note is: check the dictionary note.",
+            "createdAt": "2026-03-03T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/90#issuecomment-5089"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 91,
+      "title": "Catalogue community gardening materials",
+      "body": "Add a simple record for community gardening. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-03-25T12:00:00.000Z",
+      "updatedAt": "2026-03-25T12:00:00.000Z",
+      "closedAt": "2026-03-25T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/91",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For community gardening, the useful note is: set it aside for repair.",
+            "createdAt": "2026-03-25T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/91#issuecomment-5090"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 92,
+      "title": "Catalogue music listening materials",
+      "body": "Add a simple record for music listening. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-04-15T12:00:00.000Z",
+      "updatedAt": "2026-04-15T12:00:00.000Z",
+      "closedAt": "2026-04-15T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/92",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For music listening, the useful note is: move the chair to the centre.",
+            "createdAt": "2026-04-15T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/92#issuecomment-5091"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 93,
+      "title": "Catalogue badminton materials",
+      "body": "Add a simple record for badminton. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-05-06T12:00:00.000Z",
+      "updatedAt": "2026-05-06T12:00:00.000Z",
+      "closedAt": "2026-05-06T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/93",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For badminton, the useful note is: keep a spare in the tube.",
+            "createdAt": "2026-05-06T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/93#issuecomment-5092"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 94,
+      "title": "Catalogue paper folding materials",
+      "body": "Add a simple record for paper folding. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-05-27T12:00:00.000Z",
+      "updatedAt": "2026-05-27T12:00:00.000Z",
+      "closedAt": "2026-05-27T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/94",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For paper folding, the useful note is: use a thinner sheet.",
+            "createdAt": "2026-05-27T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/94#issuecomment-5093"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 95,
+      "title": "Catalogue spice cupboard materials",
+      "body": "Add a simple record for spice cupboard. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-06-17T12:00:00.000Z",
+      "updatedAt": "2026-06-17T12:00:00.000Z",
+      "closedAt": "2026-06-17T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/95",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For spice cupboard, the useful note is: leave the original packet clipped behind.",
+            "createdAt": "2026-06-17T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/95#issuecomment-5094"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 96,
+      "title": "Catalogue walk planning materials",
+      "body": "Add a simple record for walk planning. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-07-09T12:00:00.000Z",
+      "updatedAt": "2026-07-09T12:00:00.000Z",
+      "closedAt": "2026-07-09T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/96",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For walk planning, the useful note is: take the paved loop instead.",
+            "createdAt": "2026-07-09T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/96#issuecomment-5095"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 97,
+      "title": "Catalogue home shelving materials",
+      "body": "Add a simple record for home shelving. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "OPEN",
+      "createdAt": "2026-07-30T12:00:00.000Z",
+      "updatedAt": "2026-07-30T12:00:00.000Z",
+      "closedAt": null,
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/97",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For home shelving, the useful note is: mark both holes from the same edge.",
+            "createdAt": "2026-07-30T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/97#issuecomment-5096"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 98,
+      "title": "Catalogue card making materials",
+      "body": "Add a simple record for card making. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-08-20T12:00:00.000Z",
+      "updatedAt": "2026-08-20T12:00:00.000Z",
+      "closedAt": "2026-08-20T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/98",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For card making, the useful note is: use small dots at the corners.",
+            "createdAt": "2026-08-20T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/98#issuecomment-5097"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 99,
+      "title": "Catalogue table tennis materials",
+      "body": "Add a simple record for table tennis. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-09-10T12:00:00.000Z",
+      "updatedAt": "2026-09-10T12:00:00.000Z",
+      "closedAt": "2026-09-10T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/99",
+      "author": { "login": "fictional-ada", "name": "Ada Westbrook" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For table tennis, the useful note is: carry a second ball.",
+            "createdAt": "2026-09-10T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/99#issuecomment-5098"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    {
+      "__typename": "Issue",
+      "number": 100,
+      "title": "Catalogue soup experiments materials",
+      "body": "Add a simple record for soup experiments. Required fields: storage box, quantity, condition and a short handling note. The first sketch omitted the condition field.",
+      "state": "CLOSED",
+      "createdAt": "2026-10-02T12:00:00.000Z",
+      "updatedAt": "2026-10-02T12:00:00.000Z",
+      "closedAt": "2026-10-02T16:00:00.000Z",
+      "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/100",
+      "author": { "login": "fictional-sacha", "name": "Sacha Bellamy" },
+      "labels": { "nodes": [{ "name": "household-tool" }] },
+      "assignees": { "nodes": [] },
+      "comments": {
+        "nodes": [
+          {
+            "author": { "login": "fictional-sacha" },
+            "body": "I added the condition field. For soup experiments, the useful note is: taste before adding seasoning.",
+            "createdAt": "2026-10-02T14:00:00.000Z",
+            "url": "https://github.com/fictional-sacha/hobby-catalogue/issues/100#issuecomment-5099"
+          }
+        ],
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    }
+  ],
+  "discussions": []
+}

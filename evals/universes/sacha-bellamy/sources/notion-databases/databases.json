@@ -1,0 +1,1216 @@
+[
+  {
+    "dbId": "sacha_household_materials",
+    "name": "Household materials",
+    "description": "Small ordinary supplies and shared hobby equipment",
+    "schemaProperties": [
+      { "name": "Name", "type": "VARCHAR", "description": "Label" },
+      { "name": "Category", "type": "VARCHAR", "description": "Storage category" },
+      { "name": "Condition", "type": "VARCHAR", "description": "Last recorded condition" },
+      { "name": "Quantity", "type": "DOUBLE", "description": "Count" },
+      { "name": "Notes", "type": "VARCHAR", "description": "Handling notes" }
+    ],
+    "rows": [
+      {
+        "id": "sb-bg-household-row-00000",
+        "createdAt": "2016-09-01T12:00:00.000Z",
+        "modifiedAt": "2016-09-01T12:00:00.000Z",
+        "Name": "sourdough materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "use less water on the next batch"
+      },
+      {
+        "id": "sb-bg-household-row-00001",
+        "createdAt": "2016-10-01T12:00:00.000Z",
+        "modifiedAt": "2016-10-01T12:00:00.000Z",
+        "Name": "balcony herbs materials",
+        "Category": "Kitchen",
+        "Condition": "Good",
+        "Quantity": 2,
+        "Notes": "keep the terracotta pot for thyme"
+      },
+      {
+        "id": "sb-bg-household-row-00002",
+        "createdAt": "2016-11-01T12:00:00.000Z",
+        "modifiedAt": "2016-11-01T12:00:00.000Z",
+        "Name": "board games materials",
+        "Category": "Shared equipment",
+        "Condition": "Repaired",
+        "Quantity": 3,
+        "Notes": "use a pencil tally instead"
+      },
+      {
+        "id": "sb-bg-household-row-00003",
+        "createdAt": "2016-12-02T12:00:00.000Z",
+        "modifiedAt": "2016-12-02T12:00:00.000Z",
+        "Name": "film photography materials",
+        "Category": "Kitchen",
+        "Condition": "Stored",
+        "Quantity": 4,
+        "Notes": "write the frame numbers on the edge"
+      },
+      {
+        "id": "sb-bg-household-row-00004",
+        "createdAt": "2017-01-02T12:00:00.000Z",
+        "modifiedAt": "2017-01-02T12:00:00.000Z",
+        "Name": "bicycle care materials",
+        "Category": "Kitchen",
+        "Condition": "Repaired",
+        "Quantity": 5,
+        "Notes": "use an old toothbrush for the cassette"
+      },
+      {
+        "id": "sb-bg-household-row-00005",
+        "createdAt": "2017-02-02T12:00:00.000Z",
+        "modifiedAt": "2017-02-02T12:00:00.000Z",
+        "Name": "pasta night materials",
+        "Category": "Crafts",
+        "Condition": "Needs cleaning",
+        "Quantity": 6,
+        "Notes": "reserve a cup of cooking water"
+      },
+      {
+        "id": "sb-bg-household-row-00006",
+        "createdAt": "2017-03-05T12:00:00.000Z",
+        "modifiedAt": "2017-03-05T12:00:00.000Z",
+        "Name": "jigsaw swap materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 1,
+        "Notes": "put a coloured label on each lid"
+      },
+      {
+        "id": "sb-bg-household-row-00007",
+        "createdAt": "2017-04-05T12:00:00.000Z",
+        "modifiedAt": "2017-04-05T12:00:00.000Z",
+        "Name": "bird spotting materials",
+        "Category": "Shared equipment",
+        "Condition": "Needs cleaning",
+        "Quantity": 2,
+        "Notes": "watch from behind the low wall"
+      },
+      {
+        "id": "sb-bg-household-row-00008",
+        "createdAt": "2017-05-06T12:00:00.000Z",
+        "modifiedAt": "2017-05-06T12:00:00.000Z",
+        "Name": "language practice materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 3,
+        "Notes": "play the sentence at half speed"
+      },
+      {
+        "id": "sb-bg-household-row-00009",
+        "createdAt": "2017-06-06T12:00:00.000Z",
+        "modifiedAt": "2017-06-06T12:00:00.000Z",
+        "Name": "coffee brewing materials",
+        "Category": "Reading",
+        "Condition": "Needs cleaning",
+        "Quantity": 4,
+        "Notes": "rinse and flatten it first"
+      },
+      {
+        "id": "sb-bg-household-row-00010",
+        "createdAt": "2017-07-07T12:00:00.000Z",
+        "modifiedAt": "2017-07-07T12:00:00.000Z",
+        "Name": "picnic lunches materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 5,
+        "Notes": "wrap the lid in a cloth"
+      },
+      {
+        "id": "sb-bg-household-row-00011",
+        "createdAt": "2017-08-07T12:00:00.000Z",
+        "modifiedAt": "2017-08-07T12:00:00.000Z",
+        "Name": "chess puzzles materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 6,
+        "Notes": "cover the solution before guessing"
+      },
+      {
+        "id": "sb-bg-household-row-00012",
+        "createdAt": "2017-09-07T12:00:00.000Z",
+        "modifiedAt": "2017-09-07T12:00:00.000Z",
+        "Name": "houseplants materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 1,
+        "Notes": "check the soil before watering"
+      },
+      {
+        "id": "sb-bg-household-row-00013",
+        "createdAt": "2017-10-08T12:00:00.000Z",
+        "modifiedAt": "2017-10-08T12:00:00.000Z",
+        "Name": "bread baking materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 2,
+        "Notes": "move the tray up one shelf"
+      },
+      {
+        "id": "sb-bg-household-row-00014",
+        "createdAt": "2017-11-08T12:00:00.000Z",
+        "modifiedAt": "2017-11-08T12:00:00.000Z",
+        "Name": "knitting circle materials",
+        "Category": "Reading",
+        "Condition": "Good",
+        "Quantity": 3,
+        "Notes": "tie the swatch to its label"
+      },
+      {
+        "id": "sb-bg-household-row-00015",
+        "createdAt": "2017-12-09T12:00:00.000Z",
+        "modifiedAt": "2017-12-09T12:00:00.000Z",
+        "Name": "local history materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 4,
+        "Notes": "note the map year beside the sketch"
+      },
+      {
+        "id": "sb-bg-household-row-00016",
+        "createdAt": "2018-01-09T12:00:00.000Z",
+        "modifiedAt": "2018-01-09T12:00:00.000Z",
+        "Name": "repair cafe materials",
+        "Category": "Kitchen",
+        "Condition": "Needs cleaning",
+        "Quantity": 5,
+        "Notes": "measure the thread before replacing it"
+      },
+      {
+        "id": "sb-bg-household-row-00017",
+        "createdAt": "2018-02-09T12:00:00.000Z",
+        "modifiedAt": "2018-02-09T12:00:00.000Z",
+        "Name": "bouldering basics materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 6,
+        "Notes": "shorten the loose end"
+      },
+      {
+        "id": "sb-bg-household-row-00018",
+        "createdAt": "2018-03-12T12:00:00.000Z",
+        "modifiedAt": "2018-03-12T12:00:00.000Z",
+        "Name": "quiz night materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 1,
+        "Notes": "write it at the top of every page"
+      },
+      {
+        "id": "sb-bg-household-row-00019",
+        "createdAt": "2018-04-12T12:00:00.000Z",
+        "modifiedAt": "2018-04-12T12:00:00.000Z",
+        "Name": "drawing practice materials",
+        "Category": "Shared equipment",
+        "Condition": "Needs cleaning",
+        "Quantity": 2,
+        "Notes": "rest a spare sheet under the hand"
+      },
+      {
+        "id": "sb-bg-household-row-00020",
+        "createdAt": "2018-05-12T12:00:00.000Z",
+        "modifiedAt": "2018-05-12T12:00:00.000Z",
+        "Name": "secondhand books materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 3,
+        "Notes": "photograph the missing reference first"
+      },
+      {
+        "id": "sb-bg-household-row-00021",
+        "createdAt": "2018-06-12T12:00:00.000Z",
+        "modifiedAt": "2018-06-12T12:00:00.000Z",
+        "Name": "batch cooking materials",
+        "Category": "Crafts",
+        "Condition": "Stored",
+        "Quantity": 4,
+        "Notes": "use the shallow containers"
+      },
+      {
+        "id": "sb-bg-household-row-00022",
+        "createdAt": "2018-07-13T12:00:00.000Z",
+        "modifiedAt": "2018-07-13T12:00:00.000Z",
+        "Name": "sewing repairs materials",
+        "Category": "Crafts",
+        "Condition": "Good",
+        "Quantity": 5,
+        "Notes": "try the stronger cotton reel"
+      },
+      {
+        "id": "sb-bg-household-row-00023",
+        "createdAt": "2018-08-13T12:00:00.000Z",
+        "modifiedAt": "2018-08-13T12:00:00.000Z",
+        "Name": "museum sketches materials",
+        "Category": "Crafts",
+        "Condition": "Stored",
+        "Quantity": 6,
+        "Notes": "take the small softcover next time"
+      },
+      {
+        "id": "sb-bg-household-row-00024",
+        "createdAt": "2018-09-13T12:00:00.000Z",
+        "modifiedAt": "2018-09-13T12:00:00.000Z",
+        "Name": "window cleaning materials",
+        "Category": "Kitchen",
+        "Condition": "Needs cleaning",
+        "Quantity": 1,
+        "Notes": "use a clean dry corner at the end"
+      },
+      {
+        "id": "sb-bg-household-row-00025",
+        "createdAt": "2018-10-14T12:00:00.000Z",
+        "modifiedAt": "2018-10-14T12:00:00.000Z",
+        "Name": "puzzle evenings materials",
+        "Category": "Kitchen",
+        "Condition": "Good",
+        "Quantity": 2,
+        "Notes": "check the dictionary note"
+      },
+      {
+        "id": "sb-bg-household-row-00026",
+        "createdAt": "2018-11-14T12:00:00.000Z",
+        "modifiedAt": "2018-11-14T12:00:00.000Z",
+        "Name": "community gardening materials",
+        "Category": "Crafts",
+        "Condition": "Needs cleaning",
+        "Quantity": 3,
+        "Notes": "set it aside for repair"
+      },
+      {
+        "id": "sb-bg-household-row-00027",
+        "createdAt": "2018-12-15T12:00:00.000Z",
+        "modifiedAt": "2018-12-15T12:00:00.000Z",
+        "Name": "music listening materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 4,
+        "Notes": "move the chair to the centre"
+      },
+      {
+        "id": "sb-bg-household-row-00028",
+        "createdAt": "2019-01-15T12:00:00.000Z",
+        "modifiedAt": "2019-01-15T12:00:00.000Z",
+        "Name": "badminton materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 5,
+        "Notes": "keep a spare in the tube"
+      },
+      {
+        "id": "sb-bg-household-row-00029",
+        "createdAt": "2019-02-15T12:00:00.000Z",
+        "modifiedAt": "2019-02-15T12:00:00.000Z",
+        "Name": "paper folding materials",
+        "Category": "Shared equipment",
+        "Condition": "Repaired",
+        "Quantity": 6,
+        "Notes": "use a thinner sheet"
+      },
+      {
+        "id": "sb-bg-household-row-00030",
+        "createdAt": "2019-03-18T12:00:00.000Z",
+        "modifiedAt": "2019-03-18T12:00:00.000Z",
+        "Name": "spice cupboard materials",
+        "Category": "Crafts",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "leave the original packet clipped behind"
+      },
+      {
+        "id": "sb-bg-household-row-00031",
+        "createdAt": "2019-04-18T12:00:00.000Z",
+        "modifiedAt": "2019-04-18T12:00:00.000Z",
+        "Name": "walk planning materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 2,
+        "Notes": "take the paved loop instead"
+      },
+      {
+        "id": "sb-bg-household-row-00032",
+        "createdAt": "2019-05-19T12:00:00.000Z",
+        "modifiedAt": "2019-05-19T12:00:00.000Z",
+        "Name": "home shelving materials",
+        "Category": "Shared equipment",
+        "Condition": "Needs cleaning",
+        "Quantity": 3,
+        "Notes": "mark both holes from the same edge"
+      },
+      {
+        "id": "sb-bg-household-row-00033",
+        "createdAt": "2019-06-19T12:00:00.000Z",
+        "modifiedAt": "2019-06-19T12:00:00.000Z",
+        "Name": "card making materials",
+        "Category": "Kitchen",
+        "Condition": "Stored",
+        "Quantity": 4,
+        "Notes": "use small dots at the corners"
+      },
+      {
+        "id": "sb-bg-household-row-00034",
+        "createdAt": "2019-07-20T12:00:00.000Z",
+        "modifiedAt": "2019-07-20T12:00:00.000Z",
+        "Name": "table tennis materials",
+        "Category": "Shared equipment",
+        "Condition": "Needs cleaning",
+        "Quantity": 5,
+        "Notes": "carry a second ball"
+      },
+      {
+        "id": "sb-bg-household-row-00035",
+        "createdAt": "2019-08-20T12:00:00.000Z",
+        "modifiedAt": "2019-08-20T12:00:00.000Z",
+        "Name": "soup experiments materials",
+        "Category": "Shared equipment",
+        "Condition": "Repaired",
+        "Quantity": 6,
+        "Notes": "taste before adding seasoning"
+      },
+      {
+        "id": "sb-bg-household-row-00036",
+        "createdAt": "2019-09-20T12:00:00.000Z",
+        "modifiedAt": "2019-09-20T12:00:00.000Z",
+        "Name": "seed saving materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 1,
+        "Notes": "add the month to each packet"
+      },
+      {
+        "id": "sb-bg-household-row-00037",
+        "createdAt": "2019-10-21T12:00:00.000Z",
+        "modifiedAt": "2019-10-21T12:00:00.000Z",
+        "Name": "reusable containers materials",
+        "Category": "Crafts",
+        "Condition": "Stored",
+        "Quantity": 2,
+        "Notes": "keep each pair clipped together"
+      },
+      {
+        "id": "sb-bg-household-row-00038",
+        "createdAt": "2019-11-21T12:00:00.000Z",
+        "modifiedAt": "2019-11-21T12:00:00.000Z",
+        "Name": "short stories materials",
+        "Category": "Reading",
+        "Condition": "Stored",
+        "Quantity": 3,
+        "Notes": "mark the paragraph where the voice shifts"
+      },
+      {
+        "id": "sb-bg-household-row-00039",
+        "createdAt": "2019-12-22T12:00:00.000Z",
+        "modifiedAt": "2019-12-22T12:00:00.000Z",
+        "Name": "model building materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 4,
+        "Notes": "use a tiny drop with a toothpick"
+      },
+      {
+        "id": "sb-bg-household-row-00040",
+        "createdAt": "2020-01-21T12:00:00.000Z",
+        "modifiedAt": "2020-01-21T12:00:00.000Z",
+        "Name": "grocery lists materials",
+        "Category": "Kitchen",
+        "Condition": "Needs cleaning",
+        "Quantity": 5,
+        "Notes": "put the heavy tins in the canvas bag"
+      },
+      {
+        "id": "sb-bg-household-row-00041",
+        "createdAt": "2020-02-21T12:00:00.000Z",
+        "modifiedAt": "2020-02-21T12:00:00.000Z",
+        "Name": "parcel collection materials",
+        "Category": "Crafts",
+        "Condition": "Needs cleaning",
+        "Quantity": 6,
+        "Notes": "read the branch line rather than the headline"
+      },
+      {
+        "id": "sb-bg-household-row-00042",
+        "createdAt": "2020-03-23T12:00:00.000Z",
+        "modifiedAt": "2020-03-23T12:00:00.000Z",
+        "Name": "laundry sorting materials",
+        "Category": "Reading",
+        "Condition": "Needs cleaning",
+        "Quantity": 1,
+        "Notes": "use the cooler setting"
+      },
+      {
+        "id": "sb-bg-household-row-00043",
+        "createdAt": "2020-04-23T12:00:00.000Z",
+        "modifiedAt": "2020-04-23T12:00:00.000Z",
+        "Name": "family video calls materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 2,
+        "Notes": "check the permission icon first"
+      },
+      {
+        "id": "sb-bg-household-row-00044",
+        "createdAt": "2020-05-24T12:00:00.000Z",
+        "modifiedAt": "2020-05-24T12:00:00.000Z",
+        "Name": "weekly groceries materials",
+        "Category": "Shared equipment",
+        "Condition": "Repaired",
+        "Quantity": 3,
+        "Notes": "compare the unit price on the shelf"
+      },
+      {
+        "id": "sb-bg-household-row-00045",
+        "createdAt": "2020-06-24T12:00:00.000Z",
+        "modifiedAt": "2020-06-24T12:00:00.000Z",
+        "Name": "recycling rota materials",
+        "Category": "Crafts",
+        "Condition": "Needs cleaning",
+        "Quantity": 4,
+        "Notes": "split the large boxes into smaller pieces"
+      },
+      {
+        "id": "sb-bg-household-row-00046",
+        "createdAt": "2020-07-25T12:00:00.000Z",
+        "modifiedAt": "2020-07-25T12:00:00.000Z",
+        "Name": "work lunch rota materials",
+        "Category": "Kitchen",
+        "Condition": "Repaired",
+        "Quantity": 5,
+        "Notes": "turn the trays so everyone can read them"
+      },
+      {
+        "id": "sb-bg-household-row-00047",
+        "createdAt": "2020-08-25T12:00:00.000Z",
+        "modifiedAt": "2020-08-25T12:00:00.000Z",
+        "Name": "desk ergonomics materials",
+        "Category": "Kitchen",
+        "Condition": "Repaired",
+        "Quantity": 6,
+        "Notes": "leave a little slack behind the monitor"
+      },
+      {
+        "id": "sb-bg-household-row-00048",
+        "createdAt": "2020-09-25T12:00:00.000Z",
+        "modifiedAt": "2020-09-25T12:00:00.000Z",
+        "Name": "team documentation materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "write the full term at first use"
+      },
+      {
+        "id": "sb-bg-household-row-00049",
+        "createdAt": "2020-10-26T12:00:00.000Z",
+        "modifiedAt": "2020-10-26T12:00:00.000Z",
+        "Name": "book club reminders materials",
+        "Category": "Shared equipment",
+        "Condition": "Repaired",
+        "Quantity": 2,
+        "Notes": "include the opening sentence as well"
+      },
+      {
+        "id": "sb-bg-household-row-00050",
+        "createdAt": "2020-11-26T12:00:00.000Z",
+        "modifiedAt": "2020-11-26T12:00:00.000Z",
+        "Name": "umbrella repair materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 3,
+        "Notes": "dry the mechanism before testing again"
+      },
+      {
+        "id": "sb-bg-household-row-00051",
+        "createdAt": "2020-12-27T12:00:00.000Z",
+        "modifiedAt": "2020-12-27T12:00:00.000Z",
+        "Name": "linen cupboard materials",
+        "Category": "Reading",
+        "Condition": "Stored",
+        "Quantity": 4,
+        "Notes": "use a paper band with the size written on it"
+      },
+      {
+        "id": "sb-bg-household-row-00052",
+        "createdAt": "2021-01-27T12:00:00.000Z",
+        "modifiedAt": "2021-01-27T12:00:00.000Z",
+        "Name": "neighbour noticeboard materials",
+        "Category": "Kitchen",
+        "Condition": "Stored",
+        "Quantity": 5,
+        "Notes": "use the existing pins"
+      },
+      {
+        "id": "sb-bg-household-row-00053",
+        "createdAt": "2021-02-27T12:00:00.000Z",
+        "modifiedAt": "2021-02-27T12:00:00.000Z",
+        "Name": "shared courtyard materials",
+        "Category": "Kitchen",
+        "Condition": "Stored",
+        "Quantity": 6,
+        "Notes": "borrow the stiff outdoor brush"
+      },
+      {
+        "id": "sb-bg-household-row-00054",
+        "createdAt": "2021-03-30T12:00:00.000Z",
+        "modifiedAt": "2021-03-30T12:00:00.000Z",
+        "Name": "laptop backups materials",
+        "Category": "Crafts",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "replace that lead instead of bending it"
+      },
+      {
+        "id": "sb-bg-household-row-00055",
+        "createdAt": "2021-04-30T12:00:00.000Z",
+        "modifiedAt": "2021-04-30T12:00:00.000Z",
+        "Name": "train reading materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 2,
+        "Notes": "save the issue for offline reading"
+      },
+      {
+        "id": "sb-bg-household-row-00056",
+        "createdAt": "2021-05-31T12:00:00.000Z",
+        "modifiedAt": "2021-05-31T12:00:00.000Z",
+        "Name": "lost scarf materials",
+        "Category": "Crafts",
+        "Condition": "Repaired",
+        "Quantity": 3,
+        "Notes": "check the coat lining too"
+      },
+      {
+        "id": "sb-bg-household-row-00057",
+        "createdAt": "2021-07-01T12:00:00.000Z",
+        "modifiedAt": "2021-07-01T12:00:00.000Z",
+        "Name": "potluck arrangements materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 4,
+        "Notes": "take a spare from the kitchen"
+      },
+      {
+        "id": "sb-bg-household-row-00058",
+        "createdAt": "2021-08-01T12:00:00.000Z",
+        "modifiedAt": "2021-08-01T12:00:00.000Z",
+        "Name": "plant watering rota materials",
+        "Category": "Crafts",
+        "Condition": "Stored",
+        "Quantity": 5,
+        "Notes": "tick the card only after watering"
+      },
+      {
+        "id": "sb-bg-household-row-00059",
+        "createdAt": "2021-09-01T12:00:00.000Z",
+        "modifiedAt": "2021-09-01T12:00:00.000Z",
+        "Name": "meeting room setup materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 6,
+        "Notes": "keep the correct adapter with the cable"
+      },
+      {
+        "id": "sb-bg-household-row-00060",
+        "createdAt": "2021-10-01T12:00:00.000Z",
+        "modifiedAt": "2021-10-01T12:00:00.000Z",
+        "Name": "market vegetables materials",
+        "Category": "Crafts",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "measure the tray before buying"
+      },
+      {
+        "id": "sb-bg-household-row-00061",
+        "createdAt": "2021-11-01T12:00:00.000Z",
+        "modifiedAt": "2021-11-01T12:00:00.000Z",
+        "Name": "spare keys materials",
+        "Category": "Kitchen",
+        "Condition": "Stored",
+        "Quantity": 2,
+        "Notes": "test each one before putting it away"
+      },
+      {
+        "id": "sb-bg-household-row-00062",
+        "createdAt": "2021-12-02T12:00:00.000Z",
+        "modifiedAt": "2021-12-02T12:00:00.000Z",
+        "Name": "saturday errands materials",
+        "Category": "Reading",
+        "Condition": "Stored",
+        "Quantity": 3,
+        "Notes": "hand the book to the desk staff"
+      },
+      {
+        "id": "sb-bg-household-row-00063",
+        "createdAt": "2022-01-02T12:00:00.000Z",
+        "modifiedAt": "2022-01-02T12:00:00.000Z",
+        "Name": "handwritten letters materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 4,
+        "Notes": "use a lighter sheet for the enclosure"
+      },
+      {
+        "id": "sb-bg-household-row-00064",
+        "createdAt": "2022-02-02T12:00:00.000Z",
+        "modifiedAt": "2022-02-02T12:00:00.000Z",
+        "Name": "sourdough materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 5,
+        "Notes": "use less water on the next batch"
+      },
+      {
+        "id": "sb-bg-household-row-00065",
+        "createdAt": "2022-03-05T12:00:00.000Z",
+        "modifiedAt": "2022-03-05T12:00:00.000Z",
+        "Name": "balcony herbs materials",
+        "Category": "Kitchen",
+        "Condition": "Good",
+        "Quantity": 6,
+        "Notes": "keep the terracotta pot for thyme"
+      },
+      {
+        "id": "sb-bg-household-row-00066",
+        "createdAt": "2022-04-05T12:00:00.000Z",
+        "modifiedAt": "2022-04-05T12:00:00.000Z",
+        "Name": "board games materials",
+        "Category": "Kitchen",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "use a pencil tally instead"
+      },
+      {
+        "id": "sb-bg-household-row-00067",
+        "createdAt": "2022-05-06T12:00:00.000Z",
+        "modifiedAt": "2022-05-06T12:00:00.000Z",
+        "Name": "film photography materials",
+        "Category": "Shared equipment",
+        "Condition": "Needs cleaning",
+        "Quantity": 2,
+        "Notes": "write the frame numbers on the edge"
+      },
+      {
+        "id": "sb-bg-household-row-00068",
+        "createdAt": "2022-06-06T12:00:00.000Z",
+        "modifiedAt": "2022-06-06T12:00:00.000Z",
+        "Name": "bicycle care materials",
+        "Category": "Reading",
+        "Condition": "Needs cleaning",
+        "Quantity": 3,
+        "Notes": "use an old toothbrush for the cassette"
+      },
+      {
+        "id": "sb-bg-household-row-00069",
+        "createdAt": "2022-07-07T12:00:00.000Z",
+        "modifiedAt": "2022-07-07T12:00:00.000Z",
+        "Name": "pasta night materials",
+        "Category": "Crafts",
+        "Condition": "Good",
+        "Quantity": 4,
+        "Notes": "reserve a cup of cooking water"
+      },
+      {
+        "id": "sb-bg-household-row-00070",
+        "createdAt": "2022-08-07T12:00:00.000Z",
+        "modifiedAt": "2022-08-07T12:00:00.000Z",
+        "Name": "jigsaw swap materials",
+        "Category": "Crafts",
+        "Condition": "Needs cleaning",
+        "Quantity": 5,
+        "Notes": "put a coloured label on each lid"
+      },
+      {
+        "id": "sb-bg-household-row-00071",
+        "createdAt": "2022-09-07T12:00:00.000Z",
+        "modifiedAt": "2022-09-07T12:00:00.000Z",
+        "Name": "bird spotting materials",
+        "Category": "Shared equipment",
+        "Condition": "Needs cleaning",
+        "Quantity": 6,
+        "Notes": "watch from behind the low wall"
+      },
+      {
+        "id": "sb-bg-household-row-00072",
+        "createdAt": "2022-10-08T12:00:00.000Z",
+        "modifiedAt": "2022-10-08T12:00:00.000Z",
+        "Name": "language practice materials",
+        "Category": "Shared equipment",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "play the sentence at half speed"
+      },
+      {
+        "id": "sb-bg-household-row-00073",
+        "createdAt": "2022-11-08T12:00:00.000Z",
+        "modifiedAt": "2022-11-08T12:00:00.000Z",
+        "Name": "coffee brewing materials",
+        "Category": "Kitchen",
+        "Condition": "Needs cleaning",
+        "Quantity": 2,
+        "Notes": "rinse and flatten it first"
+      },
+      {
+        "id": "sb-bg-household-row-00074",
+        "createdAt": "2022-12-09T12:00:00.000Z",
+        "modifiedAt": "2022-12-09T12:00:00.000Z",
+        "Name": "picnic lunches materials",
+        "Category": "Kitchen",
+        "Condition": "Good",
+        "Quantity": 3,
+        "Notes": "wrap the lid in a cloth"
+      },
+      {
+        "id": "sb-bg-household-row-00075",
+        "createdAt": "2023-01-09T12:00:00.000Z",
+        "modifiedAt": "2023-01-09T12:00:00.000Z",
+        "Name": "chess puzzles materials",
+        "Category": "Reading",
+        "Condition": "Good",
+        "Quantity": 4,
+        "Notes": "cover the solution before guessing"
+      },
+      {
+        "id": "sb-bg-household-row-00076",
+        "createdAt": "2023-02-09T12:00:00.000Z",
+        "modifiedAt": "2023-02-09T12:00:00.000Z",
+        "Name": "houseplants materials",
+        "Category": "Kitchen",
+        "Condition": "Stored",
+        "Quantity": 5,
+        "Notes": "check the soil before watering"
+      },
+      {
+        "id": "sb-bg-household-row-00077",
+        "createdAt": "2023-03-12T12:00:00.000Z",
+        "modifiedAt": "2023-03-12T12:00:00.000Z",
+        "Name": "bread baking materials",
+        "Category": "Crafts",
+        "Condition": "Repaired",
+        "Quantity": 6,
+        "Notes": "move the tray up one shelf"
+      },
+      {
+        "id": "sb-bg-household-row-00078",
+        "createdAt": "2023-04-12T12:00:00.000Z",
+        "modifiedAt": "2023-04-12T12:00:00.000Z",
+        "Name": "knitting circle materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "tie the swatch to its label"
+      },
+      {
+        "id": "sb-bg-household-row-00079",
+        "createdAt": "2023-05-13T12:00:00.000Z",
+        "modifiedAt": "2023-05-13T12:00:00.000Z",
+        "Name": "local history materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 2,
+        "Notes": "note the map year beside the sketch"
+      },
+      {
+        "id": "sb-bg-household-row-00080",
+        "createdAt": "2023-06-12T12:00:00.000Z",
+        "modifiedAt": "2023-06-12T12:00:00.000Z",
+        "Name": "repair cafe materials",
+        "Category": "Reading",
+        "Condition": "Good",
+        "Quantity": 3,
+        "Notes": "measure the thread before replacing it"
+      },
+      {
+        "id": "sb-bg-household-row-00081",
+        "createdAt": "2023-07-13T12:00:00.000Z",
+        "modifiedAt": "2023-07-13T12:00:00.000Z",
+        "Name": "bouldering basics materials",
+        "Category": "Crafts",
+        "Condition": "Needs cleaning",
+        "Quantity": 4,
+        "Notes": "shorten the loose end"
+      },
+      {
+        "id": "sb-bg-household-row-00082",
+        "createdAt": "2023-08-13T12:00:00.000Z",
+        "modifiedAt": "2023-08-13T12:00:00.000Z",
+        "Name": "quiz night materials",
+        "Category": "Reading",
+        "Condition": "Needs cleaning",
+        "Quantity": 5,
+        "Notes": "write it at the top of every page"
+      },
+      {
+        "id": "sb-bg-household-row-00083",
+        "createdAt": "2023-09-13T12:00:00.000Z",
+        "modifiedAt": "2023-09-13T12:00:00.000Z",
+        "Name": "drawing practice materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 6,
+        "Notes": "rest a spare sheet under the hand"
+      },
+      {
+        "id": "sb-bg-household-row-00084",
+        "createdAt": "2023-10-14T12:00:00.000Z",
+        "modifiedAt": "2023-10-14T12:00:00.000Z",
+        "Name": "secondhand books materials",
+        "Category": "Reading",
+        "Condition": "Good",
+        "Quantity": 1,
+        "Notes": "photograph the missing reference first"
+      },
+      {
+        "id": "sb-bg-household-row-00085",
+        "createdAt": "2023-11-14T12:00:00.000Z",
+        "modifiedAt": "2023-11-14T12:00:00.000Z",
+        "Name": "batch cooking materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 2,
+        "Notes": "use the shallow containers"
+      },
+      {
+        "id": "sb-bg-household-row-00086",
+        "createdAt": "2023-12-15T12:00:00.000Z",
+        "modifiedAt": "2023-12-15T12:00:00.000Z",
+        "Name": "sewing repairs materials",
+        "Category": "Reading",
+        "Condition": "Good",
+        "Quantity": 3,
+        "Notes": "try the stronger cotton reel"
+      },
+      {
+        "id": "sb-bg-household-row-00087",
+        "createdAt": "2024-01-15T12:00:00.000Z",
+        "modifiedAt": "2024-01-15T12:00:00.000Z",
+        "Name": "museum sketches materials",
+        "Category": "Crafts",
+        "Condition": "Repaired",
+        "Quantity": 4,
+        "Notes": "take the small softcover next time"
+      },
+      {
+        "id": "sb-bg-household-row-00088",
+        "createdAt": "2024-02-15T12:00:00.000Z",
+        "modifiedAt": "2024-02-15T12:00:00.000Z",
+        "Name": "window cleaning materials",
+        "Category": "Kitchen",
+        "Condition": "Repaired",
+        "Quantity": 5,
+        "Notes": "use a clean dry corner at the end"
+      },
+      {
+        "id": "sb-bg-household-row-00089",
+        "createdAt": "2024-03-17T12:00:00.000Z",
+        "modifiedAt": "2024-03-17T12:00:00.000Z",
+        "Name": "puzzle evenings materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 6,
+        "Notes": "check the dictionary note"
+      },
+      {
+        "id": "sb-bg-household-row-00090",
+        "createdAt": "2024-04-17T12:00:00.000Z",
+        "modifiedAt": "2024-04-17T12:00:00.000Z",
+        "Name": "community gardening materials",
+        "Category": "Kitchen",
+        "Condition": "Needs cleaning",
+        "Quantity": 1,
+        "Notes": "set it aside for repair"
+      },
+      {
+        "id": "sb-bg-household-row-00091",
+        "createdAt": "2024-05-18T12:00:00.000Z",
+        "modifiedAt": "2024-05-18T12:00:00.000Z",
+        "Name": "music listening materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 2,
+        "Notes": "move the chair to the centre"
+      },
+      {
+        "id": "sb-bg-household-row-00092",
+        "createdAt": "2024-06-18T12:00:00.000Z",
+        "modifiedAt": "2024-06-18T12:00:00.000Z",
+        "Name": "badminton materials",
+        "Category": "Crafts",
+        "Condition": "Good",
+        "Quantity": 3,
+        "Notes": "keep a spare in the tube"
+      },
+      {
+        "id": "sb-bg-household-row-00093",
+        "createdAt": "2024-07-19T12:00:00.000Z",
+        "modifiedAt": "2024-07-19T12:00:00.000Z",
+        "Name": "paper folding materials",
+        "Category": "Kitchen",
+        "Condition": "Needs cleaning",
+        "Quantity": 4,
+        "Notes": "use a thinner sheet"
+      },
+      {
+        "id": "sb-bg-household-row-00094",
+        "createdAt": "2024-08-19T12:00:00.000Z",
+        "modifiedAt": "2024-08-19T12:00:00.000Z",
+        "Name": "spice cupboard materials",
+        "Category": "Crafts",
+        "Condition": "Repaired",
+        "Quantity": 5,
+        "Notes": "leave the original packet clipped behind"
+      },
+      {
+        "id": "sb-bg-household-row-00095",
+        "createdAt": "2024-09-19T12:00:00.000Z",
+        "modifiedAt": "2024-09-19T12:00:00.000Z",
+        "Name": "walk planning materials",
+        "Category": "Shared equipment",
+        "Condition": "Needs cleaning",
+        "Quantity": 6,
+        "Notes": "take the paved loop instead"
+      },
+      {
+        "id": "sb-bg-household-row-00096",
+        "createdAt": "2024-10-20T12:00:00.000Z",
+        "modifiedAt": "2024-10-20T12:00:00.000Z",
+        "Name": "home shelving materials",
+        "Category": "Crafts",
+        "Condition": "Needs cleaning",
+        "Quantity": 1,
+        "Notes": "mark both holes from the same edge"
+      },
+      {
+        "id": "sb-bg-household-row-00097",
+        "createdAt": "2024-11-20T12:00:00.000Z",
+        "modifiedAt": "2024-11-20T12:00:00.000Z",
+        "Name": "card making materials",
+        "Category": "Kitchen",
+        "Condition": "Good",
+        "Quantity": 2,
+        "Notes": "use small dots at the corners"
+      },
+      {
+        "id": "sb-bg-household-row-00098",
+        "createdAt": "2024-12-21T12:00:00.000Z",
+        "modifiedAt": "2024-12-21T12:00:00.000Z",
+        "Name": "table tennis materials",
+        "Category": "Shared equipment",
+        "Condition": "Repaired",
+        "Quantity": 3,
+        "Notes": "carry a second ball"
+      },
+      {
+        "id": "sb-bg-household-row-00099",
+        "createdAt": "2025-01-21T12:00:00.000Z",
+        "modifiedAt": "2025-01-21T12:00:00.000Z",
+        "Name": "soup experiments materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 4,
+        "Notes": "taste before adding seasoning"
+      },
+      {
+        "id": "sb-bg-household-row-00100",
+        "createdAt": "2025-02-20T12:00:00.000Z",
+        "modifiedAt": "2025-02-20T12:00:00.000Z",
+        "Name": "seed saving materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 5,
+        "Notes": "add the month to each packet"
+      },
+      {
+        "id": "sb-bg-household-row-00101",
+        "createdAt": "2025-03-23T12:00:00.000Z",
+        "modifiedAt": "2025-03-23T12:00:00.000Z",
+        "Name": "reusable containers materials",
+        "Category": "Crafts",
+        "Condition": "Good",
+        "Quantity": 6,
+        "Notes": "keep each pair clipped together"
+      },
+      {
+        "id": "sb-bg-household-row-00102",
+        "createdAt": "2025-04-23T12:00:00.000Z",
+        "modifiedAt": "2025-04-23T12:00:00.000Z",
+        "Name": "short stories materials",
+        "Category": "Shared equipment",
+        "Condition": "Good",
+        "Quantity": 1,
+        "Notes": "mark the paragraph where the voice shifts"
+      },
+      {
+        "id": "sb-bg-household-row-00103",
+        "createdAt": "2025-05-24T12:00:00.000Z",
+        "modifiedAt": "2025-05-24T12:00:00.000Z",
+        "Name": "model building materials",
+        "Category": "Kitchen",
+        "Condition": "Stored",
+        "Quantity": 2,
+        "Notes": "use a tiny drop with a toothpick"
+      },
+      {
+        "id": "sb-bg-household-row-00104",
+        "createdAt": "2025-06-24T12:00:00.000Z",
+        "modifiedAt": "2025-06-24T12:00:00.000Z",
+        "Name": "grocery lists materials",
+        "Category": "Crafts",
+        "Condition": "Stored",
+        "Quantity": 3,
+        "Notes": "put the heavy tins in the canvas bag"
+      },
+      {
+        "id": "sb-bg-household-row-00105",
+        "createdAt": "2025-07-25T12:00:00.000Z",
+        "modifiedAt": "2025-07-25T12:00:00.000Z",
+        "Name": "parcel collection materials",
+        "Category": "Reading",
+        "Condition": "Stored",
+        "Quantity": 4,
+        "Notes": "read the branch line rather than the headline"
+      },
+      {
+        "id": "sb-bg-household-row-00106",
+        "createdAt": "2025-08-25T12:00:00.000Z",
+        "modifiedAt": "2025-08-25T12:00:00.000Z",
+        "Name": "laundry sorting materials",
+        "Category": "Reading",
+        "Condition": "Good",
+        "Quantity": 5,
+        "Notes": "use the cooler setting"
+      },
+      {
+        "id": "sb-bg-household-row-00107",
+        "createdAt": "2025-09-25T12:00:00.000Z",
+        "modifiedAt": "2025-09-25T12:00:00.000Z",
+        "Name": "family video calls materials",
+        "Category": "Kitchen",
+        "Condition": "Stored",
+        "Quantity": 6,
+        "Notes": "check the permission icon first"
+      },
+      {
+        "id": "sb-bg-household-row-00108",
+        "createdAt": "2025-10-26T12:00:00.000Z",
+        "modifiedAt": "2025-10-26T12:00:00.000Z",
+        "Name": "weekly groceries materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 1,
+        "Notes": "compare the unit price on the shelf"
+      },
+      {
+        "id": "sb-bg-household-row-00109",
+        "createdAt": "2025-11-26T12:00:00.000Z",
+        "modifiedAt": "2025-11-26T12:00:00.000Z",
+        "Name": "recycling rota materials",
+        "Category": "Reading",
+        "Condition": "Stored",
+        "Quantity": 2,
+        "Notes": "split the large boxes into smaller pieces"
+      },
+      {
+        "id": "sb-bg-household-row-00110",
+        "createdAt": "2025-12-27T12:00:00.000Z",
+        "modifiedAt": "2025-12-27T12:00:00.000Z",
+        "Name": "work lunch rota materials",
+        "Category": "Shared equipment",
+        "Condition": "Needs cleaning",
+        "Quantity": 3,
+        "Notes": "turn the trays so everyone can read them"
+      },
+      {
+        "id": "sb-bg-household-row-00111",
+        "createdAt": "2026-01-27T12:00:00.000Z",
+        "modifiedAt": "2026-01-27T12:00:00.000Z",
+        "Name": "desk ergonomics materials",
+        "Category": "Reading",
+        "Condition": "Good",
+        "Quantity": 4,
+        "Notes": "leave a little slack behind the monitor"
+      },
+      {
+        "id": "sb-bg-household-row-00112",
+        "createdAt": "2026-02-27T12:00:00.000Z",
+        "modifiedAt": "2026-02-27T12:00:00.000Z",
+        "Name": "team documentation materials",
+        "Category": "Kitchen",
+        "Condition": "Good",
+        "Quantity": 5,
+        "Notes": "write the full term at first use"
+      },
+      {
+        "id": "sb-bg-household-row-00113",
+        "createdAt": "2026-03-30T12:00:00.000Z",
+        "modifiedAt": "2026-03-30T12:00:00.000Z",
+        "Name": "book club reminders materials",
+        "Category": "Reading",
+        "Condition": "Needs cleaning",
+        "Quantity": 6,
+        "Notes": "include the opening sentence as well"
+      },
+      {
+        "id": "sb-bg-household-row-00114",
+        "createdAt": "2026-04-30T12:00:00.000Z",
+        "modifiedAt": "2026-04-30T12:00:00.000Z",
+        "Name": "umbrella repair materials",
+        "Category": "Shared equipment",
+        "Condition": "Stored",
+        "Quantity": 1,
+        "Notes": "dry the mechanism before testing again"
+      },
+      {
+        "id": "sb-bg-household-row-00115",
+        "createdAt": "2026-05-31T12:00:00.000Z",
+        "modifiedAt": "2026-05-31T12:00:00.000Z",
+        "Name": "linen cupboard materials",
+        "Category": "Crafts",
+        "Condition": "Stored",
+        "Quantity": 2,
+        "Notes": "use a paper band with the size written on it"
+      },
+      {
+        "id": "sb-bg-household-row-00116",
+        "createdAt": "2026-07-01T12:00:00.000Z",
+        "modifiedAt": "2026-07-01T12:00:00.000Z",
+        "Name": "neighbour noticeboard materials",
+        "Category": "Crafts",
+        "Condition": "Good",
+        "Quantity": 3,
+        "Notes": "use the existing pins"
+      },
+      {
+        "id": "sb-bg-household-row-00117",
+        "createdAt": "2026-08-01T12:00:00.000Z",
+        "modifiedAt": "2026-08-01T12:00:00.000Z",
+        "Name": "shared courtyard materials",
+        "Category": "Kitchen",
+        "Condition": "Needs cleaning",
+        "Quantity": 4,
+        "Notes": "borrow the stiff outdoor brush"
+      },
+      {
+        "id": "sb-bg-household-row-00118",
+        "createdAt": "2026-09-01T12:00:00.000Z",
+        "modifiedAt": "2026-09-01T12:00:00.000Z",
+        "Name": "laptop backups materials",
+        "Category": "Reading",
+        "Condition": "Repaired",
+        "Quantity": 5,
+        "Notes": "replace that lead instead of bending it"
+      },
+      {
+        "id": "sb-bg-household-row-00119",
+        "createdAt": "2026-10-02T12:00:00.000Z",
+        "modifiedAt": "2026-10-02T12:00:00.000Z",
+        "Name": "train reading materials",
+        "Category": "Kitchen",
+        "Condition": "Good",
+        "Quantity": 6,
+        "Notes": "save the issue for offline reading"
+      }
+    ]
+  }
+]

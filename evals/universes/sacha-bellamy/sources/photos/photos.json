@@ -1,0 +1,2867 @@
+[
+  {
+    "id": "sb-extra-photo-0000",
+    "createdAt": "2025-10-07T14:00:00.000Z",
+    "modifiedAt": "2025-10-07T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0001",
+    "createdAt": "2025-10-08T14:00:00.000Z",
+    "modifiedAt": "2025-10-08T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0002",
+    "createdAt": "2025-10-09T14:00:00.000Z",
+    "modifiedAt": "2025-10-09T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0003",
+    "createdAt": "2025-10-10T14:00:00.000Z",
+    "modifiedAt": "2025-10-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0004",
+    "createdAt": "2025-10-11T14:00:00.000Z",
+    "modifiedAt": "2025-10-11T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0005",
+    "createdAt": "2025-10-13T14:00:00.000Z",
+    "modifiedAt": "2025-10-13T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0006",
+    "createdAt": "2025-10-14T14:00:00.000Z",
+    "modifiedAt": "2025-10-14T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0007",
+    "createdAt": "2025-10-15T14:00:00.000Z",
+    "modifiedAt": "2025-10-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0008",
+    "createdAt": "2025-10-16T14:00:00.000Z",
+    "modifiedAt": "2025-10-16T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0009",
+    "createdAt": "2025-10-17T14:00:00.000Z",
+    "modifiedAt": "2025-10-17T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0010",
+    "createdAt": "2025-10-19T14:00:00.000Z",
+    "modifiedAt": "2025-10-19T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0011",
+    "createdAt": "2025-10-20T14:00:00.000Z",
+    "modifiedAt": "2025-10-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0012",
+    "createdAt": "2025-10-21T14:00:00.000Z",
+    "modifiedAt": "2025-10-21T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0013",
+    "createdAt": "2025-10-22T14:00:00.000Z",
+    "modifiedAt": "2025-10-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0014",
+    "createdAt": "2025-10-23T14:00:00.000Z",
+    "modifiedAt": "2025-10-23T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0015",
+    "createdAt": "2025-10-25T14:00:00.000Z",
+    "modifiedAt": "2025-10-25T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0016",
+    "createdAt": "2025-10-26T14:00:00.000Z",
+    "modifiedAt": "2025-10-26T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0017",
+    "createdAt": "2025-10-27T14:00:00.000Z",
+    "modifiedAt": "2025-10-27T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0018",
+    "createdAt": "2025-10-28T14:00:00.000Z",
+    "modifiedAt": "2025-10-28T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0019",
+    "createdAt": "2025-10-29T14:00:00.000Z",
+    "modifiedAt": "2025-10-29T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0020",
+    "createdAt": "2025-10-31T14:00:00.000Z",
+    "modifiedAt": "2025-10-31T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0021",
+    "createdAt": "2025-11-01T14:00:00.000Z",
+    "modifiedAt": "2025-11-01T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0022",
+    "createdAt": "2025-11-02T14:00:00.000Z",
+    "modifiedAt": "2025-11-02T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0023",
+    "createdAt": "2025-11-03T14:00:00.000Z",
+    "modifiedAt": "2025-11-03T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0024",
+    "createdAt": "2025-11-04T14:00:00.000Z",
+    "modifiedAt": "2025-11-04T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0025",
+    "createdAt": "2025-11-06T14:00:00.000Z",
+    "modifiedAt": "2025-11-06T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0026",
+    "createdAt": "2025-11-07T14:00:00.000Z",
+    "modifiedAt": "2025-11-07T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0027",
+    "createdAt": "2025-11-08T14:00:00.000Z",
+    "modifiedAt": "2025-11-08T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0028",
+    "createdAt": "2025-11-09T14:00:00.000Z",
+    "modifiedAt": "2025-11-09T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0029",
+    "createdAt": "2025-11-10T14:00:00.000Z",
+    "modifiedAt": "2025-11-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0030",
+    "createdAt": "2025-11-12T14:00:00.000Z",
+    "modifiedAt": "2025-11-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0031",
+    "createdAt": "2025-11-13T14:00:00.000Z",
+    "modifiedAt": "2025-11-13T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0032",
+    "createdAt": "2025-11-14T14:00:00.000Z",
+    "modifiedAt": "2025-11-14T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0033",
+    "createdAt": "2025-11-15T14:00:00.000Z",
+    "modifiedAt": "2025-11-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0034",
+    "createdAt": "2025-11-16T14:00:00.000Z",
+    "modifiedAt": "2025-11-16T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0035",
+    "createdAt": "2025-11-18T14:00:00.000Z",
+    "modifiedAt": "2025-11-18T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0036",
+    "createdAt": "2025-11-19T14:00:00.000Z",
+    "modifiedAt": "2025-11-19T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0037",
+    "createdAt": "2025-11-20T14:00:00.000Z",
+    "modifiedAt": "2025-11-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0038",
+    "createdAt": "2025-11-21T14:00:00.000Z",
+    "modifiedAt": "2025-11-21T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0039",
+    "createdAt": "2025-11-22T14:00:00.000Z",
+    "modifiedAt": "2025-11-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0040",
+    "createdAt": "2025-11-24T14:00:00.000Z",
+    "modifiedAt": "2025-11-24T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0041",
+    "createdAt": "2025-11-25T14:00:00.000Z",
+    "modifiedAt": "2025-11-25T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0042",
+    "createdAt": "2025-11-26T14:00:00.000Z",
+    "modifiedAt": "2025-11-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0043",
+    "createdAt": "2025-11-27T14:00:00.000Z",
+    "modifiedAt": "2025-11-27T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0044",
+    "createdAt": "2025-11-28T14:00:00.000Z",
+    "modifiedAt": "2025-11-28T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0045",
+    "createdAt": "2025-11-30T14:00:00.000Z",
+    "modifiedAt": "2025-11-30T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0046",
+    "createdAt": "2025-12-01T14:00:00.000Z",
+    "modifiedAt": "2025-12-01T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0047",
+    "createdAt": "2025-12-02T14:00:00.000Z",
+    "modifiedAt": "2025-12-02T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0048",
+    "createdAt": "2025-12-03T14:00:00.000Z",
+    "modifiedAt": "2025-12-03T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0049",
+    "createdAt": "2025-12-04T14:00:00.000Z",
+    "modifiedAt": "2025-12-04T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0050",
+    "createdAt": "2025-12-06T14:00:00.000Z",
+    "modifiedAt": "2025-12-06T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0051",
+    "createdAt": "2025-12-07T14:00:00.000Z",
+    "modifiedAt": "2025-12-07T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0052",
+    "createdAt": "2025-12-08T14:00:00.000Z",
+    "modifiedAt": "2025-12-08T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0053",
+    "createdAt": "2025-12-09T14:00:00.000Z",
+    "modifiedAt": "2025-12-09T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0054",
+    "createdAt": "2025-12-11T14:00:00.000Z",
+    "modifiedAt": "2025-12-11T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0055",
+    "createdAt": "2025-12-12T14:00:00.000Z",
+    "modifiedAt": "2025-12-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0056",
+    "createdAt": "2025-12-13T14:00:00.000Z",
+    "modifiedAt": "2025-12-13T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0057",
+    "createdAt": "2025-12-14T14:00:00.000Z",
+    "modifiedAt": "2025-12-14T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0058",
+    "createdAt": "2025-12-15T14:00:00.000Z",
+    "modifiedAt": "2025-12-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0059",
+    "createdAt": "2025-12-17T14:00:00.000Z",
+    "modifiedAt": "2025-12-17T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0060",
+    "createdAt": "2025-12-18T14:00:00.000Z",
+    "modifiedAt": "2025-12-18T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0061",
+    "createdAt": "2025-12-19T14:00:00.000Z",
+    "modifiedAt": "2025-12-19T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0062",
+    "createdAt": "2025-12-20T14:00:00.000Z",
+    "modifiedAt": "2025-12-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0063",
+    "createdAt": "2025-12-21T14:00:00.000Z",
+    "modifiedAt": "2025-12-21T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0064",
+    "createdAt": "2025-12-23T14:00:00.000Z",
+    "modifiedAt": "2025-12-23T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0065",
+    "createdAt": "2025-12-24T14:00:00.000Z",
+    "modifiedAt": "2025-12-24T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0066",
+    "createdAt": "2025-12-25T14:00:00.000Z",
+    "modifiedAt": "2025-12-25T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0067",
+    "createdAt": "2025-12-26T14:00:00.000Z",
+    "modifiedAt": "2025-12-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0068",
+    "createdAt": "2025-12-27T14:00:00.000Z",
+    "modifiedAt": "2025-12-27T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0069",
+    "createdAt": "2025-12-29T14:00:00.000Z",
+    "modifiedAt": "2025-12-29T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0070",
+    "createdAt": "2025-12-30T14:00:00.000Z",
+    "modifiedAt": "2025-12-30T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0071",
+    "createdAt": "2025-12-31T14:00:00.000Z",
+    "modifiedAt": "2025-12-31T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0072",
+    "createdAt": "2026-01-01T14:00:00.000Z",
+    "modifiedAt": "2026-01-01T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0073",
+    "createdAt": "2026-01-02T14:00:00.000Z",
+    "modifiedAt": "2026-01-02T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0074",
+    "createdAt": "2026-01-04T14:00:00.000Z",
+    "modifiedAt": "2026-01-04T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0075",
+    "createdAt": "2026-01-05T14:00:00.000Z",
+    "modifiedAt": "2026-01-05T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0076",
+    "createdAt": "2026-01-06T14:00:00.000Z",
+    "modifiedAt": "2026-01-06T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0077",
+    "createdAt": "2026-01-07T14:00:00.000Z",
+    "modifiedAt": "2026-01-07T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0078",
+    "createdAt": "2026-01-08T14:00:00.000Z",
+    "modifiedAt": "2026-01-08T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0079",
+    "createdAt": "2026-01-10T14:00:00.000Z",
+    "modifiedAt": "2026-01-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0080",
+    "createdAt": "2026-01-11T14:00:00.000Z",
+    "modifiedAt": "2026-01-11T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0081",
+    "createdAt": "2026-01-12T14:00:00.000Z",
+    "modifiedAt": "2026-01-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0082",
+    "createdAt": "2026-01-13T14:00:00.000Z",
+    "modifiedAt": "2026-01-13T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0083",
+    "createdAt": "2026-01-14T14:00:00.000Z",
+    "modifiedAt": "2026-01-14T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0084",
+    "createdAt": "2026-01-16T14:00:00.000Z",
+    "modifiedAt": "2026-01-16T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0085",
+    "createdAt": "2026-01-17T14:00:00.000Z",
+    "modifiedAt": "2026-01-17T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0086",
+    "createdAt": "2026-01-18T14:00:00.000Z",
+    "modifiedAt": "2026-01-18T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0087",
+    "createdAt": "2026-01-19T14:00:00.000Z",
+    "modifiedAt": "2026-01-19T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0088",
+    "createdAt": "2026-01-20T14:00:00.000Z",
+    "modifiedAt": "2026-01-20T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0089",
+    "createdAt": "2026-01-22T14:00:00.000Z",
+    "modifiedAt": "2026-01-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0090",
+    "createdAt": "2026-01-23T14:00:00.000Z",
+    "modifiedAt": "2026-01-23T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0091",
+    "createdAt": "2026-01-24T14:00:00.000Z",
+    "modifiedAt": "2026-01-24T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0092",
+    "createdAt": "2026-01-25T14:00:00.000Z",
+    "modifiedAt": "2026-01-25T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0093",
+    "createdAt": "2026-01-26T14:00:00.000Z",
+    "modifiedAt": "2026-01-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0094",
+    "createdAt": "2026-01-28T14:00:00.000Z",
+    "modifiedAt": "2026-01-28T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0095",
+    "createdAt": "2026-01-29T14:00:00.000Z",
+    "modifiedAt": "2026-01-29T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0096",
+    "createdAt": "2026-01-30T14:00:00.000Z",
+    "modifiedAt": "2026-01-30T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0097",
+    "createdAt": "2026-01-31T14:00:00.000Z",
+    "modifiedAt": "2026-01-31T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0098",
+    "createdAt": "2026-02-01T14:00:00.000Z",
+    "modifiedAt": "2026-02-01T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0099",
+    "createdAt": "2026-02-03T14:00:00.000Z",
+    "modifiedAt": "2026-02-03T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0100",
+    "createdAt": "2026-02-04T14:00:00.000Z",
+    "modifiedAt": "2026-02-04T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0101",
+    "createdAt": "2026-02-05T14:00:00.000Z",
+    "modifiedAt": "2026-02-05T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0102",
+    "createdAt": "2026-02-06T14:00:00.000Z",
+    "modifiedAt": "2026-02-06T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0103",
+    "createdAt": "2026-02-08T14:00:00.000Z",
+    "modifiedAt": "2026-02-08T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0104",
+    "createdAt": "2026-02-09T14:00:00.000Z",
+    "modifiedAt": "2026-02-09T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0105",
+    "createdAt": "2026-02-10T14:00:00.000Z",
+    "modifiedAt": "2026-02-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0106",
+    "createdAt": "2026-02-11T14:00:00.000Z",
+    "modifiedAt": "2026-02-11T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0107",
+    "createdAt": "2026-02-12T14:00:00.000Z",
+    "modifiedAt": "2026-02-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0108",
+    "createdAt": "2026-02-14T14:00:00.000Z",
+    "modifiedAt": "2026-02-14T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0109",
+    "createdAt": "2026-02-15T14:00:00.000Z",
+    "modifiedAt": "2026-02-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0110",
+    "createdAt": "2026-02-16T14:00:00.000Z",
+    "modifiedAt": "2026-02-16T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0111",
+    "createdAt": "2026-02-17T14:00:00.000Z",
+    "modifiedAt": "2026-02-17T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0112",
+    "createdAt": "2026-02-18T14:00:00.000Z",
+    "modifiedAt": "2026-02-18T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0113",
+    "createdAt": "2026-02-20T14:00:00.000Z",
+    "modifiedAt": "2026-02-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0114",
+    "createdAt": "2026-02-21T14:00:00.000Z",
+    "modifiedAt": "2026-02-21T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0115",
+    "createdAt": "2026-02-22T14:00:00.000Z",
+    "modifiedAt": "2026-02-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0116",
+    "createdAt": "2026-02-23T14:00:00.000Z",
+    "modifiedAt": "2026-02-23T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0117",
+    "createdAt": "2026-02-24T14:00:00.000Z",
+    "modifiedAt": "2026-02-24T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0118",
+    "createdAt": "2026-02-26T14:00:00.000Z",
+    "modifiedAt": "2026-02-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0119",
+    "createdAt": "2026-02-27T14:00:00.000Z",
+    "modifiedAt": "2026-02-27T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0120",
+    "createdAt": "2026-02-28T14:00:00.000Z",
+    "modifiedAt": "2026-02-28T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0121",
+    "createdAt": "2026-03-01T14:00:00.000Z",
+    "modifiedAt": "2026-03-01T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0122",
+    "createdAt": "2026-03-02T14:00:00.000Z",
+    "modifiedAt": "2026-03-02T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0123",
+    "createdAt": "2026-03-04T14:00:00.000Z",
+    "modifiedAt": "2026-03-04T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0124",
+    "createdAt": "2026-03-05T14:00:00.000Z",
+    "modifiedAt": "2026-03-05T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0125",
+    "createdAt": "2026-03-06T14:00:00.000Z",
+    "modifiedAt": "2026-03-06T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0126",
+    "createdAt": "2026-03-07T14:00:00.000Z",
+    "modifiedAt": "2026-03-07T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0127",
+    "createdAt": "2026-03-08T14:00:00.000Z",
+    "modifiedAt": "2026-03-08T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0128",
+    "createdAt": "2026-03-10T14:00:00.000Z",
+    "modifiedAt": "2026-03-10T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0129",
+    "createdAt": "2026-03-11T14:00:00.000Z",
+    "modifiedAt": "2026-03-11T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0130",
+    "createdAt": "2026-03-12T14:00:00.000Z",
+    "modifiedAt": "2026-03-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0131",
+    "createdAt": "2026-03-13T14:00:00.000Z",
+    "modifiedAt": "2026-03-13T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0132",
+    "createdAt": "2026-03-14T14:00:00.000Z",
+    "modifiedAt": "2026-03-14T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0133",
+    "createdAt": "2026-03-16T14:00:00.000Z",
+    "modifiedAt": "2026-03-16T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0134",
+    "createdAt": "2026-03-17T14:00:00.000Z",
+    "modifiedAt": "2026-03-17T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0135",
+    "createdAt": "2026-03-18T14:00:00.000Z",
+    "modifiedAt": "2026-03-18T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0136",
+    "createdAt": "2026-03-19T14:00:00.000Z",
+    "modifiedAt": "2026-03-19T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0137",
+    "createdAt": "2026-03-20T14:00:00.000Z",
+    "modifiedAt": "2026-03-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0138",
+    "createdAt": "2026-03-22T14:00:00.000Z",
+    "modifiedAt": "2026-03-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0139",
+    "createdAt": "2026-03-23T14:00:00.000Z",
+    "modifiedAt": "2026-03-23T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0140",
+    "createdAt": "2026-03-24T14:00:00.000Z",
+    "modifiedAt": "2026-03-24T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0141",
+    "createdAt": "2026-03-25T14:00:00.000Z",
+    "modifiedAt": "2026-03-25T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0142",
+    "createdAt": "2026-03-26T14:00:00.000Z",
+    "modifiedAt": "2026-03-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0143",
+    "createdAt": "2026-03-28T14:00:00.000Z",
+    "modifiedAt": "2026-03-28T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0144",
+    "createdAt": "2026-03-29T14:00:00.000Z",
+    "modifiedAt": "2026-03-29T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0145",
+    "createdAt": "2026-03-30T14:00:00.000Z",
+    "modifiedAt": "2026-03-30T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0146",
+    "createdAt": "2026-03-31T14:00:00.000Z",
+    "modifiedAt": "2026-03-31T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0147",
+    "createdAt": "2026-04-01T14:00:00.000Z",
+    "modifiedAt": "2026-04-01T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0148",
+    "createdAt": "2026-04-03T14:00:00.000Z",
+    "modifiedAt": "2026-04-03T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0149",
+    "createdAt": "2026-04-04T14:00:00.000Z",
+    "modifiedAt": "2026-04-04T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0150",
+    "createdAt": "2026-04-05T14:00:00.000Z",
+    "modifiedAt": "2026-04-05T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0151",
+    "createdAt": "2026-04-06T14:00:00.000Z",
+    "modifiedAt": "2026-04-06T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0152",
+    "createdAt": "2026-04-08T14:00:00.000Z",
+    "modifiedAt": "2026-04-08T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0153",
+    "createdAt": "2026-04-09T14:00:00.000Z",
+    "modifiedAt": "2026-04-09T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0154",
+    "createdAt": "2026-04-10T14:00:00.000Z",
+    "modifiedAt": "2026-04-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0155",
+    "createdAt": "2026-04-11T14:00:00.000Z",
+    "modifiedAt": "2026-04-11T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0156",
+    "createdAt": "2026-04-12T14:00:00.000Z",
+    "modifiedAt": "2026-04-12T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0157",
+    "createdAt": "2026-04-14T14:00:00.000Z",
+    "modifiedAt": "2026-04-14T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0158",
+    "createdAt": "2026-04-15T14:00:00.000Z",
+    "modifiedAt": "2026-04-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0159",
+    "createdAt": "2026-04-16T14:00:00.000Z",
+    "modifiedAt": "2026-04-16T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0160",
+    "createdAt": "2026-04-17T14:00:00.000Z",
+    "modifiedAt": "2026-04-17T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0161",
+    "createdAt": "2026-04-18T14:00:00.000Z",
+    "modifiedAt": "2026-04-18T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0162",
+    "createdAt": "2026-04-20T14:00:00.000Z",
+    "modifiedAt": "2026-04-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0163",
+    "createdAt": "2026-04-21T14:00:00.000Z",
+    "modifiedAt": "2026-04-21T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0164",
+    "createdAt": "2026-04-22T14:00:00.000Z",
+    "modifiedAt": "2026-04-22T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0165",
+    "createdAt": "2026-04-23T14:00:00.000Z",
+    "modifiedAt": "2026-04-23T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0166",
+    "createdAt": "2026-04-24T14:00:00.000Z",
+    "modifiedAt": "2026-04-24T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0167",
+    "createdAt": "2026-04-26T14:00:00.000Z",
+    "modifiedAt": "2026-04-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0168",
+    "createdAt": "2026-04-27T14:00:00.000Z",
+    "modifiedAt": "2026-04-27T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0169",
+    "createdAt": "2026-04-28T14:00:00.000Z",
+    "modifiedAt": "2026-04-28T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0170",
+    "createdAt": "2026-04-29T14:00:00.000Z",
+    "modifiedAt": "2026-04-29T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0171",
+    "createdAt": "2026-04-30T14:00:00.000Z",
+    "modifiedAt": "2026-04-30T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0172",
+    "createdAt": "2026-05-02T14:00:00.000Z",
+    "modifiedAt": "2026-05-02T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0173",
+    "createdAt": "2026-05-03T14:00:00.000Z",
+    "modifiedAt": "2026-05-03T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0174",
+    "createdAt": "2026-05-04T14:00:00.000Z",
+    "modifiedAt": "2026-05-04T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0175",
+    "createdAt": "2026-05-05T14:00:00.000Z",
+    "modifiedAt": "2026-05-05T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0176",
+    "createdAt": "2026-05-06T14:00:00.000Z",
+    "modifiedAt": "2026-05-06T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0177",
+    "createdAt": "2026-05-08T14:00:00.000Z",
+    "modifiedAt": "2026-05-08T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0178",
+    "createdAt": "2026-05-09T14:00:00.000Z",
+    "modifiedAt": "2026-05-09T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0179",
+    "createdAt": "2026-05-10T14:00:00.000Z",
+    "modifiedAt": "2026-05-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0180",
+    "createdAt": "2026-05-11T14:00:00.000Z",
+    "modifiedAt": "2026-05-11T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0181",
+    "createdAt": "2026-05-12T14:00:00.000Z",
+    "modifiedAt": "2026-05-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0182",
+    "createdAt": "2026-05-14T14:00:00.000Z",
+    "modifiedAt": "2026-05-14T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0183",
+    "createdAt": "2026-05-15T14:00:00.000Z",
+    "modifiedAt": "2026-05-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0184",
+    "createdAt": "2026-05-16T14:00:00.000Z",
+    "modifiedAt": "2026-05-16T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0185",
+    "createdAt": "2026-05-17T14:00:00.000Z",
+    "modifiedAt": "2026-05-17T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0186",
+    "createdAt": "2026-05-18T14:00:00.000Z",
+    "modifiedAt": "2026-05-18T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0187",
+    "createdAt": "2026-05-20T14:00:00.000Z",
+    "modifiedAt": "2026-05-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0188",
+    "createdAt": "2026-05-21T14:00:00.000Z",
+    "modifiedAt": "2026-05-21T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0189",
+    "createdAt": "2026-05-22T14:00:00.000Z",
+    "modifiedAt": "2026-05-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0190",
+    "createdAt": "2026-05-23T14:00:00.000Z",
+    "modifiedAt": "2026-05-23T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0191",
+    "createdAt": "2026-05-24T14:00:00.000Z",
+    "modifiedAt": "2026-05-24T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0192",
+    "createdAt": "2026-05-26T14:00:00.000Z",
+    "modifiedAt": "2026-05-26T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0193",
+    "createdAt": "2026-05-27T14:00:00.000Z",
+    "modifiedAt": "2026-05-27T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0194",
+    "createdAt": "2026-05-28T14:00:00.000Z",
+    "modifiedAt": "2026-05-28T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0195",
+    "createdAt": "2026-05-29T14:00:00.000Z",
+    "modifiedAt": "2026-05-29T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0196",
+    "createdAt": "2026-05-30T14:00:00.000Z",
+    "modifiedAt": "2026-05-30T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0197",
+    "createdAt": "2026-06-01T14:00:00.000Z",
+    "modifiedAt": "2026-06-01T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0198",
+    "createdAt": "2026-06-02T14:00:00.000Z",
+    "modifiedAt": "2026-06-02T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0199",
+    "createdAt": "2026-06-03T14:00:00.000Z",
+    "modifiedAt": "2026-06-03T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0200",
+    "createdAt": "2026-06-04T14:00:00.000Z",
+    "modifiedAt": "2026-06-04T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0201",
+    "createdAt": "2026-06-06T14:00:00.000Z",
+    "modifiedAt": "2026-06-06T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0202",
+    "createdAt": "2026-06-07T14:00:00.000Z",
+    "modifiedAt": "2026-06-07T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0203",
+    "createdAt": "2026-06-08T14:00:00.000Z",
+    "modifiedAt": "2026-06-08T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0204",
+    "createdAt": "2026-06-09T14:00:00.000Z",
+    "modifiedAt": "2026-06-09T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0205",
+    "createdAt": "2026-06-10T14:00:00.000Z",
+    "modifiedAt": "2026-06-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0206",
+    "createdAt": "2026-06-12T14:00:00.000Z",
+    "modifiedAt": "2026-06-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0207",
+    "createdAt": "2026-06-13T14:00:00.000Z",
+    "modifiedAt": "2026-06-13T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0208",
+    "createdAt": "2026-06-14T14:00:00.000Z",
+    "modifiedAt": "2026-06-14T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0209",
+    "createdAt": "2026-06-15T14:00:00.000Z",
+    "modifiedAt": "2026-06-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0210",
+    "createdAt": "2026-06-16T14:00:00.000Z",
+    "modifiedAt": "2026-06-16T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0211",
+    "createdAt": "2026-06-18T14:00:00.000Z",
+    "modifiedAt": "2026-06-18T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0212",
+    "createdAt": "2026-06-19T14:00:00.000Z",
+    "modifiedAt": "2026-06-19T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0213",
+    "createdAt": "2026-06-20T14:00:00.000Z",
+    "modifiedAt": "2026-06-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0214",
+    "createdAt": "2026-06-21T14:00:00.000Z",
+    "modifiedAt": "2026-06-21T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0215",
+    "createdAt": "2026-06-22T14:00:00.000Z",
+    "modifiedAt": "2026-06-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0216",
+    "createdAt": "2026-06-24T14:00:00.000Z",
+    "modifiedAt": "2026-06-24T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0217",
+    "createdAt": "2026-06-25T14:00:00.000Z",
+    "modifiedAt": "2026-06-25T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0218",
+    "createdAt": "2026-06-26T14:00:00.000Z",
+    "modifiedAt": "2026-06-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0219",
+    "createdAt": "2026-06-27T14:00:00.000Z",
+    "modifiedAt": "2026-06-27T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0220",
+    "createdAt": "2026-06-28T14:00:00.000Z",
+    "modifiedAt": "2026-06-28T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0221",
+    "createdAt": "2026-06-30T14:00:00.000Z",
+    "modifiedAt": "2026-06-30T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0222",
+    "createdAt": "2026-07-01T14:00:00.000Z",
+    "modifiedAt": "2026-07-01T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0223",
+    "createdAt": "2026-07-02T14:00:00.000Z",
+    "modifiedAt": "2026-07-02T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0224",
+    "createdAt": "2026-07-03T14:00:00.000Z",
+    "modifiedAt": "2026-07-03T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0225",
+    "createdAt": "2026-07-04T14:00:00.000Z",
+    "modifiedAt": "2026-07-04T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0226",
+    "createdAt": "2026-07-06T14:00:00.000Z",
+    "modifiedAt": "2026-07-06T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0227",
+    "createdAt": "2026-07-07T14:00:00.000Z",
+    "modifiedAt": "2026-07-07T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0228",
+    "createdAt": "2026-07-08T14:00:00.000Z",
+    "modifiedAt": "2026-07-08T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0229",
+    "createdAt": "2026-07-09T14:00:00.000Z",
+    "modifiedAt": "2026-07-09T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0230",
+    "createdAt": "2026-07-10T14:00:00.000Z",
+    "modifiedAt": "2026-07-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0231",
+    "createdAt": "2026-07-12T14:00:00.000Z",
+    "modifiedAt": "2026-07-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0232",
+    "createdAt": "2026-07-13T14:00:00.000Z",
+    "modifiedAt": "2026-07-13T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0233",
+    "createdAt": "2026-07-14T14:00:00.000Z",
+    "modifiedAt": "2026-07-14T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0234",
+    "createdAt": "2026-07-15T14:00:00.000Z",
+    "modifiedAt": "2026-07-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0235",
+    "createdAt": "2026-07-16T14:00:00.000Z",
+    "modifiedAt": "2026-07-16T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0236",
+    "createdAt": "2026-07-18T14:00:00.000Z",
+    "modifiedAt": "2026-07-18T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0237",
+    "createdAt": "2026-07-19T14:00:00.000Z",
+    "modifiedAt": "2026-07-19T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0238",
+    "createdAt": "2026-07-20T14:00:00.000Z",
+    "modifiedAt": "2026-07-20T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0239",
+    "createdAt": "2026-07-21T14:00:00.000Z",
+    "modifiedAt": "2026-07-21T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0240",
+    "createdAt": "2026-07-22T14:00:00.000Z",
+    "modifiedAt": "2026-07-22T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0241",
+    "createdAt": "2026-07-24T14:00:00.000Z",
+    "modifiedAt": "2026-07-24T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0242",
+    "createdAt": "2026-07-25T14:00:00.000Z",
+    "modifiedAt": "2026-07-25T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0243",
+    "createdAt": "2026-07-26T14:00:00.000Z",
+    "modifiedAt": "2026-07-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0244",
+    "createdAt": "2026-07-27T14:00:00.000Z",
+    "modifiedAt": "2026-07-27T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0245",
+    "createdAt": "2026-07-28T14:00:00.000Z",
+    "modifiedAt": "2026-07-28T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0246",
+    "createdAt": "2026-07-30T14:00:00.000Z",
+    "modifiedAt": "2026-07-30T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0247",
+    "createdAt": "2026-07-31T14:00:00.000Z",
+    "modifiedAt": "2026-07-31T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0248",
+    "createdAt": "2026-08-01T14:00:00.000Z",
+    "modifiedAt": "2026-08-01T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0249",
+    "createdAt": "2026-08-02T14:00:00.000Z",
+    "modifiedAt": "2026-08-02T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0250",
+    "createdAt": "2026-08-04T14:00:00.000Z",
+    "modifiedAt": "2026-08-04T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0251",
+    "createdAt": "2026-08-05T14:00:00.000Z",
+    "modifiedAt": "2026-08-05T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0252",
+    "createdAt": "2026-08-06T14:00:00.000Z",
+    "modifiedAt": "2026-08-06T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0253",
+    "createdAt": "2026-08-07T14:00:00.000Z",
+    "modifiedAt": "2026-08-07T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0254",
+    "createdAt": "2026-08-08T14:00:00.000Z",
+    "modifiedAt": "2026-08-08T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0255",
+    "createdAt": "2026-08-10T14:00:00.000Z",
+    "modifiedAt": "2026-08-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0256",
+    "createdAt": "2026-08-11T14:00:00.000Z",
+    "modifiedAt": "2026-08-11T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0257",
+    "createdAt": "2026-08-12T14:00:00.000Z",
+    "modifiedAt": "2026-08-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0258",
+    "createdAt": "2026-08-13T14:00:00.000Z",
+    "modifiedAt": "2026-08-13T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0259",
+    "createdAt": "2026-08-14T14:00:00.000Z",
+    "modifiedAt": "2026-08-14T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0260",
+    "createdAt": "2026-08-16T14:00:00.000Z",
+    "modifiedAt": "2026-08-16T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0261",
+    "createdAt": "2026-08-17T14:00:00.000Z",
+    "modifiedAt": "2026-08-17T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0262",
+    "createdAt": "2026-08-18T14:00:00.000Z",
+    "modifiedAt": "2026-08-18T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0263",
+    "createdAt": "2026-08-19T14:00:00.000Z",
+    "modifiedAt": "2026-08-19T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0264",
+    "createdAt": "2026-08-20T14:00:00.000Z",
+    "modifiedAt": "2026-08-20T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0265",
+    "createdAt": "2026-08-22T14:00:00.000Z",
+    "modifiedAt": "2026-08-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0266",
+    "createdAt": "2026-08-23T14:00:00.000Z",
+    "modifiedAt": "2026-08-23T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0267",
+    "createdAt": "2026-08-24T14:00:00.000Z",
+    "modifiedAt": "2026-08-24T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0268",
+    "createdAt": "2026-08-25T14:00:00.000Z",
+    "modifiedAt": "2026-08-25T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0269",
+    "createdAt": "2026-08-26T14:00:00.000Z",
+    "modifiedAt": "2026-08-26T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0270",
+    "createdAt": "2026-08-28T14:00:00.000Z",
+    "modifiedAt": "2026-08-28T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0271",
+    "createdAt": "2026-08-29T14:00:00.000Z",
+    "modifiedAt": "2026-08-29T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0272",
+    "createdAt": "2026-08-30T14:00:00.000Z",
+    "modifiedAt": "2026-08-30T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0273",
+    "createdAt": "2026-08-31T14:00:00.000Z",
+    "modifiedAt": "2026-08-31T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0274",
+    "createdAt": "2026-09-01T14:00:00.000Z",
+    "modifiedAt": "2026-09-01T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0275",
+    "createdAt": "2026-09-03T14:00:00.000Z",
+    "modifiedAt": "2026-09-03T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0276",
+    "createdAt": "2026-09-04T14:00:00.000Z",
+    "modifiedAt": "2026-09-04T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0277",
+    "createdAt": "2026-09-05T14:00:00.000Z",
+    "modifiedAt": "2026-09-05T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0278",
+    "createdAt": "2026-09-06T14:00:00.000Z",
+    "modifiedAt": "2026-09-06T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: library list",
+      "Return the borrowed atlas and look for a compact guide to local trees"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0279",
+    "createdAt": "2026-09-07T14:00:00.000Z",
+    "modifiedAt": "2026-09-07T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0280",
+    "createdAt": "2026-09-09T14:00:00.000Z",
+    "modifiedAt": "2026-09-09T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": [],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0281",
+    "createdAt": "2026-09-10T14:00:00.000Z",
+    "modifiedAt": "2026-09-10T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0282",
+    "createdAt": "2026-09-11T14:00:00.000Z",
+    "modifiedAt": "2026-09-11T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0283",
+    "createdAt": "2026-09-12T14:00:00.000Z",
+    "modifiedAt": "2026-09-12T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: bicycle cleaning", "Wipe the chain after brushing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0284",
+    "createdAt": "2026-09-13T14:00:00.000Z",
+    "modifiedAt": "2026-09-13T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0285",
+    "createdAt": "2026-09-15T14:00:00.000Z",
+    "modifiedAt": "2026-09-15T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0286",
+    "createdAt": "2026-09-16T14:00:00.000Z",
+    "modifiedAt": "2026-09-16T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0287",
+    "createdAt": "2026-09-17T14:00:00.000Z",
+    "modifiedAt": "2026-09-17T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0288",
+    "createdAt": "2026-09-18T14:00:00.000Z",
+    "modifiedAt": "2026-09-18T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: plant care", "Check drainage before watering"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0289",
+    "createdAt": "2026-09-19T14:00:00.000Z",
+    "modifiedAt": "2026-09-19T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: bread notes", "The smaller tray gave a better rise"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0290",
+    "createdAt": "2026-09-21T14:00:00.000Z",
+    "modifiedAt": "2026-09-21T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0291",
+    "createdAt": "2026-09-22T14:00:00.000Z",
+    "modifiedAt": "2026-09-22T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Northstar Reading Room",
+    "textLines": [
+      "Handwritten label: toolbox",
+      "Small screwdriver, measuring tape, cloth, spare screws and a pencil"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0292",
+    "createdAt": "2026-09-23T14:00:00.000Z",
+    "modifiedAt": "2026-09-23T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: community room", "Fold the tables before stacking chairs"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0293",
+    "createdAt": "2026-09-24T14:00:00.000Z",
+    "modifiedAt": "2026-09-24T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": [
+      "Handwritten label: reading circle",
+      "Compare the narrator in the opening and final paragraph"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0294",
+    "createdAt": "2026-09-25T14:00:00.000Z",
+    "modifiedAt": "2026-09-25T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: batch lunches", "Cool the cooked lentils before freezing"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0295",
+    "createdAt": "2026-09-27T14:00:00.000Z",
+    "modifiedAt": "2026-09-27T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Fernbank Community Garden",
+    "textLines": [],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0296",
+    "createdAt": "2026-09-28T14:00:00.000Z",
+    "modifiedAt": "2026-09-28T14:05:00.000Z",
+    "isScreenshot": true,
+    "textLines": ["Handwritten label: craft supplies", "Store thin paper flat"],
+    "tags": ["reference", "screenshot"]
+  },
+  {
+    "id": "sb-extra-photo-0297",
+    "createdAt": "2026-09-29T14:00:00.000Z",
+    "modifiedAt": "2026-09-29T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Brookside Shared Courtyard",
+    "textLines": [
+      "Handwritten label: courtyard jobs",
+      "Clear leaves from the drain and sweep the entrance"
+    ],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0298",
+    "createdAt": "2026-09-30T14:00:00.000Z",
+    "modifiedAt": "2026-09-30T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Small Lantern Library",
+    "textLines": ["Handwritten label: coffee notes", "Rinse the filter first"],
+    "tags": ["everyday", "personal-project"]
+  },
+  {
+    "id": "sb-extra-photo-0299",
+    "createdAt": "2026-10-02T14:00:00.000Z",
+    "modifiedAt": "2026-10-02T14:05:00.000Z",
+    "isScreenshot": false,
+    "placeName": "Cedar Table Cafe",
+    "textLines": ["Handwritten label: desk checklist", "Leave cable slack around the display arm"],
+    "tags": ["everyday", "personal-project"]
+  }
+]

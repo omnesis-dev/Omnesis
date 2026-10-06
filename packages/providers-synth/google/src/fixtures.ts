@@ -22,6 +22,13 @@ import {
   type SourceId,
 } from "@omnesis/types";
 
+export interface GmailBinaryAttachment {
+  assetPath: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes?: number;
+}
+
 // ── Gmail ─────────────────────────────────────────────────────────
 
 // Mirror the real Gmail source's URL format so synth-ingested fixtures
@@ -31,7 +38,7 @@ function gmailSourceUrl(externalId: string): string {
   return `https://mail.google.com/mail/u/0/#all/${externalId}`;
 }
 
-interface GmailAttachment {
+export interface GmailTextAttachment {
   filename: string;
   mimeType: string;
   sizeBytes: number;
@@ -53,7 +60,7 @@ export interface EmailEntry {
   scheduledAt?: string;
   /** Structurally declared deadline, projected by the Gmail descriptor. */
   dueAt?: string;
-  attachments?: GmailAttachment[];
+  attachments?: Array<GmailTextAttachment | GmailBinaryAttachment>;
 }
 let emailsCache: EmailEntry[] | null = null;
 export function loadEmails(): EmailEntry[] {
@@ -76,7 +83,10 @@ export function mapEmail(
   ];
 
   const attachments = e.attachments ?? [];
-  const attachmentInfos: AttachmentInfo[] = attachments.map((a) => ({
+  if (attachments.some((attachment) => "assetPath" in attachment))
+    throw new Error("Binary gmail fixtures require the host extraction path");
+  const textAttachments = attachments as GmailTextAttachment[];
+  const attachmentInfos: AttachmentInfo[] = textAttachments.map((a) => ({
     filename: a.filename,
     mimeType: a.mimeType,
     size: a.sizeBytes,
@@ -114,7 +124,7 @@ export function mapEmail(
 
   if (attachments.length === 0) return emailDoc;
 
-  const attachmentDocs = attachments.map((att) =>
+  const attachmentDocs = textAttachments.map((att) =>
     buildAttachmentDocument(
       emailDoc,
       att.filename,

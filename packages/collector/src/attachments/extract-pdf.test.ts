@@ -5,6 +5,30 @@ import { describe, test, expect } from "vitest";
 import { extractPdfText } from "./extract-pdf.js";
 
 describe("extractPdfText", () => {
+  test("preserves scanned PDF bytes for OCR after the real native parser consumes its input", async () => {
+    const data = createImageOnlyPdf();
+    const original = new Uint8Array(data);
+    let calls = 0;
+    const result = await extractPdfText(data, {
+      ocr: async (received, mimeType, options) => {
+        calls++;
+        expect(mimeType).toBe("application/pdf");
+        expect(options?.pages).toEqual([1]);
+        expect(received.byteLength).toBe(original.byteLength);
+        expect(received).toEqual(original);
+        return {
+          text: "Fictional scanned receipt: paper lanterns",
+          pages: 1,
+          pageTexts: ["Fictional scanned receipt: paper lanterns"],
+        };
+      },
+    });
+    expect(calls).toBe(1);
+    expect(result?.text).toBe("Fictional scanned receipt: paper lanterns");
+    expect(result?.extra).toMatchObject({ ocr: true, ocrPageCount: 1 });
+    expect(data).toEqual(original);
+  });
+
   test("returns null for empty data", async () => {
     const result = await extractPdfText(new Uint8Array(0));
     expect(result).toBeNull();
@@ -138,4 +162,28 @@ function createTwoColumnPdf(left: string, right: string): Uint8Array {
   ];
 
   return new TextEncoder().encode(lines.join("\n"));
+}
+
+/** Actual one-page PDF with a raster XObject and no native/hidden text. */
+function createImageOnlyPdf(): Uint8Array {
+  const stream = "q 100 0 0 100 0 0 cm /Im0 Do Q";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 7 >>\nstream\nffffff>\nendstream",
+  ];
+  let content = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(content.length);
+    content += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = content.length;
+  content += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets.slice(1))
+    content += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  content += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(content);
 }

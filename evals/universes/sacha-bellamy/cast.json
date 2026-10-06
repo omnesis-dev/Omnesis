@@ -1,0 +1,520 @@
+{
+  "self": "p_sacha",
+  "people": [
+    {
+      "id": "p_sacha",
+      "name": "Sacha Bellamy",
+      "emails": [
+        "sacha.bellamy@example.com",
+        "sacha.bellamy@harbour-lantern.example.com",
+        "sacha.bellamy@icloud.example.com"
+      ],
+      "phones": ["+447700900100"],
+      "lids": ["800100000@lid"],
+      "extra": {
+        "notionUserId": "user_sacha",
+        "appleContactGuid": "SB-CONTACT-sacha",
+        "githubLogin": "fictional-sacha",
+        "stravaAthleteId": "8800100",
+        "enableBankingAccountId": "bellamy-eur",
+        "lunchflowAccountId": "default",
+        "coinbaseAccountId": "bellamy-crypto",
+        "plaidItemId": "plaid-bellamy-us"
+      }
+    },
+    {
+      "id": "p_maya",
+      "name": "Maya Bellamy",
+      "emails": ["maya.bellamy@example.com", "maya.reeves@example.org", "maya.bellamy@example.org"],
+      "phones": ["+447700900101"],
+      "lids": ["800100001@lid"],
+      "extra": {
+        "notionUserId": "user_maya",
+        "appleContactGuid": "SB-CONTACT-maya",
+        "githubLogin": "fictional-maya"
+      }
+    },
+    {
+      "id": "p_jamie",
+      "name": "Jamie Lopez",
+      "emails": ["jamie.lopez@example.com"],
+      "phones": ["+447700900102"],
+      "lids": ["800100002@lid"],
+      "extra": {
+        "notionUserId": "user_jamie",
+        "appleContactGuid": "SB-CONTACT-jamie",
+        "githubLogin": "fictional-jamie"
+      }
+    },
+    {
+      "id": "p_priya",
+      "name": "Priya Calder",
+      "emails": ["priya.calder@example.com"],
+      "phones": ["+447700900103"],
+      "lids": ["800100003@lid"],
+      "extra": {
+        "notionUserId": "user_priya",
+        "appleContactGuid": "SB-CONTACT-priya",
+        "githubLogin": "fictional-priya"
+      }
+    },
+    {
+      "id": "p_elliot",
+      "name": "Elliot Rowan",
+      "emails": ["elliot.rowan@example.com"],
+      "phones": ["+447700900104"],
+      "lids": ["800100004@lid"],
+      "extra": {
+        "notionUserId": "user_elliot",
+        "appleContactGuid": "SB-CONTACT-elliot",
+        "githubLogin": "fictional-elliot"
+      }
+    },
+    {
+      "id": "p_nora",
+      "name": "Nora Finch",
+      "emails": ["nora.finch@example.com"],
+      "phones": ["+447700900105"],
+      "lids": ["800100005@lid"],
+      "extra": {
+        "notionUserId": "user_nora",
+        "appleContactGuid": "SB-CONTACT-nora",
+        "githubLogin": "fictional-nora"
+      }
+    },
+    {
+      "id": "p_daniel",
+      "name": "Daniel Mercer",
+      "emails": ["daniel.mercer@example.com"],
+      "phones": ["+447700900106"],
+      "lids": ["800100006@lid"],
+      "extra": {
+        "notionUserId": "user_daniel",
+        "appleContactGuid": "SB-CONTACT-daniel",
+        "githubLogin": "fictional-daniel"
+      }
+    },
+    {
+      "id": "p_celine",
+      "name": "Celine Bellamy",
+      "emails": ["celine.bellamy@example.com"],
+      "phones": ["+447700900107"],
+      "lids": ["800100007@lid"],
+      "extra": {
+        "notionUserId": "user_celine",
+        "appleContactGuid": "SB-CONTACT-celine",
+        "githubLogin": "fictional-celine"
+      }
+    },
+    {
+      "id": "p_marc",
+      "name": "Marc Bellamy",
+      "emails": ["marc.bellamy@example.com"],
+      "phones": ["+447700900108"],
+      "lids": ["800100008@lid"],
+      "extra": {
+        "notionUserId": "user_marc",
+        "appleContactGuid": "SB-CONTACT-marc",
+        "githubLogin": "fictional-marc"
+      }
+    },
+    {
+      "id": "p_ines",
+      "name": "Ines Bellamy",
+      "emails": ["ines.bellamy@example.com"],
+      "phones": ["+447700900109"],
+      "lids": ["800100009@lid"],
+      "extra": {
+        "notionUserId": "user_ines",
+        "appleContactGuid": "SB-CONTACT-ines",
+        "githubLogin": "fictional-ines"
+      }
+    },
+    {
+      "id": "p_hugo",
+      "name": "Hugo Arden",
+      "emails": ["hugo.arden@example.com"],
+      "phones": ["+447700900110"],
+      "lids": ["800100010@lid"],
+      "extra": {
+        "notionUserId": "user_hugo",
+        "appleContactGuid": "SB-CONTACT-hugo",
+        "githubLogin": "fictional-hugo"
+      }
+    },
+    {
+      "id": "p_leila",
+      "name": "Leila Hartwell",
+      "emails": ["leila.hartwell@example.com"],
+      "phones": ["+447700900111"],
+      "lids": ["800100011@lid"],
+      "extra": {
+        "notionUserId": "user_leila",
+        "appleContactGuid": "SB-CONTACT-leila",
+        "githubLogin": "fictional-leila"
+      }
+    },
+    {
+      "id": "p_owen",
+      "name": "Owen Bramble",
+      "emails": ["owen.bramble@example.com"],
+      "phones": ["+447700900112"],
+      "lids": ["800100012@lid"],
+      "extra": {
+        "notionUserId": "user_owen",
+        "appleContactGuid": "SB-CONTACT-owen",
+        "githubLogin": "fictional-owen"
+      }
+    },
+    {
+      "id": "p_alice",
+      "name": "Alice Fenwick",
+      "emails": ["alice.fenwick@example.com"],
+      "phones": ["+447700900113"],
+      "lids": ["800100013@lid"],
+      "extra": {
+        "notionUserId": "user_alice",
+        "appleContactGuid": "SB-CONTACT-alice",
+        "githubLogin": "fictional-alice"
+      }
+    },
+    {
+      "id": "p_leo",
+      "name": "Leo Merritt",
+      "emails": ["leo.merritt@example.com"],
+      "phones": ["+447700900114"],
+      "lids": ["800100014@lid"],
+      "extra": {
+        "notionUserId": "user_leo",
+        "appleContactGuid": "SB-CONTACT-leo",
+        "githubLogin": "fictional-leo"
+      }
+    },
+    {
+      "id": "p_zoe",
+      "name": "Zoe Winslow",
+      "emails": ["zoe.winslow@example.com"],
+      "phones": ["+447700900115"],
+      "lids": ["800100015@lid"],
+      "extra": {
+        "notionUserId": "user_zoe",
+        "appleContactGuid": "SB-CONTACT-zoe",
+        "githubLogin": "fictional-zoe"
+      }
+    },
+    {
+      "id": "p_tariq",
+      "name": "Tariq Fairburn",
+      "emails": ["tariq.fairburn@example.com"],
+      "phones": ["+447700900116"],
+      "lids": ["800100016@lid"],
+      "extra": {
+        "notionUserId": "user_tariq",
+        "appleContactGuid": "SB-CONTACT-tariq",
+        "githubLogin": "fictional-tariq"
+      }
+    },
+    {
+      "id": "p_ada",
+      "name": "Ada Westbrook",
+      "emails": ["ada.westbrook@example.com"],
+      "phones": ["+447700900117"],
+      "lids": ["800100017@lid"],
+      "extra": {
+        "notionUserId": "user_ada",
+        "appleContactGuid": "SB-CONTACT-ada",
+        "githubLogin": "fictional-ada"
+      }
+    },
+    {
+      "id": "p_ben",
+      "name": "Ben Ashcombe",
+      "emails": ["ben.ashcombe@example.com"],
+      "phones": ["+447700900118"],
+      "lids": ["800100018@lid"],
+      "extra": {
+        "notionUserId": "user_ben",
+        "appleContactGuid": "SB-CONTACT-ben",
+        "githubLogin": "fictional-ben"
+      }
+    },
+    {
+      "id": "p_ruth",
+      "name": "Ruth Elwood",
+      "emails": ["ruth.elwood@example.com"],
+      "phones": ["+447700900119"],
+      "lids": ["800100019@lid"],
+      "extra": {
+        "notionUserId": "user_ruth",
+        "appleContactGuid": "SB-CONTACT-ruth",
+        "githubLogin": "fictional-ruth"
+      }
+    },
+    {
+      "id": "p_mover",
+      "name": "Robin Cartwright",
+      "emails": ["robin.cartwright@example.com"],
+      "phones": ["+447700900120"],
+      "lids": ["800100020@lid"],
+      "extra": {
+        "notionUserId": "user_mover",
+        "appleContactGuid": "SB-CONTACT-mover",
+        "githubLogin": "fictional-mover"
+      }
+    },
+    {
+      "id": "p_landlord",
+      "name": "Paula Wren",
+      "emails": ["paula.wren@example.com"],
+      "phones": ["+447700900121"],
+      "lids": ["800100021@lid"],
+      "extra": {
+        "notionUserId": "user_landlord",
+        "appleContactGuid": "SB-CONTACT-landlord",
+        "githubLogin": "fictional-landlord"
+      }
+    },
+    {
+      "id": "p_ceramics",
+      "name": "Amber Holloway",
+      "emails": ["amber.holloway@example.com"],
+      "phones": ["+447700900122"],
+      "lids": ["800100022@lid"],
+      "extra": {
+        "notionUserId": "user_ceramics",
+        "appleContactGuid": "SB-CONTACT-ceramics",
+        "githubLogin": "fictional-ceramics"
+      }
+    },
+    {
+      "id": "p_repair",
+      "name": "Simon Alder",
+      "emails": ["simon.alder@example.com"],
+      "phones": ["+447700900123"],
+      "lids": ["800100023@lid"],
+      "extra": {
+        "notionUserId": "user_repair",
+        "appleContactGuid": "SB-CONTACT-repair",
+        "githubLogin": "fictional-repair"
+      }
+    },
+    {
+      "id": "p_travel",
+      "name": "Harriet Dune",
+      "emails": ["harriet.dune@example.com"],
+      "phones": ["+447700900124"],
+      "lids": ["800100024@lid"],
+      "extra": {
+        "notionUserId": "user_travel",
+        "appleContactGuid": "SB-CONTACT-travel",
+        "githubLogin": "fictional-travel"
+      }
+    },
+    {
+      "id": "p_merchant",
+      "name": "Felix Moss",
+      "emails": ["felix.moss@example.com"],
+      "phones": ["+447700900125"],
+      "lids": ["800100025@lid"],
+      "extra": {
+        "notionUserId": "user_merchant",
+        "appleContactGuid": "SB-CONTACT-merchant",
+        "githubLogin": "fictional-merchant"
+      }
+    },
+    {
+      "id": "p_gp",
+      "name": "Imogen Cedar",
+      "emails": ["imogen.cedar@example.com"],
+      "phones": ["+447700900126"],
+      "lids": ["800100026@lid"],
+      "extra": {
+        "notionUserId": "user_gp",
+        "appleContactGuid": "SB-CONTACT-gp",
+        "githubLogin": "fictional-gp"
+      }
+    },
+    {
+      "id": "p_running",
+      "name": "Miles Brook",
+      "emails": ["miles.brook@example.com"],
+      "phones": ["+447700900127"],
+      "lids": ["800100027@lid"],
+      "extra": {
+        "notionUserId": "user_running",
+        "appleContactGuid": "SB-CONTACT-running",
+        "githubLogin": "fictional-running"
+      }
+    },
+    {
+      "id": "p_sophia",
+      "name": "Sophia Lark",
+      "emails": ["sophia.lark@example.com"],
+      "phones": ["+447700900128"],
+      "lids": ["800100028@lid"],
+      "extra": {
+        "notionUserId": "user_sophia",
+        "appleContactGuid": "SB-CONTACT-sophia",
+        "githubLogin": "fictional-sophia"
+      }
+    },
+    {
+      "id": "p_louis",
+      "name": "Louis Fairchild",
+      "emails": ["louis.fairchild@example.com"],
+      "phones": ["+447700900129"],
+      "lids": ["800100029@lid"],
+      "extra": {
+        "notionUserId": "user_louis",
+        "appleContactGuid": "SB-CONTACT-louis",
+        "githubLogin": "fictional-louis"
+      }
+    },
+    {
+      "id": "p_noemi",
+      "name": "Noemi Vale",
+      "emails": ["noemi.vale@example.com"],
+      "phones": ["+447700900130"],
+      "lids": ["800100030@lid"],
+      "extra": {
+        "notionUserId": "user_noemi",
+        "appleContactGuid": "SB-CONTACT-noemi",
+        "githubLogin": "fictional-noemi"
+      }
+    },
+    {
+      "id": "p_caleb",
+      "name": "Caleb Finchley",
+      "emails": ["caleb.finchley@example.com"],
+      "phones": ["+447700900131"],
+      "lids": ["800100031@lid"],
+      "extra": {
+        "notionUserId": "user_caleb",
+        "appleContactGuid": "SB-CONTACT-caleb",
+        "githubLogin": "fictional-caleb"
+      }
+    },
+    {
+      "id": "p_ava",
+      "name": "Ava Whitlock",
+      "emails": ["ava.whitlock@example.com"],
+      "phones": ["+447700900132"],
+      "lids": ["800100032@lid"],
+      "extra": {
+        "notionUserId": "user_ava",
+        "appleContactGuid": "SB-CONTACT-ava",
+        "githubLogin": "fictional-ava"
+      }
+    },
+    {
+      "id": "p_emile",
+      "name": "Emile Newbury",
+      "emails": ["emile.newbury@example.com"],
+      "phones": ["+447700900133"],
+      "lids": ["800100033@lid"],
+      "extra": {
+        "notionUserId": "user_emile",
+        "appleContactGuid": "SB-CONTACT-emile",
+        "githubLogin": "fictional-emile"
+      }
+    },
+    {
+      "id": "p_rosie",
+      "name": "Rosie Kestrel",
+      "emails": ["rosie.kestrel@example.com"],
+      "phones": ["+447700900134"],
+      "lids": ["800100034@lid"],
+      "extra": {
+        "notionUserId": "user_rosie",
+        "appleContactGuid": "SB-CONTACT-rosie",
+        "githubLogin": "fictional-rosie"
+      }
+    },
+    {
+      "id": "p_finn",
+      "name": "Finn Meadow",
+      "emails": ["finn.meadow@example.com"],
+      "phones": ["+447700900135"],
+      "lids": ["800100035@lid"],
+      "extra": {
+        "notionUserId": "user_finn",
+        "appleContactGuid": "SB-CONTACT-finn",
+        "githubLogin": "fictional-finn"
+      }
+    },
+    {
+      "id": "p_clara",
+      "name": "Clara Hawthorn",
+      "emails": ["clara.hawthorn@example.com"],
+      "phones": ["+447700900136"],
+      "lids": ["800100036@lid"],
+      "extra": {
+        "notionUserId": "user_clara",
+        "appleContactGuid": "SB-CONTACT-clara",
+        "githubLogin": "fictional-clara"
+      }
+    },
+    {
+      "id": "p_max",
+      "name": "Max Dewberry",
+      "emails": ["max.dewberry@example.com"],
+      "phones": ["+447700900137"],
+      "lids": ["800100037@lid"],
+      "extra": {
+        "notionUserId": "user_max",
+        "appleContactGuid": "SB-CONTACT-max",
+        "githubLogin": "fictional-max"
+      }
+    },
+    {
+      "id": "p_dina",
+      "name": "Dina Hazell",
+      "emails": ["dina.hazell@example.com"],
+      "phones": ["+447700900138"],
+      "lids": ["800100038@lid"],
+      "extra": {
+        "notionUserId": "user_dina",
+        "appleContactGuid": "SB-CONTACT-dina",
+        "githubLogin": "fictional-dina"
+      }
+    },
+    {
+      "id": "p_sam",
+      "name": "Sam Redfern",
+      "emails": ["sam.redfern@example.com"],
+      "phones": ["+447700900139"],
+      "lids": ["800100039@lid"],
+      "extra": {
+        "notionUserId": "user_sam",
+        "appleContactGuid": "SB-CONTACT-sam",
+        "githubLogin": "fictional-sam"
+      }
+    },
+    {
+      "id": "p_gift_orders",
+      "name": "Amazon Orders",
+      "emails": ["amazon.orders@example.com"],
+      "phones": ["+447700900140"],
+      "lids": ["800100040@lid"],
+      "extra": {
+        "notionUserId": "user_gift_orders",
+        "appleContactGuid": "SB-CONTACT-gift_orders",
+        "githubLogin": "fictional-gift_orders"
+      }
+    }
+  ],
+  "orgs": [
+    {
+      "id": "org_work",
+      "name": "Harbour Lantern Software",
+      "domain": "harbour-lantern.example.com"
+    },
+    { "id": "org_movers", "name": "Kindred Cart Movers", "domain": "kindred-cart.example.com" },
+    { "id": "org_ceramics", "name": "Willow Kiln Studio", "domain": "willow-kiln.example.com" },
+    {
+      "id": "org_repair",
+      "name": "Alder Appliance Workshop",
+      "domain": "alder-workshop.example.com"
+    }
+  ]
+}

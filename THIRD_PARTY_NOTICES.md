@@ -215,7 +215,8 @@ and the portal's Connect an agent dialog bundles the Claude mark
 [CC0-1.0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md).
 
 The Connect an agent dialog also bundles three agent icons under the MIT License.
-`packages/gateway/portal/img/agents/openclaw.svg` is the
+`packages/gateway/portal/img/agents/openclaw.svg`, also embedded in the source
+descriptor at `packages/providers/openclaw/src/icons.ts`, is the
 [OpenClaw](https://github.com/openclaw/openclaw) interface icon
 (`ui/public/favicon.svg`) with its animation removed:
 
@@ -239,7 +240,8 @@ The Connect an agent dialog also bundles three agent icons under the MIT License
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
-`packages/gateway/portal/img/agents/hermes.png` is rendered from the
+`packages/gateway/portal/img/agents/hermes.png`, also embedded in the source
+descriptor at `packages/providers/hermes/src/icons.ts`, is rendered from the
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) app icon
 (`assets/icon-master.svg`):
 

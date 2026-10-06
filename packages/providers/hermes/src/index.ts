@@ -3,6 +3,7 @@
 
 import { defineSource, type SyncCursor } from "@omnesis/source-sdk";
 
+import { hermesIconDataUri } from "./icons.js";
 import { hermesDocumentEventProfile } from "./document-event-profile.js";
 
 /**
@@ -26,6 +27,11 @@ export default defineSource<SyncCursor>({
   provider: { id: "hermes", name: "Hermes" },
   authType: "local",
   unitName: "conversations",
+  icon: {
+    sfSymbol: "bubble.left.and.bubble.right",
+    color: "#C9A45C",
+    imageDataUri: hermesIconDataUri,
+  },
   gatewayHosted: true,
   singleInstance: true,
   execution: "external",

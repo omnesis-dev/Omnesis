@@ -6,7 +6,11 @@ import {
   balancesToRecords,
   processTransactionsPage,
 } from "@omnesis/provider-enable-banking";
-import { loadActiveUniverse, loadSourceFixtureJson } from "@omnesis/providers-synth-common";
+import {
+  loadActiveUniverse,
+  loadSourceFixtureJson,
+  sourceFixtureClock,
+} from "@omnesis/providers-synth-common";
 import type {
   EbBalance,
   EbTransaction,
@@ -82,7 +86,10 @@ export function accountRecords(sourceAccountId: string): Record<string, unknown>
       sourceAccountId,
       bankName: SYNTH_BANK_NAME,
       country: SYNTH_BANK_COUNTRY,
-      syncedAt: SYNTH_SYNCED_AT,
+      syncedAt: sourceFixtureClock("enable-banking-accounts", {
+        snapshotDay: SYNTH_SNAPSHOT_DATE,
+        syncedAt: SYNTH_SYNCED_AT,
+      }).syncedAt,
     }),
   );
 }
@@ -93,7 +100,10 @@ export function balanceRecords(sourceAccountId: string): Record<string, unknown>
     const { records, skipped } = balancesToRecords(group.balances, {
       accountKey: group.account_key,
       sourceAccountId,
-      snapshotDate: SYNTH_SNAPSHOT_DATE,
+      snapshotDate: sourceFixtureClock("enable-banking-accounts", {
+        snapshotDay: SYNTH_SNAPSHOT_DATE,
+        syncedAt: SYNTH_SYNCED_AT,
+      }).snapshotDay,
     });
     if (skipped.length > 0) {
       throw new Error(

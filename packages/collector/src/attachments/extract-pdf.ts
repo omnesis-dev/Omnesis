@@ -129,7 +129,10 @@ function ocrNoText(pages?: number): ExtractionResult {
  */
 async function perPageNativeText(data: Uint8Array): Promise<string[] | null> {
   try {
-    const result = await extractTextItems(data);
+    // PDF.js may transfer and detach the parser input buffer. Keep the caller's
+    // bytes intact for pdf-parse fallback and sparse-page/whole-PDF OCR. Always
+    // construct a Uint8Array: Buffer.slice() would share the original buffer.
+    const result = await extractTextItems(new Uint8Array(data));
     const pages = result.items ?? [];
     if (pages.length === 0) {
       log.debug(`unpdf: 0 pages (${data.length} bytes)`);

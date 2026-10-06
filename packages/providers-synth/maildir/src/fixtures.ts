@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { deliverMessage } from "@omnesis/provider-maildir/testing";
 import {
   loadActiveUniverse,
+  loadBinaryFixtureAssets,
   loadSourceFixtureJson,
   resolvePerson,
   type PersonRef,
@@ -28,6 +29,23 @@ export interface MaildirFixtureEntry {
   /** Maildir flag letters; a message with none is an unread delivery in `new`. */
   flags?: string;
   headers?: Record<string, string>;
+  /** Binary MIME parts backed by files inside the active universe. */
+  attachments?: MaildirFixtureAttachment[];
+}
+
+export interface MaildirFixtureAttachment {
+  /** Path relative to the universe directory, not the source directory. */
+  assetPath: string;
+  filename: string;
+  mimeType: string;
+}
+
+/** Materialize binary MIME parts through the shared bounded universe reader. */
+export function loadFixtureAttachments(
+  attachments: readonly MaildirFixtureAttachment[],
+  universeDir: string,
+): NonNullable<FixtureMessage["attachments"]> {
+  return loadBinaryFixtureAssets(attachments, universeDir);
 }
 
 export function loadMessages(): MaildirFixtureEntry[] {
@@ -45,7 +63,7 @@ function address(ref: PersonRef): FixtureAddress {
   return { name: person.name, address: email };
 }
 
-function render(entry: MaildirFixtureEntry): FixtureMessage {
+function render(entry: MaildirFixtureEntry, universeDir?: string): FixtureMessage {
   return {
     messageId: entry.messageId,
     from: address(entry.from),
@@ -57,6 +75,10 @@ function render(entry: MaildirFixtureEntry): FixtureMessage {
     inReplyTo: entry.inReplyTo,
     references: entry.inReplyTo ? [entry.inReplyTo] : undefined,
     headers: entry.headers,
+    attachments:
+      entry.attachments !== undefined
+        ? loadFixtureAttachments(entry.attachments, universeDir ?? loadActiveUniverse().dir)
+        : undefined,
   };
 }
 
@@ -65,7 +87,11 @@ function render(entry: MaildirFixtureEntry): FixtureMessage {
  * folder, as a mail tool mirroring the account would. File names derive from
  * the fixture, so writing again over an existing tree changes nothing.
  */
-export function materializeMaildir(root: string, entries: readonly MaildirFixtureEntry[]): void {
+export function materializeMaildir(
+  root: string,
+  entries: readonly MaildirFixtureEntry[],
+  universeDir?: string,
+): void {
   for (const entry of entries) {
     const seconds = Math.floor(Date.parse(entry.sentAt) / 1000);
     for (const [index, folder] of entry.folders.entries()) {
@@ -74,7 +100,12 @@ export function materializeMaildir(root: string, entries: readonly MaildirFixtur
       const flags = entry.flags ?? "";
       const name = flags ? `cur/${uniq}:2,${[...flags].sort().join("")}` : `new/${uniq}`;
       if (existsSync(join(mailboxDir, name))) continue;
-      deliverMessage(mailboxDir, uniq, render(entry), flags ? { flags } : { subdir: "new" });
+      deliverMessage(
+        mailboxDir,
+        uniq,
+        render(entry, universeDir),
+        flags ? { flags } : { subdir: "new" },
+      );
     }
   }
 }

@@ -1,0 +1,15 @@
+# Fictional universe privacy review
+
+Reviewed the original universe authoring modules, new synthetic source readers/tests, related research documents and the generated reference universe. No production gateway, credentials or personal corpus was accessed.
+
+The generator uses an independently invented cast, reserved example-domain email addresses, Ofcom-reserved fictional phone numbers, placeholder street names and invented vendors. Historical and household relationships are authored fictional scenarios. Bank institution and software-platform names identify public products; no real account number, credential or transaction is included. Binary media comes from these authored strings rather than external personal photographs or recordings.
+
+The text detector scanned 104 changed/new text paths, then all 56 generated JSON paths. Both scans produced only fictional names/venues/products and title-case prose false positives; neither produced unexpected email, phone, private/tailnet IP, secret or non-public-reference findings. The scan used the exported pure detector with an explicit empty operator denylist, so it did not read production configuration. Manual review additionally checked documents/modules for operator paths, machine details and private infrastructure names.
+
+Added 122 reviewed name values at 20 exact module/test paths and 111 reviewed generated name values at 29 exact JSON paths. A later 164-path final-tree scan additionally identified two public Office XML attribute phrases in the media generator; these received exact-file exceptions after inspecting the XML. Every generated name is present in the reviewed authoring modules. No email, phone, IP or secret exception was added. Each new allowlist value was checked against its exact file; no new entry is stale. After the background facade split, 17 obsolete scope pairs were removed and their reviewed literals moved to the exact new module paths. Final finance/media additions received only the newly required exact paths for previously reviewed fictional venues and placeholder streets. Paths contain no wildcard or prefix allowance.
+
+The committed reference output is approximately 32 MiB. Keeping it alongside the generator makes the manifest discoverable and the complete fictional source breadth directly reviewable. Runtime materialization for another date belongs in an isolated external directory; generated expected answers and build metadata remain off the source-ingestion paths.
+
+The source inventory contains 43 non-Android configurable/provider/native source types. Gateway-owned capture notes and conversation writeback are separate native services populated through actual capture/live rehearsal; Apple Watch is a client/transport rather than an independent source. Historical coding/off-host source captures do not configure a replay agent backend.
+
+Re-run the changed-file detector and allowlist hygiene after final generator edits. Existing repo-wide privacy and validation gates remain required before merge.

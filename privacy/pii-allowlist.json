@@ -1007,12 +1007,12 @@
     {
       "value": "marek.vint+news@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "marekvint@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "maria.smith@acme.com",
@@ -1268,7 +1268,7 @@
         "packages/providers/github/src/normalizer.test.ts",
         "packages/providers/github/src/normalizer.ts"
       ],
-      "reason": "GitHub's public squash-merge committer address — a code constant, not corpus data"
+      "reason": "GitHub's public squash-merge committer address \u2014 a code constant, not corpus data"
     },
     {
       "value": "noreply@vendor.com",
@@ -1449,7 +1449,7 @@
     {
       "value": "someone@a-real-looking-domain.co.uk",
       "paths": ["scripts/lib/brain-cassette.test.mjs"],
-      "reason": "invented, deliberately OFF a reserved domain — the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
+      "reason": "invented, deliberately OFF a reserved domain \u2014 the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
     },
     {
       "value": "someone@s.whatsapp.net",
@@ -1748,7 +1748,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
+      "reason": "reviewed invented fixture \u2014 placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
     },
     {
       "value": "+1 415 555 7777",
@@ -1789,7 +1789,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+15551111111",
@@ -1878,7 +1878,7 @@
         "packages/providers/apple/src/contacts.test.ts",
         "packages/gateway/src/domain/LinkGraphService.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+442071234567",
@@ -2180,6 +2180,1551 @@
     }
   ],
   "names": [
+    {
+      "value": "Brookside Shared Courtyard",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Cedar Table Cafe",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Elm Lantern Grocers",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Fernbank Community Garden",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Harbour Editor",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Harbour Lantern Software",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-contacts.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Harbour Lantern Workspace",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Hi Sacha",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-messages.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Home Radio",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Northstar Reading Room",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Quiet Chess",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Rowan Cycle Workshop",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Shelf Reader",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Small Lantern Library",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "United Kingdom",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Willowbank Fitness Room",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Wren Corner Coffee",
+      "paths": ["evals/universes/sacha-bellamy/_build/background-desktop.mjs"],
+      "reason": "Reviewed original fictional demo authoring data moved from background facade without output changes; exact module path only."
+    },
+    {
+      "value": "Willow Kiln Studio",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "The Lantern Room",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Example Lane",
+      "paths": ["evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Sample Terrace",
+      "paths": ["evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Default Extension",
+      "paths": ["evals/universes/sacha-bellamy/_build/media.py"],
+      "reason": "Reviewed public Office Open XML element/attribute names in independently generated fictional document packaging; not a person identity."
+    },
+    {
+      "value": "Relationship Id",
+      "paths": ["evals/universes/sacha-bellamy/_build/media.py"],
+      "reason": "Reviewed public Office Open XML element/attribute names in independently generated fictional document packaging; not a person identity."
+    },
+    {
+      "value": "Ada Westbrook",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/github/threads.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Alder Appliance Workshop",
+      "paths": ["evals/universes/sacha-bellamy/cast.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Alice Fenwick",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Amber Holloway",
+      "paths": ["evals/universes/sacha-bellamy/cast.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Apple Watch",
+      "paths": ["evals/universes/sacha-bellamy/sources/apple-health/health.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Ava Whitlock",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Ben Ashcombe",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Birch Ebook Library",
+      "paths": ["evals/universes/sacha-bellamy/sources/enable-banking-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Bramble Basket",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Brittany Table Collective",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Brookside Shared Courtyard",
+      "paths": [
+        "evals/universes/sacha-bellamy/sources/core-location-visits/visits.json",
+        "evals/universes/sacha-bellamy/sources/photos/photos.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Caleb Finchley",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Can Maya",
+      "paths": ["evals/universes/sacha-bellamy/demo-facts.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Cedar Cloud Hosting",
+      "paths": ["evals/universes/sacha-bellamy/sources/plaid/responses.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Cedar Practice",
+      "paths": ["evals/universes/sacha-bellamy/sources/google-calendar/events.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Cedar Table Cafe",
+      "paths": [
+        "evals/universes/sacha-bellamy/sources/core-location-visits/visits.json",
+        "evals/universes/sacha-bellamy/sources/photos/photos.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Celine Bellamy",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Clara Hawthorn",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Cobalt Rail Travel",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Contact Alder Appliance",
+      "paths": ["evals/universes/sacha-bellamy/sources/google-drive/files.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Copper Ferry Transit",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Copper Trail Ebooks",
+      "paths": ["evals/universes/sacha-bellamy/sources/plaid/responses.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Daniel Mercer",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Dina Hazell",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Elliot Rowan",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Elm Lantern Grocers",
+      "paths": ["evals/universes/sacha-bellamy/sources/core-location-visits/visits.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Elm Table Kitchen",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Ember Mini",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Emile Newbury",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Example Close",
+      "paths": ["evals/universes/sacha-bellamy/sources/google-calendar/events.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Example Hall",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Example Lane",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Example Street",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-calendar/events.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Example Street Housing",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Exclude Awake",
+      "paths": ["evals/universes/sacha-bellamy/demo-facts.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Felix Moss",
+      "paths": ["evals/universes/sacha-bellamy/cast.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Fernbank Community Garden",
+      "paths": [
+        "evals/universes/sacha-bellamy/sources/core-location-visits/visits.json",
+        "evals/universes/sacha-bellamy/sources/photos/photos.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Fictional Gardens",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-calendar/events.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Fictional Gardens Housing",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Finn Meadow",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "French London",
+      "paths": ["evals/universes/sacha-bellamy/universe.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Harbour Editor",
+      "paths": ["evals/universes/sacha-bellamy/sources/screen-time/apps.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Harbour Lantern Software",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-contacts/contacts.json",
+        "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
+        "evals/universes/sacha-bellamy/sources/google-contacts/contacts.json",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Harbour Lantern Workspace",
+      "paths": ["evals/universes/sacha-bellamy/sources/core-location-visits/visits.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Harriet Dune",
+      "paths": ["evals/universes/sacha-bellamy/cast.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Hazel Homewares",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Help Nora",
+      "paths": ["evals/universes/sacha-bellamy/demo-facts.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Hi Sacha",
+      "paths": ["evals/universes/sacha-bellamy/sources/apple-voicemail/voicemails.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Home Radio",
+      "paths": ["evals/universes/sacha-bellamy/sources/screen-time/apps.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Hugo Arden",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Imogen Cedar",
+      "paths": ["evals/universes/sacha-bellamy/cast.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Ines Bellamy",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Juniper Digital Guides",
+      "paths": ["evals/universes/sacha-bellamy/sources/enable-banking-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Kestrel Sports",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Kindred Cart Movers",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/google-calendar/events.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Lantern Current",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/accounts.json",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Lantern Films",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Leila Hartwell",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Leo Merritt",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Louis Fairchild",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Marc Bellamy",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Married Maya Reeves",
+      "paths": ["evals/universes/sacha-bellamy/sources/apple-notes/notes.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Max Dewberry",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Maya Bellamy",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Meadow Cycle Repairs",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Miles Brook",
+      "paths": ["evals/universes/sacha-bellamy/cast.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Moss Harbour Stays",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Mosslight Coffee",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Noemi Vale",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Nora Finch",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Northstar Reading Room",
+      "paths": [
+        "evals/universes/sacha-bellamy/sources/core-location-visits/visits.json",
+        "evals/universes/sacha-bellamy/sources/photos/photos.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Owen Bramble",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Paper Finch Books",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Passenger Sacha Bellamy",
+      "paths": ["evals/universes/sacha-bellamy/sources/gmail/messages.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Paula Wren",
+      "paths": ["evals/universes/sacha-bellamy/cast.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Pebble Stationery",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Pine Wharf Digital",
+      "paths": ["evals/universes/sacha-bellamy/sources/plaid/responses.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Pinecone Produce",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Priya Calder",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Quiet Chess",
+      "paths": ["evals/universes/sacha-bellamy/sources/screen-time/apps.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Rainy Day Reserve",
+      "paths": [
+        "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/accounts.json",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Respect Retry-After",
+      "paths": [
+        "evals/universes/sacha-bellamy/sources/claude-code/sessions.json",
+        "evals/universes/sacha-bellamy/sources/codex/sessions.json",
+        "evals/universes/sacha-bellamy/sources/hermes/conversations.json",
+        "evals/universes/sacha-bellamy/sources/openclaw/conversations.json",
+        "evals/universes/sacha-bellamy/sources/pi/sessions.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Retained Bank",
+      "paths": ["evals/universes/sacha-bellamy/sources/apple-notes/notes.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Robin Cartwright",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Rosie Kestrel",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Rowan Cycle Workshop",
+      "paths": ["evals/universes/sacha-bellamy/sources/core-location-visits/visits.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Ruth Elwood",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Sacha Bellamy",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-notes/notes.json",
+        "evals/universes/sacha-bellamy/sources/github-commits/commits.json",
+        "evals/universes/sacha-bellamy/sources/github/threads.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Sam Redfern",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Sample Road",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Sample Terrace",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Sample Walk",
+      "paths": ["evals/universes/sacha-bellamy/sources/google-calendar/events.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "San Francisco",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/core-location-visits/visits.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Shelf Reader",
+      "paths": ["evals/universes/sacha-bellamy/sources/screen-time/apps.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Simon Alder",
+      "paths": ["evals/universes/sacha-bellamy/cast.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Small Lantern Library",
+      "paths": [
+        "evals/universes/sacha-bellamy/sources/core-location-visits/visits.json",
+        "evals/universes/sacha-bellamy/sources/photos/photos.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Sophia Lark",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Tariq Fairburn",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "The Lantern Room",
+      "paths": ["evals/universes/sacha-bellamy/sources/gmail/messages.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "United Kingdom",
+      "paths": ["evals/universes/sacha-bellamy/sources/core-location-visits/visits.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "United States",
+      "paths": [
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/core-location-visits/visits.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Willow Appliance Cooperative",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Willow Kiln Studio",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/demo-facts.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Willow Online Craft",
+      "paths": ["evals/universes/sacha-bellamy/sources/enable-banking-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Willow Pantry",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Willow Wheels Rental",
+      "paths": ["evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Willowbank Fitness Room",
+      "paths": ["evals/universes/sacha-bellamy/sources/core-location-visits/visits.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Wren Corner Coffee",
+      "paths": ["evals/universes/sacha-bellamy/sources/core-location-visits/visits.json"],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Zoe Winslow",
+      "paths": [
+        "evals/universes/sacha-bellamy/cast.json",
+        "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
+        "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
+      "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
+    },
+    {
+      "value": "Actual Tesseract",
+      "paths": ["evals/universes/sacha-bellamy/README.md"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Ada Westbrook",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Alder Appliance Workshop",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Alice Fenwick",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Amber Holloway",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Apple Watch",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Ava Whitlock",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Ben Ashcombe",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Birch Ebook Library",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Bramble Basket",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Brittany Table Collective",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Brookside Shared Courtyard",
+      "paths": ["evals/universes/sacha-bellamy/_build/extras.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Caleb Finchley",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Can Maya",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-commitments.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Cedar Cloud Hosting",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Cedar Practice",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-diary.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Cedar Table Cafe",
+      "paths": ["evals/universes/sacha-bellamy/_build/extras.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Celine Bellamy",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Clara Hawthorn",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Cobalt Rail Travel",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Contact Alder Appliance",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-purchases.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Copper Ferry Transit",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Copper Trail Ebooks",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Daniel Mercer",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "David Lin",
+      "paths": [
+        "packages/providers-synth/apple/src/fixtures.test.ts",
+        "packages/providers-synth/whatsapp/src/fixtures.test.ts"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Dina Hazell",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Elliot Rowan",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Elm Table Kitchen",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Ember Mini",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-assets.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-purchases.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Emile Newbury",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Example Close",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-diary.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Example Hall",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-commitments.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Example Lane",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Example Street",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/media_test.py",
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Example Street Housing",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Exclude Awake",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Felix Moss",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Fernbank Community Garden",
+      "paths": ["evals/universes/sacha-bellamy/_build/extras.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Fictional Gardens",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-commitments.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Fictional Gardens Housing",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Finn Meadow",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "French London",
+      "paths": ["evals/universes/sacha-bellamy/_build/build.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Harbour Lantern Software",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs",
+        "evals/universes/sacha-bellamy/_build/shared.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Harriet Dune",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Hazel Homewares",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Help Nora",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-commitments.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Hugo Arden",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Imogen Cedar",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Ines Bellamy",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Install Whisper",
+      "paths": ["evals/universes/sacha-bellamy/README.md"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/shared.mjs",
+        "packages/providers-synth/apple/src/fixtures.test.ts",
+        "packages/providers-synth/whatsapp/src/fixtures.test.ts"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Juniper Digital Guides",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Kestrel Sports",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Kindred Cart Movers",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs",
+        "evals/universes/sacha-bellamy/_build/shared.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Lantern Current",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-france.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-purchases.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Lantern Films",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Leila Hartwell",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Leo Merritt",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Local London",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Louis Fairchild",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Marc Bellamy",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Married Maya Reeves",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Max Dewberry",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Maya Bellamy",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-commitments.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-france.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs",
+        "evals/universes/sacha-bellamy/_build/shared.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-gifts.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs",
+        "packages/providers-synth/apple/src/fixtures.test.ts",
+        "packages/providers-synth/whatsapp/src/fixtures.test.ts"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Meadow Cycle Repairs",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Miles Brook",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Moss Harbour Stays",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Mosslight Coffee",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Noemi Vale",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Nora Finch",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Northstar Bank",
+      "paths": [
+        "packages/providers-synth/plaid/src/fixtures.test.ts",
+        "packages/providers-synth/plaid/src/fixtures.ts"
+      ],
+      "reason": "Reviewed legacy fictional Plaid fixture default preserved by the optional presentation settings; no personal-corpus provenance."
+    },
+    {
+      "value": "Northstar Reading Room",
+      "paths": ["evals/universes/sacha-bellamy/_build/extras.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Not Wednesday",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-commitments.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "On Debian",
+      "paths": ["evals/universes/sacha-bellamy/README.md"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Owen Bramble",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Paper Finch Books",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Passenger Sacha Bellamy",
+      "paths": ["evals/universes/sacha-bellamy/_build/travel.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Paula Wren",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Pebble Stationery",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Pine Wharf Digital",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Pinecone Produce",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Priya Calder",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-loans.mjs",
+        "evals/universes/sacha-bellamy/_build/shared.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Rainy Day Reserve",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Requires Pillow",
+      "paths": ["evals/universes/sacha-bellamy/_build/media.py"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Respect Retry-After",
+      "paths": ["evals/universes/sacha-bellamy/_build/extras.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Retained Bank",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Robin Cartwright",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Rosie Kestrel",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Ruth Elwood",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Sacha Bellamy",
+      "paths": [
+        "evals/universes/sacha-bellamy/README.md",
+        "evals/universes/sacha-bellamy/_build/scenario-france.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-gifts.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-purchases.mjs",
+        "evals/universes/sacha-bellamy/_build/shared.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Sam Redfern",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Sample Road",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-commitments.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Sample Terrace",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Sample Walk",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-commitments.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "San Francisco",
+      "paths": ["evals/universes/sacha-bellamy/_build/travel.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Simon Alder",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Small Lantern Library",
+      "paths": ["evals/universes/sacha-bellamy/_build/extras.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Sophia Lark",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Stellar Sound",
+      "paths": ["evals/universes/sacha-bellamy/_build/media_test.py"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Studio Northstar",
+      "paths": ["evals/universes/sacha-bellamy/_build/media_test.py"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Tariq Fairburn",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "The Lantern Room",
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-gifts.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Tuesday October",
+      "paths": ["evals/universes/sacha-bellamy/_build/media_test.py"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "United States",
+      "paths": ["evals/universes/sacha-bellamy/_build/travel.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Willow Appliance Cooperative",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Willow Kiln Studio",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-commitments.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-gifts.mjs",
+        "evals/universes/sacha-bellamy/_build/shared.mjs"
+      ],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Willow Online Craft",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Willow Pantry",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Willow Wheels Rental",
+      "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
+    {
+      "value": "Zoe Winslow",
+      "paths": ["evals/universes/sacha-bellamy/_build/shared.mjs"],
+      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
+    },
     {
       "value": "Browser Tell Omnesis",
       "paths": ["packages/gateway/src/http/services/BrowserNotesService.test.ts"],
@@ -3888,7 +5433,7 @@
     {
       "value": "Alex Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Alex Doe",
@@ -4217,7 +5762,7 @@
     {
       "value": "Apple Watch",
       "paths": ["evals/universes/wrist/universe.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Apple Watch Series",
@@ -4511,7 +6056,7 @@
         "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "product name — the brain end-to-end test kit, not a person"
+      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
     },
     {
       "value": "Bram Halvorsen",
@@ -4711,7 +6256,7 @@
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Cedar Grove Billing",
@@ -5512,7 +7057,7 @@
     {
       "value": "Eurostar Bookings",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Eve Bond",
@@ -5917,7 +7462,7 @@
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Guided Kyoto",
@@ -6031,7 +7576,7 @@
     {
       "value": "Hello Alex",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hello John Smith",
@@ -6101,7 +7646,7 @@
         "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hi Anton",
@@ -6341,7 +7886,7 @@
     {
       "value": "Iris Kelland",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "JP Bond",
@@ -6643,7 +8188,7 @@
     {
       "value": "Jordan Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Juniper Workshop",
@@ -6806,7 +8351,7 @@
     {
       "value": "London Paris",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "London St Pancras",
@@ -6815,7 +8360,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Lucian Farrow",
@@ -7334,7 +8879,7 @@
     {
       "value": "My Sweep",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture — a deliberately malformed sweep file name"
+      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
     },
     {
       "value": "My Task",
@@ -7506,7 +9051,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "North Quarter",
@@ -7636,7 +9181,7 @@
     {
       "value": "Not An Id",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture — a deliberately malformed sweep file name"
+      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
     },
     {
       "value": "Not Found",
@@ -7784,7 +9329,7 @@
     {
       "value": "Outbound Sunday",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Outgoing Phone",
@@ -7829,7 +9374,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Paris Riverside Triathlon",
@@ -7838,7 +9383,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Parkside Cafe",
@@ -8349,7 +9894,7 @@
       "reason": "reviewed invented fixture"
     },
     {
-      "value": "Renée Vance",
+      "value": "Ren\u00e9e Vance",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "reviewed invented fixture"
     },
@@ -8458,7 +10003,7 @@
     {
       "value": "Riverbend Tri Club",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Riverside Bank",
@@ -8572,7 +10117,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Robin Vale",
@@ -8614,12 +10159,12 @@
     {
       "value": "Sam Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Diaz",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Quinn",
@@ -8924,7 +10469,7 @@
     {
       "value": "St Pancras",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "St Pancras International",
@@ -8932,7 +10477,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Stable Child",
@@ -8960,7 +10505,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Standup Recap",
@@ -9480,12 +11025,12 @@
         "packages/collector/src/e2e/brain-bench/README.md",
         "packages/collector/src/e2e/brain-bench/index.ts"
       ],
-      "reason": "product name — the brain end-to-end test kit, not a person"
+      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
     },
     {
       "value": "The Brambling",
       "paths": ["packages/collector/src/e2e/brain-loops.e2e.test.ts"],
-      "reason": "invented fixture — an invented venue used for a lighting-quote arc in the bench's loop tests"
+      "reason": "invented fixture \u2014 an invented venue used for a lighting-quote arc in the bench's loop tests"
     },
     {
       "value": "The Briefs",
@@ -9495,7 +11040,7 @@
     {
       "value": "The Cedar Grove",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture — a three-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "The Coinbase",
@@ -9604,7 +11149,7 @@
         "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture — a three-word window of the invented venue 'Riverside Estate'"
+      "reason": "invented fixture \u2014 a three-word window of the invented venue 'Riverside Estate'"
     },
     {
       "value": "The Studio Northstar",
@@ -9640,7 +11185,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Theo Marsh",
@@ -9777,7 +11322,7 @@
     {
       "value": "Tri Club",
       "paths": ["evals/universes/wrist/sources/gmail/messages.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Tuesday James",
@@ -9939,7 +11484,7 @@
     {
       "value": "Wakes Fictional",
       "paths": ["packages/gateway/portal/js/views/watches.test.ts"],
-      "reason": "invented fixture — two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
+      "reason": "invented fixture \u2014 two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
     },
     {
       "value": "Web Crypto",
@@ -10079,7 +11624,7 @@
     {
       "value": "Your Cedar Grove",
       "paths": ["packages/collector/src/e2e/brain-rhythm.e2e.test.ts"],
-      "reason": "invented fixture — a three-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Your Japan",
@@ -10244,6 +11789,14 @@
       "value": "The Brain",
       "paths": ["packages/gateway/src/http/routes/temporal.test.ts"],
       "reason": "ordinary words, not a name"
+    },
+    {
+      "value": "Amazon Orders",
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/shared.mjs",
+        "evals/universes/sacha-bellamy/cast.json"
+      ],
+      "reason": "Public retailer label explicitly requested for a fictional gift-order demo; the sender uses a reserved example.com address and an invented order reference, with no personal-corpus provenance."
     },
     {
       "value": "Tell Omnesis",

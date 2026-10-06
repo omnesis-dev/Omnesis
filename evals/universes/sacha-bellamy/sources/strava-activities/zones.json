@@ -1,0 +1,6402 @@
+[
+  {
+    "activityId": 990000,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 644
+  },
+  {
+    "activityId": 990000,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1449
+  },
+  {
+    "activityId": 990000,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 966
+  },
+  {
+    "activityId": 990000,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 161
+  },
+  {
+    "activityId": 990001,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990001,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990001,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990001,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990002,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990002,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990002,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990002,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990003,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990003,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990003,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990003,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990004,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990004,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990004,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990004,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990005,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 920
+  },
+  {
+    "activityId": 990005,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2070
+  },
+  {
+    "activityId": 990005,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1380
+  },
+  {
+    "activityId": 990005,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 230
+  },
+  {
+    "activityId": 990006,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990006,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990006,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990006,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990007,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990007,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990007,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990007,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990008,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990008,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990008,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990008,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990009,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990009,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990009,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990009,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990010,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 754
+  },
+  {
+    "activityId": 990010,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1697
+  },
+  {
+    "activityId": 990010,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1132
+  },
+  {
+    "activityId": 990010,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 189
+  },
+  {
+    "activityId": 990011,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990011,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990011,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990011,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990012,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990012,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990012,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990012,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990013,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990013,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990013,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990013,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990014,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990014,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990014,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990014,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990015,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 1030
+  },
+  {
+    "activityId": 990015,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2318
+  },
+  {
+    "activityId": 990015,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1546
+  },
+  {
+    "activityId": 990015,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 258
+  },
+  {
+    "activityId": 990016,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990016,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990016,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990016,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990017,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990017,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990017,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990017,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990018,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990018,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990018,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990018,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990019,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990019,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990019,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990019,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990020,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 865
+  },
+  {
+    "activityId": 990020,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1946
+  },
+  {
+    "activityId": 990020,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1297
+  },
+  {
+    "activityId": 990020,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 216
+  },
+  {
+    "activityId": 990021,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990021,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990021,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990021,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990022,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990022,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990022,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990022,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990023,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990023,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990023,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990023,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990024,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990024,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990024,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990024,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990025,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 699
+  },
+  {
+    "activityId": 990025,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1573
+  },
+  {
+    "activityId": 990025,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1049
+  },
+  {
+    "activityId": 990025,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 175
+  },
+  {
+    "activityId": 990026,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990026,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990026,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990026,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990027,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990027,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990027,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990027,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990028,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990028,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990028,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990028,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990029,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990029,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990029,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990029,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990030,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 975
+  },
+  {
+    "activityId": 990030,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2194
+  },
+  {
+    "activityId": 990030,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1463
+  },
+  {
+    "activityId": 990030,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 244
+  },
+  {
+    "activityId": 990031,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990031,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990031,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990031,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990032,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990032,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990032,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990032,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990033,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990033,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990033,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990033,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990034,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990034,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990034,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990034,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990035,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 810
+  },
+  {
+    "activityId": 990035,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1822
+  },
+  {
+    "activityId": 990035,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1214
+  },
+  {
+    "activityId": 990035,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 202
+  },
+  {
+    "activityId": 990036,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990036,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990036,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990036,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990037,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990037,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990037,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990037,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990038,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990038,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990038,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990038,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990039,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990039,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990039,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990039,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990040,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 644
+  },
+  {
+    "activityId": 990040,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1449
+  },
+  {
+    "activityId": 990040,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 966
+  },
+  {
+    "activityId": 990040,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 161
+  },
+  {
+    "activityId": 990041,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990041,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990041,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990041,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990042,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990042,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990042,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990042,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990043,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990043,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990043,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990043,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990044,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990044,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990044,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990044,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990045,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 920
+  },
+  {
+    "activityId": 990045,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2070
+  },
+  {
+    "activityId": 990045,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1380
+  },
+  {
+    "activityId": 990045,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 230
+  },
+  {
+    "activityId": 990046,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990046,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990046,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990046,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990047,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990047,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990047,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990047,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990048,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990048,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990048,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990048,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990049,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990049,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990049,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990049,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990050,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 754
+  },
+  {
+    "activityId": 990050,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1697
+  },
+  {
+    "activityId": 990050,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1132
+  },
+  {
+    "activityId": 990050,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 189
+  },
+  {
+    "activityId": 990051,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990051,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990051,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990051,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990052,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990052,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990052,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990052,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990053,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990053,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990053,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990053,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990054,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990054,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990054,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990054,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990055,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 1030
+  },
+  {
+    "activityId": 990055,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2318
+  },
+  {
+    "activityId": 990055,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1546
+  },
+  {
+    "activityId": 990055,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 258
+  },
+  {
+    "activityId": 990056,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990056,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990056,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990056,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990057,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990057,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990057,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990057,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990058,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990058,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990058,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990058,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990059,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990059,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990059,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990059,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990060,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 865
+  },
+  {
+    "activityId": 990060,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1946
+  },
+  {
+    "activityId": 990060,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1297
+  },
+  {
+    "activityId": 990060,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 216
+  },
+  {
+    "activityId": 990061,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990061,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990061,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990061,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990062,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990062,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990062,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990062,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990063,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990063,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990063,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990063,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990064,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990064,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990064,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990064,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990065,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 699
+  },
+  {
+    "activityId": 990065,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1573
+  },
+  {
+    "activityId": 990065,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1049
+  },
+  {
+    "activityId": 990065,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 175
+  },
+  {
+    "activityId": 990066,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990066,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990066,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990066,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990067,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990067,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990067,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990067,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990068,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990068,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990068,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990068,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990069,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990069,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990069,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990069,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990070,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 975
+  },
+  {
+    "activityId": 990070,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2194
+  },
+  {
+    "activityId": 990070,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1463
+  },
+  {
+    "activityId": 990070,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 244
+  },
+  {
+    "activityId": 990071,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990071,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990071,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990071,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990072,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990072,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990072,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990072,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990073,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990073,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990073,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990073,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990074,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990074,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990074,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990074,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990075,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 810
+  },
+  {
+    "activityId": 990075,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1822
+  },
+  {
+    "activityId": 990075,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1214
+  },
+  {
+    "activityId": 990075,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 202
+  },
+  {
+    "activityId": 990076,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990076,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990076,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990076,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990077,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990077,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990077,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990077,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990078,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990078,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990078,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990078,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990079,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990079,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990079,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990079,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990080,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 644
+  },
+  {
+    "activityId": 990080,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1449
+  },
+  {
+    "activityId": 990080,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 966
+  },
+  {
+    "activityId": 990080,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 161
+  },
+  {
+    "activityId": 990081,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990081,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990081,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990081,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990082,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990082,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990082,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990082,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990083,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990083,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990083,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990083,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990084,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990084,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990084,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990084,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990085,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 920
+  },
+  {
+    "activityId": 990085,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2070
+  },
+  {
+    "activityId": 990085,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1380
+  },
+  {
+    "activityId": 990085,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 230
+  },
+  {
+    "activityId": 990086,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990086,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990086,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990086,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990087,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990087,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990087,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990087,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990088,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990088,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990088,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990088,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990089,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990089,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990089,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990089,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990090,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 754
+  },
+  {
+    "activityId": 990090,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1697
+  },
+  {
+    "activityId": 990090,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1132
+  },
+  {
+    "activityId": 990090,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 189
+  },
+  {
+    "activityId": 990091,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990091,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990091,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990091,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990092,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990092,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990092,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990092,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990093,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990093,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990093,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990093,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990094,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990094,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990094,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990094,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990095,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 1030
+  },
+  {
+    "activityId": 990095,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2318
+  },
+  {
+    "activityId": 990095,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1546
+  },
+  {
+    "activityId": 990095,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 258
+  },
+  {
+    "activityId": 990096,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990096,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990096,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990096,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990097,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990097,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990097,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990097,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990098,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990098,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990098,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990098,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990099,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990099,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990099,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990099,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990100,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 865
+  },
+  {
+    "activityId": 990100,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1946
+  },
+  {
+    "activityId": 990100,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1297
+  },
+  {
+    "activityId": 990100,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 216
+  },
+  {
+    "activityId": 990101,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990101,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990101,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990101,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990102,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990102,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990102,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990102,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990103,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990103,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990103,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990103,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990104,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990104,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990104,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990104,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990105,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 699
+  },
+  {
+    "activityId": 990105,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1573
+  },
+  {
+    "activityId": 990105,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1049
+  },
+  {
+    "activityId": 990105,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 175
+  },
+  {
+    "activityId": 990106,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990106,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990106,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990106,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990107,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990107,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990107,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990107,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990108,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990108,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990108,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990108,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990109,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990109,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990109,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990109,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990110,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 975
+  },
+  {
+    "activityId": 990110,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2194
+  },
+  {
+    "activityId": 990110,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1463
+  },
+  {
+    "activityId": 990110,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 244
+  },
+  {
+    "activityId": 990111,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990111,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990111,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990111,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990112,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990112,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990112,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990112,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990113,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990113,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990113,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990113,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990114,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990114,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990114,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990114,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990115,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 810
+  },
+  {
+    "activityId": 990115,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1822
+  },
+  {
+    "activityId": 990115,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1214
+  },
+  {
+    "activityId": 990115,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 202
+  },
+  {
+    "activityId": 990116,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990116,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990116,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990116,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990117,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990117,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990117,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990117,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990118,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990118,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990118,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990118,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990119,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990119,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990119,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990119,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990120,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 644
+  },
+  {
+    "activityId": 990120,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1449
+  },
+  {
+    "activityId": 990120,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 966
+  },
+  {
+    "activityId": 990120,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 161
+  },
+  {
+    "activityId": 990121,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990121,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990121,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990121,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990122,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990122,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990122,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990122,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990123,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990123,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990123,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990123,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990124,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990124,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990124,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990124,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990125,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 920
+  },
+  {
+    "activityId": 990125,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2070
+  },
+  {
+    "activityId": 990125,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1380
+  },
+  {
+    "activityId": 990125,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 230
+  },
+  {
+    "activityId": 990126,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990126,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990126,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990126,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990127,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990127,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990127,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990127,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990128,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990128,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990128,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990128,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990129,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990129,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990129,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990129,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990130,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 754
+  },
+  {
+    "activityId": 990130,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1697
+  },
+  {
+    "activityId": 990130,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1132
+  },
+  {
+    "activityId": 990130,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 189
+  },
+  {
+    "activityId": 990131,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990131,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990131,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990131,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990132,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990132,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990132,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990132,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990133,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990133,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990133,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990133,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990134,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990134,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990134,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990134,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990135,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 1030
+  },
+  {
+    "activityId": 990135,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2318
+  },
+  {
+    "activityId": 990135,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1546
+  },
+  {
+    "activityId": 990135,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 258
+  },
+  {
+    "activityId": 990136,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990136,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990136,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990136,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990137,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990137,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990137,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990137,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990138,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990138,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990138,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990138,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990139,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990139,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990139,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990139,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990140,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 865
+  },
+  {
+    "activityId": 990140,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1946
+  },
+  {
+    "activityId": 990140,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1297
+  },
+  {
+    "activityId": 990140,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 216
+  },
+  {
+    "activityId": 990141,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990141,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990141,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990141,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990142,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990142,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990142,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990142,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990143,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990143,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990143,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990143,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990144,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990144,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990144,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990144,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990145,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 699
+  },
+  {
+    "activityId": 990145,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1573
+  },
+  {
+    "activityId": 990145,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1049
+  },
+  {
+    "activityId": 990145,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 175
+  },
+  {
+    "activityId": 990146,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990146,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990146,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990146,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990147,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990147,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990147,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990147,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990148,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990148,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990148,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990148,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990149,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990149,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990149,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990149,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990150,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 975
+  },
+  {
+    "activityId": 990150,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2194
+  },
+  {
+    "activityId": 990150,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1463
+  },
+  {
+    "activityId": 990150,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 244
+  },
+  {
+    "activityId": 990151,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990151,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990151,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990151,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990152,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990152,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990152,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990152,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990153,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990153,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990153,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990153,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990154,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990154,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990154,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990154,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990155,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 810
+  },
+  {
+    "activityId": 990155,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1822
+  },
+  {
+    "activityId": 990155,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1214
+  },
+  {
+    "activityId": 990155,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 202
+  },
+  {
+    "activityId": 990156,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990156,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990156,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990156,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990157,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990157,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990157,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990157,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990158,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990158,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990158,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990158,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990159,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990159,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990159,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990159,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990160,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 644
+  },
+  {
+    "activityId": 990160,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1449
+  },
+  {
+    "activityId": 990160,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 966
+  },
+  {
+    "activityId": 990160,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 161
+  },
+  {
+    "activityId": 990161,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990161,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990161,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990161,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990162,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990162,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990162,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990162,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990163,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990163,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990163,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990163,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990164,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990164,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990164,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990164,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990165,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 920
+  },
+  {
+    "activityId": 990165,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2070
+  },
+  {
+    "activityId": 990165,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1380
+  },
+  {
+    "activityId": 990165,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 230
+  },
+  {
+    "activityId": 990166,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990166,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990166,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990166,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990167,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990167,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990167,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990167,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990168,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990168,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990168,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990168,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990169,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990169,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990169,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990169,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990170,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 754
+  },
+  {
+    "activityId": 990170,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1697
+  },
+  {
+    "activityId": 990170,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1132
+  },
+  {
+    "activityId": 990170,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 189
+  },
+  {
+    "activityId": 990171,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990171,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990171,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990171,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990172,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990172,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990172,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990172,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990173,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990173,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990173,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990173,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990174,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990174,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990174,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990174,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990175,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 1030
+  },
+  {
+    "activityId": 990175,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2318
+  },
+  {
+    "activityId": 990175,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1546
+  },
+  {
+    "activityId": 990175,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 258
+  },
+  {
+    "activityId": 990176,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990176,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990176,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990176,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990177,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990177,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990177,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990177,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990178,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990178,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990178,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990178,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990179,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 429
+  },
+  {
+    "activityId": 990179,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 964
+  },
+  {
+    "activityId": 990179,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 643
+  },
+  {
+    "activityId": 990179,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 107
+  },
+  {
+    "activityId": 990180,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 865
+  },
+  {
+    "activityId": 990180,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1946
+  },
+  {
+    "activityId": 990180,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1297
+  },
+  {
+    "activityId": 990180,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 216
+  },
+  {
+    "activityId": 990181,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990181,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990181,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990181,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990182,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990182,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990182,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990182,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990183,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990183,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990183,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990183,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990184,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 611
+  },
+  {
+    "activityId": 990184,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1375
+  },
+  {
+    "activityId": 990184,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 917
+  },
+  {
+    "activityId": 990184,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 153
+  },
+  {
+    "activityId": 990185,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 699
+  },
+  {
+    "activityId": 990185,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1573
+  },
+  {
+    "activityId": 990185,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1049
+  },
+  {
+    "activityId": 990185,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 175
+  },
+  {
+    "activityId": 990186,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990186,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990186,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990186,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990187,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990187,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990187,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990187,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990188,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990188,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990188,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990188,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  },
+  {
+    "activityId": 990189,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 392
+  },
+  {
+    "activityId": 990189,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 882
+  },
+  {
+    "activityId": 990189,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 588
+  },
+  {
+    "activityId": 990189,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 98
+  },
+  {
+    "activityId": 990190,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 975
+  },
+  {
+    "activityId": 990190,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 2194
+  },
+  {
+    "activityId": 990190,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1463
+  },
+  {
+    "activityId": 990190,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 244
+  },
+  {
+    "activityId": 990191,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 465
+  },
+  {
+    "activityId": 990191,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1047
+  },
+  {
+    "activityId": 990191,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 698
+  },
+  {
+    "activityId": 990191,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 116
+  },
+  {
+    "activityId": 990192,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 502
+  },
+  {
+    "activityId": 990192,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1129
+  },
+  {
+    "activityId": 990192,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 752
+  },
+  {
+    "activityId": 990192,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 125
+  },
+  {
+    "activityId": 990193,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 538
+  },
+  {
+    "activityId": 990193,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1211
+  },
+  {
+    "activityId": 990193,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 807
+  },
+  {
+    "activityId": 990193,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 135
+  },
+  {
+    "activityId": 990194,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 575
+  },
+  {
+    "activityId": 990194,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1293
+  },
+  {
+    "activityId": 990194,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 862
+  },
+  {
+    "activityId": 990194,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 144
+  },
+  {
+    "activityId": 990195,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 810
+  },
+  {
+    "activityId": 990195,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1822
+  },
+  {
+    "activityId": 990195,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1214
+  },
+  {
+    "activityId": 990195,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 202
+  },
+  {
+    "activityId": 990196,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 648
+  },
+  {
+    "activityId": 990196,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1457
+  },
+  {
+    "activityId": 990196,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 971
+  },
+  {
+    "activityId": 990196,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 162
+  },
+  {
+    "activityId": 990197,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 684
+  },
+  {
+    "activityId": 990197,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 1539
+  },
+  {
+    "activityId": 990197,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 1026
+  },
+  {
+    "activityId": 990197,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 171
+  },
+  {
+    "activityId": 990198,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 319
+  },
+  {
+    "activityId": 990198,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 718
+  },
+  {
+    "activityId": 990198,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 479
+  },
+  {
+    "activityId": 990198,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 80
+  },
+  {
+    "activityId": 990199,
+    "zoneType": "heartrate",
+    "bucketIndex": 0,
+    "minValue": 90,
+    "maxValue": 109,
+    "timeSeconds": 356
+  },
+  {
+    "activityId": 990199,
+    "zoneType": "heartrate",
+    "bucketIndex": 1,
+    "minValue": 110,
+    "maxValue": 129,
+    "timeSeconds": 800
+  },
+  {
+    "activityId": 990199,
+    "zoneType": "heartrate",
+    "bucketIndex": 2,
+    "minValue": 130,
+    "maxValue": 149,
+    "timeSeconds": 533
+  },
+  {
+    "activityId": 990199,
+    "zoneType": "heartrate",
+    "bucketIndex": 3,
+    "minValue": 150,
+    "maxValue": 169,
+    "timeSeconds": 89
+  }
+]

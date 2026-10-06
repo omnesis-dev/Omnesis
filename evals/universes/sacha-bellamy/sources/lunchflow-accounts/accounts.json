@@ -1,0 +1,18 @@
+[
+  {
+    "id": 901,
+    "name": "Lantern Current ending 0042",
+    "institution_name": "Lantern Current",
+    "provider": "synthetic",
+    "currency": "GBP",
+    "status": "ACTIVE"
+  },
+  {
+    "id": 902,
+    "name": "Rainy Day Reserve",
+    "institution_name": "Lantern Current",
+    "provider": "synthetic",
+    "currency": "GBP",
+    "status": "ACTIVE"
+  }
+]

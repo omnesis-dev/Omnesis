@@ -110,3 +110,22 @@ export async function ensureTheme(page, appearance) {
   }
   return applied;
 }
+
+// Font loading and DOM visibility do not establish a painted compositor frame.
+// Cross two animation frames before capture, and freeze CSS animations in the
+// screenshot itself. Errors remain errors; no alternate capture is substituted.
+export async function capturePortalScreenshot(page, options) {
+  const painted = await page.waitForFunction(
+    async () => {
+      await globalThis.document.fonts.ready;
+      await new Promise((resolve) =>
+        globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve)),
+      );
+      return true;
+    },
+    null,
+    { timeout: 30_000 },
+  );
+  await painted.dispose();
+  return page.screenshot({ ...options, animations: "disabled" });
+}
