@@ -25,7 +25,7 @@ import {
 
 // Consume the complete lexical run before applying the length cap. A bounded
 // regex would turn oversized strings into several invented vocabulary hints.
-const WORD = /[\p{L}][\p{L}\p{M}\p{N}'‘’.‐‑﹣－-]+/gu;
+const WORD = /[\p{L}\p{N}][\p{L}\p{M}\p{N}'‘’.‐‑﹣－-]+/gu;
 const withinWordLimit = (word: string): boolean =>
   word.length <= 48 || (word.length <= 96 && [...word].length <= 48);
 const normalize = normalizeVocabularyTerm;
@@ -104,6 +104,9 @@ function observeTextCandidates(
   const wholeWordStarts = new Set<number>();
   const wholeWordEnds = new Set<number>();
   for (const match of text.matchAll(WORD)) {
+    // Consume digit-led runs whole, so times and identifiers cannot contribute
+    // an invented letter-led suffix. Letter-led technical terms remain eligible.
+    if (!/^\p{L}/u.test(match[0])) continue;
     // Reject oversized runs before trimming: even a suffix regex can
     // rescan a long punctuation run when it is not at the string's end.
     if (match[0].length > 96) continue;

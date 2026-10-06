@@ -27,6 +27,8 @@ export function vocabularyLexicalQuality(
   )
     return 0;
   if (/(\p{L})\1{2,}/u.test(word)) {
+    // Deliberate uppercase acronyms must not collapse into a common word.
+    if (/^[A-Z]+$/u.test(text)) return 1;
     const collapsed = word.replace(/(\p{L})\1{2,}/gu, "$1");
     const doubled = word.replace(/(\p{L})\1{2,}/gu, "$1$1");
     if (isCommonVocabularyWord(collapsed) || isCommonVocabularyWord(doubled)) return 0;

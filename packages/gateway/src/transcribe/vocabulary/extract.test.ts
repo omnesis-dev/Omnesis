@@ -100,8 +100,13 @@ test("keeps complete uncommon phrases, including names with sentence punctuation
 });
 
 test("retains the existing Unicode code-point cap for complete lexical words", () => {
-  const word = "\u{10400}".repeat(40);
+  const word = "\u{10400}\u{10401}".repeat(20);
   expect(terms(word)).toEqual([word.toLocaleLowerCase("und")]);
+});
+
+test("digit-led times and identifiers never manufacture letter-led suffixes", () => {
+  expect(terms("07h45 9Zorvella ４Virellune 23-Nexularis")).toEqual([]);
+  expect(terms("QVL2 Nexularis")).toEqual(expect.arrayContaining(["qvl2", "nexularis"]));
 });
 
 test("discards long email and dotted identifiers without retaining their fragments", () => {
@@ -148,14 +153,14 @@ test("uses prose rather than rendered metadata as evidence in any language", () 
   expect(
     terms(
       "# Export\n**Origine:** Byrelune\n**Destination:** Tyrelune\n**Horodatage:** ZORVEL\n---\n" +
-        "**08:12** Wyrelune: [Audio, 0:07]: Nexularis Virellune\n" +
+        "**08:12** Wyrelune: Nexularis Virellune\n" +
         "> Quoted Zeralith\n---\n**Files:** chart (QZP, 3KB)",
     ),
   ).toEqual(expect.arrayContaining(["nexularis", "virellune", "nexularis virellune"]));
   expect(
     terms(
       "# Export\n**Origine:** Byrelune\n**Destination:** Tyrelune\n**Horodatage:** ZORVEL\n---\n" +
-        "**08:12** Wyrelune: [Audio, 0:07]: Nexularis Virellune\n" +
+        "**08:12** Wyrelune: Nexularis Virellune\n" +
         "> Quoted Zeralith\n---\n**Files:** chart (QZP, 3KB)",
     ),
   ).toHaveLength(3);

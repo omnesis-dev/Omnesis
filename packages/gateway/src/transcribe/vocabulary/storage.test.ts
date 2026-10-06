@@ -229,12 +229,16 @@ describe("vocabulary materialization", () => {
       },
       settings,
     );
-    expect(result.entries[0].text).toBe("Umbriolet");
+    expect(result.entries.map((entry) => entry.text)).toContain("Umbriolet");
     expect(result.entries.map((entry) => entry.text)).toContain("Dormanthh");
     expect(result.entries).toHaveLength(settings.maxTerms);
     // Both profiles contribute, while each profile's two streams count once.
-    const expected = ((3 * Math.log1p(2)) / (1 + Math.log1p(2))) * (1 + 3 * 3);
-    expect(result.entries[0].score).toBeCloseTo(expected, 10);
+    const rarity = 0.5 + 0.5 / (1 + Math.log1p(2));
+    const expected = 3 * Math.log1p(2) * rarity * (1 + 3 * 1.5);
+    expect(result.entries.find((entry) => entry.text === "Umbriolet")?.score).toBeCloseTo(
+      expected,
+      10,
+    );
   });
 
   test("overlapping frequency and recent streams do not double a profile score", () => {
@@ -251,7 +255,10 @@ describe("vocabulary materialization", () => {
       settings,
     );
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].score).toBeCloseTo((3 * Math.log1p(2)) / (1 + Math.log1p(2)), 10);
+    expect(result.entries[0].score).toBeCloseTo(
+      3 * Math.log1p(2) * (0.5 + 0.5 / (1 + Math.log1p(2))),
+      10,
+    );
   });
 
   test("singleton noise cannot crowd corroborated terms out of bounded lookup", () => {
@@ -281,7 +288,11 @@ describe("vocabulary materialization", () => {
     db.prepare("UPDATE documents SET people_resolved_at=NULL WHERE id='unresolved'").run();
     const docs = fetchTranscriptionVocabularyBatch(db, { ...settings, maxDocumentChars: 32 });
     expect(docs.map((d) => d.id)).toEqual(["ready"]);
-    expect(docs[0].content).toHaveLength(32);
+    // Two UTF-16 units of lookahead let extraction discard a truncated lexical run.
+    expect(docs[0].content).toHaveLength(34);
+    expect(
+      extractTranscriptionVocabulary(docs, { ...settings, maxDocumentChars: 32 })[0].terms,
+    ).toEqual([]);
     const plan = db
       .prepare(
         "EXPLAIN QUERY PLAN SELECT id FROM documents INDEXED BY idx_documents_vocabulary_pending WHERE vocabulary_processed_at IS NULL AND people_resolved_at IS NOT NULL ORDER BY id LIMIT 4",

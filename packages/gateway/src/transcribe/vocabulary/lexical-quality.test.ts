@@ -40,3 +40,9 @@ test("short nicknames, ordinary prose and uncommon spellings retain their identi
   for (const word of ["Tatata", "AAAA", "helloooo", "xDDD"])
     expect(vocabularyLexicalQuality(word, { grounded: true })).toBe(1);
 });
+
+test("uppercase acronyms bypass stretched common-word collapse only", () => {
+  expect(vocabularyLexicalQuality("HELLLO")).toBe(1);
+  for (const word of ["Helllo", "helllo", "AAAA", "HEHEHE"])
+    expect(vocabularyLexicalQuality(word)).toBe(0);
+});
