@@ -107,42 +107,6 @@ describe("resolveSection", () => {
   });
 });
 
-describe("cognitionRailBadge", () => {
-  test("uses exact collection totals while preserving the live run signal", () => {
-    const pulse = {
-      ready: true,
-      running: [{ id: "run_live" }],
-      totalRunCount: 127,
-      totalLoopCount: 19,
-      briefsTotal: 31,
-      queuedCount: 4,
-      upcomingCount: 8,
-      openLoopCount: 3,
-      unreadBriefCount: 5,
-    };
-
-    expect(cognition.cognitionRailBadge(pulse, "runs")).toEqual({
-      badge: 127,
-      live: true,
-    });
-    expect(cognition.cognitionRailBadge(pulse, "loops")).toEqual({
-      badge: 19,
-      live: false,
-    });
-    expect(cognition.cognitionRailBadge(pulse, "briefs")).toEqual({
-      badge: 31,
-      live: false,
-    });
-  });
-
-  test("suppresses badges until the pulse has loaded", () => {
-    expect(cognition.cognitionRailBadge({ ready: false }, "runs")).toEqual({
-      badge: null,
-      live: false,
-    });
-  });
-});
-
 describe("runFilterChangePath", () => {
   test("returns to the runs list when a selected run's filters actually change", () => {
     const listPath = "/portal/debug/cognition/runs";

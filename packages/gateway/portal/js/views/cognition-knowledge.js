@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Canonical read-only inspector. Text stays text: generated markup is never executable HTML.
 import { html } from "htm/preact";
 import { useEffect, useState, useRef } from "preact/hooks";
 import {
@@ -9,194 +8,69 @@ import {
   getKnowledgeNode,
   getKnowledgeHistory,
   getKnowledgeStatus,
-  getKnowledgeBatches,
-  getKnowledgeBatch,
+  getDocumentSummariesBulk,
 } from "../api.js";
+import {
+  KnowledgeDetail,
+  KnowledgeStatus,
+  KnowledgeBadge,
+  knowledgePath,
+  knowledgeKinds,
+  kindLabel,
+  dateLabel,
+} from "./knowledge-reader.js";
+export { KnowledgeDetail, KnowledgeStatus, knowledgeReferenceHref } from "./knowledge-reader.js";
 
-const path = (id) => `/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`;
-export function knowledgeReferenceHref(ref) {
-  const match =
-    /^(source|wiki|loop|annotation|brief):([^#]+)(?:#(?:claim|field|evidence):(.+))?$/.exec(ref);
-  if (!match) return null;
-  return match[1] === "source" ? `/portal/doc/${encodeURIComponent(match[2])}` : path(match[2]);
-}
-function Reference({ value }) {
-  const href = knowledgeReferenceHref(value);
-  return href ? html`<a href=${href}>${value}</a>` : html`<span>${value}</span>`;
-}
-export function KnowledgeDetail({ node, history = [] }) {
-  return html`<article class="cognition-detail-body">
-    <h3 class="cognition-detail-title">${node.title}</h3>
-    <p>${node.kind} · edit ${node.revision} · meaning ${node.meaningRevision} · ${node.validity}</p>
-    ${node.kind === "root" &&
-    html`<p class="debug-sub">Compact root wiki used as untrusted agent orientation.</p>`}
-    <pre class="knowledge-prose">${node.plainText}</pre>
-    <details>
-      <summary>Tagged source</summary>
-      <pre class="knowledge-prose">${node.markdown}</pre>
-    </details>
-    <h4 class="cognition-section">Claims and provenance</h4>
-    <p class="debug-sub">
-      Verification applies to tagged claims. Untagged text is unchecked context.
-    </p>
-    ${!node.claims?.length && html`<p>No tagged claims.</p>`}
-    ${(node.claims ?? []).map(
-      (claim) =>
-        html`<section class="knowledge-claim" key=${claim.id}>
-          <strong>${claim.id}</strong> · meaning ${claim.meaningRevision} · ${claim.verification} ·
-          support: ${claim.supportLogic}
-          <p>
-            ${claim.modality ?? "observation"} · ${claim.epistemicStatus ?? "asserted"}
-            ${claim.attribution && html`<span> · Attributed to: ${claim.attribution}</span>`}
-          </p>
-          <p class="knowledge-prose">${claim.text}</p>
-          <ul>
-            ${(node.dependencies ?? [])
-              .filter((dep) => dep.claimId === claim.id)
-              .map(
-                (dep) =>
-                  html`<li key=${dep.ref}>
-                    ${dep.relation}: <${Reference} value=${dep.ref} /> · input
-                    ${String(dep.inputVersion)}
-                  </li>`,
-              )}
-          </ul>
-        </section>`,
-    )}
-    <h4 class="cognition-section">Organization links</h4>
-    ${(node.links ?? []).length
-      ? html`<ul>
-          ${node.links.map(
-            (link) =>
-              html`<li>
-                ${link.relation ?? link.kind}:
-                <a href=${path(link.fromId === node.id ? link.toId : link.fromId)}
-                  >${link.fromId === node.id ? link.toId : link.fromId}</a
-                >
-              </li>`,
-          )}
-        </ul>`
-      : html`<p>No organization links.</p>`}
-    <details>
-      <summary>Canonical fields and review metadata</summary>
-      <pre class="knowledge-prose">
-${JSON.stringify({ fields: node.canonicalFields, review: node.metadata }, null, 2)}</pre
-      >
-    </details>
-    <h4 class="cognition-section">Revision history</h4>
-    ${history.map(
-      (revision) =>
-        html`<details key=${revision.revision}>
-          <summary>
-            Edit ${revision.revision} · ${new Date(revision.createdAt).toLocaleString()} ·
-            ${revision.validity}
-          </summary>
-          <pre class="knowledge-prose">${JSON.stringify(revision.diff, null, 2)}</pre>
-          <pre class="knowledge-prose">${revision.plainText}</pre>
-        </details>`,
-    )}
-  </article>`;
-}
-export function KnowledgeStatus({ status }) {
-  if (!status) return null;
-  return html`<details>
-    <summary>Maintenance status · ${status.cascades?.pending ?? 0} pending cascade steps</summary>
-    <h4>Scheduled work</h4>
-    ${status.work.length
-      ? html`<ul>
-          ${status.work.map(
-            (row) =>
-              html`<li>
-                ${row.count} ${row.status} · ${row.tier} ·
-                ${row.reason}${row.nextDueAt != null
-                  ? ` · next ${new Date(row.nextDueAt).toLocaleString()}`
-                  : ""}
-              </li>`,
-          )}
-        </ul>`
-      : html`<p>No scheduled work.</p>`}
-    <h4>Discovery coverage</h4>
-    ${status.coverage.length
-      ? html`<ul>
-          ${status.coverage.map(
-            (row) =>
-              html`<li>
-                ${row.phase} · ${row.status} · ${row.count} subjects · policy ${row.policyVersion}
-              </li>`,
-          )}
-        </ul>`
-      : html`<p>No discovery coverage yet.</p>`}
-  </details>`;
-}
-function BatchDetail({ id }) {
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let alive = true;
-    setResult(null);
-    setError("");
-    getKnowledgeBatch(id)
-      .then((data) => {
-        if (alive) setResult(data);
-      })
-      .catch((failure) => {
-        if (alive) setError(failure.message);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [id]);
-  if (error) return html`<p role="alert">${error}</p>`;
-  if (!result) return html`<p>Loading batch…</p>`;
-  return html`<section>
-    <p>
-      ${result.tier} · ${result.status} ·
-      <a href=${`/portal/debug/cognition/runs/${encodeURIComponent(result.runId)}`}>Agent run</a>
-    </p>
-    <ul>
-      ${result.frontier.map(
-        (item) =>
-          html`<li key=${item.nodeId}>
-            <a
-              href=${item.nodeId.startsWith("source:")
-                ? knowledgeReferenceHref(item.nodeId)
-                : path(item.nodeId)}
-              >${item.nodeId}</a
-            >
-            · depth ${item.depth} · ${item.status} · attempts ${item.attempts}
-          </li>`,
-      )}
-    </ul>
-  </section>`;
+const preview = (text) =>
+  String(text ?? "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[#*`_]/g, "")
+    .trim();
+function PageCard({ node, selectedId }) {
+  return html`<a
+    class=${`kn-card ${selectedId === node.id ? "is-selected" : ""}`}
+    href=${knowledgePath(node.id)}
+    aria-current=${selectedId === node.id ? "page" : undefined}
+    ><div class="kn-card-meta">
+      <span>${kindLabel(node.kind)}</span>${node.validity === "stale" &&
+      html`<span class="kn-needs-review">Needs review</span>`}
+    </div>
+    <h3>${node.title}</h3>
+    <p>${preview(node.plainText).slice(0, 140) || "A page waiting to take shape."}</p>
+    <span class="kn-card-date"
+      >Updated ${dateLabel(node.updatedAt)} <span aria-hidden="true">↗</span></span
+    ></a
+  >`;
 }
 export function KnowledgeTab({ selectedId }) {
   const generation = useRef(0);
-  const [kind, setKind] = useState("");
-  const [page, setPage] = useState({ items: [], more: false });
+  const [kind, setKind] = useState(""),
+    [query, setQuery] = useState(""),
+    [validity, setValidity] = useState("");
+  const [page, setPage] = useState({ items: [], more: false }),
+    [root, setRoot] = useState(null);
   const [status, setStatus] = useState(null);
-  const [batches, setBatches] = useState([]);
-  const [batch, setBatch] = useState(null);
-  const [detail, setDetail] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [refresh, setRefresh] = useState(0);
+  const [detail, setDetail] = useState(null),
+    [detailError, setDetailError] = useState(""),
+    [names, setNames] = useState({});
+  const [error, setError] = useState(""),
+    [loading, setLoading] = useState(true),
+    [refresh, setRefresh] = useState(0),
+    [activeTab, setActiveTab] = useState("overview");
+  const [maintenanceError, setMaintenanceError] = useState(false);
+  const [rootState, setRootState] = useState("loading");
+  useEffect(() => setActiveTab(new URLSearchParams(window.location.search).has("field") ? "advanced" : "overview"), [selectedId]);
   useEffect(() => {
     let alive = true;
     generation.current++;
     setLoading(true);
     setError("");
     setPage({ items: [], more: false });
-    Promise.all([
-      getKnowledgeNodes({ kind: kind || undefined, limit: 30 }),
-      getKnowledgeStatus(),
-      getKnowledgeBatches(),
-    ])
-      .then(([nodes, state, runs]) => {
-        if (alive) {
-          setPage({ items: nodes.items, more: nodes.items.length === 30 });
-          setStatus(state);
-          setBatches(runs.items);
-        }
+    getKnowledgeNodes({ kind: kind || undefined, limit: 30 })
+      .then((nodes) => {
+        if (alive) setPage({ items: nodes.items, more: nodes.items.length === 30 });
       })
       .catch((failure) => {
         if (alive) setError(failure.message);
@@ -211,14 +85,77 @@ export function KnowledgeTab({ selectedId }) {
   }, [kind, refresh]);
   useEffect(() => {
     let alive = true;
+    setMaintenanceError(false);
+    setRootState("loading");
+    Promise.allSettled([getKnowledgeNodes({ kind: "root", limit: 1 }), getKnowledgeStatus()]).then(
+      ([overview, state]) => {
+        if (!alive) return;
+        setRootState(overview.status === "fulfilled" ? "ready" : "error");
+        setRoot(overview.status === "fulfilled" ? (overview.value.items[0] ?? null) : null);
+        setStatus(state.status === "fulfilled" ? state.value : null);
+        setMaintenanceError(state.status !== "fulfilled");
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [refresh]);
+  useEffect(() => {
+    let alive = true;
     setDetail(null);
+    setDetailError("");
+    setNames({});
     if (selectedId)
-      Promise.all([getKnowledgeNode(selectedId), getKnowledgeHistory(selectedId)])
-        .then(([node, history]) => {
-          if (alive) setDetail({ node, history: history.items });
+      getKnowledgeNode(selectedId)
+        .then(async (node) => {
+          if (!alive) return;
+          setDetail({ node, history: [], historyLoading: true });
+          getKnowledgeHistory(selectedId)
+            .then((history) => {
+              if (alive)
+                setDetail((value) => ({ ...value, history: history.items, historyLoading: false }));
+            })
+            .catch(() => {
+              if (alive)
+                setDetail((value) => ({ ...value, historyLoading: false, historyError: true }));
+            });
+          const refs = [...new Set((node.dependencies ?? []).map((dep) => dep.ref))];
+          const sources = refs
+            .filter((ref) => ref.startsWith("source:"))
+            .map((ref) => ref.slice(7).split("#")[0]);
+          const ids = [
+            ...new Set([
+              ...refs
+                .filter((ref) => !ref.startsWith("source:"))
+                .map((ref) => ref.split(":").slice(1).join(":").split("#")[0]),
+              ...(node.links ?? []).map((link) =>
+                link.fromId === node.id ? link.toId : link.fromId,
+              ),
+            ]),
+          ].slice(0, 24);
+          const [documents, related] = await Promise.all([
+            getDocumentSummariesBulk([...new Set(sources)].slice(0, 100)).catch(() => ({
+              docs: {},
+            })),
+            Promise.allSettled(ids.map((id) => getKnowledgeNode(id))),
+          ]);
+          if (!alive) return;
+          const next = {};
+          for (const [id, doc] of Object.entries(documents.docs ?? {}))
+            for (const ref of refs)
+              if (ref.split("#")[0] === `source:${id}`) next[ref] = doc.title || "Source document";
+          related.forEach((result) => {
+            if (result.status !== "fulfilled") return;
+            const item = result.value;
+            next[`node:${item.id}`] = item.title;
+            for (const ref of refs)
+              if (ref.split("#")[0].split(":").slice(1).join(":") === item.id)
+                next[ref] = item.title;
+          });
+          setNames(next);
         })
         .catch((failure) => {
-          if (alive) setError(failure.message);
+          if (alive) setDetailError(failure.message);
         });
     return () => {
       alive = false;
@@ -226,6 +163,7 @@ export function KnowledgeTab({ selectedId }) {
   }, [selectedId, refresh]);
   async function more() {
     const current = generation.current;
+    setError("");
     setLoading(true);
     try {
       const data = await getKnowledgeNodes({
@@ -234,72 +172,216 @@ export function KnowledgeTab({ selectedId }) {
         afterId: page.items.at(-1)?.id,
       });
       if (current === generation.current)
-        setPage({ items: [...page.items, ...data.items], more: data.items.length === 30 });
+        setPage((value) => ({
+          items: [...value.items, ...data.items],
+          more: data.items.length === 30,
+        }));
     } catch (failure) {
       if (current === generation.current) setError(failure.message);
     } finally {
       if (current === generation.current) setLoading(false);
     }
   }
-  return html`<div class="knowledge-inspector">
-    <div class="cognition-filters">
-      <label
-        >Kind
-        <select value=${kind} onChange=${(event) => setKind(event.target.value)}>
-          ${[
-            ["", "All synthesis"],
-            ["root", "Root wiki"],
-            ["wiki", "Wikis"],
-            ["loop", "Loops"],
-            ["doc_annotation", "Document annotations"],
-            ["person_annotation", "Person annotations"],
-            ["brief", "Briefs"],
-          ].map(([value, label]) => html`<option value=${value}>${label}</option>`)}
-        </select></label
-      ><button disabled=${loading} onClick=${() => setRefresh(refresh + 1)}>Refresh</button>
-    </div>
-    ${error && html`<p role="alert">${error}</p>`}
-    <${KnowledgeStatus} status=${status} />
-    <details>
-      <summary>Recent maintenance batches (${batches.length})</summary>
-      <ul>
-        ${batches.map(
-          (item) =>
-            html`<li key=${item.id}>
-              <button onClick=${() => setBatch(item.id)}>
-                ${item.tier} · ${item.status} · ${new Date(item.createdAt).toLocaleString()}
-              </button>
-            </li>`,
-        )}
-      </ul>
-      ${batch && html`<${BatchDetail} key=${batch} id=${batch} />`}
-    </details>
-    <div class="cognition-master-detail">
-      <div class="cognition-list">
-        ${page.items.map(
-          (node) =>
-            html`<a
-              class="cognition-row"
-              href=${path(node.id)}
-              aria-current=${selectedId === node.id ? "page" : undefined}
-              key=${node.id}
-              ><strong>${node.title}</strong>
-              <div>${node.kind} · ${node.validity} · edit ${node.revision}</div></a
-            >`,
-        )}${loading && html`<p>Loading…</p>`}${!loading &&
-        !page.items.length &&
-        html`<p>No synthesis nodes in this selection.</p>`}${page.more &&
-        html`<button disabled=${loading} onClick=${more}>Load more</button>`}
+  const filtered = page.items.filter(
+    (node) =>
+      (!validity || node.validity === validity) &&
+      (!query ||
+        `${node.title} ${node.plainText ?? ""}`
+          .toLocaleLowerCase()
+          .includes(query.toLocaleLowerCase())),
+  );
+  const libraryNames = {
+    ...Object.fromEntries(page.items.map((node) => [`node:${node.id}`, node.title])),
+    ...names,
+  };
+  return html`<div class=${`knowledge-library ${selectedId ? "has-selection" : ""}`}>
+    <header class="kn-header">
+      <div>
+        <p class="kn-eyebrow">BRAIN / KNOWLEDGE</p>
+        <h1>Your knowledge</h1>
+        <p>What matters, what connects, and what is changing.</p>
       </div>
-      <div class="cognition-detail">
-        ${detail
-          ? html`<${KnowledgeDetail} ...${detail} />`
-          : html`<p>
-              ${selectedId
-                ? "Loading synthesis…"
-                : "Select a page, loop, annotation, or brief to inspect its claims."}
-            </p>`}
-      </div>
+      <button
+        class="kn-button kn-refresh"
+        disabled=${loading}
+        onClick=${() => setRefresh((value) => value + 1)}
+      >
+        ↻ Refresh
+      </button>
+    </header>
+    <${KnowledgeStatus} status=${status} compact=${true} />${maintenanceError &&
+    html`<p class="kn-caption" role="status">
+      Maintenance status is unavailable. Refresh to try again.
+    </p>`}
+    <div class="kn-workspace">
+      <aside class="kn-library" aria-label="Knowledge library">
+        <div class="kn-library-tools">
+          <label class="kn-search"
+            ><span aria-hidden="true">⌕</span
+            ><input
+              type="search"
+              aria-label="Search knowledge"
+              placeholder="Find a page or idea…"
+              value=${query}
+              onInput=${(event) => setQuery(event.target.value)}
+          /></label>
+          <div class="kn-filters">
+            <select
+              aria-label="Knowledge type"
+              value=${kind}
+              onChange=${(event) => setKind(event.target.value)}
+            >
+              ${knowledgeKinds.map(
+                ([value, label]) => html`<option value=${value}>${label}</option>`,
+              )}</select
+            ><select
+              aria-label="Page status"
+              value=${validity}
+              onChange=${(event) => setValidity(event.target.value)}
+            >
+              <option value="">Any status</option>
+              <option value="current">Inputs current</option>
+              <option value="stale">Needs review</option>
+            </select>
+          </div>
+          <p class="kn-caption">
+            ${filtered.length} of ${page.items.length} loaded
+            pages${query ? " · searching loaded pages" : ""}
+          </p>
+        </div>
+        ${error &&
+        html`<div class="kn-error" role="alert">
+          <strong>Knowledge could not be loaded</strong>
+          <p>${error}</p>
+          <button class="kn-button" onClick=${() => setRefresh((value) => value + 1)}>Retry</button>
+        </div>`}
+        <nav class="kn-card-list" aria-label="Knowledge pages">
+          ${filtered.map(
+            (node) => html`<${PageCard} key=${node.id} node=${node} selectedId=${selectedId} />`,
+          )}${loading &&
+          html`<div class="kn-loading" role="status">
+            <span></span><span></span>
+            <p>Loading your knowledge…</p>
+          </div>`}${!loading &&
+          !error &&
+          !filtered.length &&
+          html`<div class="kn-empty kn-empty-small">
+            <h3>
+              ${query || validity || kind ? "No matching pages" : "Your knowledge starts here"}
+            </h3>
+            <p>
+              ${query || validity || kind
+                ? "Try another search or filter. You can load more pages below."
+                : "As the Brain learns from your sources, its pages and notes will appear here."}
+            </p>
+            ${(query || validity || kind) &&
+            html`<button
+              class="kn-button"
+              onClick=${() => {
+                setQuery("");
+                setKind("");
+                setValidity("");
+              }}
+            >
+              Clear filters
+            </button>`}
+          </div>`}
+        </nav>
+        ${page.more &&
+        html`<button class="kn-button kn-load-more" disabled=${loading} onClick=${more}>
+          Load more pages
+        </button>`}
+      </aside>
+      <main class="kn-reading-pane">
+        ${selectedId
+          ? html`<a class="kn-back" href="/portal/debug/cognition/knowledge">← Back to library</a
+              >${detailError
+                ? html`<div class="kn-empty kn-error" role="alert">
+                    <h2>This page could not be opened</h2>
+                    <p>It may have been removed or access may have changed.</p>
+                    <p class="kn-caption">${detailError}</p>
+                    <button class="kn-button" onClick=${() => setRefresh((value) => value + 1)}>
+                      Retry
+                    </button>
+                  </div>`
+                : detail
+                  ? html`<${KnowledgeDetail}
+                        ...${detail}
+                        names=${libraryNames}
+                        activeTab=${activeTab}
+                        onTab=${setActiveTab}
+                      />${activeTab === "history" &&
+                      detail.historyLoading &&
+                      html`<p class="kn-history-status" role="status">
+                        Loading revision history…
+                      </p>`}${activeTab === "history" &&
+                      detail.historyError &&
+                      html`<p class="kn-history-status" role="alert">
+                        Revision history could not be loaded.
+                        <button class="kn-button" onClick=${() => setRefresh((value) => value + 1)}>
+                          Retry
+                        </button>
+                      </p>`}`
+                  : html`<div class="kn-empty" role="status">
+                      <span class="kn-orbit" aria-hidden="true">◌</span>
+                      <h2>Opening your page…</h2>
+                    </div>`}`
+          : html` <section class="kn-home">
+              <div class="kn-home-intro">
+                <h2>Your overview</h2>
+                <p>
+                  Read the big picture, explore a project, or follow an idea back to the evidence
+                  that supports it.
+                </p>
+              </div>
+              ${rootState === "loading"
+                ? html`<div class="kn-root-placeholder" role="status">
+                    Loading your life overview…
+                  </div>`
+                : rootState === "error"
+                  ? html`<div class="kn-root-placeholder" role="alert">
+                      <h3>Your life overview is unavailable</h3>
+                      <p>Refresh to try again.</p>
+                    </div>`
+                  : root
+                    ? html`<a class="kn-root-card" href=${knowledgePath(root.id)}
+                        ><div class="kn-eyebrow">
+                          YOUR LIFE AT A GLANCE <span aria-hidden="true">↗</span>
+                        </div>
+                        <h3>${root.title}</h3>
+                        <p>
+                          ${preview(root.plainText).slice(0, 380) ||
+                          "Your compact life overview is taking shape."}
+                        </p>
+                        <div>
+                          <${KnowledgeBadge} value=${root.validity} /><span class="kn-caption"
+                            >Open life overview</span
+                          >
+                        </div></a
+                      >`
+                    : html`<div class="kn-root-placeholder">
+                        <h3>Your life at a glance</h3>
+                        <p>
+                          A compact overview will appear here once the Brain has enough
+                          context.${" "}
+                          ${page.items.length
+                            ? "Explore the pages in your library while it takes shape."
+                            : "Pages will appear as your sources are considered."}
+                        </p>
+                      </div>`}
+              ${page.items.filter((node) => node.kind !== "root").length > 0 &&
+              html`<section class="kn-home-recent">
+                <h3>Explore your library</h3>
+                <div>
+                  ${[...page.items]
+                    .filter((node) => node.kind !== "root")
+                    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+                    .slice(0, 3)
+                    .map((node) => html`<${PageCard} node=${node} />`)}
+                </div>
+              </section>`}
+            </section>`}
+      </main>
     </div>
   </div>`;
 }

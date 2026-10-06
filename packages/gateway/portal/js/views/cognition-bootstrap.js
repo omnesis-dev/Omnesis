@@ -1,25 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Bootstrap — the retrospective lane's own panel on the Cognition debug page.
-//
-// The lane reviews PAST documents that still carry a future-dated semantic
-// time, seeding temporal annotations and open loops from history. It keeps its
-// whole lifecycle in engine state, and until this panel none of it reached a
-// surface: an install could sit parked with a backlog it would never touch and
-// the only evidence was a log line printed once.
-//
-// Two loaders on purpose, because the two halves cost different amounts. The
-// status is key reads and indexed counts — polled while the tab is visible.
-// The backlog is a corpus scan measured in seconds: the page opens on whatever
-// snapshot the gateway already holds, so viewing this panel is never itself
-// what triggers a scan, and the figure always carries when it was taken.
-//
-// Strictly read-only. Nothing here changes a knob; every actionable sentence
-// names the config key for the operator to change themselves.
-//
-// Self-contained module (own loaders) so its host, cognition.js, carries only
-// an import and a mount line.
+// Discovery status and historical-backfill controls. Knowledge mode reports
+// source revision admission and synthesis coverage; legacy mode retains its
+// document backlog/timeline. Start and Pause change historical admission only.
 
 import { html } from "htm/preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
@@ -159,10 +143,9 @@ export function ProviderOutageBanner({ status }) {
       <div class="debug-card-label">Model backend</div>
       <div class="debug-card-value" style="color:var(--danger);">Failing</div>
       <div class="cognition-card-sub" style="margin-top:6px; line-height:1.5;">
-        The brain has stopped claiming work after
-        ${" "}${outage.consecutiveFailures} consecutive backend failures. It retries
-        ${" "}${fmtRel(outage.openUntil)}. Nothing is lost while this lasts — runs keep their
-        attempts and documents keep their place in the queue.
+        The brain has stopped claiming work after ${" "}${outage.consecutiveFailures} consecutive
+        backend failures. It retries ${" "}${fmtRel(outage.openUntil)}. Nothing is lost while this
+        lasts — runs keep their attempts and documents keep their place in the queue.
       </div>
       ${outage.lastError &&
       html`<div class="cognition-card-sub debug-err" style="margin-top:6px; line-height:1.5;">
@@ -227,15 +210,17 @@ export function StartControl({ status, backlog, busy, onStart, disabled = false 
           : html`The Brain has not started reading your history yet.`}
       </div>
       <div class="cognition-card-sub" style="margin-top:8px; line-height:1.55;">
-        Adding your main sources first gives better results: a document read before the
-        conversation that already settled it can raise a loop that should never have opened.
-        Sources added later are still picked up.
+        Adding your main sources first gives better results: a document read before the conversation
+        that already settled it can raise a loop that should never have opened. Sources added later
+        are still picked up.
       </div>
       <div style="margin-top:10px;">
         <button
           class="btn-primary"
           disabled=${busy || disabled}
-          title=${disabled ? "Assign a background-agent model before starting the backfill." : undefined}
+          title=${disabled
+            ? "Assign a background-agent model before starting the backfill."
+            : undefined}
           onClick=${onStart}
         >
           ${busy ? "Starting…" : "Start reading history"}
@@ -257,19 +242,15 @@ export function PauseControl({ status, busy, error, onToggle }) {
   const off = status.state === "off";
   return html`
     <div class="cognition-card">
-      <div class="debug-card-label">Lane control</div>
+      <div class="debug-card-label">Historical discovery</div>
       <div style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <button
-          class="btn-secondary"
-          disabled=${busy}
-          onClick=${() => onToggle(off)}
-        >
+        <button class="btn-secondary" disabled=${busy} onClick=${() => onToggle(off)}>
           ${busy ? "Saving…" : off ? "Resume backfill" : "Pause backfill"}
         </button>
         <span class="debug-sub">
           ${off
-            ? "Paused. Resuming picks up exactly where it stopped."
-            : "Pausing stops new runs. Work already done is kept, and resuming re-reads nothing."}
+            ? "Historical admission is paused. Existing progress is retained."
+            : "Pause new historical admissions. Already queued work and new evidence can still be processed."}
         </span>
       </div>
       ${error && html`<div class="debug-err" style="margin-top:8px;">${error}</div>`}
@@ -331,37 +312,39 @@ export function BudgetSection({ budget }) {
       ${budget.breakdown &&
       budget.breakdown.promptTokens > 0 &&
       html`<table class="debug-table" style="margin-top:12px;">
-        <tbody>
-          <tr>
-            <td>Read for the first time</td>
-            <td class="num">${fmtCount(budget.breakdown.freshInputTokens)}</td>
-            <td style="color:var(--text-secondary);">fresh input — the expensive part</td>
-          </tr>
-          <tr>
-            <td>Re-read from cache</td>
-            <td class="num">${fmtCount(budget.breakdown.cacheReadTokens)}</td>
-            <td style="color:var(--text-secondary);">
-              a prefix the provider already held, billed at a fraction of fresh input
-              ${cacheHitPercent(budget.breakdown) !== null &&
-              html` — <strong>${cacheHitPercent(budget.breakdown)}%</strong> of everything read`}
-            </td>
-          </tr>
-          <tr>
-            <td>Written</td>
-            <td class="num">${fmtCount(budget.breakdown.completionTokens)}</td>
-            <td style="color:var(--text-secondary);">output — usually a rounding error on this lane</td>
-          </tr>
-        </tbody>
-      </table>
-      <p class="debug-sub" style="margin: 8px 0 0;">
-        The ceiling above counts every token the same, because a limit has to be predictable.
-        These three do not cost the same, so a day whose cached share drops gets more expensive
-        without the total moving much.
-      </p>`}
+          <tbody>
+            <tr>
+              <td>Read for the first time</td>
+              <td class="num">${fmtCount(budget.breakdown.freshInputTokens)}</td>
+              <td style="color:var(--text-secondary);">fresh input — the expensive part</td>
+            </tr>
+            <tr>
+              <td>Re-read from cache</td>
+              <td class="num">${fmtCount(budget.breakdown.cacheReadTokens)}</td>
+              <td style="color:var(--text-secondary);">
+                a prefix the provider already held, billed at a fraction of fresh input
+                ${cacheHitPercent(budget.breakdown) !== null &&
+                html` — <strong>${cacheHitPercent(budget.breakdown)}%</strong> of everything read`}
+              </td>
+            </tr>
+            <tr>
+              <td>Written</td>
+              <td class="num">${fmtCount(budget.breakdown.completionTokens)}</td>
+              <td style="color:var(--text-secondary);">
+                output — usually a rounding error on this lane
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="debug-sub" style="margin: 8px 0 0;">
+          The ceiling above counts every token the same, because a limit has to be predictable.
+          These three do not cost the same, so a day whose cached share drops gets more expensive
+          without the total moving much.
+        </p>`}
       ${uncapped &&
       html`<p class="debug-sub" style="margin: 10px 0 0;">
-        No ceiling is set, so background cognition works through history for as long as
-        there is history left. Today's figures are what a day currently costs — set
+        No ceiling is set, so background cognition works through history for as long as there is
+        history left. Today's figures are what a day currently costs — set
         <code>brain.budget.dailyTokens</code> from them to bound it.
       </p>`}
     </section>
@@ -393,8 +376,8 @@ export function BacklogSection({ status, backlog, loading, error, onRefresh }) {
         html`<span class="cognition-section-sub">taken ${fmtRel(backlog.computedAt)}</span>`}
       </h3>
       <p class="debug-sub" style="margin: 0 0 12px;">
-        Counting what the lane still owes is a scan of the corpus, so it is a snapshot rather than
-        a live figure — the gateway holds one briefly and serves it to whoever asks.
+        Counting what the lane still owes is a scan of the corpus, so it is a snapshot rather than a
+        live figure — the gateway holds one briefly and serves it to whoever asks.
       </p>
       ${error && html`<div class="debug-error">⚠️ ${error}</div>`}
       ${loading && !backlog && html`<div class="debug-loading">Counting…</div>`}
@@ -411,20 +394,18 @@ export function BacklogSection({ status, backlog, loading, error, onRefresh }) {
           <${StatCard}
             label="Date-scanned"
             value=${fmtCount(backlog.dateScanned)}
-            sub=${
-              backlog.dateScanPending > 0
-                ? `${fmtCount(backlog.dateScanPending)} still to scan`
-                : "the scan has caught up"
-            }
+            sub=${backlog.dateScanPending > 0
+              ? `${fmtCount(backlog.dateScanPending)} still to scan`
+              : "the scan has caught up"}
           />
         </div>
         ${!settled &&
         html`
           <div class="cognition-gate-notice" style="margin-top:14px;">
             <strong>This backlog is still growing.</strong> ${fmtCount(backlog.dateScanPending)}
-            documents have not been scanned for dates yet. A document with no extracted dates
-            cannot qualify, so it is not counted here — as the scan finishes, more documents enter
-            the backlog. A falling number now is not progress.
+            documents have not been scanned for dates yet. A document with no extracted dates cannot
+            qualify, so it is not counted here — as the scan finishes, more documents enter the
+            backlog. A falling number now is not progress.
           </div>
         `}
       `}
@@ -491,8 +472,8 @@ export function PaceSection({ status }) {
             <td>Waiting behind</td>
             <td class="num">${fmtCount(status.blockedByHigherPriority)}</td>
             <td style="color:var(--text-secondary);">
-              higher-priority runs due ahead of it — reactions are always claimed first, so the
-              lane receives no capacity until these clear
+              higher-priority runs due ahead of it — reactions are always claimed first, so the lane
+              receives no capacity until these clear
             </td>
           </tr>`}
           <tr>
@@ -511,9 +492,9 @@ export function PaceSection({ status }) {
             <td>Enqueued ever</td>
             <td class="num">${fmtCount(status.totalEnqueued)} / ${fmtCount(s.maxRuns)}</td>
             <td style="color:var(--text-secondary);">
-              <code>brain.bootstrap.maxRuns</code> — runs ever bought, never reset, including
-              across source removals. A spend backstop rather than a per-corpus one: reaching it
-              parks the lane until the ceiling is raised
+              <code>brain.bootstrap.maxRuns</code> — runs ever bought, never reset, including across
+              source removals. A spend backstop rather than a per-corpus one: reaching it parks the
+              lane until the ceiling is raised
             </td>
           </tr>
           <tr>
@@ -588,8 +569,8 @@ export function BoundarySection({ status }) {
                 → ${fmtTs(status.sourceWatermark)}
               </td>
               <td style="color:var(--text-secondary);">
-                a source added since is the other; the lane notices by polling this mark, so no
-                code path has to remember to tell it
+                a source added since is the other; the lane notices by polling this mark, so no code
+                path has to remember to tell it
               </td>
             </tr>
           `}
@@ -609,24 +590,49 @@ export function KnowledgeInventoryMilestones({ inventory = [] }) {
       separate outcomes; gated revisions were skipped.
     </p>
     ${inventory.length
-      ? html`<table class="debug-table">
-          <thead><tr>
-            <th>Source / import</th><th>Import state</th><th>Gateway receipt</th><th>Window / phase</th>
-            <th>Observed</th><th>Considered</th><th>Gated</th><th>Deferred</th>
-            <th>Failed</th><th>Unconsidered</th><th>Pending work</th><th>Source dates</th>
-          </tr></thead>
-          <tbody>${inventory.map((row) => html`<tr key=${row.inventoryId + row.window + row.phase}>
-            <td>${row.sourceId}<br />${row.inventoryId}</td>
-            <td>${row.importState}</td>
-            <td>${row.firstReceivedAt == null ? "—" : new Date(row.firstReceivedAt).toLocaleString()}</td>
-            <td>${row.window} / ${row.phase}</td>
-            <td>${fmtCount(row.observed)}</td><td>${fmtCount(row.considered)}</td>
-            <td>${fmtCount(row.gated)}</td><td>${fmtCount(row.deferred)}</td>
-            <td>${fmtCount(row.failed)}</td><td>${fmtCount(row.unconsidered)}</td>
-            <td>${fmtCount(row.pending)}</td>
-            <td>${row.earliestSourceDate ?? "—"} – ${row.latestSourceDate ?? "—"}</td>
-          </tr>`)}</tbody>
-        </table>`
+      ? html`<div class="portal-table-wrap" style="overflow-x:auto;">
+          <table class="debug-table">
+            <thead>
+              <tr>
+                <th>Source / import</th>
+                <th>Import state</th>
+                <th>Gateway receipt</th>
+                <th>Window / phase</th>
+                <th>Observed</th>
+                <th>Considered</th>
+                <th>Gated</th>
+                <th>Deferred</th>
+                <th>Failed</th>
+                <th>Unconsidered</th>
+                <th>Pending work</th>
+                <th>Source dates</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${inventory.map(
+                (row) =>
+                  html`<tr key=${row.inventoryId + row.window + row.phase}>
+                    <td>${row.sourceId}<br />${row.inventoryId}</td>
+                    <td>${row.importState}</td>
+                    <td>
+                      ${row.firstReceivedAt == null
+                        ? "—"
+                        : new Date(row.firstReceivedAt).toLocaleString()}
+                    </td>
+                    <td>${row.window} / ${row.phase}</td>
+                    <td>${fmtCount(row.observed)}</td>
+                    <td>${fmtCount(row.considered)}</td>
+                    <td>${fmtCount(row.gated)}</td>
+                    <td>${fmtCount(row.deferred)}</td>
+                    <td>${fmtCount(row.failed)}</td>
+                    <td>${fmtCount(row.unconsidered)}</td>
+                    <td>${fmtCount(row.pending)}</td>
+                    <td>${row.earliestSourceDate ?? "—"} – ${row.latestSourceDate ?? "—"}</td>
+                  </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>`
       : html`<p>No initial import milestones recorded.</p>`}
   </section>`;
 }
@@ -648,7 +654,10 @@ export function KnowledgeBootstrapPanel({
     html`<div class="cognition-gate-notice">
       <strong>Omnesis Brain is not running.</strong> These are stored milestones.
     </div>`}
-    ${error && html`<div class="debug-error">${error}</div>`}
+    ${error && html`<div class="debug-error" role="alert">${error}</div>`}
+    ${pauseError &&
+    status.state === "unstarted" &&
+    html`<div class="debug-error" role="alert">${pauseError}</div>`}
     <p class="debug-sub">
       Historical discovery builds context across wikis, loops and annotations. New evidence
       continues to be discovered when historical backfill is paused.
@@ -664,7 +673,11 @@ export function KnowledgeBootstrapPanel({
       />
       <${PauseControl} status=${status} busy=${pausing} error=${pauseError} onToggle=${onToggle} />
     </div>
-    <h3 class="cognition-section">Discovery admissions</h3>
+    <p>
+      <a href="/portal/debug/cognition/maintenance">Inspect queued maintenance</a> ·
+      <a href="/portal/debug/cognition/knowledge">Read the knowledge library</a>
+    </p>
+    <h3 class="cognition-section">Historical discovery admissions</h3>
     <p class="debug-sub">
       These counts are source revisions admitted for historical discovery. Several revisions may
       share one maintenance run.
@@ -683,6 +696,8 @@ export function KnowledgeBootstrapPanel({
       deliberately skipped, not synthesized. An empty queue does not establish that the entire
       corpus has been reviewed.
     </p>
+    ${(status.revisionCoverage ?? []).length === 0 &&
+    html`<p>No source revisions have recorded discovery outcomes yet.</p>`}
     <table class="debug-table">
       <thead>
         <tr>
@@ -785,8 +800,8 @@ export function BootstrapTab() {
       .finally(() => setTimelineLoading(false));
   }, []);
   useEffect(() => {
-    void loadTimeline();
-  }, [loadTimeline]);
+    if (status && status.mode !== "knowledge") void loadTimeline();
+  }, [loadTimeline, status !== null, status?.mode]);
 
   const beginBackfill = useCallback(async () => {
     setStarting(true);
@@ -855,9 +870,10 @@ export function BootstrapTab() {
   }, []);
 
   useEffect(() => {
+    if (!status || status.mode === "knowledge") return;
     const run = loadBacklog(false);
     return () => run.cancel?.();
-  }, [loadBacklog]);
+  }, [loadBacklog, status !== null, status?.mode]);
 
   // A disabled Brain hides no history: the lane status, backlog snapshot and
   // timeline below all serve from stored state, so the panel renders them
@@ -875,7 +891,9 @@ export function BootstrapTab() {
         : null}
       ${statusError
         ? html`<div class="debug-error">⚠️ ${statusError}</div>`
-        : html`<div class="debug-loading">Loading…</div>`}
+        : blockedGate
+          ? html`<p role="status">Discovery status is unavailable while the Brain is inactive.</p>`
+          : html`<div class="debug-loading" role="status">Loading discovery status…</div>`}
     </div>`;
   }
 
@@ -903,8 +921,8 @@ export function BootstrapTab() {
       <p class="debug-sub" style="margin: 0 0 16px;">
         The retrospective lane reviews past documents that still carry a future-dated meaning — a
         renewal, a deadline, an expiry — seeding temporal annotations and open loops from history.
-        It claims at the lowest priority, so it only ever uses capacity nothing else wants.
-        Read-only: change a figure by changing its config key.
+        It claims at the lowest priority, so it only ever uses capacity nothing else wants. This
+        legacy view counts documents and runs. Start and Pause control historical backfill.
       </p>
       ${
         // A transient failure on the poll must not blank a populated panel: the

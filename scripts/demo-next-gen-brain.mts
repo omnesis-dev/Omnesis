@@ -4,7 +4,8 @@
 /** Isolated deterministic gateway demo; no live account or model backend is used. */
 import "../packages/collector/src/e2e/synth-env.js";
 import { createInterface } from "node:readline/promises";
-import { createLogger } from "@omnesis/core";
+import { execFileSync } from "node:child_process";
+import { createLogger, LogLevel, setLogLevel } from "@omnesis/core";
 import {
   BrainBench,
   compressCognitionCadences,
@@ -23,6 +24,42 @@ const flags = new Set(process.argv.slice(2));
 const allowed = new Set(["--focused", "--auto", "--exit-after"]);
 for (const flag of flags) if (!allowed.has(flag)) throw new Error(`Unknown option ${flag}`);
 const log = createLogger("collector:brain-demo");
+// Interactive guidance stays visible while routine collector chatter stays quiet.
+if (!flags.has("--auto") && !process.env.OMNESIS_LOG_LEVEL) setLogLevel(LogLevel.WARN);
+const announce = (message: string) => process.stdout.write(`${message}\n`);
+function inspectorUrl(localUrl: string): string {
+  const url = new URL("/portal/debug/cognition/knowledge", localUrl);
+  try {
+    const status = JSON.parse(
+      execFileSync("tailscale", ["status", "--json"], {
+        timeout: 2000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).toString(),
+    ) as { Self?: { DNSName?: unknown } };
+    const name = status.Self?.DNSName;
+    if (typeof name === "string" && /^[a-z0-9.-]+\.ts\.net\.?$/i.test(name))
+      url.hostname = name.replace(/\.$/, "");
+  } catch {
+    // Tailscale is optional; a local URL works on every development machine.
+  }
+  return url.toString();
+}
+const stepGuides: Record<string, string> = {
+  "recent-bootstrap": "Create the first wikis and tracked commitments",
+  "unchanged-replay": "Replay the same message — nothing should change",
+  "discovered-urgent-correction": "Move gathering setup from 10:00 to 08:00",
+  "same-document-edit": "Edit the crate reservation; its repair waits for the hourly tier",
+  "late-historic-evidence": "Add an older proposal without replacing the accepted plan",
+  "one-hour-boundary": "Advance the clock and process the hourly updates",
+  "parallel-regions": "Record separate camera and gathering updates",
+  "shared-batch-frontier": "Process one message that connects both projects",
+  "privacy-delete": "Delete private access evidence and remove its derived page",
+  "suppressed-resurrection": "Verify deleted evidence cannot return",
+  "no-page-for-every-source": "Add an unrelated note without creating an unnecessary wiki",
+  "conflicting-evidence": "Introduce a conflicting, unconfirmed setup time",
+  "resolve-conflict": "Resolve the conflict with organiser confirmation",
+  "routine-boundary": "Advance the clock to finish routine maintenance",
+};
 const scenario = loadNextGenScenario();
 const scenarioTitles = new Set(Object.values(scenario.documents).map((doc) => doc.title));
 compressCognitionCadences();
@@ -44,6 +81,13 @@ process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
 
 try {
+  announce("\nPreparing your isolated Brain demo…");
+  announce(
+    flags.has("--focused")
+      ? "Loading the guided story. Your normal Omnesis data is not used."
+      : "Loading the fictional universe (about 28,000 documents). This takes several minutes. Your normal Omnesis data is not used.",
+  );
+  announce("The first wikis will be created automatically. Wait for DEMO READY below.\n");
   bench = await BrainBench.start({
     universe: "sacha-bellamy",
     experimental: true,
@@ -95,16 +139,14 @@ try {
   const sourceId = bench.harness.getSourceIds().find((id) => id.startsWith("gmail:"));
   if (!sourceId) throw new Error("The fictional universe has no mail source");
   const driver = new NextGenScenarioDriver(bench, scenario, { providerId: "google", sourceId });
-  log.info(`Isolated inspector: ${bench.harness.gatewayUrl}/portal/debug/cognition/knowledge`);
-  log.info(
-    `Its local configuration and authentication token are in ${bench.harness.getConfigDir()}`,
-  );
-  log.info(
-    "Every model judgement is scripted. This demonstrates engine behavior, not synthesis quality.",
-  );
-  for (const step of scenario.steps) {
-    if (!flags.has("--auto"))
-      await input.question(`Enter to advance to ${step.id} (+${step.minute} minutes): `);
+  const url = inspectorUrl(bench.harness.gatewayUrl);
+  for (const [index, step] of scenario.steps.entries()) {
+    if (index > 0 && !flags.has("--auto")) {
+      announce(`\nNext · ${stepGuides[step.id] ?? step.id}`);
+      await input.question(
+        "Press Enter to run this event, or explore the browser first. Ctrl+C stops the demo: ",
+      );
+    }
     if (closing) break;
     await driver.advance();
     await bench.drainUntilQuiet({
@@ -122,13 +164,33 @@ try {
     log.info(
       `${step.id}: ${state.items.length} visible synthesis nodes; future tiers remain queued until the virtual clock reaches them`,
     );
+    if (index === 0) {
+      announce(`\nDEMO READY — open ${url}`);
+      if (!flags.has("--exit-after")) announce(`Demo-only login token: ${bench.harness.apiKey}`);
+      announce(
+        "This disposable server uses a self-signed certificate; your browser may ask you to continue.",
+      );
+      announce(
+        "Start with Winter lantern gathering. Read its overview, then open Evidence to see what supports it.",
+      );
+      announce(
+        "The browser shows the brain. This terminal introduces the next event. Refresh the browser after an event finishes.",
+      );
+      announce("All model responses are scripted to demonstrate engine behavior.\n");
+    } else if (!flags.has("--auto")) {
+      announce(
+        `Done · ${stepGuides[step.id] ?? step.id}. Refresh the browser to inspect the result.`,
+      );
+    }
   }
   if (!flags.has("--exit-after") && !closing) {
-    log.info("Replay complete; the isolated gateway remains available until Enter or Ctrl+C.");
+    announce(
+      "\nAll events complete. Keep exploring in the browser. Press Enter or Ctrl+C here only when you want to stop the demo.",
+    );
     await input.question("");
   }
 } catch (error) {
-  if (bench) {
+  if (bench && !stopping) {
     try {
       log.error(
         `Replay stopped: ${JSON.stringify({
@@ -141,7 +203,7 @@ try {
       // Preserve the original failure if the isolated gateway is already gone.
     }
   }
-  throw error;
+  if (!stopping) throw error;
 } finally {
   await close();
 }

@@ -40,6 +40,15 @@ export function mountKnowledgeAdminRoutes(
     requireVisible();
     return c.json(query.batch(c.req.param("id")));
   });
+  app.get("/admin/brain/knowledge/:id/connections", scope.admin(), (c) => {
+    requireVisible();
+    return c.json(
+      query.connections(c.req.param("id"), {
+        cursor: c.req.query("cursor"),
+        limit: limitParam(c.req.query("limit"), "limit", 30, 100),
+      }),
+    );
+  });
   app.get("/admin/brain/knowledge/:id/history", scope.admin(), (c) => {
     requireVisible();
     return c.json({ items: query.history(c.req.param("id")) });

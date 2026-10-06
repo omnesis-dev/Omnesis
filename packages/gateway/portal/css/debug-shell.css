@@ -1,0 +1,56 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ * Copyright (c) 2026 Adrien Conrath */
+.global-navigation-panel {
+  display: contents;
+}
+.debug-mobile-navigation-toggle {
+  display: none;
+}
+@media (max-width: 700px) {
+  .debug-mobile-shell .app-sidebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    overflow: visible;
+    padding: 0;
+  }
+  .debug-mobile-shell .sidebar-brand {
+    border: 0;
+    padding: 16px 20px;
+  }
+  .debug-mobile-shell .sidebar-brand-sub {
+    display: none;
+  }
+  .debug-mobile-shell .debug-mobile-navigation-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 20px;
+    padding: 10px 12px;
+    min-height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .debug-mobile-navigation-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+  .debug-mobile-shell .global-navigation-panel {
+    display: none;
+  }
+  .debug-mobile-shell .global-navigation-panel.is-open {
+    display: block;
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--border);
+    max-height: 65dvh;
+    overflow-y: auto;
+  }
+  .debug-mobile-shell .app-main {
+    padding: 20px 16px;
+  }
+}

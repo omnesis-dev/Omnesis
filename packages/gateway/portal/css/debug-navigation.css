@@ -1,0 +1,190 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright (c) 2026 Adrien Conrath */
+.debug-workspace {
+  width: 100%;
+  min-width: 0;
+}
+.debug-navigation {
+  margin-bottom: 28px;
+  font-family: inherit;
+}
+.debug-navigation-top {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding-bottom: 14px;
+}
+.debug-navigation-home {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+}
+.debug-area-links,
+.debug-section-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.debug-area-links a,
+.debug-section-links a {
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 9px 13px;
+  border-radius: 8px;
+  text-decoration: none;
+}
+.debug-area-links a:hover,
+.debug-section-links a:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.debug-area-links a.is-active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.debug-section-links {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 9px;
+  gap: 4px;
+}
+.debug-section-links a.is-active {
+  color: var(--accent);
+  background: var(--bg-tertiary);
+  font-weight: 600;
+}
+.debug-navigation a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (max-width: 700px) {
+  .debug-navigation {
+    margin-bottom: 20px;
+  }
+  .debug-navigation-top {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 8px;
+  }
+  .debug-navigation-home {
+    font-size: 12px;
+  }
+  .debug-area-links,
+  .debug-section-links {
+    gap: 2px;
+  }
+  .debug-area-links a,
+  .debug-section-links a {
+    padding: 10px 9px;
+    font-size: 12px;
+  }
+}
+
+.debug-section-heading {
+  margin-bottom: 24px;
+}
+.debug-section-heading h1 {
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: -0.6px;
+  margin: 0 0 8px;
+}
+.debug-section-heading p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.debug-workspace .cognition-content {
+  min-width: 0;
+}
+
+.brain-destinations {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0 0 24px;
+}
+.brain-destinations a {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.brain-destinations a:hover {
+  border-color: var(--accent);
+}
+.brain-destinations span {
+  color: var(--accent);
+  display: block;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.brain-destinations strong {
+  font-size: 17px;
+}
+.brain-destinations p {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 8px 0 0;
+}
+@media (max-width: 700px) {
+  .brain-destinations {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .brain-destinations a {
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .brain-destinations span {
+    margin: 0;
+    font-size: 12px;
+  }
+  .brain-destinations strong {
+    font-size: 13px;
+  }
+  .brain-destinations p {
+    display: none;
+  }
+}
+
+.debug-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.debug-table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.debug-workspace .debug-section {
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .debug-workspace .debug-header {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .debug-workspace .debug-controls {
+    flex-wrap: wrap;
+  }
+  .debug-workspace .debug-queue-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .debug-workspace .debug-card {
+    min-width: 0;
+  }
+  .debug-workspace .debug-card-spark {
+    grid-column: 1 / -1;
+  }
+}

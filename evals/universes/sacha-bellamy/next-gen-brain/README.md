@@ -9,9 +9,12 @@ npx tsx scripts/demo-next-gen-brain.mts
 ```
 
 The command starts a disposable gateway and all scripted model services, loads
-the ambient fictional universe, and advances source changes when Enter is pressed.
-It prints the local knowledge inspector URL and the isolated authentication-file
-location. Enter after the final step stops the gateway and removes its temporary
+the ambient fictional universe, and creates the first wikis automatically. Loading
+the full corpus takes several minutes; wait for **DEMO READY**. It prints the
+knowledge library URL (using the Tailscale hostname when available) and the
+disposable demo login token. Read the gathering wiki, then open **Evidence** to
+inspect its sources. The terminal describes each next event before Enter advances
+it; refresh the browser after the event completes. Enter after the final step stops the gateway and removes its temporary
 data. `--auto` advances without prompts; `--exit-after` shuts down after replay;
 `--focused` omits ambient source sync for diagnosing the progression alone.
 It never reads the operator's normal configuration or calls a live model.

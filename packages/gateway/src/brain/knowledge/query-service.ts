@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { NotFoundError } from "../../http/errors.js";
+import { readKnowledgeConnections } from "./connections.js";
 import {
   getKnowledgeNode,
   getKnowledgeClaims,
@@ -32,6 +33,9 @@ export class KnowledgeQueryService {
       dependencies: getKnowledgeDependencies(this.db, id),
       links: listKnowledgeLinks(this.db, id),
     };
+  }
+  connections(id: string, options: { cursor?: string; limit?: number } = {}) {
+    return readKnowledgeConnections(this.db, id, options);
   }
   history(id: string, beforeRevision?: number) {
     this.fetch(id);

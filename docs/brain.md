@@ -291,9 +291,24 @@ on.
 - **`omnesis brain decisions`** — source-associated maintenance and other agent
   decisions, with their actual batch transcripts.
 
-The experimental knowledge inspector reads the same canonical data used by
-agent tools. Admin diagnostics include `/admin/brain/knowledge`, `/status`,
-`/batches`, `/decisions`, `/:id` and `/:id/history` under that prefix.
+The Debug workspace separates Knowledge (Library, Loops, Briefs, Timeline),
+Brain activity (Activity, Agent runs, Maintenance, Discovery, Calibration,
+Legacy memory), System diagnostics, and Data tools. Existing deep links stay
+valid. Maintenance owns the repair queue and batch frontier; Discovery owns
+bootstrap coverage and history controls. Loops and Briefs retain their lifecycle
+and delivery inspectors and link to their synthesis evidence when available.
+Legacy memory keeps agent notes and the retired-loop recurrence ledger distinct
+from the root overview.
+
+The experimental Knowledge library reads the same canonical data used by
+agent tools. Browse or filter the library, then open a page’s Overview, Evidence,
+Connections, History, or Advanced view. Inline claim spans open their evidence;
+page links and claim-specific references navigate to their targets. Connections
+separates incoming and outgoing evidence dependencies from organization links,
+with bounded pagination. Source links explain the grounding; raw claim markup
+and storage metadata remain in Advanced. Empty, pending, and unavailable states
+are explicit rather than presented as verified understanding. Admin diagnostics include `/admin/brain/knowledge`, `/status`,
+`/batches`, `/decisions`, `/:id`, `/:id/connections` and `/:id/history` under that prefix.
 They show synthesis, claim provenance, maintenance progress and metadata-only
 decision verdicts. Search projections are never the authority for these reads.
 

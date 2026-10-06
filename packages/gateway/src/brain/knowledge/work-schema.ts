@@ -148,6 +148,7 @@ export function createKnowledgeWorkTables(db: Database.Database): void {
       kind TEXT NOT NULL CHECK(kind IN ('related_to','belongs_to_project','part_of','supersedes','duplicate_of')),
       PRIMARY KEY(from_id,to_id,kind)
     );
+    CREATE INDEX IF NOT EXISTS knowledge_links_to ON knowledge_links(to_id);
     CREATE TABLE IF NOT EXISTS knowledge_checkpoints (
       id TEXT PRIMARY KEY,
       value_json TEXT NOT NULL,

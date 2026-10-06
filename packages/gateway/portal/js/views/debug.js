@@ -25,7 +25,7 @@
 
 import { html } from "htm/preact";
 import { useEffect, useState, useRef } from "preact/hooks";
-import { TabBar } from "../components/tab-bar.js";
+import { DebugNavigation } from "./debug-navigation.js";
 import {
   getBackgroundJobs,
   getMetrics,
@@ -34,7 +34,6 @@ import {
 } from "../api.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { formatDurationShort, isBacklogLate } from "../lib/format.js";
-import { replaceRoute } from "../lib/router.js";
 import { debugTabs, DEFAULT_DEBUG_TAB } from "../lib/debug-tabs.js";
 import { lazy } from "../lib/lazy.js";
 import { GraphView } from "./graph.js";
@@ -132,6 +131,16 @@ function Sparkline({ samples, peak }) {
   `;
 }
 
+const DEBUG_INTROS = {
+  data: ["Tables", "Inspect stored records in SQLite and analytics tables in DuckDB."],
+  sql: ["SQL workspace", "Explore the stored data with read-only queries."],
+  metrics: ["Gateway metrics", "Inspect process health, request latency, and scheduler contention."],
+  "background-jobs": ["Gateway jobs", "Background processes that keep ingestion, search, and the Brain running."],
+  doctor: ["System health", "Check this gateway and its host for configuration or runtime problems."],
+  calendar: ["Timeline", "Explore dated source records, annotations, and mentions in context."],
+  watch: ["Watch runtime", "Inspect installed watch definitions and their execution."],
+};
+
 export function DebugView({
   tab,
   graphParams,
@@ -154,43 +163,10 @@ export function DebugView({
   // `experimental` arrives instead of stranding on the default tab.
   const activeTab = validTabs.has(tab) ? tab : DEFAULT_DEBUG_TAB;
 
-  // Mirror the chosen tab into the path so a refresh lands on the same place.
-  // `replaceRoute` (replaceState + re-parse) keeps tab toggles out of the back
-  // stack — matching the Settings page — while still re-deriving the route, so a
-  // tab's URL-carried state resets to its defaults on a fresh visit. The Graph
-  // tab's query params are then owned by the GraphView itself, which re-mirrors
-  // them via replaceUrl once a walk runs.
-  const switchTab = (next) => {
-    // Re-selecting the tab the URL already names is a no-op: re-deriving the
-    // route would wipe whatever state that tab carries in the query string
-    // (the selected table, a graph walk, the statement in the editor). Keyed
-    // on the route rather than on `activeTab`, so a click still repairs the
-    // address bar when the two disagree — a Cognition path on a gateway whose
-    // experimental flag has not arrived shows the default tab until it does.
-    if (next === tab) return;
-    replaceRoute(`/portal/debug/${next}`);
-  };
-
   return html`
-    <div class="debug-view">
-      <div class="debug-header" style="align-items:flex-start;">
-        <div>
-          <h1 class="debug-title">Debug</h1>
-          <p class="debug-sub">
-            Internal-state inspector for the gateway. Switch tabs to
-            browse the stored tables, query them in SQL, walk the
-            document graph, view scheduler metrics and route-level
-            timings, watch every background loop in the process, browse
-            the time index on the Calendar, or run the health check.
-          </p>
-        </div>
-      </div>
-      <${TabBar}
-        style="margin-bottom:16px;"
-        active=${activeTab}
-        onSelect=${switchTab}
-        tabs=${tabs}
-      />
+    <div class="debug-view debug-workspace">
+      <${DebugNavigation} tab=${activeTab} cognitionTab=${cognitionTab} experimental=${experimental} />
+      ${DEBUG_INTROS[activeTab] && html`<header class="debug-section-heading"><h1>${DEBUG_INTROS[activeTab][0]}</h1><p>${DEBUG_INTROS[activeTab][1]}</p></header>`}
       ${activeTab === "data" && html`<${DataView}
         store=${dataParams?.store ?? null}
         table=${dataParams?.table ?? null}
@@ -418,7 +394,7 @@ function MetricsTab() {
                 Pending by op (current snapshot)
                 <span class="debug-byop-hint">— what's filling the queue right now</span>
               </div>
-              <table class="debug-byop-table">
+              <div class="debug-table-scroll" role="region" aria-label="Diagnostics table" tabindex="0"><table class="debug-byop-table">
                 <thead>
                   <tr>
                     <th>Op</th>
@@ -439,7 +415,7 @@ function MetricsTab() {
                     </tr>
                   `)}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           `}
         </section>
@@ -455,7 +431,7 @@ function MetricsTab() {
           ${data.routes.length === 0
             ? html`<div class="debug-empty">No requests recorded in this window.</div>`
             : html`
-              <table class="debug-table">
+              <div class="debug-table-scroll" role="region" aria-label="Diagnostics table" tabindex="0"><table class="debug-table">
                 <thead>
                   <tr>
                     <th>Route</th>
@@ -490,7 +466,7 @@ function MetricsTab() {
                     </tr>
                   `)}
                 </tbody>
-              </table>
+              </table></div>
             `}
         </section>
 
@@ -559,7 +535,7 @@ function SchedulerPanels({ snapshot }) {
       ${perRunner.length === 0
         ? html`<div class="debug-empty">No runners registered.</div>`
         : html`
-          <table class="debug-table">
+          <div class="debug-table-scroll" role="region" aria-label="Diagnostics table" tabindex="0"><table class="debug-table">
             <thead>
               <tr>
                 <th>Runner</th>
@@ -601,7 +577,7 @@ function SchedulerPanels({ snapshot }) {
                 `;
               })}
             </tbody>
-          </table>
+          </table></div>
         `}
     </section>
 
@@ -619,7 +595,7 @@ function SchedulerPanels({ snapshot }) {
       ${perTask.length === 0
         ? html`<div class="debug-empty">No task executions recorded in this window.</div>`
         : html`
-          <table class="debug-table">
+          <div class="debug-table-scroll" role="region" aria-label="Diagnostics table" tabindex="0"><table class="debug-table">
             <thead>
               <tr>
                 <th>Task</th>
@@ -666,7 +642,7 @@ function SchedulerPanels({ snapshot }) {
               `;
               })}
             </tbody>
-          </table>
+          </table></div>
         `}
     </section>
   `;
@@ -804,7 +780,7 @@ function BackgroundJobsTab() {
       ${grouped.map(([category, jobs]) => html`
         <section class="debug-section">
           <h2 class="debug-section-title">${category}</h2>
-          <table class="debug-table">
+          <div class="debug-table-scroll" role="region" aria-label="Diagnostics table" tabindex="0"><table class="debug-table">
             <thead>
               <tr>
                 <th>Job</th>
@@ -821,7 +797,7 @@ function BackgroundJobsTab() {
             <tbody>
               ${jobs.map((j) => html`<${JobRow} job=${j} />`)}
             </tbody>
-          </table>
+          </table></div>
         </section>
       `)}
       ${snapshot && html`

@@ -380,7 +380,7 @@
                   Reusable context for projects and topics, with claim-level provenance. A compact
                   root wiki provides current orientation and must fit its configured size limit.
                 </td>
-                <td>Debug → Cognition → Knowledge</td>
+                <td>Debug → Knowledge → Library</td>
               </tr>
               <tr>
                 <td>Time index</td>
@@ -390,7 +390,7 @@
                   documents it came from. The agent's time query returns them beside source dates
                   and date mentions.
                 </td>
-                <td>Debug → Calendar</td>
+                <td>Debug → Knowledge → Timeline</td>
               </tr>
               <tr>
                 <td>Open loops</td>
@@ -400,7 +400,7 @@
                   changed the loop. States: <code>open</code>, <code>snoozed</code>,
                   <code>done</code>, <code>dismissed</code>.
                 </td>
-                <td>Debug → Cognition → Loops; the mobile apps' Loops view</td>
+                <td>Debug → Knowledge → Loops; the mobile apps' Loops view</td>
               </tr>
               <tr>
                 <td>Annotations</td>
@@ -409,7 +409,7 @@
                   document and a confidence. The agent's <a href="/docs/agent#memory">memory</a>
                   reads the same notes.
                 </td>
-                <td>Debug → Cognition → Memory</td>
+                <td>The document or person page; Debug → Knowledge → Library</td>
               </tr>
               <tr>
                 <td>Briefs</td>
@@ -418,7 +418,7 @@
                   digest a day. Only the digest sends a push notification, at most once a day
                   (<code>brain.digest.push</code>).
                 </td>
-                <td>Debug → Cognition → Briefs; the mobile apps' Briefs view</td>
+                <td>Debug → Knowledge → Briefs; the mobile apps' Briefs view</td>
               </tr>
             </tbody>
           </table>
@@ -528,7 +528,7 @@
           verdict, and every role shares the account's usage allowance.
           <code>GET /status</code> reports the gate as <code>brain</code>, with
           <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
-          <code>active</code>; the portal's Cognition page says which of the two conditions is
+          <code>active</code>; the portal's Brain activity page says which of the two conditions is
           missing.
         </p>
 
@@ -554,16 +554,17 @@
           old message is still considered, with its original time and attribution.
         </p>
         <p>
-          Historical organization is opt-in. Open <strong>Debug → Cognition → Bootstrap</strong> and
-          press <strong>Start reading history</strong>. The pass honors historical enablement,
-          active hours and admission caps, and reports separate interpretation, organization and
-          conversion coverage. Recent-first is the default; historical evidence need not contain a
-          future date to be useful. Upgrading preserves existing loops and annotations without
-          promoting their legacy attachments into verified claims. Initial collector imports expose
-          partial coverage as they arrive. Their recent window
-          (<code>brain.knowledge.recentWindowDays</code>, default 30 days) is admitted recent-first;
-          older and undated inventory follows the historical-review controls. Later arrivals and
-          edits remain reactive, even when they describe older events.
+          Historical organization is opt-in. Open
+          <strong>Debug → Brain activity → Discovery</strong> and press
+          <strong>Start reading history</strong>. The pass honors historical enablement, active
+          hours and admission caps, and reports separate interpretation, organization and conversion
+          coverage. Recent-first is the default; historical evidence need not contain a future date
+          to be useful. Upgrading preserves existing loops and annotations without promoting their
+          legacy attachments into verified claims. Initial collector imports expose partial coverage
+          as they arrive. Their recent window (<code>brain.knowledge.recentWindowDays</code>,
+          default 30 days) is admitted recent-first; older and undated inventory follows the
+          historical-review controls. Later arrivals and edits remain reactive, even when they
+          describe older events.
         </p>
         <p>
           Synthesis uses Markdown with addressable claim spans. Normal reading hides the tags, while
@@ -573,6 +574,19 @@
           against their evidence; syntax alone cannot guarantee that every assertion is supported.
           Unavailable verification leaves claims unverified. The root wiki is limited by
           <code>brain.knowledge.rootMaxChars</code> (8000 characters by default).
+        </p>
+        <p>
+          Debug groups readable knowledge separately from Brain activity. Agent runs, maintenance
+          batches, discovery controls, and calibration live under <strong>Brain activity</strong>;
+          gateway diagnostics and database tools remain under <strong>System</strong> and
+          <strong>Data tools</strong>.
+        </p>
+        <p>
+          Open <strong>Debug → Knowledge → Library</strong> to browse the Brain’s library. Select a
+          page to read its overview, inspect supporting evidence, or follow its revision history.
+          Advanced details contain claim markup and internal metadata. Maintenance status
+          distinguishes pending work from completed work; a current page is not necessarily
+          verified.
         </p>
         <div class="table-wrap">
           <table>
@@ -730,7 +744,7 @@
         </div>
         <p>
           If Jev cannot be reached or returns an invalid answer, the engine records an unavailable
-          judgement and follows its conservative fallback. The Knowledge inspector shows decision
+          judgement and follows its conservative fallback. The Brain diagnostics show decision
           purposes, input fingerprints, normalized scores and model usage; the decision ledger does
           not duplicate raw source prose. Decision tokens count toward the daily token budget, not
           the daily agent-run budget. The key can also come from
@@ -954,13 +968,13 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
 
         <h3 id="brain-observing">Observing it</h3>
         <p>
-          The portal's <strong>Debug → Cognition</strong> page is the main view. Its tabs are
-          <strong>Overview</strong> (gate status, today's budget and spend by mechanism),
-          <strong>Loops</strong>, <strong>Runs</strong> (the queue, each run's transcript and
-          decisions), <strong>Briefs</strong>, <strong>Memory</strong> (annotations),
-          <strong>Calibration</strong> and <strong>Bootstrap</strong> (catch-up state, limits, pause
-          control and backend health). <strong>Debug → Background jobs</strong> shows when each
-          scheduled task last ran. The same data is available from the CLI:
+          The portal separates <strong>Knowledge</strong> (the library, loops, briefs, and timeline)
+          from <strong>Brain activity</strong>. Activity summarizes runs and spend; Agent runs shows
+          the queue, transcripts, and decisions; Maintenance follows repair batches; Discovery shows
+          coverage and historical admission controls; Calibration compares confidence with observed
+          outcomes. Legacy memory retains agent notes and retired-loop history.
+          <strong>System → Gateway jobs</strong> shows when each scheduled task last ran. The same
+          data is available from the CLI:
         </p>
         <div class="table-wrap">
           <table>
@@ -1028,9 +1042,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
           <li>
             <strong>Unassign the model.</strong>
             <code>omnesis model assign background-agent disabled</code> stops all new Brain work at
-            once. While experimental mode is on, the portal's Cognition page still shows what was
-            written and the apps still show stored briefs, with a setup notice that opens the model
-            picker; the apps' Loops view needs a running Brain.
+            once. While experimental mode is on, the portal's Brain activity page still shows what
+            was written and the apps still show stored briefs, with a setup notice that opens the
+            model picker; the apps' Loops view needs a running Brain.
           </li>
           <li>
             <strong>Turn experimental mode off.</strong> Restart the gateway without
@@ -1374,9 +1388,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
         </p>
         <p>
           Every compile is recorded as a run of kind <code>subscription_compile</code> on
-          <strong>Debug → Cognition → Runs</strong>, with the full transcript: what the compiler
-          looked up, what it wrote and each repair turn. An installed watch links to it from its
-          detail page. The transcript contains corpus text the compiler read.
+          <strong>Debug → Brain activity → Agent runs</strong>, with the full transcript: what the
+          compiler looked up, what it wrote and each repair turn. An installed watch links to it
+          from its detail page. The transcript contains corpus text the compiler read.
         </p>
         <p>
           <strong>An agent's request needs approval</strong> before it can wake anyone. Until then

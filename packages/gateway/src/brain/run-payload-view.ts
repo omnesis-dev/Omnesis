@@ -294,6 +294,8 @@ function decodeRunTriggerFromPayload(kind: CognitionRunKind, payload: unknown): 
     case "synthesis": {
       const p = parseCognitionSynthesisRunPayload(payload);
       if (!p) return UNKNOWN;
+      if (p.focus === "knowledge-maintenance")
+        return { type: "knowledge-maintenance", batchId: p.batchId ?? null };
       if (p.focus === "collision") {
         return {
           type: "synthesis-collision",

@@ -3,7 +3,7 @@
 
 import { html, render } from "htm/preact";
 import { Component } from "preact";
-import { useState, useEffect, useRef } from "preact/hooks";
+import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { parseRoute, onRouteChange, navigate, replaceUrl } from "./lib/router.js";
 import { loadSourceMeta } from "./lib/format.js";
 import { lazy } from "./lib/lazy.js";
@@ -217,6 +217,18 @@ function orderConversations(conversations) {
 
 function App() {
   const [route, setRoute] = useState(parseRoute());
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const mobileNavigationButton = useRef(null);
+  useLayoutEffect(() => {
+    if (!mobileNavigationOpen) return;
+    const closeOnEscape = (event) => {
+      if (event.key !== "Escape") return;
+      setMobileNavigationOpen(false);
+      mobileNavigationButton.current?.focus();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileNavigationOpen]);
   const [sessionExpired, setSessionExpired] = useState(false);
   const conversationPage = useCursorPage({
     resetKey: "sidebar-conversations",
@@ -336,7 +348,10 @@ function App() {
   useVisiblePoll(refreshGatewayStatus, RELEASE_STATUS_POLL_MS);
 
   useEffect(() => {
-    return onRouteChange(() => setRoute(parseRoute()));
+    return onRouteChange(() => {
+      setMobileNavigationOpen(false);
+      setRoute(parseRoute());
+    });
   }, []);
 
   // A route the parser resolved from a retired path renders its current view
@@ -546,7 +561,7 @@ function App() {
   }
 
   return html`
-    <div class="app-layout">
+    <div class=${`app-layout${route.view === "debug" ? " debug-mobile-shell" : ""}`}>
       <aside class="app-sidebar">
         <a class="sidebar-brand" href="/portal/" onClick=${(e) => { e.preventDefault(); navigate("/portal/"); }}>
           <span class="omnesis-mark" style="width:32px;height:32px" aria-hidden="true"></span>
@@ -556,9 +571,19 @@ function App() {
           </div>
         </a>
 
+        ${route.view === "debug" && html`<button
+          class="debug-mobile-navigation-toggle"
+          ref=${mobileNavigationButton}
+          type="button"
+          aria-label=${mobileNavigationOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded=${mobileNavigationOpen}
+          aria-controls="global-navigation-panel"
+          onClick=${() => setMobileNavigationOpen((open) => !open)}
+        ><span aria-hidden="true">${mobileNavigationOpen ? "×" : "☰"}</span> Menu</button>`}
+        <div id="global-navigation-panel" class=${`global-navigation-panel${mobileNavigationOpen ? " is-open" : ""}`}>
         ${demo === false && html`<${TestInstanceCard} instance=${testInstance} />`}
 
-        <nav class="sidebar-nav">
+        <nav class="sidebar-nav" aria-label="Main navigation">
           ${NAV_ITEMS.filter((item) => !item.experimental || experimental).map((item) => {
             // "Ask" (the agent landing) is special: it navigates AND
             // dispatches the fresh-session event, so clicking it from
@@ -690,6 +715,7 @@ function App() {
           </div>
         </div>
 
+        </div>
       </aside>
 
       <main class="app-main">

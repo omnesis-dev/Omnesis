@@ -103,7 +103,7 @@ function WatchPicker() {
   if (error) return html`<div class="debug-error" role="alert">${error}</div>`;
   if (watches.length === 0) {
     return html`<div class="debug-empty">
-      No watches are installed. Ask your agent to keep an eye on something, or add a definition with
+      No watches are installed. Ask your agent to keep an eye on something, or add a definition with${" "}
       <code>omnesis watch add</code>.
     </div>`;
   }

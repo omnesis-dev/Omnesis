@@ -37,7 +37,7 @@ const baseURL = `https://localhost:${port}`;
 
 export default defineConfig({
   testDir: "e2e",
-  testMatch: "**/*.spec.ts",
+  testMatch: ["**/*.spec.ts", "**/*.spec.mts"],
   // Generous per-test budget: the SQL view mounts a heavy CodeMirror bundle
   // and a single shared gateway serves the suite serially, so view mounts can
   // be slow under load. One retry absorbs the residual timing flakiness
