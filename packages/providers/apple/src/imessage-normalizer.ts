@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { boundedSelfAuthoredText } from "@omnesis/types";
+
 import {
   computeContentHash,
   normalizeEmail,
@@ -118,6 +120,7 @@ export function normalizeDayChat(
   chat: IMessageChatInfo,
   providerId: ProviderId,
   sourceId: SourceId,
+  transcriptionVocabularyEnabled = false,
 ): DocumentInput {
   const chatTitle = buildChatTitle(chat);
   const title = `${chatTitle} — ${date}`;
@@ -343,6 +346,26 @@ export function normalizeDayChat(
     content,
     contentHash: computeContentHash(content),
     metadata: {
+      ...(transcriptionVocabularyEnabled
+        ? {
+            selfAuthoredText: boundedSelfAuthoredText(
+              regularMessages.flatMap((msg) => {
+                if (!msg.isFromMe || msg.isSystemMessage) return [];
+                // Attachment ASR remains searchable, but only original written body
+                // can provide independent vocabulary evidence.
+                return msg.text
+                  ? [
+                      {
+                        text: msg.text,
+                        recordedAt: msg.date.toISOString(),
+                        origin: "written" as const,
+                      },
+                    ]
+                  : [];
+              }),
+            ),
+          }
+        : {}),
       sourceUrl: buildIMessageSourceUrl(regularMessages[0]?.guid),
       documentType: "conversation",
       tags: [chat.service],

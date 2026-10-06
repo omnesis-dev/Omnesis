@@ -109,7 +109,7 @@ function materialize(
           4,
         );
     if (options.rendered) {
-      body = `# Dispatch Template\n**Author:** RenderedCaster\n**Recipient:** ArchiveMarker\n---\n**09:12** TemplateByline: [Voice note, 0:10]: ${body}\n  → DiscardedReply Marker\n> QuotedMarker SyntheticArchive\n\`\`\`text\nFencedMarker TEMPLATE\n\`\`\`\n---\n**Attachments:** TemplateBundle.bin (application/octet-stream, 2KB)`;
+      body = `# Dispatch Template\n**Author:** RenderedCaster\n**Recipient:** ArchiveMarker\n---\n**09:12** TemplateByline: ${body}\n  → DiscardedReply Marker\n> QuotedMarker SyntheticArchive\n\`\`\`text\nFencedMarker TEMPLATE\n\`\`\`\n---\n**Attachments:** TemplateBundle.bin (application/octet-stream, 2KB)`;
     }
     insert.run(
       id,

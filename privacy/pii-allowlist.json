@@ -12062,6 +12062,21 @@
         "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
       ],
       "reason": "Reviewed fictional evening-demo identity, invented booking/flat, existing fictional household, or independently verified public London venue/street; never sourced from a personal corpus."
+    },
+    {
+      "value": "Will Green",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/storage.test.ts"],
+      "reason": "Invented name composed of frequent words for the grounded phrase regression."
+    },
+    {
+      "value": "Orvessa Talerin",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/balanced-ranking.test.ts"],
+      "reason": "Invented name for a deterministic contextual ranking regression."
+    },
+    {
+      "value": "Varell Orvenna",
+      "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
+      "reason": "Invented hyphenated-name fragment for Unicode typography extraction regression."
     }
   ],
   "secretFixtures": [

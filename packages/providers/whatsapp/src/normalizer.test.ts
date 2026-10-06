@@ -1765,3 +1765,65 @@ describe("the platform every identifier this source emits carries", () => {
     }
   });
 });
+
+describe("self-authored vocabulary evidence", () => {
+  test("uses native authorship and original text without quotes or presentation", () => {
+    const messages = [
+      makeMsg({
+        id: "own",
+        fromMe: true,
+        text: "Lanternshift",
+        quotedText: "Quotedprefix",
+        timestamp: 1709900000,
+      }),
+      makeMsg({ id: "received", text: "Receivedprefix", timestamp: 1709900010 }),
+      makeMsg({
+        id: "voice",
+        fromMe: true,
+        type: "audio",
+        text: "Placeholderprefix",
+        transcript: "Cobaltfinch",
+        timestamp: 1709900020,
+      }),
+      makeMsg({
+        id: "document",
+        fromMe: true,
+        type: "document",
+        text: "Filenameprefix",
+        timestamp: 1709900030,
+      }),
+      makeMsg({
+        id: "deleted",
+        fromMe: true,
+        text: "Deletedprefix",
+        deleted: true,
+        timestamp: 1709900040,
+      }),
+    ];
+    const normalize = (enabled: boolean) =>
+      normalizeDayChat(
+        "1234@s.whatsapp.net",
+        "2024-03-08",
+        messages,
+        undefined,
+        emptyContacts,
+        ProviderId("whatsapp"),
+        SourceId("whatsapp-messages"),
+        new Map(),
+        undefined,
+        enabled,
+      );
+    const disabled = normalize(false);
+    const enabled = normalize(true);
+    expect(disabled.metadata.selfAuthoredText).toBeUndefined();
+    expect(enabled.content).toBe(disabled.content);
+    expect(enabled.contentHash).toBe(disabled.contentHash);
+    expect(enabled.metadata.selfAuthoredText).toEqual([
+      {
+        text: "Lanternshift",
+        recordedAt: new Date(1709900000000).toISOString(),
+        origin: "written",
+      },
+    ]);
+  });
+});

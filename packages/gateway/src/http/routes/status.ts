@@ -467,6 +467,8 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       configHealth,
       release: getReleaseCheck?.() ?? null,
       testInstance: readTestInstance(),
+      // Presentation only: suppress setup and release cards during demonstrations.
+      demo: process.env.OMNESIS_DEMO === "1",
       // Gateway-wide experimental mode. Clients (portal / iOS / Android / CLI)
       // read this to decide whether to surface experimental features —
       // experimental sources, Watches, Briefs, and other gated tools. Off by default.

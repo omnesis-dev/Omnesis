@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test, vi } from "vitest";
-import { isCommonVocabularyWord } from "./common-words.js";
+import { isCommonVocabularyWord, normalizeVocabularyTerm } from "./common-words.js";
 import { commonWordsData } from "./common-words-data.js";
 
 describe("bundled common-word evidence", () => {
@@ -13,7 +13,7 @@ describe("bundled common-word evidence", () => {
       commonWordsData: {
         get languages() {
           reads++;
-          return { en: "ordinary", fr: "travail" };
+          return { en: "ordinary a", fr: "travail été" };
         },
       },
     }));
@@ -24,6 +24,13 @@ describe("bundled common-word evidence", () => {
       expect(reads).toBe(1);
       expect(lexical.isCommonVocabularyWord("travail")).toBe(true);
       expect(lexical.isCommonVocabularyWord("ordinary", ["fr"])).toBe(false);
+      // Independent components in different languages cannot manufacture a
+      // frequent elision that no single lexical list supports.
+      expect(lexical.isCommonVocabularyWord("a'été")).toBe(false);
+      expect(lexical.isCommonVocabularyWord("ordinary-travail")).toBe(false);
+      // Calendar evidence is locale-owned even when the frequency subset omits it.
+      expect(lexical.isCommonVocabularyWord("févr", ["fr"])).toBe(true);
+      expect(lexical.isCommonVocabularyWord("févr", ["en"])).toBe(false);
       expect(reads).toBe(1);
     } finally {
       vi.doUnmock("./common-words-data.js");
@@ -54,6 +61,80 @@ describe("bundled common-word evidence", () => {
     expect(isCommonVocabularyWord("e\u0301te\u0301", ["fr"])).toBe(true);
     expect(isCommonVocabularyWord("trabajo", ["ja"])).toBe(false);
     expect(isCommonVocabularyWord("two words", ["en"])).toBe(false);
+  });
+
+  test("standard calendar words and abbreviations are common in each supported language", () => {
+    for (const [language, words] of [
+      ["en", ["Wednesday", "Wed", "February", "Feb"]],
+      ["fr", ["mercredi", "mer", "février", "févr"]],
+      ["es", ["miércoles", "mié", "febrero", "feb"]],
+      ["de", ["Mittwoch", "Mi", "Februar", "Feb"]],
+      ["it", ["mercoledì", "mer", "febbraio", "feb"]],
+      ["pt", ["quarta-feira", "qua", "fevereiro", "fev"]],
+      ["nl", ["woensdag", "wo", "februari", "feb"]],
+    ] as const)
+      for (const word of words) {
+        expect(isCommonVocabularyWord(word, [language])).toBe(true);
+        expect(isCommonVocabularyWord(word)).toBe(true);
+      }
+    expect(isCommonVocabularyWord("FÉVR", ["fr-CA"])).toBe(true);
+    expect(isCommonVocabularyWord("fe\u0301vr", ["fr"])).toBe(true);
+    expect(isCommonVocabularyWord("févr", ["en"])).toBe(false);
+    expect(isCommonVocabularyWord("févr", ["ja"])).toBe(false);
+    expect(isCommonVocabularyWord("Zorvella", ["fr"])).toBe(false);
+    expect(isCommonVocabularyWord("Februlune")).toBe(false);
+  });
+
+  test("frequent contractions and elisions share quote normalization without losing rare names", () => {
+    for (const word of ["don't", "don’t", "don‘t", "we're", "we’re", "I'm", "I’m"])
+      expect(isCommonVocabularyWord(word, ["en"])).toBe(true);
+    for (const word of [
+      "c'est",
+      "c’est",
+      "c‘est",
+      "j'ai",
+      "j’ai",
+      "l'été",
+      "l’été",
+      "l'heure",
+      "qu'un",
+      "aujourd’hui",
+    ])
+      expect(isCommonVocabularyWord(word, ["fr"])).toBe(true);
+    for (const word of ["d'Orvelion", "d’Orvelion", "O'Zorvella", "O’Zorvella", "l'Élanor"])
+      expect(isCommonVocabularyWord(word)).toBe(false);
+    expect(isCommonVocabularyWord("c’est", ["ja"])).toBe(false);
+    expect(isCommonVocabularyWord("l'été", ["fr"])).toBe(true);
+    expect(isCommonVocabularyWord("l'Élanor", ["fr"])).toBe(false);
+  });
+
+  test("frequent inflected words and hyphen components retain same-language evidence", () => {
+    for (const [word, language] of [
+      ["working", "en"],
+      ["travaux", "fr"],
+      ["arbeiten", "de"],
+      ["trabajos", "es"],
+      ["lavori", "it"],
+      ["trabalhos", "pt"],
+      ["werken", "nl"],
+    ])
+      expect(isCommonVocabularyWord(word!, [language!])).toBe(true);
+    expect(isCommonVocabularyWord("work-home", ["en"])).toBe(true);
+    expect(isCommonVocabularyWord("l’été-travail", ["fr"])).toBe(true);
+    expect(isCommonVocabularyWord("work‐home", ["en"])).toBe(true);
+    expect(isCommonVocabularyWord("work-Zorvella", ["en"])).toBe(false);
+    expect(isCommonVocabularyWord("Zorvella-Navrel")).toBe(false);
+    expect(isCommonVocabularyWord("work--home", ["en"])).toBe(false);
+  });
+
+  test("canonical keys unify equivalent typography without erasing lexical identity", () => {
+    expect(normalizeVocabularyTerm("O’Zorvella")).toBe("o'zorvella");
+    expect(normalizeVocabularyTerm("Zorvella‐Navrel")).toBe("zorvella-navrel");
+    expect(normalizeVocabularyTerm("Zorvella‑Navrel")).toBe("zorvella-navrel");
+    expect(normalizeVocabularyTerm("Zorvella－Navrel")).toBe("zorvella-navrel");
+    expect(normalizeVocabularyTerm("ZE\u0301LOR")).toBe("zélor");
+    expect(normalizeVocabularyTerm("Zélor")).not.toBe(normalizeVocabularyTerm("Zelor"));
+    expect(normalizeVocabularyTerm("Zorvella—Navrel")).toBe("zorvella—navrel");
   });
 
   test("ships bounded lexical lists and notices alongside the derived data", () => {

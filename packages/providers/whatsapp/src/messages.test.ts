@@ -33,6 +33,66 @@ describe("WhatsAppMessagesSource", () => {
     source = new WhatsAppMessagesSource(store);
   });
 
+  test("enabling vocabulary replays archived metadata once without reprocessing media", async () => {
+    let enabled = false;
+    const download = vi.fn();
+    source = new WhatsAppMessagesSource(store, undefined, {
+      isTranscriptionVocabularyEnabled: () => enabled,
+      downloadMedia: download,
+    });
+    store.addMessages([makeMsg({ fromMe: true, text: "Lanternshift" })]);
+    const initial = await source.sync(null);
+    const idle = await source.sync(initial.cursor);
+    expect(idle.documents).toEqual([]);
+    enabled = true;
+    const replay = await source.sync(idle.cursor);
+    expect(replay.documents[0].metadata.selfAuthoredText?.[0].text).toBe("Lanternshift");
+    expect(replay.documents[0].contentHash).toBe(initial.documents[0].contentHash);
+    expect(download).not.toHaveBeenCalled();
+    // A rejected metadata POST is replayed using its previous committed cursor.
+    const retry = await source.sync(idle.cursor);
+    expect(retry.documents).toEqual(replay.documents);
+    const committed = await source.sync(retry.cursor);
+    expect(committed.documents).toEqual([]);
+    const restarted = new WhatsAppMessagesSource(store, undefined, {
+      isTranscriptionVocabularyEnabled: () => enabled,
+    });
+    expect((await restarted.sync(committed.cursor)).documents).toEqual([]);
+    enabled = false;
+    const disabled = await source.sync(committed.cursor);
+    enabled = true;
+    expect((await source.sync(disabled.cursor)).documents).toEqual([]);
+  });
+
+  test("interrupted metadata replay survives disable, successful ordinary sync and source restart", async () => {
+    let enabled = false;
+    const options = { isTranscriptionVocabularyEnabled: () => enabled };
+    source = new WhatsAppMessagesSource(store, undefined, options);
+    store.addMessages([makeMsg({ fromMe: true, text: "Lanternshift" })]);
+    const initial = await source.sync(null);
+    const idle = await source.sync(initial.cursor);
+    enabled = true;
+    const rejected = await source.sync(idle.cursor);
+    expect(rejected.documents[0].metadata.selfAuthoredText?.[0].text).toBe("Lanternshift");
+    // The enabled page is rejected; its cursor never reaches durable gateway state.
+    enabled = false;
+    const ordinary = await source.sync(idle.cursor);
+    expect(ordinary.documents[0].metadata.selfAuthoredText).toBeUndefined();
+    const ordinaryCommitted = await source.sync(ordinary.cursor);
+    expect(ordinaryCommitted.documents).toEqual([]);
+    source = new WhatsAppMessagesSource(store, undefined, options);
+    enabled = true;
+    const recovered = await source.sync(ordinaryCommitted.cursor);
+    expect(recovered.documents[0].metadata.selfAuthoredText?.[0].text).toBe("Lanternshift");
+    expect(recovered.documents[0].contentHash).toBe(initial.documents[0].contentHash);
+    const completed = await source.sync(recovered.cursor);
+    expect(completed.documents).toEqual([]);
+    enabled = false;
+    const disabled = await source.sync(completed.cursor);
+    enabled = true;
+    expect((await source.sync(disabled.cursor)).documents).toEqual([]);
+  });
+
   test("has correct id and providerId", () => {
     expect(source.id).toBe(SourceId("whatsapp-messages"));
     expect(source.providerId).toBe(ProviderId("whatsapp"));

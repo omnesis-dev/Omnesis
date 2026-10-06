@@ -388,6 +388,7 @@ export default defineProvider<AppleContext>({
           attachmentConfig,
           extractAttachment: host?.extractAttachment,
           transcribeAudio: host?.transcribeAudio,
+          isTranscriptionVocabularyEnabled: host?.isTranscriptionVocabularyEnabled,
           // The config ROOT, not `host.stateDir`. The transcript cache lives at
           // `<configDir>/apple-imessage/` with no account segment, so it is
           // shared by every Apple account on the host. Pointing it at the

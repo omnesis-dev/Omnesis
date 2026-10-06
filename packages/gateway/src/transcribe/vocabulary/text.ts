@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { truncateLexicalText } from "@omnesis/types";
 import { layoutReplyText } from "../../ocr/http-vlm-ocr.js";
 
 /**
@@ -9,7 +10,7 @@ import { layoutReplyText } from "../../ocr/http-vlm-ocr.js";
  * Input and output are bounded independently of the caller's document cap.
  */
 export function vocabularyText(content: string): string {
-  const bounded = content.slice(0, 65536);
+  const bounded = truncateLexicalText(content, 65536);
   const trimmed = bounded.trimStart();
   let prose = bounded;
   if (trimmed.startsWith("[")) {
@@ -60,8 +61,12 @@ export function vocabularyText(content: string): string {
   const out: string[] = [];
   let fence: { character: string; length: number } | undefined;
   let previousWasMessage = false;
+  let messageContext = false;
+  let skippingTranscript = false;
   for (let i = start; i < end; i++) {
     let line = lines[i];
+    // Transcript markup must not open a fence that hides the next written message.
+    if (skippingTranscript && !/^\*\*\d{1,2}:\d{2}\*\* [^:\n]{1,256}: ?/u.test(line)) continue;
     const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
     if (fence) {
       if (
@@ -85,13 +90,26 @@ export function vocabularyText(content: string): string {
     const message = /^\*\*\d{1,2}:\d{2}\*\* [^:\n]{1,256}: ?(.*)$/u.exec(line);
     if (message) {
       line = message[1];
-      // A bracketed duration followed by ':' is a rendered transcript prefix.
-      // Plain brackets and labels without a duration remain ambiguous prose.
-      line = line.replace(/^\[[^\]\n]{1,64}, \d{1,3}:\d{2}\]: ?/u, "");
+      messageContext = true;
+      skippingTranscript = false;
     } else if (previousWasMessage && /^ {2}→ /u.test(line)) {
       continue;
     }
     previousWasMessage = Boolean(message);
+    // A transcript is rendered after a bracketed audio/duration marker inside
+    // a timestamped message. Exclude its multiline tail until the next message;
+    // removing only the marker would feed prior ASR errors back as vocabulary.
+    // Original written body before an attachment marker remains independent.
+    if (skippingTranscript) continue;
+    if (messageContext) {
+      const transcript = /(?:^|[ \t])\[(?:[^\]\n]{1,64}, (?:\d{1,3}:\d{2}|\?)|Audio)\]: ?/u.exec(
+        line,
+      );
+      if (transcript) {
+        line = line.slice(0, transcript.index);
+        skippingTranscript = true;
+      }
+    }
 
     // Bounds prevent malformed delimiters from causing unbounded rescans.
     line = line

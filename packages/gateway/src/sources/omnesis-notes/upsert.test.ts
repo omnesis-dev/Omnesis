@@ -304,3 +304,56 @@ describe("NotesDayUpserter", () => {
     expect(sched.size()).toBe(0);
   });
 });
+
+describe("self-authored vocabulary evidence", () => {
+  test("is opt-in and excludes agent captures and retained page content", () => {
+    const entries = [
+      makeEntry({
+        id: "user",
+        text: "Current user wording",
+        updatedAt: "2026-07-01T12:00:00.000Z",
+      }),
+      makeEntry({
+        id: "agent",
+        text: "Agent wording",
+        captureContext: captureContext("fixture", "Assistant"),
+      }),
+      makeEntry({
+        id: "page",
+        text: "Shared page wording",
+        page: { url: "https://example.com/article" },
+      }),
+    ];
+    expect(buildNotesDayDocument("2026-06-15", entries).metadata.selfAuthoredText).toBeUndefined();
+    expect(buildNotesDayDocument("2026-06-15", entries, true).metadata.selfAuthoredText).toEqual([
+      { text: "Current user wording", recordedAt: "2026-06-15T09:30:00.000Z", origin: "written" },
+    ]);
+  });
+});
+
+test("projects only independent written evidence from mixed voice and edited notes", () => {
+  const stamp = "2026-06-15T09:31:00.000Z";
+  const entries = [
+    makeEntry({ id: "typed", text: "Virelquorin" }),
+    makeEntry({ id: "voice", text: "ASRquorin", transcribedAt: stamp, updatedAt: stamp }),
+    makeEntry({
+      id: "edited",
+      text: "Editedquorin",
+      transcribedAt: stamp,
+      updatedAt: "2026-06-15T10:00:00.000Z",
+    }),
+  ];
+  const disabled = buildNotesDayDocument("2026-06-15", entries);
+  const enabled = buildNotesDayDocument("2026-06-15", entries, true);
+  expect(enabled.content).toBe(disabled.content);
+  expect(enabled.contentHash).toBe(disabled.contentHash);
+  expect(disabled.metadata.vocabularyText).toBeUndefined();
+  expect(enabled.metadata.vocabularyText).toBe("Virelquorin\n\nEditedquorin");
+  expect(enabled.metadata.selfAuthoredText?.map((segment) => segment.text)).toEqual([
+    "Virelquorin",
+    "Editedquorin",
+  ]);
+  const voiceOnly = buildNotesDayDocument("2026-06-15", [entries[1]], true);
+  expect(voiceOnly.metadata.vocabularyText).toBe("");
+  expect(voiceOnly.metadata.selfAuthoredText).toEqual([]);
+});

@@ -82,6 +82,7 @@ export function buildSourceHost(
   input: HostInputs & {
     sourceId: string;
     sourceType: string;
+    isTranscriptionVocabularyEnabled?: () => boolean;
     /**
      * Audio routing, decided per source by whether it is conversational. Not
      * on the account-scoped inputs: a provider context has no source to route
@@ -109,6 +110,7 @@ export function buildSourceHost(
   return {
     ...base,
     log: createLogger(`source:${input.sourceType}`),
+    isTranscriptionVocabularyEnabled: input.isTranscriptionVocabularyEnabled,
     transcribeAudio: input.transcribeAudio,
     includeAudioTypes: input.includeAudioTypes ?? false,
     analytics:

@@ -217,6 +217,7 @@ export interface AddSourcesRequest {
  * touching real data sources.
  */
 export interface SourceManagerOptions {
+  isTranscriptionVocabularyEnabled?: () => boolean;
   /** Override the default definitions */
   definitions?: SourceOrProviderDefinition[];
   /** Override the default source descriptors */
@@ -265,6 +266,7 @@ export class SourceManager {
   private _sourceToProvider: Map<SourceType, ProviderType>;
   private _configPath: string | undefined;
   private _extractAttachment?: AttachmentExtractFn;
+  private _isTranscriptionVocabularyEnabled?: () => boolean;
   private _transcribeAudio?: AudioTranscribeFn;
   private _configDir: string | undefined;
   private _ingestionContext: DocumentIngestionContext | undefined;
@@ -287,6 +289,7 @@ export class SourceManager {
     this._configPath = opts?.configPath;
     this._extractAttachment = opts?.extractAttachment;
     this._transcribeAudio = opts?.transcribeAudio;
+    this._isTranscriptionVocabularyEnabled = opts?.isTranscriptionVocabularyEnabled;
     this._configDir = opts?.configDir;
     this._ingestionContext = opts?.ingestionContext;
     this.reconciler = new SourceConfigReconciler({
@@ -1342,6 +1345,7 @@ export class SourceManager {
         engine: this.engine,
         extractAttachment: this._extractAttachment,
         transcribeAudio: this._transcribeAudio,
+        isTranscriptionVocabularyEnabled: this._isTranscriptionVocabularyEnabled,
         configDir: this.getConfigDir(),
         ingestionContext: this._ingestionContext,
         multiDeviceModes: this.sourceMultiDeviceModes,

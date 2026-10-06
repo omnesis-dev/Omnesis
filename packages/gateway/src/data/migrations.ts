@@ -4765,6 +4765,12 @@ export const MIGRATIONS: readonly Migration[] = [
       }
     },
   },
+  {
+    version: 192,
+    description:
+      "retain authored dates, corroborated spellings and contextual evidence for transcription vocabulary",
+    up: installTranscriptionVocabulary,
+  },
 ];
 
 /**
