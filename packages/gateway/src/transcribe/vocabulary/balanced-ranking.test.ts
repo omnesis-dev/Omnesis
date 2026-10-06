@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, expect, test } from "vitest";
+import { SourceId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { getTranscriptionVocabulary } from "./storage.js";
 import type { Db } from "../../data/types.js";
@@ -138,7 +139,7 @@ test("ordinary relationship anchors survive broad corpus frequency independently
         speaker: { personId: "fictional-speaker" },
         recordedAt: "2026-01-01",
         ...(includeConversation
-          ? { conversation: { sourceId: "messages", threadId: "fictional-thread" } }
+          ? { conversation: { sourceId: SourceId("messages"), threadId: "fictional-thread" } }
           : {}),
       };
       const baseline = getTranscriptionVocabulary(db, context, settings);
