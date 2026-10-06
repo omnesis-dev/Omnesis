@@ -638,6 +638,151 @@ describe("knowledge coordinator", () => {
     expect(view.items[0]!.node!.plainText).toBe("");
   });
 
+  it("keeps independent project repairs separate and coordinates their new claim versions in the root", async () => {
+    service.deps.getEntailmentVerifier = async () => ({
+      verify: async () => ({ label: "entailment", probability: 1 }),
+      dispose() {},
+    });
+    source("source-a", "a-v1", "The ceramics session is on Monday.");
+    source("source-b", "b-v1", "The astronomy session is on Tuesday.");
+    await wiki("project-a", "source:source-a", "The ceramics session is on Monday.");
+    await wiki("project-b", "source:source-b", "The astronomy session is on Tuesday.");
+    const rootRefs = ["wiki:project-a#claim:fact", "wiki:project-b#claim:fact"];
+    const originalVersions = Object.fromEntries(
+      rootRefs.map((ref) => [ref, service.reference(ref).revision]),
+    );
+    await service.save({
+      id: "overview",
+      kind: "root",
+      title: "Current projects",
+      markdown:
+        '<claim id="ceramics" refs="wiki:project-a#claim:fact">The ceramics session is on Monday.</claim>\n<claim id="astronomy" refs="wiki:project-b#claim:fact">The astronomy session is on Tuesday.</claim>',
+      expectedRevision: 0,
+      inputVersions: originalVersions,
+    });
+    // Only the two revised sources drive this maintenance cycle.
+    db.prepare("DELETE FROM knowledge_changes").run();
+    now++;
+    source("source-a", "a-v2", "The ceramics session is on Thursday.");
+    source("source-b", "b-v2", "The astronomy session is on Saturday.");
+    await engine.tick();
+    const a = batchFor("source-a"),
+      b = batchFor("source-b");
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a.id).not.toBe(b.id);
+    for (const [batch, own, other] of [
+      [a, "project-a", "project-b"],
+      [b, "project-b", "project-a"],
+    ] as const) {
+      const region = db
+        .prepare<[string], { node_id: string }>(
+          "SELECT node_id FROM knowledge_batch_regions WHERE batch_id=?",
+        )
+        .all(batch.id)
+        .map((row) => row.node_id);
+      expect(region).toContain(own);
+      expect(region).not.toContain(other);
+      expect(region).not.toContain("overview");
+    }
+    for (const [batch, project, sourceId, hash, text] of [
+      [a, "project-a", "source-a", "a-v2", "The ceramics session is on Thursday."],
+      [b, "project-b", "source-b", "b-v2", "The astronomy session is on Saturday."],
+    ] as const) {
+      const evidence = (await engine.next(batch.id, batch.runId)).items.find(
+        (item) => item.id === `source:${sourceId}`,
+      )!;
+      expect(evidence.source?.contentHash).toBe(hash);
+      await engine.completeSource(batch.id, batch.runId, evidence.id, evidence.inputFingerprint);
+      const repair = (await engine.next(batch.id, batch.runId)).items.find(
+        (item) => item.id === project,
+      )!;
+      expect(repair.pendingClaimIds).toEqual(["fact"]);
+      await engine.saveNode(
+        batch.id,
+        batch.runId,
+        project,
+        repair.inputFingerprint,
+        {
+          id: project,
+          kind: "wiki",
+          title: project,
+          markdown: `<claim id="fact" refs="source:${sourceId}">${text}</claim>`,
+          expectedRevision: repair.node!.revision,
+          inputVersions: { [`source:${sourceId}`]: hash },
+        },
+        repair.pendingClaimIds,
+      );
+      expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
+    }
+    await engine.tick();
+    expect(batchFor("overview")).toBeUndefined();
+    const scheduledRoot = db
+      .prepare<
+        [],
+        { due_at: number }
+      >("SELECT due_at FROM knowledge_work WHERE subject_id='overview' AND status='pending' AND reason='root'")
+      .get()!;
+    expect(scheduledRoot.due_at).toBe(now + settings.knowledge.routineDelayMs);
+    now = scheduledRoot.due_at;
+    await engine.tick();
+    const rootBatch = batchFor("overview");
+    expect(rootBatch).toBeDefined();
+    expect([a.id, b.id]).not.toContain(rootBatch.id);
+    const root = (await engine.next(rootBatch.id, rootBatch.runId)).items.find(
+      (item) => item.id === "overview",
+    )!;
+    expect(root.orientation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "project-a",
+          plainText: "The ceramics session is on Thursday.",
+        }),
+        expect.objectContaining({
+          id: "project-b",
+          plainText: "The astronomy session is on Saturday.",
+        }),
+      ]),
+    );
+    expect([...root.pendingClaimIds!].sort()).toEqual(["astronomy", "ceramics"]);
+    const versions = Object.fromEntries(
+      rootRefs.map((ref) => [ref, service.reference(ref).revision]),
+    );
+    for (const ref of rootRefs) {
+      // Claim meaning versions identify the page revision that changed that claim;
+      // intervening invalidation edits need not produce contiguous claim versions.
+      expect(versions[ref]).toBeGreaterThan(originalVersions[ref] as number);
+      expect(root.inputVersions[ref]).toBe(versions[ref]);
+    }
+    await engine.saveNode(
+      rootBatch.id,
+      rootBatch.runId,
+      "overview",
+      root.inputFingerprint,
+      {
+        id: "overview",
+        kind: "root",
+        title: "Current projects",
+        markdown:
+          '<claim id="ceramics" refs="wiki:project-a#claim:fact">The ceramics session is on Thursday.</claim>\n<claim id="astronomy" refs="wiki:project-b#claim:fact">The astronomy session is on Saturday.</claim>',
+        expectedRevision: root.node!.revision,
+        inputVersions: versions,
+      },
+      root.pendingClaimIds,
+    );
+    expect((await engine.next(rootBatch.id, rootBatch.runId)).done).toBe(true);
+    expect(getKnowledgeNode(db, "overview")?.validity).toBe("current");
+    expect(service.reference("wiki:overview#claim:ceramics").verified).toBe(true);
+    expect(service.reference("wiki:overview#claim:astronomy").verified).toBe(true);
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM knowledge_batches WHERE status IN ('pending','running')",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
+  });
+
   it("discovers new evidence for an existing page without requiring a pre-existing edge", async () => {
     source("original");
     await wiki("project", "source:original");
