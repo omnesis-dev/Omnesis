@@ -9,6 +9,11 @@ export function resolveVocabularySettings(config: OmnesisConfig): VocabularySett
   const settings = config.inference?.transcriptionVocabulary;
   return {
     enabled: settings?.enabled === true,
+    authoredWeight: settings?.authoredWeight ?? 4,
+    machineEvidenceWeight: settings?.machineEvidenceWeight ?? 0.15,
+    contextPriorDocuments: settings?.contextPriorDocuments ?? 10,
+    authoredRarityWeight: settings?.authoredRarityWeight ?? 0.5,
+    authoredContextLiftWeight: settings?.authoredContextLiftWeight ?? 0.25,
     maxTerms: settings?.maxTerms ?? 64,
     maxPromptTokens: settings?.maxPromptTokens ?? 96,
     batchSize: settings?.batchSize ?? 4,

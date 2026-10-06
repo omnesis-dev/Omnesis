@@ -25,7 +25,14 @@
 import { createHash } from "node:crypto";
 
 import { createLogger } from "@omnesis/core";
-import { ProviderId, SourceId, type DocumentInput, type PersonMention } from "@omnesis/types";
+import {
+  ProviderId,
+  SourceId,
+  boundedSelfAuthoredText,
+  truncateLexicalText,
+  type DocumentInput,
+  type PersonMention,
+} from "@omnesis/types";
 
 import { KeyedDebouncedRunner } from "../../keyed-debounced-runner.js";
 import { principalDisplayName, renderNotesDay } from "./render.js";
@@ -48,6 +55,8 @@ export interface NotesDayUpserterDeps {
   ingest: (docs: DocumentInput[]) => Promise<unknown>;
   /** Drops the day's projected document when its last entry is deleted. */
   deleteDayDoc: (day: string) => Promise<void>;
+  /** Live opt-in gate for source-owned authored vocabulary evidence. */
+  isTranscriptionVocabularyEnabled?: () => boolean;
   /** Override the debounce window. Tests pass 0 for synchronous flushes. */
   debounceMs?: number;
   /** Pluggable timer for unit tests. */
@@ -109,7 +118,9 @@ export class NotesDayUpserter {
       await this.deps.deleteDayDoc(day);
       return;
     }
-    await this.deps.ingest([buildNotesDayDocument(day, entries)]);
+    await this.deps.ingest([
+      buildNotesDayDocument(day, entries, this.deps.isTranscriptionVocabularyEnabled?.() === true),
+    ]);
   }
 }
 
@@ -140,7 +151,11 @@ function notesDayPeople(entries: readonly NoteEntry[]): PersonMention[] {
  * deterministic given the same entries. Callers pass them in capture
  * order (as `listNoteEntriesForDay` returns them).
  */
-export function buildNotesDayDocument(day: string, entries: readonly NoteEntry[]): DocumentInput {
+export function buildNotesDayDocument(
+  day: string,
+  entries: readonly NoteEntry[],
+  vocabularyEnabled = false,
+): DocumentInput {
   if (entries.length === 0) {
     throw new Error(`buildNotesDayDocument: no entries for day ${day}`);
   }
@@ -165,6 +180,33 @@ export function buildNotesDayDocument(day: string, entries: readonly NoteEntry[]
     sourceUpdatedAt,
     metadata: {
       documentType: "note",
+      ...(vocabularyEnabled
+        ? {
+            // A later manual edit is independent written evidence; the exact
+            // transcript revision must not reinforce its own recognition errors.
+            vocabularyText: truncateLexicalText(
+              entries
+                .filter((entry) => !entry.transcribedAt || entry.updatedAt !== entry.transcribedAt)
+                .map((entry) => entry.text)
+                .join("\n\n"),
+              65536,
+            ),
+            selfAuthoredText: boundedSelfAuthoredText(
+              entries
+                .filter(
+                  (entry) =>
+                    !entry.captureContext &&
+                    !entry.page &&
+                    (!entry.transcribedAt || entry.updatedAt !== entry.transcribedAt),
+                )
+                .map((entry) => ({
+                  text: entry.text,
+                  recordedAt: entry.capturedAt,
+                  origin: "written" as const,
+                })),
+            ),
+          }
+        : {}),
       people: notesDayPeople(entries),
       // The whole point of the source: the user explicitly addressed
       // these notes to the assistant — consumers (the briefs waker)

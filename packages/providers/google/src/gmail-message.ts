@@ -195,3 +195,38 @@ export function addsToMessage(imageText: string, messageText: string): boolean {
 
 /** How many words an inline image must add to its message to be kept. */
 const MIN_FRESH_WORDS = 4;
+
+/**
+ * A conservative author-only prefix for vocabulary evidence. Prefer the plain
+ * MIME alternative; HTML-only mail is omitted rather than guessing which DOM
+ * fragments are quotations. Stop at the first quote, forwarded header, reply
+ * introduction or signature. The regular document body is unaffected.
+ */
+export function selfAuthoredMailText(parts: { text?: string; html?: string }): string {
+  const source = parts.text ?? "";
+  let text = source.slice(0, 32_768);
+  if (/[\uD800-\uDBFF]$/u.test(text)) text = text.slice(0, -1);
+  const nextCodePoint = source.codePointAt(text.length);
+  if (
+    source.length > text.length &&
+    /[\p{L}\p{M}\p{N}‘’'.-]/u.test(
+      nextCodePoint === undefined ? "" : String.fromCodePoint(nextCodePoint),
+    )
+  )
+    text = text.replace(/[\p{L}\p{M}\p{N}‘’'.-]+$/u, "");
+  if (/<\/?[a-z][^>]*>/i.test(text)) return "";
+  const lines = text.split(/\r?\n/);
+  const kept: string[] = [];
+  for (const line of lines) {
+    if (
+      /^\s*>/.test(line) ||
+      /^\s*--\s*$/.test(line) ||
+      /^\s*-{2,}.*-{2,}\s*$/.test(line) ||
+      /^\s*(?:From|Sent|To|Subject|De|Envoyé|À|Objet):\s/i.test(line) ||
+      /^\s*(?:On|Le|Am|El|Il|Em) .{0,500}:\s*$/i.test(line)
+    )
+      break;
+    kept.push(line);
+  }
+  return kept.join("\n").trim();
+}

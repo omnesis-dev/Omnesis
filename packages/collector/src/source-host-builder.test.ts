@@ -45,6 +45,32 @@ describe("the account state directory", () => {
 });
 
 describe("what a source is lent", () => {
+  it("exposes a live vocabulary gate without giving a source the global config", () => {
+    const configDir = tempConfigDir();
+    try {
+      let enabled = false;
+      const host = buildSourceHost({
+        ...inputs(configDir),
+        sourceId: "acme-mail:person@example.com",
+        sourceType: "acme-mail",
+        declaresAnalytics: false,
+        isTranscriptionVocabularyEnabled: () => enabled,
+      });
+      expect(host.isTranscriptionVocabularyEnabled?.()).toBe(false);
+      enabled = true;
+      expect(host.isTranscriptionVocabularyEnabled?.()).toBe(true);
+      const legacy = buildSourceHost({
+        ...inputs(configDir),
+        sourceId: "acme-mail:person@example.com",
+        sourceType: "acme-mail",
+        declaresAnalytics: false,
+      });
+      expect(legacy.isTranscriptionVocabularyEnabled?.() ?? false).toBe(false);
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates its state directory before handing it over, so a source can write immediately", () => {
     const configDir = tempConfigDir();
     try {

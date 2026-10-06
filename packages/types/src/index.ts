@@ -43,12 +43,15 @@ export type {
   DocumentIngestionContext,
   Document,
   DocumentMetadata,
+  SelfAuthoredTextSegment,
   NoteCaptureContext,
   DocumentInput,
   ExtractedDate,
 } from "./document.js";
 
 export {
+  boundedSelfAuthoredText,
+  truncateLexicalText,
   KNOWN_DOCUMENT_TYPES,
   PERSON_ROLES,
   PERSON_IDENTIFIER_KINDS,

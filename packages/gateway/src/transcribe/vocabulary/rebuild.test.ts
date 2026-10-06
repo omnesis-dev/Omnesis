@@ -8,7 +8,9 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDatabase } from "../../db.js";
 import {
   advanceTranscriptionVocabularyRebuild,
+  createTranscriptionVocabularyState,
   transcriptionVocabularyGeneration,
+  VOCABULARY_EVIDENCE_VERSION,
 } from "./rebuild.js";
 import {
   applyTranscriptionVocabularyBatch,
@@ -166,10 +168,10 @@ describe("versioned vocabulary rebuild", () => {
   test("aggregate and contribution deletion are bounded even when foreground work waits", () => {
     const db = database();
     const add = db.prepare(
-      "INSERT INTO transcription_vocabulary_terms VALUES ('global','',?, ?,2,3,3,'2026-01-01')",
+      "INSERT INTO transcription_vocabulary_terms(scope_kind,scope_key,term,text,document_count,benefit,base_score,last_seen) VALUES ('global','',?, ?,2,3,3,'2026-01-01')",
     );
     const ledger = db.prepare(
-      "INSERT INTO transcription_vocabulary_document_terms VALUES (?,'global','',?)",
+      "INSERT INTO transcription_vocabulary_document_terms(document_id,scope_kind,scope_key,term) VALUES (?,'global','',?)",
     );
     for (let i = 0; i < 300; i++) {
       add.run(`term${i}`, `Term${i}`);
@@ -189,5 +191,191 @@ describe("versioned vocabulary rebuild", () => {
     expect(
       db.prepare("SELECT count(*) AS n FROM transcription_vocabulary_document_terms").get(),
     ).toEqual({ n: 0 });
+  });
+});
+
+function refresh(db: Db): void {
+  db.exec("UPDATE transcription_vocabulary_refresh_state SET version=0,cursor='',done=0");
+}
+
+function refreshState(db: Db): unknown {
+  return db
+    .prepare("SELECT version,cursor,done FROM transcription_vocabulary_refresh_state WHERE id=1")
+    .get();
+}
+
+describe("non-destructive vocabulary evidence refresh", () => {
+  test("enrolls one page while old hints and contribution counts remain available", () => {
+    const db = database();
+    for (const id of ["a", "b"]) {
+      insert(db, id, false);
+      applyTranscriptionVocabularyBatch(db, [batch(id, 1)]);
+    }
+    const context = { purpose: "dictation" as const, recordedAt: "2026-01-15T12:00:00.000Z" };
+    const entries = getTranscriptionVocabulary(db, context, settings).entries;
+    expect(entries).toHaveLength(1);
+    refresh(db);
+    expect(advanceTranscriptionVocabularyRebuild(db, settings)).toEqual({
+      ready: true,
+      worked: true,
+    });
+    expect(transcriptionVocabularyGeneration(db)).toBe(1);
+    expect(getTranscriptionVocabulary(db, context, settings).entries).toEqual(entries);
+    expect(db.prepare("SELECT document_count FROM transcription_vocabulary_terms").get()).toEqual({
+      document_count: 2,
+    });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM transcription_vocabulary_document_terms").get(),
+    ).toEqual({ n: 2 });
+    expect(fetchTranscriptionVocabularyBatch(db, settings).map((doc) => doc.revision)).toEqual([
+      1, 1,
+    ]);
+    expect(refreshState(db)).toEqual({
+      version: VOCABULARY_EVIDENCE_VERSION,
+      cursor: "b",
+      done: 1,
+    });
+    expect(advanceTranscriptionVocabularyRebuild(db, settings)).toEqual({
+      ready: true,
+      worked: false,
+    });
+  });
+
+  test("does not enroll or query while disabled, and fences stale extraction", () => {
+    const db = database();
+    insert(db, "a", false);
+    const stale = fetchTranscriptionVocabularyBatch(db, settings)[0];
+    applyTranscriptionVocabularyBatch(db, [batch("a", 1)]);
+    refresh(db);
+    const spy = vi.spyOn(db, "prepare");
+    expect(advanceTranscriptionVocabularyRebuild(db, { ...settings, enabled: false })).toEqual({
+      ready: false,
+      worked: false,
+    });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+    advanceTranscriptionVocabularyRebuild(db, settings);
+    expect(
+      applyTranscriptionVocabularyBatch(db, [{ ...batch("a", 1), revision: stale.revision }]),
+    ).toMatchObject({ applied: 0, skipped: 1 });
+    expect(fetchTranscriptionVocabularyBatch(db, settings)[0].revision).toBe(1);
+  });
+
+  test("checkpoints bounded pages and leaves already pending documents' revisions intact", () => {
+    const db = database();
+    for (let i = 0; i < 300; i++) insert(db, `d${String(i).padStart(3, "0")}`);
+    insert(db, "a-pending", false);
+    refresh(db);
+    advanceTranscriptionVocabularyRebuild(db, settings, { requested: () => true });
+    expect(refreshState(db)).toEqual({
+      version: VOCABULARY_EVIDENCE_VERSION,
+      cursor: "d126",
+      done: 0,
+    });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM documents WHERE vocabulary_processed_at IS NULL").get(),
+    ).toEqual({ n: 128 });
+    expect(
+      db
+        .prepare("SELECT vocabulary_revision AS revision FROM documents WHERE id='a-pending'")
+        .get(),
+    ).toEqual({ revision: 0 });
+    insert(db, "a-new", false);
+    advanceTranscriptionVocabularyRebuild(db, settings);
+    expect(refreshState(db)).toEqual({
+      version: VOCABULARY_EVIDENCE_VERSION,
+      cursor: "d254",
+      done: 0,
+    });
+    advanceTranscriptionVocabularyRebuild(db, settings);
+    expect(refreshState(db)).toEqual({
+      version: VOCABULARY_EVIDENCE_VERSION,
+      cursor: "d299",
+      done: 1,
+    });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM documents WHERE vocabulary_processed_at IS NULL").get(),
+    ).toEqual({ n: 302 });
+  });
+
+  test("persisted refresh survives restart without enrolling the completed page twice", () => {
+    const dir = mkdtempSync(join(tmpdir(), "vocabulary-refresh-"));
+    let db = createDatabase(join(dir, "fixture.db"));
+    try {
+      for (let i = 0; i < 300; i++) insert(db, `d${String(i).padStart(3, "0")}`);
+      refresh(db);
+      advanceTranscriptionVocabularyRebuild(db, settings);
+      db.close();
+      db = createDatabase(join(dir, "fixture.db"));
+      expect(refreshState(db)).toEqual({
+        version: VOCABULARY_EVIDENCE_VERSION,
+        cursor: "d127",
+        done: 0,
+      });
+      advanceTranscriptionVocabularyRebuild(db, settings);
+      expect(refreshState(db)).toEqual({
+        version: VOCABULARY_EVIDENCE_VERSION,
+        cursor: "d255",
+        done: 0,
+      });
+      expect(
+        db.prepare("SELECT vocabulary_revision AS revision FROM documents WHERE id='d000'").get(),
+      ).toEqual({ revision: 1 });
+      expect(transcriptionVocabularyGeneration(db)).toBe(1);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("upgrade installs only refresh state and preserves a newer checkpoint", () => {
+    const db = database();
+    insert(db, "a");
+    db.exec("DROP TABLE transcription_vocabulary_refresh_state");
+    createTranscriptionVocabularyState(db);
+    expect(refreshState(db)).toEqual({ version: VOCABULARY_EVIDENCE_VERSION, cursor: "", done: 0 });
+    expect(db.prepare("SELECT vocabulary_processed_at FROM documents WHERE id='a'").get()).toEqual({
+      vocabulary_processed_at: "2026-01-01",
+    });
+    db.prepare(
+      "UPDATE transcription_vocabulary_refresh_state SET version=?,cursor='future',done=0",
+    ).run(VOCABULARY_EVIDENCE_VERSION + 1);
+    expect(advanceTranscriptionVocabularyRebuild(db, settings)).toEqual({
+      ready: true,
+      worked: false,
+    });
+    expect(refreshState(db)).toEqual({
+      version: VOCABULARY_EVIDENCE_VERSION + 1,
+      cursor: "future",
+      done: 0,
+    });
+  });
+
+  test("destructive reset deletes spelling evidence in bounded pages and needs no second refresh", () => {
+    const db = database();
+    const add = db.prepare(
+      "INSERT INTO transcription_vocabulary_spellings VALUES ('global','',?,?,2,2)",
+    );
+    for (let i = 0; i < 300; i++) add.run(`term${i}`, `Term${i}`);
+    insert(db, "a");
+    obsolete(db);
+    advanceTranscriptionVocabularyRebuild(db, settings, { requested: () => true });
+    advanceTranscriptionVocabularyRebuild(db, settings, { requested: () => true });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM transcription_vocabulary_spellings").get(),
+    ).toEqual({ n: 172 });
+    expect(transcriptionVocabularyGeneration(db)).toBeNull();
+    drain(db);
+    expect(
+      db.prepare("SELECT count(*) AS n FROM transcription_vocabulary_spellings").get(),
+    ).toEqual({ n: 0 });
+    expect(refreshState(db)).toEqual({ version: VOCABULARY_EVIDENCE_VERSION, cursor: "", done: 1 });
+    expect(advanceTranscriptionVocabularyRebuild(db, settings)).toEqual({
+      ready: true,
+      worked: false,
+    });
+    expect(
+      db.prepare("SELECT vocabulary_revision AS revision FROM documents WHERE id='a'").get(),
+    ).toEqual({ revision: 1 });
   });
 });

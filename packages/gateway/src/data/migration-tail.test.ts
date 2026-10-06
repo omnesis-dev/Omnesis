@@ -59,7 +59,7 @@ const TAIL_VERSIONS = Array.from(
  */
 const WOUND_BACK = [
   172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
-  191,
+  191, 192,
 ];
 
 let dir: string;
@@ -74,7 +74,37 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+/** Remove additive evidence shape so migration 192 must install it again. */
+function undoVocabularyEvidence(db: Db): void {
+  for (const table of [
+    "transcription_vocabulary_refresh_state",
+    "transcription_vocabulary_profiles",
+    "transcription_vocabulary_document_profiles",
+    "transcription_vocabulary_spellings",
+  ])
+    db.exec(`DROP TABLE IF EXISTS ${table}`);
+  db.exec("DROP INDEX IF EXISTS idx_transcription_vocabulary_ordinary");
+  for (const [table, columns] of [
+    [
+      "transcription_vocabulary_terms",
+      ["recent_mass", "evidence_count", "ordinary_document_count", "spelling_count"],
+    ],
+    [
+      "transcription_vocabulary_document_terms",
+      ["observed_text", "observed_at", "observed_automated"],
+    ],
+  ] as const) {
+    const existing = db
+      .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+      .all();
+    for (const column of columns)
+      if (existing.some((row) => row.name === column))
+        db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  }
+}
+
 function undoVocabulary(db: Db): void {
+  undoVocabularyEvidence(db);
   db.exec("DROP TABLE IF EXISTS transcription_vocabulary_state");
   db.exec("DROP INDEX IF EXISTS idx_documents_vocabulary_pending");
   db.exec("DROP TABLE IF EXISTS transcription_vocabulary_document_terms");
@@ -273,7 +303,62 @@ function alias(db: Db, id: string, personId: string, type: string, value: string
 }
 
 describe("vocabulary migration after the released schema", () => {
-  test("upgrades schema 188 without vocabulary tables to 191", () => {
+  test("adds evidence to schema 191 while preserving retained hints and replay keys", () => {
+    const old = upgrade();
+    try {
+      undoVocabularyEvidence(old);
+      old.exec("DELETE FROM schema_migrations WHERE version > 191; PRAGMA user_version = 191");
+      old.exec(`INSERT INTO transcription_vocabulary_terms VALUES
+        ('global','','quorvex','Quorvex',3,2,2,'2026-01-01')`);
+      old.exec(`INSERT INTO transcription_vocabulary_document_terms VALUES
+        ('fictional-document','global','','quorvex')`);
+    } finally {
+      old.close();
+    }
+    const db = upgrade();
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(
+        db
+          .prepare(
+            "SELECT text,document_count,evidence_count,ordinary_document_count,spelling_count,recent_mass FROM transcription_vocabulary_terms WHERE term='quorvex'",
+          )
+          .get(),
+      ).toEqual({
+        text: "Quorvex",
+        document_count: 3,
+        evidence_count: 0,
+        ordinary_document_count: 0,
+        spelling_count: 0,
+        recent_mass: 0,
+      });
+      expect(
+        db
+          .prepare(
+            "SELECT document_id,observed_text,observed_at,observed_automated FROM transcription_vocabulary_document_terms",
+          )
+          .get(),
+      ).toEqual({
+        document_id: "fictional-document",
+        observed_text: null,
+        observed_at: null,
+        observed_automated: null,
+      });
+      expect(
+        db.prepare("SELECT version,cursor,done FROM transcription_vocabulary_refresh_state").get(),
+      ).toEqual({ version: 1, cursor: "", done: 0 });
+      for (const table of [
+        "transcription_vocabulary_profiles",
+        "transcription_vocabulary_document_profiles",
+        "transcription_vocabulary_spellings",
+      ])
+        expect(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("upgrades schema 188 without vocabulary tables to 192", () => {
     const old = upgrade();
     try {
       undoVocabulary(old);
@@ -284,7 +369,7 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 191 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
       expect(db.prepare("SELECT version FROM schema_migrations WHERE version = 189").get()).toEqual(
         { version: 189 },
       );
@@ -307,6 +392,7 @@ describe("vocabulary migration after the released schema", () => {
   test("upgrades released vocabulary schema without clearing old hints at boot", () => {
     const old = upgrade();
     try {
+      undoVocabularyEvidence(old);
       old.exec("DROP TABLE transcription_vocabulary_state");
       old.exec("DELETE FROM schema_migrations WHERE version > 189");
       old.exec("PRAGMA user_version = 189");
@@ -317,7 +403,7 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 191 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
       expect(
         db
           .prepare("SELECT algorithm_version,generation,phase FROM transcription_vocabulary_state")
@@ -334,6 +420,7 @@ describe("vocabulary migration after the released schema", () => {
   test("preserves materialized vocabulary when replaying over an existing schema 187 layout", () => {
     const old = upgrade();
     try {
+      undoVocabularyEvidence(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 187");
       old.exec(
         "UPDATE schema_migrations SET description = 'materialize contextual transcription vocabulary' WHERE version = 187",
@@ -349,7 +436,7 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 191 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
       expect(
         db
           .prepare(

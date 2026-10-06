@@ -97,6 +97,7 @@ interface IMessageAttachmentEntry {
 }
 
 export interface AppleIMessageSourceOptions {
+  isTranscriptionVocabularyEnabled?: () => boolean;
   sourceId: string;
   providerId: string;
   dataCutoff?: string;
@@ -173,6 +174,7 @@ export class AppleIMessageSource {
   /** Optional ISO 8601 cutoff — messages sent before this date are excluded. */
   readonly dataCutoff?: string;
 
+  private isTranscriptionVocabularyEnabled?: () => boolean;
   private attachmentConfig: AttachmentExtractionConfig;
   private extractAttachment?: AttachmentExtractFn;
   private transcribeAudio?: AudioTranscribeFn;
@@ -194,6 +196,7 @@ export class AppleIMessageSource {
     this.attachmentConfig = opts.attachmentConfig ?? resolveAttachmentConfig();
     this.extractAttachment = opts.extractAttachment;
     this.transcribeAudio = opts.transcribeAudio;
+    this.isTranscriptionVocabularyEnabled = opts.isTranscriptionVocabularyEnabled;
     this.configDir = opts.configDir;
   }
 
@@ -675,7 +678,14 @@ export class AppleIMessageSource {
     // in the conversation document and is searchable.
     await this.transcribeDayAudio(dayParsed, info);
 
-    const doc = normalizeDayChat(date, dayParsed, info, this.providerId, this.id);
+    const doc = normalizeDayChat(
+      date,
+      dayParsed,
+      info,
+      this.providerId,
+      this.id,
+      this.isTranscriptionVocabularyEnabled?.() === true,
+    );
     const attachmentDocs = await this.extractAttachments(doc, dayParsed, attMap);
     return [doc, ...attachmentDocs];
   }

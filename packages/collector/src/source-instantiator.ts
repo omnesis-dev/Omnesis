@@ -66,6 +66,7 @@ const log = createLogger("collector:sources");
  * pure-ish — no implicit `this` lookups, the deps are spelled out.
  */
 export interface SourceInstantiatorContext {
+  isTranscriptionVocabularyEnabled?: () => boolean;
   definitions: SourceOrProviderDefinition[];
   descriptors: SourceDescriptor[];
   sourceToProvider: Map<SourceType, ProviderType>;
@@ -628,6 +629,7 @@ async function setupSourceDefinition(
         extractAttachment: ctx.extractAttachment,
         transcribeAudio: audio.transcribeAudio,
         includeAudioTypes: audio.includeAudioTypes,
+        isTranscriptionVocabularyEnabled: ctx.isTranscriptionVocabularyEnabled,
         sourceId: String(sourceId),
         sourceType: def.id,
         gateway: ctx.gateway,
@@ -959,6 +961,7 @@ async function setupProviderDefinition(
                   extractAttachment: ctx.extractAttachment,
                   transcribeAudio: audio.transcribeAudio,
                   includeAudioTypes: audio.includeAudioTypes,
+                  isTranscriptionVocabularyEnabled: ctx.isTranscriptionVocabularyEnabled,
                   sourceId: String(sourceId),
                   sourceType: sourceDef.id,
                   gateway: ctx.gateway,

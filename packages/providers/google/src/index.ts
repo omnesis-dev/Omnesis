@@ -191,6 +191,7 @@ export default defineProvider<GoogleContext>({
         const source = new GmailSource(ctx.auth, accountId, dataCutoff, {
           attachmentConfig,
           extractAttachment: host?.extractAttachment,
+          isTranscriptionVocabularyEnabled: host?.isTranscriptionVocabularyEnabled,
         });
         return { sync: (cursor, opts) => source.sync(cursor, opts) };
       },

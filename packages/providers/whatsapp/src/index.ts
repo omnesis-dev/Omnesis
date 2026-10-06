@@ -187,6 +187,7 @@ export default defineSource<WhatsAppSyncCursor>({
       attachmentConfig,
       extractAttachment: host?.extractAttachment,
       transcribeAudio: host?.transcribeAudio,
+      isTranscriptionVocabularyEnabled: host?.isTranscriptionVocabularyEnabled,
       downloadMedia: provider.getMediaDownloader(),
       onConnectionError: (handler) => provider.onConnectionError(handler),
       offConnectionError: (handler) => provider.offConnectionError(handler),

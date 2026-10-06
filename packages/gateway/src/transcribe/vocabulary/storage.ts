@@ -2,8 +2,17 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { normalizeEmail } from "@omnesis/core";
+import { boundedSelfAuthoredText, type SelfAuthoredTextSegment } from "@omnesis/types";
 import { createVoiceNoteTables } from "../../voice-notes/storage.js";
 import { findPersonByAlias } from "../../data/repositories/PersonRepository.js";
+import {
+  contextualVocabularyLift,
+  authoredDecay,
+  vocabularyEvidenceConfidence,
+  vocabularyDiscrimination,
+} from "./ranking.js";
+import { ordinaryEvidenceQuality } from "./evidence-quality.js";
+import { isCommonVocabularyWord, normalizeVocabularyTerm } from "./common-words.js";
 import { contextualVocabularyNames } from "./identity.js";
 import {
   createTranscriptionVocabularyState,
@@ -14,8 +23,6 @@ import {
   MIN_VOCABULARY_DOCUMENTS,
   type VocabularySettings,
   type VocabularyDocument,
-  type ExtractedVocabularyDocument,
-  type VocabularyApplyResult,
   type VocabularyScope,
 } from "./types.js";
 import type {
@@ -24,6 +31,8 @@ import type {
   TranscriptionVocabulary,
 } from "@omnesis/core";
 import type { Db } from "../../data/types.js";
+
+export { applyTranscriptionVocabularyBatch } from "./apply.js";
 
 export function createTranscriptionVocabularyTables(db: Db): void {
   createTranscriptionVocabularyState(db);
@@ -37,6 +46,10 @@ export function createTranscriptionVocabularyTables(db: Db): void {
       benefit REAL NOT NULL,
       base_score REAL NOT NULL,
       last_seen TEXT NOT NULL,
+      recent_mass REAL NOT NULL DEFAULT 0,
+      evidence_count INTEGER NOT NULL DEFAULT 0,
+      ordinary_document_count INTEGER NOT NULL DEFAULT 0,
+      spelling_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (scope_kind, scope_key, term)
     );
     CREATE INDEX IF NOT EXISTS idx_transcription_vocabulary_rank
@@ -51,9 +64,54 @@ export function createTranscriptionVocabularyTables(db: Db): void {
       scope_kind TEXT NOT NULL,
       scope_key TEXT NOT NULL,
       term TEXT NOT NULL,
+      observed_text TEXT,
+      observed_at TEXT,
+      observed_automated INTEGER,
       PRIMARY KEY (document_id, scope_kind, scope_key, term)
     ) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS transcription_vocabulary_profiles (
+      scope_kind TEXT NOT NULL, scope_key TEXT NOT NULL, document_count INTEGER NOT NULL,
+      PRIMARY KEY(scope_kind,scope_key)
+    ) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS transcription_vocabulary_document_profiles (
+      document_id TEXT NOT NULL, scope_kind TEXT NOT NULL, scope_key TEXT NOT NULL,
+      PRIMARY KEY(document_id,scope_kind,scope_key)
+    ) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS transcription_vocabulary_spellings (
+      scope_kind TEXT NOT NULL, scope_key TEXT NOT NULL, term TEXT NOT NULL,
+      text TEXT NOT NULL, document_count INTEGER NOT NULL, benefit REAL NOT NULL,
+      PRIMARY KEY(scope_kind,scope_key,term,text)
+    ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS idx_transcription_vocabulary_spelling_rank
+      ON transcription_vocabulary_spellings(scope_kind,scope_key,term,document_count DESC,text);
   `);
+  const columns = db
+    .prepare("SELECT name FROM pragma_table_info('transcription_vocabulary_document_terms')")
+    .all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "observed_text"))
+    db.exec("ALTER TABLE transcription_vocabulary_document_terms ADD COLUMN observed_text TEXT");
+  if (!columns.some((column) => column.name === "observed_at"))
+    db.exec("ALTER TABLE transcription_vocabulary_document_terms ADD COLUMN observed_at TEXT");
+  if (!columns.some((column) => column.name === "observed_automated"))
+    db.exec(
+      "ALTER TABLE transcription_vocabulary_document_terms ADD COLUMN observed_automated INTEGER",
+    );
+  const termColumns = db
+    .prepare("SELECT name FROM pragma_table_info('transcription_vocabulary_terms')")
+    .all() as Array<{ name: string }>;
+  if (!termColumns.some((column) => column.name === "recent_mass"))
+    db.exec(
+      "ALTER TABLE transcription_vocabulary_terms ADD COLUMN recent_mass REAL NOT NULL DEFAULT 0",
+    );
+  for (const column of ["evidence_count", "ordinary_document_count", "spelling_count"])
+    if (!termColumns.some((existing) => existing.name === column))
+      db.exec(
+        `ALTER TABLE transcription_vocabulary_terms ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`,
+      );
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_transcription_vocabulary_ordinary
+    ON transcription_vocabulary_terms(scope_kind,scope_key,ordinary_document_count DESC,term)
+    WHERE ordinary_document_count>=2`);
 }
 
 export function installTranscriptionVocabulary(db: Db): void {
@@ -82,23 +140,35 @@ export function fetchTranscriptionVocabularyBatch(
   if (generation === null) return [];
   const rows = db
     .prepare(
-      `SELECT id, content_hash, updated_at, vocabulary_revision, substr(title,1,256) AS title,
+      `SELECT id, content_hash, updated_at, vocabulary_revision, substr(title,1,258) AS title,
     substr(content,1,?) AS content, source_id, source_created_at,
+    CASE WHEN json_type(metadata,'$.extra.transcribed')='true' THEN ''
+      WHEN json_type(metadata,'$.vocabularyText')='text'
+      THEN substr(json_extract(metadata,'$.vocabularyText'),1,65538)
+      ELSE NULL END AS vocabulary_text,
+    substr(json_extract(metadata,'$.selfAuthoredText'),1,131072) AS self_authored_text,
+    (json_type(metadata,'$.bulkMail')='true' OR json_type(metadata,'$.automatedSender')='true') AS automated_evidence,
     substr(COALESCE(json_extract(metadata,'$.extra.conversationId'),json_extract(metadata,'$.extra.threadId')),1,1024) AS thread_id
     FROM documents INDEXED BY idx_documents_vocabulary_pending
     WHERE vocabulary_processed_at IS NULL AND people_resolved_at IS NOT NULL
     ORDER BY id LIMIT ?`,
     )
-    .all(Math.min(settings.maxDocumentChars, 65536), Math.min(settings.batchSize, 16)) as Array<{
+    .all(
+      Math.min(settings.maxDocumentChars, 65536) + 2,
+      Math.min(settings.batchSize, 16),
+    ) as Array<{
     id: string;
     content_hash: string;
     updated_at: string;
     vocabulary_revision: number;
     title: string;
     content: string;
+    vocabulary_text: string | null;
     source_id: string;
     source_created_at: string;
     thread_id: string | null;
+    self_authored_text: string | null;
+    automated_evidence: number | null;
   }>;
   const people =
     db.prepare(`SELECT DISTINCT canonical.id AS personId, substr(canonical.canonical_name,1,80) AS name,
@@ -117,111 +187,40 @@ export function fetchTranscriptionVocabularyBatch(
     generation,
     title: row.title,
     content: row.content,
+    ...(row.vocabulary_text !== null ? { vocabularyText: row.vocabulary_text } : {}),
     sourceId: row.source_id,
     threadId: row.thread_id,
     recordedAt: row.source_created_at,
+    automatedEvidence: row.automated_evidence === 1,
+    selfAuthoredText: parseAuthoredEvidence(row.self_authored_text),
     people: (
       people.all(row.id) as Array<{ personId: string; name: string; isSelf: number; role: string }>
     ).map((p) => ({ ...p, isSelf: Boolean(p.isSelf) })),
   }));
 }
 
-/** Fixed 32-row write transactions; resume offsets preserve forward progress. */
-export function applyTranscriptionVocabularyBatch(
-  db: Db,
-  input: ExtractedVocabularyDocument[],
-  token?: { requested(): boolean },
-): VocabularyApplyResult {
-  let applied = 0;
-  let skipped = 0;
-  const current = db.prepare(
-    `SELECT 1 FROM documents WHERE id = ? AND content_hash = ? AND updated_at = ? AND vocabulary_revision = ? AND vocabulary_processed_at IS NULL`,
-  );
-  const seen = db.prepare(
-    `INSERT OR IGNORE INTO transcription_vocabulary_document_terms(document_id,scope_kind,scope_key,term) VALUES (?,?,?,?)`,
-  );
-  const existing = db.prepare(
-    `SELECT text, document_count, benefit, last_seen FROM transcription_vocabulary_terms WHERE scope_kind = ? AND scope_key = ? AND term = ?`,
-  );
-  const upsert =
-    db.prepare(`INSERT INTO transcription_vocabulary_terms(scope_kind,scope_key,term,text,document_count,benefit,base_score,last_seen)
-    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(scope_kind,scope_key,term) DO UPDATE SET
-    text=excluded.text, document_count=excluded.document_count, benefit=excluded.benefit,
-    base_score=excluded.base_score, last_seen=excluded.last_seen`);
-  const stamp = db.prepare(
-    `UPDATE documents SET vocabulary_processed_at = ? WHERE id = ? AND content_hash = ? AND updated_at = ? AND vocabulary_revision = ?`,
-  );
-  for (let index = 0; index < input.length; index++) {
-    const doc = input[index];
-    if (doc.generation !== transcriptionVocabularyGeneration(db)) {
-      skipped++;
-      continue;
-    }
-    const scopes = doc.scopes.slice(0, 18);
-    const terms = doc.terms.slice(0, 128);
-    const total = scopes.length * terms.length;
-    let offset = doc.applyOffset ?? 0;
-    if (!current.get(doc.id, doc.contentHash, doc.updatedAt, doc.revision)) {
-      skipped++;
-      continue;
-    }
-    do {
-      const end = Math.min(total, offset + 32);
-      let valid = true;
-      db.transaction(() => {
-        if (!current.get(doc.id, doc.contentHash, doc.updatedAt, doc.revision)) {
-          valid = false;
-          return;
-        }
-        for (let row = offset; row < end; row++) {
-          const scope = scopes[Math.floor(row / terms.length)];
-          const term = terms[row % terms.length];
-          const isNew = seen.run(doc.id, scope.kind, scope.key, term.term).changes > 0;
-          const prior = existing.get(scope.kind, scope.key, term.term) as
-            | { text: string; document_count: number; benefit: number; last_seen: string }
-            | undefined;
-          const count = (prior?.document_count ?? 0) + (isNew ? 1 : 0);
-          const benefit = Math.max(prior?.benefit ?? 0, term.benefit);
-          const lastSeen =
-            prior && prior.last_seen > doc.recordedAt ? prior.last_seen : doc.recordedAt;
-          if (!isNew && prior && prior.benefit === benefit && prior.last_seen === lastSeen)
-            continue;
-          upsert.run(
-            scope.kind,
-            scope.key,
-            term.term,
-            prior && prior.benefit >= term.benefit ? prior.text : term.text,
-            count,
-            benefit,
-            // Keep uncorroborated candidates out of the indexed top stream;
-            // filtering only after LIMIT would let singletons hide useful hints.
-            count >= MIN_VOCABULARY_DOCUMENTS ? benefit * Math.log1p(count) : 0,
-            lastSeen,
-          );
-        }
-        if (end === total)
-          stamp.run(new Date().toISOString(), doc.id, doc.contentHash, doc.updatedAt, doc.revision);
-      })();
-      if (!valid) {
-        skipped++;
-        break;
-      }
-      offset = end;
-      if (offset === total) {
-        applied++;
-        break;
-      }
-      if (token?.requested())
-        return {
-          applied,
-          skipped,
-          remaining: [{ ...doc, applyOffset: offset }, ...input.slice(index + 1)],
-        };
-    } while (offset < total);
-    if (token?.requested() && index + 1 < input.length)
-      return { applied, skipped, remaining: input.slice(index + 1) };
+/** Metadata is untrusted; reject truncated or malformed evidence before extraction. */
+function parseAuthoredEvidence(payload: string | null): SelfAuthoredTextSegment[] {
+  if (!payload) return [];
+  try {
+    const value: unknown = JSON.parse(payload);
+    if (!Array.isArray(value)) return [];
+    return boundedSelfAuthoredText(
+      value
+        .filter((segment): segment is SelfAuthoredTextSegment =>
+          Boolean(
+            segment &&
+            segment.origin === "written" &&
+            typeof segment.text === "string" &&
+            typeof segment.recordedAt === "string" &&
+            Number.isFinite(Date.parse(segment.recordedAt)),
+          ),
+        )
+        .slice(0, 128),
+    );
+  } catch {
+    return [];
   }
-  return { applied, skipped, remaining: [] };
 }
 
 function resolvePerson(db: Db, person: TranscriptionPerson, includeSelf = false): string | null {
@@ -260,6 +259,19 @@ export function getTranscriptionVocabulary(
   const profiles: Array<VocabularyScope & { weight: number }> = [
     { kind: "global", key: "", weight: 1 },
   ];
+  const speakerCanonical = context.speaker ? resolvePerson(db, context.speaker, true) : null;
+  const canonicalSelf =
+    speakerCanonical &&
+    (
+      db.prepare("SELECT is_self FROM people WHERE id=?").get(speakerCanonical) as
+        | { is_self: number }
+        | undefined
+    )?.is_self;
+  if (
+    (settings.authoredWeight ?? 4) > 0 &&
+    (context.purpose !== "source-audio" || context.speaker?.isSelf || canonicalSelf)
+  )
+    profiles.push({ kind: "self", key: "", weight: settings.authoredWeight ?? 4 });
   if (context.conversation)
     profiles.push({
       kind: "conversation",
@@ -293,27 +305,44 @@ export function getTranscriptionVocabulary(
         weight: id === speakerId ? 3 : participantWeight,
       });
   }
-  const top = db.prepare(`SELECT term,text,document_count,benefit,base_score,last_seen
+  const top =
+    db.prepare(`SELECT term,text,document_count,benefit,base_score,last_seen,recent_mass,evidence_count,ordinary_document_count,spelling_count
     FROM transcription_vocabulary_terms INDEXED BY idx_transcription_vocabulary_rank
     WHERE scope_kind=? AND scope_key=? ORDER BY base_score DESC,term LIMIT ?`);
-  const recent = db.prepare(`SELECT term,text,document_count,benefit,base_score,last_seen
+  const recent =
+    db.prepare(`SELECT term,text,document_count,benefit,base_score,last_seen,recent_mass,evidence_count,ordinary_document_count,spelling_count
     FROM transcription_vocabulary_terms INDEXED BY idx_transcription_vocabulary_recent
     WHERE scope_kind=? AND scope_key=? ORDER BY last_seen DESC,term LIMIT ?`);
+  const ordinary =
+    db.prepare(`SELECT term,text,document_count,benefit,base_score,last_seen,recent_mass,evidence_count,ordinary_document_count,spelling_count
+    FROM transcription_vocabulary_terms INDEXED BY idx_transcription_vocabulary_ordinary
+    WHERE scope_kind=? AND scope_key=? AND ordinary_document_count>=2
+    ORDER BY ordinary_document_count DESC,term LIMIT ?`);
   const global = db.prepare(
-    `SELECT document_count FROM transcription_vocabulary_terms WHERE scope_kind='global' AND scope_key='' AND term=?`,
+    `SELECT document_count,evidence_count FROM transcription_vocabulary_terms WHERE scope_kind='global' AND scope_key='' AND term=?`,
   );
-  const globalCounts = new Map<string, number>();
+  const globalCounts = new Map<string, { document_count: number; evidence_count: number }>();
+  const profileCount = db.prepare(
+    "SELECT document_count FROM transcription_vocabulary_profiles WHERE scope_kind=? AND scope_key=?",
+  );
+  const globalDocuments =
+    (profileCount.get("global", "") as { document_count: number } | undefined)?.document_count ?? 0;
   const selected = new Map<string, { text: string; score: number }>();
+  const spellingEvidence = new Map<string, { score: number; count: number }>();
+  const commonTerms = new Map<string, boolean>();
   const parsedTime = Date.parse(context.recordedAt ?? "");
   const anchor = Number.isFinite(parsedTime) ? parsedTime : Date.now();
   const limit = Math.min(256, Math.max(32, settings.maxTerms * 2));
   for (const profile of profiles.slice(0, 16)) {
     // Frequency-only retrieval can discard a recent relationship term before
-    // its context score is considered. Union two bounded indexed streams and
-    // count each term once per profile, retaining cross-profile contributions.
+    // its context score is considered. Combine bounded rank, recent and
+    // ordinary-evidence streams; count each term once per profile.
     const rows = [
       ...top.all(profile.kind, profile.key, limit),
       ...recent.all(profile.kind, profile.key, Math.min(limit, 128)),
+      ...(profile.kind === "self"
+        ? []
+        : ordinary.all(profile.kind, profile.key, Math.min(limit, 128))),
     ] as Array<{
       term: string;
       text: string;
@@ -321,29 +350,100 @@ export function getTranscriptionVocabulary(
       benefit: number;
       base_score: number;
       last_seen: string;
+      recent_mass: number;
+      evidence_count: number;
+      ordinary_document_count: number;
+      spelling_count: number;
     }>;
+    const profileDocuments =
+      (profileCount.get(profile.kind, profile.key) as { document_count: number } | undefined)
+        ?.document_count ?? 0;
     const seen = new Set<string>();
     for (const row of rows) {
       if (seen.has(row.term)) continue;
       seen.add(row.term);
       if (row.document_count < MIN_VOCABULARY_DOCUMENTS) continue;
-      let total = globalCounts.get(row.term);
-      if (total === undefined) {
-        total =
-          (global.get(row.term) as { document_count: number } | undefined)?.document_count ??
-          row.document_count;
-        globalCounts.set(row.term, total);
+      // Retained evidence must obey the same lexical filter as extraction.
+      // Terms are normalized keys; overlapping profiles share this lookup.
+      let common = commonTerms.get(row.term);
+      if (common === undefined) {
+        common = isCommonVocabularyWord(row.term);
+        commonTerms.set(row.term, common);
       }
+      if (common) continue;
+      let background = globalCounts.get(row.term);
+      if (!background) {
+        background = (global.get(row.term) as
+          | { document_count: number; evidence_count: number }
+          | undefined) ?? { document_count: row.document_count, evidence_count: 0 };
+        globalCounts.set(row.term, background);
+      }
+      const total = background.document_count;
       const specificity =
         profile.kind === "global"
           ? 1
-          : 1 + 2 * Math.min(1, row.document_count / Math.max(1, total));
+          : (contextualVocabularyLift(
+              {
+                profileOccurrences: row.evidence_count,
+                profileDocuments,
+                globalOccurrences: background.evidence_count,
+                globalDocuments,
+              },
+              settings.contextPriorDocuments ?? 10,
+            ) ?? 1 + 2 * Math.min(1, row.document_count / Math.max(1, total)));
       const ageDays = Math.max(0, (anchor - Date.parse(row.last_seen)) / 86400000);
+      // Ordinary profiles retain a bounded last-seen recency factor.
       const recency = Number.isFinite(ageDays) ? 0.5 + 0.5 * Math.exp(-ageDays / 180) : 0.5;
-      const rarity = 1 / (1 + Math.log1p(total));
-      const score = row.base_score * profile.weight * specificity * recency * rarity;
+      // Authored support decays each original contribution with a 90-day
+      // half-life; received material cannot refresh this separate profile.
+      const authoredMass =
+        profile.kind === "self"
+          ? row.recent_mass * authoredDecay(row.last_seen, new Date(anchor).toISOString())
+          : 0;
+      const support =
+        profile.kind === "self"
+          ? row.benefit *
+            Math.log1p(authoredMass) *
+            vocabularyEvidenceConfidence(
+              Math.min(row.document_count, authoredMass),
+              settings.contextPriorDocuments ?? 10,
+            )
+          : row.base_score * recency;
+      const quality =
+        profile.kind === "self"
+          ? 1
+          : ordinaryEvidenceQuality(
+              row.evidence_count,
+              row.ordinary_document_count,
+              settings.machineEvidenceWeight ?? 0.15,
+            );
+      if (quality === 0) continue;
+      // Ordinary support already grows with corpus frequency; full rarity keeps
+      // it saturated. Verified written self evidence has independent decayed
+      // support, so its blend can retain personally used technical vocabulary.
+      const score =
+        support *
+        profile.weight *
+        vocabularyDiscrimination(
+          total,
+          specificity,
+          profile.kind === "self" ? (settings.authoredRarityWeight ?? 0.5) : 1,
+          profile.kind === "self" ? (settings.authoredContextLiftWeight ?? 0.25) : 1,
+        ) *
+        quality;
       const prior = selected.get(row.term);
-      selected.set(row.term, { text: row.text, score: (prior?.score ?? 0) + score });
+      const priorSpelling = spellingEvidence.get(row.term);
+      const useSpelling =
+        !prior ||
+        (row.spelling_count >= MIN_VOCABULARY_DOCUMENTS &&
+          (!priorSpelling ||
+            priorSpelling.count < MIN_VOCABULARY_DOCUMENTS ||
+            score > priorSpelling.score));
+      selected.set(row.term, {
+        text: useSpelling ? row.text : prior!.text,
+        score: (prior?.score ?? 0) + score,
+      });
+      if (useSpelling) spellingEvidence.set(row.term, { score, count: row.spelling_count });
     }
   }
   // Identity evidence is a small contextual prior, not a fabricated corpus
@@ -358,13 +458,15 @@ export function getTranscriptionVocabulary(
     context.purpose !== "source-audio" ||
       Boolean(context.speaker?.isSelf || context.participants?.some((person) => person.isSelf)),
   );
-  const identityScore = Math.max(0, ...[...selected.values()].map((term) => term.score)) + 1;
+  const identityScore =
+    Math.max(0, ...[...selected.values()].map((term) => term.score).filter(Number.isFinite)) + 1;
   for (const [index, text] of identityNames.entries()) {
-    const term = text.normalize("NFC").toLocaleLowerCase("und");
+    const term = normalizeVocabularyTerm(text);
     selected.set(term, { text, score: identityScore + 1 / (index + 1) });
   }
   return {
     entries: [...selected.values()]
+      .filter((entry) => Number.isFinite(entry.score) && entry.score > 0)
       .sort((a, b) => b.score - a.score || a.text.localeCompare(b.text))
       .slice(0, settings.maxTerms),
   };

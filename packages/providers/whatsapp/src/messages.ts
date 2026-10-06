@@ -73,6 +73,7 @@ interface MediaAttemptBudget {
 }
 
 export interface WhatsAppMessagesSourceOptions {
+  isTranscriptionVocabularyEnabled?: () => boolean;
   /** ISO 8601 date string. Documents with sourceCreatedAt older than this are filtered out. */
   dataCutoff?: string;
   attachmentConfig?: AttachmentExtractionConfig;
@@ -101,6 +102,7 @@ export class WhatsAppMessagesSource {
   readonly id: SourceIdType;
   readonly providerId: ProviderIdType;
 
+  private isTranscriptionVocabularyEnabled?: () => boolean;
   /** Optional ISO 8601 cutoff — documents older than this are skipped */
   private dataCutoff: string | undefined;
 
@@ -125,6 +127,7 @@ export class WhatsAppMessagesSource {
     this.extractAttachment = options?.extractAttachment;
     this.downloadMedia = options?.downloadMedia;
     this.transcribeAudio = options?.transcribeAudio;
+    this.isTranscriptionVocabularyEnabled = options?.isTranscriptionVocabularyEnabled;
     this.mediaAttemptsPerPage = options?.mediaAttemptsPerPage ?? DEFAULT_MEDIA_ATTEMPTS_PER_PAGE;
     if (!Number.isSafeInteger(this.mediaAttemptsPerPage) || this.mediaAttemptsPerPage <= 0) {
       throw new Error("mediaAttemptsPerPage must be a positive safe integer");
@@ -173,11 +176,17 @@ export class WhatsAppMessagesSource {
   }
 
   async sync(cursor: SyncCursor | null): Promise<SyncResult> {
+    const vocabularyEnabled = this.isTranscriptionVocabularyEnabled?.() === true;
     const state: WhatsAppSyncCursor = validateWhatsAppSyncCursor(cursor) ?? {
       phase: "bootstrap",
       lastTimestamp: 0,
       committedSeq: 0,
     };
+    const committedSeq = state.storeId === this.store.storeId ? (state.committedSeq ?? 0) : 0;
+    this.store.reconcileSelfAuthoredTextNormalization(committedSeq, vocabularyEnabled);
+    const vocabularyBackfillPending = vocabularyEnabled
+      ? this.store.enrollSelfAuthoredTextNormalization()
+      : false;
 
     // Media retry sweep (before draining): re-dirty eligible media days whose
     // backoff window has elapsed, so they re-render and the download is retried.
@@ -196,7 +205,7 @@ export class WhatsAppMessagesSource {
     // GCs messages — re-emission is always recoverable.
     const { dirtyKeys, messagesByKey, chats, contacts, lidPhoneMap, emitSeq, morePending } =
       this.store.drain({
-        committedSeq: state.storeId === this.store.storeId ? (state.committedSeq ?? 0) : 0,
+        committedSeq,
       });
 
     log.debug("Draining message store", {
@@ -282,6 +291,7 @@ export class WhatsAppMessagesSource {
         this.id,
         lidPhoneMap,
         contactsByLidJid,
+        vocabularyEnabled,
       );
 
       // Post-filter safety: skip documents whose sourceCreatedAt is before the cutoff
@@ -333,7 +343,7 @@ export class WhatsAppMessagesSource {
     // re-pair / a one-time backup import, not an endless sync loop.
     const historyState = this.store.historySyncState;
     const historyComplete = historyState === "complete";
-    const hasMore = morePending || historyState === "streaming";
+    const hasMore = morePending || vocabularyBackfillPending || historyState === "streaming";
 
     const phase = historyComplete ? "incremental" : "bootstrap";
     // Coverage reports whether the synced corpus is whole. WhatsApp only serves
@@ -366,6 +376,12 @@ export class WhatsAppMessagesSource {
         );
       }
     }
+
+    if (vocabularyEnabled)
+      this.store.recordSelfAuthoredTextNormalizationEmission(
+        emitSeq,
+        !vocabularyBackfillPending && !morePending,
+      );
 
     return {
       documents,

@@ -141,6 +141,9 @@ export interface ProviderHost {
  * operation.
  */
 export interface SourceHost extends ProviderHost {
+  /** Live opt-in gate for source-owned transcription vocabulary evidence. */
+  readonly isTranscriptionVocabularyEnabled?: () => boolean;
+
   /**
    * Transcribe audio inline, for a conversational source when the host has
    * speech-to-text enabled. A document source receives nothing here: its audio
