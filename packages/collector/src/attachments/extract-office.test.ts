@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, test, expect } from "vitest";
 import JSZip from "jszip";
 import { extractOfficeText } from "./extract-office.js";
@@ -352,6 +354,47 @@ const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.
 // ─── DOCX tests ───────────────────────────────────────────────────────────────
 
 describe("extractOfficeText — DOCX", () => {
+  test("extracts hostile precision text without loading CLI formatters", async () => {
+    const text = "%.999999999f %.101e %.0g";
+    const data = await createDocx([text]);
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `
+          import Module from "node:module";
+          import { readFileSync } from "node:fs";
+          const load = Module._load;
+          const formatterImports = [];
+          Module._load = function(request, ...args) {
+            if (request === "argparse" || request === "sprintf-js") {
+              formatterImports.push(request);
+              throw new Error("Document conversion loaded a CLI formatter: " + request);
+            }
+            return Reflect.apply(load, this, [request, ...args]);
+          };
+          const { extractOfficeText } = await import(process.argv[1]);
+          const result = await extractOfficeText(
+            Buffer.from(readFileSync(0, "utf8"), "base64"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          );
+          if (formatterImports.length) {
+            throw new Error("Formatter imports attempted: " + formatterImports.join(", "));
+          }
+          process.stdout.write(JSON.stringify(result));
+        `,
+        fileURLToPath(new URL("./extract-office.ts", import.meta.url)),
+      ],
+      { input: Buffer.from(data).toString("base64"), encoding: "utf8", timeout: 30_000 },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    expect(JSON.parse(child.stdout)).toMatchObject({ text, truncated: false });
+  });
+
   test("extracts text from paragraphs", async () => {
     const data = await createDocx(["Hello World", "Second paragraph"]);
     const result = await extractOfficeText(data, DOCX_MIME);

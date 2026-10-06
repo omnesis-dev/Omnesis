@@ -18,6 +18,16 @@ import { execFileSync } from "node:child_process";
  * entry justified — an unjustified allowlist is worse than a red build.
  */
 const ALLOWLIST = {
+  "GHSA-hp3w-g68c-fv3c":
+    "sprintf-js has no patched release. The production dependency is Mammoth's " +
+    "argparse 1 CLI help formatter; Mammoth's conversion library never imports " +
+    "argparse or sprintf-js. Omnesis calls convertToHtml/extractRawText and never " +
+    "runs the Mammoth CLI or supplies printf format strings. The Office " +
+    "extraction regression denies both modules in a fresh subprocess while " +
+    "extracting document text containing hostile precision specifiers. The " +
+    "read-yaml-file/js-yaml 3 path is development-only and likewise uses " +
+    "argparse only in its separate CLI. Revisit if these CLI paths or " +
+    "user-controlled format strings become part of the product.",
   "GHSA-frvp-7c67-39w9":
     "@hono/node-server serve-static path traversal is Windows-only (an encoded " +
     "backslash, %5C, is only a path separator on Windows). Omnesis's gateway " +
