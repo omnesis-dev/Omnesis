@@ -6,7 +6,6 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
-    "@omnesis/core": "*",
     "@omnesis/provider-local-files": "*",
     "@omnesis/providers-synth-common": "*",
     "@omnesis/source-sdk": "*",
