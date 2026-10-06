@@ -447,11 +447,6 @@
 .kn-notice p {
   margin: 5px 0 0;
 }
-.kn-home-recent > h3 {
-  font-size: 12px;
-  font-weight: 600;
-  margin: 0 0 12px;
-}
 .kn-section-intro {
   margin-bottom: 22px;
 }
@@ -629,22 +624,6 @@
   line-height: 1.8;
   color: var(--text-secondary);
   margin: 0;
-}
-.kn-home-recent {
-  margin-top: 25px;
-}
-.kn-home-recent > div {
-  display: grid;
-  gap: 9px;
-}
-.kn-home-recent .kn-card {
-  padding: 13px 16px;
-}
-.kn-home-recent .kn-card p {
-  display: none;
-}
-.kn-home-recent .kn-card h3 {
-  margin: 5px 0 10px;
 }
 .kn-empty {
   padding: 45px 25px;
@@ -827,9 +806,6 @@
     display: none;
   }
   .kn-home-intro .kn-orbit {
-    display: none;
-  }
-  .kn-home-recent {
     display: none;
   }
   .kn-home {

@@ -548,17 +548,6 @@ export function KnowledgeTab({ selectedId }) {
                             : "Pages will appear as your sources are considered."}
                         </p>
                       </div>`}
-              ${page.items.filter((node) => node.kind !== "root").length > 0 &&
-              html`<section class="kn-home-recent">
-                <h3>Explore your library</h3>
-                <div>
-                  ${[...page.items]
-                    .filter((node) => node.kind !== "root")
-                    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-                    .slice(0, 3)
-                    .map((node) => html`<${PageCard} node=${node} />`)}
-                </div>
-              </section>`}
             </section>`}
       </main>
     </div>
