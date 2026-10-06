@@ -16,13 +16,38 @@ let cachedLists:
   | { languages: Map<string, ReadonlySet<string>>; allLanguages: ReadonlySet<string>[] }
   | undefined;
 
+/** Standard calendar words come from locale data, never a private corpus. */
+function calendarVocabularyForms(language: string): Set<string> {
+  const words = new Set<string>();
+  // A runtime without this locale must not add fallback English to its list.
+  if (!Intl.DateTimeFormat.supportedLocalesOf([language]).length) return words;
+  for (const width of ["long", "short"] as const) {
+    const formatter = new Intl.DateTimeFormat(language, {
+      weekday: width,
+      month: width,
+      timeZone: "UTC",
+      calendar: "gregory",
+    });
+    // Seven consecutive days cover weekdays; twelve month starts cover months.
+    for (let index = 0; index < 19; index++) {
+      const date = new Date(Date.UTC(2020, index < 7 ? 0 : index - 7, index < 7 ? 6 + index : 1));
+      for (const part of formatter.formatToParts(date)) {
+        if (part.type !== "weekday" && part.type !== "month") continue;
+        const word = normalizeVocabularyTerm(part.value).replace(/\p{P}+$/gu, "");
+        if (word) words.add(word);
+      }
+    }
+  }
+  return words;
+}
+
 /** Disabled vocabulary workers import the module without allocating lexical sets. */
 function getLists(): NonNullable<typeof cachedLists> {
   if (!cachedLists) {
     const languages = new Map<string, ReadonlySet<string>>(
       Object.entries(commonWordsData.languages).map(([language, words]) => [
         language,
-        new Set(words.split(" ")),
+        new Set([...words.split(" "), ...calendarVocabularyForms(language)]),
       ]),
     );
     cachedLists = { languages, allLanguages: [...languages.values()] };
@@ -57,7 +82,9 @@ function hasCommonLexicalForm(word: string, list: ReadonlySet<string>): boolean 
 
 /**
  * High-frequency lexical membership, not dictionary validity or an estimate of
- * recognition accuracy. Accents remain significant. With no language hint the
+ * recognition accuracy. Standard Gregorian calendar names supplement the
+ * frequency subset using runtime locale data. Accents remain significant. With
+ * no language hint the
  * supported-language union avoids mistaking ordinary foreign words for private
  * vocabulary; explicit unsupported languages have no frequency evidence.
  * Quote glyphs are canonicalized for lookup only. Short-prefix elisions require

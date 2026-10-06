@@ -653,14 +653,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           corpus. Existing WhatsApp archives are reprojected in bounded pages without resetting
           media; historical Gmail and iMessage evidence is not automatically replayed. Historical
           Tell Omnesis written projections are refreshed at gateway startup when enabled; untouched
-          transcripts are excluded, while later manual edits may contribute. Common compounds,
-          structural chat noise and low-confidence near-common spellings receive filtering or
-          reduced weight, with safeguards for names and acronyms. Structurally marked metadata,
-          transcripts, Markdown block quotes and fenced code blocks are excluded, and structured OCR
-          layouts contribute their readable text. Learned terms need at least two distinct
-          supporting documents. Repetition within one document does not count as corroboration,
-          although copies stored as separate documents can still count. Configured and
-          contact-curated names for the current people supply separate identity hints. Linking a
+          transcripts are excluded, while later manual edits may contribute. Common calendar words,
+          compounds, structural chat noise and low-confidence near-common spellings receive
+          filtering or reduced weight, with safeguards for names and acronyms. Structurally marked
+          metadata, transcripts, Markdown block quotes and fenced code blocks are excluded, and
+          structured OCR layouts contribute their readable text. Learned terms need at least two
+          distinct supporting documents. Repetition within one document does not count as
+          corroboration, although copies stored as separate documents can still count. Configured
+          and contact-curated names for the current people supply separate identity hints. Linking a
           person to a document does not itself count as an occurrence of their name. Vocabulary
           builds in bounded background batches; transcription does not wait for a full build. When
           an extraction update requires a rebuild, the gateway temporarily supplies no hints while

@@ -28,6 +28,9 @@ describe("bundled common-word evidence", () => {
       // frequent elision that no single lexical list supports.
       expect(lexical.isCommonVocabularyWord("a'été")).toBe(false);
       expect(lexical.isCommonVocabularyWord("ordinary-travail")).toBe(false);
+      // Calendar evidence is locale-owned even when the frequency subset omits it.
+      expect(lexical.isCommonVocabularyWord("févr", ["fr"])).toBe(true);
+      expect(lexical.isCommonVocabularyWord("févr", ["en"])).toBe(false);
       expect(reads).toBe(1);
     } finally {
       vi.doUnmock("./common-words-data.js");
@@ -58,6 +61,28 @@ describe("bundled common-word evidence", () => {
     expect(isCommonVocabularyWord("e\u0301te\u0301", ["fr"])).toBe(true);
     expect(isCommonVocabularyWord("trabajo", ["ja"])).toBe(false);
     expect(isCommonVocabularyWord("two words", ["en"])).toBe(false);
+  });
+
+  test("standard calendar words and abbreviations are common in each supported language", () => {
+    for (const [language, words] of [
+      ["en", ["Wednesday", "Wed", "February", "Feb"]],
+      ["fr", ["mercredi", "mer", "février", "févr"]],
+      ["es", ["miércoles", "mié", "febrero", "feb"]],
+      ["de", ["Mittwoch", "Mi", "Februar", "Feb"]],
+      ["it", ["mercoledì", "mer", "febbraio", "feb"]],
+      ["pt", ["quarta-feira", "qua", "fevereiro", "fev"]],
+      ["nl", ["woensdag", "wo", "februari", "feb"]],
+    ] as const)
+      for (const word of words) {
+        expect(isCommonVocabularyWord(word, [language])).toBe(true);
+        expect(isCommonVocabularyWord(word)).toBe(true);
+      }
+    expect(isCommonVocabularyWord("FÉVR", ["fr-CA"])).toBe(true);
+    expect(isCommonVocabularyWord("fe\u0301vr", ["fr"])).toBe(true);
+    expect(isCommonVocabularyWord("févr", ["en"])).toBe(false);
+    expect(isCommonVocabularyWord("févr", ["ja"])).toBe(false);
+    expect(isCommonVocabularyWord("Zorvella", ["fr"])).toBe(false);
+    expect(isCommonVocabularyWord("Februlune")).toBe(false);
   });
 
   test("frequent contractions and elisions share quote normalization without losing rare names", () => {

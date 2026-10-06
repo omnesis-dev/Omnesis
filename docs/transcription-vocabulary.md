@@ -45,6 +45,8 @@ document can choose its spelling but cannot corroborate it. High-frequency words
 are filtered using the bundled multilingual frequency lists; membership is not a
 prediction of recognizer accuracy. Accents remain significant.
 
+Standard weekday and month names and abbreviations are common lexical forms,
+derived from the runtime's Gregorian calendar data for the supported languages.
 Frequent hyphenated compounds require frequent components in one supported
 language. Structural laughter, stretched common words and word-shaped chat
 emoticons are omitted. Uncommon short nicknames and grounded names retain
