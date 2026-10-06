@@ -599,6 +599,85 @@ export function BoundarySection({ status }) {
   `;
 }
 
+/** Knowledge admission and coverage are different units from legacy datum runs. */
+export function KnowledgeBootstrapPanel({
+  status,
+  budget,
+  blockedGate,
+  error,
+  starting,
+  pausing,
+  pauseError,
+  onStart,
+  onToggle,
+}) {
+  const admission = status.admission;
+  return html`<div>
+    ${blockedGate &&
+    html`<div class="cognition-gate-notice">
+      <strong>Omnesis Brain is not running.</strong> These are stored milestones.
+    </div>`}
+    ${error && html`<div class="debug-error">${error}</div>`}
+    <p class="debug-sub">
+      Historical discovery builds context across wikis, loops and annotations. New evidence
+      continues to be discovered when historical backfill is paused.
+    </p>
+    <div class="cognition-cards">
+      <${StateBanner} status=${status} />
+      <${ProviderOutageBanner} status=${status} />
+      <${StartControl}
+        status=${status}
+        busy=${starting}
+        onStart=${onStart}
+        disabled=${!!blockedGate}
+      />
+      <${PauseControl} status=${status} busy=${pausing} error=${pauseError} onToggle=${onToggle} />
+    </div>
+    <h3 class="cognition-section">Discovery admissions</h3>
+    <p class="debug-sub">
+      These counts are source revisions admitted for historical discovery. Several revisions may
+      share one maintenance run.
+    </p>
+    <div class="cognition-cards">
+      <${StatCard} label="Admitted today" value=${fmtCount(admission.today)} />
+      <${StatCard} label="Admitted overall" value=${fmtCount(admission.total)} />
+      <${StatCard} label="Waiting" value=${fmtCount(admission.pending)} />
+      <${StatCard} label="In maintenance batches" value=${fmtCount(admission.batched)} />
+      <${StatCard} label="Settled work items" value=${fmtCount(admission.completed)} />
+    </div>
+    <h3 class="cognition-section">Coverage milestones</h3>
+    <p class="debug-sub">
+      Interpretation and organization are tracked separately for each source revision. Gated means
+      deliberately skipped, not synthesized. An empty queue does not establish that the entire
+      corpus has been reviewed.
+    </p>
+    <table class="debug-table">
+      <thead>
+        <tr>
+          <th>Phase</th>
+          <th>Outcome</th>
+          <th>Revisions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${(status.revisionCoverage ?? []).map(
+          (row) =>
+            html`<tr key=${row.phase + row.status}>
+              <td>${row.phase}</td>
+              <td>${row.status}</td>
+              <td>${fmtCount(row.count)}</td>
+            </tr>`,
+        )}
+      </tbody>
+    </table>
+    <p class="debug-sub">
+      ${fmtCount(status.conversion?.length ?? 0)} legacy record conversion cursors recorded.
+      Conversion preserves existing records; it does not verify their claims.
+    </p>
+    <${BudgetSection} budget=${budget} />
+  </div>`;
+}
+
 export function BootstrapTab() {
   const [gate, setGate] = useState(null);
   const [status, setStatus] = useState(null);
@@ -767,6 +846,19 @@ export function BootstrapTab() {
         : html`<div class="debug-loading">Loading…</div>`}
     </div>`;
   }
+
+  if (status.mode === "knowledge")
+    return html`<${KnowledgeBootstrapPanel}
+      status=${status}
+      budget=${budget}
+      blockedGate=${blockedGate}
+      error=${statusError}
+      starting=${starting}
+      pausing=${pausing}
+      pauseError=${pauseError}
+      onStart=${beginBackfill}
+      onToggle=${togglePaused}
+    />`;
 
   return html`
     <div>

@@ -39,6 +39,27 @@ function toolResult(toolCallId: string, kind: string) {
 }
 
 describe("summarizeCognitionTranscript", () => {
+  test("shows canonical synthesis writes without presenting frontier plumbing as decisions", () => {
+    const decision = summarizeCognitionTranscript(
+      transcript({
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch-fictional" },
+        events: [
+          toolStart("a", "knowledge_next_frontier", {}),
+          toolStart("b", "knowledge_discovery_complete", {}),
+          toolStart("c", "knowledge_save", {
+            node: { kind: "wiki", id: "project", title: "Workshop" },
+          }),
+        ],
+      }),
+    );
+    expect(decision.subject).toBe("knowledge maintenance batch batch-fictional");
+    expect(decision.docId).toBeNull();
+    expect(decision.actions).toEqual([
+      { tool: "knowledge_save", detail: "save wiki Workshop", ok: true },
+    ]);
+  });
+
   test("splits tool calls into decision actions vs research, in order", () => {
     const decision = summarizeCognitionTranscript(
       transcript({

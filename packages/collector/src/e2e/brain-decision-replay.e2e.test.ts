@@ -17,9 +17,12 @@
  */
 
 import "./synth-env.js";
+import { parseCognitionDataRunPayload } from "@omnesis/gateway/src/brain/run-payloads.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   WORTH_MAIL,
   compressCognitionCadences,
   passesWorthGate,
@@ -32,7 +35,7 @@ import {
 
 compressCognitionCadences();
 
-describe("worth gate: replayed decisions", () => {
+describe("persisted legacy worth decisions: cassette recovery", () => {
   let bench: BrainBench;
   const JUDGED: readonly WorthMail[] = [
     WORTH_MAIL.promotion,
@@ -52,7 +55,16 @@ describe("worth gate: replayed decisions", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      brain: { mergeAdjudication: { enabled: false } },
+      behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [{ plan: { calls: [] } }],
+          maintainNode: preserveCurrentOwner,
+        }),
+      },
+      brain: {
+        mergeAdjudication: { enabled: false },
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       decisionBackend: "replay",
     });
     await bench.drainUntilQuiet();
@@ -61,11 +73,37 @@ describe("worth gate: replayed decisions", () => {
     const docs = [...JUDGED, UNRECORDED];
     const docIds = await bench.pushAndSettle(docs.map((mail) => worthMailDoc(mail)));
     docs.forEach((mail, i) => ids.set(mail.key, docIds[i]!));
+    // These recorded cassettes recover persisted legacy requests, independently of source admission.
+    for (const id of ids.values()) {
+      const payload = { docId: id, event: "created" as const, datumAt: Date.now() };
+      expect(parseCognitionDataRunPayload(payload)).toEqual(payload);
+      bench.seedRun({
+        id: `legacy-decision-replay-${id}`,
+        kind: "data",
+        payload,
+        dedupeKey: `data:doc:${id}`,
+        enqueuedAt: Date.now(),
+      });
+    }
+    await bench.drainUntilQuiet();
   }, 600_000);
 
   afterAll(async () => {
     await bench?.destroy();
   }, 60_000);
+
+  test("unrecorded current maintenance profiles fail open and preserve honest unavailable verdict metadata", async () => {
+    for (const id of ids.values())
+      expect((await bench.obs.interpretationForSource(id)).kind).toBe("synthesis");
+    const decisions = bench.sql
+      .prepare<
+        [],
+        { purpose: string; score: number | null }
+      >("SELECT purpose,score FROM knowledge_decisions")
+      .all();
+    expect(decisions.some((entry) => entry.purpose === "discovery")).toBe(true);
+    expect(decisions.every((entry) => entry.score === null)).toBe(true);
+  });
 
   test("no decision server is running", () => {
     expect(() => bench.decision).toThrow(/no decision server/);

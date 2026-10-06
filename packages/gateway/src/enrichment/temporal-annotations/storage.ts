@@ -982,10 +982,11 @@ export function listTemporalAnnotationsAwaitingRefile(
   db: Db,
   docId: string,
   limit: number,
+  excludePresentedRunId: string | null = null,
 ): InvalidatedTemporalAnnotation[] {
   return db
     .prepare<
-      [string, string, number],
+      [string, string, string | null, string | null, number],
       {
         id: string;
         sentence: string;
@@ -1009,10 +1010,11 @@ export function listTemporalAnnotationsAwaitingRefile(
           AND (e.refile_presented_run IS NULL
                OR EXISTS (SELECT 1 FROM cognition_runs r
                            WHERE r.id = e.refile_presented_run AND r.status <> 'completed'))
+          AND (? IS NULL OR e.refile_presented_run IS NULL OR e.refile_presented_run <> ?)
         ORDER BY e.invalidated_at DESC, e.id DESC
         LIMIT ?`,
     )
-    .all(docId, docId, Math.max(1, limit))
+    .all(docId, docId, excludePresentedRunId, excludePresentedRunId, Math.max(1, limit))
     .map((r) => ({
       id: r.id,
       sentence: r.sentence,

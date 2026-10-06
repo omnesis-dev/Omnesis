@@ -24,18 +24,26 @@
  */
 
 import "./synth-env.js";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { createLogger } from "@omnesis/core";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
   fileTemporal,
   ref,
 } from "./brain-bench/index.js";
-import type { AdminTemporalAnnotation, ExecutedTool, PuppetBehavior } from "./brain-bench/index.js";
+import type {
+  AdminTemporalAnnotation,
+  ExecutedTool,
+  SourceInterpretation,
+} from "./brain-bench/index.js";
 
 compressCognitionCadences();
+const log = createLogger("collector:brain-bench");
 
 // ── the shapes the routes actually serve ────────────────────────────────────
 //
@@ -56,13 +64,13 @@ interface TemporalWindowItem {
 }
 
 /**
- * The `temporal_annotation_add` calls the document's data run made, in call
+ * The `temporal_annotation_add` calls the document's source interpretation made, in call
  * order, paired with what the gateway answered. The refusals and the minted
  * ids live only in the transcript's event stream, which is what
  * `obs.executedTools` reconstructs.
  */
 async function addResults(bench: BrainBench, docId: string): Promise<ExecutedTool[]> {
-  const run = await bench.obs.runForDoc(docId);
+  const run = await bench.obs.interpretationForSource(docId);
   const steps = await bench.obs.executedTools(run.id);
   return steps.filter((s) => s.tool === "temporal_annotation_add");
 }
@@ -127,9 +135,8 @@ const CASCADE_DOC = email({
     "Access is from the north gate.\n\nRiverside Estate",
 });
 
-const BEHAVIORS: PuppetBehavior[] = [
+const SOURCE_INTERPRETATIONS: SourceInterpretation[] = [
   {
-    flavour: "data.created",
     docTitle: PRECISION_DOC.title,
     plan: (ctx) => ({
       calls: [
@@ -168,7 +175,6 @@ const BEHAVIORS: PuppetBehavior[] = [
     }),
   },
   {
-    flavour: "data.created",
     docTitle: UPDATE_DOC.title,
     plan: (ctx) => ({
       calls: [
@@ -194,7 +200,6 @@ const BEHAVIORS: PuppetBehavior[] = [
     }),
   },
   {
-    flavour: "data.created",
     docTitle: DELETE_DOC.title,
     plan: (ctx) => ({
       calls: [
@@ -212,8 +217,8 @@ const BEHAVIORS: PuppetBehavior[] = [
     }),
   },
   {
-    flavour: "data.created",
     docTitle: EVIDENCE_DOC.title,
+    expectedRefusals: [{ tool: "temporal_annotation_add", code: "evidence_not_found" }],
     plan: (ctx) => ({
       calls: [
         // Grounded: the quote is verbatim, so both teeth pass.
@@ -237,7 +242,6 @@ const BEHAVIORS: PuppetBehavior[] = [
     }),
   },
   {
-    flavour: "data.created",
     docTitle: OVERLAP_DOC.title,
     plan: () => ({
       calls: [
@@ -264,7 +268,6 @@ const BEHAVIORS: PuppetBehavior[] = [
     }),
   },
   {
-    flavour: "data.created",
     docTitle: LOOP_DOC.title,
     plan: (ctx) => ({
       calls: [
@@ -305,7 +308,6 @@ const BEHAVIORS: PuppetBehavior[] = [
     }),
   },
   {
-    flavour: "data.created",
     docTitle: CASCADE_DOC.title,
     plan: (ctx) => ({
       calls: [
@@ -344,18 +346,49 @@ describe("Brain Bench — steward-written temporal annotations", () => {
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       // Assigned, and permissive: the entailment gate's PASS arm is then a
       // real verdict rather than an unassigned gate failing open, so the
       // grounded write below proves the gate ran and let it through.
       entailment: "accept-all",
-      behaviors: { behaviors: BEHAVIORS },
+      behaviors: {
+        dynamic: sourceInterpretations({
+          sources: SOURCE_INTERPRETATIONS,
+          maintainNode: preserveCurrentOwner,
+        }),
+      },
     });
   }, 300_000);
 
   afterAll(async () => {
     await bench?.destroy();
   }, 60_000);
+
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    const runs = await bench.obs.runs({ limit: 20 });
+    log.error(
+      `Temporal maintenance failure: ${JSON.stringify({
+        runs: runs.items.map(({ id, kind, status, lastError }) => ({
+          id,
+          kind,
+          status,
+          lastError,
+        })),
+        pending: bench.sql
+          .prepare(
+            "SELECT subject_id,reason,status,last_error FROM knowledge_work WHERE status IN ('pending','batched')",
+          )
+          .all(),
+        tools: await Promise.all(
+          runs.items.map(async ({ id }) => ({ id, tools: await bench.obs.executedTools(id) })),
+        ),
+      })}`,
+    );
+  });
 
   test("every scripted temporal plan ran to completion", async () => {
     const docs = [
@@ -370,9 +403,11 @@ describe("Brain Bench — steward-written temporal annotations", () => {
     const ids = await bench.pushAndSettle(docs);
     docs.forEach((doc, i) => docIds.set(doc.externalId, ids[i]!));
 
-    const runs = await bench.obs.settledRuns("data");
-    expect(runs).toHaveLength(docs.length);
-    expect(runs.every((r) => r.status === "completed")).toBe(true);
+    for (const id of ids) {
+      const run = await bench.obs.interpretationForSource(id);
+      expect(run.kind).toBe("synthesis");
+      expect(run.status).toBe("completed");
+    }
   }, 180_000);
 
   test("a scripted add writes a row per precision, linked and readable", async () => {
@@ -414,7 +449,7 @@ describe("Brain Bench — steward-written temporal annotations", () => {
     expect(range.intervalEndMs).toBe(Date.UTC(2027, 8, 7) - 1);
 
     // Each row is attributed to the run that wrote it.
-    const run = await bench.obs.runForDoc(docIds.get(PRECISION_DOC.externalId)!);
+    const run = await bench.obs.interpretationForSource(docIds.get(PRECISION_DOC.externalId)!);
     for (const row of [year, month, day, instant, range]) expect(row.createdByRun).toBe(run.id);
   }, 60_000);
 
@@ -545,7 +580,7 @@ describe("Brain Bench — steward-written temporal annotations", () => {
     expect(join!.n).toBe(1);
 
     // The reverse direction the steward reads: the loop carries its dates.
-    const run = await bench.obs.runForDoc(docIds.get(LOOP_DOC.externalId)!);
+    const run = await bench.obs.interpretationForSource(docIds.get(LOOP_DOC.externalId)!);
     const steps = await bench.obs.executedTools(run.id);
     const fetched = steps.find((s) => s.tool === "open_loop_fetch");
     const temporal = fetched?.result?.data?.temporalAnnotations as Array<{
@@ -736,25 +771,34 @@ describe("Brain Bench — the entailment gate's reject arm on a temporal write",
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       entailment: "reject-all",
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: REJECT_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("temporal_annotation_add", {
-                  when: "2027-02-01",
-                  sentence: "TIX-REJECT annexe licence renewal window opens.",
-                  kind: "deadline",
-                  evidence: { docId: ctx.subject!, quote: REJECT_QUOTE },
-                }),
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: REJECT_DOC.title,
+              expectedRefusals: [
+                { tool: "temporal_annotation_add", code: "evidence_does_not_entail_claim" },
               ],
-            }),
-          },
-        ],
+              plan: (ctx) => ({
+                calls: [
+                  call("temporal_annotation_add", {
+                    when: "2027-02-01",
+                    sentence: "TIX-REJECT annexe licence renewal window opens.",
+                    kind: "deadline",
+                    evidence: { docId: ctx.subject!, quote: REJECT_QUOTE },
+                  }),
+                ],
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [],
       },
     });
   }, 300_000);
@@ -828,40 +872,36 @@ describe("Brain Bench — a supporting document's edit and the entries it touche
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       behaviors: {
-        behaviors: [
-          // The planning notes themselves warrant nothing.
-          {
-            flavour: "data.created",
-            docTitle: SUPPORTING_DOC.title,
-            plan: { calls: [], finalText: "Planning notes; nothing to record." },
-          },
-          {
-            flavour: "data.updated",
-            docTitle: SUPPORTING_DOC.title,
-            plan: { calls: [], finalText: "Planning notes changed; nothing to record." },
-          },
-          // The confirmation files the crossing, grounded by a quote from the
-          // confirmation itself (the BASIS) and additionally linked to the
-          // planning notes as supporting context — the enrichment shape.
-          {
-            flavour: "data.created",
-            docTitle: BASIS_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                fileTemporal({
-                  when: "2027-07-09",
-                  sentence: "TIX-FERRY the ferry crossing departs at 08:30 (ref QF-2214).",
-                  kind: "appointment",
-                  documentIds: [ctx.subject, supportingDocId],
-                  evidence: { docId: ctx.subject, quote: BASIS_QUOTE },
-                }),
-              ],
-              finalText: "Filed the crossing.",
-            }),
-          },
-        ],
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: SUPPORTING_DOC.title,
+              plan: { calls: [], finalText: "Planning notes; nothing to record." },
+            },
+            {
+              docTitle: BASIS_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  fileTemporal({
+                    when: "2027-07-09",
+                    sentence: "TIX-FERRY the ferry crossing departs at 08:30 (ref QF-2214).",
+                    kind: "appointment",
+                    documentIds: [ctx.subject, supportingDocId],
+                    evidence: { docId: ctx.subject, quote: BASIS_QUOTE },
+                  }),
+                ],
+                finalText: "Filed the crossing.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [],
       },
     });
 
@@ -904,9 +944,13 @@ describe("Brain Bench — a supporting document's edit and the entries it touche
       .prepare<[string], { content: string }>("SELECT content FROM documents WHERE id = ?")
       .get(supportingDocId);
     expect(supporting!.content).toContain("print the boarding reference");
+    const interpretations = await bench.obs.runsForSource(supportingDocId);
     expect(
-      bench.puppetCalls.some((c) => c.subject === supportingDocId && c.flavour === "data.updated"),
-      "the update drove a data run",
+      interpretations.length,
+      "initial and changed source versions were interpreted",
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      interpretations.every((run) => run.kind === "synthesis" && run.status === "completed"),
     ).toBe(true);
 
     const row = bench.sql
@@ -960,49 +1004,53 @@ describe("Brain Bench — the re-file loop after a grounding quote breaks", () =
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: REFILE_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                fileTemporal({
-                  when: "2027-05-03",
-                  sentence: "TIX-REFILE move-out inspection at the studio.",
-                  kind: "appointment",
-                  evidence: {
-                    docId: ctx.subject,
-                    quote: "inspection is booked for the third of May 2027",
-                  },
-                }),
-              ],
-              finalText: "Filed the inspection.",
-            }),
-          },
-          // Fires for BOTH edits. The first re-files against the new date;
-          // the second attempt meets the reconcile refusal (the re-filed
-          // entry is live on that day) and settles without a duplicate.
-          {
-            flavour: "data.updated",
-            docTitle: REFILE_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                fileTemporal({
-                  when: "2027-05-05",
-                  sentence: "TIX-REFILE move-out inspection at the studio (moved).",
-                  kind: "appointment",
-                  evidence: {
-                    docId: ctx.subject,
-                    quote: "moved to the fifth of May 2027",
-                  },
-                }),
-              ],
-              finalText: "Re-filed the moved inspection.",
-            }),
-          },
-        ],
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              contentContains: "moved to the fifth of May 2027",
+              docTitle: REFILE_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  fileTemporal({
+                    when: "2027-05-05",
+                    sentence: "TIX-REFILE move-out inspection at the studio (moved).",
+                    kind: "appointment",
+                    evidence: {
+                      docId: ctx.subject,
+                      quote: "moved to the fifth of May 2027",
+                    },
+                  }),
+                ],
+                finalText: "Re-filed the moved inspection.",
+              }),
+            },
+            {
+              contentContains: "inspection is booked for the third of May 2027",
+              docTitle: REFILE_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  fileTemporal({
+                    when: "2027-05-03",
+                    sentence: "TIX-REFILE move-out inspection at the studio.",
+                    kind: "appointment",
+                    evidence: {
+                      docId: ctx.subject,
+                      quote: "inspection is booked for the third of May 2027",
+                    },
+                  }),
+                ],
+                finalText: "Filed the inspection.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [],
       },
     });
     await bench.pushAndSettle([REFILE_DOC]);
@@ -1036,15 +1084,22 @@ describe("Brain Bench — the re-file loop after a grounding quote breaks", () =
     expect(row!.invalidated_at).not.toBeNull();
     expect(row!.invalidation_cause).toBe("content_change");
 
-    // … the update run's prompt listed it (the state lookup caught an
-    // invalidation stamped before the run row existed) …
-    const run = await bench.obs.runForDoc(refileDocId);
-    const prompt = await bench.obs.promptFor(run.id);
-    expect(prompt).toContain("<invalidated-temporal-annotations>");
-    expect(prompt).toContain("TIX-REFILE move-out inspection at the studio.");
-    expect(prompt).toContain("Account for EVERY entry above");
-
-    // … the runtime stamped the presentation with that run's id …
+    // The source frontier carries the casualty and stamps the actual maintenance read.
+    const run = await bench.obs.interpretationForSource(refileDocId);
+    const steps = await bench.obs.executedTools(run.id);
+    const frontiers = steps.filter((step) => step.tool === "knowledge_next_frontier");
+    const offered = frontiers
+      .flatMap(
+        (step) =>
+          (step.result?.data?.items ?? []) as Array<{
+            source?: { id: string };
+            temporal?: { invalidated: Array<{ id: string; sentence: string }> };
+          }>,
+      )
+      .find((item) => item.source?.id === refileDocId);
+    expect(offered?.temporal?.invalidated.map((entry) => entry.sentence)).toContain(
+      "TIX-REFILE move-out inspection at the studio.",
+    );
     expect(row!.refile_presented_run).toBe(run.id);
 
     // … and the re-filed replacement is live, grounded in the new quote.
@@ -1064,12 +1119,23 @@ describe("Brain Bench — the re-file loop after a grounding quote breaks", () =
 
     // The second edit keeps the new quote intact: nothing new dies, and the
     // already-presented casualty (its run completed) stays retired.
-    const run = await bench.obs.runForDoc(refileDocId);
-    const prompt = await bench.obs.promptFor(run.id);
-    expect(prompt).not.toContain("<invalidated-temporal-annotations>");
+    const run = await bench.obs.interpretationForSource(refileDocId);
+    const steps = await bench.obs.executedTools(run.id);
+    const items = steps
+      .filter((step) => step.tool === "knowledge_next_frontier")
+      .flatMap(
+        (step) =>
+          (step.result?.data?.items ?? []) as Array<{
+            source?: { id: string };
+            temporal?: { invalidated: Array<{ sentence: string }> };
+          }>,
+      );
+    expect(items.find((item) => item.source?.id === refileDocId)?.temporal?.invalidated).toEqual(
+      [],
+    );
 
     // The replacement entry survived the benign edit — and exactly ONE live
-    // row carries it: the second data.updated firing's re-file attempt met
+    // row carries it: the second source-maintenance pass's re-file attempt met
     // the reconcile refusal instead of minting a duplicate.
     const rows = bench.sql
       .prepare<
@@ -1079,5 +1145,106 @@ describe("Brain Bench — the re-file loop after a grounding quote breaks", () =
       .all();
     expect(rows).toHaveLength(1);
     expect(rows[0]!.invalidated_at).toBeNull();
+  }, 180_000);
+});
+
+// More than one context page must be consumed before the exact source revision can settle.
+describe("Brain Bench — paginated temporal casualties in source maintenance", () => {
+  let bench: BrainBench;
+  const original = email({
+    externalId: "temporal-context-pages",
+    title: "Workshop planning dates",
+    content:
+      "The workshop will run on the planned dates, daily from the first through the twelfth of November 2027. Keep the schedule for now.",
+  });
+  beforeAll(async () => {
+    bench = await BrainBench.start({
+      experimental: true,
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
+      behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: original.title,
+              contentContains: "planned dates",
+              plan: (ctx) => ({
+                calls: Array.from({ length: 12 }, (_, i) =>
+                  fileTemporal({
+                    when: `2027-11-${String(i + 1).padStart(2, "0")}`,
+                    sentence: `Pagination workshop appointment ${i + 1}.`,
+                    kind: "appointment",
+                    force: true,
+                    evidence: {
+                      docId: ctx.subject,
+                      quote:
+                        "The workshop will run on the planned dates, daily from the first through the twelfth of November 2027.",
+                    },
+                  }),
+                ),
+              }),
+            },
+            {
+              docTitle: original.title,
+              contentContains: "All dates were cancelled",
+              plan: {
+                calls: [],
+                finalText:
+                  "Every prior appointment is cancelled; no supported date remains to re-file.",
+              },
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+      },
+    });
+  }, 300_000);
+  afterAll(async () => {
+    await bench?.destroy();
+  }, 60_000);
+  test("reads every casualty page through real tools before completing discovery", async () => {
+    const [docId] = await bench.pushAndSettle([original]);
+    expect(
+      (await bench.obs.timeIndex()).items.filter((item) =>
+        item.sentence.startsWith("Pagination workshop"),
+      ),
+    ).toHaveLength(12);
+    await bench.update(
+      original,
+      "All dates were cancelled. No replacement dates have been arranged.",
+    );
+    await bench.drainUntilQuiet();
+    const run = await bench.obs.interpretationForSource(docId!);
+    const steps = await bench.obs.executedTools(run.id);
+    const items = steps
+      .filter((step) => step.tool === "knowledge_next_frontier")
+      .flatMap(
+        (step) =>
+          (step.result?.data?.items ?? []) as Array<{
+            source?: { id: string };
+            temporal?: { invalidated: Array<{ id: string }>; hasMoreInvalidated: boolean };
+          }>,
+      );
+    const initial = items.find((item) => item.source?.id === docId)?.temporal;
+    expect(initial?.invalidated).toHaveLength(10);
+    expect(initial?.hasMoreInvalidated).toBe(true);
+    const pages = steps.filter((step) => step.tool === "knowledge_temporal_context");
+    expect(pages).toHaveLength(1);
+    expect(pages[0]!.args).toEqual({ documentId: docId });
+    expect(pages[0]!.result?.data?.invalidated).toHaveLength(2);
+    expect(pages[0]!.result?.data?.hasMoreInvalidated).toBe(false);
+    const rows = bench.sql
+      .prepare<
+        [string],
+        { refile_presented_run: string | null }
+      >("SELECT refile_presented_run FROM temporal_annotations WHERE id IN (SELECT annotation_id FROM temporal_annotation_documents WHERE document_id=?) AND sentence LIKE 'Pagination workshop%'")
+      .all(docId!);
+    expect(rows).toHaveLength(12);
+    expect(rows.every((row) => row.refile_presented_run === run.id)).toBe(true);
+    const completionAt = steps.findIndex((step) => step.tool === "knowledge_discovery_complete");
+    expect(completionAt).toBeGreaterThan(
+      steps.findIndex((step) => step.tool === "knowledge_temporal_context"),
+    );
   }, 180_000);
 });

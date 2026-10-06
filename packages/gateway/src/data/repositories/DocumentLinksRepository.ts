@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 
@@ -43,6 +44,7 @@ export interface InboundRef {
  * Get all references for a document (both directions).
  */
 export function getDocumentRefs(db: Db, docId: string): DocumentRefs {
+  if (!isKnowledgeDocumentReadable(db, docId)) return { outbound: [], inbound: [] };
   const outboundRows = db
     .prepare<
       [string],
@@ -94,24 +96,32 @@ export function getDocumentRefs(db: Db, docId: string): DocumentRefs {
     .all(docId);
 
   return {
-    outbound: outboundRows.map((r) => ({
-      linkType: r.link_type,
-      rawTarget: r.raw_target,
-      normalizedTarget: r.normalized_target,
-      targetDocId: r.target_doc_id,
-      targetTitle: r.target_title,
-      targetSourceId: r.target_source_id,
-      targetSourceUrl: r.target_source_url,
-      targetAppUrl: r.target_app_url,
-    })),
-    inbound: inboundRows.map((r) => ({
-      sourceDocId: r.source_doc_id,
-      sourceTitle: r.source_title,
-      sourceSourceId: r.source_source_id,
-      sourceSourceUrl: r.source_source_url,
-      sourceAppUrl: r.source_app_url,
-      linkType: r.link_type,
-    })),
+    outbound: outboundRows
+      .filter(
+        (r) =>
+          !r.target_doc_id ||
+          isKnowledgeDocumentReadable(db, r.target_doc_id, r.target_source_id ?? undefined),
+      )
+      .map((r) => ({
+        linkType: r.link_type,
+        rawTarget: r.raw_target,
+        normalizedTarget: r.normalized_target,
+        targetDocId: r.target_doc_id,
+        targetTitle: r.target_title,
+        targetSourceId: r.target_source_id,
+        targetSourceUrl: r.target_source_url,
+        targetAppUrl: r.target_app_url,
+      })),
+    inbound: inboundRows
+      .filter((r) => isKnowledgeDocumentReadable(db, r.source_doc_id, r.source_source_id))
+      .map((r) => ({
+        sourceDocId: r.source_doc_id,
+        sourceTitle: r.source_title,
+        sourceSourceId: r.source_source_id,
+        sourceSourceUrl: r.source_source_url,
+        sourceAppUrl: r.source_app_url,
+        linkType: r.link_type,
+      })),
   };
 }
 
@@ -121,6 +131,7 @@ export function getDocumentRefsPage(
   direction: "inbound" | "outbound",
   options: { limit: number; afterSortId?: number },
 ): { items: Array<InboundRef | OutboundRef>; hasMore: boolean; lastSortId?: number } {
+  if (!isKnowledgeDocumentReadable(db, docId)) return { items: [], hasMore: false };
   const probeLimit = options.limit + 1;
   if (direction === "outbound") {
     const rows = db
@@ -154,16 +165,22 @@ export function getDocumentRefsPage(
     const hasMore = rows.length > options.limit;
     const page = hasMore ? rows.slice(0, options.limit) : rows;
     return {
-      items: page.map((r) => ({
-        linkType: r.link_type,
-        rawTarget: r.raw_target,
-        normalizedTarget: r.normalized_target,
-        targetDocId: r.target_doc_id,
-        targetTitle: r.target_title,
-        targetSourceId: r.target_source_id,
-        targetSourceUrl: r.target_source_url,
-        targetAppUrl: r.target_app_url,
-      })),
+      items: page
+        .filter(
+          (r) =>
+            !r.target_doc_id ||
+            isKnowledgeDocumentReadable(db, r.target_doc_id, r.target_source_id ?? undefined),
+        )
+        .map((r) => ({
+          linkType: r.link_type,
+          rawTarget: r.raw_target,
+          normalizedTarget: r.normalized_target,
+          targetDocId: r.target_doc_id,
+          targetTitle: r.target_title,
+          targetSourceId: r.target_source_id,
+          targetSourceUrl: r.target_source_url,
+          targetAppUrl: r.target_app_url,
+        })),
       hasMore,
       ...(page.at(-1) ? { lastSortId: page.at(-1)!.sort_id } : {}),
     };
@@ -198,14 +215,16 @@ export function getDocumentRefsPage(
   const hasMore = rows.length > options.limit;
   const page = hasMore ? rows.slice(0, options.limit) : rows;
   return {
-    items: page.map((r) => ({
-      sourceDocId: r.source_doc_id,
-      sourceTitle: r.source_title,
-      sourceSourceId: r.source_source_id,
-      sourceSourceUrl: r.source_source_url,
-      sourceAppUrl: r.source_app_url,
-      linkType: r.link_type,
-    })),
+    items: page
+      .filter((r) => isKnowledgeDocumentReadable(db, r.source_doc_id, r.source_source_id))
+      .map((r) => ({
+        sourceDocId: r.source_doc_id,
+        sourceTitle: r.source_title,
+        sourceSourceId: r.source_source_id,
+        sourceSourceUrl: r.source_source_url,
+        sourceAppUrl: r.source_app_url,
+        linkType: r.link_type,
+      })),
     hasMore,
     ...(page.at(-1) ? { lastSortId: page.at(-1)!.sort_id } : {}),
   };
@@ -248,6 +267,7 @@ export interface DocumentEdgesView {
  * `omnesis edges show <doc-id>` inspection command.
  */
 export function getDocumentEdges(db: Db, docId: string): DocumentEdgesView {
+  if (!isKnowledgeDocumentReadable(db, docId)) return { edges: [], pending: [] };
   const outbound = db
     .prepare<
       [string],
@@ -315,36 +335,44 @@ export function getDocumentEdges(db: Db, docId: string): DocumentEdgesView {
 
   return {
     edges: [
-      ...outbound.map(
-        (r): DocumentEdge => ({
-          direction: "outbound",
-          linkType: r.link_type,
-          otherDocId: r.target_doc_id,
-          otherTitle: r.target_title,
-          otherSourceId: r.target_source_id,
-          resolved: r.target_doc_id !== null,
-          provenanceKind: r.provenance_kind,
-          provenanceOrigin: r.provenance_origin,
-          provenanceVersion: r.provenance_version,
-          declaredAt: r.declared_at,
-          metadataJson: r.metadata_json,
-        }),
-      ),
-      ...inbound.map(
-        (r): DocumentEdge => ({
-          direction: "inbound",
-          linkType: r.link_type,
-          otherDocId: r.source_doc_id,
-          otherTitle: r.source_title,
-          otherSourceId: r.source_source_id,
-          resolved: true,
-          provenanceKind: r.provenance_kind,
-          provenanceOrigin: r.provenance_origin,
-          provenanceVersion: r.provenance_version,
-          declaredAt: r.declared_at,
-          metadataJson: r.metadata_json,
-        }),
-      ),
+      ...outbound
+        .filter(
+          (r) =>
+            !r.target_doc_id ||
+            isKnowledgeDocumentReadable(db, r.target_doc_id, r.target_source_id ?? undefined),
+        )
+        .map(
+          (r): DocumentEdge => ({
+            direction: "outbound",
+            linkType: r.link_type,
+            otherDocId: r.target_doc_id,
+            otherTitle: r.target_title,
+            otherSourceId: r.target_source_id,
+            resolved: r.target_doc_id !== null,
+            provenanceKind: r.provenance_kind,
+            provenanceOrigin: r.provenance_origin,
+            provenanceVersion: r.provenance_version,
+            declaredAt: r.declared_at,
+            metadataJson: r.metadata_json,
+          }),
+        ),
+      ...inbound
+        .filter((r) => isKnowledgeDocumentReadable(db, r.source_doc_id, r.source_source_id))
+        .map(
+          (r): DocumentEdge => ({
+            direction: "inbound",
+            linkType: r.link_type,
+            otherDocId: r.source_doc_id,
+            otherTitle: r.source_title,
+            otherSourceId: r.source_source_id,
+            resolved: true,
+            provenanceKind: r.provenance_kind,
+            provenanceOrigin: r.provenance_origin,
+            provenanceVersion: r.provenance_version,
+            declaredAt: r.declared_at,
+            metadataJson: r.metadata_json,
+          }),
+        ),
     ],
     pending: pending.map((r) => ({
       linkType: r.link_type,

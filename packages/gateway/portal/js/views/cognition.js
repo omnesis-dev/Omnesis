@@ -56,6 +56,7 @@ import {
 } from "../api.js";
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { CalibrationTab } from "./cognition-calibration.js";
+import { KnowledgeTab } from "./cognition-knowledge.js";
 import { BootstrapTab } from "./cognition-bootstrap.js";
 
 // Developer mode for this page, mirrored from `CognitionView`'s `developer`
@@ -79,6 +80,7 @@ const SECTIONS = [
   { key: "runs", label: "Runs" },
   { key: "briefs", label: "Briefs" },
   { key: "memory", label: "Memory" },
+  { key: "knowledge", label: "Knowledge" },
   { key: "calibration", label: "Calibration" },
   { key: "bootstrap", label: "Bootstrap" },
 ];
@@ -891,7 +893,7 @@ function OverviewTab({ pulse }) {
           Source coverage
           ${coverage.meta
             ? html`<span class="cognition-section-sub">
-                ${coverage.meta.bootstrapProcessedDocs} document${
+                ${coverage.meta.bootstrapProcessedDocs} legacy historical document${
                   coverage.meta.bootstrapProcessedDocs === 1 ? "" : "s"
                 } marked reviewed
               </span>`
@@ -904,7 +906,7 @@ function OverviewTab({ pulse }) {
             <table class="debug-table">
               <thead>
                 <tr>
-                  <th>Source</th><th>Workflow</th><th>Status</th>
+                  <th>Source</th><th>Workflow</th><th>Status</th><th>Unit</th>
                   <th class="num">Eligible</th><th class="num">Processed</th>
                 </tr>
               </thead>
@@ -915,6 +917,7 @@ function OverviewTab({ pulse }) {
                       <td><${SourceChip} sourceId=${row.sourceId} sourceType=${row.sourceType} /></td>
                       <td title=${row.workflowId}>${row.workflowLabel}</td>
                       <td>${row.status}</td>
+                      <td>${row.unit === "source-revisions" ? "Source revisions" : "Documents"}</td>
                       <td class="num">${row.eligible || "—"}</td>
                       <td class="num">${row.processed}</td>
                     </tr>
@@ -2077,6 +2080,7 @@ export function CognitionView({ subTab, selectedId, developer = false } = {}) {
           ${section === "runs" && html`<${RunsTab} selectedId=${selectedId} pulse=${pulse} />`}
           ${section === "briefs" && html`<${BriefsTab} selectedId=${selectedId} />`}
           ${section === "memory" && html`<${MemoryTab} />`}
+          ${section === "knowledge" && html`<${KnowledgeTab} selectedId=${selectedId} />`}
           ${section === "calibration" && html`<${CalibrationTab} />`}
           ${section === "bootstrap" && html`<${BootstrapTab} />`}
         </div>

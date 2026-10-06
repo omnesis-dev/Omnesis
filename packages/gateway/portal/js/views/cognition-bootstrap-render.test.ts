@@ -602,3 +602,28 @@ describe("cacheHitPercent", () => {
     expect(panel.cacheHitPercent({})).toBeNull();
   });
 });
+
+describe("knowledge bootstrap milestones", () => {
+  it("labels admission units and does not render legacy completion or ETA claims", async () => {
+    const { KnowledgeBootstrapPanel } = await import("./cognition-bootstrap.js");
+    const nodes = expandToHostNodes(
+      KnowledgeBootstrapPanel({
+        status: {
+          mode: "knowledge",
+          state: "running",
+          reason: "Historical discovery enabled.",
+          settings: { enabled: true },
+          admission: { today: 2, total: 5, pending: 1, batched: 2, completed: 2 },
+          revisionCoverage: [{ phase: "interpretation", status: "gated", count: 3 }],
+          conversion: [],
+        },
+      }),
+    );
+    const text = nodes.map((node) => node.text).join(" ").replace(/\s+/g, " ");
+    expect(text).toContain("source revisions admitted");
+    expect(text).toContain("Gated means deliberately skipped");
+    expect(text).toContain("empty queue does not establish");
+    expect(text).not.toContain("Days to completion");
+    expect(text).not.toContain("NaN");
+  });
+});

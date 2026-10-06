@@ -10,6 +10,7 @@ import {
   validateDocumentTemporalProjectionContracts,
 } from "@omnesis/core";
 import { SourceId, sourceTypeOf, type DocumentInput, type Scope } from "@omnesis/types";
+import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import {
   fetchDocumentProjections,
   getDocumentCount,
@@ -1414,7 +1415,27 @@ export class DocumentService {
       opts?.excludeSourceIds,
       opts?.includeSourceIds,
     );
-    return listDocuments(this.deps.db, { ...opts, excludeSourceIds });
+    const limit = opts?.limit ?? 100;
+    const documents: ReturnType<typeof listDocuments>["documents"] = [];
+    let afterId = opts?.afterId;
+    let hasMore: boolean;
+    do {
+      const page = listDocuments(this.deps.db, {
+        ...opts,
+        excludeSourceIds,
+        afterId,
+        limit: limit - documents.length,
+      });
+      documents.push(
+        ...page.documents.filter((row) =>
+          isKnowledgeDocumentReadable(this.deps.db, row.id, row.sourceId),
+        ),
+      );
+      hasMore = page.hasMore;
+      afterId = page.documents.at(-1)?.id;
+      if (!afterId) break;
+    } while (hasMore && documents.length < limit);
+    return { documents, hasMore };
   }
 
   listIds() {
@@ -1459,7 +1480,8 @@ export class DocumentService {
     return this.deps.db
       .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
       .all(`${idPrefix}%`)
-      .map((row) => row.id);
+      .map((row) => row.id)
+      .filter((id) => isKnowledgeDocumentReadable(this.deps.db, id));
   }
 
   listAnnotations(

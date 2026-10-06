@@ -29,6 +29,9 @@
 
 import { buildBuiltinTools, PlanStore, type ToolHandle, type ToolPorts } from "@omnesis/agent";
 import { experimentalVisible, type EntailCapability, type Logger } from "@omnesis/core";
+import { parseCognitionSynthesisRunPayload } from "../run-payloads.js";
+import { buildKnowledgeTools } from "../knowledge/tools.js";
+import { buildMaintenanceCanonicalTools } from "../knowledge/canonical-tool-fence.js";
 import { isGrantedMutation } from "../cognition/authority.js";
 import { cognitiveWorkflowIdForRun } from "../cognition/workflows.js";
 
@@ -54,11 +57,7 @@ import { currentEvidenceFingerprint, getMergeCandidateById } from "../../merge-c
 import { getOpenLoop } from "../storage/open-loops.js";
 import { systemClock, type ClaimedCognitionRun, type Clock } from "../storage/types.js";
 import { resolveAddressedEntries } from "../addressed-entry-context.js";
-import { loadDigestHorizon, localTimeZone } from "./digest-horizon.js";
-import {
-  loadNearbyTimelineContext,
-  type NearbyTimelineContext,
-} from "./nearby-timeline-context.js";
+import { renderKnowledgeRootContext } from "../knowledge/root-context.js";
 import {
   buildCognitionOwnTools,
   COGNITION_MUTATING_TOOL_NAMES,
@@ -66,9 +65,16 @@ import {
   type CognitionToolDeps,
   type CognitionWriteOps,
 } from "./tools.js";
+import {
+  loadNearbyTimelineContext,
+  type NearbyTimelineContext,
+} from "./nearby-timeline-context.js";
+import { loadDigestHorizon, localTimeZone } from "./digest-horizon.js";
 import { buildCognitionRunPrompt, buildCognitionSystemPrompt } from "./prompts.js";
 import { RunConsumptionTracker } from "./consumption.js";
 import { createOpenLoopMirror, type OpenLoopMirror } from "./mirror.js";
+import type { KnowledgeEngine } from "../knowledge/engine.js";
+import type { KnowledgeService } from "../knowledge/service.js";
 import type { PersonLookupGate } from "../../domain/person-lookup.js";
 import type { BriefJudge } from "./brief-judge.js";
 import type Database from "better-sqlite3";
@@ -392,6 +398,7 @@ export function buildCognitionInteractiveOwnTools(
 }
 
 export interface CognitionRuntimeDeps {
+  knowledge?: { service: KnowledgeService; engine: KnowledgeEngine };
   db: Db;
   writeGate: WriteGate;
   searchPipeline: SearchPipeline;
@@ -544,7 +551,38 @@ export async function createCognitionRuntime(
   return {
     buildTools: (run, executionContext) => {
       const consumption = consumptionFor(run);
-      const tools = buildCognitionToolset(toolsetDeps, run, { consumption });
+      const payload =
+        run.kind === "synthesis" ? parseCognitionSynthesisRunPayload(run.payload) : null;
+      const tools =
+        deps.knowledge && payload?.focus === "knowledge-maintenance" && payload.batchId
+          ? buildMaintenanceCanonicalTools(
+              deps.db,
+              deps.writeGate,
+              { batchId: payload.batchId, runId: run.id },
+              (writeGate) =>
+                buildCognitionToolset({ ...toolsetDeps, writeGate }, run, { consumption }),
+            )
+          : buildCognitionToolset(toolsetDeps, run, { consumption });
+      if (deps.knowledge) {
+        tools.push(
+          ...withGrantedMutationsOnly(
+            buildKnowledgeTools(deps.knowledge.service, {
+              runId: run.id,
+              scopedOwnersOnly: !isGrantedMutation(
+                cognitiveWorkflowIdForRun(run.kind, run.payload),
+                "knowledge_save",
+              ),
+              engine: deps.knowledge.engine,
+              markTemporalPresented: (ids, runId) =>
+                deps.writeGate.markTemporalAnnotationsRefilePresented(ids, runId),
+              ...(payload?.focus === "knowledge-maintenance" && payload.batchId
+                ? { batchId: payload.batchId }
+                : {}),
+            }),
+            run,
+          ),
+        );
+      }
       let successfulReads = successfulDocumentReadsByRun.get(run);
       if (!successfulReads) {
         successfulReads = new Set<string>();
@@ -582,7 +620,10 @@ export async function createCognitionRuntime(
       }
       return tools;
     },
-    buildOwnTools: (runId) => buildCognitionInteractiveOwnTools(toolsetDeps, runId),
+    buildOwnTools: (runId) => [
+      ...buildCognitionInteractiveOwnTools(toolsetDeps, runId),
+      ...(deps.knowledge ? buildKnowledgeTools(deps.knowledge.service, { runId }) : []),
+    ],
     // Read settings live per run so a config change (and the delta-prime caps
     // it carries) takes on the next run, matching getReconcileSettings above.
     promptBuilder: async (run) => {
@@ -684,12 +725,14 @@ export async function createCognitionRuntime(
       // agent write self-memory; the memory itself rides the run message.
       const settings = deps.getSettings();
       const annotationsOn = settings.annotations.enabled;
-      return buildCognitionSystemPrompt({
-        notesMaxBytes: settings.notesMaxBytes,
-        annotationsEnabled: annotationsOn,
-        selfPersonId: annotationsOn ? fetchSelfPersonId(deps.db) : null,
-        operatorInstructions: deps.getOperatorInstructions?.() ?? "",
-      });
+      return (
+        buildCognitionSystemPrompt({
+          notesMaxBytes: settings.notesMaxBytes,
+          annotationsEnabled: annotationsOn,
+          selfPersonId: annotationsOn ? fetchSelfPersonId(deps.db) : null,
+          operatorInstructions: deps.getOperatorInstructions?.() ?? "",
+        }) + renderKnowledgeRootContext(deps.db, settings.knowledge.rootMaxChars)
+      );
     },
   };
 }

@@ -1,133 +1,56 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-/**
- * Brain Bench — the worth gate on the retrospective bootstrap lane.
- *
- * The lane buys historical documents that still point at a future date. The
- * worth gate sits after that selection, at claim time: a bought email the
- * decision model scores below the threshold is settled with no agent turn,
- * marked covered, and shown in the Bootstrap timeline's `gated` band rather
- * than as reviewed — so gating is never mistaken for reading.
- *
- * The decision model is the scripted System One stand-in, scoring by subject.
+/** Historical discovery applies the current relevance rubric and records
+ * separate interpretation/organization milestones, including gated revisions.
  */
-
 import "./synth-env.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  preserveCurrentOwner,
   compressCognitionCadences,
+  sourceInterpretations,
+  seedHistory,
+  historicalAdmissions,
   waitFor,
-  worthAnswersFor,
-  worthMailDoc,
-  worthRequestFor,
   type DecisionServerRequest,
-  type WorthMail,
 } from "./brain-bench/index.js";
-
 compressCognitionCadences();
-
-const HOUR = 3_600_000;
-const DAY = 86_400_000;
-
-function localMidnight(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+const SOURCE = "synthetic:archive@example.com";
+const MAILS = [
+  {
+    id: "history-promotion",
+    title: "Outlet clearance notice",
+    content: "Generic clearance announcement with no personal context.",
+    score: 0,
+  },
+  {
+    id: "history-booking",
+    title: "Workshop booking confirmation",
+    content: "Your workshop starts on 12 March 2029. The balance is due two weeks before arrival.",
+    score: 2,
+  },
+];
+function decision(request: DecisionServerRequest) {
+  const purpose = Object.keys(request.questions)[0]!;
+  const state = request.state as { source?: { title?: string }; title?: string };
+  const mail = MAILS.find((m) => m.title === (state.source?.title ?? state.title));
+  return {
+    [purpose]: { type: "score" as const, score: purpose === "discovery" ? (mail?.score ?? 2) : 2 },
+  };
 }
-
-/** Local noon today: the anchor every instant below derives from. */
-const D0_NOON = localMidnight(Date.now()) + 12 * HOUR;
-/** D+1 noon — past the lane's boot hold whatever hour the suite starts. */
-const PAST_HOLD_AT = localMidnight(D0_NOON + DAY) + 12 * HOUR;
-
-const SRC = "synthetic:archive@example.com";
-
-/**
- * Two historical emails, both carrying an explicit future date so the lane
- * buys them whenever the suite runs.
- */
-const PROMO: WorthMail = {
-  key: "bs-promo",
-  externalId: "wg-bs-promo",
-  title: "Winter clearance ends 31 January 2029",
-  content:
-    "Our winter clearance runs until 31 January 2029. Everything in the outlet is half price while stocks last at Stellar Outfitters.",
-  sender: { name: "Stellar Outfitters", email: "offers@stellar-outfitters.example.com" },
-  score: 0.3,
-};
-const STAY: WorthMail = {
-  key: "bs-stay",
-  externalId: "wg-bs-stay",
-  title: "Your cottage at Riverside Estate is booked for 12 March 2029",
-  content:
-    "Thank you for booking the Willow cottage at Riverside Estate. Your stay begins on 12 March 2029 with check-in from 3pm. The balance is due two weeks before arrival.",
-  sender: { name: "Riverside Estate", email: "stays@riverside-estate.example.com" },
-  score: 2.6,
-};
-const MAILS = [PROMO, STAY];
-
-function scoreBySubject(request: DecisionServerRequest) {
-  const subject = (request.state as { subject?: unknown }).subject;
-  const mail = MAILS.find((m) => m.title === subject);
-  return mail
-    ? worthAnswersFor(mail)
-    : { httpError: 422, message: `unscripted subject: ${String(subject)}` };
-}
-
-interface BootstrapRun {
-  id: string;
-  status: string;
-  docId: string;
-}
-
-function bootstrapRuns(bench: BrainBench): BootstrapRun[] {
-  return bench.sql
-    .prepare<[], { id: string; status: string; payload_json: string }>(
-      "SELECT id, status, payload_json FROM cognition_runs WHERE kind = 'bootstrap' ORDER BY enqueued_at, id",
-    )
-    .all()
-    .map((r) => ({
-      id: r.id,
-      status: r.status,
-      docId: (JSON.parse(r.payload_json) as { docId: string }).docId,
-    }));
-}
-
-async function awaitExtractedDates(bench: BrainBench, docId: string, label: string): Promise<void> {
-  await waitFor(
-    `extracted dates for ${label}`,
-    () =>
-      (bench.sql
-        .prepare<
-          [string],
-          { n: number }
-        >("SELECT COUNT(*) AS n FROM document_extracted_dates WHERE document_id = ?")
-        .get(docId)?.n ?? 0) > 0
-        ? true
-        : null,
-    90_000,
-  );
-}
-
-describe("worth gate: the bootstrap lane", () => {
+describe("historical discovery: relevance gate", () => {
   let bench: BrainBench;
-  const ids = new Map<string, string>();
-  const at = new Map<string, number>([
-    [PROMO.key, D0_NOON - 8 * DAY],
-    [STAY.key, D0_NOON - 9 * DAY],
-  ]);
-
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
       clock: "virtual",
-      decision: { policy: scoreBySubject, inputTokens: 300 },
+      decision: { policy: decision, inputTokens: 300 },
       brain: {
-        mergeAdjudication: { enabled: false },
-        // A frozen clock never advances past a deferred run's due time.
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         derivationBarrier: "0s",
+        mergeAdjudication: { enabled: false },
         bootstrap: {
           enabled: true,
           direction: "recent-first",
@@ -137,100 +60,94 @@ describe("worth gate: the bootstrap lane", () => {
           batchSize: 10,
         },
       },
-    });
-    await bench.obs.startBootstrap();
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v !== undefined, 60_000);
-
-    // Outside the waker's recency window, so only the bootstrap lane reaches them.
-    for (const mail of MAILS) {
-      await bench.push(
-        worthMailDoc(mail, { sourceId: SRC, providerId: SRC, at: at.get(mail.key)! }),
-      );
-      ids.set(mail.key, await bench.docId(mail.externalId));
-      await awaitExtractedDates(bench, ids.get(mail.key)!, mail.key);
-    }
-
-    await bench.clock.set(PAST_HOLD_AT);
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v === "0", 60_000);
-    await waitFor(
-      "bootstrap runs for both emails",
-      () => {
-        const bought = new Set(bootstrapRuns(bench).map((r) => r.docId));
-        return MAILS.every((m) => bought.has(ids.get(m.key)!)) ? true : null;
+      behaviors: {
+        dynamic: sourceInterpretations({
+          maintainNode: preserveCurrentOwner,
+          sources: [{ plan: { calls: [] } }],
+        }),
       },
-      90_000,
+    });
+    await bench.drainUntilQuiet();
+    const { now } = await bench.clock.now();
+    MAILS.forEach((mail, i) =>
+      seedHistory(bench, { ...mail, at: now - (8 + i) * 86_400_000, sourceId: SOURCE }),
+    );
+    await bench.obs.startBootstrap();
+    await waitFor(
+      "both historical source admissions",
+      () => (historicalAdmissions(bench).length === 2 ? true : null),
+      120_000,
     );
     await bench.drainUntilQuiet();
   }, 600_000);
-
   afterAll(async () => {
     await bench?.destroy();
   }, 60_000);
-
-  function runFor(mail: WorthMail): BootstrapRun {
-    const run = bootstrapRuns(bench).find((r) => r.docId === ids.get(mail.key));
-    if (!run) throw new Error(`no bootstrap run for ${mail.key}`);
-    return run;
-  }
-
-  test("the gate is asked about both bought emails with the rubric's exact state", () => {
+  test("both admitted historical revisions are judged with the current discovery rubric", () => {
+    expect(historicalAdmissions(bench).map((w) => w.subject_id)).toEqual(MAILS.map((m) => m.id));
     for (const mail of MAILS) {
-      const calls = bench.decision.callsForSubject(mail.title);
-      expect(calls, mail.key).toHaveLength(1);
-      expect(calls[0]!.request).toEqual({
-        model: bench.decision.modelId,
-        ...worthRequestFor(mail),
+      const calls = bench.decision.calls.filter((c) => {
+        const state = c.request.state as { source?: { title?: string } };
+        return !!c.request.questions.discovery && state.source?.title === mail.title;
       });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.request.questions.discovery).toMatchObject({ type: "score" });
     }
   });
-
-  test("the low-worth email's bootstrap run is gated: completed, no agent turn", async () => {
-    const run = runFor(PROMO);
-    expect(run.status).toBe("completed");
-    expect(bench.puppetCalls.filter((c) => c.runId === run.id)).toHaveLength(0);
-    const detail = await bench.obs.run(run.id);
-    expect(detail.run.usage).toBeNull();
-    expect(detail.decisions).toHaveLength(1);
-    expect(detail.decisions[0]).toMatchObject({
-      lane: "bootstrap",
-      verdict: "skip",
-      score: PROMO.score,
-      documentId: ids.get(PROMO.key),
-    });
-    const listed = (await bench.obs.runs({ kind: "bootstrap" })).items.find((r) => r.id === run.id);
-    expect(listed?.gateVerdict).toBe("skip");
-  });
-
-  test("the worthwhile email's bootstrap run executes the agent", async () => {
-    const run = runFor(STAY);
-    expect(run.status).toBe("completed");
-    expect(bench.puppetCalls.filter((c) => c.runId === run.id).length).toBeGreaterThan(0);
-    const detail = await bench.obs.run(run.id);
-    expect(detail.decisions[0]).toMatchObject({ lane: "bootstrap", verdict: "pass" });
-  });
-
-  test("the gated email is covered: marked processed and counted in the timeline's gated band", async () => {
-    const marked = bench.sql
+  test("a low-relevance historical source settles gated without source interpretation", async () => {
+    expect(await bench.obs.runsForSource(MAILS[0]!.id)).toHaveLength(0);
+    expect(
+      bench.sql
+        .prepare<
+          [string],
+          { status: string }
+        >("SELECT status FROM knowledge_work WHERE subject_id=? AND reason='discovery'")
+        .get(MAILS[0]!.id)?.status,
+    ).toBe("completed");
+    const coverage = bench.sql
       .prepare<
         [string],
-        { marked: string | null }
-      >("SELECT bootstrap_processed_at AS marked FROM documents WHERE id = ?")
-      .get(ids.get(PROMO.key)!);
-    expect(marked?.marked).not.toBeNull();
-
-    const timeline = await bench.obs.bootstrapTimeline();
-    expect(timeline.pending).toBe(false);
-    const monthOf = (mail: WorthMail) => new Date(at.get(mail.key)!).toISOString().slice(0, 7);
-    const row = (month: string) => timeline.months.find((m) => m.month === month);
-
-    const promoMonth = row(monthOf(PROMO));
-    const stayMonth = row(monthOf(STAY));
-    expect(promoMonth, `timeline month ${monthOf(PROMO)}`).toBeDefined();
-    expect(stayMonth, `timeline month ${monthOf(STAY)}`).toBeDefined();
-    const gatedTotal = timeline.months.reduce((sum, m) => sum + m.gated, 0);
-    // Only the promotion was gated; the stay is reviewed, never gated.
-    expect(gatedTotal).toBe(1);
-    expect(promoMonth!.gated).toBe(1);
-    expect(stayMonth!.reviewed).toBeGreaterThanOrEqual(1);
+        { phase: string; status: string }
+      >("SELECT phase,status FROM knowledge_discovery_coverage WHERE subject_id=?")
+      .all(MAILS[0]!.id);
+    expect(coverage).toEqual(
+      expect.arrayContaining([
+        { phase: "interpretation", status: "gated" },
+        { phase: "organization", status: "gated" },
+      ]),
+    );
+  });
+  test("a relevant historical source executes the model and real discovery tools", async () => {
+    const run = await bench.obs.interpretationForSource(MAILS[1]!.id);
+    expect(run.status).toBe("completed");
+    expect(bench.puppetCalls.some((c) => c.runId === run.id)).toBe(true);
+    expect(
+      (await bench.obs.executedTools(run.id)).some(
+        (t) => t.tool === "knowledge_discovery_complete",
+      ),
+    ).toBe(true);
+  });
+  test("gated coverage stays distinct from considered coverage in the current operator projection", async () => {
+    const row = (await bench.obs.coverage()).items.find(
+      (r) => r.sourceId === SOURCE && r.workflowId === "knowledge-maintenance",
+    );
+    expect(row).toMatchObject({
+      eligible: 2,
+      processed: 1,
+      skipped: 1,
+      unit: "source-revisions",
+      costAttribution: "shared-run-ledger",
+    });
+    const status = await bench.obs.bootstrapStatus();
+    expect(status.admission?.completed).toBe(2);
+    expect(status.corpusCompletion).toBe("not-measured");
+    const verdicts = bench.sql
+      .prepare<
+        [],
+        { score: number | null; rubric_version: string }
+      >("SELECT score,rubric_version FROM knowledge_decisions WHERE purpose='discovery'")
+      .all();
+    expect(verdicts.some((v) => v.score === 0)).toBe(true);
+    expect(verdicts.every((v) => v.rubric_version === "knowledge-decisions-v2")).toBe(true);
   });
 });

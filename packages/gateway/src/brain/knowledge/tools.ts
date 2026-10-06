@@ -1,0 +1,463 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import {
+  listTemporalAnnotationsAwaitingRefile,
+  listUngroundedTemporalAnnotationsForDoc,
+} from "../../enrichment/temporal-annotations/storage.js";
+import { assertKnowledgeRunFence } from "./run-fence.js";
+import { fitKnowledgeFrontierItem } from "./engine-frontier.js";
+import { getKnowledgeCandidate, listKnowledgeCandidates } from "./discovery.js";
+import { KnowledgeStorageError } from "./types.js";
+import { listKnowledgeLinks } from "./links.js";
+import { ClaimMarkupError } from "./claims.js";
+import type { ToolHandle } from "@omnesis/agent";
+import type { ToolResult } from "@omnesis/core";
+import type { KnowledgeService, KnowledgeProposal } from "./service.js";
+import type { KnowledgeEngine, KnowledgeFrontierView } from "./engine.js";
+
+const id = z.string().min(1).max(256);
+const versions = z.record(z.string(), z.union([z.string(), z.number().int().nonnegative()]));
+const claimState = z
+  .object({
+    id,
+    supportLogic: z.enum(["all", "any"]).optional(),
+    relations: z
+      .record(z.string(), z.enum(["supports", "contradicts", "context", "depends_on"]))
+      .optional(),
+    validFrom: z.number().optional().nullable(),
+    validUntil: z.number().optional().nullable(),
+  })
+  .strict();
+const proposal = z
+  .object({
+    id,
+    kind: z.enum(["wiki", "root", "loop", "doc_annotation", "person_annotation", "brief"]),
+    ownerId: id.optional(),
+    title: z.string().min(1).max(1000),
+    markdown: z.string().max(262144),
+    expectedRevision: z.number().int().nonnegative(),
+    inputVersions: versions,
+    claims: z.array(claimState).max(1024).optional(),
+    metadata: z
+      .object({
+        importance: z.number().min(0).max(1).optional(),
+        volatility: z.number().min(0).max(1).optional(),
+        uncertainty: z.number().min(0).max(1).optional(),
+        activity: z.enum(["active", "quiet", "historical"]).optional(),
+        nextReviewAt: z.number().optional().nullable(),
+        checkpointAt: z.number().optional().nullable(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+function tool<S extends z.ZodType>(
+  name: string,
+  description: string,
+  schema: S,
+  mutates: boolean,
+  run: (input: z.output<S>) => unknown | Promise<unknown>,
+): ToolHandle {
+  return {
+    name,
+    description,
+    schema,
+    mutates,
+    async invoke(args): Promise<ToolResult> {
+      const parsed = schema.safeParse(args);
+      if (!parsed.success)
+        return { kind: "error", code: "invalid_arguments", message: parsed.error.message };
+      try {
+        return { kind: "structured", resultType: name, data: await run(parsed.data) };
+      } catch (error) {
+        if (error instanceof KnowledgeStorageError || error instanceof ClaimMarkupError)
+          return { kind: "error", code: error.code, message: error.message };
+        throw error;
+      }
+    },
+  };
+}
+export const KNOWLEDGE_MUTATING_TOOLS = new Set([
+  "loop_synthesis_save",
+  "brief_synthesis_save",
+  "doc_annotation_synthesis_save",
+  "person_annotation_synthesis_save",
+  "knowledge_link",
+  "knowledge_evidence",
+  "knowledge_save",
+  "knowledge_propose_page",
+  "knowledge_candidate_decide",
+  "knowledge_next_frontier",
+  "knowledge_discovery_complete",
+  "knowledge_temporal_context",
+]);
+
+export function buildKnowledgeTools(
+  service: KnowledgeService,
+  context: {
+    runId: string;
+    /** Narrow workflows receive only artifact-scoped owner mutation variants. */
+    scopedOwnersOnly?: boolean;
+    engine?: KnowledgeEngine;
+    batchId?: string;
+    markTemporalPresented?: (ids: readonly string[], runId: string) => Promise<void>;
+  },
+): ToolHandle[] {
+  const runFence = context.batchId ? { batchId: context.batchId, runId: context.runId } : undefined;
+  const guarded = (entries: ToolHandle[]): ToolHandle[] =>
+    entries.map((entry) =>
+      !entry.mutates || !runFence || entry.name === "knowledge_next_frontier"
+        ? entry
+        : {
+            ...entry,
+            async invoke(args, invocation) {
+              try {
+                assertKnowledgeRunFence(service.deps.db, runFence);
+              } catch (error) {
+                if (error instanceof KnowledgeStorageError)
+                  return { kind: "error", code: error.code, message: error.message };
+                throw error;
+              }
+              return entry.invoke(args, invocation);
+            },
+          },
+    );
+  const tools: ToolHandle[] = [
+    tool(
+      "knowledge_candidates",
+      "Inspect page candidates before creating or organizing a subject. Follow nextCursor even when a privacy-filtered page has no items.",
+      z
+        .object({
+          afterId: id.optional(),
+          limit: z.number().int().min(1).max(100).optional(),
+          status: z.enum(["proposed", "deferred", "published", "merged", "dismissed"]).optional(),
+        })
+        .strict(),
+      false,
+      (input) => listKnowledgeCandidates(service.deps.db, input),
+    ),
+    tool(
+      "knowledge_candidate_decide",
+      "Defer or dismiss a candidate, reconsider it, or reconcile it into an existing canonical wiki after updating that page's grounding. Publication of a new wiki is atomic through knowledge_save.",
+      z
+        .object({
+          id,
+          expectedRevision: z.number().int().positive(),
+          status: z.enum(["proposed", "deferred", "dismissed", "merged"]),
+          nodeId: id.optional(),
+          reconsiderAt: z.number().optional(),
+        })
+        .strict(),
+      true,
+      (input) =>
+        service.deps.writeGate["knowledge.settleCandidate"](input, service.deps.clock(), runFence),
+    ),
+    tool(
+      "knowledge_links",
+      "Read organizational links around a synthesis node. These links are distinct from evidence dependencies in claim refs.",
+      z.object({ id }).strict(),
+      false,
+      (input) => listKnowledgeLinks(service.deps.db, input.id),
+    ),
+    tool(
+      "knowledge_link",
+      "Organize context and outcomes. belongs_to_project connects a node to its project wiki; part_of connects subloops to loops or pages to parent pages. These are navigation links and do not imply evidential support. Change operational blocking through open_loop_update.",
+      z
+        .object({
+          fromId: id,
+          toId: id,
+          kind: z.enum([
+            "related_to",
+            "belongs_to_project",
+            "part_of",
+            "supersedes",
+            "duplicate_of",
+          ]),
+          fromRevision: z.number().int().positive(),
+          toRevision: z.number().int().positive(),
+          remove: z.boolean().optional(),
+        })
+        .strict(),
+      true,
+      (input) => service.deps.writeGate["knowledge.link"](input, runFence),
+    ),
+    tool(
+      "knowledge_fetch",
+      "Read a synthesis node. Set editing=true only to repair its tagged claims; normal reading strips tags.",
+      z.object({ id, editing: z.boolean().default(false) }).strict(),
+      false,
+      (input) => service.fetch(input.id, input.editing),
+    ),
+    tool(
+      "knowledge_list",
+      "List synthesis nodes for orientation; use search_many to retrieve their indexed contents.",
+      z
+        .object({
+          kind: z
+            .enum(["wiki", "root", "loop", "doc_annotation", "person_annotation", "brief"])
+            .optional(),
+          afterId: id.optional(),
+          limit: z.number().int().min(1).max(100).default(30),
+        })
+        .strict(),
+      false,
+      (input) => service.list(input),
+    ),
+    tool(
+      "knowledge_reference",
+      "Resolve an exact claim or evidence reference and read its current version. Supply this version on every synthesis write.",
+      z.object({ ref: z.string().min(1).max(1024) }).strict(),
+      false,
+      (input) => service.reference(input.ref),
+    ),
+    tool(
+      "knowledge_evidence",
+      "Register an exact source quote against the content hash actually read. Returns a stable addressable evidence reference.",
+      z
+        .object({
+          documentId: id,
+          contentHash: z.string().min(1),
+          quote: z.string().min(1).max(32000),
+          start: z.number().int().nonnegative().optional(),
+        })
+        .strict(),
+      true,
+      (input) => service.evidence(input, runFence),
+    ),
+    tool(
+      "knowledge_propose_page",
+      "After searching existing pages and candidates, propose a reusable page with a stable identity key, distinct scope and evidence versions. Prefer extending existing context; a document alone does not require its own wiki.",
+      z
+        .object({
+          identityKey: z.string().min(1).max(500),
+          title: z.string().min(1).max(1000),
+          scope: z.string().min(1).max(8000),
+          evidenceVersions: z.record(z.string(), z.string()),
+        })
+        .strict(),
+      true,
+      (input) =>
+        service.deps.writeGate["knowledge.proposeCandidate"](
+          { id: `candidate_${randomUUID()}`, ...input },
+          service.deps.clock(),
+          runFence,
+        ),
+    ),
+    tool(
+      "knowledge_save",
+      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank wiki/root text span must be covered by tags; this structural check is separate from entailment. Never invent verification. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. In maintenance, existing pages must match an offered frontier. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      z
+        .object({
+          node: proposal,
+          candidateId: id.optional(),
+          inputFingerprint: z.string().optional(),
+        })
+        .strict(),
+      true,
+      async (input) => {
+        const node = input.node as KnowledgeProposal;
+        const candidate = input.candidateId
+          ? getKnowledgeCandidate(service.deps.db, input.candidateId)
+          : null;
+        if (
+          node.expectedRevision === 0 &&
+          node.kind === "wiki" &&
+          (!candidate || candidate.status !== "proposed")
+        )
+          throw new KnowledgeStorageError(
+            "claim_invalid",
+            "A new wiki needs a reconciled proposed candidate",
+          );
+        const result =
+          context.batchId && context.engine && node.expectedRevision > 0
+            ? await context.engine.saveNode(
+                context.batchId,
+                context.runId,
+                node.id,
+                input.inputFingerprint ?? "",
+                node,
+              )
+            : await service.save(
+                node,
+                candidate
+                  ? { candidateId: candidate.id, expectedCandidateRevision: candidate.revision }
+                  : undefined,
+                runFence,
+              );
+        return result;
+      },
+    ),
+  ];
+  if (context.engine && context.batchId) {
+    const engine = context.engine;
+    const batchId = context.batchId;
+    const temporalContext = async (documentId: string, present = true) => {
+      service.reference(`source:${documentId}`);
+      const entries = listTemporalAnnotationsAwaitingRefile(
+        service.deps.db,
+        documentId,
+        11,
+        context.runId,
+      );
+      const invalidated = entries.slice(0, 10);
+      if (present && invalidated.length && context.markTemporalPresented)
+        await context.markTemporalPresented(
+          invalidated.map((entry) => entry.id),
+          context.runId,
+        );
+      return {
+        invalidated,
+        hasMoreInvalidated: entries.length > 10,
+        ungrounded: listUngroundedTemporalAnnotationsForDoc(service.deps.db, documentId, 10),
+      };
+    };
+    tools.push(
+      tool(
+        "knowledge_temporal_context",
+        "Read the next page of time-index entries invalidated by this source change. Account for each: re-file only facts still supported by current evidence, or explain why they no longer hold. Repeat while hasMoreInvalidated=true. Ungrounded live entries require evidence review too.",
+        z.object({ documentId: id }).strict(),
+        true,
+        (input) => temporalContext(input.documentId),
+      ),
+    );
+    tools.push(
+      tool(
+        "knowledge_next_frontier",
+        "Ask the engine for the next BFS level. The decision gate filters inputs before they are offered. Follow fetchRequired to retrieve complete nodes or sources; inputVersionsOmitted requires resolving current references. If source.contentTruncated is true, fetch the complete source before synthesizing claims. If temporal.contextOmitted is true, call knowledge_temporal_context before completing the source. Continue until done=true; an empty level with done=false means deterministic maintenance still has work.",
+        z.object({}).strict(),
+        true,
+        async () => {
+          const frontier = await engine.next(batchId, context.runId);
+          const items: Array<
+            KnowledgeFrontierView["items"][number] & {
+              temporal?: Awaited<ReturnType<typeof temporalContext>> & { contextOmitted?: boolean };
+            }
+          > = [];
+          const limit = service.deps.getSettings().knowledge.maxFrontierChars;
+          const responseSize = (nextItems: unknown[]) =>
+            JSON.stringify({
+              kind: "structured",
+              resultType: "knowledge_next_frontier",
+              data: { ...frontier, items: nextItems },
+            }).length;
+          const fits = (item: unknown) => responseSize([...items, item]) <= limit;
+          for (const item of frontier.items) {
+            if (!item.source) {
+              const fitted = fitKnowledgeFrontierItem(
+                item,
+                limit - responseSize(items) - 1,
+                items.length === 0,
+              );
+              if (!fitted) break;
+              items.push(fitted);
+              continue;
+            }
+            const temporal = await temporalContext(item.source.id, false);
+            const decorated = { ...item, temporal };
+            if (fits(decorated)) {
+              if (temporal.invalidated.length && context.markTemporalPresented)
+                await context.markTemporalPresented(
+                  temporal.invalidated.map((entry) => entry.id),
+                  context.runId,
+                );
+              items.push(decorated);
+              continue;
+            }
+            const omitted = {
+              invalidated: [],
+              hasMoreInvalidated: temporal.invalidated.length > 0 || temporal.hasMoreInvalidated,
+              ungrounded: [],
+              contextOmitted: true,
+            };
+            let compact = { ...item, temporal: omitted };
+            if (!fits(compact)) {
+              if (items.length) break;
+              const descriptor = fitKnowledgeFrontierItem(
+                item,
+                limit - responseSize([]) - JSON.stringify(omitted).length - 20,
+                true,
+              );
+              if (!descriptor)
+                throw new Error("Knowledge frontier descriptor exceeds context budget");
+              compact = { ...descriptor, temporal: omitted };
+            }
+            if (!fits(compact))
+              throw new Error("Knowledge frontier descriptor exceeds context budget");
+            items.push(compact);
+          }
+          return {
+            ...frontier,
+            items,
+          };
+        },
+      ),
+    );
+    tools.push(
+      tool(
+        "knowledge_discovery_complete",
+        "After interpreting an offered source, reconcile existing loops, annotations and pages; optionally propose a new reusable page. Record that discovery is complete for this exact source version. Known dependents are then inspected by the engine.",
+        z
+          .object({
+            id,
+            inputFingerprint: z.string().min(1),
+            targets: z.array(id).max(32).optional(),
+            phases: z
+              .array(z.enum(["interpretation", "organization", "conversion"]))
+              .min(1)
+              .optional(),
+          })
+          .strict(),
+        true,
+        (input) => {
+          if (
+            context.markTemporalPresented &&
+            listTemporalAnnotationsAwaitingRefile(
+              service.deps.db,
+              input.id.startsWith("source:") ? input.id.slice(7) : input.id,
+              1,
+              context.runId,
+            ).length
+          )
+            throw new KnowledgeStorageError(
+              "claim_invalid",
+              "Read and account for remaining temporal casualties with knowledge_temporal_context before completing this source",
+            );
+          return engine.completeSource(
+            batchId,
+            context.runId,
+            input.id,
+            input.inputFingerprint,
+            false,
+            input.phases,
+            input.targets,
+          );
+        },
+      ),
+    );
+  }
+  if (context.scopedOwnersOnly) {
+    const owners = [
+      ["loop_synthesis_save", "loop"],
+      ["brief_synthesis_save", "brief"],
+      ["doc_annotation_synthesis_save", "doc_annotation"],
+      ["person_annotation_synthesis_save", "person_annotation"],
+    ] as const;
+    return guarded([
+      ...tools.filter((entry) => !entry.mutates),
+      ...owners.map(([name, kind]) =>
+        tool(
+          name,
+          `Revise tagged claims on an existing canonical ${kind}. The ID must name the existing owner; read its current synthesis revision with knowledge_fetch and current evidence versions with knowledge_reference. This changes prose only, preserving operational fields. Briefs must preserve ## Description and ## Body sections. It cannot create wiki pages or change another artifact kind.`,
+          proposal.omit({ kind: true, ownerId: true }),
+          true,
+          (input) => service.save({ ...input, kind, ownerId: input.id }, undefined, runFence),
+        ),
+      ),
+    ]);
+  }
+  return guarded(tools);
+}

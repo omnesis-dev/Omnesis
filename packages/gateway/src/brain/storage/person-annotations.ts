@@ -25,6 +25,7 @@
  * handle, explicit `now`, single-writer in production.
  */
 
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import {
   breakAnnotationEvidenceForDoc,
   insertAnnotationEvidenceRows,
@@ -249,7 +250,10 @@ export function listPersonAnnotationEvidence(
 /** Single annotation by id — the read the revise firewall re-check needs. */
 export function getPersonAnnotation(db: Db, id: string): PersonAnnotationRow | null {
   const row = db
-    .prepare<[string], PersonAnnotationDbRow>("SELECT * FROM person_annotations WHERE id = ?")
+    .prepare<
+      [string],
+      PersonAnnotationDbRow
+    >(`SELECT * FROM person_annotations WHERE id = ? AND ${knowledgeOwnerReadPredicate(db, "person_annotations.id")}`)
     .get(id);
   return row ? rowToPersonAnnotation(row) : null;
 }
@@ -270,7 +274,7 @@ export function listRecentLivePersonAnnotations(
   const rows = db
     .prepare<[number, number], PersonAnnotationDbRow>(
       `SELECT * FROM person_annotations
-        WHERE invalidated_at IS NULL AND created_at >= ?
+        WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND invalidated_at IS NULL AND created_at >= ?
           AND (verification_state IS NULL OR verification_state = 'verified')
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
         ORDER BY created_at DESC LIMIT ?`,
@@ -335,7 +339,7 @@ export function listLivePersonAnnotationsForPerson(
     .prepare<(string | number)[], PersonAnnotationDbRow>(
       `WITH ${MERGE_CLASS_CTE}
        SELECT * FROM person_annotations
-        WHERE person_id IN (SELECT id FROM merge_class)
+        WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND person_id IN (SELECT id FROM merge_class)
           AND invalidated_at IS NULL
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
           ${cursor}
@@ -363,7 +367,7 @@ export function listLiveSameClaimTypePersonAnnotations(
     .prepare<unknown[], PersonAnnotationDbRow>(
       `WITH ${MERGE_CLASS_CTE}
        SELECT * FROM person_annotations
-        WHERE person_id IN (SELECT id FROM merge_class)
+        WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND person_id IN (SELECT id FROM merge_class)
           AND claim_type = ? COLLATE NOCASE AND invalidated_at IS NULL
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
           ${opts.excludeId !== undefined ? "AND id != ?" : ""}

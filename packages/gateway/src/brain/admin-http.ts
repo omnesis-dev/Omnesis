@@ -18,6 +18,8 @@
  */
 
 import { NotFoundError } from "../http/errors.js";
+import { KnowledgeQueryService } from "./knowledge/query-service.js";
+import { mountKnowledgeAdminRoutes } from "./knowledge/admin-routes.js";
 import { mountCognitionBriefAdminRoutes } from "./admin-http-brief-routes.js";
 import { mountCognitionListAdminRoutes } from "./admin-http-list-routes.js";
 import { mountCognitionLoopAdminRoutes } from "./admin-http-loop-routes.js";
@@ -116,6 +118,7 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
     now(),
   );
   const context = { app, query, requireActive, requireVisible, now };
+  mountKnowledgeAdminRoutes(app, new KnowledgeQueryService(opts.db), requireVisible);
 
   // One probe per mount, so the cache is shared across every caller rather
   // than per-request — two portal tabs must not each pay for the scan.

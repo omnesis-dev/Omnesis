@@ -24,9 +24,13 @@
 
 import "./synth-env.js";
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { createLogger } from "@omnesis/core";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
@@ -411,10 +415,19 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      behaviors: { behaviors },
+      behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [{ docTitle: GRANT_DOC.title, plan: behaviors[0]!.plan }],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors,
+      },
       // The retrospective lane would fill the queue with its own runs and make
       // every claim-order and concurrency assertion below unreadable.
-      brain: { bootstrap: { enabled: false } },
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+        bootstrap: { enabled: false },
+      },
     });
     await bench.drainUntilQuiet();
   }, 300_000);
@@ -436,8 +449,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
 
     // Not vacuous: the same three tools are attempted below on runs whose
     // workflow lacks them, and none of those calls even reaches a handler.
-    const runs = await bench.obs.settledRuns("data");
-    const dataRun = runs.find((r) => r.dedupeKey === `data:doc:${grantDocId}`);
+    const dataRun = await bench.obs.interpretationForSource(grantDocId);
     expect(dataRun?.status).toBe("completed");
     const calls = await toolOutcomes(bench, dataRun!.id);
     expect(calls.filter((c) => c.kind === "error")).toEqual([]);
@@ -561,6 +573,14 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
   test("a payload folded onto a run in flight gets its own execution, not silence", async () => {
     await bench.pushAll([FOLD_DOC]);
     foldDocId = await bench.docId(FOLD_DOC.externalId);
+    // This case exercises recovery of a persisted legacy queue row, not source admission.
+    bench.seedRun({
+      id: `run_${randomUUID()}`,
+      kind: "data",
+      payload: { docId: foldDocId, event: "created", datumAt: Date.now() },
+      dedupeKey: `data:doc:${foldDocId}`,
+      enqueuedAt: Date.now(),
+    });
 
     // The fold is applied from inside the model turn, so by construction it
     // lands while the row is claimed and executing.
@@ -802,7 +822,12 @@ describe("brain engine — the experimental gate off", () => {
   let bench: BrainBench;
 
   beforeAll(async () => {
-    bench = await BrainBench.start({ experimental: false });
+    bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
+      experimental: false,
+    });
   }, 300_000);
 
   afterAll(async () => {
@@ -955,9 +980,15 @@ describe("brain engine — failure, backpressure and the budget", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      behaviors: { behaviors },
+      behaviors: {
+        dynamic: sourceInterpretations({ sources: [], maintainNode: preserveCurrentOwner }),
+        behaviors,
+      },
       clock: "virtual",
-      brain: { bootstrap: { enabled: false } },
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+        bootstrap: { enabled: false },
+      },
     });
     await bench.drainUntilQuiet();
     await bench.pushAll([FAIL_DOC, HOLD_DOC, QUIET_DOC]);
@@ -1286,78 +1317,84 @@ describe("brain engine — a scheduled check that collides with a pending one", 
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       behaviors: {
-        behaviors: [
-          {
-            // The full exchange: a morning check lands, an evening one for the
-            // same loop is refused, the retry with `merge` folds it into the
-            // morning check, and a late one with `add` stands on its own.
-            flavour: "data.created",
-            docTitle: COLLIDE_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_create", {
-                  title: `Confirm the sound check window (${MARK_COLLIDE})`,
-                  confidence: 0.9,
-                  importance: 0.6,
-                  docs: [ctx.subject],
-                }),
-                call("schedule_agent_run", {
-                  when: MORNING_AT,
-                  prompt: COLLIDE_MORNING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-                call("schedule_agent_run", {
-                  when: EVENING_AT,
-                  prompt: COLLIDE_EVENING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-                call("schedule_agent_run", {
-                  when: EVENING_AT,
-                  prompt: COLLIDE_EVENING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                  onConflict: "merge",
-                }),
-                call("schedule_agent_run", {
-                  when: LATE_AT,
-                  prompt: COLLIDE_LATE,
-                  loopId: ref("open_loop_create", "loop.id"),
-                  onConflict: "add",
-                }),
-              ],
-              finalText: "Scheduled the day-of checks.",
-            }),
-          },
-          {
-            // The refusal with no retry: deciding the second check was
-            // redundant needs no flag at all.
-            flavour: "data.created",
-            docTitle: STAND_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_create", {
-                  title: `Confirm the catering headcount (${MARK_STAND})`,
-                  confidence: 0.9,
-                  importance: 0.6,
-                  docs: [ctx.subject],
-                }),
-                call("schedule_agent_run", {
-                  when: MORNING_AT,
-                  prompt: STAND_MORNING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-                call("schedule_agent_run", {
-                  when: EVENING_AT,
-                  prompt: STAND_EVENING,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-              ],
-              finalText: "The morning check already covers it.",
-            }),
-          },
-          { kind: "data", plan: { calls: [] } },
-        ],
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              // The full exchange: a morning check lands, an evening one for the
+              // same loop is refused, the retry with `merge` folds it into the
+              // morning check, and a late one with `add` stands on its own.
+              docTitle: COLLIDE_DOC.title,
+              expectedRefusals: [{ tool: "schedule_agent_run", code: "schedule_conflict" }],
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_create", {
+                    title: `Confirm the sound check window (${MARK_COLLIDE})`,
+                    confidence: 0.9,
+                    importance: 0.6,
+                    docs: [ctx.subject],
+                  }),
+                  call("schedule_agent_run", {
+                    when: MORNING_AT,
+                    prompt: COLLIDE_MORNING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                  call("schedule_agent_run", {
+                    when: EVENING_AT,
+                    prompt: COLLIDE_EVENING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                  call("schedule_agent_run", {
+                    when: EVENING_AT,
+                    prompt: COLLIDE_EVENING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                    onConflict: "merge",
+                  }),
+                  call("schedule_agent_run", {
+                    when: LATE_AT,
+                    prompt: COLLIDE_LATE,
+                    loopId: ref("open_loop_create", "loop.id"),
+                    onConflict: "add",
+                  }),
+                ],
+                finalText: "Scheduled the day-of checks.",
+              }),
+            },
+            {
+              // The refusal with no retry: deciding the second check was
+              // redundant needs no flag at all.
+              docTitle: STAND_DOC.title,
+              expectedRefusals: [{ tool: "schedule_agent_run", code: "schedule_conflict" }],
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_create", {
+                    title: `Confirm the catering headcount (${MARK_STAND})`,
+                    confidence: 0.9,
+                    importance: 0.6,
+                    docs: [ctx.subject],
+                  }),
+                  call("schedule_agent_run", {
+                    when: MORNING_AT,
+                    prompt: STAND_MORNING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                  call("schedule_agent_run", {
+                    when: EVENING_AT,
+                    prompt: STAND_EVENING,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                ],
+                finalText: "The morning check already covers it.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [{ kind: "data", plan: { calls: [] } }],
       },
     });
   }, 300_000);
@@ -1366,9 +1403,31 @@ describe("brain engine — a scheduled check that collides with a pending one", 
     await bench?.destroy();
   }, 60_000);
 
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    const runs = await bench.obs.runs({ limit: 20 });
+    createLogger("collector:brain-bench").error(
+      `Scheduled collision failure: ${JSON.stringify({
+        owners: bench.sql.prepare("SELECT * FROM knowledge_owner_changes").all(),
+        nodes: bench.sql
+          .prepare("SELECT id,owner_id,kind,validity,revision FROM knowledge_nodes")
+          .all(),
+        tools: await Promise.all(
+          runs.items
+            .filter((run) => run.kind === "synthesis")
+            .map(async (run) => ({ id: run.id, tools: await bench.obs.executedTools(run.id) })),
+        ),
+        gateway: readFileSync(bench.harness.getGatewayLogPath(), "utf8")
+          .split("\n")
+          .filter((line) => /error|warn|constraint|knowledge/i.test(line))
+          .slice(-50),
+      })}`,
+    );
+  });
+
   /** The `schedule_agent_run` calls a run made, in order, with the gateway's answers. */
   async function scheduleCalls(docId: string) {
-    const run = await bench.obs.runForDoc(docId);
+    const run = await bench.obs.interpretationForSource(docId);
     const steps = await bench.obs.executedTools(run.id);
     return steps.filter((s) => s.tool === "schedule_agent_run");
   }

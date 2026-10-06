@@ -11,6 +11,7 @@ import {
   trySourceId,
   type DocumentInput,
 } from "@omnesis/types";
+import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import { normalizeSnapshot } from "../../absence/snapshot-claims.js";
 import { enforceBroadWriteScope, enforceWriteScopeForSource, scope } from "../scope.js";
 import { DOCUMENTS_BODY_LIMIT_BYTES, ingestBodyLimit } from "../body-limits.js";
@@ -821,7 +822,8 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
       .all(...unique) as Array<Record<string, unknown>>;
     const docs: Record<string, Record<string, unknown>> = {};
     for (const row of rows) {
-      docs[row.id as string] = row;
+      if (isKnowledgeDocumentReadable(db, row.id as string, row.source_id as string))
+        docs[row.id as string] = row;
     }
     return c.json({ docs });
   });
@@ -1146,13 +1148,17 @@ export function mountDocumentByIdRoute(app: RouteApp, deps: { db: Db }): void {
       const row = db.prepare(`SELECT ${columns} ${from} WHERE document.id = ?`).get(id) as
         | Record<string, unknown>
         | undefined;
-      if (!row) throw new NotFoundError("Document not found");
+      if (!row || !isKnowledgeDocumentReadable(db, row.id as string, row.source_id as string))
+        throw new NotFoundError("Document not found");
       return c.json(withInternalFlag(row));
     }
 
-    const rows = db
+    const candidates = db
       .prepare(`SELECT ${columns} ${from} WHERE document.id LIKE ? LIMIT 2`)
       .all(`${id}%`) as Array<Record<string, unknown>>;
+    const rows = candidates.filter((row) =>
+      isKnowledgeDocumentReadable(db, row.id as string, row.source_id as string),
+    );
     if (rows.length === 0) {
       throw new NotFoundError("Document not found");
     }

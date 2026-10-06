@@ -30,6 +30,8 @@ import "./synth-env.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
@@ -187,6 +189,7 @@ describe("Brain Bench — open loops", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         // The clock-driven arcs move virtual time forward by days; documents
         // pushed afterwards still carry wall-clock timestamps, so widen the
         // waker's recency gate rather than back-dating every fixture. The
@@ -203,206 +206,190 @@ describe("Brain Bench — open loops", () => {
         decay: { backoffBase: "1h", backoffCap: "8h", datedFloor: "30m" },
       },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: A1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${A} showcase deposit` }),
+                  call("open_loop_create", {
+                    title: `Send the deposit for the ${A} showcase`,
+                    description: `Riverside Estate holds the ${A} date until the deposit lands.`,
+                    confidence: 0.9,
+                    importance: 0.7,
+                    docs: [ctx.subject],
+                    actors: ["maya.reeves@example.org"],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: `Deposit requested to hold the ${A} showcase date.`,
+                  }),
+                ],
+                finalText: "Tracked the deposit obligation.",
+              }),
+            },
+            {
+              docTitle: A2.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${A} showcase deposit` }),
+                  // The loop was minted by an EARLIER run, so its id can only
+                  // come from this run's live search result.
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    docs: [ref("open_loop_search", "loops.0.docs.0"), ctx.subject],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    note: `Stage rider arrived; the ${A} deposit is still outstanding.`,
+                  }),
+                ],
+                finalText: "Reconciled onto the existing loop.",
+              }),
+            },
+            {
+              docTitle: A3.title,
+              plan: () => ({
+                calls: [
+                  call("open_loop_search", { query: `${A} showcase deposit` }),
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    state: "done",
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    note: `Deposit confirmed for the ${A} showcase; closing without a card.`,
+                  }),
+                ],
+                finalText: "Closed silently — nothing left for the user to do.",
+              }),
+            },
+            {
+              docTitle: B1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${B} lease review` }),
+                  call("open_loop_create", {
+                    title: `Review the ${B} lease`,
+                    description: `Whitfield Law is waiting on comments for the ${B} lease.`,
+                    confidence: 0.85,
+                    importance: 0.8,
+                    docs: [ctx.subject],
+                    actors: ["dana.whitfield@whitfieldlaw.example"],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: `Review of the ${B} lease requested.`,
+                  }),
+                  call("brief_create", {
+                    kind: "loop",
+                    title: `${B} lease needs your comments`,
+                    description: "Requested before Friday.",
+                    citations: [ctx.subject],
+                    relatedLoopIds: [ref("open_loop_create", "loop.id")],
+                    confidence: 0.85,
+                    urgency: 0.6,
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: B2.title,
+              plan: () => ({
+                calls: [
+                  call("open_loop_search", { query: `${B} lease review` }),
+                  call("open_loop_delete", { id: ref("open_loop_search", "loops.0.id") }),
+                ],
+                finalText: "The obligation was rescinded; the loop should never have existed.",
+              }),
+            },
+            {
+              docTitle: P1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${P} rental` }),
+                  call("open_loop_create", {
+                    title: `Return the signed ${P} rental agreement`,
+                    description: `Studio Northstar is waiting on the countersigned ${P} agreement.`,
+                    confidence: 0.9,
+                    importance: 0.9,
+                    docs: [ctx.subject],
+                    actors: ["maya.reeves@example.org"],
+                    involved: ["jamie.lopez@example.com"],
+                  }),
+                  call("open_loop_create", {
+                    title: `Compare the ${P} catering menus`,
+                    description: `Menus for the ${P} booking are attached; no deadline given.`,
+                    confidence: 0.7,
+                    importance: 0.2,
+                    docs: [ctx.subject],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: `Agreement for ${P} sent for signature.`,
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: D1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "studio session status" }),
+                  call("open_loop_create", {
+                    title: `Confirm the ${D_KEEP} rehearsal slot`,
+                    description: `Studio Northstar has not confirmed the ${D_KEEP} slot.`,
+                    confidence: 0.8,
+                    importance: 0.6,
+                    docs: [ctx.subject],
+                  }),
+                  call("open_loop_create", {
+                    title: `Chase the ${D_GONE} lighting quote`,
+                    description: `No lighting quote for ${D_GONE} has arrived.`,
+                    confidence: 0.75,
+                    importance: 0.5,
+                    docs: [ctx.subject],
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: C1.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: `${C} permit renewal` }),
+                  call("open_loop_create", {
+                    title: `Renew ${C} workshop permit`,
+                    description: `Cedar Grove Supplies asked for the ${C} renewal form.`,
+                    confidence: 0.85,
+                    importance: 0.55,
+                    docs: [ctx.subject],
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: C2.title,
+              plan: (ctx) => ({
+                // Deliberately re-worded: the consolidation key is the
+                // order-insensitive normalized title, not the literal string.
+                calls: [
+                  call("open_loop_search", { query: `${C} permit renewal` }),
+                  call("open_loop_create", {
+                    title: `${C} workshop permit — renew`,
+                    description: `Cedar Grove Supplies asked for the ${C} renewal form again.`,
+                    confidence: 0.85,
+                    importance: 0.55,
+                    docs: [ctx.subject],
+                  }),
+                ],
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
-          // ── arc A: create ────────────────────────────────────────────────
-          {
-            flavour: "data.created",
-            docTitle: A1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${A} showcase deposit` }),
-                call("open_loop_create", {
-                  title: `Send the deposit for the ${A} showcase`,
-                  description: `Riverside Estate holds the ${A} date until the deposit lands.`,
-                  confidence: 0.9,
-                  importance: 0.7,
-                  docs: [ctx.subject],
-                  actors: ["maya.reeves@example.org"],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: `Deposit requested to hold the ${A} showcase date.`,
-                }),
-              ],
-              finalText: "Tracked the deposit obligation.",
-            }),
-          },
-          // ── arc A: reconcile onto the existing loop ──────────────────────
-          {
-            flavour: "data.created",
-            docTitle: A2.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${A} showcase deposit` }),
-                // The loop was minted by an EARLIER run, so its id can only
-                // come from this run's live search result.
-                call("open_loop_update", {
-                  id: ref("open_loop_search", "loops.0.id"),
-                  docs: [ref("open_loop_search", "loops.0.docs.0"), ctx.subject],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_search", "loops.0.id"),
-                  note: `Stage rider arrived; the ${A} deposit is still outstanding.`,
-                }),
-              ],
-              finalText: "Reconciled onto the existing loop.",
-            }),
-          },
-          // ── arc A: silent close ──────────────────────────────────────────
-          {
-            flavour: "data.created",
-            docTitle: A3.title,
-            plan: () => ({
-              calls: [
-                call("open_loop_search", { query: `${A} showcase deposit` }),
-                call("open_loop_update", {
-                  id: ref("open_loop_search", "loops.0.id"),
-                  state: "done",
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_search", "loops.0.id"),
-                  note: `Deposit confirmed for the ${A} showcase; closing without a card.`,
-                }),
-              ],
-              finalText: "Closed silently — nothing left for the user to do.",
-            }),
-          },
-          // ── arc B: a loop with an attached brief ─────────────────────────
-          {
-            flavour: "data.created",
-            docTitle: B1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${B} lease review` }),
-                call("open_loop_create", {
-                  title: `Review the ${B} lease`,
-                  description: `Whitfield Law is waiting on comments for the ${B} lease.`,
-                  confidence: 0.85,
-                  importance: 0.8,
-                  docs: [ctx.subject],
-                  actors: ["dana.whitfield@whitfieldlaw.example"],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: `Review of the ${B} lease requested.`,
-                }),
-                call("brief_create", {
-                  kind: "loop",
-                  title: `${B} lease needs your comments`,
-                  description: "Requested before Friday.",
-                  citations: [ctx.subject],
-                  relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                  confidence: 0.85,
-                  urgency: 0.6,
-                }),
-              ],
-            }),
-          },
-          // ── arc B: the obligation is rescinded → delete, not done ────────
-          {
-            flavour: "data.created",
-            docTitle: B2.title,
-            plan: () => ({
-              calls: [
-                call("open_loop_search", { query: `${B} lease review` }),
-                call("open_loop_delete", { id: ref("open_loop_search", "loops.0.id") }),
-              ],
-              finalText: "The obligation was rescinded; the loop should never have existed.",
-            }),
-          },
-          // ── arc P: two loops of different importance, with people ────────
-          {
-            flavour: "data.created",
-            docTitle: P1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${P} rental` }),
-                call("open_loop_create", {
-                  title: `Return the signed ${P} rental agreement`,
-                  description: `Studio Northstar is waiting on the countersigned ${P} agreement.`,
-                  confidence: 0.9,
-                  importance: 0.9,
-                  docs: [ctx.subject],
-                  actors: ["maya.reeves@example.org"],
-                  involved: ["jamie.lopez@example.com"],
-                }),
-                call("open_loop_create", {
-                  title: `Compare the ${P} catering menus`,
-                  description: `Menus for the ${P} booking are attached; no deadline given.`,
-                  confidence: 0.7,
-                  importance: 0.2,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: `Agreement for ${P} sent for signature.`,
-                }),
-              ],
-            }),
-          },
-          // ── arc D: two loops the decay engine will revisit ───────────────
-          {
-            flavour: "data.created",
-            docTitle: D1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: "studio session status" }),
-                call("open_loop_create", {
-                  title: `Confirm the ${D_KEEP} rehearsal slot`,
-                  description: `Studio Northstar has not confirmed the ${D_KEEP} slot.`,
-                  confidence: 0.8,
-                  importance: 0.6,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_create", {
-                  title: `Chase the ${D_GONE} lighting quote`,
-                  description: `No lighting quote for ${D_GONE} has arrived.`,
-                  confidence: 0.75,
-                  importance: 0.5,
-                  docs: [ctx.subject],
-                }),
-              ],
-            }),
-          },
-          // ── arc C: a recurring commitment, minted twice ──────────────────
-          {
-            flavour: "data.created",
-            docTitle: C1.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: `${C} permit renewal` }),
-                call("open_loop_create", {
-                  title: `Renew ${C} workshop permit`,
-                  description: `Cedar Grove Supplies asked for the ${C} renewal form.`,
-                  confidence: 0.85,
-                  importance: 0.55,
-                  docs: [ctx.subject],
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: C2.title,
-            plan: (ctx) => ({
-              // Deliberately re-worded: the consolidation key is the
-              // order-insensitive normalized title, not the literal string.
-              calls: [
-                call("open_loop_search", { query: `${C} permit renewal` }),
-                call("open_loop_create", {
-                  title: `${C} workshop permit — renew`,
-                  description: `Cedar Grove Supplies asked for the ${C} renewal form again.`,
-                  confidence: 0.85,
-                  importance: 0.55,
-                  docs: [ctx.subject],
-                }),
-              ],
-            }),
-          },
-
-          // ── decay behaviors ──────────────────────────────────────────────
-          // Most-specific first: the Brambling REAP arm only matches once the
-          // KEEP arm's ledger note is in the prompt's ledger tail.
           {
             flavour: "time_based.decay",
             promptContains: BRAMBLING_KEPT_NOTE,
@@ -450,8 +437,6 @@ describe("Brain Bench — open loops", () => {
               finalText: "Filed and closed.",
             }),
           },
-          // Every other loop's decay check is a deliberate no-op, so one arc's
-          // clock advance never disturbs another arc's loops.
           { flavour: "time_based.decay", plan: { calls: [] } },
         ],
       },
@@ -541,7 +526,9 @@ describe("Brain Bench — open loops", () => {
     // The reconcile went through the gateway's own search tool, and that
     // search surfaced the loop the EARLIER run minted — the only channel
     // through which this run could have learned the id it then updated.
-    const steps = await bench.obs.executedTools((await bench.obs.runForDoc(a2Id!)).id);
+    const steps = await bench.obs.executedTools(
+      (await bench.obs.interpretationForSource(a2Id!)).id,
+    );
     const search = steps.find((s) => s.tool === "open_loop_search");
     expect(search, "the reconcile run searched for an existing loop").toBeDefined();
     const surfaced = search!.result?.data?.loops as Array<{ id: string }> | undefined;
@@ -573,10 +560,12 @@ describe("Brain Bench — open loops", () => {
 
     // Non-vacuous: the resolution run really executed and really resolved the
     // loop — it simply wrote no brief while doing so.
-    const dataRuns = await bench.obs.settledRuns("data");
-    expect(dataRuns).toHaveLength(3);
-    expect(dataRuns.every((r) => r.status === "completed")).toBe(true);
-    const steps = await bench.obs.executedTools((await bench.obs.runForDoc(a3Id!)).id);
+    const resolvingRun = await bench.obs.interpretationForSource(a3Id!);
+    expect(resolvingRun.kind).toBe("synthesis");
+    expect(resolvingRun.status).toBe("completed");
+    const steps = await bench.obs.executedTools(
+      (await bench.obs.interpretationForSource(a3Id!)).id,
+    );
     // The gateway handed this run the loop the earlier runs had been building,
     // so the resolving update could only have targeted that loop.
     const surfaced = steps.find((s) => s.tool === "open_loop_search")?.result?.data?.loops as
@@ -643,9 +632,7 @@ describe("Brain Bench — open loops", () => {
     expect(citationRows?.n).toBe(0);
 
     // The tool reported the cascade it performed.
-    const deleteRun = (await bench.obs.settledRuns("data")).find(
-      (r) => r.dedupeKey === `data:doc:${b2Id}`,
-    );
+    const deleteRun = await bench.obs.interpretationForSource(b2Id!);
     expect(deleteRun).toBeDefined();
     const refs = await bench.obs.transcripts({ runId: deleteRun!.id });
     const { transcript } = await bench.obs.transcript(refs.items.at(-1)!.fileName);
@@ -656,8 +643,17 @@ describe("Brain Bench — open loops", () => {
     expect(joinRowCount(bench, "open_loop_people", loopId)).toBe(0);
     expect(joinRowCount(bench, "open_loop_ledger", loopId)).toBe(0);
 
-    // And the corpus mirror was removed, not left as a stale search hit.
-    expect(mirrorOf(bench, loopId)).toBeUndefined();
+    // The active-loop mirror is removed. Intentional retirement retains a
+    // historical synthesis projection; source privacy deletion purges that too.
+    expect(
+      bench.sql
+        .prepare("SELECT 1 FROM documents WHERE external_id=? AND source_id='open-loops'")
+        .get(loopId),
+    ).toBeUndefined();
+    const retiredProjection = mirrorOf(bench, loopId);
+    expect(retiredProjection?.source_id).toBe("brain-knowledge");
+    expect(retiredProjection?.content).toContain('"state":"retired"');
+    expect(retiredProjection?.content).toContain('"outcome":"deleted"');
     const scoped = await bench.harness.gatewayJson<LikeSearchResult>(
       `/documents/search?q=${B}&sources=open-loops`,
     );
@@ -792,8 +788,17 @@ describe("Brain Bench — open loops", () => {
     expect(trace).toBeDefined();
     expect(trace!.outcome).toBe("decayed");
 
-    // Its mirror and its pending check went with it.
-    expect(mirrorOf(bench, gone.id)).toBeUndefined();
+    // Active retrieval and scheduled checks stop, while the intentional
+    // retirement retains historical context in the synthesis projection.
+    expect(
+      bench.sql
+        .prepare("SELECT 1 FROM documents WHERE external_id=? AND source_id='open-loops'")
+        .get(gone.id),
+    ).toBeUndefined();
+    const retiredProjection = mirrorOf(bench, gone.id);
+    expect(retiredProjection?.source_id).toBe("brain-knowledge");
+    expect(retiredProjection?.content).toContain('"state":"retired"');
+    expect(retiredProjection?.content).toContain('"outcome":"decayed"');
     expect(bench.pendingDedupeKeys()).not.toContain(`decay:loop:${gone.id}`);
   }, 180_000);
 
@@ -857,7 +862,24 @@ describe("Brain Bench — open loops", () => {
 
     // Three days and one hour later it retires again.
     await bench.clock.advance(73 * HOUR);
-    await bench.drainUntilQuiet();
+    try {
+      await bench.drainUntilQuiet();
+    } catch (error) {
+      const pending = bench.sql
+        .prepare(
+          "SELECT f.*,b.status AS batch_status FROM knowledge_frontier f JOIN knowledge_batches b ON b.id=f.batch_id WHERE b.status!='completed' ORDER BY b.created_at DESC LIMIT 12",
+        )
+        .all();
+      const root = bench.sql
+        .prepare(
+          "SELECT id,revision,validity,markdown,metadata_json FROM knowledge_nodes WHERE kind='root'",
+        )
+        .get();
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; maintenance=${JSON.stringify({ pending, root })}`,
+        { cause: error },
+      );
+    }
 
     const traces = (await bench.obs.retiredLoops()).items;
     const secondTrace = traces.find((r) => r.id === second.id);

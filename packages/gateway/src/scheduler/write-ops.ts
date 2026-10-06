@@ -23,6 +23,7 @@
  */
 
 import { writeGateFromCall, type WriteGate, type WriterCallFn } from "../write-gate.js";
+import { KnowledgeStorageError } from "../brain/knowledge/types.js";
 import { rehydrateAnswerStoreError } from "../privacy/store.js";
 import { rehydrateSourceModeTransitionPrepareError } from "../data/repositories/SourceModeTransitionRepository.js";
 import { TaskExecutionError, type Priority, type Task } from "./types.js";
@@ -56,6 +57,41 @@ const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 500;
 
 const WRITE_OP_DEFS: readonly WriteOpDef[] = [
+  { name: "knowledge.canonicalMutation", priority: "background" },
+  { name: "knowledge.save", priority: "background" },
+  { name: "knowledge.discoveryTargets", priority: "background" },
+  { name: "knowledge.publishCandidate", priority: "background" },
+  { name: "knowledge.syncOwners", priority: "background" },
+  { name: "knowledge.link", priority: "background" },
+  { name: "knowledge.decision", priority: "background" },
+  { name: "knowledge.abandonBatch", priority: "background" },
+  { name: "knowledge.scheduleReview", priority: "background" },
+  { name: "knowledge.checkpoint", priority: "background" },
+  { name: "knowledge.admitOrganization", priority: "background" },
+  { name: "knowledge.adoptWork", priority: "background" },
+  { name: "knowledge.refreshWork", priority: "background" },
+  { name: "knowledge.queueProjectionCleanup", priority: "background" },
+  { name: "knowledge.ackProjectionCleanup", priority: "background" },
+
+  { name: "knowledge.saveOwned", priority: "background" },
+  { name: "knowledge.convertOwner", priority: "background" },
+  { name: "knowledge.settleFrontier", priority: "background" },
+  { name: "knowledge.coverage", priority: "background" },
+  { name: "knowledge.proposeCandidate", priority: "background" },
+  { name: "knowledge.settleCandidate", priority: "background" },
+
+  { name: "knowledge.evidence", priority: "background" },
+  { name: "knowledge.sourceChanged", priority: "background" },
+  { name: "knowledge.advanceCascade", priority: "background" },
+  { name: "knowledge.invalidate", priority: "background" },
+  { name: "knowledge.purge", priority: "background" },
+  { name: "knowledge.ackChanges", priority: "background" },
+  { name: "knowledge.enqueue", priority: "background" },
+  { name: "knowledge.startBatch", priority: "background" },
+  { name: "knowledge.appendFrontier", priority: "background" },
+  { name: "knowledge.frontierOutcome", priority: "background" },
+  { name: "knowledge.finishBatch", priority: "background" },
+
   { name: "vocabulary.advanceRebuild", priority: "background" },
   { name: "vocabulary.applyBatch", priority: "background" },
   // ── db.ts — bulk writes ────────────────────────────────────────────
@@ -647,6 +683,28 @@ export function writeGateFromScheduler(scheduler: Scheduler): WriteGate {
     // contract on `WriterCallFn` is what keeps caller-args aligned.
     return (scheduler.enqueue(task, args as unknown[]) as Promise<never>).catch(
       (error: unknown) => {
+        if (
+          op.startsWith("knowledge.") &&
+          error instanceof TaskExecutionError &&
+          error.cause instanceof Error &&
+          error.cause.name === "KnowledgeStorageError"
+        ) {
+          const code = (error.cause as Error & { code?: unknown }).code;
+          if (
+            typeof code === "string" &&
+            [
+              "revision_conflict",
+              "reference_invalid",
+              "claim_invalid",
+              "cycle",
+              "root_conflict",
+            ].includes(code)
+          )
+            throw new KnowledgeStorageError(
+              code as KnowledgeStorageError["code"],
+              error.cause.message,
+            );
+        }
         if (
           op.startsWith("privacy.") &&
           error instanceof TaskExecutionError &&

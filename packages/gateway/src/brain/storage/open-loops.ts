@@ -28,6 +28,10 @@
  *    deletes the loops' mirrored corpus documents by external id.
  */
 
+import {
+  isKnowledgeOwnerReadable,
+  knowledgeOwnerReadPredicate,
+} from "../knowledge/storage-fence.js";
 import { deleteBriefsAttachedToLoops, findActiveBriefsForLoops } from "./briefs.js";
 import { bumpCognitionDecayDirty } from "./engine-state.js";
 import { retireLoop } from "./retired-loops.js";
@@ -122,6 +126,7 @@ export interface LoopPeople {
 }
 
 export function loopPeople(db: Db, loopId: string): LoopPeople {
+  if (!isKnowledgeOwnerReadable(db, loopId)) return { actors: [], involved: [] };
   const rows = db
     .prepare<
       [string],
@@ -180,6 +185,7 @@ export function createOpenLoop(db: Db, input: CreateOpenLoopInput, now: number):
 }
 
 export function getOpenLoop(db: Db, id: string): OpenLoopRow | null {
+  if (!isKnowledgeOwnerReadable(db, id)) return null;
   const row = db.prepare<[string], OpenLoopDbRow>("SELECT * FROM open_loops WHERE id = ?").get(id);
   if (!row) return null;
   return rowToOpenLoop(row, loopDocs(db, id));
@@ -193,6 +199,7 @@ export function getOpenLoop(db: Db, id: string): OpenLoopRow | null {
  * would do.
  */
 export function getActiveLoopTitle(db: Db, id: string): string | null {
+  if (!isKnowledgeOwnerReadable(db, id)) return null;
   const row = db
     .prepare<
       [string],
@@ -357,8 +364,8 @@ export function searchOpenLoopsLexical(
   params.push(options.limit ?? 8);
   const rows = db
     .prepare<(string | number)[], OpenLoopDbRow>(
-      `SELECT * FROM (SELECT *, (${tokenCase}) AS matched_tokens FROM open_loops)
-        WHERE matched_tokens > 0
+      `SELECT * FROM (SELECT *, (${tokenCase}) AS matched_tokens FROM open_loops) candidates
+        WHERE matched_tokens > 0 AND ${knowledgeOwnerReadPredicate(db, "candidates.id")}
         ORDER BY matched_tokens DESC, last_update DESC LIMIT ?`,
     )
     .all(...params);
@@ -367,7 +374,7 @@ export function searchOpenLoopsLexical(
 
 /** Loops ordered by most-recently-updated first. */
 export function listOpenLoops(db: Db, options: ListOpenLoopsOptions = {}): OpenLoopRow[] {
-  const conditions: string[] = [];
+  const conditions: string[] = [knowledgeOwnerReadPredicate(db, "open_loops.id")];
   const params: (string | number)[] = [];
   const importanceOrder = options.orderBy === "importance";
   let pageIndex = importanceOrder ? "idx_open_loops_importance_page" : "idx_open_loops_update_page";
@@ -568,6 +575,7 @@ export function listOpenLoopLedger(
   loopId: string,
   options: { limit?: number; beforeSeq?: number; order?: "asc" | "desc" } = {},
 ): OpenLoopLedgerEntry[] {
+  if (!isKnowledgeOwnerReadable(db, loopId)) return [];
   const order = options.order === "desc" ? "DESC" : "ASC";
   const comparator = order === "DESC" ? "<" : ">";
   const cursor = options.beforeSeq === undefined ? "" : `AND seq ${comparator} ?`;
@@ -630,18 +638,33 @@ export function deleteOpenLoop(
   id: string,
   opts: DeleteOpenLoopOptions = {},
 ): DeleteOpenLoopResult {
-  const existing = db
-    .prepare<[string], OpenLoopDbRow>("SELECT * FROM open_loops WHERE id = ?")
-    .get(id);
-  if (!existing) return { deleted: false, deletedBriefIds: [] };
-  if (opts.retire) {
-    const outcome = existing.decay_check_count > 0 ? "decayed" : "deleted";
-    retireLoop(db, rowToOpenLoop(existing, loopDocs(db, id)), outcome, opts.now ?? Date.now());
-  }
-  const deletedBriefIds = deleteBriefsAttachedToLoops(db, [id], { includeTerminal: false });
-  db.prepare<[string]>("DELETE FROM open_loops WHERE id = ?").run(id);
-  bumpCognitionDecayDirty(db);
-  return { deleted: true, deletedBriefIds };
+  const knowledgeRetirement = !!db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_owner_retire_guard'",
+    )
+    .get();
+  return db.transaction(() => {
+    const existing = db
+      .prepare<[string], OpenLoopDbRow>("SELECT * FROM open_loops WHERE id = ?")
+      .get(id);
+    if (!existing) return { deleted: false, deletedBriefIds: [] };
+    if (opts.retire && knowledgeRetirement) {
+      db.prepare("INSERT OR IGNORE INTO knowledge_owner_retire_guard(owner_id) VALUES(?)").run(id);
+      db.prepare(
+        "INSERT OR IGNORE INTO knowledge_retired_loop_sources(loop_id,document_id) SELECT loop_id,doc_id FROM open_loop_docs WHERE loop_id=?",
+      ).run(id);
+    }
+    if (opts.retire) {
+      const outcome = existing.decay_check_count > 0 ? "decayed" : "deleted";
+      retireLoop(db, rowToOpenLoop(existing, loopDocs(db, id)), outcome, opts.now ?? Date.now());
+    }
+    const deletedBriefIds = deleteBriefsAttachedToLoops(db, [id], { includeTerminal: false });
+    db.prepare<[string]>("DELETE FROM open_loops WHERE id = ?").run(id);
+    if (knowledgeRetirement)
+      db.prepare("DELETE FROM knowledge_owner_retire_guard WHERE owner_id=?").run(id);
+    bumpCognitionDecayDirty(db);
+    return { deleted: true, deletedBriefIds };
+  })();
 }
 
 export interface OpenLoopPrivacyCascadeResult {

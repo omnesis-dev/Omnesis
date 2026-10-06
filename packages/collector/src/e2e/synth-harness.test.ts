@@ -82,3 +82,41 @@ describe("SyntheticE2EHarness.syncAllSources", () => {
     await syncing;
   });
 });
+
+describe("SyntheticE2EHarness.pushDocuments", () => {
+  test.each([
+    { result: { rejectedSourceIds: ["fixture:source"] }, message: "lost its source write epoch" },
+    {
+      result: { rejected: [{ sourceId: "fixture:source", reason: "removed" }] },
+      message: "fixture:source (removed)",
+    },
+    {
+      result: { rejected: [{ sourceId: "fixture:source", reason: "paused" }] },
+      message: "fixture:source (paused)",
+    },
+  ])("exposes rejected fixture writes: $message", async ({ result, message }) => {
+    const harness = Object.create(SyntheticE2EHarness.prototype) as SyntheticE2EHarness;
+    const gateway = vi
+      .spyOn(harness, "gatewayJson")
+      .mockResolvedValueOnce({ wipeEpoch: 7 })
+      .mockResolvedValueOnce(result);
+    await expect(
+      harness.pushDocuments([
+        { sourceId: "fixture:source", externalId: "one" },
+        { sourceId: "fixture:source", externalId: "two" },
+      ]),
+    ).rejects.toThrow(message);
+    expect(gateway).toHaveBeenCalledTimes(2);
+    expect(gateway.mock.calls[0]?.[0]).toBe("/sync-state/fixture%3Asource");
+    const body = JSON.parse(gateway.mock.calls[1]?.[1]?.body as string);
+    expect(body.writeEpochs).toEqual({ "fixture:source": 7 });
+    expect(body.documents).toHaveLength(2);
+  });
+  test("keeps intentional document tombstone suppression successful", async () => {
+    const harness = Object.create(SyntheticE2EHarness.prototype) as SyntheticE2EHarness;
+    vi.spyOn(harness, "gatewayJson")
+      .mockResolvedValueOnce({ wipeEpoch: 7 })
+      .mockResolvedValueOnce({ ingested: 0, suppressed: ["tombstoned-document"] });
+    await expect(harness.pushDocument({ sourceId: "fixture:source" })).resolves.toBeUndefined();
+  });
+});

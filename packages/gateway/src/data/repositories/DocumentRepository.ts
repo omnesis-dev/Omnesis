@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { randomUUID } from "node:crypto";
@@ -1345,7 +1346,8 @@ export function getRecentDocuments(
        ORDER BY document.source_created_at DESC, document.id DESC
        LIMIT ?`,
     )
-    .all(...params);
+    .all(...params)
+    .filter((row) => isKnowledgeDocumentReadable(db, row.id, row.source_id));
 }
 
 export function listDocuments(
@@ -1550,6 +1552,7 @@ export function listDocumentsByIds(db: Db, ids: string[]): ListedDocumentRow[] {
       )
       .all(...chunk);
     for (const row of rows) {
+      if (!isKnowledgeDocumentReadable(db, row.id, row.source_id)) continue;
       out.push({
         id: row.id,
         sourceId: row.source_id,
@@ -1638,7 +1641,10 @@ export function getDocumentTitlesAndSources(
         { id: string; title: string; source_id: string }
       >(`SELECT id, title, source_id FROM documents WHERE id IN (${placeholders})`)
       .all(...chunk);
-    for (const row of rows) out.set(row.id, { title: row.title, sourceId: row.source_id });
+    for (const row of rows) {
+      if (isKnowledgeDocumentReadable(db, row.id, row.source_id))
+        out.set(row.id, { title: row.title, sourceId: row.source_id });
+    }
   }
   return out;
 }

@@ -35,6 +35,11 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createLogger, type Logger } from "@omnesis/core";
+import { createKnowledgeTables } from "../brain/knowledge/schema.js";
+import { createKnowledgeDecisionTable } from "../brain/knowledge/decision-storage.js";
+import { installKnowledgeOwnerTriggers } from "../brain/knowledge/owner-triggers.js";
+import { createKnowledgeSourceTriggers } from "../brain/knowledge/source-triggers.js";
+import { createKnowledgeWorkTables } from "../brain/knowledge/work-schema.js";
 import {
   createBriefsStorageTables,
   createBriefClaimsTables,
@@ -114,7 +119,11 @@ import {
 import { createSourceMemberConfigContractTable } from "./repositories/SourceMemberConfigContractRepository.js";
 import { createReplicaDeletionClaimsTable } from "./repositories/ReplicaDeletionClaimRepository.js";
 import { foldWebPagesIntoWebSource } from "./fold-web-pages-migration.js";
-import { installCollectorRosterRevision, installMutableListRevisions } from "./list-revisions.js";
+import {
+  installCollectorRosterRevision,
+  installMutableListRevisions,
+  installKnowledgeCoverageRevision,
+} from "./list-revisions.js";
 import { pruneOrphanSourceStats } from "./prune-orphan-source-stats.js";
 import { pruneInvalidEmailAliases } from "./prune-invalid-email-aliases.js";
 import { runSchemaSetup } from "./schema.js";
@@ -4770,6 +4779,18 @@ export const MIGRATIONS: readonly Migration[] = [
     description:
       "retain authored dates, corroborated spellings and contextual evidence for transcription vocabulary",
     up: installTranscriptionVocabulary,
+  },
+  {
+    version: 193,
+    description: "add versioned knowledge claims and durable synthesis maintenance",
+    up(db) {
+      createKnowledgeTables(db);
+      createKnowledgeWorkTables(db);
+      installKnowledgeCoverageRevision(db);
+      createKnowledgeSourceTriggers(db);
+      createKnowledgeDecisionTable(db);
+      installKnowledgeOwnerTriggers(db);
+    },
   },
 ];
 

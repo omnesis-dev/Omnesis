@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { KnowledgeStorageError } from "./brain/knowledge/types.js";
+import type { KnowledgeCanonicalFence } from "./brain/knowledge/canonical-fence.js";
+import { withdrawKnowledgeOwner } from "./brain/knowledge/owner-withdrawal.js";
+
+import {
+  knowledgeGateFromCall,
+  directKnowledgeGate,
+  type KnowledgeWriteGate,
+} from "./brain/knowledge/writer.js";
+
 import { promoteSourceWireContract } from "./data/repositories/SourceWireContractRepository.js";
 import { replaceSourceSyncIssues } from "./data/repositories/SourceSyncIssueRepository.js";
 import type {
@@ -505,7 +515,6 @@ import {
   createDocAnnotationSuperseding,
   supersedeDocAnnotationBy,
   updateDocAnnotation,
-  deleteDocAnnotation,
   invalidateAnnotationsForDoc,
   cascadeAnnotationPrivacyDelete,
   invalidateBriefClaimsForDoc,
@@ -514,7 +523,6 @@ import {
   createPersonAnnotationSuperseding,
   supersedePersonAnnotationBy,
   revisePersonAnnotation,
-  deletePersonAnnotation,
   invalidatePersonAnnotationsForDoc,
   cascadePersonAnnotationPrivacyDelete,
   mutateWithConsumptionDependencies,
@@ -658,7 +666,7 @@ import type {
   ExtractedVocabularyDocument,
 } from "./transcribe/vocabulary/types.js";
 
-export interface WriteGate {
+export interface WriteGate extends KnowledgeWriteGate {
   advanceTranscriptionVocabularyRebuild(
     settings: VocabularySettings,
   ): Promise<{ ready: boolean; worked: boolean }>;
@@ -2220,8 +2228,29 @@ function canonicalizerRegistryForWrite(
     : buildSafeUrlCanonicalizerRegistry(specs);
 }
 
+const gateCalls = new WeakMap<WriteGate, WriterCallFn>();
+export function maintenanceCanonicalWriteGate(
+  gate: WriteGate,
+  fence: () => KnowledgeCanonicalFence,
+): WriteGate {
+  const call = gateCalls.get(gate);
+  if (!call) throw new Error("Maintenance requires a registered writer gate");
+  return writeGateFromCall(
+    async <K extends WriterOpName>(
+      op: K,
+      args: WriterArgs<K>,
+    ): Promise<Awaited<WriterReturn<K>>> => {
+      const scope = fence();
+      const result = await call("knowledge.canonicalMutation", [scope, op, args as unknown[]]);
+      if (!result.ok) throw new KnowledgeStorageError(result.code, result.message);
+      scope.owners = result.owners;
+      return result.value as Awaited<WriterReturn<K>>;
+    },
+  );
+}
 export function writeGateFromCall(call: WriterCallFn): WriteGate {
-  return {
+  const gate: WriteGate = {
+    ...knowledgeGateFromCall(call),
     upsertDocuments: (
       docs,
       canonicalizers,
@@ -2731,6 +2760,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     nearDupGenerationSweepStep: (config) => call("nearDup.generationSweepStep", [config]),
     markNearDupDfDirty: () => call("nearDup.markDfDirty", []),
   };
+  gateCalls.set(gate, call);
+  return gate;
 }
 
 /**
@@ -2739,7 +2770,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
  * writer invariant.
  */
 export function directWriteGate(db: Db): WriteGate {
-  return {
+  const gate: WriteGate = {
+    ...directKnowledgeGate(db),
     upsertDocuments: async (
       docs,
       canonicalizers,
@@ -3244,7 +3276,9 @@ export function directWriteGate(db: Db): WriteGate {
       supersedeDocAnnotationBy(db, id, supersededById, now),
     updateDocAnnotation: async (id, patch, now) => updateDocAnnotation(db, id, patch, now),
     deleteDocAnnotation: async (id, now) =>
-      retractAnnotationWithDependentRechecks(db, "doc", id, now, () => deleteDocAnnotation(db, id)),
+      retractAnnotationWithDependentRechecks(db, "doc", id, now, () =>
+        withdrawKnowledgeOwner(db, "doc_annotation", id, now),
+      ),
     invalidateAnnotationsForDoc: async (docId, now) => invalidateAnnotationsForDoc(db, docId, now),
     cascadeAnnotationPrivacyDelete: async (deletedDocIds) =>
       cascadeAnnotationPrivacyDelete(db, deletedDocIds),
@@ -3261,7 +3295,7 @@ export function directWriteGate(db: Db): WriteGate {
     revisePersonAnnotation: async (id, patch, now) => revisePersonAnnotation(db, id, patch, now),
     retractPersonAnnotation: async (id, now) =>
       retractAnnotationWithDependentRechecks(db, "person", id, now, () =>
-        deletePersonAnnotation(db, id),
+        withdrawKnowledgeOwner(db, "person_annotation", id, now),
       ),
     invalidatePersonAnnotationsForDoc: async (docId, now) =>
       invalidatePersonAnnotationsForDoc(db, docId, now),
@@ -3396,4 +3430,18 @@ export function directWriteGate(db: Db): WriteGate {
       markNearDupDfDirty(db);
     },
   };
+  gateCalls.set(
+    gate,
+    async <K extends WriterOpName>(
+      op: K,
+      args: WriterArgs<K>,
+    ): Promise<Awaited<WriterReturn<K>>> => {
+      const handler = (
+        writerHandlers as unknown as Record<string, (db: Db, ...args: unknown[]) => unknown>
+      )[op];
+      if (!handler) throw new Error("Unsupported direct writer operation");
+      return handler(db, ...args) as Awaited<WriterReturn<K>>;
+    },
+  );
+  return gate;
 }

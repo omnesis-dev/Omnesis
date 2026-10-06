@@ -16,6 +16,7 @@
     "packages/**/*.tsx",
     "skills/**/*.ts",
     "scripts/**/*.ts",
+    "scripts/**/*.mts",
     "bench/**/*.ts",
     "e2e/**/*.ts",
     "*.config.ts",

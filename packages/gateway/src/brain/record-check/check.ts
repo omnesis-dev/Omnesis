@@ -9,8 +9,8 @@
  * investigate — every tool call and search still happens; only the final
  * sentence is weighed. Scope:
  * - New doc, person and document-grounded temporal annotations made by
- *   `data` and `bootstrap` runs. Revisions, supersedes and self-sourced
- *   scheduling entries are never checked, and neither is interactive memory or
+ *   `data`, `bootstrap` and knowledge-maintenance `synthesis` runs. Revisions,
+ *   supersedes and self-sourced scheduling entries are never checked, and neither is interactive memory or
  *   content the user handed to the assistant.
  * - Three modes, read live: `off`; `shadow` saves every record at once and
  *   judges it in the background, so it can never delay or lose a write;
@@ -25,7 +25,10 @@
  */
 
 import { askScore, raceAbort } from "../decision-call.js";
-import { parseCognitionDataRunPayload } from "../run-payloads.js";
+import {
+  parseCognitionDataRunPayload,
+  parseCognitionSynthesisRunPayload,
+} from "../run-payloads.js";
 import {
   RECORD_BELONGS_QUESTIONS,
   RECORD_BELONGS_QUESTION_ID,
@@ -75,7 +78,7 @@ interface RecordCheckDeps {
   log: Logger;
 }
 
-type CheckedLane = "data" | "bootstrap";
+type CheckedLane = "data" | "bootstrap" | "synthesis";
 
 const SAVE: RecordCheckOutcome = { save: true };
 
@@ -197,6 +200,10 @@ export class RecordCheck {
 /** The lane whose records are checked, or null for runs that are never checked. */
 function checkedLane(run: ClaimedCognitionRun): CheckedLane | null {
   if (run.kind === "bootstrap") return "bootstrap";
+  if (run.kind === "synthesis") {
+    const payload = parseCognitionSynthesisRunPayload(run.payload);
+    return payload?.focus === "knowledge-maintenance" && payload.batchId ? "synthesis" : null;
+  }
   if (run.kind === "data") {
     // Content the user handed to the assistant is never second-guessed.
     const payload = parseCognitionDataRunPayload(run.payload);

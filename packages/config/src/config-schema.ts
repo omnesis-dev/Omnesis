@@ -2688,8 +2688,112 @@ const brainDigest = z
   })
   .strict();
 
+/** Bounded maintenance of grounded synthesis; shares the existing Brain gate. */
+const brainKnowledge = z
+  .object({
+    immediateThreshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe("Urgency score that schedules synthesis immediately.")
+      .optional(),
+    soonThreshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe("Urgency score that schedules synthesis in the soon tier.")
+      .optional(),
+    soonDelay: duration.describe("Maximum debounce for the soon maintenance tier.").optional(),
+    routineDelay: duration
+      .describe("Maximum debounce for routine maintenance; floored to the soon delay.")
+      .optional(),
+    rootMaxChars: z
+      .number()
+      .int()
+      .min(256)
+      .max(32000)
+      .describe("Hard character budget for the tagged root wiki.")
+      .optional(),
+    maxSeeds: z
+      .number()
+      .int()
+      .min(1)
+      .max(512)
+      .describe("Maximum evidence changes considered in one maintenance plan.")
+      .optional(),
+    maxVisitedPerSeed: z
+      .number()
+      .int()
+      .min(1)
+      .max(4096)
+      .describe("Maximum dependency region explored per evidence change.")
+      .optional(),
+    maxFrontierChars: z
+      .number()
+      .int()
+      .min(4096)
+      .max(1048576)
+      .describe(
+        "Maximum JSON characters in a maintenance frontier response; oversized nodes require an explicit fetch.",
+      )
+      .optional(),
+    maxFrontierNodes: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum synthesis nodes offered in one frontier tool response.")
+      .optional(),
+    cascadeBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .describe("Maximum deterministic cascade steps per writer slice.")
+      .optional(),
+    discoveryBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum new evidence records considered in one discovery slice.")
+      .optional(),
+    bootstrapBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(512)
+      .describe("Maximum historical records inventoried per resumable bootstrap slice.")
+      .optional(),
+    maxReviewsPerTick: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum synthesis review candidates considered per scheduling tick.")
+      .optional(),
+    maxReviewInterval: duration
+      .describe("Maximum time since meaningful verification before a review is required.")
+      .optional(),
+    checkpointLead: duration
+      .describe("How far ahead of a checkpoint proactive review becomes due.")
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.soonThreshold ?? 0.4) > (value.immediateThreshold ?? 0.8))
+      ctx.addIssue({
+        code: "custom",
+        path: ["soonThreshold"],
+        message: "Soon urgency threshold must not exceed the immediate threshold.",
+      });
+  });
+
 const brain = z
   .object({
+    knowledge: brainKnowledge
+      .describe("Grounded synthesis, discovery and maintenance scheduling.")
+      .optional(),
     workerConcurrency: z
       .number()
       .int()

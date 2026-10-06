@@ -1,78 +1,150 @@
 # The Omnesis Brain — operating guide
 
-The Brain is the background agent that reads your corpus on its own and writes
-what it learns into three kinds of durable artifact: **temporal annotations**
-(dated facts — "the lease renews on 14 March"), **open loops** (obligations
-that are still outstanding), and **briefs** (cards that interrupt you). It is
-the only part of Omnesis that spends money without you asking it to, which is
-why it has an operating guide and the rest of the system does not.
+The Brain maintains evidence-backed understanding: project and topic wikis,
+tracked outcomes (loops), document and person annotations, a time index, and
+briefs. A compact **root wiki** provides current orientation to agent runs.
+These records are synthesis, not independent evidence.
 
-It is experimental. Nothing here is on unless you deliberately turned it on.
+The autonomous Brain is experimental and unstable. Enable
+`OMNESIS_EXPERIMENTAL=1` and assign a reachable `background-agent` model to
+start it. Either alone leaves autonomous work inactive. Evidence invalidation
+and privacy cleanup continue when autonomous synthesis is stopped.
 
-A date that merely times an obligation stays in the loop’s deadline. A separate
-event or interval belongs in a temporal annotation even when it shares that
-date. Before adding a deadline annotation, the tool checks explicitly linked
-loops for the same interval and returns candidates for reconciliation without
-writing a row. A distinct dated fact can still be added after reviewing those
-candidates; this check does not classify meaning from dates alone.
+## Changes and maintenance
 
-## Turning it on takes two acts
+Source writes record a durable change and invalidate affected evidence without
+calling a model. Invalidated claims remain visibly stale until maintenance;
+privacy-deleted evidence is denied immediately while bounded cleanup removes
+derived content and index projections.
 
-The Brain is active only when **both** are true:
+The `decision` role scores urgency, discovery relevance, dependency impact and
+proactive review. Its ordered-level answers are normalized to 0–1. Missing or
+invalid judgements take the conservative path; they do not establish that
+content is irrelevant or verified. Maintenance tiers are configurable under
+`brain.knowledge`:
 
-1. the gateway was started with `OMNESIS_EXPERIMENTAL=1`, and
-2. a model is assigned to the `background-agent` role.
+| Setting              | Default | Purpose                                       |
+| -------------------- | ------- | --------------------------------------------- |
+| `immediateThreshold` | 0.8     | Immediate repair threshold                    |
+| `soonThreshold`      | 0.4     | Hourly repair threshold                       |
+| `soonDelay`          | `1h`    | Delay for soon work                           |
+| `routineDelay`       | `6h`    | Delay for routine work                        |
+| `rootMaxChars`       | 8000    | Hard limit for the root wiki                  |
+| `maxSeeds`           | 64      | Admission bound per maintenance pass          |
+| `maxFrontierNodes`   | 32      | Maximum offered frontier size                 |
+| `maxFrontierChars`   | 65536   | Maximum JSON characters per frontier response |
+| `maxVisitedPerSeed`  | 256     | Bounded affected-region traversal             |
 
-Either alone does nothing. `GET /status` reports the gate as `brain`
-(`visible` / `enabled` / `modelAssigned` / `active`), and the portal's Cognition
-page says which of the two is missing.
+Evidence changes whose potentially affected regions overlap share a batch;
+disjoint regions can remain separate. The root is a separately coordinated
+aggregate so a shared overview does not join every project into one batch.
 
-The second act is the one that starts spending. Assigning a model turns on
-**nine producers at once** — the live waker, the retrospective bootstrap lane,
-synthesis, collision detection, re-verification, provenance rechecks, the
-judge, the digest, and sweeps. That is deliberate: an engine that reacts to new
-documents but never notices anything across them is not the feature. But it
-means the moment after you assign a model is the moment to read the rest of
-this page.
+A synthesis run asks `knowledge_next_frontier` for work. The engine checks input
+versions, runs relevance gates, and offers the next breadth-first frontier.
+The agent writes through validated tools; the engine records changed,
+unchanged, skipped or deferred outcomes. Only material changes expand repair
+into dependents. Concurrent edits invalidate an obsolete proposal rather than
+letting it overwrite a newer revision. Interrupted work remains durable.
+The first frontier is gated before starting the agent: a fully skipped batch
+does not consume a synthesis turn.
 
-## The two lanes
+New evidence needs discovery even when no dependency points to it yet. The
+agent searches established context, adds evidence to existing synthesis, or
+proposes a scoped page candidate. A source does not require its own page.
+Agent transcripts are excluded from automatic source discovery. When explicitly
+cited as evidence, their edits repair existing dependents and their deletion
+purges derived content, including historical provenance.
+Newly arriving historical evidence is considered without treating its events
+as new commitments or allowing an old proposal to overwrite an accepted plan.
 
-Work is divided by the **datum's own timestamp**, not by when it was ingested:
+## Claims and context
 
-- inside `brain.recencyWindow` (7 days by default) → the **live waker**
-- outside it → the **retrospective bootstrap lane**
+Wikis, root text, loop descriptions, annotations and briefs use Markdown with
+addressable claim spans:
 
-The partition is exact and shared, so no document belongs to both and none
-falls between them. A document ingested today but dated two years ago is the
-bootstrap lane's.
+```html
+<claim id="setup" refs="source:document-id#evidence:passage-id">Setup is at 08:00.</claim>
+```
 
-### The bootstrap lane is the one that spends unboundedly
+Tags can nest. Each claim has its own ID; references can name multiple source
+passages, other claims, or canonical loop fields. Support, contradiction,
+context, applicability and verification state live in structured storage.
+Nesting alone does not supply evidence for the enclosing assertion.
 
-The live waker's work is bounded by how much new material arrives. The
-bootstrap lane's is bounded by how much history you have, which on a mature
-corpus means it runs for days or weeks.
+Normal reads and search omit tags. Editing reads retain them, while provenance
+and revision history remain inspectable. The mutation boundary parses markup,
+checks references and versions, and invokes the entailment verifier on changed
+claims. An unavailable verifier leaves a claim unverified. Well-formed markup
+is not proof of factual completeness; untagged prose does not inherit verified
+status from neighboring claims. Wiki/root mutation tools require every nonblank
+text span, including headings, to be inside a claim tag. This structural
+coverage check is separate from entailment; migrated legacy owner text remains
+explicitly unverified until repaired.
 
-Each bootstrap run is a full agent run — it fetches the document, reconciles it
-against what the Brain already recorded, then writes only what is new — so it
-costs several model round-trips, not one completion. Measure your own: the
-portal's **Cognition → Bootstrap** panel reports what the lane actually
-completed in the last 24 hours, and the spend summary on the **Cognition →
-Overview** tab reports the tokens those runs consumed.
+A wiki supplies context; a loop tracks an outcome. Organizational links can
+express project membership, page hierarchy and separately trackable subloops.
+They do not imply evidential support. Operational blocking and completion stay
+in the loop's canonical fields. Closing or retiring a loop preserves its useful
+history; deleting private evidence has separate removal semantics.
 
-The panel reports the lane as one of seven states:
+The root wiki is the compact overview itself, not a second full-sized page.
+Every write must fit `rootMaxChars`. It is injected as untrusted reference
+context; reading it does not create an automatic dependency on every claim.
 
-| State       | Meaning                                                                                                                       |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `unstarted` | Never started. Assigning the `background-agent` model does not start it; **Start reading history** on the Bootstrap tab does. |
-| `off`       | `brain.bootstrap.enabled` is false.                                                                                           |
-| `holding`   | Within ten minutes of a gateway start. The lane stays out of post-restart backfill contention.                                |
-| `waiting`   | Outside `brain.bootstrap.activeHours`. Quiet on your instruction.                                                             |
-| `running`   | Working through history at its configured pace.                                                                               |
-| `drained`   | Nothing left to review. Reopens on a new local day or when a source is added.                                                 |
-| `parked`    | Stopped at `brain.bootstrap.maxRuns`. Raise the ceiling to resume.                                                            |
+## Bootstrap and upgrade
 
-`parked` is the one to act on, and the panel renders it in the fault tone for
-that reason. A parked lane is silent otherwise.
+Schema migration preserves existing loop states, annotations and available
+provenance. Legacy attachments become explicitly unverified context, not
+verified claims. Existing notes remain available while the root acquires
+grounded understanding. Conversion and page organization have separate
+coverage, keyed by source revision and policy version.
+
+Historical organization is opt-in: use **Cognition → Bootstrap → Start reading
+history**. Assigning a model does not grant an unlimited historical reread.
+Existing `brain.bootstrap` enablement, ordering, active hours, backlog and
+admission caps apply. The default order is recent-first; older evidence remains
+eligible even without a future date.
+Admission rotates across sources, preserving the configured chronological order
+within each source. A bounded historical slot keeps continuous live arrivals
+from starving authorized backfill.
+
+The current prototype cannot distinguish a newly connected source's initial bulk
+inventory from genuinely new evidence: the generic ingestion contract has no
+transaction-bound inventory marker. Those arrivals enter live discovery in
+arrival order, including old documents, and do not use historical admission
+caps. Existing-corpus backfill uses the operator-controlled rules above. A future
+inventory mode needs durable per-sync provenance and an inventory-complete marker
+before fair chronological admission; occurrence dates alone cannot safely identify
+old inventory, because late evidence and edits must remain discoverable.
+
+Frontier responses also have a JSON character budget. The engine leaves excess
+items for later calls. An oversized page is represented by `fetchRequired`, not
+truncated claim markup: fetch it explicitly with `knowledge_fetch(editing=true)`
+and resolve its current references before saving. Omitted input versions are
+marked explicitly; the internal frontier still retains the complete fingerprint.
+
+Bootstrap reports distinct coverage and conversion milestones. A populated
+root or an empty eligible queue does not mean the entire corpus is understood.
+Late sources, revised inputs and policy changes can reopen coverage. Pausing
+historical admission preserves completed work; resuming can revisit genuinely
+changed inputs.
+
+## Proactive review
+
+Changed evidence is the main repair trigger. Bounded proactive passes also
+check deadlines, review checkpoints, volatility, importance, uncertainty and
+time since verification. The decision model may defer a review within the
+configured maximum interval. A deferral is not verification. Completed and
+historical records remain context without being repeatedly reopened merely
+because their outcome is old.
+
+Organization also revisits deferred page candidates and previously gated or
+failed discovery decisions after a bounded interval. It uses evidence already
+admitted to the Brain, so this backstop does not silently expand historical
+consent. Candidate context helps the agent choose between a new page, an
+existing page, deferral and dismissal. It does not count as verified evidence.
+Durable admission and retry deadlines prevent a quiet candidate from creating
+a new agent turn on every scheduler tick.
 
 ## Bounding the spend
 
@@ -89,15 +161,11 @@ The panel splits the day three ways, and the split matters more than the total:
 - **Read for the first time** — fresh input. The expensive part.
 - **Re-read from cache** — a prompt prefix the provider already held, billed at
   a fraction of fresh input. This is a _subset_ of what was read, not extra.
-- **Written** — output. On the retrospective lane this is usually around 1% of
-  the total.
+- **Written** — output.
 
-A corpus-wide backfill re-reads a large cached prefix on every run, so the
-cached share is typically high, and it is **the biggest cost lever you have**.
-Two days with identical token totals can cost very differently depending on it,
-and a change that breaks the cacheable prefix shows up as the share collapsing
-while the total barely moves. If your spend jumps without your token count
-changing, look here first.
+Cache reuse depends on the backend, model and prompt prefix. Compare the measured
+fresh-input and cached-input counts when estimating cost against your provider's
+pricing. The gateway does not assume a fixed cache share or output ratio.
 
 The budget ceilings below deliberately count every token the same. A limit has
 to be predictable, and one that moved with how well a prompt cached that day
@@ -113,11 +181,9 @@ tomorrow, a failed one burns its retry budget. It counts interactive spend too,
 because a budget background work could exhaust while a chat session spent
 freely alongside it would not be a budget. **Both default to no ceiling.**
 
-**`brain.bootstrap.maxRunsPerDay`** — the retrospective lane's pace, and the
-knob to reach for first. Note that the drainer works one bootstrap run at a
-time, so above its real throughput this number stops meaning anything; the
-panel says so when your configured cap exceeds what the lane demonstrably
-reaches.
+**`brain.bootstrap.maxRunsPerDay`** — the daily historical admission cap.
+In the maintenance engine this counts source-revision work seeds, which may
+share a synthesis run. It is separate from the global agent-run budget.
 
 **`brain.bootstrap.maxRuns`** — a lifetime backstop, counted across the whole
 install and never reset, including across source removals. It is a spend
@@ -129,7 +195,8 @@ If you need to turn the spend down, in order:
 1. `brain.bootstrap.maxRunsPerDay` — the biggest lever by far.
 2. `brain.bootstrap.activeHours` — shape it onto off-peak hours rather than
    reducing it.
-3. `brain.reverification.maxPerSweep` — the second-largest producer.
+3. `brain.knowledge.maxReviewsPerTick` and `brain.reverification.maxPerSweep` —
+   bound proactive synthesis checks and legacy annotation rechecks.
 4. Individual producers to `enabled: false`.
 5. `brain.budget.dailyTokens` as a hard stop under all of it.
 
@@ -151,8 +218,8 @@ it.
 
 The Bootstrap panel has a pause control. It writes
 `brain.bootstrap.enabled`, the same key the config editor does. Pausing costs
-nothing already done: the processed marker is written once per document and
-never cleared, so resuming re-reads nothing.
+no completed coverage: markers are scoped to input revision, work purpose and
+policy. Resuming revisits changed inputs and explicitly deferred work.
 
 ## When a provider fails
 
@@ -187,5 +254,21 @@ on.
 - **`omnesis brain runs`** — the queue, newest first. `omnesis brain run <id>`
   and `omnesis brain transcript <id>` open one up.
 - **`omnesis brain spend`** — tokens by day, mechanism and model.
-- **`omnesis brain decisions`** — what the agent decided about a given datum,
-  and why.
+- **`omnesis brain decisions`** — source-associated maintenance and other agent
+  decisions, with their actual batch transcripts.
+
+The experimental knowledge inspector reads the same canonical data used by
+agent tools. Admin diagnostics include `/admin/brain/knowledge`, `/status`,
+`/batches`, `/decisions`, `/:id` and `/:id/history` under that prefix.
+They show synthesis, claim provenance, maintenance progress and metadata-only
+decision verdicts. Search projections are never the authority for these reads.
+
+## Deterministic replay
+
+The Brain Bench boots a real isolated gateway and substitutes model roles at
+the production inference seams. The progressive scenario under
+`evals/universes/sacha-bellamy/next-gen-brain/` supplies source arrivals, edits,
+late history, contradictory evidence and privacy deletion. Its clock is
+virtual; a scripted agent calls the real maintenance tools and scripted
+decision, entailment and brief-judge services make the engine replayable.
+These tests establish execution correctness, not model judgement quality.

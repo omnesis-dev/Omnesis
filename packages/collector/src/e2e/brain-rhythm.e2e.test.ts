@@ -25,9 +25,16 @@
  */
 
 import "./synth-env.js";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { createLogger } from "@omnesis/core";
 import {
   BrainBench,
+  seedHistory,
+  historicalAdmissions,
+  sourceInterpretations,
+  preserveCurrentOwner,
+  refreshCurrentOwner,
   call,
   compressCognitionCadences,
   ref,
@@ -161,6 +168,9 @@ describe("rhythm: the daily boundary", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+        // This frozen-clock scenario isolates day boundaries; readiness has its own E2E.
+        derivationBarrier: "0s",
         dailyRunHour: DAILY_HOUR,
         // Every other rhythm lane off: this suite asserts on the `daily` kind,
         // and the digest rides that same kind.
@@ -172,30 +182,32 @@ describe("rhythm: the daily boundary", () => {
         collision: { enabled: false },
       },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: "Studio Northstar rehearsal hold",
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "rehearsal hold" }),
+                  call("open_loop_create", {
+                    title: "Confirm the rehearsal hold with Studio Northstar",
+                    description: "Tracked from the booking request.",
+                    confidence: 0.9,
+                    importance: 0.85,
+                    docs: [ctx.subject],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: "Studio holds the slot until it is confirmed.",
+                  }),
+                ],
+                finalText: "Tracked the rehearsal hold.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: "Studio Northstar rehearsal hold",
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: "rehearsal hold" }),
-                call("open_loop_create", {
-                  title: "Confirm the rehearsal hold with Studio Northstar",
-                  description: "Tracked from the booking request.",
-                  confidence: 0.9,
-                  importance: 0.85,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: "Studio holds the slot until it is confirmed.",
-                }),
-              ],
-              finalText: "Tracked the rehearsal hold.",
-            }),
-          },
-          // The daily batches themselves do nothing — this suite asserts on the
-          // ENQUEUE side (one run per source, its key, and its prompt).
           { flavour: "daily.source", plan: { calls: [], finalText: "Nothing in the batch." } },
         ],
       },
@@ -254,9 +266,8 @@ describe("rhythm: the daily boundary", () => {
     expect(bench.markers.get("daily_last_run_day")).toBe(bench.clock.localDay(D0_NOON));
     // Its window was the day BEFORE the stimulus, so nothing was batched yet.
     expect(runRows(bench, "daily")).toHaveLength(0);
-    // And the sample-typed documents are deferred, not woken on directly.
-    const data = await bench.obs.settledRuns("data");
-    expect(data.map((r) => r.dedupeKey)).toEqual([`data:doc:${alphaDocId}`]);
+    expect((await bench.obs.interpretationForSource(alphaDocId)).kind).toBe("synthesis");
+    expect(await bench.obs.settledRuns("data")).toHaveLength(0);
     expect(loopId).not.toBe("");
   }, 120_000);
 
@@ -426,6 +437,7 @@ describe("rhythm: the morning digest", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         dailyRunHour: DAILY_HOUR,
         digest: { enabled: true, hour: DIGEST_HOUR, graceMinutes: GRACE_MINUTES },
         bootstrap: { enabled: false },
@@ -435,6 +447,7 @@ describe("rhythm: the morning digest", () => {
         collision: { enabled: false },
       },
       behaviors: {
+        dynamic: sourceInterpretations({ sources: [], maintainNode: preserveCurrentOwner }),
         behaviors: [
           {
             flavour: "daily.digest",
@@ -551,55 +564,22 @@ describe("rhythm: the morning digest", () => {
 // G3 — the retrospective bootstrap
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("rhythm: bootstrap coverage", () => {
+describe("rhythm: historical admission coverage", () => {
   let bench: BrainBench;
-  const SRC_HISTORY = "synthetic:history@example.com";
-  const MAX_PER_DAY = 2;
-  /**
-   * D+1 noon: comfortably past the ten-minute boot hold whatever hour the
-   * suite booted at, and far enough from midnight that a later advance inside
-   * the test stays on the same local day (the pace cap is per day).
-   */
-  const PAST_HOLD_AT = localMidnight(D0_NOON + DAY) + 12 * HOUR;
-  /** The local day that instant falls on; resolved once the bench exists. */
-  let PAST_HOLD_DAY = "";
-  const SEEDS = [
-    {
-      externalId: "rhythm-history-1",
-      title: "Rehearsal room lease renewal",
-      content:
-        "Your rehearsal room lease at Riverside Estate renews on 14 March 2029. Give notice in writing if you do not intend to continue.",
-    },
-    {
-      externalId: "rhythm-history-2",
-      title: "Equipment warranty registration",
-      content:
-        "The warranty on your Stellar Sound desk runs until 2 September 2030. Keep this message for the claim reference.",
-    },
-    {
-      externalId: "rhythm-history-3",
-      title: "Insurance policy schedule",
-      content:
-        "The public liability policy for Studio Northstar is scheduled to expire on 30 June 2029 unless renewed.",
-    },
-    {
-      externalId: "rhythm-history-4",
-      title: "Membership term confirmation",
-      content:
-        "Your Cedar Grove Supplies trade membership is valid through to 11 November 2029 at the current rate.",
-    },
-  ];
-
+  const sourceId = "synthetic:history@example.com";
+  const ids = ["rhythm-history-1", "rhythm-history-2", "rhythm-history-3", "rhythm-history-4"];
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+        derivationBarrier: "0s",
         bootstrap: {
           enabled: true,
           direction: "recent-first",
-          backlogTarget: MAX_PER_DAY,
-          maxRunsPerDay: MAX_PER_DAY,
+          backlogTarget: 2,
+          maxRunsPerDay: 2,
           maxRuns: 50,
           batchSize: 10,
         },
@@ -610,164 +590,114 @@ describe("rhythm: bootstrap coverage", () => {
         collision: { enabled: false },
       },
       behaviors: {
-        // Bootstrap runs fetch their document, then do nothing: this suite is
-        // about which documents the lane BUYS and what the counters say, not
-        // about what the steward writes when it reads one.
-        behaviors: [{ flavour: "bootstrap", plan: { calls: [], finalText: "Nothing to seed." } }],
+        dynamic: sourceInterpretations({ maintainNode: preserveCurrentOwner, sources: [] }),
       },
     });
-
-    await bench.obs.startBootstrap();
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v !== undefined);
-
-    PAST_HOLD_DAY = bench.clock.localDay(PAST_HOLD_AT);
-
-    // Just outside the waker's 7-day recency window, so these are the lane's
-    // most recent candidates and `recent-first` takes them before the
-    // universe's (months-old) ambient corpus.
-    const seededAt = Date.now() - 8 * DAY;
-    for (const seed of SEEDS) {
-      await bench.push({
-        ...seed,
-        documentType: "email",
-        sourceId: SRC_HISTORY,
-        providerId: SRC_HISTORY,
-        at: seededAt,
-      });
-    }
-    for (const seed of SEEDS) {
-      const docId = await bench.docId(seed.externalId);
-      await waitFor(
-        `extracted dates for ${seed.externalId}`,
-        () =>
-          (bench.sql
-            .prepare<
-              [string],
-              { n: number }
-            >("SELECT COUNT(*) AS n FROM document_extracted_dates WHERE document_id = ?")
-            .get(docId)?.n ?? 0) > 0
-            ? true
-            : null,
-        90_000,
-      );
-    }
+    await bench.drainUntilQuiet();
+    const instant = (await bench.clock.now()).now;
+    await bench.clock.set(localMidnight(instant) + 12 * HOUR);
+    const { now } = await bench.clock.now();
+    ids.forEach((id, i) =>
+      seedHistory(bench, {
+        id,
+        sourceId,
+        title: `Archived workshop ${i}`,
+        content: "A workshop planning record from the archive.",
+        at: now - (8 + i) * DAY,
+      }),
+    );
   }, 300_000);
-
   afterAll(async () => {
     await bench?.destroy();
   }, 60_000);
-
-  test("the lane holds through the boot window", async () => {
-    // A pass inside the boot window defers, stamping the hold rather than
-    // probing the corpus — so nothing is bought in the minutes after a start.
-    expect(bench.markers.get("bootstrap_hold_since")).toBeDefined();
-    expect(bench.markers.get("bootstrap_hold_since")).not.toBe("0");
-    expect(runRows(bench, "bootstrap")).toHaveLength(0);
-  }, 120_000);
-
-  test("past the boot window the lane enqueues up to its per-day cap, keyed per document", async () => {
-    await bench.clock.set(PAST_HOLD_AT);
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v === "0", 60_000);
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    createLogger("collector:brain-bench").error(
+      `Historical admission failure: ${JSON.stringify({
+        status: await bench.obs.status(),
+        bootstrap: await bench.obs.bootstrapStatus(),
+        checkpoints: bench.sql.prepare("SELECT * FROM knowledge_checkpoints").all(),
+        coverage: bench.sql
+          .prepare(
+            "SELECT * FROM knowledge_discovery_coverage WHERE subject_id LIKE 'rhythm-history-%'",
+          )
+          .all(),
+        gateway: readFileSync(bench.harness.getGatewayLogPath(), "utf8")
+          .split("\n")
+          .filter((line) => /WARN|ERROR|periodic|knowledge/i.test(line))
+          .slice(-40),
+      })}`,
+    );
+  });
+  test("persisted history awaits operator consent while live discovery remains independent", async () => {
+    expect(historicalAdmissions(bench)).toHaveLength(0);
+    const status = await bench.obs.bootstrapStatus();
+    expect(status.state).toBe("unstarted");
+    expect(status.liveDiscoveryIndependent).toBe(true);
+  });
+  test("consent admits newest revisions up to the daily source-work bound", async () => {
+    await bench.obs.startBootstrap();
     await waitFor(
-      "bootstrap runs to be enqueued",
-      () => (runRows(bench, "bootstrap").length > 0 ? true : null),
-      60_000,
+      () =>
+        `daily historical admission bound: ${JSON.stringify({
+          admissions: historicalAdmissions(bench),
+          counters: bench.sql.prepare("SELECT * FROM knowledge_historical_admissions").all(),
+          state: bench.sql.prepare("SELECT * FROM cognition_engine_state").all(),
+          work: bench.sql
+            .prepare(
+              "SELECT subject_id,reason,status,last_error FROM knowledge_work WHERE status IN ('pending','batched')",
+            )
+            .all(),
+          sources: bench.sql
+            .prepare(
+              "SELECT id,source_id,content_hash FROM documents WHERE id LIKE 'rhythm-history-%'",
+            )
+            .all(),
+        })}`,
+
+      () => (historicalAdmissions(bench).length === 2 ? true : null),
+      120_000,
     );
     await bench.drainUntilQuiet();
-
-    const runs = runRows(bench, "bootstrap");
-    // The backlog target and the per-day cap both bind at 2, so one pass
-    // takes exactly that many however large the batch size is.
-    expect(runs).toHaveLength(MAX_PER_DAY);
-    const takenDocId = (run: RunRow): string =>
-      (bench.runPayload(run.id) as { docId: string }).docId;
-    for (const run of runs) {
-      expect(run.dedupe_key).toBe(`bootstrap:doc:${takenDocId(run)}`);
-    }
-
-    // Every selected document belongs to the seeded history: `recent-first`
-    // took the newest candidates, which are the ones this suite planted.
-    const seedIds = new Set(await Promise.all(SEEDS.map((s) => bench.docId(s.externalId))));
-    for (const run of runs) {
-      expect(seedIds.has(takenDocId(run))).toBe(true);
-    }
-
-    // Selection marks at ENQUEUE, so a later pass can never re-select them.
-    const marked = bench.sql
-      .prepare<
-        [],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM documents WHERE bootstrap_processed_at IS NOT NULL")
-      .get()!.n;
-    expect(marked).toBeGreaterThanOrEqual(MAX_PER_DAY);
+    expect(historicalAdmissions(bench).map((w) => w.subject_id)).toEqual(ids.slice(0, 2));
+    expect(historicalAdmissions(bench).every((w) => w.status === "completed")).toBe(true);
+    expect(await bench.obs.settledRuns("bootstrap")).toHaveLength(0);
   }, 240_000);
-
-  test("the day's allowance is spent — a further pass inside it buys nothing", async () => {
-    expect(bench.markers.get(`bootstrap_enqueued:${PAST_HOLD_DAY}`)).toBe(String(MAX_PER_DAY));
-    expect(bench.markers.get("bootstrap_total_enqueued")).toBe(String(MAX_PER_DAY));
-
-    const before = runRows(bench, "bootstrap").map((r) => r.id);
-    // Later the same local day: the pace cap is per DAY, so crossing into the
-    // next one would legitimately buy more.
-    await bench.clock.set(PAST_HOLD_AT + 6 * HOUR);
-    // The lane records its state on the way past the lifetime backstop, one
-    // step AHEAD of the pace cap it is about to hit. Clearing that marker and
-    // waiting for the lane to write it back is therefore proof that a pass
-    // really reached the cap — the day's allowance held rather than the lane
-    // having gone quiet on us.
-    bench.markers.clear("bootstrap_state");
-    await bench.markers.waitFor("bootstrap_state", (v) => v === "running", 60_000);
+  test("a further pass within the day buys no more work", async () => {
+    const before = historicalAdmissions(bench);
+    await bench.clock.advance(60 * 60_000);
+    await awaitRhythmPasses(bench);
     await bench.drainUntilQuiet();
-    expect(runRows(bench, "bootstrap").map((r) => r.id)).toEqual(before);
-    expect(bench.markers.get(`bootstrap_enqueued:${PAST_HOLD_DAY}`)).toBe(String(MAX_PER_DAY));
-    expect(bench.markers.get("bootstrap_total_enqueued")).toBe(String(MAX_PER_DAY));
+    expect(historicalAdmissions(bench)).toEqual(before);
+    const status = await bench.obs.bootstrapStatus();
+    expect(status.state).toBe("waiting");
+    expect(status.admission?.remainingToday).toBe(0);
   }, 240_000);
-
-  test("a new local day restores the allowance and the lane takes fresh documents", async () => {
-    const before = new Set(runRows(bench, "bootstrap").map((r) => r.id));
-    const takenBefore = new Set(
-      runRows(bench, "bootstrap").map((r) => (bench.runPayload(r.id) as { docId: string }).docId),
-    );
-    const nextDay = localMidnight(PAST_HOLD_AT + DAY) + 12 * HOUR;
-
-    await bench.clock.set(nextDay);
-    await bench.markers.waitFor(
-      `bootstrap_enqueued:${bench.clock.localDay(nextDay)}`,
-      (v) => v === String(MAX_PER_DAY),
-      60_000,
+  test("a new local day restores admission room without buying covered revisions again", async () => {
+    await bench.clock.advance(DAY);
+    await waitFor(
+      "next day historical admission",
+      () => (historicalAdmissions(bench).length === 4 ? true : null),
+      120_000,
     );
     await bench.drainUntilQuiet();
-
-    const fresh = runRows(bench, "bootstrap").filter((r) => !before.has(r.id));
-    expect(fresh).toHaveLength(MAX_PER_DAY);
-    // Mark-at-enqueue means the new day's batch cannot re-select what the
-    // first one already bought — the lane advances rather than looping.
-    for (const run of fresh) {
-      const docId = (bench.runPayload(run.id) as { docId: string }).docId;
-      expect(takenBefore.has(docId)).toBe(false);
-    }
-    expect(bench.markers.get("bootstrap_total_enqueued")).toBe(String(2 * MAX_PER_DAY));
+    expect(historicalAdmissions(bench).map((w) => w.subject_id)).toEqual(ids);
+    expect(new Set(historicalAdmissions(bench).map((w) => w.subject_id)).size).toBe(4);
   }, 240_000);
-
-  test("coverage reconciles with the runs that actually settled", async () => {
-    const coverage = await bench.obs.coverage();
-    const rows = coverage.items.filter((i) => i.workflowId === "source-bootstrap");
-    expect(rows).toHaveLength(1);
-    const row = rows[0]!;
-    expect(row.sourceId).toBe(SRC_HISTORY);
-
-    const runs = runRows(bench, "bootstrap");
-    const settled = runs.filter((r) => r.status !== "pending");
-    expect(runs).toHaveLength(2 * MAX_PER_DAY);
-    expect(settled).toHaveLength(runs.length);
-
-    // `eligible` is bumped when the lane selects a document; `processed` /
-    // `skipped` when its run settles. With every selected run settled the two
-    // sides must agree, and the derived status must say so.
-    expect(row.eligible).toBe(runs.length);
-    expect(row.processed + row.skipped).toBe(settled.length);
-    expect(row.status).toBe("settled");
-    expect(coverage.bootstrapProcessedDocs).toBeGreaterThanOrEqual(runs.length);
+  test("source-revision coverage agrees with successful source interpretations", async () => {
+    const row = (await bench.obs.coverage()).items.find(
+      (i) => i.workflowId === "knowledge-maintenance" && i.sourceId === sourceId,
+    );
+    expect(row).toMatchObject({
+      eligible: 4,
+      processed: 4,
+      skipped: 0,
+      unit: "source-revisions",
+      costAttribution: "shared-run-ledger",
+    });
+    for (const id of ids)
+      expect((await bench.obs.interpretationForSource(id)).status).toBe("completed");
+    expect((await bench.obs.bootstrapStatus()).corpusCompletion).toBe("not-measured");
   }, 120_000);
 });
 
@@ -789,6 +719,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         synthesis: { enabled: true, cadenceHours: 6, maxPerDay: 1 },
         collision: { enabled: true, cadenceHours: 6, maxPerSweep: 3 },
         bootstrap: { enabled: false },
@@ -797,6 +728,33 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
         sweepsEnabled: false,
       },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: "Riverside Estate site visit and invoice",
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_create", {
+                    title: "Book the Riverside Estate site visit",
+                    description: "The visit still needs a date.",
+                    confidence: 0.9,
+                    importance: 0.8,
+                    docs: [ctx.subject],
+                  }),
+                  call("open_loop_create", {
+                    title: "Pay the Riverside Estate deposit invoice",
+                    description: "The invoice on the same message is unpaid.",
+                    confidence: 0.9,
+                    importance: 0.7,
+                    docs: [ctx.subject],
+                  }),
+                ],
+                finalText: "Two distinct obligations from one message.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
           {
             flavour: "synthesis.noticing",
@@ -814,35 +772,9 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
               finalText: "Noticed one thing.",
             }),
           },
-          // The collision judge deliberately writes nothing: a candidate the
-          // judge covered with a brief would be filtered out of later sweeps,
-          // which would hide the enqueue behaviour this suite asserts on.
           {
             flavour: "synthesis.collision.loops",
             plan: { calls: [], finalText: "No real relationship." },
-          },
-          {
-            flavour: "data.created",
-            docTitle: "Riverside Estate site visit and invoice",
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_create", {
-                  title: "Book the Riverside Estate site visit",
-                  description: "The visit still needs a date.",
-                  confidence: 0.9,
-                  importance: 0.8,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_create", {
-                  title: "Pay the Riverside Estate deposit invoice",
-                  description: "The invoice on the same message is unpaid.",
-                  confidence: 0.9,
-                  importance: 0.7,
-                  docs: [ctx.subject],
-                }),
-              ],
-              finalText: "Two distinct obligations from one message.",
-            }),
           },
         ],
       },
@@ -982,11 +914,18 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       r.dedupe_key?.startsWith("synthesis:collision:"),
     );
     expect(collisions).toHaveLength(1);
-    // The next day's noticing pass is the only new synthesis work — and there
-    // IS one, so `every` below is a judgement on real rows.
+    // The next day buys one noticing pass. The live maintenance engine may
+    // also review owners; those runs must not be mistaken for another collision.
     const fresh = runRows(bench, "synthesis").filter((r) => !before.includes(r.id));
-    expect(fresh.length).toBeGreaterThan(0);
-    expect(fresh.every((r) => r.dedupe_key?.startsWith("synthesis:noticing:"))).toBe(true);
+    const freshNoticing = fresh.filter((r) => r.dedupe_key?.startsWith("synthesis:noticing:"));
+    expect(freshNoticing).toHaveLength(1);
+    expect(freshNoticing[0]!.dedupe_key).toBe(`synthesis:noticing:${bench.clock.localDay(at)}`);
+    for (const run of fresh.filter((r) => !freshNoticing.includes(r))) {
+      const payload = bench.runPayload(run.id) as { focus?: string; batchId?: string };
+      expect(payload.focus).toBe("knowledge-maintenance");
+      expect(payload.batchId).toEqual(expect.any(String));
+      expect(payload.batchId!.length).toBeGreaterThan(0);
+    }
   }, 240_000);
 });
 
@@ -1030,6 +969,7 @@ describe("rhythm: scheduled sweeps", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         sweepsEnabled: true,
         bootstrap: { enabled: false },
         digest: { enabled: false },
@@ -1038,6 +978,7 @@ describe("rhythm: scheduled sweeps", () => {
         collision: { enabled: false },
       },
       behaviors: {
+        dynamic: sourceInterpretations({ sources: [], maintainNode: refreshCurrentOwner }),
         behaviors: [
           {
             flavour: "sweep",
@@ -1122,6 +1063,21 @@ describe("rhythm: scheduled sweeps", () => {
   afterAll(async () => {
     await bench?.destroy();
   }, 60_000);
+
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    const runs = (await bench.obs.runs({ kind: "synthesis", limit: 10 })).items;
+    createLogger("collector:brain-bench").error(
+      `Scheduled sweep maintenance failure: ${JSON.stringify({
+        nodes: bench.sql.prepare("SELECT * FROM knowledge_nodes WHERE kind != 'root'").all(),
+        claims: bench.sql.prepare("SELECT * FROM knowledge_claims").all(),
+        annotations: bench.sql.prepare("SELECT * FROM doc_annotations").all(),
+        runs: await Promise.all(
+          runs.map(async (run) => ({ run, tools: await bench.obs.executedTools(run.id) })),
+        ),
+      })}`,
+    );
+  });
 
   test("a sweep that has never run seeds its phase instead of firing", async () => {
     await bench.markers.waitFor(
@@ -1298,10 +1254,9 @@ describe("rhythm: scheduled sweeps", () => {
  * works, so a failure on the year-less twin isolates the year rule rather
  * than the pipeline.
  */
-describe("rhythm: the extracted-dates gate and year-less documents", () => {
+describe("rhythm: source discovery and year-less extracted dates", () => {
   let bench: BrainBench;
   const SRC = "synthetic:planning@example.com";
-  const GATE_PAST_HOLD_AT = localMidnight(D0_NOON + DAY) + 12 * HOUR;
   let controlDocId = "";
   let yearlessDocId = "";
 
@@ -1334,6 +1289,7 @@ describe("rhythm: the extracted-dates gate and year-less documents", () => {
       experimental: true,
       clock: "virtual",
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         bootstrap: {
           enabled: true,
           direction: "recent-first",
@@ -1349,17 +1305,9 @@ describe("rhythm: the extracted-dates gate and year-less documents", () => {
         collision: { enabled: false },
       },
       behaviors: {
-        behaviors: [
-          { flavour: "bootstrap", plan: { calls: [], finalText: "Read; nothing to do." } },
-        ],
+        dynamic: sourceInterpretations({ maintainNode: preserveCurrentOwner, sources: [] }),
       },
     });
-    await bench.obs.startBootstrap();
-    // Wait for the consent-triggered pass at the bench's boot instant before
-    // moving virtual time. Merely issuing Start first is not enough: its
-    // periodic kick is asynchronous, so a fast clock move can still put that
-    // pass beyond the ten-minute boot grace before it stamps the hold.
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v !== undefined);
     await bench.clock.set(D0_NOON);
 
     // Outside the waker's recency window: these are backlog documents, and
@@ -1423,27 +1371,24 @@ describe("rhythm: the extracted-dates gate and year-less documents", () => {
     ).toBeGreaterThan(0);
   }, 60_000);
 
-  test("the gate admits the year-ful control to the backlog lane", async () => {
-    await bench.clock.set(GATE_PAST_HOLD_AT);
-    await bench.markers.waitFor("bootstrap_hold_since", (v) => v === "0", 60_000);
-    const controlId = await bench.docId(CONTROL.externalId);
-    await waitFor(
-      "the control document to become a bootstrap candidate",
-      () =>
-        runRows(bench, "bootstrap").some((r) => r.dedupe_key === `bootstrap:doc:${controlId}`)
-          ? true
-          : null,
-      90_000,
-    );
+  test("the year-ful control receives actual source interpretation", async () => {
     await bench.drainUntilQuiet();
+    expect((await bench.obs.interpretationForSource(controlDocId)).status).toBe("completed");
   }, 180_000);
 
-  test("the gate admits the year-less twin as well", () => {
-    // The year-less date resolved against the anchor, so the still-future
-    // condition holds and the gate opens exactly as for the control.
-    expect(
-      runRows(bench, "bootstrap").some((r) => r.dedupe_key === `bootstrap:doc:${yearlessDocId}`),
-      "the year-less document never became a bootstrap candidate",
-    ).toBe(true);
+  test("the year-less twin receives the same revision coverage", async () => {
+    expect((await bench.obs.interpretationForSource(yearlessDocId)).status).toBe("completed");
+    const rows = bench.sql
+      .prepare<
+        [string],
+        { phase: string; status: string }
+      >("SELECT phase,status FROM knowledge_discovery_coverage WHERE subject_id=?")
+      .all(yearlessDocId);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "interpretation", status: "considered" }),
+        expect.objectContaining({ phase: "organization", status: "considered" }),
+      ]),
+    );
   }, 60_000);
 });

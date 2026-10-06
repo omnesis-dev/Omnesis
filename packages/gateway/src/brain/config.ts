@@ -26,6 +26,23 @@ import type { CognitionBudgetSettings } from "./cognition/budget.js";
 
 /** Effective defaults, config-shaped (durations as human-readable strings). */
 export const BRAIN_DEFAULTS = {
+  knowledge: {
+    immediateThreshold: 0.8,
+    soonThreshold: 0.4,
+    soonDelay: "1h",
+    routineDelay: "6h",
+    rootMaxChars: 8000,
+    maxSeeds: 64,
+    maxVisitedPerSeed: 256,
+    maxFrontierNodes: 32,
+    maxFrontierChars: 65536,
+    cascadeBatchSize: 100,
+    discoveryBatchSize: 32,
+    bootstrapBatchSize: 64,
+    maxReviewsPerTick: 16,
+    maxReviewInterval: "30d",
+    checkpointLead: "1d",
+  },
   workerConcurrency: 1,
   conversationDebounce: "1h",
   // Max-defer ceilings are derived from their debounce timescales: 6× the 1h
@@ -141,6 +158,24 @@ export const BRAIN_DEFAULTS = {
 
 /** The `brain` block resolved to concrete runtime values (durations in ms). */
 export interface ResolvedBrainSettings {
+  /** Knowledge maintenance follows the Brain gate; no independent enable switch. */
+  knowledge: {
+    immediateThreshold: number;
+    soonThreshold: number;
+    soonDelayMs: number;
+    routineDelayMs: number;
+    rootMaxChars: number;
+    maxSeeds: number;
+    maxVisitedPerSeed: number;
+    maxFrontierNodes: number;
+    maxFrontierChars: number;
+    cascadeBatchSize: number;
+    discoveryBatchSize: number;
+    bootstrapBatchSize: number;
+    maxReviewsPerTick: number;
+    maxReviewIntervalMs: number;
+    checkpointLeadMs: number;
+  };
   /** Queue workers draining in parallel (non-daily runs serialize regardless). */
   workerConcurrency: number;
   /** Quiet period before new conversation messages enqueue one `data` run. */
@@ -358,7 +393,32 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     dailyTokens: settings?.budget?.dailyTokens ?? null,
     dailyRuns: settings?.budget?.dailyRuns ?? null,
   };
+  const knowledge = settings?.knowledge;
+  const defaults = BRAIN_DEFAULTS.knowledge;
+  const soonDelayMs = parseDuration(knowledge?.soonDelay ?? defaults.soonDelay);
   return {
+    knowledge: {
+      immediateThreshold: knowledge?.immediateThreshold ?? defaults.immediateThreshold,
+      soonThreshold: knowledge?.soonThreshold ?? defaults.soonThreshold,
+      rootMaxChars: knowledge?.rootMaxChars ?? defaults.rootMaxChars,
+      maxSeeds: knowledge?.maxSeeds ?? defaults.maxSeeds,
+      maxVisitedPerSeed: knowledge?.maxVisitedPerSeed ?? defaults.maxVisitedPerSeed,
+      maxFrontierNodes: knowledge?.maxFrontierNodes ?? defaults.maxFrontierNodes,
+      maxFrontierChars: knowledge?.maxFrontierChars ?? defaults.maxFrontierChars,
+      cascadeBatchSize: knowledge?.cascadeBatchSize ?? defaults.cascadeBatchSize,
+      discoveryBatchSize: knowledge?.discoveryBatchSize ?? defaults.discoveryBatchSize,
+      bootstrapBatchSize: knowledge?.bootstrapBatchSize ?? defaults.bootstrapBatchSize,
+      maxReviewsPerTick: knowledge?.maxReviewsPerTick ?? defaults.maxReviewsPerTick,
+      soonDelayMs,
+      routineDelayMs: Math.max(
+        soonDelayMs,
+        parseDuration(knowledge?.routineDelay ?? defaults.routineDelay),
+      ),
+      maxReviewIntervalMs: parseDuration(
+        knowledge?.maxReviewInterval ?? defaults.maxReviewInterval,
+      ),
+      checkpointLeadMs: parseDuration(knowledge?.checkpointLead ?? defaults.checkpointLead),
+    },
     workerConcurrency: settings?.workerConcurrency ?? BRAIN_DEFAULTS.workerConcurrency,
     conversationDebounceMs,
     // A ceiling below its debounce is nonsensical (it would clamp the very

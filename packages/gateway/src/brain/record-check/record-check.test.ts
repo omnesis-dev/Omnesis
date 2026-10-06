@@ -159,7 +159,7 @@ describe("record check", () => {
   });
 
   describe("scope", () => {
-    test("covers data and bootstrap runs only, and never content handed to the assistant", () => {
+    test("covers source interpretation and legacy ingestion, never unrelated lanes or user-handed content", () => {
       const { check: c } = check(new ScriptedDecision(), "shadow");
       expect(c.forRun(run("bootstrap", { docId: "d", datumAt: NOW }))).not.toBeNull();
       expect(c.forRun(run("data", { docId: "d", event: "created", datumAt: NOW }))).not.toBeNull();
@@ -168,6 +168,31 @@ describe("record check", () => {
       ).toBeNull();
       expect(c.forRun(run("daily", {}))).toBeNull();
       expect(c.forRun(run("synthesis", {}))).toBeNull();
+      expect(
+        c.forRun(run("synthesis", { focus: "knowledge-maintenance", batchId: "batch" })),
+      ).not.toBeNull();
+      for (const payload of [
+        { focus: "knowledge-maintenance" },
+        { focus: "knowledge-maintenance", batchId: "" },
+        { focus: "noticing", date: "2026-09-01" },
+        { focus: "collision", loopIds: ["loop"] },
+        { focus: "annotation-contradiction", annotationIds: ["annotation"] },
+      ])
+        expect(c.forRun(run("synthesis", payload))).toBeNull();
+    });
+  });
+
+  test("an enforcing maintenance run drops a weak record and attributes its real decision and spend", async () => {
+    const doc = insertDoc("maintenance-record", NOTICE);
+    const { check: c } = check(new ScriptedDecision({ [NOTICE]: 0.1 }), "enforce");
+    const bound = c.forRun(run("synthesis", { focus: "knowledge-maintenance", batchId: "batch" }))!;
+    await expect(bound(record(doc))).resolves.toMatchObject({ save: false, score: 0.1 });
+    expect(listDecisionsForRun(db, "run_1")).toMatchObject([
+      { lane: "synthesis", documentId: doc, recordId: "ta_1", verdict: "skip", enforced: true },
+    ]);
+    expect(getCognitionSpendDayTotal(db, cognitionSpendDay(NOW))).toMatchObject({
+      promptTokens: 120,
+      runs: 0,
     });
   });
 

@@ -14,6 +14,23 @@ describe("resolveBrainSettings", () => {
   it("applies the documented defaults for an absent block", () => {
     const r = resolveBrainSettings(undefined);
     expect(r).toEqual({
+      knowledge: {
+        immediateThreshold: 0.8,
+        soonThreshold: 0.4,
+        soonDelayMs: 3600000,
+        routineDelayMs: 21600000,
+        rootMaxChars: 8000,
+        maxSeeds: 64,
+        maxVisitedPerSeed: 256,
+        maxFrontierNodes: 32,
+        maxFrontierChars: 65536,
+        cascadeBatchSize: 100,
+        discoveryBatchSize: 32,
+        bootstrapBatchSize: 64,
+        maxReviewsPerTick: 16,
+        maxReviewIntervalMs: 2592000000,
+        checkpointLeadMs: 86400000,
+      },
       workerConcurrency: 1,
       conversationDebounceMs: 60 * 60 * 1000,
       conversationMaxDeferMs: 6 * 60 * 60 * 1000,
@@ -372,5 +389,40 @@ describe("merge-adjudication knob", () => {
     expect(validateConfig({ brain: { mergeAdjudication: { nonsense: 1 } as never } }).ok).toBe(
       false,
     );
+  });
+});
+
+describe("knowledge maintenance configuration", () => {
+  it("keeps display defaults and runtime defaults aligned", () => {
+    expect(defAt("/brain/knowledge")).toEqual(BRAIN_DEFAULTS.knowledge);
+  });
+  it("supports deterministic compressed timing and bounds routine delay by soon delay", () => {
+    const resolved = resolveBrainSettings({
+      knowledge: {
+        soonDelay: "2ms",
+        routineDelay: "1ms",
+        maxReviewInterval: "5ms",
+        checkpointLead: "1ms",
+        maxSeeds: 2,
+      },
+    });
+    expect(resolved.knowledge).toMatchObject({
+      soonDelayMs: 2,
+      routineDelayMs: 2,
+      maxReviewIntervalMs: 5,
+      checkpointLeadMs: 1,
+      maxSeeds: 2,
+    });
+  });
+  it.each([
+    { maxSeeds: 0 },
+    { maxVisitedPerSeed: 4097 },
+    { cascadeBatchSize: 1001 },
+    { rootMaxChars: 32001 },
+    { soonThreshold: 0.9 },
+    { immediateThreshold: 0.2 },
+    { enabled: true },
+  ])("rejects unsafe knowledge settings %j", (knowledge) => {
+    expect(validateConfig({ brain: { knowledge } }).ok).toBe(false);
   });
 });

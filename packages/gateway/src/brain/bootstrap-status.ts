@@ -51,6 +51,8 @@ type Db = Database.Database;
 
 /** The resolved knobs the lane runs under, as an observer needs to see them. */
 export interface BootstrapSettingsView {
+  /** Composition marker: the knowledge engine owns historical admission. */
+  knowledge?: boolean;
   enabled: boolean;
   direction: "recent-first" | "oldest-first";
   backlogTarget: number;
@@ -410,7 +412,7 @@ export function readBootstrapStatus(
  * elapsed `openUntil` is the normal resting state and must read as "no
  * outage", not as a stale alarm.
  */
-function readProviderOutage(db: Db, now: number): BootstrapStatus["providerOutage"] {
+export function readProviderOutage(db: Db, now: number): BootstrapStatus["providerOutage"] {
   const openUntil = finiteOrNull(getCognitionEngineState(db, PROVIDER_BREAKER_OPEN_UNTIL_KEY)) ?? 0;
   if (openUntil <= now) return null;
   return {

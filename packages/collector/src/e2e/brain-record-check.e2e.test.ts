@@ -2,15 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The record check on the real-time `data` lane, on the brain bench.
+ * The record check on real source interpretation batches, on the brain bench.
  *
  * Before a background run saves a new annotation, the gateway asks the
  * `decision` model whether the record belongs in life memory. The model is a
  * scripted stand-in for TypeSafe's decision API, reached through the production client,
  * so the assignment, the per-run binding, the tool integration, the ledger,
  * the spend record and the run detail all run for real; only the score is
- * scripted, by record sentence. The worth gate is live too and passes every
- * email, so each run reaches its agent turn.
+ * scripted, by record sentence. Maintenance decisions admit each source, so
+ * every source interpretation reaches its agent turn.
  *
  * Covered, on one gateway whose mode is switched through the live config:
  *  - enforce: a low-scored timeline entry and doc-fact record are not saved
@@ -22,7 +22,7 @@
  *    unavailable;
  *  - the run detail serves every record-check decision with its record id,
  *    and the tokens land under the record-check mechanism without counting a
- *    run; the runs list's gate verdict stays the worth gate's.
+ *    run; the runs list keeps maintenance admission separate from record checks.
  *
  * Correctness only: whether a score is a GOOD judgement of a record is the
  * rubric's evaluation, not this suite's. The suite is order-dependent: each
@@ -40,7 +40,9 @@ import {
   type BenchDoc,
   type DecisionPolicyReply,
   type DecisionServerRequest,
-  type PuppetBehavior,
+  sourceInterpretations,
+  preserveCurrentOwner,
+  type SourceInterpretation,
 } from "./brain-bench/index.js";
 
 compressCognitionCadences();
@@ -53,6 +55,10 @@ const OUTAGE = "Studio Northstar lists its new opening hours from 3 October 2027
 
 /** Scores by record sentence; the worth gate's email questions all pass. */
 function policy(request: DecisionServerRequest): DecisionPolicyReply {
+  const maintenancePurpose = ["urgency", "impact", "discovery", "review"].find(
+    (key) => key in request.questions,
+  );
+  if (maintenancePurpose) return { [maintenancePurpose]: { type: "score", score: 2 } };
   const state = request.state as { subject?: string; record?: string };
   if (typeof state.subject === "string") {
     return { worth_score: { type: "score" as const, score: 3 } };
@@ -70,10 +76,9 @@ function memberMail(n: number): BenchDoc {
   });
 }
 
-/** What each email's data run writes, all grounded on the same quote. */
-function writes(title: string, records: readonly string[], docFact = false): PuppetBehavior {
+/** What each source interpretation writes, all grounded on the same quote. */
+function writes(title: string, records: readonly string[], docFact = false): SourceInterpretation {
   return {
-    flavour: "data.created",
     docTitle: title,
     plan: (ctx) => ({
       calls: [
@@ -107,24 +112,28 @@ function writes(title: string, records: readonly string[], docFact = false): Pup
 
 const MAIL = [1, 2, 3, 4].map(memberMail);
 
-describe("record check: a scripted decision model on the data lane", () => {
+describe("record check: a scripted decision model on source interpretation", () => {
   let bench: BrainBench;
 
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
       brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
         mergeAdjudication: { enabled: false },
         annotations: { recordCheck: "enforce" },
       },
       decision: { policy, inputTokens: 90 },
       behaviors: {
-        behaviors: [
-          writes(MAIL[0]!.title, [NOISE, KEEP], true),
-          writes(MAIL[1]!.title, [NOISE]),
-          writes(MAIL[2]!.title, [NOISE]),
-          writes(MAIL[3]!.title, [OUTAGE]),
-        ],
+        dynamic: sourceInterpretations({
+          maintainNode: preserveCurrentOwner,
+          sources: [
+            writes(MAIL[0]!.title, [NOISE, KEEP], true),
+            writes(MAIL[1]!.title, [NOISE]),
+            writes(MAIL[2]!.title, [NOISE]),
+            writes(MAIL[3]!.title, [OUTAGE]),
+          ],
+        }),
       },
     });
     await bench.drainUntilQuiet();
@@ -144,14 +153,16 @@ describe("record check: a scripted decision model on the data lane", () => {
 
   /** The run's write calls, without the document read the puppet opens every data run with. */
   const writeSteps = async (runId: string) =>
-    (await bench.obs.executedTools(runId)).filter((step) => step.tool !== "fetch_many");
+    (await bench.obs.executedTools(runId)).filter((step) =>
+      ["temporal_annotation_add", "annotate_durable"].includes(step.tool),
+    );
 
   const recordChecks = (runId: string) =>
     bench.obs.run(runId).then((d) => d.decisions.filter((x) => x.purpose === "record-check"));
 
   test("enforce: a low-scored record is not saved and the agent is told not to retry", async () => {
     const [docId] = await bench.pushAndSettle([MAIL[0]!]);
-    const run = await bench.obs.runForDoc(docId!);
+    const run = await bench.obs.interpretationForSource(docId!);
     const steps = await writeSteps(run.id);
     const results = steps.map((s) => [s.tool, s.result?.resultType]);
     expect(results).toEqual([
@@ -182,19 +193,19 @@ describe("record check: a scripted decision model on the data lane", () => {
     });
     for (const d of decisions) {
       expect(d).toMatchObject({
-        lane: "data",
+        lane: "synthesis",
         documentId: docId,
         rubricVersion: "record-belongs-v1",
       });
     }
-    // The runs list's gate verdict is still the worth gate's pass.
-    expect(run.gateVerdict).toBe("pass");
+    // Discovery decisions belong to the knowledge ledger, independently of record checks.
+    expect(run.gateVerdict).toBeNull();
   });
 
   test("shadow: the same record is saved and its verdict recorded as not enforced", async () => {
     await bench.patchConfig({ brain: { annotations: { recordCheck: "shadow" } } });
     const [docId] = await bench.pushAndSettle([MAIL[1]!]);
-    const run = await bench.obs.runForDoc(docId!);
+    const run = await bench.obs.interpretationForSource(docId!);
     const [step] = await writeSteps(run.id);
     expect(step!.result?.resultType).toBe("temporal_annotation.added");
     expect(sentences()).toEqual([NOISE, KEEP].sort());
@@ -221,7 +232,7 @@ describe("record check: a scripted decision model on the data lane", () => {
       (c) => "record" in (c.request.state as object),
     ).length;
     const [docId] = await bench.pushAndSettle([MAIL[2]!]);
-    const run = await bench.obs.runForDoc(docId!);
+    const run = await bench.obs.interpretationForSource(docId!);
     expect(await recordChecks(run.id)).toEqual([]);
     expect(
       bench.decision.calls.filter((c) => "record" in (c.request.state as object)),
@@ -232,7 +243,7 @@ describe("record check: a scripted decision model on the data lane", () => {
   test("an outage fails open under enforce: the record is saved and the verdict is unavailable", async () => {
     await bench.patchConfig({ brain: { annotations: { recordCheck: "enforce" } } });
     const [docId] = await bench.pushAndSettle([MAIL[3]!]);
-    const run = await bench.obs.runForDoc(docId!);
+    const run = await bench.obs.interpretationForSource(docId!);
     const [step] = await writeSteps(run.id);
     expect(step!.result?.resultType).toBe("temporal_annotation.added");
     expect(sentences()).toContain(OUTAGE);

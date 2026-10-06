@@ -28,7 +28,10 @@ describe("Codex inference through the Brain engine", () => {
     vi.stubEnv("OMNESIS_CODEX_INFERENCE_POOL_SIZE", "1");
     bench = await BrainBench.start({
       experimental: true,
-      brain: { judge: { enabled: true } },
+      brain: {
+        judge: { enabled: true },
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       extraInference: {
         allowRemoteInference: true,
         assignments: {
@@ -55,7 +58,7 @@ describe("Codex inference through the Brain engine", () => {
         content: "The fictional workshop registration closes on Friday.",
       }),
     ]);
-    const run = await bench.obs.runForDoc(docId!);
+    const run = await bench.obs.interpretationForSource(docId!);
     const calls = await bench.obs.executedTools(run.id);
     const briefs = await bench.obs.briefsMatching("codex-bench-");
     expect(briefs.map((brief) => brief.title)).toEqual(["codex-bench-accepted"]);
@@ -73,14 +76,18 @@ describe("Codex inference through the Brain engine", () => {
             event: string;
             model: string;
             threadId: string;
+            runId: string | null;
           },
       );
     const parentStart = events.findIndex(
-      (event) => event.event === "start" && event.model === "fixture-parent",
+      (event) =>
+        event.event === "start" && event.model === "fixture-parent" && event.runId === run.id,
     );
     const parentEnd = events.findIndex(
       (event, index) =>
-        index > parentStart && event.event === "complete" && event.model === "fixture-parent",
+        index > parentStart &&
+        event.event === "complete" &&
+        event.threadId === events[parentStart]?.threadId,
     );
     expect(parentStart).toBeGreaterThanOrEqual(0);
     expect(parentEnd).toBeGreaterThan(parentStart);

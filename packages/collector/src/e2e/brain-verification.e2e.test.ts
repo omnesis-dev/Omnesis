@@ -33,6 +33,8 @@ import "./synth-env.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   note,
@@ -238,6 +240,7 @@ describe("Brain Bench — the re-verification lane", () => {
       // That is the livelock setup: nothing but the tool layer's own
       // mechanical quote re-check can advance a last-checked stamp.
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         reverification: { enabled: true, intervalDays: 1, maxPerSweep: 1, batchSize: 2 },
         // Every other producer off: this bench asserts on the verification
         // queue, and a bootstrap/digest/sweep backlog would drown it.
@@ -248,27 +251,29 @@ describe("Brain Bench — the re-verification lane", () => {
         sweepsEnabled: false,
       },
       behaviors: {
-        behaviors: [
-          ...SEEDS.map((s) => ({
-            flavour: "data.created" as const,
-            docTitle: s.doc.title,
-            plan: (ctx: RunContext): PuppetPlan => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: s.claimType,
-                  claimText: s.claimText,
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: s.quote,
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-              ],
-              finalText: "Recorded one durable observation.",
-            }),
-          })),
-          { flavour: "verification" as const, plan: verificationPlan },
-        ],
+        dynamic: sourceInterpretations({
+          sources: [
+            ...SEEDS.map((s) => ({
+              docTitle: s.doc.title,
+              plan: (ctx: RunContext): PuppetPlan => ({
+                calls: [
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: s.claimType,
+                    claimText: s.claimText,
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: s.quote,
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                ],
+                finalText: "Recorded one durable observation.",
+              }),
+            })),
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [{ flavour: "verification" as const, plan: verificationPlan }],
       },
     });
   }, 300_000);
@@ -410,17 +415,9 @@ describe("Brain Bench — the re-verification lane", () => {
     );
     expect(verificationRuns()).toHaveLength(0);
 
-    await bench.pushAll(SEEDS.map((s) => s.doc));
-    await waitFor(
-      () =>
-        `${SEEDS.length} data runs to be enqueued (saw ${bench.puppetCalls.length} model calls)`,
-      async () => {
-        const runs = await bench.obs.runs({ kind: "data", limit: 200 });
-        return runs.items.length >= SEEDS.length ? runs.items.length : null;
-      },
-      90_000,
-    );
-    await bench.drainUntilQuiet();
+    const ids = await bench.pushAndSettle(SEEDS.map((s) => s.doc));
+    for (const id of ids)
+      expect((await bench.obs.interpretationForSource(id)).status).toBe("completed");
 
     seeded = annotations();
     const rows = seeded;
@@ -681,6 +678,7 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
     bench = await BrainBench.start({
       experimental: true,
       brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         provenanceRecheck: { enabled: true },
         bootstrap: { enabled: false },
         mergeAdjudication: { enabled: false },
@@ -689,61 +687,101 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
         sweepsEnabled: false,
       },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: PRIOR_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "booking",
+                    claimText:
+                      "A rehearsal room at Studio Northstar is reserved for the first week of May.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: PRIOR_QUOTE,
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                ],
+                finalText: "Recorded the booking as a durable prior.",
+              }),
+            },
+            {
+              docTitle: DEPENDENT_DOC.title,
+              plan: () => ({
+                calls: [
+                  // The read that makes the prior eligible to be declared.
+                  call("annotation_search", { docId: priorDocId }),
+                  call("brief_create", {
+                    kind: "info",
+                    title: BRIEF_TITLE,
+                    description: "One rehearsal booking already sits on the studio calendar.",
+                    citations: [priorDocId],
+                    confidence: 0.7,
+                    urgency: 0.3,
+                    annotationDependencies: [
+                      { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
+                    ],
+                  }),
+                ],
+                finalText: "Raised one card resting on the recorded booking.",
+              }),
+            },
+            {
+              docTitle: KILLER_DOC.title,
+              plan: () => ({
+                calls: [
+                  call("annotation_search", { docId: priorDocId }),
+                  call("annotation_retract", {
+                    id: ref("annotation_search", "annotations.0.id"),
+                  }),
+                ],
+                finalText: "The booking never existed; retracted the prior.",
+              }),
+            },
+            {
+              docTitle: BREAKER_DOC.title,
+              contentContains: BREAKER_QUOTE,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "delivery-window",
+                    claimText: "The Cedar Grove pallet delivery window is the third week of May.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: BREAKER_QUOTE,
+                    confidence: 0.8,
+                    claimBasis: "quoted",
+                  }),
+                ],
+                finalText: "Recorded the delivery window.",
+              }),
+            },
+            {
+              docTitle: MULTI_DOC.title,
+              contentContains: MULTI_QUOTE,
+              plan: (ctx) => ({
+                calls: [
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "site-visit",
+                    claimText:
+                      "A Riverside Estate site visit is scheduled while the season access arrangements still stand.",
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: MULTI_QUOTE,
+                    additionalEvidence: [{ docId: anchorDocId, quote: ANCHOR_QUOTE }],
+                    confidence: 0.5,
+                    claimBasis: "synthesized",
+                  }),
+                ],
+                finalText: "Recorded the site visit against two grounding atoms.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: PRIOR_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "booking",
-                  claimText:
-                    "A rehearsal room at Studio Northstar is reserved for the first week of May.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: PRIOR_QUOTE,
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-              ],
-              finalText: "Recorded the booking as a durable prior.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DEPENDENT_DOC.title,
-            plan: () => ({
-              calls: [
-                // The read that makes the prior eligible to be declared.
-                call("annotation_search", { docId: priorDocId }),
-                call("brief_create", {
-                  kind: "info",
-                  title: BRIEF_TITLE,
-                  description: "One rehearsal booking already sits on the studio calendar.",
-                  citations: [priorDocId],
-                  confidence: 0.7,
-                  urgency: 0.3,
-                  annotationDependencies: [
-                    { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
-                  ],
-                }),
-              ],
-              finalText: "Raised one card resting on the recorded booking.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: KILLER_DOC.title,
-            plan: () => ({
-              calls: [
-                call("annotation_search", { docId: priorDocId }),
-                call("annotation_retract", {
-                  id: ref("annotation_search", "annotations.0.id"),
-                }),
-              ],
-              finalText: "The booking never existed; retracted the prior.",
-            }),
-          },
           {
             flavour: "feedback.provenance",
             plan: (ctx) => ({
@@ -756,44 +794,6 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
                 }),
               ],
               finalText: "Repaired the card that rested on the dead prior.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: BREAKER_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "delivery-window",
-                  claimText: "The Cedar Grove pallet delivery window is the third week of May.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: BREAKER_QUOTE,
-                  confidence: 0.8,
-                  claimBasis: "quoted",
-                }),
-              ],
-              finalText: "Recorded the delivery window.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: MULTI_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "site-visit",
-                  claimText:
-                    "A Riverside Estate site visit is scheduled while the season access arrangements still stand.",
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: MULTI_QUOTE,
-                  additionalEvidence: [{ docId: anchorDocId, quote: ANCHOR_QUOTE }],
-                  confidence: 0.5,
-                  claimBasis: "synthesized",
-                }),
-              ],
-              finalText: "Recorded the site visit against two grounding atoms.",
             }),
           },
         ],
@@ -829,28 +829,18 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
       >(`SELECT ${RUN_COLUMNS} FROM cognition_runs WHERE dedupe_key = ? ORDER BY enqueued_at DESC LIMIT 1`)
       .get(key);
 
-  /** Push documents, wait for their data runs to be enqueued, then drain. */
+  /** Push documents, wait for their source interpretations to complete, then drain. */
   async function pushAndDrain(docs: readonly BenchDoc[]): Promise<string[]> {
-    const before = (await bench.obs.runs({ kind: "data", limit: 200 })).items.length;
-    await bench.pushAll(docs);
-    await waitFor(
-      () => `${docs.length} more data run(s) to be enqueued (had ${before})`,
-      async () => {
-        const runs = await bench.obs.runs({ kind: "data", limit: 200 });
-        return runs.items.length >= before + docs.length ? runs.items.length : null;
-      },
-      90_000,
-    );
-    await bench.drainUntilQuiet();
-    const ids: string[] = [];
-    for (const d of docs) ids.push(await bench.docId(d.externalId));
+    const ids = await bench.pushAndSettle(docs);
+    for (const id of ids)
+      expect((await bench.obs.interpretationForSource(id)).status).toBe("completed");
     return ids;
   }
 
   /**
    * A content change invalidates annotations off the event bus, deliberately
    * NOT awaited by ingest. Wait on the sidecar instead, then let the debounced
-   * `data.updated` run settle so the queue is clean for the next test.
+   * source maintenance settle so the queue is clean for the next test.
    */
   async function breakEvidence(doc: BenchDoc, replacement: string, annotationId: string) {
     await bench.update(doc, replacement);

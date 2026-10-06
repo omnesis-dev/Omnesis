@@ -2,9 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Brain Bench — the worth gate on the real-time `data` lane.
+ * Brain Bench — legacy datum recovery and current source discovery.
  *
- * Before a claimed `data` run about an email starts its background-agent turn,
+ * Ingestion now creates maintenance work. Persisted legacy `data` rows still
+ * recover through the worth gate: before an email starts its background-agent turn,
  * the drainer asks the `decision` model whether the email is worth one. The
  * model here is a scripted System One stand-in reached through the production
  * TypeSafe client (`typesafe/jev-1.13.0`, a bearer key, `inference.typesafe.url`),
@@ -26,9 +27,12 @@
  */
 
 import "./synth-env.js";
+import { parseCognitionDataRunPayload } from "@omnesis/gateway/src/brain/run-payloads.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   EMAIL_WORTH_THRESHOLD,
   WORTH_MAIL,
   attachmentOf,
@@ -46,10 +50,28 @@ compressCognitionCadences();
 
 /** Score by subject; an email the table does not know fails loudly as a 422. */
 function scoreBySubject(request: DecisionServerRequest) {
+  const purpose = Object.keys(request.questions)[0]!;
+  if (["urgency", "discovery", "impact", "review"].includes(purpose)) {
+    const state = request.state as { title?: string; source?: { title: string } };
+    const mail = worthMailBySubject(state.source?.title ?? state.title);
+    return {
+      [purpose]: {
+        type: "score" as const,
+        score: purpose === "discovery" && mail && !passesWorthGate(mail) ? 0 : 2,
+      },
+    };
+  }
   const mail = worthMailBySubject((request.state as { subject?: unknown }).subject);
   return mail
     ? worthAnswersFor(mail)
     : { httpError: 422, message: `unscripted subject: ${JSON.stringify(request.state)}` };
+}
+
+/** A recovered row must carry the same valid payload as the retired enqueuer. */
+function legacyDatumPayload(docId: string) {
+  const payload = { docId, event: "created" as const, datumAt: Date.now() };
+  expect(parseCognitionDataRunPayload(payload)).toEqual(payload);
+  return payload;
 }
 
 /** Every worth-gate decision recorded against a run, as the ledger holds them. */
@@ -65,13 +87,16 @@ function agentTurnsFor(bench: BrainBench, runId: string): number {
   return bench.puppetCalls.filter((c) => c.runId === runId).length;
 }
 
-const LANES_OFF = { mergeAdjudication: { enabled: false } } as const;
+const LANES_OFF = {
+  mergeAdjudication: { enabled: false },
+  knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+} as const;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Scripted decision model
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("worth gate: a scripted decision model on the data lane", () => {
+describe("worth gate: persisted legacy datum recovery alongside current source discovery", () => {
   let bench: BrainBench;
   const ids = new Map<string, string>();
   const ATTACHMENT = attachmentOf(WORTH_MAIL.booking, "wg-booking-1-itinerary", "itinerary.pdf");
@@ -85,14 +110,22 @@ describe("worth gate: a scripted decision model on the data lane", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
+      behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [{ plan: { calls: [] } }],
+          maintainNode: preserveCurrentOwner,
+        }),
+      },
       brain: LANES_OFF,
       decision: { policy: scoreBySubject, inputTokens: 480 },
     });
-    // The ambient universe is dated outside the recency window: nothing may
-    // have been judged before this suite's own stimulus.
+    // Ambient arrivals use current discovery; they create no legacy datum
+    // rows or email-worth requests before the explicit recovery stimulus.
     await bench.drainUntilQuiet();
     expect((await bench.obs.runs({ kind: "data" })).items).toHaveLength(0);
-    expect(bench.decision.calls).toHaveLength(0);
+    expect(
+      bench.decision.calls.filter((call) => "subject" in (call.request.state as object)),
+    ).toHaveLength(0);
 
     // The parent before its attachment, so the containment resolves whenever
     // the attachment's run is claimed.
@@ -100,6 +133,16 @@ describe("worth gate: a scripted decision model on the data lane", () => {
     await bench.drainUntilQuiet();
     for (const mail of JUDGED) ids.set(mail.key, await bench.docId(mail.externalId));
     ids.set("attachment", await bench.docId(ATTACHMENT.externalId));
+    // Recover genuine persisted legacy datum rows; ingestion itself only buys maintenance.
+    for (const id of ids.values())
+      bench.seedRun({
+        id: `legacy-worth-${id}`,
+        kind: "data",
+        payload: legacyDatumPayload(id),
+        dedupeKey: `data:doc:${id}`,
+        enqueuedAt: Date.now(),
+      });
+    await bench.drainUntilQuiet();
   }, 600_000);
 
   afterAll(async () => {
@@ -122,7 +165,9 @@ describe("worth gate: a scripted decision model on the data lane", () => {
     }
     // Nothing else was asked: every call is one of the four emails.
     const subjects = new Set(JUDGED.map((m) => m.title));
-    for (const call of bench.decision.calls) {
+    for (const call of bench.decision.calls.filter(
+      (call) => "subject" in (call.request.state as object),
+    )) {
       expect(subjects.has((call.request.state as { subject: string }).subject)).toBe(true);
     }
   });
@@ -213,16 +258,30 @@ describe("worth gate: a scripted decision model on the data lane", () => {
     const gate = rows.filter((r) => r.mechanism === "worth-gate");
     expect(gate.length).toBeGreaterThan(0);
     expect(gate.every((r) => r.modelId === bench.decision.modelId)).toBe(true);
-    const calls = bench.decision.calls.filter((c) => c.status === 200).length;
+    const calls = bench.decision.calls.filter(
+      (c) => c.status === 200 && "subject" in (c.request.state as object),
+    ).length;
     expect(gate.reduce((sum, r) => sum + r.promptTokens, 0)).toBe(480 * calls);
     expect(gate.reduce((sum, r) => sum + r.completionTokens, 0)).toBe(0);
   });
 
   test("an outage fails open: the run executes and the decision is recorded unavailable", async () => {
+    const outage = [WORTH_MAIL.receipt, WORTH_MAIL.invitation];
+    await bench.pushAll(outage.map((mail) => worthMailDoc(mail)));
+    await bench.drainUntilQuiet();
+    // Target persisted legacy recovery, after independent live discovery settles.
     bench.decision.refuseWith(529, "overloaded");
     try {
-      const outage = [WORTH_MAIL.receipt, WORTH_MAIL.invitation];
-      await bench.pushAll(outage.map((mail) => worthMailDoc(mail)));
+      for (const mail of outage) {
+        const id = await bench.docId(mail.externalId);
+        bench.seedRun({
+          id: `legacy-worth-outage-${id}`,
+          kind: "data",
+          payload: legacyDatumPayload(id),
+          dedupeKey: `data:doc:${id}`,
+          enqueuedAt: Date.now(),
+        });
+      }
       await bench.drainUntilQuiet();
       for (const mail of outage) {
         // The client retries 529 before giving up; every attempt was refused.
@@ -259,6 +318,35 @@ describe("worth gate: a scripted decision model on the data lane", () => {
     }
   }, 180_000);
 
+  test("current discovery independently gates low-worth sources and records normalized metadata", async () => {
+    for (const mail of JUDGED) {
+      const id = ids.get(mail.key)!;
+      const coverage = bench.sql
+        .prepare<
+          [string],
+          { status: string }
+        >("SELECT status FROM knowledge_discovery_coverage WHERE subject_id=? AND phase='organization'")
+        .get(id);
+      expect(coverage?.status).toBe(passesWorthGate(mail) ? "considered" : "gated");
+      if (passesWorthGate(mail))
+        expect((await bench.obs.interpretationForSource(id)).kind).toBe("synthesis");
+      else expect(await bench.obs.runsForSource(id)).toEqual([]);
+    }
+    const decisions = bench.sql
+      .prepare<
+        [],
+        { score: number | null; rubric_version: string }
+      >("SELECT score,rubric_version FROM knowledge_decisions")
+      .all();
+    expect(decisions.length).toBeGreaterThan(0);
+    expect(
+      decisions.every((entry) => entry.score === null || (entry.score >= 0 && entry.score <= 1)),
+    ).toBe(true);
+    expect(decisions.every((entry) => entry.rubric_version === "knowledge-decisions-v2")).toBe(
+      true,
+    );
+  });
+
   test("every judged run has exactly one ledger row", () => {
     // 4 emails + the attachment + the 2 outage emails.
     expect(decisionRowCount(bench)).toBe(7);
@@ -273,7 +361,16 @@ describe("worth gate: absent while the decision role is unassigned", () => {
   let bench: BrainBench;
 
   beforeAll(async () => {
-    bench = await BrainBench.start({ experimental: true, brain: LANES_OFF });
+    bench = await BrainBench.start({
+      experimental: true,
+      brain: LANES_OFF,
+      behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [{ plan: { calls: [] } }],
+          maintainNode: preserveCurrentOwner,
+        }),
+      },
+    });
   }, 600_000);
 
   afterAll(async () => {
@@ -282,8 +379,9 @@ describe("worth gate: absent while the decision role is unassigned", () => {
 
   test("a low-worth email still gets its agent run, and nothing is judged", async () => {
     const [docId] = await bench.pushAndSettle([worthMailDoc(WORTH_MAIL.promotion)]);
-    const run = await bench.obs.runForDoc(docId!);
+    const run = await bench.obs.interpretationForSource(docId!);
     expect(run.status).toBe("completed");
+    expect(run.kind).toBe("synthesis");
     expect(run.gateVerdict).toBeNull();
     expect(agentTurnsFor(bench, run.id)).toBeGreaterThan(0);
     expect((await bench.obs.run(run.id)).decisions).toEqual([]);

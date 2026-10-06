@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The engine is fully inert when experimental mode is off. With experimental
- * mode on, its runtime is prepared once and every task reads model assignment
+ * Autonomous cognition is inert when experimental mode is off; durable privacy
+ * cleanup stays active. With experimental mode on, its runtime is prepared
+ * once and every task reads model assignment
  * live, allowing hot assignment/removal without duplicate registrations.
  */
 
@@ -485,28 +486,32 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     }
   });
 
-  it("prong 1 (experimental unset): no tasks scheduled, no jobs registered", async () => {
+  it("prong 1 (experimental unset): only durable privacy cleanup stays registered", async () => {
     const { deps, schedule, registerAll } = makeBootDeps(assignedResolver);
     await bootBriefs(deps);
-    expect(schedule).not.toHaveBeenCalled();
-    expect(registerAll).not.toHaveBeenCalled();
+    expect(schedule.mock.calls.map((call) => (call[0] as { name: string }).name)).toEqual([
+      "knowledge.cascade",
+    ]);
+    expect(registerAll).toHaveBeenCalledTimes(1);
+    expect(registerAll.mock.calls[0]?.[0]).toHaveLength(1);
   });
 
   it("experimental on with no model: tasks register once but remain live-gated", async () => {
     process.env.OMNESIS_EXPERIMENTAL = "1";
     const { deps, schedule, registerAll } = makeBootDeps(unassignedResolver);
     await bootBriefs(deps);
-    expect(schedule).toHaveBeenCalledTimes(12);
-    expect(registerAll.mock.calls.flatMap((call) => call[0] as unknown[])).toHaveLength(12);
+    expect(schedule).toHaveBeenCalledTimes(13);
+    expect(registerAll.mock.calls.flatMap((call) => call[0] as unknown[])).toHaveLength(13);
   });
 
   it("active: schedules the drain + rhythm tasks and registers their jobs", async () => {
     process.env.OMNESIS_EXPERIMENTAL = "1";
     const { deps, schedule, registerAll } = makeBootDeps(assignedResolver);
     await bootBriefs(deps);
-    expect(schedule).toHaveBeenCalledTimes(12);
+    expect(schedule).toHaveBeenCalledTimes(13);
     const names = schedule.mock.calls.map((c) => (c[0] as { name: string }).name);
     expect(names).toEqual([
+      "knowledge.cascade",
       "cognition.drain",
       "cognition.dailyRhythm",
       "cognition.digest",
@@ -520,9 +525,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
       "cognition.reverificationSweep",
       "cognition.provenanceRecheck",
     ]);
-    expect(registerAll).toHaveBeenCalledTimes(2);
+    expect(registerAll).toHaveBeenCalledTimes(3);
     const registered = registerAll.mock.calls.flatMap((c) => c[0] as unknown[]);
-    expect(registered.length).toBe(12);
+    expect(registered.length).toBe(13);
   });
 
   it("drains after a hot model assignment and parks again on removal without re-registering", async () => {
@@ -688,7 +693,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     const { deps, schedule } = makeBootDeps(assignedResolver);
     (deps.runQueue as { eventBus?: Pick<EventBus, "on"> }).eventBus = new EventBus();
     await bootBriefs(deps);
-    expect(schedule).not.toHaveBeenCalled();
+    expect(schedule.mock.calls.map((call) => (call[0] as { name: string }).name)).toEqual([
+      "knowledge.cascade",
+    ]);
     expect(priorContentRequested()).toBe(false);
   });
 
@@ -705,6 +712,7 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
     await bootBriefs(deps);
     const names = schedule.mock.calls.map((c) => (c[0] as { name: string }).name);
     expect(names).toEqual([
+      "knowledge.cascade",
       "cognition.drain",
       "cognition.dailyRhythm",
       "cognition.digest",

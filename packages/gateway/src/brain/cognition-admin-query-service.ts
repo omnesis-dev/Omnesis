@@ -16,6 +16,8 @@ import {
   listTemporalAnnotations,
   temporalAnnotationStats,
 } from "../enrichment/temporal-annotations/storage.js";
+import { readKnowledgeBootstrapStatus } from "./knowledge/bootstrap-status.js";
+import { summarizeCognitionTranscript } from "./decision-view.js";
 import { artifactProvenance } from "./artifact-provenance.js";
 import { displayPersonRefs } from "./person-refs.js";
 import { countBootstrapProcessed } from "./storage/bootstrap.js";
@@ -294,6 +296,14 @@ export class CognitionAdminQueryService {
    * The retrospective lane's live state. `startedAt` is this process's start,
    * which is what the lane's boot hold is measured against.
    */
+  knowledgeBootstrapStatus(
+    settings: BootstrapSettingsView,
+    now: number,
+    budget?: CognitionBudgetSettings,
+  ) {
+    return readKnowledgeBootstrapStatus(this.db, settings, now, budget);
+  }
+
   bootstrapStatus(settings: BootstrapSettingsView, now: number): BootstrapStatus {
     return readBootstrapStatus(this.db, settings, { now, startedAt: this.startedAt });
   }
@@ -388,6 +398,25 @@ export class CognitionAdminQueryService {
       this.transcripts?.listForRunWithStatus(runId) ??
       Promise.resolve({ items: [], indexComplete: true })
     );
+  }
+
+  transcriptDecision(transcript: CognitionRunTranscript) {
+    const decision = summarizeCognitionTranscript(transcript);
+    if (
+      decision.kind !== "synthesis" ||
+      !this.db
+        .prepare("SELECT 1 FROM sqlite_master WHERE name='knowledge_batches' AND type='table'")
+        .get()
+    )
+      return decision;
+    const docs = this.db
+      .prepare<[string], { id: string }>(
+        `SELECT DISTINCT w.subject_id AS id FROM knowledge_batches b
+      JOIN knowledge_work w ON w.batch_id=b.id JOIN documents d ON d.id=w.subject_id
+      WHERE b.run_id=? AND w.subject_kind='source' ORDER BY w.subject_id`,
+      )
+      .all(decision.runId);
+    return { ...decision, docIds: docs.map((doc) => doc.id) };
   }
 
   loadTranscript(fileName: string): Promise<CognitionRunTranscript> {

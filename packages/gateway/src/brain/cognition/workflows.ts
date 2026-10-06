@@ -105,6 +105,7 @@ const WORKFLOWS = {
   "loop-decay-check": { label: "Loop decay check", queueKind: "time_based", version: 1 },
   "feedback-learning": { label: "Feedback learning", queueKind: "feedback", version: 1 },
   "provenance-recheck": { label: "Provenance recheck", queueKind: "feedback", version: 1 },
+  "knowledge-maintenance": { label: "Knowledge maintenance", queueKind: "synthesis", version: 1 },
   noticing: { label: "Noticing", queueKind: "synthesis", version: 1 },
   "collision-review": { label: "Collision review", queueKind: "synthesis", version: 1 },
   "contradiction-review": { label: "Contradiction review", queueKind: "synthesis", version: 1 },
@@ -220,6 +221,8 @@ export function cognitiveWorkflowIdForRun(
     case "synthesis": {
       const synthesis = parseCognitionSynthesisRunPayload(payload);
       if (!synthesis) return UNRECOGNIZED_WORKFLOW_ID;
+      if (synthesis.focus === "knowledge-maintenance")
+        return synthesis.batchId ? "knowledge-maintenance" : UNRECOGNIZED_WORKFLOW_ID;
       if (synthesis.focus === "collision") return "collision-review";
       if (synthesis.focus === "annotation-contradiction") return "contradiction-review";
       return "noticing";

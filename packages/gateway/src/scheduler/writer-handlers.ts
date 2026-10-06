@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { promoteSourceWireContract } from "../data/repositories/SourceWireContractRepository.js";
-import { replaceSourceSyncIssues } from "../data/repositories/SourceSyncIssueRepository.js";
+import { KnowledgeStorageError } from "../brain/knowledge/types.js";
+import {
+  assertKnowledgeCanonicalFence,
+  refreshKnowledgeCanonicalOwners,
+  type KnowledgeCanonicalFence,
+} from "../brain/knowledge/canonical-fence.js";
+
 import {
   type SyncIssue,
   type SyncIssueAssessment,
@@ -60,6 +65,10 @@ type Db = Database.Database;
 const NEAR_DUP_DF_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import { replaceSourceSyncIssues } from "../data/repositories/SourceSyncIssueRepository.js";
+import { promoteSourceWireContract } from "../data/repositories/SourceWireContractRepository.js";
+import { knowledgeWriterHandlers } from "../brain/knowledge/writer.js";
+import { withdrawKnowledgeOwner } from "../brain/knowledge/owner-withdrawal.js";
 
 // Handlers import from canonical homes, not the
 // (`./people.js`, `./links.js`) wrapper shells. The shells stay for
@@ -457,7 +466,6 @@ import {
   createDocAnnotationSuperseding,
   supersedeDocAnnotationBy,
   updateDocAnnotation,
-  deleteDocAnnotation,
   invalidateAnnotationsForDoc,
   cascadeAnnotationPrivacyDelete,
   invalidateBriefClaimsForDoc,
@@ -466,7 +474,6 @@ import {
   createPersonAnnotationSuperseding,
   supersedePersonAnnotationBy,
   revisePersonAnnotation,
-  deletePersonAnnotation,
   invalidatePersonAnnotationsForDoc,
   cascadePersonAnnotationPrivacyDelete,
   mutateWithConsumptionDependencies,
@@ -599,7 +606,39 @@ import type { MobilePermissionHealthReport } from "@omnesis/types/mobile-permiss
  * worker-side message loop already coerces `undefined` to `null` on
  * the wire, so the wire shape doesn't depend on return-statement style.
  */
+function guardedCanonicalMutation(
+  db: Db,
+  fence: KnowledgeCanonicalFence,
+  operation: string,
+  args: unknown[],
+):
+  | { ok: true; value: unknown; owners: KnowledgeCanonicalFence["owners"] }
+  | { ok: false; code: "revision_conflict"; message: string } {
+  if (!(operation.startsWith("cognition.") || operation.startsWith("temporalAnnotations.")))
+    throw new Error("Unsupported canonical maintenance mutation");
+  const handler = (
+    writerHandlers as unknown as Record<string, (db: Db, ...args: unknown[]) => unknown>
+  )[operation];
+  if (!handler) throw new Error("Unknown canonical maintenance mutation");
+  try {
+    const value = db.transaction(() => {
+      assertKnowledgeCanonicalFence(db, fence);
+      const result = handler(db, ...args);
+      if (result instanceof Promise)
+        throw new Error("Canonical maintenance mutation must be synchronous");
+      return { result, owners: refreshKnowledgeCanonicalOwners(db, fence) };
+    })();
+    return { ok: true, value: value.result, owners: value.owners };
+  } catch (error) {
+    if (error instanceof KnowledgeStorageError && error.code === "revision_conflict")
+      return { ok: false, code: error.code, message: error.message };
+    throw error;
+  }
+}
+
 export const writerHandlers = {
+  "knowledge.canonicalMutation": guardedCanonicalMutation,
+  ...knowledgeWriterHandlers,
   // ── db.ts ─────────────────────────────────────────────────────────
   // Note: `db.upsertDocuments` lives in `writerYieldableHandlers` below
   // — handleCall dispatches there first since cooperative yield is
@@ -1473,7 +1512,9 @@ export const writerHandlers = {
     now: number,
   ) => updateDocAnnotation(db, id, patch, now),
   "cognition.annotationDelete": (db: Db, id: string, now: number): boolean =>
-    retractAnnotationWithDependentRechecks(db, "doc", id, now, () => deleteDocAnnotation(db, id)),
+    retractAnnotationWithDependentRechecks(db, "doc", id, now, () =>
+      withdrawKnowledgeOwner(db, "doc_annotation", id, now),
+    ),
   "cognition.annotationInvalidate": (db: Db, docId: string, now: number) =>
     invalidateAnnotationsForDoc(db, docId, now),
   "cognition.annotationPrivacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
@@ -1504,7 +1545,7 @@ export const writerHandlers = {
   ): boolean => revisePersonAnnotation(db, id, patch, now),
   "cognition.personAnnotationRetract": (db: Db, id: string, now: number): boolean =>
     retractAnnotationWithDependentRechecks(db, "person", id, now, () =>
-      deletePersonAnnotation(db, id),
+      withdrawKnowledgeOwner(db, "person_annotation", id, now),
     ),
   "cognition.personAnnotationInvalidate": (db: Db, docId: string, now: number) =>
     invalidatePersonAnnotationsForDoc(db, docId, now),
