@@ -95,13 +95,17 @@ confident. Missing or inconsistent cohort evidence uses the fallback ranking.
 This is a document-frequency approximation, not a recognizer language-model
 probability.
 
-Distinctiveness refines support instead of cancelling it. `rarityWeight`
+Ordinary global, person and conversation evidence retains full inverse-log rarity
+and contextual lift. Its logarithmic frequency support then saturates rather
+than allowing broadly repeated corpus terms to crowd out relationship anchors.
+Verified self-authored evidence uses a separate blend: `authoredRarityWeight`
 defaults to 0.5, blending inverse-log global rarity with a neutral baseline;
-`contextLiftWeight` defaults to 0.25, compressing contextual lift to 1–1.5.
-Both accept 0–1: zero ignores the discriminator and one applies its full
-strength. Authored confidence uses decayed independent support and the existing
-document prior. It supplies no additive lifetime-score floor, so dormant words
-continue fading even when they had substantial historical support.
+`authoredContextLiftWeight` defaults to 0.25, compressing its contextual lift to
+1–1.5. These settings apply only to the self-authored profile and accept 0–1:
+zero ignores the discriminator and one applies its full strength. Authored
+confidence uses decayed independent support and the existing document prior.
+It supplies no additive lifetime-score floor, so dormant words continue fading
+even when they had substantial historical support.
 
 Candidate admission combines bounded indexed streams for rank, recent usage and
 independently corroborated ordinary evidence. Applying a discount only after a

@@ -31,15 +31,15 @@ describe("transcription vocabulary settings", () => {
       authoredWeight: 4,
       machineEvidenceWeight: 0.15,
       contextPriorDocuments: 10,
-      rarityWeight: 0.5,
-      contextLiftWeight: 0.25,
+      authoredRarityWeight: 0.5,
+      authoredContextLiftWeight: 0.25,
     });
   });
   test("relevance blend weights have bounded overrides", () => {
     for (const settings of [
-      { rarityWeight: 0, contextLiftWeight: 0 },
-      { rarityWeight: 1, contextLiftWeight: 1 },
-      { rarityWeight: 0.4, contextLiftWeight: 0.3 },
+      { authoredRarityWeight: 0, authoredContextLiftWeight: 0 },
+      { authoredRarityWeight: 1, authoredContextLiftWeight: 1 },
+      { authoredRarityWeight: 0.4, authoredContextLiftWeight: 0.3 },
     ]) {
       expect(
         resolveVocabularySettings(
@@ -50,11 +50,11 @@ describe("transcription vocabulary settings", () => {
       ).toMatchObject(settings);
     }
     for (const settings of [
-      { rarityWeight: -0.1 },
-      { rarityWeight: 1.1 },
-      { contextLiftWeight: -0.1 },
-      { contextLiftWeight: 1.1 },
-      { rarityWeight: Number.POSITIVE_INFINITY },
+      { authoredRarityWeight: -0.1 },
+      { authoredRarityWeight: 1.1 },
+      { authoredContextLiftWeight: -0.1 },
+      { authoredContextLiftWeight: 1.1 },
+      { authoredRarityWeight: Number.POSITIVE_INFINITY },
     ]) {
       expect(
         omnesisConfigSchema.safeParse({

@@ -84,16 +84,78 @@ test.each([
       { ...settings, maxTerms: 1 },
     );
     expect(dictionary.entries.map((entry) => entry.text)).toEqual([technical]);
-    // Full-strength discrimination reproduces the frequency/lift cancellation;
-    // the balanced default fixes it without term-specific admission rules.
+    // Strong verified authored support survives global frequency penalties;
+    // full-strength authored discrimination still favors the narrow term.
     const legacy = getTranscriptionVocabulary(
       db,
       { purpose: "dictation", recordedAt: "2026-01-01" },
-      { ...settings, maxTerms: 1, rarityWeight: 1, contextLiftWeight: 1 },
+      { ...settings, maxTerms: 1, authoredRarityWeight: 1, authoredContextLiftWeight: 1 },
     );
     expect(legacy.entries.map((entry) => entry.text)).toEqual([conversational]);
   },
 );
+
+test("ordinary relationship anchors survive broad corpus frequency independently of authored blends", () => {
+  const db = createDatabase(":memory:");
+  databases.push(db);
+  const conversationKey = JSON.stringify(["messages", "fictional-thread"]);
+  db.prepare(
+    "INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at) VALUES ('fictional-speaker','Velquorin','fictional','2026-01-01','2026-01-01','2026-01-01','2026-01-01')",
+  ).run();
+  const profile = db.prepare("INSERT INTO transcription_vocabulary_profiles VALUES(?,?,?)");
+  profile.run("global", "", 200000);
+  profile.run("person", "fictional-speaker", 20000);
+  profile.run("conversation", conversationKey, 20000);
+  const insert = db.prepare(`INSERT INTO transcription_vocabulary_terms
+    (scope_kind,scope_key,term,text,document_count,benefit,base_score,last_seen,
+     evidence_count,ordinary_document_count,spelling_count)
+    VALUES (?,?,?,?,?,2,?,'2026-01-01',?,?,?)`);
+  for (const broadCount of [1000, 10000, 100000]) {
+    db.exec("DELETE FROM transcription_vocabulary_terms");
+    for (const [kind, key] of [
+      ["global", ""],
+      ["person", "fictional-speaker"],
+      ["conversation", conversationKey],
+    ])
+      for (const [text, count] of [
+        ["Broadvelune", kind === "global" ? broadCount : broadCount / 10],
+        ["Meralith", 20],
+      ] as const)
+        insert.run(
+          kind,
+          key,
+          text.toLowerCase(),
+          text,
+          count,
+          2 * Math.log1p(count),
+          count,
+          count,
+          count,
+        );
+    for (const includeConversation of [false, true]) {
+      const context = {
+        purpose: "source-audio" as const,
+        speaker: { personId: "fictional-speaker" },
+        recordedAt: "2026-01-01",
+        ...(includeConversation
+          ? { conversation: { sourceId: "messages", threadId: "fictional-thread" } }
+          : {}),
+      };
+      const baseline = getTranscriptionVocabulary(db, context, settings);
+      expect(baseline.entries.map((entry) => entry.text)).toEqual(["Meralith", "Broadvelune"]);
+      // Ordinary rarity saturates frequency support below its spelling benefit.
+      expect(baseline.entries[1].score).toBeLessThan(2 * (includeConversation ? 9 : 4));
+      for (const weight of [0, 1])
+        expect(
+          getTranscriptionVocabulary(db, context, {
+            ...settings,
+            authoredRarityWeight: weight,
+            authoredContextLiftWeight: weight,
+          }),
+        ).toEqual(baseline);
+    }
+  }
+});
 
 test("strong recent contextual evidence can still outrank broad vocabulary", () => {
   const db = fixture("prismaVeld", "zoffli");

@@ -418,14 +418,17 @@ export function getTranscriptionVocabulary(
               settings.machineEvidenceWeight ?? 0.15,
             );
       if (quality === 0) continue;
+      // Ordinary support already grows with corpus frequency; full rarity keeps
+      // it saturated. Verified written self evidence has independent decayed
+      // support, so its blend can retain personally used technical vocabulary.
       const score =
         support *
         profile.weight *
         vocabularyDiscrimination(
           total,
           specificity,
-          settings.rarityWeight ?? 0.5,
-          settings.contextLiftWeight ?? 0.25,
+          profile.kind === "self" ? (settings.authoredRarityWeight ?? 0.5) : 1,
+          profile.kind === "self" ? (settings.authoredContextLiftWeight ?? 0.25) : 1,
         ) *
         quality;
       const prior = selected.get(row.term);

@@ -227,7 +227,7 @@ describe("vocabulary materialization", () => {
         speaker: { personId: "recent-speaker" },
         recordedAt: "2026-01-01",
       },
-      { ...settings, rarityWeight: 1, contextLiftWeight: 1 },
+      settings,
     );
     expect(result.entries[0].text).toBe("Umbriolet");
     expect(result.entries.map((entry) => entry.text)).toContain("Dormanthh");
@@ -254,10 +254,7 @@ describe("vocabulary materialization", () => {
       settings,
     );
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].score).toBeCloseTo(
-      3 * Math.log1p(2) * (0.5 + 0.5 / (1 + Math.log1p(2))),
-      10,
-    );
+    expect(result.entries[0].score).toBeCloseTo((3 * Math.log1p(2)) / (1 + Math.log1p(2)), 10);
   });
 
   test("singleton noise cannot crowd corroborated terms out of bounded lookup", () => {

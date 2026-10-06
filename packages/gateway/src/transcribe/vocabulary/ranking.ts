@@ -30,8 +30,8 @@ export function vocabularyEvidenceConfidence(documents: number, priorDocuments =
 export function vocabularyDiscrimination(
   globalOccurrences: number,
   contextualLift: number,
-  rarityWeight = 0.5,
-  contextLiftWeight = 0.25,
+  rarityWeight = 1,
+  contextLiftWeight = 1,
 ): number {
   if (!Number.isFinite(globalOccurrences) || globalOccurrences < 0) return 0;
   const rarity = 1 / (1 + Math.log1p(globalOccurrences));

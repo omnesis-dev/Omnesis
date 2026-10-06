@@ -8,8 +8,8 @@ export interface VocabularySettings {
   authoredWeight?: number;
   machineEvidenceWeight?: number;
   contextPriorDocuments?: number;
-  rarityWeight?: number;
-  contextLiftWeight?: number;
+  authoredRarityWeight?: number;
+  authoredContextLiftWeight?: number;
   maxTerms: number;
   maxPromptTokens: number;
   batchSize: number;

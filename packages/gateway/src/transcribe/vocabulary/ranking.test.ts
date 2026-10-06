@@ -9,10 +9,12 @@ import {
   vocabularyEvidenceConfidence,
 } from "./ranking.js";
 
-test("distinctiveness cannot erase established recognition support", () => {
-  expect(vocabularyDiscrimination(1000000, 1)).toBeGreaterThan(0.5);
-  expect(vocabularyDiscrimination(2, 3)).toBeLessThan(1.5);
-  expect(vocabularyDiscrimination(2, 3) / vocabularyDiscrimination(1000000, 1)).toBeLessThan(3);
+test("authored blending limits distinctiveness without erasing established support", () => {
+  expect(vocabularyDiscrimination(1000000, 1, 0.5, 0.25)).toBeGreaterThan(0.5);
+  expect(vocabularyDiscrimination(2, 3, 0.5, 0.25)).toBeLessThan(1.5);
+  expect(
+    vocabularyDiscrimination(2, 3, 0.5, 0.25) / vocabularyDiscrimination(1000000, 1, 0.5, 0.25),
+  ).toBeLessThan(3);
   expect(vocabularyDiscrimination(100, 3, 0, 0)).toBe(1);
   expect(vocabularyDiscrimination(100, 3, 1, 1)).toBeCloseTo(3 / (1 + Math.log1p(100)));
 });

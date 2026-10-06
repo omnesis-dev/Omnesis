@@ -645,19 +645,22 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           configurable through <code>machineEvidenceWeight</code> (default <code>0.15</code>);
           <code>contextPriorDocuments</code> controls contextual smoothing strength (default
           <code>10</code>). Global rarity and contextual lift refine support without crowding out
-          established vocabulary; <code>rarityWeight</code> defaults to <code>0.5</code> and
-          <code>contextLiftWeight</code> to <code>0.25</code>. Both accept values from
-          <code>0</code> (ignore that discriminator) to <code>1</code> (full strength). These
-          settings live under <code>inference.transcriptionVocabulary</code>. These defaults are
-          initial calibration choices; they do not establish improved speech accuracy for every
-          corpus. Existing WhatsApp archives are reprojected in bounded pages without resetting
-          media; historical Gmail and iMessage evidence is not automatically replayed. Historical
-          Tell Omnesis written projections are refreshed at gateway startup when enabled; untouched
-          transcripts are excluded, while later manual edits may contribute. Common calendar words,
-          compounds, structural chat noise and low-confidence near-common spellings receive
-          filtering or reduced weight, with safeguards for names and acronyms. Structurally marked
-          metadata, transcripts, Markdown block quotes and fenced code blocks are excluded, and
-          structured OCR layouts contribute their readable text. Learned terms need at least two
+          established self-authored vocabulary; <code>authoredRarityWeight</code> defaults to
+          <code>0.5</code> and <code>authoredContextLiftWeight</code> to <code>0.25</code>. These
+          apply only to verified self-authored evidence. Ordinary global, person and conversation
+          evidence retains full rarity and contextual discrimination so broadly repeated terms
+          cannot gain unbounded frequency advantage over relationship vocabulary. Both settings
+          accept values from <code>0</code> (ignore that discriminator) to <code>1</code> (full
+          strength). These settings live under <code>inference.transcriptionVocabulary</code>. These
+          defaults are initial calibration choices; they do not establish improved speech accuracy
+          for every corpus. Existing WhatsApp archives are reprojected in bounded pages without
+          resetting media; historical Gmail and iMessage evidence is not automatically replayed.
+          Historical Tell Omnesis written projections are refreshed at gateway startup when enabled;
+          untouched transcripts are excluded, while later manual edits may contribute. Common
+          calendar words, compounds, structural chat noise and low-confidence near-common spellings
+          receive filtering or reduced weight, with safeguards for names and acronyms. Structurally
+          marked metadata, transcripts, Markdown block quotes and fenced code blocks are excluded,
+          and structured OCR layouts contribute their readable text. Learned terms need at least two
           distinct supporting documents. Repetition within one document does not count as
           corroboration, although copies stored as separate documents can still count. Configured
           and contact-curated names for the current people supply separate identity hints. Linking a

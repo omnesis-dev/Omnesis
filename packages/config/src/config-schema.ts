@@ -3028,20 +3028,20 @@ const transcriptionVocabularySettings = z
         "Smoothing strength for contextual vocabulary specificity in document units. Default 10.",
       )
       .optional(),
-    rarityWeight: z
+    authoredRarityWeight: z
       .number()
       .min(0)
       .max(1)
       .describe(
-        "Strength of the global-frequency penalty for vocabulary ranking. Default 0.5; 0 ignores global rarity, 1 applies the full penalty.",
+        "Strength of the global-frequency penalty for verified self-authored vocabulary only. Default 0.5; 0 ignores global rarity, 1 applies the full penalty.",
       )
       .optional(),
-    contextLiftWeight: z
+    authoredContextLiftWeight: z
       .number()
       .min(0)
       .max(1)
       .describe(
-        "Strength of contextual frequency lift in vocabulary ranking. Default 0.25; 0 ignores lift, 1 applies the full lift.",
+        "Strength of contextual frequency lift for verified self-authored vocabulary only. Default 0.25; 0 ignores lift, 1 applies the full lift.",
       )
       .optional(),
     maxTerms: z
