@@ -25,12 +25,11 @@ export { KnowledgeDetail, KnowledgeStatus, knowledgeReferenceHref } from "./know
 
 import { KnowledgeIcon } from "../lib/knowledge-link-icons.js";
 import { extractKnowledgeReferences } from "./knowledge-claim-markdown.js";
-import { replaceUrl } from "../lib/router.js";
+import { navigate, replaceUrl } from "../lib/router.js";
 import {
   LoopContext,
   loopLibraryNode,
   loopDeadlineLabel,
-  loopLibraryPath,
   sortLibraryLoops,
 } from "./knowledge-loop-library.js";
 
@@ -56,14 +55,35 @@ const preview = (text) =>
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/[#*`_]/g, "")
     .trim();
-function PageCard({ node, selectedId }) {
+export function knowledgeSelectionHref(id, kind = "") {
+  const path = id ? knowledgePath(id) : "/portal/debug/cognition/knowledge";
+  return path + (kind ? `?kind=${encodeURIComponent(kind)}` : "");
+}
+
+/** Preserve normal new-tab actions while ordinary selections reuse the mounted library. */
+export function navigateKnowledgeSelection(event) {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  )
+    return;
+  event.preventDefault();
+  navigate(event.currentTarget.getAttribute("href"));
+}
+
+function PageCard({ node, selectedId, kind }) {
   return html`<a
     class=${`kn-card ${selectedId === node.id ? "is-selected" : ""}`}
-    href=${node.kind === "loop" ? loopLibraryPath(node.id) : knowledgePath(node.id)}
+    href=${knowledgeSelectionHref(node.id, kind)}
+    onClick=${navigateKnowledgeSelection}
     aria-current=${selectedId === node.id ? "page" : undefined}
     ><div class="kn-card-meta">
-      <span>${kindLabel(node.kind)}</span>${node.validity ===
-        "stale" && html`<span class="kn-needs-review">Needs review</span>`}
+      <span>${kindLabel(node.kind)}</span>${node.validity === "stale" &&
+      html`<span class="kn-needs-review">Needs review</span>`}
     </div>
     <h3><${KnowledgeIcon} kind=${node.kind} />${node.title}</h3>
     ${node.kind === "loop" &&
@@ -409,7 +429,13 @@ export function KnowledgeTab({ selectedId }) {
         </div>`}
         <nav class="kn-card-list" aria-label="Knowledge pages">
           ${filtered.map(
-            (node) => html`<${PageCard} key=${node.id} node=${node} selectedId=${selectedId} />`,
+            (node) =>
+              html`<${PageCard}
+                key=${node.id}
+                node=${node}
+                selectedId=${selectedId}
+                kind=${kind}
+              />`,
           )}${loading &&
           html`<div class="kn-loading" role="status">
             <span></span><span></span>
@@ -454,7 +480,8 @@ export function KnowledgeTab({ selectedId }) {
         ${selectedId
           ? html`<a
                 class="kn-back"
-                href=${kind === "loop" ? loopLibraryPath() : "/portal/debug/cognition/knowledge"}
+                href=${knowledgeSelectionHref(null, kind)}
+                onClick=${navigateKnowledgeSelection}
                 >← Back to library</a
               >${(detail?.node?.kind === "loop" || (!detail && kind === "loop")) &&
               html`<${LoopContext}
@@ -522,7 +549,10 @@ export function KnowledgeTab({ selectedId }) {
                       <p>Refresh to try again.</p>
                     </div>`
                   : root
-                    ? html`<a class="kn-root-card" href=${knowledgePath(root.id)}
+                    ? html`<a
+                        class="kn-root-card"
+                        href=${knowledgeSelectionHref(root.id, kind)}
+                        onClick=${navigateKnowledgeSelection}
                         ><div class="kn-eyebrow">
                           YOUR LIFE AT A GLANCE
                           <span aria-hidden="true">↗</span>

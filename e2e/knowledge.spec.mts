@@ -313,6 +313,46 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   const search = page.getByRole("searchbox", { name: "Search knowledge" });
   await search.fill("no-such-subject");
   await expect(page.getByText("No matching pages", { exact: true })).toBeVisible();
+  await search.fill("workshop");
+  await expect(page.locator(".kn-card-list")).toContainText("Prepare workshop materials");
+  await page.evaluate(() => {
+    (window as Window & { libraryNavigationSentinel?: string }).libraryNavigationSentinel =
+      "preserved";
+  });
+  const libraryRequests: string[] = [];
+  const trackLibraryRequests = (request: import("@playwright/test").Request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === "/admin/brain/knowledge" || path === "/admin/brain/knowledge/status")
+      libraryRequests.push(request.url());
+  };
+  page.on("request", trackLibraryRequests);
+  const library = page.getByRole("navigation", { name: "Knowledge pages" });
+  await library.getByRole("link", { name: /Prepare workshop materials/ }).click();
+  await expect(page).toHaveURL(/knowledge\/browser-materials$/);
+  await expect(page.getByRole("region", { name: "Tracked outcome" })).toBeVisible();
+  await expect(search).toHaveValue("workshop");
+  await expect(page.getByRole("combobox", { name: "Knowledge type" })).toHaveValue("");
+  await expect(library).toContainText("Workshop supplies");
+  await library.locator('a[href="/portal/debug/cognition/knowledge/browser-supplies"]').click();
+  await expect(page.locator(".kn-reader")).toContainText(
+    "Paper and pencils are workshop supplies.",
+  );
+  await page.goBack();
+  await expect(page).toHaveURL(/knowledge\/browser-materials$/);
+  await expect(page.getByRole("region", { name: "Tracked outcome" })).toBeVisible();
+  await page.goForward();
+  await expect(page).toHaveURL(/knowledge\/browser-supplies$/);
+  await expect(page.locator(".kn-reader")).toContainText(
+    "Paper and pencils are workshop supplies.",
+  );
+  await expect(search).toHaveValue("workshop");
+  expect(
+    await page.evaluate(
+      () => (window as Window & { libraryNavigationSentinel?: string }).libraryNavigationSentinel,
+    ),
+  ).toBe("preserved");
+  expect(libraryRequests).toEqual([]);
+  page.off("request", trackLibraryRequests);
   await search.fill("Paper workshop");
   await page
     .getByRole("link", { name: /Paper workshop/ })
@@ -484,7 +524,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     animations: "disabled",
   });
   await page.goto(url(`${route}/browser-context?claim=removed`));
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator(".kn-selected-claim").getByRole("status")).toContainText(
     "The referenced claim is not present in this version of the page.",
   );
   await page.screenshot({

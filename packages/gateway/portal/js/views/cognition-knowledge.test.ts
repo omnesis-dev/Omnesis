@@ -2,14 +2,20 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // @ts-nocheck — structural checks for the plain-JS portal renderer.
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 // Actual sanitizer and browser interactions are exercised by e2e/knowledge.spec.mts.
 vi.mock("./knowledge-claim-markdown.js", async (importOriginal) => ({
   ...(await importOriginal()),
   renderKnowledgeMarkdown: vi.fn(() => ({ html: "<p>Sanitized prose</p>", targets: new Map() })),
 }));
 import { renderKnowledgeMarkdown } from "./knowledge-claim-markdown.js";
-import { KnowledgeDetail, KnowledgeStatus, knowledgeReferenceHref } from "./cognition-knowledge.js";
+import {
+  KnowledgeDetail,
+  KnowledgeStatus,
+  knowledgeReferenceHref,
+  knowledgeSelectionHref,
+  navigateKnowledgeSelection,
+} from "./cognition-knowledge.js";
 import { resolveSection } from "./cognition.js";
 import { ConnectionClaims } from "./knowledge-connections.js";
 import { KnowledgeBadge } from "./knowledge-reader.js";
@@ -176,4 +182,44 @@ it("keeps library maintenance compact and links the dedicated queue view", () =>
   expect(
     hosts(tree).some((element) => element.props?.href === "/portal/debug/cognition/maintenance"),
   ).toBe(true);
+});
+
+afterEach(() => vi.unstubAllGlobals());
+it("selects library entries without leaving the document or changing the library filter", () => {
+  expect(knowledgeSelectionHref("outcome/one")).toBe(
+    "/portal/debug/cognition/knowledge/outcome%2Fone",
+  );
+  expect(knowledgeSelectionHref("outcome/one", "loop")).toBe(
+    "/portal/debug/cognition/knowledge/outcome%2Fone?kind=loop",
+  );
+  expect(knowledgeSelectionHref(null, "wiki")).toBe("/portal/debug/cognition/knowledge?kind=wiki");
+  const pushState = vi.fn(),
+    dispatchEvent = vi.fn(),
+    preventDefault = vi.fn();
+  vi.stubGlobal("history", { pushState });
+  vi.stubGlobal("window", { dispatchEvent });
+  const href = knowledgeSelectionHref("project", "wiki");
+  navigateKnowledgeSelection({
+    button: 0,
+    preventDefault,
+    currentTarget: { getAttribute: () => href },
+  });
+  expect(preventDefault).toHaveBeenCalledOnce();
+  expect(pushState).toHaveBeenCalledWith(null, "", href);
+  expect(dispatchEvent).toHaveBeenCalledOnce();
+});
+it("leaves modified, middle-button and already handled library clicks to the browser", () => {
+  for (const event of [
+    { button: 1 },
+    { button: 2 },
+    { button: 0, metaKey: true },
+    { button: 0, ctrlKey: true },
+    { button: 0, shiftKey: true },
+    { button: 0, altKey: true },
+    { button: 0, defaultPrevented: true },
+  ]) {
+    const preventDefault = vi.fn();
+    navigateKnowledgeSelection({ ...event, preventDefault });
+    expect(preventDefault).not.toHaveBeenCalled();
+  }
 });
