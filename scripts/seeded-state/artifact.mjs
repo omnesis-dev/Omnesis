@@ -162,11 +162,13 @@ const SAFE_TABLES = new Set([
   "knowledge_batch_regions",
   "knowledge_batches",
   "knowledge_candidates",
+  "knowledge_candidate_sources",
   "knowledge_cascade_frontier",
   "knowledge_cascade_jobs",
   "knowledge_changes",
   "knowledge_checkpoints",
   "knowledge_claims",
+  "knowledge_claim_outcomes",
   "knowledge_decisions",
   "knowledge_dependencies",
   "knowledge_discovery_coverage",
@@ -230,6 +232,8 @@ const SAFE_TABLES = new Set([
   "schema_migrations",
   "source_document_profiles",
   "source_devices",
+  "source_inventories",
+  "source_inventory_documents",
   // A source family's declared name and glyph: product strings the
   // collector re-pushes on every boot, and useful in a clone before it does.
   "source_family_meta",
