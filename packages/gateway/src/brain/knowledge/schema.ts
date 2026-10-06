@@ -32,6 +32,9 @@ export function createKnowledgeTables(db: Database.Database): void {
       span_start INTEGER NOT NULL,
       span_end INTEGER NOT NULL,
       support_logic TEXT NOT NULL,
+      attribution TEXT,
+      modality TEXT NOT NULL DEFAULT 'observation',
+      epistemic_status TEXT NOT NULL DEFAULT 'asserted',
       verification TEXT NOT NULL,
       fingerprint TEXT NOT NULL,
       meaning_revision INTEGER NOT NULL,
@@ -120,4 +123,16 @@ export function createKnowledgeTables(db: Database.Database): void {
       "UPDATE knowledge_claims SET verification='unverified',verifier=NULL WHERE support_logic='any' AND verification='verified'",
     );
   }
+  const claimColumns = new Set(
+    (db.prepare("PRAGMA table_info(knowledge_claims)").all() as Array<{ name: string }>).map(
+      (column) => column.name,
+    ),
+  );
+  for (const [name, definition] of [
+    ["attribution", "TEXT"],
+    ["modality", "TEXT NOT NULL DEFAULT 'observation'"],
+    ["epistemic_status", "TEXT NOT NULL DEFAULT 'asserted'"],
+  ])
+    if (!claimColumns.has(name!))
+      db.exec(`ALTER TABLE knowledge_claims ADD COLUMN ${name} ${definition}`);
 }

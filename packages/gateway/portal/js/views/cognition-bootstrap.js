@@ -600,6 +600,37 @@ export function BoundarySection({ status }) {
 }
 
 /** Knowledge admission and coverage are different units from legacy datum runs. */
+export function KnowledgeInventoryMilestones({ inventory = [] }) {
+  return html`<section>
+    <h3 class="cognition-section">Initial import milestones</h3>
+    <p class="debug-sub">
+      Coverage describes observed import revisions only. Import complete means the source finished
+      sending its inventory, not that synthesis is complete. Interpretation and organization have
+      separate outcomes; gated revisions were skipped.
+    </p>
+    ${inventory.length
+      ? html`<table class="debug-table">
+          <thead><tr>
+            <th>Source / import</th><th>Import state</th><th>Gateway receipt</th><th>Window / phase</th>
+            <th>Observed</th><th>Considered</th><th>Gated</th><th>Deferred</th>
+            <th>Failed</th><th>Unconsidered</th><th>Pending work</th><th>Source dates</th>
+          </tr></thead>
+          <tbody>${inventory.map((row) => html`<tr key=${row.inventoryId + row.window + row.phase}>
+            <td>${row.sourceId}<br />${row.inventoryId}</td>
+            <td>${row.importState}</td>
+            <td>${row.firstReceivedAt == null ? "—" : new Date(row.firstReceivedAt).toLocaleString()}</td>
+            <td>${row.window} / ${row.phase}</td>
+            <td>${fmtCount(row.observed)}</td><td>${fmtCount(row.considered)}</td>
+            <td>${fmtCount(row.gated)}</td><td>${fmtCount(row.deferred)}</td>
+            <td>${fmtCount(row.failed)}</td><td>${fmtCount(row.unconsidered)}</td>
+            <td>${fmtCount(row.pending)}</td>
+            <td>${row.earliestSourceDate ?? "—"} – ${row.latestSourceDate ?? "—"}</td>
+          </tr>`)}</tbody>
+        </table>`
+      : html`<p>No initial import milestones recorded.</p>`}
+  </section>`;
+}
+
 export function KnowledgeBootstrapPanel({
   status,
   budget,
@@ -645,6 +676,7 @@ export function KnowledgeBootstrapPanel({
       <${StatCard} label="In maintenance batches" value=${fmtCount(admission.batched)} />
       <${StatCard} label="Settled work items" value=${fmtCount(admission.completed)} />
     </div>
+    <${KnowledgeInventoryMilestones} inventory=${status.inventory ?? []} />
     <h3 class="cognition-section">Coverage milestones</h3>
     <p class="debug-sub">
       Interpretation and organization are tracked separately for each source revision. Gated means

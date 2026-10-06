@@ -92,6 +92,9 @@ export function getKnowledgeClaims(db: Db, nodeId: string): KnowledgeClaim[] {
         span_start: number;
         span_end: number;
         support_logic: KnowledgeClaim["supportLogic"];
+        attribution: string | null;
+        modality: KnowledgeClaim["modality"];
+        epistemic_status: KnowledgeClaim["epistemicStatus"];
         verification: KnowledgeClaim["verification"];
         fingerprint: string;
         witness_refs_json: string;
@@ -112,6 +115,9 @@ export function getKnowledgeClaims(db: Db, nodeId: string): KnowledgeClaim[] {
     end: r.span_end,
     refs: deps.filter((d) => d.claimId === r.id).map((d) => d.ref),
     supportLogic: r.support_logic,
+    attribution: r.attribution,
+    modality: r.modality,
+    epistemicStatus: r.epistemic_status,
     verification: knowledgeNodeFence(db, nodeId, { kind: "claim", id: r.id }).stale
       ? "stale"
       : r.verification,

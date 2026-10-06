@@ -242,6 +242,16 @@ describe("Brain Bench — briefs (no brief judge)", () => {
                     title: JUDGE_SHIP_TITLE,
                     description: "The Riverside Estate balance is due before Friday.",
                     citations: [ctx.subject],
+                    assertedClaims: [
+                      {
+                        claimText: "The Riverside Estate balance is due before Friday.",
+                        evidenceDocId: ctx.subject,
+                        evidenceQuote:
+                          "The remaining balance for the Riverside Estate booking is due before Friday.",
+                        claimBasis: "quoted",
+                        confidence: 0.9,
+                      },
+                    ],
                     confidence: 0.9,
                     urgency: 0.8,
                   }),
@@ -445,7 +455,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
   }, 120_000);
 
   test("dismissing a brief settles a feedback run whose lesson lands", async () => {
-    await bench.pushAndSettle([HANDLED_DOC, IRRELEVANT_DOC]);
+    const [handledDocId] = await bench.pushAndSettle([HANDLED_DOC, IRRELEVANT_DOC]);
     const handled = await briefWith(bench, HANDLED_MARKER);
     const irrelevant = await briefWith(bench, IRRELEVANT_MARKER);
 
@@ -498,6 +508,46 @@ describe("Brain Bench — briefs (no brief judge)", () => {
     expect(notes).toContain(IRRELEVANT_MARKER);
     expect(notes).toContain("already handled; stop resurfacing it");
     expect(notes).toContain("not worth a card");
+
+    const snapshot = bench.sql
+      .prepare<[string], { markdown: string }>("SELECT markdown FROM knowledge_nodes WHERE id=?")
+      .get(handled.id)!;
+    expect(snapshot).toBeDefined();
+    await bench.pushAndSettle([
+      {
+        ...HANDLED_DOC,
+        title: "Revised settled booking notice",
+        content: "The prior payment reminder has been withdrawn.",
+      },
+    ]);
+    expect((await bench.obs.brief(handled.id)).brief).toMatchObject({
+      state: "dismissed_already_handled",
+      description: handled.description,
+    });
+    expect(
+      bench.sql.prepare("SELECT markdown FROM knowledge_nodes WHERE id=?").get(handled.id),
+    ).toEqual(snapshot);
+    expect(
+      bench.sql
+        .prepare(
+          "SELECT COUNT(*) AS n FROM brief_claims WHERE brief_id=? AND invalidated_at IS NOT NULL",
+        )
+        .get(handled.id),
+    ).toEqual({ n: 1 });
+    expect(
+      bench.sql
+        .prepare(
+          "SELECT COUNT(*) AS n FROM knowledge_work WHERE subject_id=? AND status IN ('pending','batched')",
+        )
+        .get(handled.id),
+    ).toEqual({ n: 0 });
+    // Historical retention never overrides a privacy deletion.
+    await bench.deleteDoc(handledDocId!);
+    await bench.drainUntilQuiet();
+    expect(bench.sql.prepare("SELECT id FROM briefs WHERE id=?").get(handled.id)).toBeUndefined();
+    expect(
+      bench.sql.prepare("SELECT id FROM knowledge_nodes WHERE id=?").get(handled.id),
+    ).toBeUndefined();
   }, 180_000);
 
   test("a brief scheduled for later is stored but withheld from the product feed", async () => {

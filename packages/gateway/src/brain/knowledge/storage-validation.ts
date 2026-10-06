@@ -45,6 +45,9 @@ export function knowledgeClaimFingerprint(
     state?.supportLogic ?? "all",
     state?.validFrom ?? null,
     state?.validUntil ?? null,
+    state?.attribution ?? null,
+    state?.modality ?? "observation",
+    state?.epistemicStatus ?? "asserted",
   ]);
 }
 
@@ -161,10 +164,17 @@ function referenceHasCurrentSupport(
   const claim = db
     .prepare<
       [string, string],
-      { verification: string; support_logic: string; witness_refs_json: string }
-    >("SELECT verification,support_logic,witness_refs_json FROM knowledge_claims WHERE node_id=? AND id=?")
+      {
+        verification: string;
+        support_logic: string;
+        witness_refs_json: string;
+        epistemic_status: string;
+      }
+    >(
+      "SELECT verification,support_logic,witness_refs_json,epistemic_status FROM knowledge_claims WHERE node_id=? AND id=?",
+    )
     .get(target.targetId, ref.selector.id);
-  if (claim?.verification !== "verified") return false;
+  if (claim?.verification !== "verified" || claim.epistemic_status !== "asserted") return false;
   const supports = db
     .prepare<
       [string, string],
@@ -246,6 +256,39 @@ export function validateKnowledgeDependencies(
         inputVersion: target.revision,
       });
     }
+    if (
+      state?.attribution != null &&
+      (typeof state.attribution !== "string" ||
+        !state.attribution.trim() ||
+        state.attribution.length > 1000)
+    )
+      throw new KnowledgeStorageError("claim_invalid", "Invalid claim attribution");
+    if (
+      state?.modality !== undefined &&
+      ![
+        "observation",
+        "reported",
+        "proposal",
+        "commitment",
+        "inference",
+        "recommendation",
+        "question",
+      ].includes(state.modality)
+    )
+      throw new KnowledgeStorageError("claim_invalid", "Invalid claim modality");
+    if (
+      state?.epistemicStatus !== undefined &&
+      !["asserted", "disputed", "unsupported"].includes(state.epistemicStatus)
+    )
+      throw new KnowledgeStorageError("claim_invalid", "Invalid claim epistemic status");
+    if (
+      state?.verification?.status === "verified" &&
+      (state.epistemicStatus ?? "asserted") !== "asserted"
+    )
+      throw new KnowledgeStorageError(
+        "claim_invalid",
+        "Disputed or unsupported claims cannot carry verified support",
+      );
     if (state?.verification?.status === "verified") {
       const supports = claim.refs.filter(
         (ref) => (state.relations?.[ref.raw] ?? "supports") === "supports",

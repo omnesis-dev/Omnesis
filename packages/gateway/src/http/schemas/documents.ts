@@ -362,6 +362,9 @@ const edgeDeclarationShape = z.object({
 // partial failure.
 export const upsertWithCursorBody = z
   .object({
+    initialInventory: z
+      .object({ id: z.string().uuid(), startedAt: z.string().datetime() })
+      .optional(),
     providerId: nonEmptyString,
     sourceId: nonEmptyString,
     documents: z.array(documentInputShape).optional(),

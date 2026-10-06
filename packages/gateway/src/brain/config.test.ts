@@ -19,6 +19,7 @@ describe("resolveBrainSettings", () => {
         soonThreshold: 0.4,
         soonDelayMs: 3600000,
         routineDelayMs: 21600000,
+        recentWindowMs: 30 * 86_400_000,
         rootMaxChars: 8000,
         maxSeeds: 64,
         maxVisitedPerSeed: 256,
@@ -403,6 +404,7 @@ describe("knowledge maintenance configuration", () => {
         routineDelay: "1ms",
         maxReviewInterval: "5ms",
         checkpointLead: "1ms",
+        recentWindowDays: 7,
         maxSeeds: 2,
       },
     });
@@ -411,10 +413,13 @@ describe("knowledge maintenance configuration", () => {
       routineDelayMs: 2,
       maxReviewIntervalMs: 5,
       checkpointLeadMs: 1,
+      recentWindowMs: 7 * 86_400_000,
       maxSeeds: 2,
     });
   });
   it.each([
+    { recentWindowDays: 0 },
+    { recentWindowDays: 3651 },
     { maxSeeds: 0 },
     { maxVisitedPerSeed: 4097 },
     { cascadeBatchSize: 1001 },

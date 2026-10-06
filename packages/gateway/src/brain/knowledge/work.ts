@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { cognitionSpendDay } from "../storage/spend.js";
+import { snapshotClaimMaintenance, settleClaimMaintenance } from "./claim-maintenance.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { recordKnowledgeCoverage, type KnowledgeCoverageInput } from "./discovery.js";
 import { KnowledgeStorageError } from "./types.js";
@@ -212,6 +213,8 @@ export function listPendingKnowledgeWork(db: Database.Database, limit: number): 
 }
 
 export interface KnowledgeFrontierInput {
+  /** Carry only unfinished claims when a partial page save creates a successor input. */
+  eligibleClaimIds?: readonly string[];
   nodeId: string;
   inputFingerprint: string;
   inputVersions: Record<string, string | number>;
@@ -419,6 +422,11 @@ export function appendKnowledgeFrontier(
           "Frontier fingerprint was reused for different inputs",
         );
       insert.run(batchId, item.nodeId, item.inputFingerprint, serialized, item.depth);
+      snapshotClaimMaintenance(
+        db,
+        { batchId, nodeId: item.nodeId, inputFingerprint: item.inputFingerprint },
+        item.eligibleClaimIds,
+      );
     }
   })();
 }
@@ -451,6 +459,7 @@ export function setKnowledgeFrontierOutcome(
         "revision_conflict",
         "Maintenance batch is missing or completed",
       );
+    settleClaimMaintenance(db, input);
     const result = db
       .prepare(
         `UPDATE knowledge_frontier SET status=?,result_revision=?,attempts=attempts+1

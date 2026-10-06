@@ -9,6 +9,7 @@ import { KnowledgeService, type KnowledgeProposal } from "./service.js";
 import {
   createKnowledgeTables,
   getKnowledgeClaims,
+  getKnowledgeDependencies,
   getKnowledgeNode,
   recordKnowledgeSourceChange,
   purgeKnowledgeBySource,
@@ -331,4 +332,169 @@ it("evaluates shared diamond proof only once per depth and never caches across r
   prepared.mockRestore();
   db.exec("UPDATE knowledge_claims SET verification='unverified' WHERE node_id='left-0'");
   expect(brain.reference(refs[0]!).verified).toBe(false);
+});
+
+it.each(["asserted", "disputed", "unsupported"] as const)(
+  "keeps %s epistemic state distinct from verification",
+  async (epistemicStatus) => {
+    const brain = service(verifier);
+    await brain.save({
+      ...proposal("state"),
+      claims: [
+        { id: "date", attribution: "Workshop coordinator", modality: "reported", epistemicStatus },
+      ],
+    });
+    expect(getKnowledgeClaims(db, "state")[0]).toMatchObject({
+      attribution: "Workshop coordinator",
+      modality: "reported",
+      epistemicStatus,
+      verification: epistemicStatus === "asserted" ? "verified" : "unverified",
+    });
+    expect(brain.reference("wiki:state#claim:date").verified).toBe(epistemicStatus === "asserted");
+  },
+);
+
+it("requires structural coverage on every new synthesis kind", async () => {
+  // Structural checking precedes owner resolution; no fake canonical owner needed.
+  for (const kind of [
+    "wiki",
+    "root",
+    "loop",
+    "doc_annotation",
+    "person_annotation",
+    "brief",
+  ] as const)
+    await expect(
+      service().save({ ...proposal(kind), kind, markdown: "An uncovered factual sentence." }),
+    ).rejects.toThrow("Every nonblank synthesis");
+});
+
+it("retains no-reference questions as unsupported rather than fabricated proof", async () => {
+  const brain = service(verifier);
+  await brain.save({
+    ...proposal("question"),
+    markdown: '<claim id="date" refs="">Could the workshop move?</claim>',
+    inputVersions: {},
+    claims: [{ id: "date", modality: "question", epistemicStatus: "unsupported" }],
+  });
+  expect(brain.reference("wiki:question#claim:date").verified).toBe(false);
+  expect(getKnowledgeClaims(db, "question")[0]).toMatchObject({
+    modality: "question",
+    epistemicStatus: "unsupported",
+    verification: "unverified",
+  });
+});
+
+it("preserves attribution and uncertainty when stable claim state is omitted", async () => {
+  const brain = service(verifier);
+  const saved = await brain.save({
+    ...proposal("retained"),
+    claims: [
+      {
+        id: "date",
+        attribution: "Workshop coordinator",
+        modality: "proposal",
+        epistemicStatus: "disputed",
+      },
+    ],
+  });
+  await brain.save({ ...proposal("retained"), expectedRevision: saved.node.revision });
+  expect(getKnowledgeClaims(db, "retained")[0]).toMatchObject({
+    attribution: "Workshop coordinator",
+    modality: "proposal",
+    epistemicStatus: "disputed",
+    verification: "unverified",
+  });
+});
+
+it("retains all omitted claim state on title-only edits and supports explicit clearing", async () => {
+  const brain = service(verifier);
+  const initial = await brain.save({
+    ...proposal("complete-state"),
+    claims: [
+      {
+        id: "date",
+        supportLogic: "any",
+        relations: { "source:evidence": "context" },
+        validFrom: 10,
+        validUntil: 200,
+        attribution: "Workshop coordinator",
+        modality: "proposal",
+        epistemicStatus: "disputed",
+      },
+    ],
+  });
+  const updated = await brain.save({
+    ...proposal("complete-state"),
+    title: "Updated heading",
+    expectedRevision: initial.node.revision,
+  });
+  expect(getKnowledgeClaims(db, "complete-state")[0]).toMatchObject({
+    supportLogic: "any",
+    validFrom: 10,
+    validUntil: 200,
+    attribution: "Workshop coordinator",
+    modality: "proposal",
+    epistemicStatus: "disputed",
+  });
+  expect(getKnowledgeDependencies(db, "complete-state")).toMatchObject([
+    { ref: "source:evidence", relation: "context" },
+  ]);
+  await brain.save({
+    ...proposal("complete-state"),
+    expectedRevision: updated.node.revision,
+    claims: [
+      {
+        id: "date",
+        supportLogic: "all",
+        relations: {},
+        validFrom: null,
+        validUntil: null,
+        attribution: null,
+        modality: "observation",
+        epistemicStatus: "asserted",
+      },
+    ],
+  });
+  expect(getKnowledgeClaims(db, "complete-state")[0]).toMatchObject({
+    supportLogic: "all",
+    validFrom: null,
+    validUntil: null,
+    attribution: null,
+    modality: "observation",
+    epistemicStatus: "asserted",
+    verification: "verified",
+  });
+  expect(getKnowledgeDependencies(db, "complete-state")).toMatchObject([
+    { ref: "source:evidence", relation: "supports" },
+  ]);
+});
+
+it("retains relations only for surviving refs and defaults new refs to supports", async () => {
+  db.prepare("INSERT INTO documents VALUES(?,?,?)").run("additional", "Workshop Friday.", "v2");
+  const brain = service();
+  const saved = await brain.save({
+    ...proposal("relations"),
+    claims: [{ id: "date", relations: { "source:evidence": "context" } }],
+  });
+  const added = await brain.save({
+    ...proposal("relations", "source:evidence source:additional"),
+    expectedRevision: saved.node.revision,
+    inputVersions: { "source:evidence": "v1", "source:additional": "v2" },
+  });
+  expect(getKnowledgeDependencies(db, "relations")).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ ref: "source:evidence", relation: "context" }),
+      expect.objectContaining({ ref: "source:additional", relation: "supports" }),
+    ]),
+  );
+  await brain.save({
+    ...proposal("relations", "source:additional"),
+    expectedRevision: added.node.revision,
+    inputVersions: { "source:additional": "v2" },
+  });
+  expect(getKnowledgeDependencies(db, "relations")).toMatchObject([
+    { ref: "source:additional", relation: "supports" },
+  ]);
+  expect(getKnowledgeDependencies(db, "relations")).toHaveLength(1);
 });

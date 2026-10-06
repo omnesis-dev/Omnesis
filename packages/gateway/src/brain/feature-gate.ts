@@ -735,6 +735,7 @@ export async function bootBriefs(deps: {
             // One boundary for both lanes: the waker's window decides what is
             // live, and bootstrap takes everything on the other side of it.
             recencyWindowMs: rq.getSettings().recencyWindowMs,
+            knowledgeRecentWindowMs: rq.getSettings().knowledge.recentWindowMs,
           }),
           // The re-verification sweep re-grounds ANNOTATIONS, so its
           // effective gate is reverification.enabled AND annotations.enabled:

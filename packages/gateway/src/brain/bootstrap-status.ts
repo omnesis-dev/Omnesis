@@ -53,6 +53,8 @@ type Db = Database.Database;
 export interface BootstrapSettingsView {
   /** Composition marker: the knowledge engine owns historical admission. */
   knowledge?: boolean;
+  /** Initial-inventory recent window; independent of ordinary arrival recency. */
+  knowledgeRecentWindowMs?: number;
   enabled: boolean;
   direction: "recent-first" | "oldest-first";
   backlogTarget: number;

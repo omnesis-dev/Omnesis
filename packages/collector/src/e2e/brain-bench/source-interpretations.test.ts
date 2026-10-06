@@ -127,6 +127,30 @@ describe("source interpretations", () => {
     ).toEqual([]);
   });
 
+  it("preserves evidence-free legacy owner prose with explicit unsupported coverage", () => {
+    const item = {
+      ...source,
+      source: undefined,
+      node: {
+        id: "owner",
+        ownerId: "owner",
+        kind: "loop",
+        title: "Workshop",
+        markdown: "Historical workshop context.",
+        revision: 1,
+        validity: "current",
+        claims: [],
+        metadata: {},
+      },
+    };
+    expect(preserveCurrentOwner(item, ctx, []).calls[0]?.args).toMatchObject({
+      node: {
+        markdown: '<claim id="legacy-context-0" refs="">Historical workshop context.</claim>',
+        claims: [{ id: "legacy-context-0", epistemicStatus: "unsupported" }],
+      },
+    });
+  });
+
   it("pages remaining temporal casualties before completing discovery", () => {
     const next = sourceInterpretations({
       sources: [{ docTitle: "Workshop", plan: { calls: [] } }],

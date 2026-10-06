@@ -9,9 +9,9 @@ import type Database from "better-sqlite3";
 /**
  * Constant-size durable intake in the same transaction as every source write.
  * No graph walk or model call occurs on ingestion. Mirrors are derived outputs.
- * TODO: the generic ingest contract needs transaction-bound initial-inventory
- * provenance before bulk new-source history can enter consented chronological
- * backfill. An old occurrence date is not sufficient: it can be late evidence.
+ * Generic cursor pages attach transaction-bound initial-inventory provenance.
+ * Intake admits those revisions chronologically; ordinary arrivals and edits
+ * remain reactive even when their occurrence dates are old.
  * Installation is separate from table creation so isolated storage tests may use
  * a minimal documents table without the production provider metadata.
  */

@@ -23,12 +23,39 @@ const versions = z.record(z.string(), z.union([z.string(), z.number().int().nonn
 const claimState = z
   .object({
     id,
-    supportLogic: z.enum(["all", "any"]).optional(),
+    supportLogic: z
+      .enum(["all", "any"])
+      .optional()
+      .describe("Omit to preserve the existing claim support logic; new claims default to all."),
+    attribution: z.string().trim().min(1).max(1000).nullable().optional(),
+    modality: z
+      .enum([
+        "observation",
+        "reported",
+        "proposal",
+        "commitment",
+        "inference",
+        "recommendation",
+        "question",
+      ])
+      .optional(),
+    epistemicStatus: z.enum(["asserted", "disputed", "unsupported"]).optional(),
     relations: z
       .record(z.string(), z.enum(["supports", "contradicts", "context", "depends_on"]))
-      .optional(),
-    validFrom: z.number().optional().nullable(),
-    validUntil: z.number().optional().nullable(),
+      .optional()
+      .describe(
+        "Omit to preserve relations for retained refs; new refs default to supports. An explicit map replaces the previous map; {} resets every ref to supports.",
+      ),
+    validFrom: z
+      .number()
+      .optional()
+      .nullable()
+      .describe("Omit to retain the existing bound; null clears it."),
+    validUntil: z
+      .number()
+      .optional()
+      .nullable()
+      .describe("Omit to retain the existing bound; null clears it."),
   })
   .strict();
 const proposal = z
@@ -249,12 +276,19 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_save",
-      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank wiki/root text span must be covered by tags; this structural check is separate from entailment. Never invent verification. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. In maintenance, existing pages must match an offered frontier. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Never invent verification. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. In maintenance, existing pages must match an offered frontier. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
       z
         .object({
           node: proposal,
           candidateId: id.optional(),
           inputFingerprint: z.string().optional(),
+          reviewedClaimIds: z
+            .array(id)
+            .max(1024)
+            .optional()
+            .describe(
+              "Existing pending claim IDs actually reviewed in this save. Untouched claims omitted here remain pending; changing or removing a claim is recorded automatically. Use the offered pendingClaimIds, or an explicit subset for partial review.",
+            ),
         })
         .strict(),
       true,
@@ -280,6 +314,7 @@ export function buildKnowledgeTools(
                 node.id,
                 input.inputFingerprint ?? "",
                 node,
+                input.reviewedClaimIds,
               )
             : await service.save(
                 node,

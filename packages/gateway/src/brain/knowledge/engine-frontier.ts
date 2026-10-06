@@ -15,6 +15,7 @@ export function fitKnowledgeFrontierItem(
   const compact: Item = {
     id: item.id,
     inputFingerprint: item.inputFingerprint,
+    pendingClaimIds: [...item.pendingClaimIds],
     inputVersions: {},
     inputVersionsOmitted: true,
     depth: item.depth,
@@ -25,7 +26,7 @@ export function fitKnowledgeFrontierItem(
       title: (item.node?.title ?? item.source?.title ?? "").slice(0, 200),
       revision: item.node?.revision ?? item.source?.contentHash ?? "",
       instruction:
-        "Fetch the full node with knowledge_fetch(editing=true), or the source with fetch_many. Resolve current evidence references before saving. Use knowledge_list for root orientation.",
+        "Fetch the full node with knowledge_fetch(editing=true), or the source with fetch_many. Resolve current evidence references before saving. Use knowledge_list for root orientation. Review only the listed pending claims when their list is bounded; later frontier calls expose the remainder.",
     },
     ...(item.source
       ? {
@@ -37,5 +38,9 @@ export function fitKnowledgeFrontierItem(
         }
       : {}),
   };
+  while (compact.pendingClaimIds.length > 1 && JSON.stringify(compact).length > remaining) {
+    compact.pendingClaimIds.pop();
+    compact.pendingClaimIdsOmitted = true;
+  }
   return JSON.stringify(compact).length <= remaining ? compact : null;
 }

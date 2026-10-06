@@ -79,7 +79,6 @@ describe("claim markup", () => {
     '<claim id="c" id="d" refs="source:d">x</claim>',
     '<claim id="c" refs="source:d" refs="source:e">x</claim>',
     '<claim id="c">x</claim>',
-    '<claim id="c" refs="">x</claim>',
     '<claim id="c" refs="source:d source:d">x</claim>',
     '<claim id="c" refs="source:d" onclick="bad">x</claim>',
     '<claim id="c" refs="source:&quot;x">x</claim>',
@@ -109,4 +108,11 @@ describe("claim markup", () => {
     expect(parseClaimMarkup("An unverified assertion.").claims).toEqual([]);
     expect(parseClaimMarkup(claim("c", "An unsupported assertion.")).claims).toHaveLength(1);
   });
+});
+
+it("represents explicitly unsupported text without inventing a reference", () => {
+  expect(
+    parseClaimMarkup('<claim id="question" refs="">Could the workshop move?</claim>').claims[0]!
+      .refs,
+  ).toEqual([]);
 });

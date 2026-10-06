@@ -527,7 +527,12 @@ describe("an install several versions behind, upgrading", () => {
         db.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
       ).toEqual({ name: "knowledge_nodes" });
       expect(db.prepare("SELECT name FROM pragma_table_info('knowledge_claims')").all()).toEqual(
-        expect.arrayContaining([{ name: "witness_refs_json" }]),
+        expect.arrayContaining([
+          { name: "witness_refs_json" },
+          { name: "attribution" },
+          { name: "modality" },
+          { name: "epistemic_status" },
+        ]),
       );
       expect(db.prepare("SELECT name FROM pragma_table_info('documents')").all()).toEqual(
         expect.arrayContaining([
@@ -543,6 +548,9 @@ describe("an install several versions behind, upgrading", () => {
           .get(),
       ).toEqual({ name: "allow_vocabulary", dflt_value: "0" });
       for (const name of [
+        "source_inventories",
+        "source_inventory_documents",
+        "knowledge_claim_outcomes",
         "transcription_vocabulary_terms",
         "transcription_vocabulary_document_terms",
         "idx_documents_vocabulary_pending",

@@ -75,22 +75,57 @@ export function abandonKnowledgeBatch(
 /** Scheduling metadata is bookkeeping, not a semantic page edit or verification. */
 export function scheduleKnowledgeReview(
   db: Database.Database,
-  input: { id: string; expectedRevision: number; nextReviewAt: number },
+  input: {
+    id: string;
+    expectedRevision: number;
+    nextReviewAt: number;
+    decision?: "now" | "defer" | "dormant";
+    workId?: string;
+    reason?: string;
+  },
   now: number,
 ): void {
-  const result = db
-    .prepare(
-      `UPDATE knowledge_nodes SET metadata_json=json_set(metadata_json,'$.nextReviewAt',?)
+  db.transaction(() => {
+    const result = db
+      .prepare(
+        `UPDATE knowledge_nodes SET metadata_json=json_set(metadata_json,'$.nextReviewAt',?,'$.reviewDecision',?,'$.reviewReason',?,'$.reviewDecidedAt',?)
     WHERE id=? AND revision=?`,
-    )
-    .run(input.nextReviewAt, input.id, input.expectedRevision);
-  if (result.changes !== 1)
-    throw new KnowledgeStorageError(
-      "revision_conflict",
-      "Review candidate changed during scheduling",
-    );
-  // Deliberately no lastVerifiedAt or updated_at mutation: deferral is not evidence.
-  void now;
+      )
+      .run(
+        input.nextReviewAt,
+        input.decision ?? "defer",
+        input.reason ?? "bounded_deferral",
+        now,
+        input.id,
+        input.expectedRevision,
+      );
+    if (result.changes !== 1)
+      throw new KnowledgeStorageError(
+        "revision_conflict",
+        "Review candidate changed during scheduling",
+      );
+    if (input.decision === "now") {
+      if (!input.workId)
+        throw new KnowledgeStorageError(
+          "claim_invalid",
+          "Immediate review requires a work identity",
+        );
+      enqueueKnowledgeWork(
+        db,
+        {
+          id: input.workId,
+          subjectId: input.id,
+          subjectKind: "node",
+          reason: "review",
+          inputRevision: String(input.expectedRevision),
+          tier: "immediate",
+          dueAt: now,
+        },
+        now,
+      );
+    }
+    // Deliberately no lastVerifiedAt or updated_at mutation: scheduling is not evidence.
+  })();
 }
 
 export function setKnowledgeCheckpoint(

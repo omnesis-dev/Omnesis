@@ -87,7 +87,7 @@ it("binds scoped saves to an existing canonical owner and rejects kind or field 
     id: "notice",
     title: "Workshop",
     markdown:
-      '## Description\n<claim id="date" refs="source:evidence">Workshop Friday.</claim>\n\n## Body\n',
+      '<claim id="date" refs="source:evidence">## Description\nWorkshop Friday.\n\n## Body\n</claim>',
     expectedRevision: 0,
     inputVersions: { "source:evidence": "v1" },
   };

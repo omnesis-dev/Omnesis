@@ -85,6 +85,14 @@ export function createKnowledgeWorkTables(db: Database.Database): void {
       attempts INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY(batch_id,node_id,input_fingerprint)
     );
+    CREATE TABLE IF NOT EXISTS knowledge_claim_outcomes (
+      batch_id TEXT NOT NULL, node_id TEXT NOT NULL, input_fingerprint TEXT NOT NULL,
+      claim_id TEXT NOT NULL, input_claim_revision INTEGER NOT NULL,
+      result_claim_revision INTEGER,
+      status TEXT NOT NULL CHECK(status IN ('pending','skipped','unchanged','changed','deferred')),
+      PRIMARY KEY(batch_id,node_id,input_fingerprint,claim_id),
+      FOREIGN KEY(batch_id,node_id,input_fingerprint) REFERENCES knowledge_frontier(batch_id,node_id,input_fingerprint) ON DELETE CASCADE
+    );
     CREATE INDEX IF NOT EXISTS knowledge_frontier_pending ON knowledge_frontier(batch_id,status,depth);
     CREATE TABLE IF NOT EXISTS knowledge_discovery_targets (
       source_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

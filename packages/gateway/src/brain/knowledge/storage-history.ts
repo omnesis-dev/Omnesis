@@ -35,7 +35,7 @@ export function snapshotKnowledgeRevision(
   if (!node) return;
   const claims = db
     .prepare(
-      "SELECT id,text,parent_id,verification,fingerprint,meaning_revision,witness_refs_json FROM knowledge_claims WHERE node_id=? ORDER BY id",
+      "SELECT id,text,parent_id,verification,fingerprint,meaning_revision,witness_refs_json,attribution,modality,epistemic_status FROM knowledge_claims WHERE node_id=? ORDER BY id",
     )
     .all(nodeId);
   db.prepare(

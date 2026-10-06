@@ -40,10 +40,10 @@ const questions: Record<KnowledgeDecisionPurpose, Extract<DecisionQuestion, { ty
   review: {
     type: "score",
     instructions:
-      "Does this synthesis need a proactive evidence check now? Consider its last meaningful verification, uncertainty, activity, importance, volatility and checkpoint. A previous deferral is not verification.",
+      "Choose proactive review timing from objective signals: canonical loop deadline and importance, last meaningful review, uncertain claims, activity, volatility and checkpoint. The ordered levels are dormant, defer, and review now. Uncertainty or consequential change means review now. The engine computes the bounded timestamp; a deferral is never verification.",
     criteria: [
-      "Safe to defer within the configured maximum interval.",
-      "Uncertain freshness worth checking.",
+      "Dormant: stable historical context; wait for evidence changes or the mandatory backstop.",
+      "Defer: a short bounded wait is clearly safe; check again at an engine-computed time.",
       "Due checkpoint, stale evidence or important unresolved contradiction.",
     ],
   },
@@ -89,7 +89,7 @@ export async function judgeKnowledge(
   await deps.record?.({
     purpose,
     inputFingerprint: knowledgeHash(state),
-    rubricVersion: "knowledge-decisions-v2",
+    rubricVersion: purpose === "review" ? "knowledge-review-timing-v3" : "knowledge-decisions-v2",
     score,
     modelId: result.modelId,
     latencyMs: result.latencyMs,

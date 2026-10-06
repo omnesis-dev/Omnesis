@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
+import { coverLegacyProse } from "./legacy-prose.js";
 import { call, structuredData, type PuppetPlan, type ToolStep } from "./puppet-plan.js";
 import type { PuppetKnowledgeItem } from "./knowledge-puppet.js";
 
@@ -114,6 +115,7 @@ export function nextGenOwnerPlan(
     );
   if (Object.keys(versions).length === refs.length) {
     const text = node.markdown.replace(/<\/?claim\b[^>]*>/g, "");
+    const unsupported = coverLegacyProse(text);
     calls.push(
       call("knowledge_save", {
         inputFingerprint: item.inputFingerprint,
@@ -125,11 +127,11 @@ export function nextGenOwnerPlan(
           expectedRevision: node.revision,
           markdown: refs.length
             ? `<claim id="legacy" refs="${refs.join(" ")}">${text}</claim>`
-            : text,
+            : unsupported.markdown,
           inputVersions: versions,
           claims: refs.length
             ? [{ id: "legacy", relations: Object.fromEntries(refs.map((ref) => [ref, "context"])) }]
-            : [],
+            : unsupported.addedClaims,
         },
       }),
     );

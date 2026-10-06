@@ -17,6 +17,7 @@ const itemSchema = z
     id: z.string(),
     inputFingerprint: z.string(),
     inputVersions: z.record(z.string(), z.union([z.string(), z.number()])),
+    pendingClaimIds: z.array(z.string()).optional(),
     depth: z.number(),
     fetchRequired: z.object({ id: z.string(), kind: z.string() }).passthrough().optional(),
     source: z
@@ -168,7 +169,21 @@ export function knowledgePuppet(
           )
         : since;
       const next = emitNextPlanned(plan, planSteps, false);
-      if (next.kind === "tool") return next;
+      if (next.kind === "tool") {
+        if (
+          next.name === "knowledge_save" &&
+          item.node &&
+          next.args.reviewedClaimIds === undefined &&
+          typeof next.args.node === "object" &&
+          next.args.node !== null &&
+          (next.args.node as { id?: unknown }).id === item.id
+        ) {
+          // These policies synthesize the entire offered page. A partial-review
+          // scenario names its exact subset explicitly, including an empty set.
+          return { ...next, args: { ...next.args, reviewedClaimIds: item.pendingClaimIds ?? [] } };
+        }
+        return next;
+      }
       if (item.source)
         return {
           kind: "tool",

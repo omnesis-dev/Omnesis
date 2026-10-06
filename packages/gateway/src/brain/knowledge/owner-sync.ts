@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { historicalBriefFields } from "./owner-maintenance.js";
 import {
   readKnowledgeOwner,
   buildLegacyOwnerKnowledge,
@@ -52,7 +53,11 @@ export function advanceKnowledgeOwnerSync(
             "Canonical owner identity collides with another synthesis node",
           );
         if (!node || node.plainText !== owner.markdown) {
-          saveKnowledgeNode(db, buildLegacyOwnerKnowledge(db, owner, node?.revision ?? 0), now);
+          saveKnowledgeNode(
+            db,
+            buildLegacyOwnerKnowledge(db, owner, node?.revision ?? 0, now),
+            now,
+          );
         } else {
           const parsed = parseClaimMarkup(node.markdown);
           const inputVersions: Record<string, KnowledgeRevision> = {};
@@ -74,13 +79,19 @@ export function advanceKnowledgeOwnerSync(
               metadata: {
                 ...node.metadata,
                 ...(owner.canonicalFields.invalidatedAt != null ||
-                (owner.kind === "loop" && owner.canonicalFields.state !== "open")
+                (owner.kind === "loop" && owner.canonicalFields.state !== "open") ||
+                (owner.kind === "brief" && historicalBriefFields(owner.canonicalFields, now))
                   ? { activity: "historical" as const }
-                  : {}),
+                  : owner.kind === "brief"
+                    ? { activity: "active" as const }
+                    : {}),
               },
               claims: getKnowledgeClaims(db, node.id).map((claim) => ({
                 id: claim.id,
                 supportLogic: claim.supportLogic,
+                attribution: claim.attribution,
+                modality: claim.modality,
+                epistemicStatus: claim.epistemicStatus,
                 validFrom: claim.validFrom,
                 validUntil: claim.validUntil,
                 relations: Object.fromEntries(

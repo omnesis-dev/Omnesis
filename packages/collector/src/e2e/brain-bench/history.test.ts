@@ -22,6 +22,8 @@ function fixture() {
     "knowledge_cascade_jobs",
     "knowledge_evidence",
     "knowledge_source_revisions",
+    "source_inventory_documents",
+    "source_inventories",
   ])
     db.exec(`CREATE TABLE ${table}(id TEXT PRIMARY KEY)`);
   db.exec(`CREATE TABLE knowledge_changes(seq INTEGER PRIMARY KEY,kind TEXT);
@@ -30,7 +32,9 @@ function fixture() {
     INSERT INTO knowledge_changes VALUES(10,'source_changed'),(12,'source_changed');
     INSERT INTO knowledge_cascade_jobs VALUES('pending');
     INSERT INTO knowledge_evidence VALUES('grounding');
-    INSERT INTO knowledge_source_revisions VALUES('initial');`);
+    INSERT INTO knowledge_source_revisions VALUES('initial');
+    INSERT INTO source_inventory_documents VALUES('initial');
+    INSERT INTO source_inventories VALUES('import');`);
   return db;
 }
 afterEach(() => {
@@ -57,6 +61,8 @@ it("records an explicit inventory boundary without changing evidence or pending 
   const report = checkpointInitialInventory(db);
   expect(report).toEqual({ documentCount: 1, sourceChangeCount: 2, sourceChangeHighWater: 12 });
   expect(db.prepare("SELECT * FROM knowledge_changes").all()).toEqual([]);
+  expect(db.prepare("SELECT * FROM source_inventory_documents").all()).toEqual([]);
+  expect(db.prepare("SELECT * FROM source_inventories").all()).toEqual([]);
   for (const table of [
     "documents",
     "knowledge_cascade_jobs",
@@ -85,6 +91,9 @@ it.each([
   db.prepare(`INSERT INTO ${table} VALUES('started')`).run();
   expect(() => checkpointInitialInventory(db)).toThrow("untouched brain");
   expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_changes").get()).toEqual({ count: 2 });
+  expect(db.prepare("SELECT COUNT(*) AS count FROM source_inventories").get()).toEqual({
+    count: 1,
+  });
 });
 
 it("refuses non-arrival events without partially clearing the journal", () => {

@@ -45,6 +45,10 @@ export function KnowledgeDetail({ node, history = [] }) {
         html`<section class="knowledge-claim" key=${claim.id}>
           <strong>${claim.id}</strong> · meaning ${claim.meaningRevision} · ${claim.verification} ·
           support: ${claim.supportLogic}
+          <p>
+            ${claim.modality ?? "observation"} · ${claim.epistemicStatus ?? "asserted"}
+            ${claim.attribution && html`<span> · Attributed to: ${claim.attribution}</span>`}
+          </p>
           <p class="knowledge-prose">${claim.text}</p>
           <ul>
             ${(node.dependencies ?? [])

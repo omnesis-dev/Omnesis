@@ -53,6 +53,9 @@ it("renders tagged provenance, exact claim revisions and history while treating 
           text: dangerous,
           verification: "stale",
           supportLogic: "all",
+          modality: "reported",
+          epistemicStatus: "disputed",
+          attribution: "Fictional workshop organizer",
         },
       ],
       dependencies: [
@@ -82,6 +85,9 @@ it("renders tagged provenance, exact claim revisions and history while treating 
     "/portal/debug/cognition/knowledge/project",
   ]);
   expect(text(tree)).toContain("meaning 2");
+  expect(text(tree)).toContain("reported");
+  expect(text(tree)).toContain("disputed");
+  expect(text(tree)).toContain("Attributed to: Fictional workshop organizer");
   expect(text(tree)).toContain("Untagged text is unchecked context");
   expect(text(tree)).toContain("Previous orientation.");
 });

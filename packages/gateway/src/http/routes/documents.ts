@@ -1306,9 +1306,15 @@ export function mountSyncStateRoutes(
       documentService.getSyncState(sourceId, row) ??
       (row ? documentService.getSyncState(sourceId, "") : null);
     if (!state || state.last_synced_at === null) {
-      return c.json({ cursor: null, lastSyncedAt: null, wipeEpoch });
+      return c.json({
+        cursor: null,
+        lastSyncedAt: null,
+        wipeEpoch,
+        initialInventory: documentService.getInitialSourceInventory(sourceId, row),
+      });
     }
     return c.json({
+      initialInventory: documentService.getInitialSourceInventory(sourceId, row),
       cursor: syncStateCursorCodec.parseWithFallback(state.cursor, { rowId: sourceId }),
       lastSyncedAt: state.last_synced_at,
       hasMeta: !!(state.icon || state.label),

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
+import { coverLegacyProse } from "./legacy-prose.js";
 import {
   knowledgePuppet,
   type KnowledgePuppetPolicy,
@@ -16,6 +17,19 @@ const legacyClaim = z.object({
   supportLogic: z.enum(["all", "any"]),
   validFrom: z.number().nullable(),
   validUntil: z.number().nullable(),
+  attribution: z.string().nullable().optional(),
+  modality: z
+    .enum([
+      "observation",
+      "reported",
+      "proposal",
+      "commitment",
+      "inference",
+      "recommendation",
+      "question",
+    ])
+    .optional(),
+  epistemicStatus: z.enum(["asserted", "disputed", "unsupported"]).optional(),
 });
 const reviewMetadata = z.object({
   importance: z.number().optional(),
@@ -37,6 +51,7 @@ export const preserveCurrentOwner: KnowledgePuppetPolicy["plan"] = (item) => {
     return { calls: [] };
   const claims = z.array(legacyClaim).safeParse(node.claims);
   if (!claims.success) return { calls: [] };
+  const covered = coverLegacyProse(node.markdown);
   return {
     calls: [
       call("knowledge_save", {
@@ -45,13 +60,16 @@ export const preserveCurrentOwner: KnowledgePuppetPolicy["plan"] = (item) => {
           kind: node.kind,
           ...(node.ownerId ? { ownerId: node.ownerId } : {}),
           title: node.title,
-          markdown: node.markdown,
+          markdown: covered.markdown,
           expectedRevision: node.revision,
           inputVersions: item.inputVersions,
-          claims: claims.data.map(({ refs, ...state }) => ({
-            ...state,
-            relations: Object.fromEntries(refs.map((ref) => [ref, "context"])),
-          })),
+          claims: [
+            ...claims.data.map(({ refs, ...state }) => ({
+              ...state,
+              relations: Object.fromEntries(refs.map((ref) => [ref, "context"])),
+            })),
+            ...covered.addedClaims,
+          ],
           metadata: reviewMetadata.parse(node.metadata),
         },
         inputFingerprint: item.inputFingerprint,

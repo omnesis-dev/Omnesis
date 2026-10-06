@@ -4,7 +4,8 @@
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
 import { listOrganizationAdmissions } from "./organization.js";
 import { getKnowledgeNode } from "./storage.js";
-import { boundKnowledgeReview } from "./planner.js";
+import { knowledgeReviewSignals, decideKnowledgeReview } from "./review-policy.js";
+import { isHistoricalKnowledgeBrief } from "./owner-maintenance.js";
 import { judgeKnowledge } from "./decision.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
@@ -139,19 +140,41 @@ export class KnowledgeUpkeep {
     const last =
       "MAX(COALESCE(json_extract(n.metadata_json,'$.lastVerifiedAt'),n.created_at),COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),n.created_at))";
     const maximum = `${last}+${cfg.maxReviewIntervalMs}`;
-    const defaultDelay = `CASE WHEN COALESCE(json_extract(n.metadata_json,'$.volatility'),0)>=0.7 THEN ${cfg.soonDelayMs} WHEN json_extract(n.metadata_json,'$.activity')='active' THEN ${cfg.routineDelayMs} ELSE ${cfg.maxReviewIntervalMs} END`;
     // A completed but unverified review is still an attempt. Bound retries without
     // moving lastVerifiedAt or pretending its claims became current.
     const retryAfter = Math.max(60_000, cfg.soonDelayMs);
+    const hasLoops = !!this.deps.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_loops'")
+      .get();
+    const hasBriefs = !!this.deps.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='briefs'")
+      .get();
+    const importance = hasLoops
+      ? "COALESCE(l.importance,json_extract(n.metadata_json,'$.importance'),0)"
+      : "COALESCE(json_extract(n.fields_json,'$.importance'),json_extract(n.metadata_json,'$.importance'),0)";
+    const defaultDelay = `CASE WHEN COALESCE(json_extract(n.metadata_json,'$.volatility'),0)>=0.7 OR ${importance}>=0.7 THEN ${cfg.soonDelayMs} WHEN json_extract(n.metadata_json,'$.activity')='active' THEN ${cfg.routineDelayMs} ELSE ${cfg.maxReviewIntervalMs} END`;
+    const loopDeadline = hasLoops
+      ? "CASE WHEN l.state='open' THEN CAST(strftime('%s',COALESCE(json_extract(l.deadline_json,'$.date'),CASE WHEN json_type(l.deadline_json)='text' THEN json_extract(l.deadline_json,'$') END)) AS REAL)*1000 END"
+      : "NULL";
+    const ownerCheckpoint = `CASE WHEN (${loopDeadline})-${cfg.checkpointLeadMs}>COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),0) THEN (${loopDeadline})-${cfg.checkpointLeadMs} ELSE ${maximum} END`;
+    const briefState = hasBriefs
+      ? "COALESCE(b.state,json_extract(n.fields_json,'$.state'))"
+      : "json_extract(n.fields_json,'$.state')";
+    const briefUntil = hasBriefs
+      ? "CASE WHEN b.id IS NOT NULL THEN b.relevant_until ELSE json_extract(n.fields_json,'$.relevantUntil') END"
+      : "json_extract(n.fields_json,'$.relevantUntil')";
+    const historicalBrief = `(n.kind='brief' AND (${briefState} LIKE 'dismissed_%' OR ${briefState} IN ('retired','archived','expired') OR ${briefUntil}<=${now}))`;
     const checkpointDue = `CASE WHEN json_extract(n.metadata_json,'$.checkpointAt')-${cfg.checkpointLeadMs}>COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),0) THEN json_extract(n.metadata_json,'$.checkpointAt')-${cfg.checkpointLeadMs} ELSE ${maximum} END`;
-    const due = `MIN(COALESCE(json_extract(n.metadata_json,'$.nextReviewAt'),${last}+(${defaultDelay})),${maximum},${checkpointDue})`;
+    const due = `MIN(COALESCE(json_extract(n.metadata_json,'$.nextReviewAt'),${last}+(${defaultDelay})),${maximum},${checkpointDue},${ownerCheckpoint})`;
     const rows = this.deps.db
       .prepare<[number, number], { id: string }>(
         `SELECT n.id FROM knowledge_nodes n
-      WHERE n.kind!='root' AND COALESCE(json_extract(n.fields_json,'$.withdrawn'),0)!=1 AND ${due}<=?
+      ${hasLoops ? "LEFT JOIN open_loops l ON n.kind='loop' AND l.id=COALESCE(n.owner_id,n.id)" : ""}
+      ${hasBriefs ? "LEFT JOIN briefs b ON n.kind='brief' AND b.id=COALESCE(n.owner_id,n.id)" : ""}
+      WHERE n.kind!='root' AND NOT COALESCE(${historicalBrief},0) AND COALESCE(json_extract(n.fields_json,'$.withdrawn'),0)!=1 AND ${due}<=?
       AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='node' AND w.subject_id=n.id AND w.status IN ('pending','batched'))
       AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='node' AND w.subject_id=n.id AND w.reason='review' AND w.status='completed' AND w.updated_at>${now - retryAfter})
-      ORDER BY ${due},n.id LIMIT ?`,
+      ORDER BY CASE WHEN ${maximum}<=${now} THEN 0 ELSE 1 END,${due},n.id LIMIT ?`,
       )
       .all(now, cfg.maxReviewsPerTick);
     for (const row of rows) {
@@ -159,49 +182,21 @@ export class KnowledgeUpkeep {
         return;
       const node = getKnowledgeNode(this.deps.db, row.id);
       if (!node) continue;
-      const bound = {
+      if (isHistoricalKnowledgeBrief(this.deps.db, node, now)) continue;
+      const signals = knowledgeReviewSignals(this.deps.db, node, now);
+      const score = await judgeKnowledge(this.deps.decisions, "review", signals);
+      const schedule = decideKnowledgeReview(signals, score, cfg);
+      await this.deps.writeGate["knowledge.scheduleReview"](
+        {
+          id: node.id,
+          expectedRevision: node.revision,
+          nextReviewAt: schedule.nextReviewAt,
+          decision: schedule.decision,
+          reason: schedule.reason,
+          ...(schedule.decision === "now" ? { workId: this.id("kw") } : {}),
+        },
         now,
-        lastVerifiedAt: Math.max(
-          node.metadata.lastVerifiedAt ?? node.createdAt,
-          node.metadata.lastReviewedAt ?? node.createdAt,
-        ),
-        createdAt: node.createdAt,
-        proposedAt: now + cfg.routineDelayMs,
-        checkpointAt:
-          node.metadata.checkpointAt != null &&
-          node.metadata.checkpointAt - cfg.checkpointLeadMs > (node.metadata.lastReviewedAt ?? 0)
-            ? node.metadata.checkpointAt
-            : null,
-        maxIntervalMs: cfg.maxReviewIntervalMs,
-        checkpointLeadMs: cfg.checkpointLeadMs,
-      };
-      const latest = boundKnowledgeReview(bound);
-      const score = await judgeKnowledge(this.deps.decisions, "review", {
-        id: node.id,
-        kind: node.kind,
-        metadata: node.metadata,
-        validity: node.validity,
-        now,
-      });
-      if (latest <= now || node.validity === "stale" || score === null || score >= 0.25) {
-        await this.deps.writeGate["knowledge.enqueue"](
-          {
-            id: this.id("kw"),
-            subjectId: node.id,
-            subjectKind: "node",
-            reason: "review",
-            inputRevision: String(node.revision),
-            tier: "immediate",
-            dueAt: now,
-          },
-          now,
-        );
-      } else {
-        await this.deps.writeGate["knowledge.scheduleReview"](
-          { id: node.id, expectedRevision: node.revision, nextReviewAt: latest },
-          now,
-        );
-      }
+      );
     }
   }
 }

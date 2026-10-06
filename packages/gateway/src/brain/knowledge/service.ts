@@ -18,6 +18,7 @@ import {
 import {
   KnowledgeStorageError,
   type KnowledgeClaimState,
+  type KnowledgeRelation,
   type KnowledgeNode,
   type KnowledgeRevision,
   type SaveKnowledgeNodeInput,
@@ -149,7 +150,8 @@ export class KnowledgeService {
     if (
       ref.selector?.kind === "claim" &&
       !target.stale &&
-      selected[0]?.verification === "verified"
+      selected[0]?.verification === "verified" &&
+      selected[0]?.epistemicStatus === "asserted"
     ) {
       const claim = selected[0];
       const supports = getKnowledgeDependencies(this.deps.db, node.id).filter(
@@ -208,6 +210,12 @@ export class KnowledgeService {
         "claim_invalid",
         "Candidate publication must create a new wiki",
       );
+    const parsed = parseClaimMarkup(input.markdown);
+    if (uncoveredKnowledgeSpans(parsed).length)
+      throw new KnowledgeStorageError(
+        "claim_invalid",
+        "Every nonblank synthesis text span must be inside a claim tag; structural coverage is checked separately from factual support",
+      );
     const owner =
       input.kind === "wiki" || input.kind === "root"
         ? null
@@ -217,16 +225,19 @@ export class KnowledgeService {
         "claim_invalid",
         "Owned synthesis must preserve its canonical identity",
       );
-    const parsed = parseClaimMarkup(input.markdown);
-    if ((input.kind === "wiki" || input.kind === "root") && uncoveredKnowledgeSpans(parsed).length)
-      throw new KnowledgeStorageError(
-        "claim_invalid",
-        "Every nonblank wiki/root text span must be inside a claim tag; structural coverage is checked separately from factual support",
-      );
     const states: KnowledgeClaimState[] = [];
     const previousClaims = new Map(
       getKnowledgeClaims(this.deps.db, input.id).map((claim) => [claim.id, claim]),
     );
+    const previousRelations = new Map<string, Map<string, KnowledgeRelation>>();
+    for (const dependency of getKnowledgeDependencies(this.deps.db, input.id)) {
+      let relations = previousRelations.get(dependency.claimId);
+      if (!relations) {
+        relations = new Map();
+        previousRelations.set(dependency.claimId, relations);
+      }
+      relations.set(dependency.ref, dependency.relation);
+    }
     let performedVerification = false;
     let verifier: EntailCapability | null = null;
     try {
@@ -236,12 +247,24 @@ export class KnowledgeService {
     }
     for (const claim of parsed.claims) {
       const proposed = input.claims?.find((state) => state.id === claim.id);
+      const previous = previousClaims.get(claim.id);
       const state: KnowledgeClaimState = {
         id: claim.id,
-        supportLogic: proposed?.supportLogic,
-        relations: proposed?.relations,
-        validFrom: proposed?.validFrom,
-        validUntil: proposed?.validUntil,
+        supportLogic: proposed?.supportLogic ?? previous?.supportLogic,
+        relations:
+          proposed?.relations ??
+          Object.fromEntries(
+            claim.refs.flatMap<[string, KnowledgeRelation]>((ref) => {
+              const relation = previousRelations.get(claim.id)?.get(ref.raw);
+              return relation ? [[ref.raw, relation]] : [];
+            }),
+          ),
+        validFrom: proposed?.validFrom === undefined ? previous?.validFrom : proposed.validFrom,
+        validUntil: proposed?.validUntil === undefined ? previous?.validUntil : proposed.validUntil,
+        attribution:
+          proposed?.attribution === undefined ? previous?.attribution : proposed.attribution,
+        modality: proposed?.modality ?? previous?.modality,
+        epistemicStatus: proposed?.epistemicStatus ?? previous?.epistemicStatus,
       };
       const support: KnowledgeReferenceView[] = [];
       for (const ref of claim.refs) {
@@ -253,11 +276,14 @@ export class KnowledgeService {
           );
         if ((state.relations?.[ref.raw] ?? "supports") === "supports") support.push(view);
       }
+      if ((state.epistemicStatus ?? "asserted") !== "asserted") {
+        states.push(state);
+        continue;
+      }
       const verifiedSupport = support.filter((view) => view.verified && !view.stale);
       const sufficientSupport =
         verifiedSupport.length > 0 &&
         (state.supportLogic === "any" || verifiedSupport.length === support.length);
-      const previous = previousClaims.get(claim.id);
       const fingerprint = knowledgeClaimFingerprint(claim, input.inputVersions, state);
       if (
         previous?.verification === "verified" &&
@@ -326,6 +352,9 @@ export class KnowledgeService {
       ...input.metadata,
       lastVerifiedAt: priorMetadata?.lastVerifiedAt ?? null,
       lastReviewedAt: priorMetadata?.lastReviewedAt ?? null,
+      reviewDecision: priorMetadata?.reviewDecision,
+      reviewReason: priorMetadata?.reviewReason,
+      reviewDecidedAt: priorMetadata?.reviewDecidedAt,
     };
     if (
       performedVerification &&

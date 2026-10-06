@@ -81,6 +81,10 @@ export function listKnowledgeDiscoveryBacklog(
     policyVersion?: string;
     direction?: "recent-first" | "oldest-first";
     sourceId?: string;
+    /** Explicit initial inventory only; cutoff is fixed to the inventory start. */
+    recentInventoryWindowMs?: number;
+    /** Recent inventory belongs to the live allowance, not historical admission caps. */
+    excludeRecentInventoryWindowMs?: number;
   },
 ): DiscoveryDocument[] {
   const exclusion = cognitionAuthoredSqlExclusion("d.source_id");
@@ -96,6 +100,8 @@ export function listKnowledgeDiscoveryBacklog(
     LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id
     WHERE COALESCE(r.deleted,0)=0 AND ${exclusion.sql || "1"} ${removalFence}
       ${options.sourceId === undefined ? "" : "AND d.source_id=?"}
+      ${options.recentInventoryWindowMs === undefined ? "" : `AND EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=d.id AND si.input_revision=d.content_hash AND julianday(d.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`}
+      ${options.excludeRecentInventoryWindowMs === undefined ? "" : `AND NOT EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=d.id AND si.input_revision=d.content_hash AND julianday(d.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`}
       AND NOT EXISTS(SELECT 1 FROM knowledge_discovery_coverage c WHERE c.subject_id=d.id
         AND c.input_revision=d.content_hash AND c.phase=? AND c.policy_version=?
         AND (c.reconsider_at IS NULL OR c.reconsider_at>?))
@@ -106,6 +112,12 @@ export function listKnowledgeDiscoveryBacklog(
     .all(
       ...exclusion.params,
       ...(options.sourceId === undefined ? [] : [options.sourceId]),
+      ...(options.recentInventoryWindowMs === undefined
+        ? []
+        : [options.recentInventoryWindowMs / 86_400_000]),
+      ...(options.excludeRecentInventoryWindowMs === undefined
+        ? []
+        : [options.excludeRecentInventoryWindowMs / 86_400_000]),
       options.phase,
       options.policyVersion ?? KNOWLEDGE_DISCOVERY_POLICY,
       options.now,

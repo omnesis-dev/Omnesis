@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  isInventoryRevision,
+  hasSourceInventoryTables,
+} from "../../data/repositories/SourceInventoryRepository.js";
 import { listTemporalAnnotationsAwaitingRefile } from "../../enrichment/temporal-annotations/storage.js";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
 import { bootstrapWindowOpen } from "../bootstrap-window.js";
@@ -38,6 +42,12 @@ export class KnowledgeIntake {
       if (change.kind === "source_changed") {
         const source = this.context.source(change.entityId);
         if (source) {
+          // Explicit initial inventory has its own recent-first admission. The
+          // journal may be acknowledged because revision-keyed inventory persists.
+          if (isInventoryRevision(this.context.deps.db, source.id, source.contentHash)) {
+            await this.context.deps.writeGate["knowledge.ackChanges"](change.seq);
+            continue;
+          }
           const covered = this.context.deps.db
             .prepare(
               "SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id=? AND input_revision=? AND phase='organization' AND policy_version=? AND status IN ('considered','gated') AND (reconsider_at IS NULL OR reconsider_at>?)",
@@ -181,7 +191,71 @@ export class KnowledgeIntake {
     }
   }
 
+  private async recentInventory(): Promise<void> {
+    const { deps } = this.context;
+    if (!hasSourceInventoryTables(deps.db)) return;
+    const cfg = deps.getSettings().knowledge;
+    const pending = deps.db
+      .prepare<
+        [],
+        { count: number }
+      >(`SELECT COUNT(*) AS count FROM knowledge_work w JOIN source_inventory_documents si ON si.document_id=w.subject_id AND si.input_revision=w.input_revision WHERE w.subject_kind='source' AND w.reason='change' AND w.status IN ('pending','batched')`)
+      .get()!.count;
+    const room = Math.max(0, cfg.discoveryBatchSize - pending);
+    if (!room) return;
+    const checkpoint = deps.db
+      .prepare<
+        [],
+        { revision: number; value_json: string }
+      >("SELECT revision,value_json FROM knowledge_checkpoints WHERE id='knowledge:inventory:source'")
+      .get();
+    const after = checkpoint
+      ? (JSON.parse(checkpoint.value_json) as { sourceId: string }).sourceId
+      : "";
+    const sources = deps.db
+      .prepare<
+        [string, number],
+        { sourceId: string }
+      >(`SELECT DISTINCT source_id AS sourceId FROM source_inventories ORDER BY source_id<=?,source_id LIMIT ?`)
+      .all(after, Math.min(cfg.bootstrapBatchSize, room));
+    for (const { sourceId } of sources) {
+      const docs = listKnowledgeDiscoveryBacklog(deps.db, {
+        phase: "organization",
+        sourceId,
+        direction: "recent-first",
+        recentInventoryWindowMs: cfg.recentWindowMs,
+        limit: 1,
+        now: deps.clock(),
+      });
+      for (const doc of docs) {
+        const now = deps.clock();
+        await deps.writeGate["knowledge.enqueue"](
+          {
+            id: this.context.id("kw"),
+            subjectId: doc.id,
+            subjectKind: "source",
+            reason: "change",
+            inputRevision: doc.contentHash,
+            tier: "immediate",
+            dueAt: now,
+          },
+          now,
+        );
+      }
+    }
+    if (sources.length)
+      await deps.writeGate["knowledge.checkpoint"](
+        {
+          id: "knowledge:inventory:source",
+          expectedRevision: checkpoint?.revision ?? 0,
+          value: { sourceId: sources.at(-1)!.sourceId },
+        },
+        deps.clock(),
+      );
+  }
+
   async bootstrap(): Promise<void> {
+    await this.recentInventory();
     const settings = this.context.deps.getSettings(),
       cfg = settings.knowledge,
       backfill = settings.bootstrap;
@@ -243,6 +317,9 @@ export class KnowledgeIntake {
         phase: "organization",
         sourceId: source.source_id,
         direction: backfill.direction,
+        ...(hasSourceInventoryTables(this.context.deps.db)
+          ? { excludeRecentInventoryWindowMs: cfg.recentWindowMs }
+          : {}),
         limit: 1,
         now: this.context.deps.clock(),
       }),

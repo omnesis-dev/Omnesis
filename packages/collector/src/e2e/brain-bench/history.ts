@@ -12,8 +12,8 @@ export interface InitialInventoryReport {
 }
 
 /**
- * Fixture initialization, not maintenance: model an existing corpus from before
- * Brain activation. Call only while the isolated gateway is stopped, after real
+ * Fixture initialization, not maintenance: model an existing corpus predating
+ * inventory-aware Brain ingestion. Call only while the isolated gateway is stopped, after real
  * source ingestion with experimental cognition disabled. No started work may be
  * discarded, and no discovery/verification result is fabricated. Coverage stays
  * empty so an explicitly enabled historical bootstrap can discover this corpus.
@@ -44,6 +44,11 @@ export function checkpointInitialInventory(db: Database.Database): InitialInvent
         .prepare<[], { seq: number }>("SELECT COALESCE(MAX(seq),0) AS seq FROM knowledge_changes")
         .get()!.seq,
     };
+    // This fixture predates inventory-aware ingestion, so it has no initial-import
+    // provenance. Clear only that metadata, without inventing discovery completion.
+    // New-version imports made with Brain disabled intentionally retain provenance.
+    db.prepare("DELETE FROM source_inventory_documents").run();
+    db.prepare("DELETE FROM source_inventories").run();
     // The report makes this explicit fixture boundary durable and inspectable.
     // Evidence, source revisions, pending privacy cascades and indexing survive.
     db.prepare(

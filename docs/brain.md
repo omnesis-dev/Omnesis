@@ -69,14 +69,21 @@ addressable claim spans:
 Tags can nest. Each claim has its own ID; references can name multiple source
 passages, other claims, or canonical loop fields. Support, contradiction,
 context, applicability and verification state live in structured storage.
-Nesting alone does not supply evidence for the enclosing assertion.
+Nesting alone does not supply evidence for the enclosing assertion. Structured
+claim state also records attribution, modality (observation, reported statement,
+proposal, commitment, inference, recommendation or question), and epistemic
+status (asserted, disputed or unsupported). These are distinct from verifier
+results: an agent cannot declare its own claim verified, and disputed or
+unsupported claims cannot serve as verified support. An explicitly unsupported
+question or context span may use `refs=""`; the attribute remains required,
+and a claim without supporting references cannot be verified.
 
 Normal reads and search omit tags. Editing reads retain them, while provenance
 and revision history remain inspectable. The mutation boundary parses markup,
 checks references and versions, and invokes the entailment verifier on changed
 claims. An unavailable verifier leaves a claim unverified. Well-formed markup
 is not proof of factual completeness; untagged prose does not inherit verified
-status from neighboring claims. Wiki/root mutation tools require every nonblank
+status from neighboring claims. Synthesis mutation tools require every nonblank
 text span, including headings, to be inside a claim tag. This structural
 coverage check is separate from entailment; migrated legacy owner text remains
 explicitly unverified until repaired.
@@ -108,20 +115,37 @@ Admission rotates across sources, preserving the configured chronological order
 within each source. A bounded historical slot keeps continuous live arrivals
 from starving authorized backfill.
 
-The current prototype cannot distinguish a newly connected source's initial bulk
-inventory from genuinely new evidence: the generic ingestion contract has no
-transaction-bound inventory marker. Those arrivals enter live discovery in
-arrival order, including old documents, and do not use historical admission
-caps. Existing-corpus backfill uses the operator-controlled rules above. A future
-inventory mode needs durable per-sync provenance and an inventory-complete marker
-before fair chronological admission; occurrence dates alone cannot safely identify
-old inventory, because late evidence and edits must remain discoverable.
+Initial collector enumerations carry a durable inventory identity through the
+generic cursor-page protocol. Partial pages and collector restarts keep that
+identity; the final cursor commit marks that inventory complete. New document
+revisions in an inventory enter fair recent-first admission. The configurable
+`brain.knowledge.recentWindowDays` window (default 30) is measured against that
+inventory's first receipt at the gateway, retained across retries and independent
+of the collector's clock. Recent inventory shares the live cognition budget; older and
+undated inventory requires historical-review consent and uses its admission caps.
+The Brain can start on partial imports without waiting for every collector.
+
+Ordinary arrivals, edits, and late evidence stay reactive regardless of their
+event dates. Clients that do not send inventory provenance retain this reactive
+behavior; dates alone never establish that an arrival was historical inventory.
+Bootstrap status reports each observed inventory's import state and separate
+recent, history, and undated revision counts, considered/gated/pending outcomes,
+and observed source-date bounds. These are scoped coverage milestones, not a
+claim that unseen provider history has been understood.
 
 Frontier responses also have a JSON character budget. The engine leaves excess
 items for later calls. An oversized page is represented by `fetchRequired`, not
 truncated claim markup: fetch it explicitly with `knowledge_fetch(editing=true)`
 and resolve its current references before saving. Omitted input versions are
 marked explicitly; the internal frontier still retains the complete fingerprint.
+
+Each offered node also identifies pending claim IDs. A synthesis save names
+`reviewedClaimIds` for retained assertions it actually reviewed. Changed or removed
+assertions are accounted for by the accepted mutation; untouched claims outside
+that explicit review remain pending. The engine records outcomes against the
+batch, node, input fingerprint and claim revision. Partial saves therefore cannot
+silently settle the rest of a page. Large pending rosters are exposed in bounded
+subsets through successive frontier calls.
 
 Bootstrap reports distinct coverage and conversion milestones. A populated
 root or an empty eligible queue does not mean the entire corpus is understood.
@@ -133,10 +157,20 @@ changed inputs.
 
 Changed evidence is the main repair trigger. Bounded proactive passes also
 check deadlines, review checkpoints, volatility, importance, uncertainty and
-time since verification. The decision model may defer a review within the
-configured maximum interval. A deferral is not verification. Completed and
+time since verification. Loop signals use the current canonical deadline and
+importance. The decision model chooses immediate review, bounded deferral or
+dormancy; dormancy still has a maximum-interval and checkpoint backstop. The
+engine stores the decision, reason and next review time separately from
+verification. Unavailable decisions fail open to review. A deferral is not
+verification. Completed and
 historical records remain context without being repeatedly reopened merely
 because their outcome is old.
+
+Dismissed, retired and expired briefs preserve their historical prose rather
+than undergoing routine rewriting. Evidence changes still invalidate their
+support and propagate support loss to dependent durable synthesis; privacy
+deletion still removes affected material. Snoozed briefs can become active
+again when their canonical state returns to unread.
 
 Organization also revisits deferred page candidates and previously gated or
 failed discovery decisions after a bounded interval. It uses evidence already

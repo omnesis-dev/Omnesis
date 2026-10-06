@@ -627,3 +627,27 @@ describe("knowledge bootstrap milestones", () => {
     expect(text).not.toContain("NaN");
   });
 });
+
+
+describe("initial inventory milestones", () => {
+  it("keeps completed imports separate from unfinished synthesis phases", async () => {
+    const { KnowledgeInventoryMilestones } = await import("./cognition-bootstrap.js");
+    const common = {
+      sourceId: "source-fictional", inventoryId: "import-fictional", importState: "complete",
+      window: "recent", observed: 10, considered: 0, gated: 0, deferred: 0, failed: 0,
+      unconsidered: 10, pending: 2, earliestSourceDate: "2025-01-01", latestSourceDate: "2025-01-10",
+    };
+    const nodes = expandToHostNodes(KnowledgeInventoryMilestones({ inventory: [
+      { ...common, phase: "interpretation", considered: 7, gated: 1, unconsidered: 2 },
+      { ...common, phase: "organization" },
+    ] }));
+    const text = nodes.map((node) => node.text).join(" ").replace(/\s+/g, " ");
+    expect(text).toContain("not that synthesis is complete");
+    expect(text).toContain("recent / interpretation");
+    expect(text).toContain("recent / organization");
+    expect(text).toContain("source-fictional");
+    expect(text).toContain("Unconsidered");
+    expect(text).toContain("Gateway receipt");
+    expect(text).not.toContain("NaN");
+  });
+});

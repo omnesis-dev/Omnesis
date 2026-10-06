@@ -165,16 +165,16 @@ export function parseClaimMarkup(
         }
         const id = values.get("id");
         const refsText = values.get("refs");
-        if (!id || !isClaimIdentifier(id) || refsText === undefined || !refsText.trim())
+        if (!id || !isClaimIdentifier(id) || refsText === undefined)
           throw new ClaimMarkupError(
             "syntax",
             offset,
-            "Claim requires a safe id and nonempty refs",
+            "Claim requires a safe id and a refs attribute",
           );
         if (ids.has(id)) throw new ClaimMarkupError("duplicate", offset, "Duplicate claim id");
         if (claims.length >= limits.maxClaims || stack.length >= limits.maxDepth)
           throw new ClaimMarkupError("limit", offset, "Claim count or depth limit exceeded");
-        const rawRefs = refsText.trim().split(/\s+/);
+        const rawRefs = refsText.trim() ? refsText.trim().split(/\s+/) : [];
         if (rawRefs.length > limits.maxReferencesPerClaim)
           throw new ClaimMarkupError("limit", offset, "Claim reference limit exceeded");
         if (new Set(rawRefs).size !== rawRefs.length)

@@ -56,6 +56,7 @@ export const CONFIG_DEFAULTS = {
       soonThreshold: 0.4,
       soonDelay: "1h",
       routineDelay: "6h",
+      recentWindowDays: 30,
       rootMaxChars: 8000,
       maxSeeds: 64,
       maxVisitedPerSeed: 256,

@@ -2461,7 +2461,12 @@ const app = createServer(db, DB_PATH, {
   io: ioGate,
   getBootstrapSettings: () => {
     const b = resolveBrainSettings(configStore.get().brain);
-    return { ...b.bootstrap, recencyWindowMs: b.recencyWindowMs, knowledge: true };
+    return {
+      ...b.bootstrap,
+      recencyWindowMs: b.recencyWindowMs,
+      knowledgeRecentWindowMs: b.knowledge.recentWindowMs,
+      knowledge: true,
+    };
   },
   getBudgetSettings: () => resolveBrainSettings(configStore.get().brain).budget,
   // Idempotent: an already-started lane keeps its original instant, so a

@@ -26,6 +26,44 @@ const frontier = (items: unknown[], done = false): ToolStep => ({
   result: { kind: "structured", data: { batchId: "b", done, items } },
 });
 describe("knowledge puppet protocol", () => {
+  it.each([undefined, [], ["date"]])(
+    "preserves explicit claim review scope %j",
+    (reviewedClaimIds) => {
+      const next = knowledgePuppet({
+        plan: (item) => ({
+          calls: [
+            call("knowledge_save", {
+              node: { id: item.id },
+              inputFingerprint: item.inputFingerprint,
+              ...(reviewedClaimIds !== undefined ? { reviewedClaimIds } : {}),
+            }),
+          ],
+        }),
+      });
+      const offered = frontier([
+        {
+          id: "page",
+          inputFingerprint: "fp",
+          inputVersions: {},
+          depth: 0,
+          pendingClaimIds: ["date", "place"],
+          node: {
+            id: "page",
+            kind: "wiki",
+            title: "Workshop",
+            markdown: "Tagged page",
+            revision: 1,
+            ownerId: null,
+          },
+        },
+      ]);
+      expect(next(ctx, [offered])).toMatchObject({
+        kind: "tool",
+        name: "knowledge_save",
+        args: { reviewedClaimIds: reviewedClaimIds ?? ["date", "place"] },
+      });
+    },
+  );
   it("only finishes when the real engine returns done", () => {
     const next = knowledgePuppet({ plan: () => ({ calls: [] }) });
     expect(next(ctx, [])).toMatchObject({ kind: "tool", name: "knowledge_next_frontier" });

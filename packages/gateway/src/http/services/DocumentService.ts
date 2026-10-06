@@ -10,6 +10,7 @@ import {
   validateDocumentTemporalProjectionContracts,
 } from "@omnesis/core";
 import { SourceId, sourceTypeOf, type DocumentInput, type Scope } from "@omnesis/types";
+import { getInitialSourceInventory } from "../../data/repositories/SourceInventoryRepository.js";
 import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import {
   fetchDocumentProjections,
@@ -177,6 +178,7 @@ interface CursorUpsertRequest {
    */
   replicaClaimDeviceId?: string;
   body: {
+    initialInventory?: UpsertWithCursorArgs["initialInventory"];
     pendingPageId?: string;
     providerId: string;
     sourceId: string;
@@ -986,6 +988,7 @@ export class DocumentService {
         absencePlan,
         edges: body.edges,
         hasMore: body.hasMore,
+        initialInventory: body.initialInventory,
         cursor: body.cursor as UpsertWithCursorArgs["cursor"],
         cursorDeviceId: args.cursorDeviceId,
         streamId: args.streamId,
@@ -1631,6 +1634,10 @@ export class DocumentService {
   /** One row of a source's sync state: `""` (shared) or a member device's own. */
   getSyncState(sourceId: string, deviceId = "") {
     return this.sourceSyncState.getState(sourceId, deviceId);
+  }
+
+  getInitialSourceInventory(sourceId: string, cursorRow = "") {
+    return getInitialSourceInventory(this.deps.db, sourceId, cursorRow);
   }
 
   /** Current write epoch of one cursor row (0 if never claimed or wiped). */

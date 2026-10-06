@@ -13,7 +13,7 @@ import {
   deleteOpenLoop,
   updateOpenLoop,
 } from "../storage/open-loops.js";
-import { createBrief, getBrief } from "../storage/briefs.js";
+import { createBrief, getBrief, updateBrief, setBriefState } from "../storage/briefs.js";
 import {
   createKnowledgeTables,
   getKnowledgeNode,
@@ -145,6 +145,59 @@ it("keeps brief description and body distinct", () => {
     body: "Workshop Friday.",
     state: "unread",
   });
+});
+it("preserves a dismissed snapshot, retains privacy purge, and resumes a snoozed owner when reactivated", () => {
+  createBrief(
+    db,
+    {
+      id: "snapshot",
+      createdByRun: "run",
+      kind: "info",
+      title: "Workshop update",
+      description: "Workshop Friday.",
+      confidence: 0.7,
+      urgency: 0.3,
+      citations: ["evidence"],
+    },
+    1,
+  );
+  convertKnowledgeOwner(db, "brief", "snapshot", 2);
+  installKnowledgeOwnerTriggers(db);
+  setBriefState(db, "snapshot", "dismissed_snoozed", 3);
+  advanceKnowledgeOwnerSync(db, 10, 4);
+  const snapshot = getKnowledgeNode(db, "snapshot")!;
+  expect(snapshot.metadata.activity).toBe("historical");
+  const owner = readKnowledgeOwner(db, "brief", "snapshot");
+  expect(() =>
+    saveOwnedKnowledgeNode(
+      db,
+      {
+        node: {
+          id: owner.id,
+          ownerId: owner.id,
+          kind: "brief",
+          title: owner.title,
+          markdown: snapshot.markdown.replace("Friday", "Saturday"),
+          expectedRevision: snapshot.revision,
+          inputVersions: { "source:evidence": "v1" },
+        },
+        ownerVersion: owner.versionFingerprint,
+      },
+      5,
+    ),
+  ).toThrow("Historical brief snapshots");
+  expect(getKnowledgeNode(db, "snapshot")?.markdown).toBe(snapshot.markdown);
+  updateBrief(db, "snapshot", { nextShow: null }, 6);
+  advanceKnowledgeOwnerSync(db, 10, 7);
+  expect(getKnowledgeNode(db, "snapshot")?.metadata.activity).toBe("active");
+  setBriefState(db, "snapshot", "dismissed_acknowledged", 8);
+  advanceKnowledgeOwnerSync(db, 10, 9);
+  purgeKnowledgeBySource(db, "evidence", 10);
+  while (advanceKnowledgeCascade(db, 100, 10).pending) {
+    /* bounded batches */
+  }
+  expect(getKnowledgeNode(db, "snapshot")).toBeNull();
+  expect(getBrief(db, "snapshot")).toBeNull();
 });
 it("reconciles canonical state changes, preserves tags, and prevents adapter self-triggering", () => {
   loop();

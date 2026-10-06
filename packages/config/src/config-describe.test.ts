@@ -85,6 +85,7 @@ const EXPECTED_INVENTORY = [
   "/brain/knowledge/maxReviewsPerTick [number]",
   "/brain/knowledge/maxSeeds [number]",
   "/brain/knowledge/maxVisitedPerSeed [number]",
+  "/brain/knowledge/recentWindowDays [number]",
   "/brain/knowledge/rootMaxChars [number]",
   "/brain/knowledge/routineDelay [duration]",
   "/brain/knowledge/soonDelay [duration]",

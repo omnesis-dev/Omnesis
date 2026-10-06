@@ -559,7 +559,11 @@
           active hours and admission caps, and reports separate interpretation, organization and
           conversion coverage. Recent-first is the default; historical evidence need not contain a
           future date to be useful. Upgrading preserves existing loops and annotations without
-          promoting their legacy attachments into verified claims.
+          promoting their legacy attachments into verified claims. Initial collector imports expose
+          partial coverage as they arrive. Their recent window
+          (<code>brain.knowledge.recentWindowDays</code>, default 30 days) is admitted recent-first;
+          older and undated inventory follows the historical-review controls. Later arrivals and
+          edits remain reactive, even when they describe older events.
         </p>
         <p>
           Synthesis uses Markdown with addressable claim spans. Normal reading hides the tags, while

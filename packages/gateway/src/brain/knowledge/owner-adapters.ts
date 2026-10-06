@@ -15,6 +15,7 @@ import {
   listPersonAnnotationEvidence,
   revisePersonAnnotation,
 } from "../storage/person-annotations.js";
+import { historicalBriefFields } from "./owner-maintenance.js";
 import { parseClaimMarkup } from "./claims.js";
 import { getKnowledgeNode, saveKnowledgeNode } from "./storage.js";
 import { isKnowledgeOwnerReadable } from "./storage-fence.js";
@@ -240,6 +241,15 @@ export function saveOwnedKnowledgeNode(
         "Canonical owner can no longer be revised",
       );
     const plain = parseClaimMarkup(proposed.markdown).text;
+    if (
+      proposed.kind === "brief" &&
+      historicalBriefFields(owner.canonicalFields, now) &&
+      (plain !== owner.markdown || proposed.title !== owner.title)
+    )
+      throw new KnowledgeStorageError(
+        "revision_conflict",
+        "Historical brief snapshots cannot be rewritten by synthesis",
+      );
     let briefParts: RegExpExecArray | null = null;
     if (proposed.kind === "brief") {
       briefParts = /^## Description\n([\s\S]*?)\n\n## Body\n([\s\S]*)$/.exec(plain);
@@ -358,7 +368,7 @@ export function convertKnowledgeOwner(
       return { node: existing, meaningChanged: false };
     }
     const owner = readKnowledgeOwner(db, kind, ownerId);
-    return saveKnowledgeNode(db, buildLegacyOwnerKnowledge(db, owner, 0), now);
+    return saveKnowledgeNode(db, buildLegacyOwnerKnowledge(db, owner, 0, now), now);
   })();
 }
 
@@ -366,6 +376,7 @@ export function buildLegacyOwnerKnowledge(
   db: Database.Database,
   owner: KnowledgeOwnerSnapshot,
   expectedRevision: number,
+  now: number,
 ): SaveKnowledgeNodeInput {
   const ownerId = owner.id;
   const kind = owner.kind;
@@ -418,6 +429,7 @@ export function buildLegacyOwnerKnowledge(
       uncertainty: 1,
       activity:
         (kind === "loop" && owner.canonicalFields.state !== "open") ||
+        (kind === "brief" && historicalBriefFields(owner.canonicalFields, now)) ||
         owner.canonicalFields.invalidatedAt != null
           ? "historical"
           : "active",

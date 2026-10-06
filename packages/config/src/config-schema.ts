@@ -2707,6 +2707,15 @@ const brainKnowledge = z
     routineDelay: duration
       .describe("Maximum debounce for routine maintenance; floored to the soon delay.")
       .optional(),
+    recentWindowDays: z
+      .number()
+      .int()
+      .min(1)
+      .max(3650)
+      .describe(
+        "Recent initial-inventory window in days; older inventory follows historical review controls.",
+      )
+      .optional(),
     rootMaxChars: z
       .number()
       .int()

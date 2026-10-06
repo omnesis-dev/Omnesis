@@ -11,6 +11,15 @@ export type KnowledgeNodeKind =
 export type KnowledgeValidity = "current" | "stale";
 export type KnowledgeVerification = "unverified" | "verified" | "rejected" | "stale";
 export type KnowledgeRelation = "supports" | "contradicts" | "context" | "depends_on";
+export type KnowledgeModality =
+  | "observation"
+  | "reported"
+  | "proposal"
+  | "commitment"
+  | "inference"
+  | "recommendation"
+  | "question";
+export type KnowledgeEpistemicStatus = "asserted" | "disputed" | "unsupported";
 export type KnowledgeRevision = string | number;
 
 export interface KnowledgeReviewMetadata {
@@ -22,6 +31,9 @@ export interface KnowledgeReviewMetadata {
   lastVerifiedAt?: number | null;
   lastReviewedAt?: number | null;
   checkpointAt?: number | null;
+  reviewDecision?: "now" | "defer" | "dormant";
+  reviewReason?: string;
+  reviewDecidedAt?: number;
 }
 
 export interface KnowledgeNode {
@@ -44,6 +56,9 @@ export interface KnowledgeClaimState {
   /** Claim IDs come from the markup; every supplied state must match a parsed claim. */
   id: string;
   supportLogic?: "all" | "any";
+  attribution?: string | null;
+  modality?: KnowledgeModality;
+  epistemicStatus?: KnowledgeEpistemicStatus;
   relations?: Record<string, KnowledgeRelation>;
   validFrom?: number | null;
   validUntil?: number | null;
@@ -67,6 +82,9 @@ export interface KnowledgeClaim {
   end: number;
   refs: string[];
   supportLogic: "all" | "any";
+  attribution: string | null;
+  modality: KnowledgeModality;
+  epistemicStatus: KnowledgeEpistemicStatus;
   verification: KnowledgeVerification;
   fingerprint: string;
   witnessRefs: string[];
@@ -77,7 +95,12 @@ export interface KnowledgeClaim {
 export interface SaveKnowledgeNodeInput {
   runFence?: import("./run-fence.js").KnowledgeRunFence;
   /** Internal scheduler lease, never supplied by model arguments. */
-  maintenance?: { batchId: string; runId: string; inputFingerprint: string };
+  maintenance?: {
+    batchId: string;
+    runId: string;
+    inputFingerprint: string;
+    reviewedClaimIds?: readonly string[];
+  };
   id: string;
   kind: KnowledgeNodeKind;
   ownerId?: string | null;

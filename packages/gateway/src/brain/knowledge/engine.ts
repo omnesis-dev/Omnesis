@@ -4,6 +4,8 @@
 import { randomUUID } from "node:crypto";
 import { listTemporalAnnotationsAwaitingRefile } from "../../enrichment/temporal-annotations/storage.js";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
+import { isHistoricalKnowledgeBrief } from "./owner-maintenance.js";
+import { pendingMaintenanceClaimIds } from "./claim-maintenance.js";
 import { getKnowledgeDependencies, getKnowledgeNode } from "./storage.js";
 import { knowledgeHash } from "./storage-validation.js";
 import {
@@ -62,6 +64,8 @@ export interface KnowledgeFrontierView {
   items: Array<{
     id: string;
     inputFingerprint: string;
+    pendingClaimIds: string[];
+    pendingClaimIdsOmitted?: boolean;
     inputVersions: Record<string, string | number>;
     depth: number;
     source?: SourceInput;
@@ -332,6 +336,17 @@ export class KnowledgeEngine {
           progressed = true;
           continue;
         }
+        const currentNode = item.nodeId.startsWith("source:")
+          ? null
+          : getKnowledgeNode(this.deps.db, item.nodeId);
+        if (
+          currentNode &&
+          isHistoricalKnowledgeBrief(this.deps.db, currentNode, this.deps.clock())
+        ) {
+          await this.settle(item, runId, "skipped", this.children(item.nodeId, item.depth));
+          progressed = true;
+          continue;
+        }
         if (item.nodeId.startsWith("source:")) {
           const seed = this.deps.db
             .prepare<
@@ -396,6 +411,7 @@ export class KnowledgeEngine {
         }
         const candidate: KnowledgeFrontierView["items"][number] = {
           id: item.nodeId,
+          pendingClaimIds: pendingMaintenanceClaimIds(this.deps.db, item),
           inputFingerprint: item.inputFingerprint,
           inputVersions: item.inputVersions,
           depth: item.depth,
@@ -632,6 +648,7 @@ export class KnowledgeEngine {
     nodeId: string,
     inputFingerprint: string,
     input: Parameters<KnowledgeService["save"]>[0],
+    reviewedClaimIds?: readonly string[],
   ) {
     this.batch(batchId, runId);
     const item = this.currentItem(batchId, nodeId, inputFingerprint);
@@ -639,14 +656,20 @@ export class KnowledgeEngine {
       throw new KnowledgeStorageError("claim_invalid", "Save must match an offered synthesis node");
     const result = await this.deps.service.save({
       ...input,
-      maintenance: { batchId, runId, inputFingerprint },
+      maintenance: { batchId, runId, inputFingerprint, reviewedClaimIds },
     });
+    const pending = pendingMaintenanceClaimIds(this.deps.db, item);
+    const append = result.meaningChanged ? this.children(nodeId, item.depth) : [];
+    if (pending.length) {
+      const successor = this.frontier(nodeId, item.depth);
+      if (successor) append.unshift({ ...successor, eligibleClaimIds: pending });
+    }
     await this.settle(
       item,
       runId,
       result.meaningChanged ? "changed" : "unchanged",
-      result.meaningChanged ? this.children(nodeId, item.depth) : [],
-      result.node.revision,
+      append,
+      pending.length ? undefined : result.node.revision,
     );
     // Settlement yields to the writer too: recheck before exposing saved prose.
     const current = getKnowledgeNode(this.deps.db, nodeId);

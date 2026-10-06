@@ -4,6 +4,7 @@
 import { readProviderOutage, type BootstrapSettingsView } from "../bootstrap-status.js";
 import { bootstrapWindowOpen, bootstrapWindowOpensAt } from "../bootstrap-window.js";
 import { cognitionBudgetVerdict, type CognitionBudgetSettings } from "../cognition/budget.js";
+import { readKnowledgeInventoryStatus } from "./inventory-status.js";
 import { historicalKnowledgeAdmissions } from "./work.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery.js";
 import type Database from "better-sqlite3";
@@ -91,6 +92,11 @@ export function readKnowledgeBootstrapStatus(
         "SELECT id,revision,updated_at AS updatedAt FROM knowledge_checkpoints WHERE id LIKE 'knowledge:conversion:%' ORDER BY id",
       )
       .all(),
+    recentWindowMs: settings.knowledgeRecentWindowMs ?? 30 * 86_400_000,
+    inventory: readKnowledgeInventoryStatus(
+      db,
+      settings.knowledgeRecentWindowMs ?? 30 * 86_400_000,
+    ),
     corpusCompletion: "not-measured" as const,
   };
 }

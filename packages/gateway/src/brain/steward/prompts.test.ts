@@ -1178,6 +1178,9 @@ describe("Cognition Steward run prompts", () => {
       attempt: 2,
     });
     expect(prompt).toContain("knowledge_next_frontier");
+    expect(prompt).toContain("reviewedClaimIds");
+    expect(prompt).toContain("pendingClaimIdsOmitted");
+    expect(prompt).toContain("does not settle untouched claims");
     expect(prompt).toContain("Your notes file is currently empty.");
   });
 

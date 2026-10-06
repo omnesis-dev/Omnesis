@@ -28,6 +28,7 @@ import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
+import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
@@ -1443,6 +1444,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // Briefs / Cognition Steward storage (experimental): open loops, briefs,
   // the agent run queue, spend tracking, agent notes.
   createBriefsStorageTables(db);
+  createSourceInventoryTables(db);
   createKnowledgeTables(db);
   createKnowledgeWorkTables(db);
   createKnowledgeSourceTriggers(db);

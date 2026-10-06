@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Repository mutations run exclusively through the gateway writer worker. */
+import { recordAcceptedClaimMaintenance } from "./claim-maintenance.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { parseClaimMarkup } from "./claims.js";
 import { snapshotKnowledgeRevision } from "./storage-history.js";
@@ -146,6 +147,9 @@ export function saveKnowledgeNode(
           state?.supportLogic ?? "all",
           state?.validFrom ?? null,
           state?.validUntil ?? null,
+          state?.attribution ?? null,
+          state?.modality ?? "observation",
+          state?.epistemicStatus ?? "asserted",
         ];
       }),
     ]);
@@ -179,7 +183,7 @@ export function saveKnowledgeNode(
     db.prepare("DELETE FROM knowledge_dependencies WHERE node_id=?").run(input.id);
     db.prepare("DELETE FROM knowledge_claims WHERE node_id=?").run(input.id);
     const insertClaim = db.prepare(
-      `INSERT INTO knowledge_claims(node_id,id,text,parent_id,span_start,span_end,support_logic,verification,fingerprint,verifier,valid_from,valid_until,meaning_revision,meaning_hash,witness_refs_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO knowledge_claims(node_id,id,text,parent_id,span_start,span_end,support_logic,verification,fingerprint,verifier,valid_from,valid_until,meaning_revision,meaning_hash,witness_refs_json,attribution,modality,epistemic_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
     for (const claim of parsed.claims) {
       const state = input.claims?.find((c) => c.id === claim.id);
@@ -190,6 +194,9 @@ export function saveKnowledgeNode(
         state?.supportLogic ?? "all",
         state?.validFrom ?? null,
         state?.validUntil ?? null,
+        state?.attribution ?? null,
+        state?.modality ?? "observation",
+        state?.epistemicStatus ?? "asserted",
       ]);
       const priorClaim = oldClaimMeanings.get(claim.id);
       insertClaim.run(
@@ -208,6 +215,9 @@ export function saveKnowledgeNode(
         priorClaim?.meaning_hash === claimMeaningHash ? priorClaim.meaning_revision : revision,
         claimMeaningHash,
         JSON.stringify(state?.verification?.witnessRefs ?? []),
+        state?.attribution ?? null,
+        state?.modality ?? "observation",
+        state?.epistemicStatus ?? "asserted",
       );
     }
     const insertDependency = db.prepare(
@@ -223,6 +233,7 @@ export function saveKnowledgeNode(
         dep.relation,
         JSON.stringify(dep.inputVersion),
       );
+    recordAcceptedClaimMaintenance(db, input);
     const newClaims = new Map(
       parsed.claims.map((claim) => [
         claim.id,
@@ -253,7 +264,7 @@ export function saveKnowledgeNode(
           )
           .sort(),
         titleChanged: existing?.title !== input.title,
-        validityChanged: existing?.validity !== "current",
+        validityChanged: existing?.validity !== readKnowledgeNodeRow(db, input.id)?.validity,
       },
       now,
     );
@@ -295,8 +306,13 @@ export function revalidateKnowledgeNode(
           support_logic: "all" | "any";
           valid_from: number | null;
           valid_until: number | null;
+          attribution: string | null;
+          modality: import("./types.js").KnowledgeModality;
+          epistemic_status: import("./types.js").KnowledgeEpistemicStatus;
         }
-      >("SELECT id,support_logic,valid_from,valid_until FROM knowledge_claims WHERE node_id=?")
+      >(
+        "SELECT id,support_logic,valid_from,valid_until,attribution,modality,epistemic_status FROM knowledge_claims WHERE node_id=?",
+      )
       .all(input.id);
     const relations = db
       .prepare<
@@ -321,6 +337,9 @@ export function revalidateKnowledgeNode(
           supportLogic: state.support_logic,
           validFrom: state.valid_from,
           validUntil: state.valid_until,
+          attribution: state.attribution,
+          modality: state.modality,
+          epistemicStatus: state.epistemic_status,
           relations: Object.fromEntries(
             relations.filter((r) => r.claim_id === state.id).map((r) => [r.ref, r.relation]),
           ),

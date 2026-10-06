@@ -31,6 +31,7 @@ export const BRAIN_DEFAULTS = {
     soonThreshold: 0.4,
     soonDelay: "1h",
     routineDelay: "6h",
+    recentWindowDays: 30,
     rootMaxChars: 8000,
     maxSeeds: 64,
     maxVisitedPerSeed: 256,
@@ -164,6 +165,7 @@ export interface ResolvedBrainSettings {
     soonThreshold: number;
     soonDelayMs: number;
     routineDelayMs: number;
+    recentWindowMs: number;
     rootMaxChars: number;
     maxSeeds: number;
     maxVisitedPerSeed: number;
@@ -400,6 +402,7 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     knowledge: {
       immediateThreshold: knowledge?.immediateThreshold ?? defaults.immediateThreshold,
       soonThreshold: knowledge?.soonThreshold ?? defaults.soonThreshold,
+      recentWindowMs: (knowledge?.recentWindowDays ?? defaults.recentWindowDays) * 86_400_000,
       rootMaxChars: knowledge?.rootMaxChars ?? defaults.rootMaxChars,
       maxSeeds: knowledge?.maxSeeds ?? defaults.maxSeeds,
       maxVisitedPerSeed: knowledge?.maxVisitedPerSeed ?? defaults.maxVisitedPerSeed,

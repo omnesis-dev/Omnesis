@@ -4,8 +4,14 @@
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLogger, type DecisionCapability } from "@omnesis/core";
+import {
+  createSourceInventoryTables,
+  recordSourceInventoryPage,
+  recordSourceInventoryDocument,
+} from "../../data/repositories/SourceInventoryRepository.js";
 import { DERIVATION_STAGES } from "../../domain/DocumentDerivation.js";
 import { createTemporalAnnotationTables } from "../../enrichment/temporal-annotations/storage.js";
+import { createBrief, setBriefState, getBrief } from "../storage/briefs.js";
 import { createOpenLoop, updateOpenLoop } from "../storage/open-loops.js";
 import { resolveBrainSettings } from "../config.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
@@ -654,15 +660,22 @@ describe("knowledge coordinator", () => {
       (item) => item.id === "project",
     )!;
     expect(repair).toBeDefined();
-    await engine.saveNode(batch.id, batch.runId, repair.id, repair.inputFingerprint, {
-      id: "project",
-      kind: "wiki",
-      title: "project",
-      markdown:
-        '<claim id="fact" refs="source:new-evidence">The workshop now begins Saturday.</claim>',
-      expectedRevision: repair.node!.revision,
-      inputVersions: { "source:new-evidence": "v1" },
-    });
+    await engine.saveNode(
+      batch.id,
+      batch.runId,
+      repair.id,
+      repair.inputFingerprint,
+      {
+        id: "project",
+        kind: "wiki",
+        title: "project",
+        markdown:
+          '<claim id="fact" refs="source:new-evidence">The workshop now begins Saturday.</claim>',
+        expectedRevision: repair.node!.revision,
+        inputVersions: { "source:new-evidence": "v1" },
+      },
+      repair.pendingClaimIds,
+    );
     expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
     expect(getKnowledgeNode(db, "project")!.plainText).toContain("Saturday");
     expect(
@@ -779,19 +792,20 @@ describe("knowledge coordinator", () => {
     const offered = (await engine.next(batch.id, batch.runId)).items.find(
       (item) => item.id === "reviewed",
     )!;
-    await directKnowledgeGate(db)["knowledge.settleFrontier"](
+    await engine.saveNode(
+      batch.id,
+      batch.runId,
+      offered.id,
+      offered.inputFingerprint,
       {
-        outcome: {
-          batchId: batch.id,
-          runId: batch.runId,
-          nodeId: offered.id,
-          inputFingerprint: offered.inputFingerprint,
-          status: "unchanged",
-          resultRevision: offered.node!.revision,
-        },
-        append: [],
+        id: offered.id,
+        kind: "wiki",
+        title: offered.node!.title,
+        markdown: offered.node!.markdown,
+        expectedRevision: offered.node!.revision,
+        inputVersions: { "source:input": "v1" },
       },
-      now,
+      offered.pendingClaimIds,
     );
     await engine.next(batch.id, batch.runId);
     expect(getKnowledgeNode(db, "reviewed")!.metadata).toMatchObject({
@@ -826,14 +840,21 @@ describe("knowledge coordinator", () => {
     const offered = (await engine.next(batch.id, batch.runId)).items.find(
       (item) => item.id === "overdue",
     )!;
-    await engine.saveNode(batch.id, batch.runId, offered.id, offered.inputFingerprint, {
-      id: "overdue",
-      kind: "wiki",
-      title: "Overdue context",
-      markdown,
-      expectedRevision: offered.node!.revision,
-      inputVersions: { "source:input": "v1" },
-    });
+    await engine.saveNode(
+      batch.id,
+      batch.runId,
+      offered.id,
+      offered.inputFingerprint,
+      {
+        id: "overdue",
+        kind: "wiki",
+        title: "Overdue context",
+        markdown,
+        expectedRevision: offered.node!.revision,
+        inputVersions: { "source:input": "v1" },
+      },
+      offered.pendingClaimIds,
+    );
     expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
     const verification = getKnowledgeNode(db, "overdue")!.metadata.lastVerifiedAt;
     await engine.tick();
@@ -861,14 +882,21 @@ describe("knowledge coordinator", () => {
       return result;
     };
     await expect(
-      engine.saveNode(batch.id, batch.runId, offered.id, offered.inputFingerprint, {
-        id: "project",
-        kind: "wiki",
-        title: "project",
-        markdown: '<claim id="fact" refs="source:input">The workshop begins Friday.</claim>',
-        expectedRevision: offered.node!.revision,
-        inputVersions: { "source:input": "v1" },
-      }),
+      engine.saveNode(
+        batch.id,
+        batch.runId,
+        offered.id,
+        offered.inputFingerprint,
+        {
+          id: "project",
+          kind: "wiki",
+          title: "project",
+          markdown: '<claim id="fact" refs="source:input">The workshop begins Friday.</claim>',
+          expectedRevision: offered.node!.revision,
+          inputVersions: { "source:input": "v1" },
+        },
+        offered.pendingClaimIds,
+      ),
     ).rejects.toMatchObject({ code: "reference_invalid" });
     expect(getKnowledgeNode(db, "project")).toBeNull();
   });
@@ -891,14 +919,21 @@ describe("knowledge coordinator", () => {
       return null;
     };
     await expect(
-      engine.saveNode(batch.id, batch.runId, offered.id, offered.inputFingerprint, {
-        id: "project",
-        kind: "wiki",
-        title: "project",
-        markdown: '<claim id="fact" refs="source:input">A late write.</claim>',
-        expectedRevision: offered.node!.revision,
-        inputVersions: { "source:input": "v1" },
-      }),
+      engine.saveNode(
+        batch.id,
+        batch.runId,
+        offered.id,
+        offered.inputFingerprint,
+        {
+          id: "project",
+          kind: "wiki",
+          title: "project",
+          markdown: '<claim id="fact" refs="source:input">A late write.</claim>',
+          expectedRevision: offered.node!.revision,
+          inputVersions: { "source:input": "v1" },
+        },
+        offered.pendingClaimIds,
+      ),
     ).rejects.toMatchObject({ code: "revision_conflict" });
     expect(getKnowledgeNode(db, "project")!.revision).toBe(offered.node!.revision);
   });
@@ -940,14 +975,21 @@ describe("knowledge coordinator", () => {
     const offered = (await engine.next(batch.id, batch.runId)).items.find(
       (item) => item.id === "parent",
     )!;
-    await engine.saveNode(batch.id, batch.runId, offered.id, offered.inputFingerprint, {
-      id: "parent",
-      kind: "wiki",
-      title: "Workshop",
-      markdown: markdown.replace("Friday", "Saturday"),
-      expectedRevision: offered.node!.revision,
-      inputVersions: { "source:a": "v2", "source:b": "v1" },
-    });
+    await engine.saveNode(
+      batch.id,
+      batch.runId,
+      offered.id,
+      offered.inputFingerprint,
+      {
+        id: "parent",
+        kind: "wiki",
+        title: "Workshop",
+        markdown: markdown.replace("Friday", "Saturday"),
+        expectedRevision: offered.node!.revision,
+        inputVersions: { "source:a": "v2", "source:b": "v1" },
+      },
+      offered.pendingClaimIds,
+    );
     expect(listKnowledgeFrontier(db, batch.id).some((item) => item.nodeId === "child")).toBe(false);
     expect(getKnowledgeNode(db, "child")).toMatchObject({
       revision: childRevision,
@@ -979,14 +1021,21 @@ describe("knowledge coordinator", () => {
         (item) => item.id === "project",
       )!;
       expect(repair).toBeDefined();
-      await engine.saveNode(batch.id, batch.runId, repair.id, repair.inputFingerprint, {
-        id: "project",
-        kind: "wiki",
-        title: "project",
-        markdown: `<claim id="fact" refs="source:input">The workshop begins ${day}.</claim>`,
-        expectedRevision: repair.node!.revision,
-        inputVersions: { "source:input": version },
-      });
+      await engine.saveNode(
+        batch.id,
+        batch.runId,
+        repair.id,
+        repair.inputFingerprint,
+        {
+          id: "project",
+          kind: "wiki",
+          title: "project",
+          markdown: `<claim id="fact" refs="source:input">The workshop begins ${day}.</claim>`,
+          expectedRevision: repair.node!.revision,
+          inputVersions: { "source:input": version },
+        },
+        repair.pendingClaimIds,
+      );
       expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
       expect(getKnowledgeNode(db, "project")).toMatchObject({
         validity: "current",
@@ -1014,14 +1063,21 @@ describe("knowledge coordinator", () => {
     let parent = (await engine.next(batch.id, batch.runId)).items.find(
       (item) => item.id === "parent",
     )!;
-    await engine.saveNode(batch.id, batch.runId, parent.id, parent.inputFingerprint, {
-      id: "parent",
-      kind: "wiki",
-      title: "parent",
-      markdown: '<claim id="fact" refs="source:input">The workshop begins Friday.</claim>',
-      expectedRevision: parent.node!.revision,
-      inputVersions: { "source:input": "v1" },
-    });
+    await engine.saveNode(
+      batch.id,
+      batch.runId,
+      parent.id,
+      parent.inputFingerprint,
+      {
+        id: "parent",
+        kind: "wiki",
+        title: "parent",
+        markdown: '<claim id="fact" refs="source:input">The workshop begins Friday.</claim>',
+        expectedRevision: parent.node!.revision,
+        inputVersions: { "source:input": "v1" },
+      },
+      parent.pendingClaimIds,
+    );
     await engine.next(batch.id, batch.runId);
     source("input", "v2");
     now++;
@@ -1030,14 +1086,21 @@ describe("knowledge coordinator", () => {
     offered = (await engine.next(batch.id, batch.runId)).items.find((item) => item.source)!;
     await engine.completeSource(batch.id, batch.runId, offered.id, offered.inputFingerprint);
     parent = (await engine.next(batch.id, batch.runId)).items.find((item) => item.id === "parent")!;
-    const saved = await engine.saveNode(batch.id, batch.runId, parent.id, parent.inputFingerprint, {
-      id: "parent",
-      kind: "wiki",
-      title: "parent",
-      markdown: '<claim id="fact" refs="source:input">The workshop begins Friday.</claim>',
-      expectedRevision: parent.node!.revision,
-      inputVersions: { "source:input": "v2" },
-    });
+    const saved = await engine.saveNode(
+      batch.id,
+      batch.runId,
+      parent.id,
+      parent.inputFingerprint,
+      {
+        id: "parent",
+        kind: "wiki",
+        title: "parent",
+        markdown: '<claim id="fact" refs="source:input">The workshop begins Friday.</claim>',
+        expectedRevision: parent.node!.revision,
+        inputVersions: { "source:input": "v2" },
+      },
+      parent.pendingClaimIds,
+    );
     expect(saved.meaningChanged).toBe(false);
     expect(listKnowledgeFrontier(db, batch.id).some((item) => item.nodeId === "child")).toBe(false);
     expect(getKnowledgeNode(db, "child")!.validity).toBe("current");
@@ -1078,4 +1141,229 @@ it("repairs explicit authored-source dependents without opening source discovery
   expect(
     db.prepare("SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id='chat'").get(),
   ).toBeUndefined();
+});
+
+describe("explicit initial inventory admission", () => {
+  const inventory = {
+    id: "12345678-1234-4234-8234-123456789012",
+    startedAt: "2027-01-11T08:00:00.000Z",
+  };
+  function inventorySource(id: string, at: number) {
+    source(id, "v1", "Invented workshop history.", at);
+    recordSourceInventoryPage(db, "fictional", "", inventory, false, now);
+    recordSourceInventoryDocument(db, {
+      documentId: id,
+      inventoryId: inventory.id,
+      revision: "v1",
+      now,
+    });
+  }
+  it("admits recent inventory newest-first while old inventory waits for historical consent", async () => {
+    createSourceInventoryTables(db);
+    inventorySource("old", Date.parse("2020-01-01T00:00:00Z"));
+    inventorySource("recent-older", now - 10 * 86_400_000);
+    inventorySource("recent-newer", now - 86_400_000);
+    await engine.tick();
+    expect(
+      db.prepare("SELECT subject_id,reason FROM knowledge_work WHERE subject_kind='source'").all(),
+    ).toEqual([{ subject_id: "recent-newer", reason: "change" }]);
+    await engine.tick();
+    expect(
+      db
+        .prepare(
+          "SELECT subject_id FROM knowledge_work WHERE subject_kind='source' ORDER BY subject_id",
+        )
+        .all(),
+    ).toEqual([{ subject_id: "recent-newer" }, { subject_id: "recent-older" }]);
+    settings = resolveBrainSettings({ bootstrap: { enabled: true, maxRuns: 1, maxRunsPerDay: 1 } });
+    db.prepare(
+      "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+    ).run(String(now));
+    await engine.tick();
+    expect(db.prepare("SELECT reason FROM knowledge_work WHERE subject_id='old'").get()).toEqual({
+      reason: "discovery",
+    });
+    expect(
+      db.prepare("SELECT SUM(count) AS count FROM knowledge_historical_admissions").get(),
+    ).toEqual({ count: 1 });
+  });
+  it("keeps old late arrivals and edits reactive while an initial import remains partial", async () => {
+    createSourceInventoryTables(db);
+    inventorySource("old", Date.parse("2020-01-01T00:00:00Z"));
+    source("late", "v1", "A newly received old letter.", Date.parse("2020-01-01T00:00:00Z"));
+    source("old", "v2", "A new correction to older evidence.", Date.parse("2020-01-01T00:00:00Z"));
+    await engine.tick();
+    expect(
+      db
+        .prepare(
+          "SELECT subject_id,reason FROM knowledge_work WHERE subject_kind='source' ORDER BY subject_id",
+        )
+        .all(),
+    ).toEqual([
+      { subject_id: "late", reason: "change" },
+      { subject_id: "old", reason: "change" },
+    ]);
+  });
+  it("anchors recent admission to gateway receipt despite collector clock skew and later retries", async () => {
+    createSourceInventoryTables(db);
+    const skewed = { ...inventory, startedAt: "2099-01-01T00:00:00.000Z" };
+    recordSourceInventoryPage(db, "fictional", "", skewed, false, now);
+    source("recent-skew", "v1", "Fictional recent planning.", now - 86_400_000);
+    source("old-skew", "v1", "Fictional historical planning.", now - 60 * 86_400_000);
+    for (const documentId of ["recent-skew", "old-skew"])
+      recordSourceInventoryDocument(db, {
+        documentId,
+        inventoryId: skewed.id,
+        revision: "v1",
+        now,
+      });
+    recordSourceInventoryPage(db, "fictional", "", skewed, false, now + 90 * 86_400_000);
+    await engine.tick();
+    expect(
+      db.prepare("SELECT subject_id FROM knowledge_work WHERE subject_kind='source'").all(),
+    ).toEqual([{ subject_id: "recent-skew" }]);
+    expect(db.prepare("SELECT first_received_at FROM source_inventories").get()).toEqual({
+      first_received_at: now,
+    });
+  });
+  it("uses the configured recent window without swallowing older imports", async () => {
+    createSourceInventoryTables(db);
+    settings = resolveBrainSettings({
+      bootstrap: { enabled: false },
+      knowledge: { recentWindowDays: 1 },
+    });
+    inventorySource("two-days-old", now - 2 * 86_400_000);
+    await engine.tick();
+    expect(
+      db.prepare("SELECT 1 FROM knowledge_work WHERE subject_kind='source'").get(),
+    ).toBeUndefined();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM source_inventory_documents").get()).toEqual({
+      count: 1,
+    });
+  });
+});
+
+it("keeps untouched eligible claims pending after a partial page save", async () => {
+  source();
+  const markdown =
+    '<claim id="first" refs="source:input">The workshop is on Friday.</claim>\n<claim id="second" refs="source:input">Venue provisional.</claim>';
+  await service.save({
+    id: "partial",
+    kind: "wiki",
+    title: "Partial review",
+    markdown,
+    expectedRevision: 0,
+    inputVersions: { "source:input": "v1" },
+    metadata: { nextReviewAt: now },
+  });
+  db.exec("DELETE FROM knowledge_changes");
+  await engine.tick();
+  const batch = batchFor("partial");
+  const first = (await engine.next(batch.id, batch.runId)).items.find(
+    (item) => item.id === "partial",
+  )!;
+  expect(first.pendingClaimIds).toEqual(["first", "second"]);
+  const changed = markdown.replace("The workshop is on Friday.", "The workshop is on Saturday.");
+  await engine.saveNode(
+    batch.id,
+    batch.runId,
+    first.id,
+    first.inputFingerprint,
+    {
+      id: "partial",
+      kind: "wiki",
+      title: "Partial review",
+      markdown: changed,
+      expectedRevision: first.node!.revision,
+      inputVersions: { "source:input": "v1" },
+    },
+    [],
+  );
+  const next = await engine.next(batch.id, batch.runId);
+  expect(next.done).toBe(false);
+  const second = next.items.find((item) => item.id === "partial")!;
+  expect(second.pendingClaimIds).toEqual(["second"]);
+  expect(second.node!.claims.find((claim) => claim.id === "second")!.verification).toBe("stale");
+  await engine.saveNode(
+    batch.id,
+    batch.runId,
+    second.id,
+    second.inputFingerprint,
+    {
+      id: "partial",
+      kind: "wiki",
+      title: "Partial review",
+      markdown: changed,
+      expectedRevision: second.node!.revision,
+      inputVersions: { "source:input": "v1" },
+    },
+    ["second"],
+  );
+  expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
+  expect(
+    db
+      .prepare(
+        "SELECT claim_id,status FROM knowledge_claim_outcomes WHERE batch_id=? AND input_fingerprint=? ORDER BY claim_id",
+      )
+      .all(batch.id, first.inputFingerprint),
+  ).toEqual([
+    { claim_id: "first", status: "changed" },
+    { claim_id: "second", status: "deferred" },
+  ]);
+  expect(
+    db
+      .prepare(
+        "SELECT status FROM knowledge_claim_outcomes WHERE batch_id=? AND input_fingerprint=? AND claim_id='second'",
+      )
+      .get(batch.id, second.inputFingerprint),
+  ).toEqual({ status: "unchanged" });
+});
+
+it("traverses lost support through a historical brief without rewriting its snapshot", async () => {
+  source();
+  createBrief(
+    db,
+    {
+      id: "past-brief",
+      createdByRun: "fixture",
+      kind: "info",
+      title: "Workshop",
+      description: "The workshop is on Friday.",
+      confidence: 0.7,
+      urgency: 0.3,
+      citations: ["input"],
+    },
+    now,
+  );
+  convertKnowledgeOwner(db, "brief", "past-brief", now);
+  await service.save({
+    id: "past-brief",
+    ownerId: "past-brief",
+    kind: "brief",
+    title: "Workshop",
+    markdown:
+      '<claim id="fact" refs="source:input">## Description\nThe workshop is on Friday.\n\n## Body\n</claim>',
+    expectedRevision: 1,
+    inputVersions: { "source:input": "v1" },
+  });
+  await wiki("durable", "brief:past-brief#claim:fact", "The workshop is on Friday.");
+  setBriefState(db, "past-brief", "dismissed_already_handled", now);
+  const snapshot = getBrief(db, "past-brief")!;
+  db.exec("DELETE FROM knowledge_changes");
+  source("input", "v2", "The workshop is on Saturday.");
+  await engine.tick();
+  const batch = batchFor("input");
+  const discovery = (await engine.next(batch.id, batch.runId)).items.find((item) => item.source)!;
+  await engine.completeSource(batch.id, batch.runId, discovery.id, discovery.inputFingerprint);
+  const offered = await engine.next(batch.id, batch.runId);
+  expect(offered.items.map((item) => item.id)).toContain("durable");
+  expect(offered.items.map((item) => item.id)).not.toContain("past-brief");
+  expect(
+    listKnowledgeFrontier(db, batch.id).find((item) => item.nodeId === "past-brief")?.status,
+  ).toBe("skipped");
+  expect(service.reference("brief:past-brief#claim:fact")).toMatchObject({
+    stale: true,
+    verified: false,
+  });
+  expect(getBrief(db, "past-brief")).toEqual(snapshot);
 });

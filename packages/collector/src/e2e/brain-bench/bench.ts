@@ -163,7 +163,7 @@ export interface BrainBenchOptions {
   apns?: boolean;
   /** Sync every universe source at boot so the ambient corpus lands. Defaults to true. */
   syncSources?: boolean;
-  /** Existing indexed context predating Brain activation; never processed as live arrivals. */
+  /** Existing indexed context predating inventory-aware ingestion; no fabricated coverage. */
   initialInventory?: "pre-existing";
 }
 
