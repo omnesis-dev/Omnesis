@@ -4,11 +4,15 @@ import { describe, expect, it, vi } from "vitest";
 // Browser coverage exercises DOMPurify's actual DOM implementation. Here the
 // spy verifies that the complete generated output passes the strict policy.
 vi.mock("dompurify", () => ({ default: { sanitize: vi.fn((value) => value) } }));
+vi.mock("../lib/format.js", () => ({
+  sourceIconUrl: (id: string) => (id === "fixture-notes" ? "data:image/png;base64,aGVsbG8=" : null),
+}));
 import DOMPurify from "dompurify";
 import {
   claimMarkupRanges,
   internalKnowledgeHref,
   renderKnowledgeMarkdown,
+  extractKnowledgeReferences,
 } from "./knowledge-claim-markdown.js";
 function claim(markdown: string, id: string, parentId: string | null = null) {
   const open = `<claim id="${id}" refs="source:fixture">`;
@@ -17,6 +21,35 @@ function claim(markdown: string, id: string, parentId: string | null = null) {
   return { id, parentId, start, end };
 }
 describe("claim-aware Markdown", () => {
+  it("resolves canonical portal links and excludes code examples from metadata hydration", () => {
+    const markdown =
+      "[Page](/portal/debug/cognition/knowledge/project) [Note](/portal/doc/letter%2Fone) ` [Example](source:private-example) `";
+    expect(extractKnowledgeReferences(markdown)).toEqual(["node:project", "source:letter/one"]);
+    const rendered = renderKnowledgeMarkdown(markdown, [], {
+      "node:project": { kind: "root" },
+      "source:letter/one": { kind: "source", sourceId: "fixture-notes" },
+    }).html;
+    expect(rendered).toContain('class="kn-link-icon kn-link-icon--wiki"');
+    expect(rendered).toContain('src="data:image/png;base64,aGVsbG8="');
+  });
+  it("decorates typed links while keeping prose sanitization closed to images and SVG", () => {
+    const result = renderKnowledgeMarkdown(
+      "[Project](wiki:project) [Task](loop:task) [Note](source:note#evidence:paragraph) [Website](https://example.org)",
+      [],
+      {
+        "source:note": { kind: "source", sourceId: "fixture-notes" },
+      },
+    );
+    expect(result.html).toContain('class="kn-link-icon kn-link-icon--wiki"');
+    expect(result.html).toContain('class="kn-link-icon kn-link-icon--loop"');
+    expect(result.html).toContain('class="kn-link-icon kn-link-icon--source"');
+    expect(result.html).toContain('src="data:image/png;base64,aGVsbG8="');
+    expect(result.html).toContain('<a href="https://example.org">Website</a>');
+    expect(result.html).toContain('aria-hidden="true"');
+    const sanitizedInput = vi.mocked(DOMPurify.sanitize).mock.calls.at(-1)?.[0];
+    expect(sanitizedInput).not.toContain("<svg");
+    expect(sanitizedInput).not.toContain("<img");
+  });
   it("preserves nested formatting and exact claim identities", () => {
     const markdown =
       '# Plan\n\n<claim id="outer" refs="source:fixture">Bring **paper** and <claim id="inner" refs="source:fixture">blue pencils</claim>.</claim>';
@@ -61,10 +94,10 @@ describe("claim-aware Markdown", () => {
       "/portal/debug/cognition/knowledge/project?claim=date",
     );
     expect(internalKnowledgeHref("loop:task#field:state")).toBe(
-      "/portal/debug/cognition/knowledge/task?field=state",
+      "/portal/debug/cognition/knowledge/task?kind=loop&field=state",
     );
     expect(renderKnowledgeMarkdown("[State](loop:task#field:state)").html).toContain(
-      'href="/portal/debug/cognition/knowledge/task?field=state"',
+      'href="/portal/debug/cognition/knowledge/task?kind=loop&field=state"',
     );
   });
   it("refuses invalid offsets rather than highlighting matching prose elsewhere", () => {

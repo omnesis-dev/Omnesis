@@ -11,7 +11,6 @@ const GROUPS = [
     label: "Knowledge",
     items: [
       brain("knowledge", "Library"),
-      brain("loops", "Loops"),
       brain("briefs", "Briefs"),
       { key: "calendar", label: "Timeline" },
     ],
@@ -54,7 +53,7 @@ export function debugNavigation(experimental, tab, cognitionTab) {
     ...group,
     items: group.items.filter((item) => !item.experimental || experimental),
   })).filter((group) => group.items.length);
-  const requested = cognitionTab === "scheduled" ? "runs" : cognitionTab || "overview";
+  const requested = cognitionTab === "loops" ? "knowledge" : cognitionTab === "scheduled" ? "runs" : cognitionTab || "overview";
   const section = GROUPS.some((group) =>
     group.items.some((item) => item.key === `cognition/${requested}`),
   )

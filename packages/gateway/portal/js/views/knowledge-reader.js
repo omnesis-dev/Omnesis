@@ -55,38 +55,31 @@ export function KnowledgeBadge({ value }) {
     >${label}</span
   >`;
 }
-export function KnowledgeProse({ text }) {
+export function KnowledgeProse({ text, references = {} }) {
   // The shared renderer sanitizes Markdown; remote images are blocked for privacy.
   return html`<div
     class="kn-prose"
-    dangerouslySetInnerHTML=${{ __html: renderKnowledgeMarkdown(text ?? "").html }}
+    dangerouslySetInnerHTML=${{ __html: renderKnowledgeMarkdown(text ?? "", [], references).html }}
   />`;
-}
-function Reference({ value, names = {} }) {
-  const href = knowledgeReferenceHref(value);
-  const label = names[value] ?? (value.startsWith("source:") ? "Source document" : "Related page");
-  return href
-    ? html`<a class="kn-reference" href=${href}><span aria-hidden="true">↗</span> ${label}</a>`
-    : html`<span>Reference unavailable</span>`;
 }
 export function KnowledgeDetail({
   node,
   history = [],
-  names = {},
+  references = {},
   activeTab = "overview",
   onTab = () => {},
   historyLoading = false,
   historyError = false,
+  hideTitle = false,
+  selectedClaim = null,
+  onClaim = () => {},
 }) {
   const claims = node.claims ?? [],
     verified = claims.filter((claim) => claim.verification === "verified").length;
   const selectedField =
     typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("field");
-  const requestedClaim =
-    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("claim");
   const tabs = [
     ["overview", "Overview"],
-    ["evidence", "Evidence"],
     ["connections", "Connections"],
     ["history", "History"],
     ["advanced", "Advanced"],
@@ -96,7 +89,7 @@ export function KnowledgeDetail({
       <div class="kn-eyebrow">
         ${kindLabel(node.kind)} <${KnowledgeBadge} value=${node.validity} />
       </div>
-      <h2>${node.title}</h2>
+      ${!hideTitle && html`<h2>${node.title}</h2>`}
       <p class="kn-caption">
         ${`Updated ${dateLabel(node.updatedAt)}`}${claims.length
           ? ` · ${verified} of ${claims.length} claims verified`
@@ -113,19 +106,11 @@ export function KnowledgeDetail({
             class=${activeTab === value ? "is-active" : ""}
             onClick=${() => onTab(value)}
           >
-            ${label}${value === "evidence" && claims.length
-              ? html`<span>${claims.length}</span>`
-              : null}
+            ${label}
           </button>`,
       )}
     </div>
     <div class="kn-reader-body">
-      ${activeTab === "overview" &&
-      requestedClaim &&
-      !claims.some((claim) => claim.id === requestedClaim) &&
-      html`<p class="kn-caption" role="status">
-        The referenced claim is not present in this version of the page.
-      </p>`}
       ${activeTab === "overview" &&
       html`${node.validity === "stale" &&
       html`<aside class="kn-notice">
@@ -141,69 +126,22 @@ export function KnowledgeDetail({
         ? claimMarkupRanges(node.markdown ?? "", claims).length
           ? html`<${KnowledgeClaimReader}
               node=${node}
-              names=${names}
-              referenceHref=${knowledgeReferenceHref}
-              Badge=${KnowledgeBadge}
+              references=${references}
+              onClaim=${onClaim}
             />`
-          : html`<${KnowledgeProse} text=${node.plainText} />`
+          : html`<${KnowledgeProse} text=${node.plainText} references=${references} />`
         : html`<div class="kn-empty">
             <h3>This page is taking shape</h3>
             <p>Its first synthesis has not been written yet.</p>
-          </div>`}
-      ${(node.links ?? []).length > 0 &&
-      html`<section class="kn-related">
-        <h3>Connected pages</h3>
-        ${node.links.map((link) => {
-          const id = link.fromId === node.id ? link.toId : link.fromId;
-          return html`<a href=${knowledgePath(id)} key=${`${link.kind}:${id}`}
-            ><span>${names[`node:${id}`] ?? "Related page"}</span
-            ><small>${readable(link.relation ?? link.kind)} ↗</small></a
-          >`;
-        })}
-      </section>`}`}
-      ${activeTab === "connections" && html`<${KnowledgeConnections} node=${node} />`}
-      ${activeTab === "evidence" &&
-      html`<div class="kn-section-intro">
-          <h3>What this page is based on</h3>
-          <p>
-            Each claim keeps its own sources and verification status. A source link alone is not
-            proof.
-          </p>
-        </div>
-        ${!claims.length &&
-        html`<div class="kn-empty">
-          <h3>No claims yet</h3>
-          <p>This page has no tagged assertions to inspect.</p>
-        </div>`}${claims.map(
-          (claim, index) =>
-            html`<section class="kn-evidence-card" key=${claim.id}>
-              <div class="kn-evidence-meta">
-                <span>Claim ${index + 1}</span
-                ><${KnowledgeBadge} value=${claim.verification} />${claim.epistemicStatus &&
-                claim.epistemicStatus !== "asserted" &&
-                html`<${KnowledgeBadge} value=${claim.epistemicStatus} />`}
-              </div>
-              <p class="kn-claim-text">${claim.text}</p>
-              <p class="kn-caption">
-                ${readable(claim.modality ?? "observation")}${claim.attribution
-                  ? ` · Attributed to: ${claim.attribution}`
-                  : ""}${claim.supportLogic === "any" ? " · One sufficient source required" : ""}
-              </p>
-              <div class="kn-sources">
-                ${(node.dependencies ?? [])
-                  .filter((dep) => dep.claimId === claim.id)
-                  .map(
-                    (dep) =>
-                      html`<div key=${dep.ref}>
-                        <span class="kn-caption">${readable(dep.relation)}</span
-                        ><${Reference} value=${dep.ref} names=${names} />
-                      </div>`,
-                  )}
-              </div>
-              ${!(claim.refs ?? (node.dependencies ?? []).filter((dep) => dep.claimId === claim.id))
-                .length && html`<p class="kn-caption">No supporting source attached.</p>`}
-            </section>`,
-        )}`}
+          </div>`} `}
+      ${activeTab === "connections" &&
+      html`<${KnowledgeConnections}
+        node=${node}
+        references=${references}
+        selectedClaim=${selectedClaim}
+        onClaim=${onClaim}
+        Badge=${KnowledgeBadge}
+      />`}
       ${activeTab === "history" &&
       html`<div class="kn-section-intro">
           <h3>How this page evolved</h3>
@@ -231,7 +169,7 @@ export function KnowledgeDetail({
                   ${`${revision.diff?.changedClaimIds?.length ?? 0} claim${revision.diff?.changedClaimIds?.length === 1 ? "" : "s"} changed`}
                   · ${revision.validity === "stale" ? "Needed review" : "Current when saved"}
                 </p>
-                <${KnowledgeProse} text=${revision.plainText} />
+                <${KnowledgeProse} text=${revision.plainText} references=${references} />
               </details>`,
           )}
         </div>`}

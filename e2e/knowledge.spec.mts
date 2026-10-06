@@ -5,9 +5,15 @@ import "../packages/collector/src/e2e/synth-env.js";
 import Database from "better-sqlite3";
 import { test, expect } from "@playwright/test";
 import { SyntheticE2EHarness } from "../packages/collector/src/e2e/synth-harness.js";
-import { createOpenLoop } from "../packages/gateway/src/brain/storage/open-loops.js";
+import {
+  createOpenLoop,
+  appendOpenLoopLedger,
+} from "../packages/gateway/src/brain/storage/open-loops.js";
 import { createBrief } from "../packages/gateway/src/brain/storage/briefs.js";
-import { recordSettledCognitionRun } from "../packages/gateway/src/brain/storage/run-queue.js";
+import {
+  recordSettledCognitionRun,
+  enqueueCognitionRun,
+} from "../packages/gateway/src/brain/storage/run-queue.js";
 import { saveKnowledgeNode } from "../packages/gateway/src/brain/knowledge/storage.js";
 import {
   enqueueKnowledgeWork,
@@ -48,13 +54,20 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     animations: "disabled",
   });
 
+  const descriptors = await request.get(url("/admin/source-descriptors"), {
+    headers: { Authorization: `Bearer ${token()}` },
+  });
+  const registeredSource = (await descriptors.json()).items.find(
+    (item: { icon?: { imageDataUri?: string } }) => item.icon?.imageDataUri,
+  );
+  expect(registeredSource).toBeTruthy();
   const response = await request.post(url("/documents"), {
     headers: { Authorization: `Bearer ${token()}` },
     data: {
       documents: [
         {
           providerId: "fixture",
-          sourceId: "fixture:knowledge-browser",
+          sourceId: `${registeredSource.id}:knowledge-browser`,
           externalId: "workshop-plan",
           title: "Workshop planning note",
           content: "The workshop begins at ten. Bring paper and pencils.",
@@ -88,10 +101,23 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
         },
         Date.now(),
       );
+      createOpenLoop(
+        db,
+        {
+          id: "browser-materials",
+          createdByRun: "browser-fixture",
+          title: "Prepare workshop materials",
+          description: "Gather paper and pencils for the workshop.",
+          confidence: 0.9,
+          importance: 0.5,
+        },
+        Date.now(),
+      );
       saveKnowledgeNode(
         db,
         {
           id: "browser-materials",
+          ownerId: "browser-materials",
           kind: "loop",
           title: "Prepare workshop materials",
           canonicalFields: { state: "open" },
@@ -127,7 +153,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
         {
           ...node,
           expectedRevision: 1,
-          markdown: `${node.markdown}\n\n## Preparation\n\n<claim id="materials" refs="${ref}">Bring paper and <claim id="pencils" refs="${ref}">pencils</claim>.</claim>\n\nRead [Opening time](wiki:browser-workshop#claim:time). See [Workshop supplies](wiki:browser-supplies), [Opening](wiki:browser-supplies#claim:opening), and [State](loop:browser-materials#field:state).\n\n<claim id="planning" refs="wiki:browser-supplies loop:browser-materials">Workshop supplies provide context for preparing the materials.</claim>`,
+          markdown: `${node.markdown}\n\n## Preparation\n\n<claim id="materials" refs="${ref}">Bring paper and <claim id="pencils" refs="${ref}">pencils</claim>.</claim>\n\nRead [Opening time](wiki:browser-workshop#claim:time). See [Workshop supplies](wiki:browser-supplies), [Opening](wiki:browser-supplies#claim:opening), and [State](loop:browser-materials#field:state). Read the [Source note](${ref}).\n\n<claim id="planning" refs="wiki:browser-supplies loop:browser-materials">Workshop supplies provide context for preparing the materials.</claim>`,
           inputVersions: {
             ...node.inputVersions,
             "wiki:browser-supplies": 1,
@@ -295,24 +321,31 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await expect(page).toHaveURL(/knowledge\/browser-workshop/);
   await expect(page.getByRole("heading", { name: "Preparation", exact: true })).toBeVisible();
   await expect(page.locator(".kn-reader")).toContainText("Bring paper and pencils.");
+  await expect(page.getByRole("heading", { name: "Connected pages", exact: true })).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("knowledge-desktop-reader.png"),
     fullPage: true,
     animations: "disabled",
   });
+  await expect(
+    page.locator('.kn-prose a[href*="browser-supplies"] svg.kn-link-icon--wiki').first(),
+  ).toBeVisible();
+  await expect(
+    page.locator('.kn-prose a[href*="browser-materials"] svg.kn-link-icon--loop'),
+  ).toBeVisible();
+  await expect(
+    page.locator('.kn-prose a[href^="/portal/doc/"] img.kn-link-icon--source'),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Inspect claim 3", exact: true }).click();
-  await expect(page.getByRole("complementary", { name: "Selected claim" })).toContainText(
-    "pencils",
-  );
+  await expect(page.locator(".kn-selected-claim")).toContainText("pencils");
   await page.screenshot({
     path: info.outputPath("knowledge-nested-claim.png"),
     fullPage: true,
     animations: "disabled",
   });
   await page.getByRole("button", { name: "Inspect enclosing claim", exact: true }).click();
-  await expect(page.getByRole("complementary", { name: "Selected claim" })).toContainText(
-    "Bring paper and pencils.",
-  );
+  await expect(page.locator(".kn-selected-claim")).toContainText("Bring paper and pencils.");
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await page
     .locator(".kn-prose")
     .getByRole("link", { name: "Workshop supplies", exact: true })
@@ -328,17 +361,17 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await page.goBack();
   await page.locator(".kn-prose").getByRole("link", { name: "Opening time", exact: true }).click();
   await expect(page).toHaveURL(/browser-workshop\?claim=time$/);
-  await expect(page.getByRole("complementary", { name: "Selected claim" })).toContainText(
-    "The workshop begins at ten.",
-  );
+  await expect(page.locator(".kn-selected-claim")).toContainText("The workshop begins at ten.");
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await page.locator(".kn-prose").getByRole("link", { name: "Opening", exact: true }).click();
   await expect(page).toHaveURL(/browser-supplies\?claim=opening$/);
-  await expect(page.getByRole("complementary", { name: "Selected claim" })).toContainText(
+  await expect(page.locator(".kn-selected-claim")).toContainText(
     "Paper and pencils are workshop supplies.",
   );
   await page.goBack();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await page.locator(".kn-prose").getByRole("link", { name: "State", exact: true }).click();
-  await expect(page).toHaveURL(/browser-materials\?field=state$/);
+  await expect(page).toHaveURL(/browser-materials\?kind=loop&field=state$/);
   await expect(page.getByRole("region", { name: "Referenced field" })).toContainText('"open"');
   await page.screenshot({
     path: info.outputPath("knowledge-field-reference.png"),
@@ -347,19 +380,30 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   });
   await page.goBack();
   await page.getByRole("button", { name: "Connections", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "How this page connects" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Filter connections by claim" }).selectOption("");
   await expect(page.locator(".kn-reader")).toContainText("Workshop supplies");
   await expect(page.locator(".kn-reader")).toContainText("Prepare workshop materials");
+  await expect(page.locator(".kn-connections svg.kn-link-icon--loop").first()).toBeVisible();
+  await expect(page.locator(".kn-connections svg.kn-link-icon--wiki").first()).toBeVisible();
   await page.screenshot({
     path: info.outputPath("knowledge-connections.png"),
     fullPage: true,
     animations: "disabled",
   });
-  await page.getByRole("button", { name: /^Evidence/ }).click();
-  const source = page.getByRole("link", { name: /Workshop planning note/ }).first();
+  await expect(page.getByRole("button", { name: /^Evidence/ })).toHaveCount(0);
+  const source = page.getByRole("link", { name: /Workshop planning note/ });
+  await expect(source).toHaveCount(1);
+  await expect(source.locator("img.kn-link-icon--source")).toBeVisible();
+  await expect(source.locator("img.kn-link-icon--source")).toHaveJSProperty("complete", true);
+  expect(
+    await source
+      .locator("img.kn-link-icon--source")
+      .evaluate((image: HTMLImageElement) => image.naturalWidth),
+  ).toBeGreaterThan(0);
   await expect(source).toHaveAttribute("href", `/portal/doc/${encodeURIComponent(documentId!)}`);
   await page.screenshot({
-    path: info.outputPath("knowledge-evidence.png"),
+    path: info.outputPath("knowledge-relationships-sources.png"),
     fullPage: true,
     animations: "disabled",
   });
@@ -367,7 +411,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     document.documentElement.dataset.theme = "light";
   });
   await page.screenshot({
-    path: info.outputPath("knowledge-evidence-light.png"),
+    path: info.outputPath("knowledge-relationships-light.png"),
     fullPage: true,
     animations: "disabled",
   });
@@ -418,15 +462,14 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   });
   await page.getByRole("button", { name: "Inspect claim 3", exact: true }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("complementary", { name: "Selected claim" })).toContainText(
-    "pencils",
-  );
+  await expect(page.locator(".kn-selected-claim")).toContainText("pencils");
   await page.screenshot({
     path: info.outputPath("knowledge-nested-claim-mobile.png"),
     fullPage: true,
     animations: "disabled",
   });
   await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page.getByRole("combobox", { name: "Filter connections by claim" }).selectOption("");
   await expect(page.locator(".kn-connections")).toContainText("Workshop supplies");
   await page.screenshot({
     path: info.outputPath("knowledge-connections-mobile.png"),
@@ -476,15 +519,7 @@ test("brain navigation remains usable across its existing sections", async ({ pa
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(url(`/portal/?token=${encodeURIComponent(token())}`));
   await expect(page.locator("nav.sidebar-nav")).toBeVisible();
-  for (const section of [
-    "overview",
-    "loops",
-    "runs",
-    "briefs",
-    "memory",
-    "calibration",
-    "bootstrap",
-  ]) {
+  for (const section of ["overview", "runs", "briefs", "memory", "calibration", "bootstrap"]) {
     await page.goto(url(`/portal/debug/cognition/${section}`));
     await expect(page.locator(".cognition-content")).toBeVisible();
     await expect
@@ -582,8 +617,78 @@ test("populated operational readers preserve mobile navigation", async ({ page }
           createdByRun: "browser-review-run",
           title: "Prepare workshop materials",
           description: "Gather paper and pencils before the workshop.",
+          deadline: { kind: "by", date: "2027-01-15" },
           confidence: 0.9,
           importance: 0.6,
+        },
+        now,
+      );
+      saveKnowledgeNode(
+        db,
+        {
+          id: "browser-materials-loop",
+          ownerId: "browser-materials-loop",
+          kind: "loop",
+          title: "Prepare workshop materials",
+          expectedRevision: 0,
+          markdown: "Gather paper and pencils before the workshop.",
+          inputVersions: {},
+          canonicalFields: { state: "open" },
+        },
+        now,
+      );
+      createOpenLoop(
+        db,
+        {
+          id: "browser-finished-loop",
+          createdByRun: "browser-review-run",
+          title: "Reserve workshop room",
+          description: "The room reservation is complete.",
+          state: "done",
+          confidence: 0.9,
+          importance: 0.5,
+        },
+        now,
+      );
+      saveKnowledgeNode(
+        db,
+        {
+          id: "browser-finished-loop",
+          ownerId: "browser-finished-loop",
+          kind: "loop",
+          title: "Reserve workshop room",
+          expectedRevision: 0,
+          markdown: "The room reservation is complete.",
+          inputVersions: {},
+          canonicalFields: { state: "done" },
+        },
+        now,
+      );
+      appendOpenLoopLedger(
+        db,
+        "browser-materials-loop",
+        { runId: "browser-review-run", note: "Materials remain to be gathered." },
+        now,
+      );
+      enqueueCognitionRun(
+        db,
+        {
+          id: "browser-scheduled-check",
+          kind: "time_based",
+          payload: { loopId: "browser-materials-loop", instruction: "Check preparation progress." },
+          notBefore: now + 3600000,
+        },
+        now,
+      );
+      createOpenLoop(
+        db,
+        {
+          id: "browser-legacy-loop",
+          createdByRun: "browser-review-run",
+          title: "Prepare name cards",
+          description: "Write the workshop name cards.",
+          confidence: 0.8,
+          importance: 0.4,
         },
         now,
       );
@@ -623,10 +728,24 @@ test("populated operational readers preserve mobile navigation", async ({ page }
       .poll(() => page.locator("body").evaluate((el) => getComputedStyle(el).fontFamily))
       .not.toContain("Times New Roman");
     await expect(page.locator(".cognition-content").getByText(/^Loading/)).toHaveCount(0);
-    if (section === "loops")
-      await expect(page.locator(".cognition-content")).toContainText(
-        "Gather paper and pencils before the workshop.",
+    if (section === "loops") {
+      await expect(page).toHaveURL(/knowledge\/browser-materials-loop\?kind=loop$/);
+      await expect(page.getByRole("region", { name: "Tracked outcome" })).toContainText(
+        "2027-01-15",
       );
+      await expect(
+        page
+          .getByRole("region", { name: "Tracked outcome" })
+          .getByRole("heading", { name: "Prepare workshop materials", exact: true }),
+      ).toBeVisible();
+      await expect(page.locator(".kn-reader h2")).toHaveCount(0);
+      await page.getByText("Outcome details and activity", { exact: true }).click();
+      await expect(page.locator(".kn-loop-activity")).toContainText(
+        "Materials remain to be gathered.",
+      );
+      await expect(page.locator(".kn-loop-activity")).toContainText("Workshop preparation");
+      await expect(page.locator(".kn-loop-activity")).toContainText("Scheduled checks (1)");
+    }
     if (section === "briefs")
       await expect(page.locator(".cognition-content")).toContainText(
         "Materials are the remaining preparation step.",
@@ -639,7 +758,11 @@ test("populated operational readers preserve mobile navigation", async ({ page }
       animations: "disabled",
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByRole("link", { name: new RegExp(`Back to ${section}$`) })).toBeVisible();
+    await expect(
+      page.getByRole("link", {
+        name: new RegExp(`Back to ${section === "loops" ? "library" : section}$`),
+      }),
+    ).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
@@ -648,7 +771,51 @@ test("populated operational readers preserve mobile navigation", async ({ page }
       fullPage: true,
       animations: "disabled",
     });
-    await page.getByRole("link", { name: new RegExp(`Back to ${section}$`) }).click();
-    await expect(page).toHaveURL(new RegExp(`/cognition/${section}$`));
+    await page
+      .getByRole("link", {
+        name: new RegExp(`Back to ${section === "loops" ? "library" : section}$`),
+      })
+      .click();
+    await expect(page).toHaveURL(
+      section === "loops"
+        ? /cognition\/knowledge(?:\?kind=loop)?$/
+        : new RegExp(`/cognition/${section}$`),
+    );
+    if (section === "loops") {
+      await page.getByRole("combobox", { name: "Knowledge type" }).selectOption("loop");
+      await page.getByRole("combobox", { name: "Loop status" }).selectOption("active");
+      await expect(page.locator(".kn-card-list")).toContainText("Prepare workshop materials");
+      await expect(page.locator(".kn-card-list")).not.toContainText("Reserve workshop room");
+      await page.getByRole("combobox", { name: "Loop status" }).selectOption("resolved");
+      await expect(page.locator(".kn-card-list")).toContainText("Reserve workshop room");
+      await expect(page.locator(".kn-card-list")).not.toContainText("Prepare workshop materials");
+      await page.getByRole("combobox", { name: "Sort loops" }).selectOption("importance");
+      await page.goto(url("/portal/debug/cognition/loops/browser-legacy-loop"));
+      await expect(page).toHaveURL(/knowledge\/browser-legacy-loop\?kind=loop$/);
+      await expect(page.getByRole("region", { name: "Tracked outcome" })).toContainText(
+        "Prepare name cards",
+      );
+      await expect(page.getByRole("heading", { name: "No synthesis available" })).toBeVisible();
+      await expect(
+        page
+          .getByRole("region", { name: "Tracked outcome" })
+          .getByRole("heading", { name: "Prepare name cards", exact: true }),
+      ).toBeVisible();
+      await page.getByText("Outcome details and activity", { exact: true }).click();
+      await expect(page.locator(".kn-loop-activity")).toContainText(
+        "Write the workshop name cards.",
+      );
+      await page.screenshot({
+        path: info.outputPath("library-legacy-loop-mobile.png"),
+        fullPage: true,
+        animations: "disabled",
+      });
+
+      await page.screenshot({
+        path: info.outputPath("library-loop-filters-mobile.png"),
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
   }
 });

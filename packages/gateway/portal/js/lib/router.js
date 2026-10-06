@@ -478,6 +478,11 @@ export function parseRoute() {
         : "/portal/debug/calendar",
     };
   }
+  if (cognitionMatch?.[1] === "loops") {
+    const id = cognitionMatch[2] ? decodePathSegment(cognitionMatch[2]) : null;
+    return { view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: id,
+      redirectTo: `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop` };
+  }
   if (cognitionMatch) {
     return {
       view: "debug",

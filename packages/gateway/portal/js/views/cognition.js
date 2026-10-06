@@ -5,6 +5,8 @@
 // synthesis and evidence; operational views expose runs, lifecycle and controls.
 
 import { html } from "htm/preact";
+import { loopDeadlineLabel } from "./knowledge-loop-library.js";
+import { KnowledgeIcon } from "../lib/knowledge-link-icons.js";
 import { renderMarkdown } from "../lib/markdown.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Segmented } from "../components/segmented.js";
@@ -23,7 +25,6 @@ import {
   getCognitionLoopBriefs,
   getCognitionLoopLedger,
   getCognitionLoopScheduled,
-  getCognitionLoops,
   getCognitionPulse,
   getCognitionNotes,
   getCognitionRetiredLoops,
@@ -59,7 +60,6 @@ function annotate(target) {
 
 const SECTIONS = [
   { key: "overview", label: "Overview" },
-  { key: "loops", label: "Loops" },
   { key: "runs", label: "Runs" },
   { key: "briefs", label: "Briefs" },
   { key: "memory", label: "Memory" },
@@ -77,11 +77,13 @@ const VALID_SECTIONS = new Set(SECTIONS.map((s) => s.key));
  * Exported for tests.
  */
 export function resolveSection(subTab) {
+  if (subTab === "loops") return "knowledge";
   if (subTab === "scheduled") return "runs";
   return subTab && VALID_SECTIONS.has(subTab) ? subTab : "overview";
 }
 
 function cognitionPath(section, id) {
+  if (section === "loops") return `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop`;
   return id
     ? `/portal/debug/cognition/${section}/${encodeURIComponent(id)}`
     : `/portal/debug/cognition/${section}`;
@@ -242,7 +244,7 @@ function EntityId({ kind, id }) {
     href=${href}
     title=${`${kind}: ${id}`}
     onClick=${(e) => { e.preventDefault(); navigate(href); }}
-  >${id}</a>`;
+  >${kind === "loop" && html`<${KnowledgeIcon} kind="loop" />`}${id}</a>`;
 }
 
 // A person reference rendered as its name linking to the person page. The
@@ -950,81 +952,12 @@ function SourceChip({ sourceId, sourceType }) {
 
 // ── Loops ────────────────────────────────────────────────────────────
 
-const LOOP_FILTERS = [
-  { value: "all", label: "All" },
-  { value: "active", label: "Active" },
-  { value: "resolved", label: "Resolved" },
-];
-
-function loopMatchesFilter(loop, filter) {
-  if (filter === "active") return loop.state === "open" || loop.state === "snoozed";
-  if (filter === "resolved") return loop.state === "done" || loop.state === "dismissed";
-  return true;
-}
-
-function LoopsTab({ selectedId }) {
-  const [filter, setFilter] = useState("all");
-  // The disabled-Brain banner below polls the gate itself.
-  const page = useCursorPage({
-    resetKey: filter,
-    pageSize: 50,
-    loadPage: ({ limit, cursor }) =>
-      getCognitionLoops({
-        limit,
-        cursor,
-        ...(filter === "all" ? {} : { state: filter }),
-      }),
-  });
-  const loops = page.items.filter((loop) => loopMatchesFilter(loop, filter));
-
-  const list = html`
-    <div>
-      ${page.items.length === 0 && !page.loading && !page.error
-        ? html`<div class="debug-empty" style="padding:16px;">No loops yet. Outcomes you are tracking will appear here.</div>`
-        : loops.length === 0 && !page.loading && !page.error
-        ? html`<div class="debug-empty" style="padding:16px;">No ${filter} loops.</div>`
-        : loops.map((l) => html`
-          <${ListRow} section="loops" id=${l.id} selected=${l.id === selectedId}>
-            <div class="cognition-row-top">
-              <${Pill} color=${loopStateColor(l.state)}>${l.state}</${Pill}>
-              <span class="cognition-row-time" title=${fmtTs(l.lastUpdate)}>${fmtRel(l.lastUpdate)}</span>
-            </div>
-            <div class="cognition-row-title">${l.title || "(untitled)"}</div>
-          </${ListRow}>
-        `)}
-      <${LoadMore}
-        hasMore=${page.hasMore}
-        loading=${page.loadingMore}
-        error=${page.loadMoreError}
-        onLoadMore=${page.loadMore}
-        label="Load more loops"
-      />
-    </div>
-  `;
-
-  return html`
-    <section class=${`debug-operations${selectedId ? " has-selection" : ""}`}>
-      <${BrainInactiveBanner} />
-      <div class="cognition-filters">
-        <${Segmented} options=${LOOP_FILTERS} value=${filter} onChange=${setFilter} />
-      </div>
-      <${LoadState} loading=${page.loading} error=${page.error} />
-      <p class="debug-operations-count">${loops.length} loaded loops</p>
-      ${selectedId && html`<a class="debug-operations-back" href=${cognitionPath("loops")}>← Back to loops</a>`}
-      <${MasterDetail}
-        list=${list}
-        detail=${selectedId ? html`<${LoopDetail} id=${selectedId} />` : loops.length ? html`<${EmptyDetail} noun="loop" />` : null}
-      />
-    </section>
-  `;
-}
-
 function KnowledgeOwnerLink({ id }) {
   const page = useLoader(() => getKnowledgeNode(id), [id]);
-  return page.data && !page.error ? html`<p><a href=${`/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`}>Read synthesis and claim evidence</a></p>` : null;
+  return page.data && !page.error ? html`<p><a href=${`/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`}><${KnowledgeIcon} kind=${page.data.kind} /> Read synthesis and claim evidence</a></p>` : null;
 }
 
-function LoopDetail({ id }) {
+export function LoopDetail({ id, embedded = false, synthesisText = null }) {
   const { data, error, loading } = useLoader(
     () => getCognitionLoop(id, { includeChildren: false }),
     [id],
@@ -1053,13 +986,13 @@ function LoopDetail({ id }) {
   return html`
     <div class="cognition-detail-body">
       <div class="cognition-detail-titlebar">
-        <h2 class="cognition-detail-title">${loop.title || "(untitled)"}</h2>
+        ${!embedded && html`<h2 class="cognition-detail-title">${loop.title || "(untitled)"}</h2>`}
         ${annotate({ targetType: "open_loop", targetId: loop.id, label: loop.title || `Loop ${loop.id}` })}
       </div>
-      <div style="margin-bottom:12px;"><${Pill} color=${loopStateColor(loop.state)}>${loop.state}</${Pill}></div>
-      <${KnowledgeOwnerLink} id=${loop.id} />
-      <${Field} label="Description">${loop.description || "—"}</${Field}>
-      <${Field} label="Deadline">${loop.deadline ? html`<code>${JSON.stringify(loop.deadline)}</code>` : "—"}</${Field}>
+      ${!embedded && html`<div style="margin-bottom:12px;"><${Pill} color=${loopStateColor(loop.state)}>${loop.state}</${Pill}></div>`}
+      ${!embedded && html`<${KnowledgeOwnerLink} id=${loop.id} />`}
+      ${(!embedded || (loop.description ?? "").trim() !== (synthesisText ?? "").trim()) && html`<${Field} label="Description">${loop.description || "—"}</${Field}>`}
+      ${!embedded && html`<${Field} label="Deadline">${loopDeadlineLabel(loop.deadline)}</${Field}>`}
       <${Field} label="Created by run"><${EntityId} kind="run" id=${loop.createdByRun} /></${Field}>
       <${Field} label="Actors"><${PersonList} people=${loop.actors} /></${Field}>
       <${Field} label="Why am I seeing this?"
@@ -1131,7 +1064,7 @@ function LoopDetail({ id }) {
       <details class="debug-operations-advanced"><summary>Advanced</summary>
       <${Field} label="Id"><span class="cognition-mono">${loop.id}</span></${Field}>
       <${Field} label="Confidence">${fmt01(loop.confidence)}</${Field}>
-      <${Field} label="Importance">${fmt01(loop.importance)}</${Field}>
+      ${!embedded && html`<${Field} label="Importance">${fmt01(loop.importance)}</${Field}>`}
       <${Field} label="Last decay check">${fmtTs(loop.lastDecayCheck)}</${Field}>
       <${Field} label="Decay checks">${loop.decayCheckCount}</${Field}>
       </details>
@@ -2029,7 +1962,6 @@ function MemoryTab() {
 
 const SECTION_INTROS = {
   overview: ["Brain activity", "What is running, what is waiting, and where attention is going."],
-  loops: ["Loops", "Outcomes the Brain tracks, with their status, evidence, and next check."],
   runs: ["Agent runs", "Inspect decisions, scheduled work, transcripts, and costs."],
   briefs: ["Briefs", "What the Brain surfaced, why it matters, and its delivery history."],
   memory: ["Legacy memory", "Agent notes and the recurrence history of retired loops."],
@@ -2052,7 +1984,6 @@ export function CognitionView({ subTab, selectedId, developer = false } = {}) {
           ${section === "knowledge" && html`<${KnowledgeTab} selectedId=${selectedId} />`}
           ${section === "maintenance" && html`<${KnowledgeMaintenanceTab} selectedId=${selectedId} />`}
           ${section === "overview" && html`<${OverviewTab} pulse=${pulse} />`}
-          ${section === "loops" && html`<${LoopsTab} selectedId=${selectedId} />`}
           ${section === "runs" && html`<${RunsTab} selectedId=${selectedId} pulse=${pulse} />`}
           ${section === "briefs" && html`<${BriefsTab} selectedId=${selectedId} />`}
           ${section === "memory" && html`<${MemoryTab} />`}

@@ -2,6 +2,24 @@
 // Copyright (c) 2026 Adrien Conrath
 import { Marked, Renderer } from "marked";
 import DOMPurify from "dompurify";
+import {
+  knowledgeIconHtml,
+  knowledgeReferenceMetadata,
+  knowledgeLinkReference,
+} from "../lib/knowledge-link-icons.js";
+
+/** Link hydration is bounded by the caller; code examples are not navigable references. */
+export function extractKnowledgeReferences(markdown) {
+  const parser = new Marked();
+  const refs = new Set();
+  const tokens = parser.lexer(String(markdown ?? "").replace(/<\/?claim\b[^>]*>/g, ""));
+  parser.walkTokens(tokens, (token) => {
+    if (token.type !== "link") return;
+    const reference = knowledgeLinkReference(token.href);
+    if (reference) refs.add(reference);
+  });
+  return [...refs];
+}
 
 /** Only the typed internal reference grammar becomes a portal navigation URL. */
 export function internalKnowledgeHref(value) {
@@ -14,7 +32,10 @@ export function internalKnowledgeHref(value) {
     match[1] === "source"
       ? `/portal/doc/${encodeURIComponent(match[2])}`
       : `/portal/debug/cognition/knowledge/${encodeURIComponent(match[2])}`;
-  return path + (match[3] ? `?${match[3]}=${encodeURIComponent(match[4])}` : "");
+  const query = new URLSearchParams();
+  if (match[1] === "loop") query.set("kind", "loop");
+  if (match[3]) query.set(match[3], match[4]);
+  return path + (query.size ? `?${query}` : "");
 }
 
 /** Database spans identify exact markup; never infer claims from a prose substring. */
@@ -48,10 +69,11 @@ export function claimMarkupRanges(markdown, claims) {
   });
 }
 
-export function renderKnowledgeMarkdown(markdown, claims = []) {
+export function renderKnowledgeMarkdown(markdown, claims = [], references = {}) {
   const ranges = claimMarkupRanges(markdown ?? "", claims);
   const prefix = `knowledge-claim-${crypto.randomUUID()}-`;
   const targets = new Map();
+  const icons = new Map();
   const extension = (level) => ({
     name: level === "block" ? "knowledgeClaimBlock" : "knowledgeClaimInline",
     level,
@@ -91,20 +113,35 @@ export function renderKnowledgeMarkdown(markdown, claims = []) {
     extensions: [extension("block"), extension("inline")],
     renderer: {
       link(token) {
-        return Renderer.prototype.link.call(this, {
+        const href = internalKnowledgeHref(token.href);
+        const link = Renderer.prototype.link.call(this, {
           ...token,
-          href: internalKnowledgeHref(token.href) ?? token.href,
+          href: href ?? token.href,
         });
+        const reference = knowledgeLinkReference(token.href);
+        if (!reference) return link;
+        const icon = knowledgeIconHtml({
+          reference,
+          ...knowledgeReferenceMetadata(reference, references),
+        });
+        if (!icon) return link;
+        const marker = `<span id="${prefix}icon-${icons.size}"></span>`;
+        icons.set(marker, icon);
+        return link.replace(/^(<a\b[^>]*>)/, `$1${marker}`);
       },
     },
   });
+  let sanitized = DOMPurify.sanitize(parser.parse(markdown ?? ""), {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["img"],
+    ALLOW_DATA_ATTR: false,
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+  });
+  // Untrusted prose never gains SVG/image permission. Only unguessable markers
+  // emitted by our link renderer receive static icons after sanitization.
+  for (const [marker, icon] of icons) sanitized = sanitized.replaceAll(marker, icon);
   return {
-    html: DOMPurify.sanitize(parser.parse(markdown ?? ""), {
-      USE_PROFILES: { html: true },
-      FORBID_TAGS: ["img"],
-      ALLOW_DATA_ATTR: false,
-      ALLOW_UNKNOWN_PROTOCOLS: false,
-    }),
+    html: sanitized,
     targets,
   };
 }

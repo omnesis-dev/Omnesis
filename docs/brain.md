@@ -291,21 +291,23 @@ on.
 - **`omnesis brain decisions`** — source-associated maintenance and other agent
   decisions, with their actual batch transcripts.
 
-The Debug workspace separates Knowledge (Library, Loops, Briefs, Timeline),
+The Debug workspace separates Knowledge (Library, Briefs, Timeline),
 Brain activity (Activity, Agent runs, Maintenance, Discovery, Calibration,
 Legacy memory), System diagnostics, and Data tools. Existing deep links stay
 valid. Maintenance owns the repair queue and batch frontier; Discovery owns
-bootstrap coverage and history controls. Loops and Briefs retain their lifecycle
-and delivery inspectors and link to their synthesis evidence when available.
+bootstrap coverage and history controls. Loops live in the Knowledge library,
+with canonical state and expandable outcome details beside their synthesis.
+Briefs retain their delivery inspector and link to synthesis when available.
 Legacy memory keeps agent notes and the retired-loop recurrence ledger distinct
 from the root overview.
 
 The experimental Knowledge library reads the same canonical data used by
-agent tools. Browse or filter the library, then open a page’s Overview, Evidence,
-Connections, History, or Advanced view. Inline claim spans open their evidence;
-page links and claim-specific references navigate to their targets. Connections
-separates incoming and outgoing evidence dependencies from organization links,
-with bounded pagination. Source links explain the grounding; raw claim markup
+agent tools. Browse or filter the library, then open a page’s Overview,
+Connections, History, or Advanced view. Inline claim spans open Connections
+focused on that claim’s verification and relationships; clear the claim selection
+to inspect the whole page. Page links and claim-specific references navigate to
+their targets. Connections is the single relationship view, separating incoming
+and outgoing evidence dependencies from organization links with bounded pagination. Source links explain the grounding; raw claim markup
 and storage metadata remain in Advanced. Empty, pending, and unavailable states
 are explicit rather than presented as verified understanding. Admin diagnostics include `/admin/brain/knowledge`, `/status`,
 `/batches`, `/decisions`, `/:id`, `/:id/connections` and `/:id/history` under that prefix.

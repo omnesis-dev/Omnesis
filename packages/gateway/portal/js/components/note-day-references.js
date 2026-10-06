@@ -5,6 +5,7 @@
 // capture. Keep this lookup independent of history pagination and poll while
 // visible so transcription/indexing and later Brain work appear in place.
 import { html } from "htm/preact";
+import { KnowledgeIcon } from "../lib/knowledge-link-icons.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { getNotesProvenance } from "../api.js";
 import { navigate } from "../lib/router.js";
@@ -116,8 +117,8 @@ export function NoteDayReferences({ day, revision, experimental = false, onDocum
       (loop) => html`<div class="note-reference-row" key=${loop.id}>
         <div class="note-reference-body">
           <${ReferenceLink}
-            href=${`/portal/debug/cognition/loops/${encodeURIComponent(loop.id)}`}
-            label=${loop.title}
+            href=${`/portal/debug/cognition/knowledge/${encodeURIComponent(loop.id)}?kind=loop`}
+            label=${html`<${KnowledgeIcon} kind="loop" />${loop.title}`}
           />
           <span class="note-reference-heading">Open loop</span>
         </div>

@@ -3,6 +3,7 @@
 import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
 import { navigate } from "../lib/router.js";
+import { KnowledgeIcon } from "../lib/knowledge-link-icons.js";
 import {
   getKnowledgeStatus,
   getKnowledgeBatches,
@@ -18,6 +19,7 @@ import {
 } from "./knowledge-reader.js";
 function BatchDetail({ id }) {
   const [names, setNames] = useState({});
+  const [references, setReferences] = useState({});
   const [state, setState] = useState({ loading: true });
   useEffect(() => {
     let alive = true;
@@ -27,6 +29,7 @@ function BatchDetail({ id }) {
         if (!alive) return;
         setState({ data });
         setNames({});
+        setReferences({});
         const ids = [...new Set((data.frontier ?? []).map((item) => item.nodeId))].slice(0, 50);
         const sourceIds = ids.filter((id) => id.startsWith("source:")).map((id) => id.slice(7));
         const [sources, nodes] = await Promise.all([
@@ -36,12 +39,13 @@ function BatchDetail({ id }) {
           ),
         ]);
         if (!alive) return;
-        const next = {};
+        const next = {}, metadata = {};
         for (const [id, doc] of Object.entries(sources.docs ?? {}))
-          next[`node:source:${id}`] = doc.title;
+          { next[`node:source:${id}`] = doc.title; metadata[`source:${id}`] = { kind: "source", sourceId: doc.source_id }; }
         for (const result of nodes)
-          if (result.status === "fulfilled") next[`node:${result.value.id}`] = result.value.title;
+          if (result.status === "fulfilled") { next[`node:${result.value.id}`] = result.value.title; metadata[result.value.id] = { kind: result.value.kind }; }
         setNames(next);
+        setReferences(metadata);
       })
       .catch((error) => {
         if (alive) setState({ error: error.message });
@@ -71,7 +75,7 @@ function BatchDetail({ id }) {
               href=${item.nodeId.startsWith("source:")
                 ? knowledgeReferenceHref(item.nodeId)
                 : knowledgePath(item.nodeId)}
-              >${names[`node:${item.nodeId}`] ??
+              ><${KnowledgeIcon} ...${references[item.nodeId] ?? {}} />${names[`node:${item.nodeId}`] ??
               (item.nodeId.startsWith("source:") ? "Source document" : "Knowledge page")}</a
             ><span>${readable(item.status)}</span>
           </li>`,

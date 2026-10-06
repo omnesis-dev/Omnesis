@@ -253,3 +253,11 @@ describe("Calendar route", () => {
     }
   });
 });
+
+test("retired loop routes preserve identity in the knowledge library", () => {
+  expect(route("/portal/debug/cognition/loops/outcome%2Fone")).toEqual({
+    view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: "outcome/one",
+    redirectTo: "/portal/debug/cognition/knowledge/outcome%2Fone?kind=loop",
+  });
+  expect(route("/portal/debug/cognition/loops").redirectTo).toBe("/portal/debug/cognition/knowledge?kind=loop");
+});

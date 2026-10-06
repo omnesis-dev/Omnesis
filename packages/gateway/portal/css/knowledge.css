@@ -1,5 +1,20 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  * Copyright (c) 2026 Adrien Conrath */
+.kn-link-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  vertical-align: -3px;
+  margin-inline-end: 5px;
+}
+.kn-link-icon--source {
+  border-radius: 3px;
+  object-fit: contain;
+}
+.kn-link-icon-wrap {
+  display: inline;
+}
 .knowledge-library {
   font-family:
     Inter,
@@ -432,29 +447,10 @@
 .kn-notice p {
   margin: 5px 0 0;
 }
-.kn-related {
-  border-top: 1px solid var(--border-light);
-  margin-top: 30px;
-  padding-top: 18px;
-}
-.kn-related h3,
 .kn-home-recent > h3 {
   font-size: 12px;
   font-weight: 600;
   margin: 0 0 12px;
-}
-.kn-related a {
-  display: flex;
-  justify-content: space-between;
-  gap: 15px;
-  color: var(--text-primary);
-  text-decoration: none;
-  padding: 10px 0;
-  font-size: 13px;
-}
-.kn-related small {
-  color: var(--text-secondary);
-  font-size: 12px;
 }
 .kn-section-intro {
   margin-bottom: 22px;
@@ -469,12 +465,6 @@
   line-height: 1.7;
   color: var(--text-secondary);
   margin: 0;
-}
-.kn-evidence-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 18px;
-  margin-bottom: 14px;
 }
 .kn-evidence-meta {
   display: flex;
@@ -493,26 +483,6 @@
   line-height: 1.8;
   margin: 16px 0 11px;
   overflow-wrap: anywhere;
-}
-.kn-sources {
-  border-top: 1px solid var(--border-light);
-  margin-top: 12px;
-  padding-top: 7px;
-}
-.kn-sources > div {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 9px 0;
-}
-.kn-reference {
-  font-size: 12px;
-  color: var(--text-link);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-.kn-reference:hover {
-  text-decoration: underline;
 }
 .kn-timeline {
   border-left: 1px solid var(--border);
@@ -884,9 +854,6 @@
     padding: 0 19px;
     gap: 19px;
   }
-  .kn-evidence-card {
-    padding: 14px;
-  }
   .kn-maintenance {
     margin-bottom: 18px;
   }
@@ -950,29 +917,6 @@
 .kn-claim-hint {
   margin: 0 0 20px;
 }
-.kn-claim-inspector {
-  margin-top: 24px;
-  padding: 20px;
-  border: 1px solid var(--accent);
-  border-radius: 12px;
-  background: var(--kn-soft);
-}
-.kn-claim-inspector .kn-evidence-meta {
-  display: flex;
-  justify-content: space-between;
-}
-.kn-claim-sources {
-  list-style: none;
-  padding: 0;
-}
-.kn-claim-sources li {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 9px 0;
-  border-top: 1px solid var(--border);
-}
-.kn-claim-sources span,
 .kn-claim-family > span {
   color: var(--text-secondary);
   font-size: 12px;
@@ -993,4 +937,63 @@
   .knowledge-library .kn-tabs button {
     min-height: 44px;
   }
+}
+.kn-loop-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 8px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.kn-loop-context {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  background: var(--bg-secondary);
+}
+.kn-loop-summary {
+  display: grid;
+  gap: 8px;
+}
+.kn-loop-summary h2 {
+  font-size: 20px;
+  line-height: 1.4;
+  margin: 0;
+}
+.kn-loop-context dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+  margin: 20px 0;
+}
+.kn-loop-context dt {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+}
+.kn-loop-context dd {
+  margin: 0;
+  font-size: 14px;
+}
+.kn-loop-activity > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.kn-loop-activity .cognition-detail-titlebar {
+  display: none;
+}
+.kn-loop-activity .cognition-detail-body {
+  border: 0;
+  padding: 16px 0 0;
+}
+.kn-filters:has([aria-label="Sort loops"]) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.kn-filters [aria-label="Sort loops"] {
+  grid-column: 1 / -1;
 }

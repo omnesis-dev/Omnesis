@@ -4,6 +4,26 @@ import { expect, it } from "vitest";
 // @ts-expect-error Plain JavaScript portal module.
 import * as connections from "./knowledge-connections.js";
 const { connectionHref, connectionLabel, ConnectionCard, groupConnectionEdges } = connections;
+it("filters on this page's claim identity without confusing incoming claims or organization links", () => {
+  const edges = [
+    { id: "support", direction: "outgoing", claimId: "opening", targetClaimId: null },
+    { id: "other", direction: "outgoing", claimId: "materials", targetClaimId: null },
+    { id: "inbound", direction: "incoming", claimId: "other-claim", targetClaimId: "opening" },
+    {
+      id: "same-name-elsewhere",
+      direction: "incoming",
+      claimId: "opening",
+      targetClaimId: "materials",
+    },
+    { id: "organization", direction: "outgoing", claimId: null, targetClaimId: null },
+  ];
+  expect(connections.claimConnectionEdges(edges, "opening").map((edge) => edge.id)).toEqual([
+    "support",
+    "inbound",
+  ]);
+  expect(connections.claimConnectionEdges(edges, null)).toEqual(edges);
+  expect(connections.claimConnectionEdges(edges, "missing")).toEqual([]);
+});
 it("preserves hierarchy direction for project and subtask relationships", () => {
   expect(connectionLabel({ relationship: "part_of", direction: "outgoing" })).toBe(
     "Parent of this page",

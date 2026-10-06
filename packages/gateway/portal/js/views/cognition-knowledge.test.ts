@@ -11,6 +11,8 @@ vi.mock("./knowledge-claim-markdown.js", async (importOriginal) => ({
 import { renderKnowledgeMarkdown } from "./knowledge-claim-markdown.js";
 import { KnowledgeDetail, KnowledgeStatus, knowledgeReferenceHref } from "./cognition-knowledge.js";
 import { resolveSection } from "./cognition.js";
+import { ConnectionClaims } from "./knowledge-connections.js";
+import { KnowledgeBadge } from "./knowledge-reader.js";
 function hosts(value, out = []) {
   if (value == null || typeof value === "boolean") return out;
   if (Array.isArray(value)) {
@@ -71,7 +73,7 @@ it("preserves experimental routes and rejects unsafe reference protocols", () =>
 it("uses the sanitized internal-link-aware Markdown reader", () => {
   const tree = KnowledgeDetail({ node });
   const elements = hosts(tree);
-  expect(renderKnowledgeMarkdown).toHaveBeenCalledWith(unsafe);
+  expect(renderKnowledgeMarkdown).toHaveBeenCalledWith(unsafe, [], {});
   expect(elements.some((element) => element.type === "script")).toBe(false);
   expect(text(tree)).toContain("Some context needs another look");
   expect(text(tree)).toContain("0 of 1 claims verified");
@@ -80,13 +82,23 @@ it("uses the sanitized internal-link-aware Markdown reader", () => {
     elements
       .filter((element) => element.type === "button")
       .map((element) => element.props["aria-pressed"]),
-  ).toEqual([true, false, false, false, false]);
+  ).toEqual([true, false, false, false]);
 });
-it("keeps evidence readable with named links while preserving uncertainty", () => {
-  const tree = KnowledgeDetail({
+it("retains the page title unless a loaded canonical outcome already supplies it", () => {
+  const loop = { ...node, kind: "loop", title: "Prepare workshop materials" };
+  const headings = (hideTitle = false) =>
+    hosts(KnowledgeDetail({ node: loop, hideTitle }))
+      .filter((element) => element.type === "h2")
+      .map(text);
+  expect(headings()).toContain(loop.title);
+  expect(headings(true)).not.toContain(loop.title);
+});
+it("shows assertion uncertainty in Connections without repeating source links", () => {
+  const tree = ConnectionClaims({
     node,
-    activeTab: "evidence",
-    names: { "source:fixture": "Workshop planning note" },
+    selectedClaim: "date",
+    onClaim: () => {},
+    Badge: KnowledgeBadge,
   });
   const elements = hosts(tree);
   expect(text(tree)).toContain("Disputed");
@@ -94,11 +106,16 @@ it("keeps evidence readable with named links while preserving uncertainty", () =
   expect(
     elements.some((element) => element.type === "script" || element.props?.dangerouslySetInnerHTML),
   ).toBe(false);
-  expect(
-    elements.filter((element) => element.type === "a").map((element) => element.props.href),
-  ).toEqual(["/portal/doc/fixture"]);
-  expect(text(tree)).toContain("Workshop planning note");
+  expect(elements.filter((element) => element.type === "a")).toHaveLength(0);
   expect(text(tree)).not.toContain("source:fixture");
+});
+it("keeps relationship navigation in Connections instead of a duplicate Overview list", () => {
+  const tree = KnowledgeDetail({ node });
+  expect(text(tree)).not.toContain("Connected pages");
+  const labels = hosts(tree)
+    .filter((element) => element.type === "button")
+    .map(text);
+  expect(labels).toEqual(["Overview", "Connections", "History", "Advanced"]);
 });
 it("keeps raw markup literal and exact revisions discoverable in Advanced", () => {
   const elements = hosts(KnowledgeDetail({ node, activeTab: "advanced" }));
