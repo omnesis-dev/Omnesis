@@ -11212,6 +11212,18 @@
     "updatedAt": "2023-04-20T12:00:00.000Z"
   },
   {
+    "externalId": "sb-evening-calendar",
+    "title": "The Clockmaker's Map",
+    "description": "Two-person theatre booking DEMO-EVENING-2048. Tickets are in the reservation email. Synthetic demonstration event for an invented performance.",
+    "location": "Criterion Theatre, 218-223 Piccadilly, London",
+    "startTime": "2026-10-03T19:00:00.000Z",
+    "endTime": "2026-10-03T21:00:00.000Z",
+    "attendees": ["self", "p_thomas"],
+    "attendeeEmails": ["sacha.bellamy@example.com", "thomas.ashford@example.com"],
+    "createdAt": "2026-09-30T12:00:00.000Z",
+    "updatedAt": "2026-09-30T12:00:00.000Z"
+  },
+  {
     "externalId": "sb-party-stale",
     "title": "Daniel birthday party",
     "description": "Original plan: guests at 19:00 at 18 Sample Walk. See organiser for final arrangements.",

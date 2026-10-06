@@ -107,8 +107,8 @@ describe("Sacha demo chronology and evidence consistency", () => {
     expect(
       merged["apple-notes"]["notes.json"].some((n) => n.externalId === "sb-bank-coverage"),
     ).toBe(true);
-    expect([...scenarios.facts, ...finance.facts]).toHaveLength(15);
-    expect(new Set([...scenarios.facts, ...finance.facts].map((f) => f.id)).size).toBe(15);
+    expect([...scenarios.facts, ...finance.facts]).toHaveLength(16);
+    expect(new Set([...scenarios.facts, ...finance.facts].map((f) => f.id)).size).toBe(16);
     expect(() =>
       mergeSources({ test: { "data.json": { x: 1 } } }, { test: { "data.json": { x: 2 } } }),
     ).toThrow("Duplicate non-array");

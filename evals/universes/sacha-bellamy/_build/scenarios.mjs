@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { addEvening } from "./scenario-evening.mjs";
 import { addHomes } from "./scenario-homes.mjs";
 import { addGifts } from "./scenario-gifts.mjs";
 import { addFranceTrip } from "./scenario-france.mjs";
@@ -23,6 +24,7 @@ export function buildScenarios(ctx) {
     facts.push({ id, prompt, expected, evidence, limits });
   const state = { ctx, day: ctx.day, add, fact };
   const homes = addHomes(state);
+  const evening = addEvening(state);
   addGifts(state);
   const trip = addFranceTrip(state);
   const audioText = addCommitments(state);
@@ -64,7 +66,10 @@ export function buildScenarios(ctx) {
   return {
     sources,
     facts,
+    additionalPeople: [evening.friend],
     assets: {
+      eveningTicket: evening.ticket,
+      eveningTenancy: evening.tenancy,
       audioText,
       symptomAudioText,
       receipt,

@@ -30092,6 +30092,44 @@
     "labels": ["INBOX"]
   },
   {
+    "externalId": "sb-evening-reservation",
+    "subject": "Booking confirmed: The Clockmaker's Map",
+    "from": "p_merchant",
+    "fromEmail": "tickets@stage-lantern.example.com",
+    "to": ["self"],
+    "toEmails": ["sacha.bellamy@example.com"],
+    "body": "Your booking DEMO-EVENING-2048 is confirmed for 2026-10-03 at 20:00 Europe/London at Criterion Theatre, 218-223 Piccadilly, London. Two tickets are attached. This is a synthetic reservation for an invented performance, not an actual theatre listing.",
+    "sentAt": "2026-09-30T10:00:00.000Z",
+    "threadId": "thread-sb-evening-reservation",
+    "labels": ["INBOX"],
+    "attachments": [
+      {
+        "filename": "evening-tickets.pdf",
+        "mimeType": "application/pdf",
+        "assetPath": "assets/evening-tickets.pdf"
+      }
+    ]
+  },
+  {
+    "externalId": "sb-evening-shortlet",
+    "subject": "Signed short-let agreement for your London stay",
+    "from": "p_landlord",
+    "fromEmail": "paula.wren@example.com",
+    "to": ["self"],
+    "toEmails": ["sacha.bellamy@example.com"],
+    "body": "Your signed agreement is attached. It covers your temporary London accommodation; retain it for your records.",
+    "sentAt": "2026-09-30T10:00:00.000Z",
+    "threadId": "thread-sb-evening-shortlet",
+    "labels": ["INBOX"],
+    "attachments": [
+      {
+        "filename": "evening-shortlet.pdf",
+        "mimeType": "application/pdf",
+        "assetPath": "assets/evening-shortlet.pdf"
+      }
+    ]
+  },
+  {
     "externalId": "sb-sketching-stool-order",
     "subject": "Amazon order EXAMPLE-731-2048 delivered",
     "from": "p_gift_orders",

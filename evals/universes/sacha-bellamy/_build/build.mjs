@@ -137,7 +137,10 @@ export async function buildUniverse({ asOf = REFERENCE_DAY, outDir = root, media
     await writeFile(path, await format(JSON.stringify(data), { ...style, parser: "json" }));
   };
   await write(join(outDir, "universe.json"), manifest);
-  await write(join(outDir, "cast.json"), ctx.cast);
+  await write(join(outDir, "cast.json"), {
+    ...ctx.cast,
+    people: [...ctx.cast.people, ...scenarios.additionalPeople],
+  });
   await write(join(outDir, "demo-facts.json"), {
     asOf,
     weekStart: ctx.monday,

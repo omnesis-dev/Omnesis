@@ -151,6 +151,33 @@
       ]
     },
     {
+      "id": "A16",
+      "prompt": "What time should I leave home tonight?",
+      "expected": {
+        "date": "2026-10-03",
+        "show": "The Clockmaker's Map",
+        "showTime": "20:00",
+        "venue": "Criterion Theatre, 218-223 Piccadilly, London",
+        "pub": "The Three Greyhounds, 25 Greek Street, London W1D 5DD",
+        "meetingTime": "19:00",
+        "home": "Flat Example, Example House, Gower Street, Bloomsbury, London",
+        "seats": ["Stalls, Row H, Seat 12", "Stalls, Row H, Seat 13"],
+        "followUpPrompt": "What seats do we have?"
+      },
+      "evidence": [
+        "sb-evening-reservation",
+        "sb-evening-calendar",
+        "sb-evening-pub-plan",
+        "sb-evening-shortlet"
+      ],
+      "limits": [
+        "Resolve tonight to the London day when loading the universe; dates remain fixed until a fresh load.",
+        "The earlier pub plan changes the arrival target to 19:00; the show starts at 20:00.",
+        "A real route lookup must supply travel duration. The fictional short-let has only a public street/locality route origin; state that approximation.",
+        "Seat numbers exist only in the actual ticket PDF. The short-let address exists only in the actual tenancy PDF."
+      ]
+    },
+    {
       "id": "F01",
       "prompt": "Reconstruct my UK address history since September 2016. Resolve the overlapping tenancies and cite the actual move evidence.",
       "expected": {
