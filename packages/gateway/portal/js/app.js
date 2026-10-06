@@ -261,6 +261,8 @@ function App() {
   // false until the /status read resolves, so the affordance never flashes in.
   const [developer, setDeveloper] = useState(false);
   const [testInstance, setTestInstance] = useState(null);
+  // Withhold demo-sensitive cards until the gateway has declared its mode.
+  const [demo, setDemo] = useState(null);
   // A passive, gateway-owned release result. Null before the first successful
   // check, on malformed data, or when this install is current.
   const [releaseUpdate, setReleaseUpdate] = useState(null);
@@ -307,6 +309,7 @@ function App() {
       if (generation !== statusRequestGeneration.current) return;
       setExperimental(status?.experimental === true);
       setDeveloper(status?.developer === true);
+      setDemo(status?.demo === true);
       setTestInstance(status?.testInstance ?? null);
       const nextReleaseUpdate = releaseUpdateFromStatus(status);
       setReleaseUpdate((current) =>
@@ -553,7 +556,7 @@ function App() {
           </div>
         </a>
 
-        <${TestInstanceCard} instance=${testInstance} />
+        ${demo === false && html`<${TestInstanceCard} instance=${testInstance} />`}
 
         <nav class="sidebar-nav">
           ${NAV_ITEMS.filter((item) => !item.experimental || experimental).map((item) => {
@@ -588,7 +591,7 @@ function App() {
           })}
         </nav>
 
-        <${FleetHostUpdate} releaseUpdate=${releaseUpdate} />
+        ${demo === false && html`<${FleetHostUpdate} releaseUpdate=${releaseUpdate} />`}
 
         <div class="sidebar-convos" ref=${menuRootRef}>
           <div class="sidebar-convos-list">
@@ -695,7 +698,7 @@ function App() {
           : route.view === "people"
           ? html`<${PeopleView} personId=${route.personId} tab=${route.tab} initialQuery=${route.query} experimental=${experimental} />`
           : route.view === "sources"
-          ? html`<${SourcesView} />`
+          ? html`<${SourcesView} demo=${demo} />`
           : route.view === "source-recent"
           ? html`<${SourceRecentView} sourceId=${route.sourceId} />`
           : route.view === "settings"

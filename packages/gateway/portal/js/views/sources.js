@@ -578,7 +578,7 @@ export function sourceMetaRefresh(rows, coveredSynced, resolves = sourceIconReso
   return { refresh: unresolved || newlySynced, covered: new Set(synced) };
 }
 
-export function SourcesView() {
+export function SourcesView({ demo = false } = {}) {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
   const agentPromoVisible = useAgentPromoVisible();
@@ -997,7 +997,7 @@ export function SourcesView() {
 
       ${indexStats && html`<${MigrationBar} versions=${indexStats.indexVersions} />`}
 
-      ${!loading
+      ${!loading && demo === false
         && (shouldShowExtensionPromo({ sources }) || shouldShowMobilePromos({ sources }) || agentPromoVisible)
         && html`<div class="sources-promo-row">
           ${shouldShowExtensionPromo({ sources }) && html`<${ExtensionPromoCard} />`}

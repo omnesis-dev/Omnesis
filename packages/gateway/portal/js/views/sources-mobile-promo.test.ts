@@ -184,6 +184,25 @@ describe("SourcesView phone-app promos", () => {
     expect(row.textContent).not.toContain("Install the Chrome extension");
   });
 
+  test("demo mode hides all installation cards and restoring normal mode reveals them", async () => {
+    apiMocks.getAccessOverview.mockResolvedValue({
+      oauth: { resource: "https://gateway.example.org/mcp" },
+      principals: [],
+    });
+    await act(async () => { render(h(SourcesView, { demo: true }), host); });
+    await vi.waitFor(() => expect(host.textContent).not.toContain("Loading…"));
+    expect(host.querySelector(".sources-promo-row")).toBeNull();
+    expect(host.textContent).toContain("+ Add source");
+    await act(async () => { render(h(SourcesView, { demo: false }), host); });
+    await vi.waitFor(() => expect(host.querySelectorAll(".sources-promo-row .ext-promo")).toHaveLength(4));
+  });
+
+  test("withholds installation cards until demo mode is known", async () => {
+    await act(async () => { render(h(SourcesView, { demo: null }), host); });
+    await vi.waitFor(() => expect(host.textContent).not.toContain("Loading…"));
+    expect(host.querySelector(".sources-promo-row")).toBeNull();
+  });
+
   test("the agent card closes the row while no agent is connected", async () => {
     apiMocks.getAccessOverview.mockResolvedValue({
       oauth: { resource: "https://gateway.example.org/mcp" },

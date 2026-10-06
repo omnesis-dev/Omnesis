@@ -233,6 +233,24 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     expect(card?.textContent).toContain(purpose);
   });
 
+  test("demo mode hides test identity and release cards while preserving navigation", async () => {
+    getStatus.mockResolvedValue({
+      demo: true,
+      testInstance: { purpose: "Try navigation" },
+      release: {
+        currentVersion: "1.4.0",
+        latestVersion: "1.5.0",
+        installMethod: "source",
+        checkedAt: "2026-09-07T12:00:00.000Z",
+        updateAvailable: true,
+      },
+    } as never);
+    await mount();
+    expect(host.querySelector(".sidebar-test-instance")).toBeNull();
+    expect(host.querySelector(".sidebar-release")).toBeNull();
+    expect(host.querySelector(".sidebar-nav")?.textContent).toContain("Sources");
+  });
+
   test("shows a quiet sidebar notice for a newer release", async () => {
     getStatus.mockResolvedValue({
       experimental: false,
