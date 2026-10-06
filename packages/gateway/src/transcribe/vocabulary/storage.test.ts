@@ -201,7 +201,7 @@ describe("vocabulary materialization", () => {
     expect(plan.map((row) => row.detail).join(" ")).not.toContain("TEMP B-TREE");
   });
 
-  test("recent relationship terms survive frequency crowding without losing frequent terms", () => {
+  test("recent candidate stream survives frequency crowding with rarity emphasized", () => {
     const db = database();
     db.prepare(
       "INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at) VALUES ('recent-speaker','Orvella','fictional','2026-01-01','2026-01-01','2026-01-01','2026-01-01')",
@@ -227,14 +227,13 @@ describe("vocabulary materialization", () => {
         speaker: { personId: "recent-speaker" },
         recordedAt: "2026-01-01",
       },
-      settings,
+      { ...settings, rarityWeight: 1, contextLiftWeight: 1 },
     );
-    expect(result.entries.map((entry) => entry.text)).toContain("Umbriolet");
+    expect(result.entries[0].text).toBe("Umbriolet");
     expect(result.entries.map((entry) => entry.text)).toContain("Dormanthh");
     expect(result.entries).toHaveLength(settings.maxTerms);
     // Both profiles contribute, while each profile's two streams count once.
-    const rarity = 0.5 + 0.5 / (1 + Math.log1p(2));
-    const expected = 3 * Math.log1p(2) * rarity * (1 + 3 * 1.5);
+    const expected = ((3 * Math.log1p(2)) / (1 + Math.log1p(2))) * (1 + 3 * 3);
     expect(result.entries.find((entry) => entry.text === "Umbriolet")?.score).toBeCloseTo(
       expected,
       10,
