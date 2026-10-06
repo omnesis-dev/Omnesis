@@ -94,6 +94,7 @@ function createGatewayTestDb() {
     -- search doesn't trip over a missing table.
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
+      source_id TEXT,
       metadata TEXT
     );
   `);
@@ -1183,9 +1184,12 @@ describe("SearchPipeline (metadata hydration)", () => {
     ]);
 
     const gatewayDb = new Database(`/tmp/omnesis-gw-mime-${randomUUID()}.db`);
-    gatewayDb.exec(`CREATE TABLE documents (id TEXT PRIMARY KEY, metadata TEXT)`);
-    gatewayDb.prepare(`INSERT INTO documents (id, metadata) VALUES (?, ?)`).run(
+    gatewayDb.exec(
+      `CREATE TABLE documents (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, metadata TEXT)`,
+    );
+    gatewayDb.prepare(`INSERT INTO documents (id, source_id, metadata) VALUES (?, ?, ?)`).run(
       "doc-pdf-1",
+      "google-drive:user@test.com",
       JSON.stringify({
         appUrl: "googledrive://file/doc-pdf-1",
         extra: { mimeType: "application/pdf" },
@@ -1224,9 +1228,12 @@ describe("SearchPipeline (metadata hydration)", () => {
       },
     ]);
     const gatewayDb = new Database(`/tmp/omnesis-gw-url-${randomUUID()}.db`);
-    gatewayDb.exec(`CREATE TABLE documents (id TEXT PRIMARY KEY, metadata TEXT)`);
-    gatewayDb.prepare(`INSERT INTO documents (id, metadata) VALUES (?, ?)`).run(
+    gatewayDb.exec(
+      `CREATE TABLE documents (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, metadata TEXT)`,
+    );
+    gatewayDb.prepare(`INSERT INTO documents (id, source_id, metadata) VALUES (?, ?, ?)`).run(
       "doc-mail-1",
+      "gmail:user@example.com",
       JSON.stringify({
         sourceUrl:
           "https://mail.google.com/mail/u/0/?authuser=user%40example.com#all/18c30b6251bb7dc2",
@@ -1263,8 +1270,12 @@ describe("SearchPipeline (metadata hydration)", () => {
       },
     ]);
     const gatewayDb = new Database(`/tmp/omnesis-gw-url2-${randomUUID()}.db`);
-    gatewayDb.exec(`CREATE TABLE documents (id TEXT PRIMARY KEY, metadata TEXT)`);
-    gatewayDb.prepare(`INSERT INTO documents (id, metadata) VALUES (?, ?)`).run("doc-note-2", "{}");
+    gatewayDb.exec(
+      `CREATE TABLE documents (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, metadata TEXT)`,
+    );
+    gatewayDb
+      .prepare(`INSERT INTO documents (id, source_id, metadata) VALUES (?, ?, ?)`)
+      .run("doc-note-2", "notes:local", "{}");
 
     const pipeline = new SearchPipeline({ indexDb: db });
     pipeline.setGatewayDb(gatewayDb);
@@ -1298,10 +1309,16 @@ describe("SearchPipeline (metadata hydration)", () => {
     ]);
 
     const gatewayDb = new Database(`/tmp/omnesis-gw-mime2-${randomUUID()}.db`);
-    gatewayDb.exec(`CREATE TABLE documents (id TEXT PRIMARY KEY, metadata TEXT)`);
+    gatewayDb.exec(
+      `CREATE TABLE documents (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, metadata TEXT)`,
+    );
     gatewayDb
-      .prepare(`INSERT INTO documents (id, metadata) VALUES (?, ?)`)
-      .run("doc-email-x", JSON.stringify({ sourceUrl: "https://mail.google.com/x" }));
+      .prepare(`INSERT INTO documents (id, source_id, metadata) VALUES (?, ?, ?)`)
+      .run(
+        "doc-email-x",
+        "gmail:user@test.com",
+        JSON.stringify({ sourceUrl: "https://mail.google.com/x" }),
+      );
 
     const pipeline = new SearchPipeline({ indexDb: db });
     pipeline.setGatewayDb(gatewayDb);
