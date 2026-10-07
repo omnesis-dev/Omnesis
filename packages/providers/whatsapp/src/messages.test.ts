@@ -7,7 +7,7 @@ import { SourceId, ProviderId } from "@omnesis/types";
 import { WhatsAppMessagesSource } from "./messages.js";
 import { MessageStore } from "./message-store.js";
 import type { MediaDownloadFn, WhatsAppMessagesSourceOptions } from "./messages.js";
-import type { StoredMessage } from "./types.js";
+import type { StoredMessage, WhatsAppConnectionFailure } from "./types.js";
 import type { AttachmentExtractFn } from "@omnesis/core";
 
 function makeMsg(overrides: Partial<StoredMessage> = {}): StoredMessage {
@@ -91,6 +91,24 @@ describe("WhatsAppMessagesSource", () => {
     const disabled = await source.sync(completed.cursor);
     enabled = true;
     expect((await source.sync(disabled.cursor)).documents).toEqual([]);
+  });
+
+  test("sync fails while the link is down and drains the buffer once it is back", async () => {
+    let failure: WhatsAppConnectionFailure | null = {
+      kind: "network",
+      message: "WhatsApp reconnect failed after 10 attempts",
+    };
+    source = new WhatsAppMessagesSource(store, undefined, { connectionFailure: () => failure });
+    store.addMessages([makeMsg()]);
+
+    await expect(source.sync(null)).rejects.toMatchObject({
+      kind: "network",
+      message: "WhatsApp reconnect failed after 10 attempts",
+    });
+
+    failure = null;
+    const recovered = await source.sync(null);
+    expect(recovered.documents).toHaveLength(1);
   });
 
   test("has correct id and providerId", () => {

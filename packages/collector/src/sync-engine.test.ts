@@ -1608,6 +1608,146 @@ describe("SyncEngine onSourceError", () => {
     ).toHaveLength(1);
   });
 
+  test("a reported connection error leaves the source wired, so it recovers", async () => {
+    // A live-socket source reports a lost link once its reconnect burst is
+    // spent, then keeps reconnecting by itself and pushes when it is back. The
+    // report must leave the source scheduled and subscribed: unwiring it would
+    // send that push nowhere, and the source would stay failed until the
+    // collector restarted.
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const pushEngine = new SyncEngine(gateway, { pushDebounceMs: 10 });
+      let linkDown = false;
+      let syncs = 0;
+      let push: (() => void) | undefined;
+      let reportError: ((error: string) => void) | undefined;
+      let unsubscribed = 0;
+      const source = makeSource("wa:recovering", "whatsapp", async () => {
+        syncs += 1;
+        if (linkDown) throw new Error("WhatsApp reconnect failed after 10 attempts");
+        return { documents: [], deletedExternalIds: [], cursor: {}, hasMore: false };
+      });
+      source.instance.onPushEvent = (cb) => {
+        push = cb;
+        return () => {
+          unsubscribed += 1;
+        };
+      };
+      source.instance.onSourceError = (cb) => {
+        reportError = cb;
+        return () => {
+          unsubscribed += 1;
+        };
+      };
+      pushEngine.registerProvider(makeProvider("whatsapp", true, [source]));
+      await pushEngine.startSyncLoop({ defaultSyncInterval: "1m" }, { skipInitialSync: true });
+      const state = () => pushEngine.getStatuses().find((s) => s.sourceId === "wa:recovering");
+
+      linkDown = true;
+      reportError!("WhatsApp reconnect failed after 10 attempts");
+      expect(state()?.state).toBe("error");
+      expect(unsubscribed, "the report must not unwire the source").toBe(0);
+
+      // While the link is down a scheduled tick still runs, and fails.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(syncs).toBe(1);
+      expect(state()?.state).toBe("error");
+
+      // The link comes back and the source pushes: the error clears.
+      linkDown = false;
+      push!();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(syncs).toBe(2);
+      expect(state()?.state).toBe("idle");
+      expect(state()?.lastError).toBeUndefined();
+
+      // And the interval timer is still armed.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(syncs).toBe(3);
+      pushEngine.stopSyncLoop();
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  test("a connection error during a sync leaves that run in charge", async () => {
+    // A WhatsApp socket blip can fire while a sync reads happily from the local
+    // store the socket already filled; aborting there would discard a page for
+    // a source that was never removed. The status stays `syncing` too, so the
+    // guard that keeps a tick from starting a second run still holds.
+    let reportError: ((error: string) => void) | undefined;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signalDuringSync: AbortSignal | undefined;
+    let finished = false;
+    const source = makeSource("wa:inflight", "whatsapp", async () => {
+      throw new Error("replaced below");
+    });
+    source.instance.sync = async (_cursor, opts) => {
+      signalDuringSync = opts?.signal;
+      await gate;
+      finished = true;
+      return { documents: [], deletedExternalIds: [], cursor: {}, hasMore: false };
+    };
+    source.instance.onSourceError = (cb) => {
+      reportError = cb;
+    };
+    engine.registerProvider(makeProvider("whatsapp", true, [source]));
+    await engine.startSyncLoop({}, { skipInitialSync: true });
+    engine.triggerSync("wa:inflight");
+    await vi.waitFor(() => expect(signalDuringSync).toBeDefined());
+
+    reportError!("WhatsApp reconnect failed after 10 attempts");
+    const state = () => engine.getStatuses().find((s) => s.sourceId === "wa:inflight")?.state;
+    expect(signalDuringSync!.aborted).toBe(false);
+    expect(state()).toBe("syncing");
+
+    release();
+    await vi.waitFor(() => expect(finished).toBe(true));
+    expect(signalDuringSync!.aborted).toBe(false);
+    await vi.waitFor(() => expect(state()).toBe("idle"));
+  });
+
+  test("an unlinked device reported as an error parks as needs-auth on the next tick", async () => {
+    // The report leaves the source scheduled; the tick's credential check is
+    // what keeps a failure that cannot heal by itself in front of the operator.
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      let reportError: ((error: string) => void) | undefined;
+      const source = makeSource("wa:unlinked", "whatsapp", async () => ({
+        documents: [],
+        deletedExternalIds: [],
+        cursor: {},
+        hasMore: false,
+      }));
+      source.instance.onSourceError = (cb) => {
+        reportError = cb;
+      };
+      let credential: "connected" | "unlinked" = "connected";
+      const provider: RegisteredProvider = {
+        ...makeProvider("whatsapp", true, [source]),
+        credentialState: async () => ({ status: credential }),
+      };
+      engine.registerProvider(provider);
+      await engine.startSyncLoop({ defaultSyncInterval: "1m" }, { skipInitialSync: true });
+
+      credential = "unlinked";
+      reportError!("WhatsApp logged out — device was unlinked");
+      expect(engine.getStatuses()[0].state).toBe("error");
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(engine.getStatuses()[0].state).toBe("needs-auth");
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
   test("source error does not affect disabled sources", async () => {
     let errorHandler: ((error: string) => void) | undefined;
 

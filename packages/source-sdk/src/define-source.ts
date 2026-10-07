@@ -358,9 +358,15 @@ export interface SourceInstance<TCursor extends SyncCursor = SyncCursor> {
   onPushEvent?(callback: () => void): Unsubscribe | void;
 
   /**
-   * Report permanent connection failures (e.g. an unlinked device), and
-   * return the handle that stops the reports. See {@link onPushEvent} for why
-   * the handle exists.
+   * Report a connection failure (e.g. an unlinked device, or a live link that
+   * stopped reconnecting), and return the handle that stops the reports. See
+   * {@link onPushEvent} for why the handle exists.
+   *
+   * The host shows the source as failed at once but keeps it scheduled and
+   * subscribed, so the next successful sync clears the error. A source that
+   * recovers on its own fires {@link onPushEvent} when it does; while it has
+   * not recovered, its syncs should fail rather than succeed against what it
+   * buffered before the link went down.
    */
   onSourceError?(callback: (error: string) => void): Unsubscribe | void;
 

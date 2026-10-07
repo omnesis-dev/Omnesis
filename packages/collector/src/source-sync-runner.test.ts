@@ -2657,8 +2657,8 @@ describe("SourceSyncRunner — a source stopped mid-sync", () => {
     // actually gone. A sync entering in that window used to be handed a fresh,
     // un-aborted signal — the source was still registered and its status still
     // present — and wrote its page. WhatsApp is the shape that hits it: a slow
-    // Baileys flush in dispose, and push-triggered syncs that survive
-    // `stopSource`.
+    // Baileys flush in dispose, and push-triggered syncs that can start at
+    // any moment.
     //
     // A signal is now armed only by registration, so the window hands out an
     // aborted one instead of minting.
@@ -2756,19 +2756,6 @@ describe("SourceSyncRunner — a source stopped mid-sync", () => {
     expect(signal.aborted).toBe(false);
     await registry.unregisterSource(id);
     expect(signal.aborted).toBe(true);
-  });
-
-  test("a connection error does not abort — the source is still here", async () => {
-    // `stopSource` also runs when a live-socket source reports a connection
-    // error. A WhatsApp socket blip can fire while a sync reads happily from
-    // the local store the socket already filled; aborting there would discard
-    // a page for a source that was never removed.
-    const { registry } = makeRegistry();
-    const id = "whatsapp:+15550100142";
-    registry.registerProvider(makeProvider(makeDocumentSource(id, async () => emptyPage())));
-    const signal = registry.syncSignal(id);
-    registry.stopSource(id);
-    expect(signal.aborted).toBe(false);
   });
 
   test("a queued old instance cannot borrow the replacement's fresh signal", async () => {

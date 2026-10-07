@@ -33,6 +33,15 @@ export interface WhatsAppSyncCursor extends SyncCursor {
  *   re-pair (refreshes the recent window) or a one-time backup import.
  *   Never silently promoted to `complete` by a timer.
  */
+/**
+ * Why the WhatsApp link cannot deliver messages: `auth` when the linked device
+ * was removed, `network` when the reconnect burst ran out.
+ */
+export interface WhatsAppConnectionFailure {
+  kind: "auth" | "network";
+  message: string;
+}
+
 export type HistorySyncState = "streaming" | "interrupted" | "complete";
 
 /** Group sub-kind. Only meaningful when `StoredChat.isGroup` is true. */
