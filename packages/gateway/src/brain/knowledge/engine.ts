@@ -368,19 +368,34 @@ export class KnowledgeEngine {
             ? this.source(item.nodeId.slice(7))
             : null;
           const node = source ? null : this.deps.service.fetch(item.nodeId, true);
-          const score = await judgeKnowledge(this.deps.decisions, source ? "discovery" : "impact", {
-            inputVersions: item.inputVersions,
-            source: source ? { ...source, content: source.content.slice(0, 24000) } : undefined,
-            node,
-            changedInputs: this.batchSources(batchId),
-          });
           const isReview = !!this.deps.db
             .prepare(
               "SELECT 1 FROM knowledge_work WHERE batch_id=? AND subject_id=? AND reason='review'",
             )
             .get(batchId, item.nodeId.startsWith("source:") ? item.nodeId.slice(7) : item.nodeId);
+          // An agent already selected these repair targets while interpreting a
+          // source. Do not let a second, cheaper gate discard that explicit work.
+          const isDiscoveryTarget =
+            !source &&
+            !!this.deps.db
+              .prepare(
+                `SELECT 1 FROM knowledge_discovery_targets t
+             JOIN knowledge_frontier f ON f.node_id='source:'||t.source_id AND f.batch_id=?
+             JOIN documents d ON d.id=t.source_id AND d.content_hash=t.source_revision
+             WHERE t.node_id=? LIMIT 1`,
+              )
+              .get(batchId, item.nodeId);
+          const score = isDiscoveryTarget
+            ? null
+            : await judgeKnowledge(this.deps.decisions, source ? "discovery" : "impact", {
+                inputVersions: item.inputVersions,
+                source: source ? { ...source, content: source.content.slice(0, 24000) } : undefined,
+                node,
+                changedInputs: this.batchSources(batchId),
+              });
           if (
             !isReview &&
+            !isDiscoveryTarget &&
             score !== null &&
             score < 0.25 &&
             (source

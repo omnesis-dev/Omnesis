@@ -12,6 +12,8 @@ import {
 import { DERIVATION_STAGES } from "../../domain/DocumentDerivation.js";
 import { createTemporalAnnotationTables } from "../../enrichment/temporal-annotations/storage.js";
 import { createBrief, setBriefState, getBrief } from "../storage/briefs.js";
+import { createAnnotationStorageTables } from "../storage/annotations.js";
+import { createPersonAnnotationStorageTables } from "../storage/person-annotations.js";
 import { createOpenLoop, updateOpenLoop } from "../storage/open-loops.js";
 import { resolveBrainSettings } from "../config.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
@@ -834,6 +836,163 @@ describe("knowledge coordinator", () => {
         .get(),
     ).toEqual({ source_revision: "v1", node_id: "project" });
   });
+
+  it("materializes fresh owner targets and reviews their claims before completing discovery", async () => {
+    source();
+    await engine.tick();
+    const batch = batchFor("input");
+    const offered = (await engine.next(batch.id, batch.runId)).items.find((item) => item.source)!;
+    createOpenLoop(
+      db,
+      {
+        id: "fresh-loop",
+        createdByRun: batch.runId,
+        title: "Prepare the workshop",
+        description: "The workshop begins Friday.",
+        confidence: 0.8,
+        importance: 0.5,
+        docs: ["input"],
+      },
+      now,
+    );
+    expect(getKnowledgeNode(db, "fresh-loop")).toBeNull();
+    await engine.completeSource(
+      batch.id,
+      batch.runId,
+      offered.id,
+      offered.inputFingerprint,
+      false,
+      ["interpretation", "organization", "conversion"],
+      ["fresh-loop"],
+    );
+    expect(getKnowledgeNode(db, "fresh-loop")?.ownerId).toBe("fresh-loop");
+    expect(listKnowledgeFrontier(db, batch.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ nodeId: "fresh-loop", status: "pending", depth: 1 }),
+      ]),
+    );
+    // Explicit repair targets have already been selected by the synthesis agent;
+    // a low impact score must not discard their initial claim-grounding pass.
+    score = 0;
+    const repair = (await engine.next(batch.id, batch.runId)).items.find(
+      (item) => item.id === "fresh-loop",
+    )!;
+    expect(repair).toBeDefined();
+    expect(repair.pendingClaimIds).toContain("legacy");
+    await engine.saveNode(
+      batch.id,
+      batch.runId,
+      repair.id,
+      repair.inputFingerprint,
+      {
+        id: repair.id,
+        ownerId: repair.id,
+        kind: "loop",
+        title: repair.node!.title,
+        markdown: '<claim id="schedule" refs="source:input">The workshop begins Friday.</claim>',
+        expectedRevision: repair.node!.revision,
+        inputVersions: { "source:input": "v1" },
+        canonicalFields: repair.node!.canonicalFields,
+      },
+      repair.pendingClaimIds,
+    );
+    expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
+    expect(getKnowledgeNode(db, "fresh-loop")?.markdown).toContain('id="schedule"');
+    expect(getKnowledgeNode(db, "fresh-loop")?.markdown).not.toContain('id="legacy"');
+  });
+
+  it("rolls back owner materialization and leaves source discovery offered when any target is unavailable", async () => {
+    source();
+    await engine.tick();
+    const batch = batchFor("input");
+    const offered = (await engine.next(batch.id, batch.runId)).items.find((item) => item.source)!;
+    createOpenLoop(
+      db,
+      {
+        id: "fresh-loop",
+        createdByRun: batch.runId,
+        title: "Prepare the workshop",
+        confidence: 0.8,
+        importance: 0.5,
+        docs: ["input"],
+      },
+      now,
+    );
+    await expect(
+      engine.completeSource(
+        batch.id,
+        batch.runId,
+        offered.id,
+        offered.inputFingerprint,
+        false,
+        ["interpretation", "organization", "conversion"],
+        ["fresh-loop", "missing-owner"],
+      ),
+    ).rejects.toThrow("Discovery target is not available");
+    expect(getKnowledgeNode(db, "fresh-loop")).toBeNull();
+    expect(db.prepare("SELECT 1 FROM knowledge_discovery_targets").all()).toEqual([]);
+    expect(
+      db.prepare("SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id='input'").all(),
+    ).toEqual([]);
+    expect(listKnowledgeFrontier(db, batch.id)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ nodeId: offered.id, status: "offered" })]),
+    );
+  });
+
+  it.each([
+    ["doc_annotation", false],
+    ["doc_annotation", true],
+    ["person_annotation", false],
+    ["person_annotation", true],
+  ] as const)(
+    "rejects inactive %s repair targets even before owner sync (materialized=%s)",
+    async (kind, materialized) => {
+      createAnnotationStorageTables(db);
+      createPersonAnnotationStorageTables(db);
+      source();
+      await engine.tick();
+      const batch = batchFor("input");
+      const offered = (await engine.next(batch.id, batch.runId)).items.find((item) => item.source)!;
+      const table = kind === "doc_annotation" ? "doc_annotations" : "person_annotations";
+      const subject = kind === "doc_annotation" ? "doc_id" : "person_id";
+      db.prepare(
+        `INSERT INTO ${table}(id,${subject},claim_type,claim_text,evidence_doc_id,evidence_quote,confidence,created_by_run,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        "inactive-note",
+        "input",
+        "schedule",
+        "The workshop begins Friday.",
+        "input",
+        "The workshop begins Friday.",
+        0.7,
+        batch.runId,
+        now,
+      );
+      if (materialized) convertKnowledgeOwner(db, kind, "inactive-note", now);
+      db.prepare(`UPDATE ${table} SET invalidated_at=? WHERE id='inactive-note'`).run(now);
+      await expect(
+        engine.completeSource(
+          batch.id,
+          batch.runId,
+          offered.id,
+          offered.inputFingerprint,
+          false,
+          undefined,
+          ["inactive-note"],
+        ),
+      ).rejects.toThrow("annotation is inactive");
+      expect(db.prepare("SELECT 1 FROM knowledge_discovery_targets").all()).toEqual([]);
+      expect(
+        db.prepare("SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id='input'").all(),
+      ).toEqual([]);
+      expect(!!getKnowledgeNode(db, "inactive-note")).toBe(materialized);
+      expect(listKnowledgeFrontier(db, batch.id)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ nodeId: offered.id, status: "offered" }),
+        ]),
+      );
+    },
+  );
 
   it("requeues newly discovered overlap durably instead of racing an active region", async () => {
     source("new");

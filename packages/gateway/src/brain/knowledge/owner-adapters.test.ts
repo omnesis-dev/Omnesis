@@ -25,6 +25,7 @@ import {
 } from "./storage.js";
 import {
   convertKnowledgeOwner,
+  materializeKnowledgeOwner,
   readKnowledgeOwner,
   saveOwnedKnowledgeNode,
 } from "./owner-adapters.js";
@@ -69,6 +70,86 @@ function loop() {
     1,
   );
 }
+it.each(["loop", "brief", "doc_annotation", "person_annotation"] as const)(
+  "materializes a fresh %s owner by canonical identity without a periodic sweep",
+  (kind) => {
+    if (kind === "loop") loop();
+    else if (kind === "brief")
+      createBrief(
+        db,
+        {
+          id: "task",
+          createdByRun: "run",
+          kind: "info",
+          title: "Workshop",
+          description: "Workshop Friday.",
+          confidence: 0.7,
+          urgency: 0.3,
+          citations: ["evidence"],
+        },
+        1,
+      );
+    else {
+      const table = kind === "doc_annotation" ? "doc_annotations" : "person_annotations";
+      const subject = kind === "doc_annotation" ? "doc_id" : "person_id";
+      db.prepare(
+        `INSERT INTO ${table}(id,${subject},claim_type,claim_text,evidence_doc_id,evidence_quote,confidence,created_by_run,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        "task",
+        "evidence",
+        "schedule",
+        "Workshop Friday.",
+        "evidence",
+        "Workshop Friday.",
+        0.7,
+        "run",
+        1,
+      );
+    }
+    expect(getKnowledgeNode(db, "task")).toBeNull();
+    expect(materializeKnowledgeOwner(db, "task", 2)).toMatchObject({ kind, ownerId: "task" });
+    expect(getKnowledgeClaims(db, "task")[0]?.verification).toBe("unverified");
+    expect(getKnowledgeDependencies(db, "task")[0]?.relation).toBe("context");
+  },
+);
+
+it("does not materialize tombstoned owners or ambiguous canonical identities", () => {
+  loop();
+  createBrief(
+    db,
+    {
+      id: "task",
+      createdByRun: "run",
+      kind: "info",
+      title: "Workshop",
+      description: "Workshop Friday.",
+      confidence: 0.7,
+      urgency: 0.3,
+      citations: ["evidence"],
+    },
+    1,
+  );
+  expect(() => materializeKnowledgeOwner(db, "task", 2)).toThrow("ambiguous");
+  expect(getKnowledgeNode(db, "task")).toBeNull();
+  db.prepare("DELETE FROM briefs WHERE id='task'").run();
+  db.prepare("INSERT INTO knowledge_node_tombstones(id,deleted_at) VALUES('task',2)").run();
+  expect(materializeKnowledgeOwner(db, "task", 3)).toBeNull();
+});
+
+it("bounds fresh owner materialization by aggregate prose and evidence budgets", () => {
+  loop();
+  expect(() => materializeKnowledgeOwner(db, "task", 2, { chars: 2, references: 1024 })).toThrow(
+    "bounded writer budget",
+  );
+  expect(() => materializeKnowledgeOwner(db, "task", 2, { chars: 262144, references: 0 })).toThrow(
+    "bounded writer budget",
+  );
+  expect(getKnowledgeNode(db, "task")).toBeNull();
+  const budget = { chars: 262144, references: 1024 };
+  expect(materializeKnowledgeOwner(db, "task", 2, budget)?.kind).toBe("loop");
+  expect(budget).toEqual({ chars: 262144 - "Workshop Friday.".length, references: 1023 });
+});
+
 it("converts closed loops without reopening or inventing verified support", () => {
   loop();
   const result = convertKnowledgeOwner(db, "loop", "task", 2);

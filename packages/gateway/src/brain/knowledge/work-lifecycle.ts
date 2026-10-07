@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { assertKnowledgeRunFence, type KnowledgeRunFence } from "./run-fence.js";
 import { enqueueKnowledgeWork, type KnowledgeWork } from "./work.js";
 import { getKnowledgeNode } from "./storage.js";
+import { materializeKnowledgeOwner, readKnowledgeOwner } from "./owner-adapters.js";
+import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import { KnowledgeStorageError } from "./types.js";
 import type Database from "better-sqlite3";
 
@@ -179,12 +181,26 @@ export function recordKnowledgeDiscoveryTargets(
         { content_hash: string }
       >("SELECT d.content_hash FROM documents d LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id WHERE d.id=? AND COALESCE(r.deleted,0)=0")
       .get(input.sourceId);
-    if (!source || source.content_hash !== input.sourceRevision)
+    if (
+      !source ||
+      source.content_hash !== input.sourceRevision ||
+      !isKnowledgeEvidenceReadable(db, input.sourceId)
+    )
       throw new KnowledgeStorageError("revision_conflict", "Discovery source changed");
+    const conversionBudget = { chars: 262144, references: 1024 };
     for (const id of new Set(input.nodeIds)) {
-      const target = getKnowledgeNode(db, id);
+      const target =
+        getKnowledgeNode(db, id) ?? materializeKnowledgeOwner(db, id, now, conversionBudget);
       if (!target || target.canonicalFields.withdrawn === true)
         throw new KnowledgeStorageError("reference_invalid", "Discovery target is not available");
+      if (target.kind === "doc_annotation" || target.kind === "person_annotation") {
+        const owner = readKnowledgeOwner(db, target.kind, target.ownerId ?? id);
+        if (owner.canonicalFields.invalidatedAt != null)
+          throw new KnowledgeStorageError(
+            "reference_invalid",
+            "Discovery target annotation is inactive; use its active replacement",
+          );
+      }
       db.prepare(
         "INSERT OR IGNORE INTO knowledge_discovery_targets(source_id,source_revision,node_id,created_at) VALUES(?,?,?,?)",
       ).run(input.sourceId, input.sourceRevision, id, now);

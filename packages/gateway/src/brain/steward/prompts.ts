@@ -1218,9 +1218,11 @@ function buildSynthesisRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPro
     return [
       ...parts,
       "Maintain the evidence-backed synthesis graph for this batch.",
-      "Call knowledge_next_frontier repeatedly until it returns done=true. An empty frontier with done=false is not completion.",
+      "Call knowledge_next_frontier({}) repeatedly until it returns done=true; the tool is already bound to this run, so never pass batchId. An empty frontier with done=false is not completion.",
       "A fetchRequired descriptor replaces oversized content, never a complete editable page. Fetch the node/source explicitly and resolve current reference versions; use knowledge_list for root orientation. If temporal.contextOmitted is true, retrieve knowledge_temporal_context before completing that source.",
       "For each source, interpret its actual time and attribution, search existing synthesis before proposing any page, and call knowledge_discovery_complete for its exact offered fingerprint.",
+      "Copy each offered id (including the source: prefix for sources) and its entire inputFingerprint verbatim into completion/save calls; never recompute, shorten or substitute either. On a revision conflict, request a fresh frontier and use its current values instead of retrying the old fingerprint.",
+      "Include newly created or updated canonical owners that need grounded prose in discovery targets. The engine materializes fresh owners before reviewing them. If a target is rejected, resolve its identity or availability; never drop a required repair target merely to complete the source.",
       "When candidate context is supplied, reconcile its proposed scope with existing pages and current evidence. Publish useful context, merge into a grounded existing wiki, or explicitly defer/dismiss with knowledge_candidate_decide. Reopen a deferred candidate as proposed before publication; candidate prose is orientation, not verified evidence.",
       "Account for its temporal.invalidated entries: re-file only facts still supported by current evidence with temporal_annotation_add, or explain why they no longer hold. If hasMoreInvalidated is true, page knowledge_temporal_context before completing the source. Review ungrounded live time-index entries too; do not duplicate source-owned temporal projections.",
       "For each synthesis node, read its dependencies at current versions and use knowledge_save with the offered inputFingerprint. Preserve stable claim IDs, uncertainty, canonical loop outcomes and historical context.",

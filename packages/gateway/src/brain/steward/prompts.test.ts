@@ -1177,7 +1177,12 @@ describe("Cognition Steward run prompts", () => {
       kind: "synthesis",
       attempt: 2,
     });
-    expect(prompt).toContain("knowledge_next_frontier");
+    expect(prompt).toContain("knowledge_next_frontier({})");
+    expect(prompt).toContain("never pass batchId");
+    expect(prompt).toContain("including the source: prefix");
+    expect(prompt).toContain("inputFingerprint verbatim");
+    expect(prompt).toContain("request a fresh frontier");
+    expect(prompt).toContain("never drop a required repair target");
     expect(prompt).toContain("reviewedClaimIds");
     expect(prompt).toContain("pendingClaimIdsOmitted");
     expect(prompt).toContain("does not settle untouched claims");

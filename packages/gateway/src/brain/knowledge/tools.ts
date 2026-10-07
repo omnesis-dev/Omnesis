@@ -362,7 +362,7 @@ export function buildKnowledgeTools(
     tools.push(
       tool(
         "knowledge_next_frontier",
-        "Ask the engine for the next BFS level. The decision gate filters inputs before they are offered. Follow fetchRequired to retrieve complete nodes or sources; inputVersionsOmitted requires resolving current references. If source.contentTruncated is true, fetch the complete source before synthesizing claims. If temporal.contextOmitted is true, call knowledge_temporal_context before completing the source. Continue until done=true; an empty level with done=false means deterministic maintenance still has work.",
+        "Call with {} only: this tool is already bound to the current run and batch. Read the next bounded maintenance frontier. Copy offered IDs and fingerprints verbatim into save/completion calls; request a fresh frontier after revision conflicts. Follow fetchRequired to retrieve complete nodes or sources; inputVersionsOmitted requires resolving current references. If source.contentTruncated is true, fetch the complete source before synthesizing claims. If temporal.contextOmitted is true, call knowledge_temporal_context before completing the source. Continue until done=true, even when items is empty.",
         z.object({}).strict(),
         true,
         async () => {
@@ -434,7 +434,7 @@ export function buildKnowledgeTools(
     tools.push(
       tool(
         "knowledge_discovery_complete",
-        "After interpreting an offered source, reconcile existing loops, annotations and pages; optionally propose a new reusable page. Record that discovery is complete for this exact source version. Known dependents are then inspected by the engine.",
+        "After interpreting an offered source, reconcile existing loops, annotations and pages; optionally propose a reusable page. Copy the offered id including source: and the entire inputFingerprint verbatim. Include canonical owners needing grounded prose as targets; fresh owners are materialized before repair. Resolve unavailable target errors rather than dropping intended repairs. On revision conflict, fetch the frontier again. Known dependents are then inspected by the engine.",
         z
           .object({
             id,

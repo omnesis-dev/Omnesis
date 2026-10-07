@@ -372,6 +372,45 @@ export function convertKnowledgeOwner(
   })();
 }
 
+/** Resolve fresh canonical owners before the periodic conversion sweep reaches them. */
+export function materializeKnowledgeOwner(
+  db: Database.Database,
+  ownerId: string,
+  now: number,
+  budget?: { chars: number; references: number },
+): ReturnType<typeof getKnowledgeNode> {
+  if (!isKnowledgeOwnerReadable(db, ownerId)) return null;
+  const owners: Array<[KnowledgeOwnerKind, string]> = [
+    ["loop", "open_loops"],
+    ["brief", "briefs"],
+    ["doc_annotation", "doc_annotations"],
+    ["person_annotation", "person_annotations"],
+  ];
+  const matches = owners.filter(
+    ([, table]) =>
+      db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table) &&
+      db.prepare(`SELECT 1 FROM ${table} WHERE id=?`).get(ownerId),
+  );
+  if (matches.length > 1)
+    throw new KnowledgeStorageError("reference_invalid", "Discovery target identity is ambiguous");
+  const kind = matches[0]?.[0];
+  if (!kind) return null;
+  if (budget) {
+    const owner = readKnowledgeOwner(db, kind, ownerId);
+    if (
+      owner.markdown.length > budget.chars ||
+      owner.evidenceDocumentIds.length > budget.references
+    )
+      throw new KnowledgeStorageError(
+        "claim_invalid",
+        "Discovery target conversion exceeds the bounded writer budget; ground fewer owners per call",
+      );
+    budget.chars -= owner.markdown.length;
+    budget.references -= owner.evidenceDocumentIds.length;
+  }
+  return convertKnowledgeOwner(db, kind, ownerId, now).node;
+}
+
 export function buildLegacyOwnerKnowledge(
   db: Database.Database,
   owner: KnowledgeOwnerSnapshot,
