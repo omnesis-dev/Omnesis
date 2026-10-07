@@ -173,6 +173,20 @@ describe("Cognition Steward tools", () => {
     cleanupDb(path);
   });
 
+  test("mutation contracts distinguish current obligations and display claims from historical evidence", () => {
+    const loop = findTool(tools, "open_loop_create");
+    expect(loop.description).toContain("currently actionable outcome for the user");
+    expect(loop.description).toContain("historical status or unsuccessful attempt alone");
+    expect(loop.description).toContain("proves neither resolution nor non-resolution");
+    for (const name of ["brief_create", "brief_update"]) {
+      const description = findTool(tools, name).description;
+      expect(description).toContain("Audit title, description, and body");
+      expect(description).toContain("implied current-status and negative claims");
+      expect(description).toContain("assertedClaims");
+      expect(description).toContain("displayed prose");
+    }
+  });
+
   async function createLoop(extra: Record<string, unknown> = {}): Promise<string> {
     const result = await findTool(tools, "open_loop_create").invoke(
       {

@@ -6,9 +6,9 @@
  *
  * The loader is tested per resolution kind;
  * the judge adapter is tested structurally — style selection from the config
- * knob, verdict parsing (labels, Yes/No mapping, junk → throws), and the
- * usage callback — never by asserting prompt content verbatim. Fixture data
- * is invented.
+ * knob, guardrail delivery, verdict parsing (labels, Yes/No mapping, junk →
+ * throws), and the usage callback. Scripted replies do not test model accuracy.
+ * Fixture data is invented.
  */
 
 import { describe, expect, test, vi } from "vitest";
@@ -129,6 +129,31 @@ describe("LlmJudgeEntailmentVerifier — parsing", () => {
 });
 
 describe("LlmJudgeEntailmentVerifier — style selection + usage", () => {
+  test("judge instructions require support for every factual clause, time scope, and advice premise", async () => {
+    const input = {
+      evidence: "The pond gate latch was loose last autumn.",
+      claim: "The latch was loose last autumn; repair it because it remains loose today.",
+    };
+    const completer = fakeCompleter("NEUTRAL");
+    await judge(completer).verify(input);
+    const prompt = completer.prompts[0]!;
+    expect(prompt).toContain(input.evidence);
+    expect(prompt).toContain(input.claim);
+    expect(prompt).toContain("every factual clause and implied factual premise must be supported");
+    expect(prompt).toContain("does not establish that the condition persists now");
+    expect(prompt).toContain(
+      "Missing later evidence establishes neither resolution nor non-resolution",
+    );
+    expect(prompt).toContain(
+      "Advice or a recommendation does not excuse an unsupported factual premise",
+    );
+    // This pins the instructions delivered to the backend, not model accuracy.
+    // MiniCheck retains its trained Document/Claim format rather than chat instructions.
+    const mini = fakeCompleter("No");
+    await judge(mini, "minicheck").verify(input);
+    expect(mini.prompts[0]).toBe(`Document: ${input.evidence}\nClaim: ${input.claim}`);
+  });
+
   test("style is read live per call from the config knob", async () => {
     const completer = fakeCompleter("Yes ENTAILMENT"); // parseable under both styles
     let style: EntailmentPromptStyle = "judge";

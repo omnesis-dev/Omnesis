@@ -36,6 +36,7 @@ import {
 } from "./storage.js";
 
 let db: Database.Database, engine: KnowledgeEngine, service: KnowledgeService;
+let writeGate: ReturnType<typeof directKnowledgeGate>;
 let now: number, serial: number, score: number, decisions: number;
 let settings: ReturnType<typeof resolveBrainSettings>;
 let decisionStates: unknown[];
@@ -57,7 +58,7 @@ beforeEach(() => {
   decisions = 0;
   decisionStates = [];
   settings = resolveBrainSettings({ bootstrap: { enabled: false } });
-  const writeGate = directKnowledgeGate(db);
+  writeGate = directKnowledgeGate(db);
   service = new KnowledgeService({
     db,
     writeGate,
@@ -1409,6 +1410,41 @@ describe("knowledge coordinator", () => {
       );
     },
   );
+
+  it("promotes a queued full batch for overlapping urgent evidence without clearing backoff", async () => {
+    settings.knowledge.maxSeeds = 1;
+    source();
+    await engine.tick();
+    const batch = batchFor("input");
+    db.prepare("UPDATE knowledge_batches SET tier='routine' WHERE id=?").run(batch.id);
+    db.prepare("UPDATE cognition_runs SET next_attempt_at=? WHERE id=?").run(
+      now + 60000,
+      batch.runId,
+    );
+    const promotion = vi.spyOn(writeGate, "knowledge.promoteBlockingBatches");
+    source("input", "v2");
+    await engine.tick();
+    expect(promotion).toHaveBeenCalledTimes(1);
+    expect(promotion.mock.calls[0]![0].work).toEqual({
+      id: expect.any(String),
+      generation: expect.any(Number),
+      inputRevision: "v2",
+    });
+    expect(Array.isArray(promotion.mock.calls[0]![0].work)).toBe(false);
+    expect(db.prepare("SELECT tier FROM knowledge_batches WHERE id=?").get(batch.id)).toEqual({
+      tier: "immediate",
+    });
+    expect(
+      db.prepare("SELECT next_attempt_at FROM cognition_runs WHERE id=?").get(batch.runId),
+    ).toEqual({ next_attempt_at: now + 60000 });
+    expect(
+      db
+        .prepare(
+          "SELECT status FROM knowledge_work WHERE subject_id='input' AND input_revision='v2'",
+        )
+        .get(),
+    ).toEqual({ status: "pending" });
+  });
 
   it("requeues newly discovered overlap durably instead of racing an active region", async () => {
     source("new");

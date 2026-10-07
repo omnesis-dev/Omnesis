@@ -1390,7 +1390,10 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "duplicate — but keep one loop per distinct obligation: two different " +
       "asks are two loops, even from the same person for the same trip, " +
       "while one request naming several parts stays one loop. The loop is " +
-      "stamped with this run's id.",
+      "stamped with this run's id. Require evidence of a currently actionable " +
+      "outcome for the user: a historical status or unsuccessful attempt alone " +
+      "does not establish a current obligation. Missing later indexed evidence " +
+      "proves neither resolution nor non-resolution; preserve unknown current status.",
     schema: openLoopCreateSchema,
     mutates: true,
     summarize: (args) => (args as { title?: string })?.title,
@@ -1791,7 +1794,10 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "replace it, or force:true only if this card is genuinely distinct. " +
       "Cite the source documents; pass each factual, document-derived " +
       "statement the card asserts as assertedClaims (verified at write time " +
-      "against its quoted evidence); set eventAt only for a source-supported event moment and " +
+      "against its quoted evidence). Audit title, description, and body, including " +
+      "implied current-status and negative claims. Advice does not establish its " +
+      "factual premises. Remove or qualify unsupported wording in the displayed " +
+      "prose too, not only in assertedClaims. Set eventAt only for a source-supported event moment and " +
       "relevantUntil when relevance expires. Do NOT create a brief whose " +
       "relevance has already passed. An informative future plan need not ask for action now; do not chase completion before its anchored expected window without separate evidence requiring earlier action. Use nextShow for a justified later follow-up. The brief is stamped with this run's id.",
     schema: briefCreateSchema,
@@ -1997,6 +2003,9 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "Partially update a brief's content/metadata — pass only the fields " +
       "to change (list fields replace; pass null to clear a nullable " +
       "field). A supplied assertedClaims replaces the live claim set. " +
+      "Audit title, description, and body for every factual assertion, including " +
+      "implied current-status and negative claims and the factual premises of " +
+      "advice. Correct unsupported displayed prose as well as assertedClaims. " +
       "Dismissal state is user-driven and not editable here.",
     schema: briefUpdateSchema,
     mutates: true,

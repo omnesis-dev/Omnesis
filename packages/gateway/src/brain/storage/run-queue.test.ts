@@ -79,6 +79,102 @@ describe("steward run queue", () => {
     );
   }
 
+  function organizationRun(id: string) {
+    maintenanceRun(id);
+    db.prepare(
+      "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.organizationCohortId',?) WHERE id=?",
+    ).run(`cohort-${id}`, id);
+    db.prepare(
+      `INSERT INTO knowledge_organization_cohorts
+      (id,batch_id,input_fingerprint,policy_version,status,retry_at,created_at,updated_at)
+      VALUES(?,?,'fp','test','pending',100,100,100)`,
+    ).run(`cohort-${id}`, `batch-${id}`);
+  }
+
+  test("bound maintenance tiers pass historical backlog while reactions remain first", () => {
+    for (let index = 0; index < 256; index++) maintenanceRun(`history-${index}`);
+    maintenanceRun("soon");
+    maintenanceRun("immediate");
+    db.exec("UPDATE knowledge_batches SET tier='soon' WHERE run_id='soon'");
+    db.exec("UPDATE knowledge_batches SET tier='immediate' WHERE run_id='immediate'");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=101 WHERE id IN ('soon','immediate')");
+    enqueueCognitionRun(db, { id: "feedback", kind: "feedback", payload: {} }, 102);
+    enqueueCognitionRun(db, { id: "data", kind: "data", payload: {} }, 102);
+    organizationRun("organization");
+    expect(claimDueCognitionRuns(db, { now: 102, limit: 5 }).map((run) => run.id)).toEqual([
+      "feedback",
+      "data",
+      "immediate",
+      "soon",
+      "organization",
+    ]);
+  });
+
+  test("completed organization retains bounded preference while its repair batch remains active", () => {
+    maintenanceRun("history");
+    organizationRun("organization");
+    db.exec("UPDATE knowledge_organization_cohorts SET status='completed'");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=101 WHERE id='organization'");
+    expect(claimDueCognitionRuns(db, { now: 102, limit: 1 })[0]!.id).toBe("organization");
+  });
+
+  test("organization and initial root share the bounded synthesis preference", () => {
+    for (let index = 0; index < 5; index++) maintenanceRun(`history-${index}`);
+    organizationRun("organization");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=101 WHERE id='organization'");
+    const take = (now: number) => {
+      const run = claimDueCognitionRuns(db, { now, limit: 1 })[0]!;
+      completeCognitionRun(db, run.id, { usage: null, now });
+      return run.id;
+    };
+    expect(take(102)).toBe("organization");
+    maintenanceRun("root");
+    db.exec("UPDATE knowledge_batches SET tier='immediate' WHERE run_id='root'");
+    db.exec(
+      "UPDATE cognition_runs SET next_attempt_at=101,payload_json=json_set(payload_json,'$.schedulingClass','initial-root') WHERE id='root'",
+    );
+    for (let index = 0; index < 3; index++) expect(take(103 + index)).toMatch(/^history-/);
+    expect(take(106)).toBe("root");
+  });
+
+  test("a maintenance tier or cohort must belong to this active run", () => {
+    maintenanceRun("older");
+    for (const id of ["wrong-run", "finished", "unknown-tier", "forged-cohort"]) {
+      maintenanceRun(id);
+      db.prepare("UPDATE cognition_runs SET next_attempt_at=101 WHERE id=?").run(id);
+    }
+    db.exec(
+      "UPDATE knowledge_batches SET tier='immediate',run_id='other' WHERE run_id='wrong-run'",
+    );
+    db.exec(
+      "UPDATE knowledge_batches SET tier='immediate',status='completed' WHERE run_id='finished'",
+    );
+    db.exec("UPDATE knowledge_batches SET tier='urgent' WHERE run_id='unknown-tier'");
+    db.exec(
+      "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.organizationCohortId','missing') WHERE id='forged-cohort'",
+    );
+    // A real cohort belonging to a different batch is not this run's authority.
+    db.exec(`INSERT INTO knowledge_organization_cohorts
+      (id,batch_id,input_fingerprint,policy_version,status,retry_at,created_at,updated_at)
+      VALUES('missing','batch-finished','fp','test','pending',100,100,100)`);
+    expect(claimDueCognitionRuns(db, { now: 102, limit: 1 })[0]!.id).toBe("older");
+  });
+
+  test("promoted maintenance respects backoff, attempts, exclusions and exclusive heads", () => {
+    maintenanceRun("history");
+    maintenanceRun("immediate");
+    db.exec("UPDATE knowledge_batches SET tier='immediate' WHERE run_id='immediate'");
+    db.exec("DELETE FROM knowledge_batch_regions WHERE batch_id='batch-immediate'");
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true })).toEqual([]);
+    expect(getCognitionRun(db, "history")?.attempts).toBe(0);
+    db.exec("UPDATE cognition_runs SET next_attempt_at=200 WHERE id='immediate'");
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1 })[0]!.id).toBe("history");
+    db.exec("UPDATE cognition_runs SET next_attempt_at=100,attempts=3 WHERE id='immediate'");
+    expect(
+      claimDueCognitionRuns(db, { now: 100, limit: 1, maxAttempts: 3, excludeIds: ["history"] }),
+    ).toEqual([]);
+  });
+
   test("claim excludes active and visited pending rows without spending their attempts", () => {
     maintenanceRun("a");
     maintenanceRun("b");

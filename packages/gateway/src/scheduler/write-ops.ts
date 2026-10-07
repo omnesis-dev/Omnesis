@@ -70,6 +70,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "knowledge.checkpoint", priority: "background" },
   { name: "knowledge.admitOrganization", priority: "background" },
   { name: "knowledge.adoptWork", priority: "background" },
+  { name: "knowledge.promoteBlockingBatches", priority: "background" },
   { name: "knowledge.refreshWork", priority: "background" },
   { name: "knowledge.queueProjectionCleanup", priority: "background" },
   { name: "knowledge.ackProjectionCleanup", priority: "background" },

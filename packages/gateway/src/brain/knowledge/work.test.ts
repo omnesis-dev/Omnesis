@@ -14,6 +14,8 @@ import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import {
   appendKnowledgeFrontier,
+  appendKnowledgeBatchWork,
+  promoteBlockingKnowledgeBatches,
   createKnowledgeBatch,
   enqueueKnowledgeWork,
   finishKnowledgeBatch,
@@ -95,6 +97,59 @@ function settle(
 }
 
 describe("durable maintenance work", () => {
+  it("inherits actual due urgency into blocked regions without adopting work", () => {
+    enqueue();
+    createKnowledgeBatch(db, makeBatch("batch-a", "work-a", "source-a", ["shared"]), 2);
+    enqueue("work-b", "source-b", "v1", 10);
+    db.exec("UPDATE knowledge_work SET tier='immediate' WHERE id='work-b'");
+    const input = {
+      work: makeBatch("unused", "work-b", "source-b").work[0]!,
+      regionNodeIds: ["shared"],
+    };
+    expect(promoteBlockingKnowledgeBatches(db, input, 9)).toBe(0);
+    db.exec("UPDATE knowledge_work SET last_error='derivation' WHERE id='work-b'");
+    expect(promoteBlockingKnowledgeBatches(db, input, 10)).toBe(0);
+    db.exec("UPDATE knowledge_work SET last_error=NULL WHERE id='work-b'");
+    expect(promoteBlockingKnowledgeBatches(db, input, 10)).toBe(1);
+    expect(getKnowledgeWork(db, "work-b")?.status).toBe("pending");
+    expect(db.prepare("SELECT tier FROM knowledge_batches WHERE id='batch-a'").get()).toEqual({
+      tier: "immediate",
+    });
+    expect(promoteBlockingKnowledgeBatches(db, input, 11)).toBe(0);
+    db.exec("UPDATE knowledge_work SET generation=generation+1 WHERE id='work-b'");
+    expect(() => promoteBlockingKnowledgeBatches(db, input, 12)).toThrow(
+      "changed before promotion",
+    );
+  });
+
+  it("adoption promotes from the real work tier and never demotes the batch", () => {
+    enqueue();
+    createKnowledgeBatch(db, makeBatch("batch-a", "work-a", "source-a", ["shared"]), 2);
+    enqueue("work-b", "source-b", "v1", 3);
+    db.exec("UPDATE knowledge_work SET tier='soon' WHERE id='work-b'");
+    appendKnowledgeBatchWork(
+      db,
+      {
+        batchId: "batch-a",
+        work: makeBatch("unused", "work-b", "source-b").work,
+        regionNodeIds: ["shared"],
+        frontier: [sourceFrontier("source-b")],
+      },
+      3,
+    );
+    expect(db.prepare("SELECT tier FROM knowledge_batches WHERE id='batch-a'").get()).toEqual({
+      tier: "soon",
+    });
+    appendKnowledgeBatchWork(
+      db,
+      { batchId: "batch-a", work: [], regionNodeIds: [], frontier: [] },
+      4,
+    );
+    expect(db.prepare("SELECT tier FROM knowledge_batches WHERE id='batch-a'").get()).toEqual({
+      tier: "soon",
+    });
+  });
+
   it("refreshes obsolete pending versions and retires removed identities without rewriting batched work", () => {
     const input = {
       id: "refresh",

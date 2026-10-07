@@ -122,6 +122,9 @@ history**. Assigning a model does not grant an unlimited historical reread.
 Existing `brain.bootstrap` enablement, ordering, active hours, backlog and
 admission caps apply. The default order is recent-first; older evidence remains
 eligible even without a future date.
+Historical notices establish what happened then; missing follow-up evidence does
+not establish a current obligation or prove that an outcome is still unresolved.
+Displayed factual premises need grounding even when they accompany advice.
 Admission fills the available batch allowance in rounds across sources, preserving
 the configured chronological order within each source. A prolific source can use
 capacity left by exhausted sources. Admitted history is due immediately at routine
@@ -175,6 +178,16 @@ drain admits at most four times the worker count, rechecking the feature gate,
 daily budget and provider breaker before each claim. Active runs finish or abort before the scheduler invocation returns;
 each queue row is admitted at most once in that invocation. Budget
 checks stop new admissions; already admitted work can finish and accrue spend.
+User feedback and new-data runs keep the highest queue priority. Within maintenance,
+the bound batch's immediate and soon tiers precede routine historical work. Initial
+root population and joint organization reviews share a preferred slot, at most once
+per four distinct synthesis admissions, so a large historical backlog cannot delay
+all organization until its end. Initial root work uses this bounded preference even
+when its batch is immediate. Retry deadlines and exclusive-run ordering still apply.
+Ready urgent evidence blocked by an existing reserved batch raises that batch's
+priority without clearing its retry deadline; adopted work can also raise priority.
+Organization reviews retain their bounded preference while the same batch finishes
+the resulting repairs.
 A maintenance turn that reaches its tool-call limit after settling frontier inputs
 continues in a new run on the same durable batch. Completed inputs and reservations
 remain intact, each segment keeps its transcript and spend, and the successor must

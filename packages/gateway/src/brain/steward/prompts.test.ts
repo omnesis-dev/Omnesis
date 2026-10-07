@@ -130,6 +130,19 @@ function annotationItem(o: {
 }
 
 describe("Cognition Steward system prompt", () => {
+  test("does not turn historical outcomes or missing follow-up into current obligations", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
+    expect(prompt).toContain("Creating or reopening an open loop requires evidence");
+    expect(prompt).toContain("currently actionable outcome for the user");
+    expect(prompt).toContain(
+      "Missing later indexed evidence proves neither resolution nor non-resolution",
+    );
+    expect(prompt).toContain("Preserve unknown current status instead of inventing a task");
+    expect(prompt).toContain(
+      "maintain loops only where the evidence establishes their outcome and current status",
+    );
+  });
+
   test("states the notes cap without carrying the notes", () => {
     const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
     expect(prompt).toContain("4096 bytes");
@@ -332,6 +345,9 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("2026-07-02T10:00:00.000Z");
     expect(prompt).toContain("3 days old");
     expect(prompt).toContain("fetch_many");
+    expect(prompt).toContain("every factual statement from the title, description, and body");
+    expect(prompt).toContain("factual premises embedded in advice");
+    expect(prompt).toContain("correcting the claim list alone does not correct the card");
   });
 
   test("a data run receives its source projection and is told not to duplicate it", () => {
@@ -1251,6 +1267,13 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(prompt).toContain("initial root population");
     expect(prompt).toContain("Split compound legacy spans");
+    expect(prompt).toContain("Separate advice from each factual clause");
+    expect(prompt).toContain(
+      "Marking a span recommendation or unsupported does not qualify its displayed words",
+    );
+    expect(prompt).toContain(
+      "Never create or reopen an obligation merely because a historical attempt failed",
+    );
     expect(prompt).toContain("Anchor relative deadlines and waiting periods");
     expect(prompt).toContain("never to ingestion time or the day of this run");
     expect(prompt).toContain("An empty root has no claims to revalidate");

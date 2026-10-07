@@ -155,6 +155,31 @@ export class KnowledgeBatchPlanner {
       const batchId = this.context.id("kb");
       const runId = this.context.id("cog");
       try {
+        // Ready urgent work inherits priority into the region owner even when
+        // its seed capacity is full and adoption must wait for that run.
+        const now = this.context.deps.clock();
+        const dueWork = group.seeds
+          .map((seed) => byId.get(seed.id)!)
+          .filter(
+            (item) =>
+              item.dueAt <= now &&
+              !["pending_content", "derivation"].includes(item.lastError ?? ""),
+          );
+        const witness =
+          dueWork.find((item) => item.tier === "immediate") ??
+          dueWork.find((item) => item.tier === "soon");
+        if (witness)
+          await this.context.deps.writeGate["knowledge.promoteBlockingBatches"](
+            {
+              work: {
+                id: witness.id,
+                generation: witness.generation,
+                inputRevision: witness.inputRevision,
+              },
+              regionNodeIds: group.nodes,
+            },
+            this.context.deps.clock(),
+          );
         await this.context.deps.writeGate["knowledge.startBatch"](
           {
             id: batchId,

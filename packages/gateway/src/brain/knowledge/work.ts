@@ -592,6 +592,46 @@ export function finishKnowledgeBatch(
   })();
 }
 
+/** Priority inheritance changes neither reservations nor a run's retry deadline. */
+export function promoteBlockingKnowledgeBatches(
+  db: Database.Database,
+  input: { work: CreateKnowledgeBatch["work"][number]; regionNodeIds: string[] },
+  now: number,
+): number {
+  return db.transaction(() => {
+    // One real witness is sufficient; writer reads never scale with group size.
+    const expected = input.work;
+    const work = getKnowledgeWork(db, expected.id);
+    if (
+      !work ||
+      work.status !== "pending" ||
+      work.generation !== expected.generation ||
+      work.inputRevision !== expected.inputRevision
+    )
+      throw new KnowledgeStorageError(
+        "revision_conflict",
+        "Blocking work changed before promotion",
+      );
+    assertCurrentWorkRevision(db, work);
+    const tier = work.tier;
+    if (
+      tier === "routine" ||
+      work.dueAt > now ||
+      ["pending_content", "derivation"].includes(work.lastError ?? "")
+    )
+      return 0;
+    return db
+      .prepare(
+        `UPDATE knowledge_batches SET tier=?,updated_at=?,revision=revision+1
+      WHERE status IN ('pending','running','deferred')
+        AND CASE tier WHEN 'immediate' THEN 0 WHEN 'soon' THEN 1 ELSE 2 END > ?
+        AND id IN (SELECT batch_id FROM knowledge_batch_regions
+          WHERE node_id IN (SELECT value FROM json_each(?)))`,
+      )
+      .run(tier, now, ranks[tier], JSON.stringify(input.regionNodeIds)).changes;
+  })();
+}
+
 /** Adopt newly queued overlapping evidence before the next BFS offer, under the same locks. */
 export function appendKnowledgeBatchWork(
   db: Database.Database,
@@ -604,6 +644,7 @@ export function appendKnowledgeBatchWork(
   now: number,
 ): void {
   db.transaction(() => {
+    let tier: MaintenanceTier = "routine";
     for (const expected of input.work) {
       const work = getKnowledgeWork(db, expected.id);
       if (
@@ -617,6 +658,7 @@ export function appendKnowledgeBatchWork(
           "Overlapping work changed before adoption",
         );
       assertCurrentWorkRevision(db, work);
+      if (ranks[work.tier] < ranks[tier]) tier = work.tier;
       const key = work.subjectKind === "source" ? `source:${work.subjectId}` : work.subjectId;
       if (
         !input.frontier.some(
@@ -631,6 +673,11 @@ export function appendKnowledgeBatchWork(
           "Adopted work requires its own frontier obligation",
         );
     }
+    db.prepare(
+      `UPDATE knowledge_batches SET tier=?,updated_at=?,revision=revision+1
+      WHERE id=? AND status IN ('pending','running','deferred')
+        AND CASE tier WHEN 'immediate' THEN 0 WHEN 'soon' THEN 1 ELSE 2 END > ?`,
+    ).run(tier, now, input.batchId, ranks[tier]);
     reserveKnowledgeRegion(db, input.batchId, input.regionNodeIds);
     appendKnowledgeFrontier(db, input.batchId, input.frontier);
     for (const expected of input.work)
