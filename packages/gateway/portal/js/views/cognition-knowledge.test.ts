@@ -17,8 +17,7 @@ import {
   navigateKnowledgeSelection,
 } from "./cognition-knowledge.js";
 import { resolveSection } from "./cognition.js";
-import { ConnectionClaims } from "./knowledge-connections.js";
-import { KnowledgeBadge } from "./knowledge-reader.js";
+import { KnowledgeContent, KnowledgeProse } from "./knowledge-reader.js";
 function hosts(value, out = []) {
   if (value == null || typeof value === "boolean") return out;
   if (Array.isArray(value)) {
@@ -26,6 +25,11 @@ function hosts(value, out = []) {
     return out;
   }
   if (typeof value !== "object") return out;
+  // Hook-driven content is exercised by the browser suite, not invoked outside Preact.
+  if (value.type === KnowledgeContent) {
+    out.push(value);
+    return out;
+  }
   if (typeof value.type === "function") return hosts(value.type(value.props), out);
   out.push(value);
   hosts(value.props?.children, out);
@@ -35,6 +39,7 @@ function text(value) {
   if (value == null || typeof value === "boolean") return "";
   if (Array.isArray(value)) return value.map(text).join("");
   if (typeof value !== "object") return String(value);
+  if (value.type === KnowledgeContent) return "";
   if (typeof value.type === "function") return text(value.type(value.props));
   return text(value.props?.children);
 }
@@ -77,9 +82,11 @@ it("preserves experimental routes and rejects unsafe reference protocols", () =>
   expect(knowledgeReferenceHref("javascript:alert(1)")).toBeNull();
 });
 it("uses the sanitized internal-link-aware Markdown reader", () => {
+  const prose = KnowledgeProse({ text: unsafe });
+  expect(renderKnowledgeMarkdown).toHaveBeenCalledWith(unsafe, [], {});
+  expect(prose.props.dangerouslySetInnerHTML).toEqual({ __html: "<p>Sanitized prose</p>" });
   const tree = KnowledgeDetail({ node });
   const elements = hosts(tree);
-  expect(renderKnowledgeMarkdown).toHaveBeenCalledWith(unsafe, [], {});
   expect(elements.some((element) => element.type === "script")).toBe(false);
   expect(text(tree)).toContain("Some context needs another look");
   expect(text(tree)).toContain("0 of 1 claims verified");
@@ -99,21 +106,20 @@ it("retains the page title unless a loaded canonical outcome already supplies it
   expect(headings()).toContain(loop.title);
   expect(headings(true)).not.toContain(loop.title);
 });
-it("shows assertion uncertainty in Connections without repeating source links", () => {
-  const tree = ConnectionClaims({
+it("passes the selected claim and its metadata to the Overview reader", () => {
+  const onClaim = vi.fn();
+  const references = { "source:fixture": { title: "Example source", kind: "source" } };
+  const tree = KnowledgeDetail({
     node,
     selectedClaim: "date",
-    onClaim: () => {},
-    Badge: KnowledgeBadge,
+    onClaim,
+    references,
   });
-  const elements = hosts(tree);
-  expect(text(tree)).toContain("Disputed");
-  expect(text(tree)).toContain("Attributed to: Fictional workshop organizer");
-  expect(
-    elements.some((element) => element.type === "script" || element.props?.dangerouslySetInnerHTML),
-  ).toBe(false);
-  expect(elements.filter((element) => element.type === "a")).toHaveLength(0);
-  expect(text(tree)).not.toContain("source:fixture");
+  const content = hosts(tree).find((element) => element.type === KnowledgeContent);
+  expect(content.props.node).toBe(node);
+  expect(content.props.selectedClaim).toBe("date");
+  expect(content.props.onClaim).toBe(onClaim);
+  expect(content.props.references).toBe(references);
 });
 it("keeps relationship navigation in Connections instead of a duplicate Overview list", () => {
   const tree = KnowledgeDetail({ node });
@@ -123,11 +129,16 @@ it("keeps relationship navigation in Connections instead of a duplicate Overview
     .map(text);
   expect(labels).toEqual(["Overview", "Connections", "History", "Advanced"]);
 });
-it("keeps raw markup literal and exact revisions discoverable in Advanced", () => {
+it("keeps claim mappings and revisions in Advanced without duplicating raw Markdown", () => {
   const elements = hosts(KnowledgeDetail({ node, activeTab: "advanced" }));
-  expect(elements.some((element) => element.type === "pre" && text(element).includes(unsafe))).toBe(
-    true,
-  );
+  expect(elements.filter((element) => element.type === "pre")).toHaveLength(2);
+  expect(elements.filter((element) => element.type === "h4").map(text)).toEqual([
+    "Canonical fields and review metadata",
+    "Exact claim dependencies",
+  ]);
+  const mappings = JSON.parse(text(elements.filter((element) => element.type === "pre")[1]));
+  expect(mappings.claims[0].text).toBe(unsafe);
+  expect(mappings.dependencies).toEqual(node.dependencies);
   expect(
     elements.some((element) => element.type === "script" || element.props?.dangerouslySetInnerHTML),
   ).toBe(false);

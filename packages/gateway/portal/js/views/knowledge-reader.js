@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
+import { useState } from "preact/hooks";
+import { Segmented } from "../components/segmented.js";
 import { KnowledgeClaimReader } from "./knowledge-claim-reader.js";
 import {
   claimMarkupRanges,
@@ -61,6 +63,33 @@ export function KnowledgeProse({ text, references = {} }) {
     class="kn-prose"
     dangerouslySetInnerHTML=${{ __html: renderKnowledgeMarkdown(text ?? "", [], references).html }}
   />`;
+}
+export function KnowledgeContent({ node, references, onClaim, selectedClaim }) {
+  const [mode, setMode] = useState("markdown");
+  const claims = node.claims ?? [];
+  return html`<div class="kn-content-mode" role="group" aria-label="Content display">
+      <${Segmented}
+        options=${[{ value: "markdown", label: "Markdown" }, { value: "raw", label: "Raw" }]}
+        value=${mode}
+        onChange=${setMode}
+      />
+    </div>
+    ${selectedClaim && !claims.some((claim) => claim.id === selectedClaim) && html`<p class="kn-claim-missing" role="status">The referenced claim is not present in this version of the page.</p>`}
+    ${mode === "raw"
+      ? html`<pre class="kn-code kn-raw-content" aria-label="Raw Markdown"><code>${node.markdown ?? ""}</code></pre>`
+      : node.plainText
+        ? claimMarkupRanges(node.markdown ?? "", claims).length
+          ? html`<${KnowledgeClaimReader}
+              node=${node}
+              references=${references}
+              onClaim=${onClaim}
+              selectedClaim=${selectedClaim}
+            />`
+          : html`<${KnowledgeProse} text=${node.plainText} references=${references} />`
+        : html`<div class="kn-empty">
+            <h3>This page is taking shape</h3>
+            <p>Its first synthesis has not been written yet.</p>
+          </div>`}`;
 }
 export function KnowledgeDetail({
   node,
@@ -125,25 +154,17 @@ export function KnowledgeDetail({
       html`<p class="kn-root-note">
         The compact overview your agents use to stay oriented. Details live in the pages it connects
         to.
-      </p>`}${node.plainText
-        ? claimMarkupRanges(node.markdown ?? "", claims).length
-          ? html`<${KnowledgeClaimReader}
-              node=${node}
-              references=${references}
-              onClaim=${onClaim}
-            />`
-          : html`<${KnowledgeProse} text=${node.plainText} references=${references} />`
-        : html`<div class="kn-empty">
-            <h3>This page is taking shape</h3>
-            <p>Its first synthesis has not been written yet.</p>
-          </div>`}${overviewContent} `}
+      </p>`}<${KnowledgeContent}
+        key=${node.id}
+        node=${node}
+        references=${references}
+        onClaim=${onClaim}
+        selectedClaim=${selectedClaim}
+      />${overviewContent} `}
       ${activeTab === "connections" &&
       html`<${KnowledgeConnections}
         node=${node}
         references=${references}
-        selectedClaim=${selectedClaim}
-        onClaim=${onClaim}
-        Badge=${KnowledgeBadge}
       />`}
       ${activeTab === "history" &&
       html`<div class="kn-section-intro">
@@ -179,7 +200,7 @@ export function KnowledgeDetail({
       ${activeTab === "advanced" &&
       html`<div class="kn-section-intro">
           <h3>Under the hood</h3>
-          <p>Exact identifiers and source markup for inspecting the maintenance model.</p>
+          <p>Exact identifiers and metadata for inspecting the maintenance model.</p>
         </div>
         ${selectedField &&
         html`<section class="kn-field-target" aria-label="Referenced field">
@@ -205,10 +226,6 @@ ${JSON.stringify(
               : new Date(node.metadata.nextReviewAt).toLocaleString()}
           </dd>
         </dl>
-        <section>
-          <h4>Tagged Markdown</h4>
-          <pre class="kn-code">${node.markdown}</pre>
-        </section>
         <section>
           <h4>Canonical fields and review metadata</h4>
           <pre class="kn-code">

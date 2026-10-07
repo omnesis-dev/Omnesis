@@ -461,24 +461,6 @@
   color: var(--text-secondary);
   margin: 0;
 }
-.kn-evidence-meta {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.kn-evidence-meta > span:first-child {
-  margin-right: auto;
-}
-.kn-claim-text {
-  white-space: pre-wrap;
-  font-size: 14px;
-  line-height: 1.8;
-  margin: 16px 0 11px;
-  overflow-wrap: anywhere;
-}
 .kn-timeline {
   border-left: 1px solid var(--border);
   padding-left: 18px;
@@ -890,20 +872,6 @@
 .kn-claim-span .kn-claim-span {
   text-decoration-style: solid;
 }
-.kn-claim-hint {
-  margin: 0 0 20px;
-}
-.kn-claim-family > span {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-.kn-claim-family {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-}
 @container (max-width: 570px) {
   .knowledge-library .kn-tabs {
     flex-wrap: wrap;
@@ -977,4 +945,44 @@
 }
 .kn-filters [aria-label="Sort loops"] {
   grid-column: 1 / -1;
+}
+
+.kn-content-mode {
+  margin-bottom: 20px;
+}
+.kn-claim-popover {
+  position: fixed;
+  z-index: 1000;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 24px));
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: 0 12px 36px #0006;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.kn-claim-popover-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kn-claim-popover-text {
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+.kn-claim-popover-refs {
+  padding-left: 18px;
+  margin: 8px 0;
+}
+.kn-claim-popover-refs li + li {
+  margin-top: 6px;
 }

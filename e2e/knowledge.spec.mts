@@ -335,6 +335,11 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await expect(page.locator(".kn-loop-activity")).toBeVisible();
   await expect(page.locator(".kn-loop-activity details")).toHaveCount(0);
   await expect(page.locator(".kn-loop-activity")).toContainText("Confidence");
+  await page.getByRole("button", { name: "Raw", exact: true }).click();
+  await expect(page.locator(".kn-raw-content")).toContainText('<claim id="outcome"');
+  await expect(page.locator(".kn-loop-activity")).toBeVisible();
+  await page.getByRole("button", { name: "Markdown", exact: true }).click();
+
   await expect(page.locator('option[value="current"]')).toHaveText(
     "Up to date with linked evidence",
   );
@@ -384,16 +389,45 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await expect(
     page.locator('.kn-prose a[href^="/portal/doc/"] img.kn-link-icon--source'),
   ).toBeVisible();
+
+  await page.getByRole("button", { name: "Raw", exact: true }).click();
+  await expect(page.locator(".kn-raw-content")).toContainText('<claim id="pencils"');
+  await expect(page.locator(".kn-raw-content claim")).toHaveCount(0);
+  await expect(page.locator(".kn-claim-span")).toHaveCount(0);
+  await page.getByRole("button", { name: "Markdown", exact: true }).click();
+  const nestedClaim = page.getByRole("button", { name: "Inspect claim 3", exact: true });
+  await nestedClaim.hover();
+  const preview = page.getByRole("tooltip");
+  await expect(preview).toContainText("Claim pencils");
+  await expect(preview).toContainText("Within claim");
+  await expect(preview).toContainText("References from this claim (1)");
+  await expect(preview).not.toContainText("source:");
+  await expect(preview).toContainText("References to this page");
+  await expect(preview).toContainText("Current focus");
+  await preview.hover();
+  await expect(preview).toBeVisible();
+  await page.screenshot({ path: info.outputPath("claim-preview.png"), fullPage: true });
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await nestedClaim.focus();
+  await page.mouse.move(0, 0);
+  await expect(preview).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Inspect claim 3", exact: true }).click();
-  await expect(page.locator(".kn-selected-claim")).toContainText("pencils");
+  await expect(preview).toContainText("Claim pencils");
+  await expect(page.locator(".kn-prose")).toBeVisible();
+  await expect(page.locator(".kn-connections")).toHaveCount(0);
+
   await page.screenshot({
     path: info.outputPath("knowledge-nested-claim.png"),
     fullPage: true,
     animations: "disabled",
   });
-  await page.getByRole("button", { name: "Inspect enclosing claim", exact: true }).click();
-  await expect(page.locator(".kn-selected-claim")).toContainText("Bring paper and pencils.");
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Inspect claim 2", exact: true }).focus();
+  await expect(preview).toContainText("Claim materials");
+  await expect(preview).toContainText("Bring paper and pencils.");
+  await page.keyboard.press("Escape");
   await page
     .locator(".kn-prose")
     .getByRole("link", { name: "Workshop supplies", exact: true })
@@ -409,13 +443,14 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await page.goBack();
   await page.locator(".kn-prose").getByRole("link", { name: "Opening time", exact: true }).click();
   await expect(page).toHaveURL(/browser-workshop\?claim=time$/);
-  await expect(page.locator(".kn-selected-claim")).toContainText("The workshop begins at ten.");
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(preview).toContainText("The workshop begins at ten.");
+  await expect(page.getByRole("button", { name: "Inspect claim 1", exact: true })).toBeFocused();
+  await expect(page.locator(".kn-prose")).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.locator(".kn-prose").getByRole("link", { name: "Opening", exact: true }).click();
   await expect(page).toHaveURL(/browser-supplies\?claim=opening$/);
-  await expect(page.locator(".kn-selected-claim")).toContainText(
-    "Paper and pencils are workshop supplies.",
-  );
+  await expect(preview).toContainText("Paper and pencils are workshop supplies.");
+  await expect(page.getByRole("button", { name: "Inspect claim 1", exact: true })).toBeFocused();
   await page.goBack();
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   await page.locator(".kn-prose").getByRole("link", { name: "State", exact: true }).click();
@@ -429,7 +464,12 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await page.goBack();
   await page.getByRole("button", { name: "Connections", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
-  await page.getByRole("combobox", { name: "Filter connections by claim" }).selectOption("");
+  await expect(page.getByRole("combobox", { name: "Filter connections by claim" })).toHaveCount(0);
+  await expect(page.locator(".kn-selected-claim, .kn-connection-claims")).toHaveCount(0);
+  const sourceReferences = page.locator('.kn-connection-reference:has(a[href^="/portal/doc/"])');
+  await expect(sourceReferences).toHaveCount(1);
+  await expect(sourceReferences.locator("a")).toHaveCount(1);
+  await expect(sourceReferences.locator("p, details")).toHaveCount(0);
   await expect(page.locator(".kn-reader")).toContainText("Workshop supplies");
   await expect(page.locator(".kn-reader")).toContainText("Prepare workshop materials");
   await expect(page.locator(".kn-connections svg.kn-link-icon--loop").first()).toBeVisible();
@@ -482,7 +522,8 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   });
   await page.getByRole("button", { name: "Advanced", exact: true }).click();
   await expect(page.locator(".kn-reader-body details")).toHaveCount(0);
-  await expect(page.locator(".kn-reader-body pre")).toHaveCount(3);
+  await expect(page.locator(".kn-reader-body pre")).toHaveCount(2);
+  await expect(page.getByText("Tagged Markdown", { exact: true })).toHaveCount(0);
   for (const block of await page.locator(".kn-reader-body pre").all())
     await expect(block).toBeVisible();
   await page.screenshot({
@@ -513,15 +554,21 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   });
   await page.getByRole("button", { name: "Inspect claim 3", exact: true }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator(".kn-selected-claim")).toContainText("pencils");
+  await expect(preview).toContainText("Claim pencils");
+  await expect(page.locator(".kn-prose")).toBeVisible();
+
   await page.screenshot({
     path: info.outputPath("knowledge-nested-claim-mobile.png"),
     fullPage: true,
     animations: "disabled",
   });
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Connections", exact: true }).click();
-  await page.getByRole("combobox", { name: "Filter connections by claim" }).selectOption("");
+  await expect(page.getByRole("combobox", { name: "Filter connections by claim" })).toHaveCount(0);
   await expect(page.locator(".kn-connections")).toContainText("Workshop supplies");
+  await expect(sourceReferences).toHaveCount(1);
+  await expect(sourceReferences.locator("a")).toHaveCount(1);
+  await expect(sourceReferences.locator("p, details")).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("knowledge-connections-mobile.png"),
     fullPage: true,
@@ -535,7 +582,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     animations: "disabled",
   });
   await page.goto(url(`${route}/browser-context?claim=removed`));
-  await expect(page.locator(".kn-selected-claim").getByRole("status")).toContainText(
+  await expect(page.locator(".kn-claim-missing")).toContainText(
     "The referenced claim is not present in this version of the page.",
   );
   await page.screenshot({

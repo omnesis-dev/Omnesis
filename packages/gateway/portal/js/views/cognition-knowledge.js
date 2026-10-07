@@ -141,7 +141,7 @@ export function KnowledgeTab({ selectedId }) {
       params.has("field")
         ? "advanced"
         : params.has("claim")
-          ? "connections"
+          ? "overview"
           : ["connections", "history", "advanced"].includes(tab)
             ? tab
             : "overview",
@@ -149,10 +149,10 @@ export function KnowledgeTab({ selectedId }) {
   }, [selectedId, routeSearch]);
   function selectClaim(id) {
     setSelectedClaim(id);
-    setActiveTab("connections");
+    setActiveTab("overview");
     const params = new URLSearchParams(window.location.search);
     params.delete("field");
-    params.set("tab", "connections");
+    params.set("tab", "overview");
     if (id) params.set("claim", id);
     else params.delete("claim");
     replaceUrl(
@@ -163,7 +163,7 @@ export function KnowledgeTab({ selectedId }) {
     setActiveTab(tab);
     const params = new URLSearchParams(window.location.search);
     params.set("tab", tab);
-    if (tab !== "connections") {
+    if (tab !== "overview") {
       params.delete("claim");
       setSelectedClaim(null);
     }
@@ -275,15 +275,15 @@ export function KnowledgeTab({ selectedId }) {
           for (const [id, doc] of Object.entries(documents.docs ?? {}))
             for (const ref of refs)
               if (ref.split("#")[0] === `source:${id}`) {
-                refMetadata[ref] = { kind: "source", sourceId: doc.source_id };
+                refMetadata[ref] = { kind: "source", sourceId: doc.source_id, title: doc.title };
               }
           related.forEach((result) => {
             if (result.status !== "fulfilled") return;
             const item = result.value;
-            refMetadata[`node:${item.id}`] = { kind: item.kind };
+            refMetadata[`node:${item.id}`] = { kind: item.kind, title: item.title };
             for (const ref of refs)
               if (ref.split("#")[0].split(":").slice(1).join(":") === item.id) {
-                refMetadata[ref] = { kind: item.kind };
+                refMetadata[ref] = { kind: item.kind, title: item.title };
               }
           });
           setReferences(refMetadata);
