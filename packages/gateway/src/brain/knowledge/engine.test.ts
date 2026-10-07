@@ -635,7 +635,36 @@ describe("knowledge coordinator", () => {
       .get()!;
     const batch = batchFor(root.id);
     expect(batch.id).not.toBe(batchFor("input").id);
+    // Initial orientation is deliberate work, even with a low impact verdict.
+    score = 0;
+    const before = decisions;
     const view = await engine.next(batch.id, batch.runId);
+    expect(decisions).toBe(before);
+    expect(
+      JSON.parse(
+        db
+          .prepare<
+            [string],
+            { payload_json: string }
+          >("SELECT payload_json FROM cognition_runs WHERE id=?")
+          .get(batch.runId)!.payload_json,
+      ),
+    ).toMatchObject({ schedulingClass: "initial-root" });
+    // Existing pending batches from before the scheduling class are upgraded.
+    db.prepare(
+      "UPDATE cognition_runs SET payload_json=json_remove(payload_json,'$.schedulingClass') WHERE id=?",
+    ).run(batch.runId);
+    await directKnowledgeGate(db)["knowledge.classifyInitialRootBatches"](root.id);
+    expect(
+      JSON.parse(
+        db
+          .prepare<
+            [string],
+            { payload_json: string }
+          >("SELECT payload_json FROM cognition_runs WHERE id=?")
+          .get(batch.runId)!.payload_json,
+      ),
+    ).toMatchObject({ schedulingClass: "initial-root" });
     expect(view.items[0]!.orientation?.map((node) => node.id)).toContain("project");
     expect(view.items[0]!.node!.plainText).toBe("");
   });

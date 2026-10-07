@@ -97,6 +97,9 @@ history; deleting private evidence has separate removal semantics.
 The root wiki is the compact overview itself, not a second full-sized page.
 Every write must fit `rootMaxChars`. It is injected as untrusted reference
 context; reading it does not create an automatic dependency on every claim.
+Once readable synthesis exists, the initial empty root receives bounded
+scheduling preference over ordinary synthesis, below reactive work. Initial
+orientation bypasses the impact gate; subsequent updates use normal maintenance.
 
 ## Bootstrap and upgrade
 

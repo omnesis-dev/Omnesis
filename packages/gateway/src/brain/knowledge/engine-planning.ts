@@ -15,6 +15,7 @@ import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
 
 interface PlanningContext {
+  initialRoot: () => string | null;
   deps: KnowledgeEngineDeps;
   id: (prefix: string) => string;
   frontier: (id: string, depth: number) => KnowledgeFrontierInput | null;
@@ -124,6 +125,7 @@ export class KnowledgeBatchPlanner {
         eligible = eligible.filter((item) => item.id !== error.seedId);
       }
     }
+    const initialRoot = this.context.initialRoot();
     let enqueued = 0;
     for (const group of groups) {
       if (group.dueAt > this.context.deps.clock()) continue;
@@ -169,7 +171,14 @@ export class KnowledgeBatchPlanner {
           {
             id: runId,
             kind: "synthesis",
-            payload: { focus: "knowledge-maintenance", batchId },
+            payload: {
+              focus: "knowledge-maintenance",
+              batchId,
+              ...(initialRoot &&
+              seeds.some((seed) => seed.subjectKind === "node" && seed.subjectId === initialRoot)
+                ? { schedulingClass: "initial-root" }
+                : {}),
+            },
             notBefore: group.dueAt,
           },
           this.context.deps.clock(),

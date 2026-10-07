@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./synth-env.js";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -35,6 +36,12 @@ beforeAll(async () => {
     syncSources: false,
     entailment: "accept-all",
     judge: "hold-all",
+    decision: {
+      policy(request) {
+        const purpose = Object.keys(request.questions)[0]!;
+        return { [purpose]: { type: "score" as const, score: purpose === "impact" ? 0 : 2 } };
+      },
+    },
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",
@@ -108,7 +115,7 @@ it("discovers a freshly created canonical loop and synthesizes its claims in the
     const calls = await Promise.all(attempts.items.map((run) => bench.obs.executedTools(run.id)));
     const refused = calls.flat().filter((step) => step.result?.kind === "error");
     throw new Error(
-      `${String(error)}; refused tools=${JSON.stringify(refused)}; node offers=${JSON.stringify(nodeOffers)}`,
+      `${String(error)}; refused tools=${JSON.stringify(refused)}; node offers=${JSON.stringify(nodeOffers)}; gateway tail=${readFileSync(bench.harness.getGatewayLogPath(), "utf8").split("\n").slice(-60).join("\n")}`,
       { cause: error },
     );
   }
@@ -155,4 +162,16 @@ it("discovers a freshly created canonical loop and synthesizes its claims in the
     }),
   ]);
   expect(await bench.obs.loopsMatching(title)).toHaveLength(1);
+  // A first root with usable orientation must be offered despite a gate that
+  // rejects every impact request. The puppet may legitimately keep it empty.
+  expect(nodeOffers.some((node) => node.kind === "root")).toBe(true);
+  expect(
+    bench.sql
+      .prepare(
+        `SELECT 1 FROM cognition_runs WHERE kind='synthesis'
+    AND json_extract(payload_json,'$.schedulingClass')='initial-root'
+    AND attempts>0 LIMIT 1`,
+      )
+      .get(),
+  ).toBeDefined();
 }, 180_000);

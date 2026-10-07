@@ -101,7 +101,11 @@ export class KnowledgeEngine {
   private readonly intake: KnowledgeIntake;
   constructor(readonly deps: KnowledgeEngineDeps) {
     this.graph = new KnowledgeGraph(deps.db, () => deps.getSettings().knowledge.maxVisitedPerSeed);
-    this.upkeep = new KnowledgeUpkeep(deps, (prefix) => this.id(prefix));
+    this.upkeep = new KnowledgeUpkeep(
+      deps,
+      (prefix) => this.id(prefix),
+      () => this.initialRoot(),
+    );
     this.intake = new KnowledgeIntake({
       deps,
       id: (prefix) => this.id(prefix),
@@ -111,6 +115,7 @@ export class KnowledgeEngine {
     });
     this.planner = new KnowledgeBatchPlanner({
       deps,
+      initialRoot: () => this.initialRoot(),
       id: (prefix) => this.id(prefix),
       frontier: (id, depth) => this.frontier(id, depth),
       arcs: (id) => this.graph.arcs(id),
@@ -188,6 +193,15 @@ export class KnowledgeEngine {
       inputVersions: versions,
       depth,
     };
+  }
+  private initialRoot(): string | null {
+    const root = this.deps.db
+      .prepare<
+        [],
+        { id: string }
+      >("SELECT id FROM knowledge_nodes WHERE kind='root' AND trim(plain_text)='' LIMIT 1")
+      .get();
+    return root && this.orientation().some((node) => node.plainText.trim()) ? root.id : null;
   }
   private orientation(): ReturnType<KnowledgeService["list"]> {
     const ids = this.deps.db
@@ -385,17 +399,25 @@ export class KnowledgeEngine {
              WHERE t.node_id=? LIMIT 1`,
               )
               .get(batchId, item.nodeId);
-          const score = isDiscoveryTarget
-            ? null
-            : await judgeKnowledge(this.deps.decisions, source ? "discovery" : "impact", {
-                inputVersions: item.inputVersions,
-                source: source ? { ...source, content: source.content.slice(0, 24000) } : undefined,
-                node,
-                changedInputs: this.batchSources(batchId),
-              });
+          const isInitialRoot =
+            node?.kind === "root" &&
+            !node.plainText.trim() &&
+            this.orientation().some((candidate) => candidate.plainText.trim());
+          const score =
+            isDiscoveryTarget || isInitialRoot
+              ? null
+              : await judgeKnowledge(this.deps.decisions, source ? "discovery" : "impact", {
+                  inputVersions: item.inputVersions,
+                  source: source
+                    ? { ...source, content: source.content.slice(0, 24000) }
+                    : undefined,
+                  node,
+                  changedInputs: this.batchSources(batchId),
+                });
           if (
             !isReview &&
             !isDiscoveryTarget &&
+            !isInitialRoot &&
             score !== null &&
             score < 0.25 &&
             (source

@@ -15,9 +15,12 @@ export class KnowledgeUpkeep {
   constructor(
     private readonly deps: KnowledgeEngineDeps,
     private readonly id: (prefix: string) => string,
+    private readonly initialRoot: () => string | null = () => null,
   ) {}
 
   async root(): Promise<void> {
+    const initialRoot = this.initialRoot();
+    if (initialRoot) await this.deps.writeGate["knowledge.classifyInitialRootBatches"](initialRoot);
     if (this.deps.db.prepare("SELECT 1 FROM knowledge_nodes WHERE kind='root'").get()) return;
     try {
       await this.deps.service.save({

@@ -181,6 +181,114 @@ describe("steward run queue", () => {
     expect(getCognitionRun(db, "run_1")?.status).toBe("pending");
   });
 
+  test("initial root preference preserves reactive precedence, backoff and synthesis fairness", () => {
+    const rootPayload = {
+      focus: "knowledge-maintenance",
+      batchId: "batch-root",
+      schedulingClass: "initial-root",
+    };
+    for (let i = 0; i < 5; i++)
+      enqueueCognitionRun(
+        db,
+        { id: `ordinary-${i}`, kind: "synthesis", payload: { focus: "noticing" } },
+        100 + i,
+      );
+    enqueueCognitionRun(
+      db,
+      { id: "root", kind: "synthesis", payload: rootPayload, notBefore: 200 },
+      150,
+    );
+    enqueueCognitionRun(db, { id: "reactive", kind: "data", payload: { docId: "fictional" } }, 190);
+    const take = (time: number) => {
+      const item = claimDueCognitionRuns(db, { now: time, limit: 1 })[0]!;
+      completeCognitionRun(db, item.id, { usage: null, now: time });
+      return item.id;
+    };
+    expect(take(199)).toBe("reactive");
+    expect(take(200)).toBe("root");
+    enqueueCognitionRun(
+      db,
+      { id: "root-again", kind: "synthesis", payload: rootPayload, notBefore: 205 },
+      201,
+    );
+    expect(take(201)).toBe("ordinary-0");
+    expect(take(202)).toBe("ordinary-1");
+    expect(take(203)).toBe("ordinary-2");
+    expect(take(204)).toBe("ordinary-3"); // preferred work is still not due
+    expect(take(205)).toBe("root-again");
+  });
+
+  test("a multi-run claim gives only one root the preferred slot", () => {
+    enqueueCognitionRun(
+      db,
+      { id: "older-ordinary", kind: "synthesis", payload: { focus: "noticing" } },
+      1,
+    );
+    for (const id of ["root-a", "root-b"])
+      enqueueCognitionRun(
+        db,
+        {
+          id,
+          kind: "synthesis",
+          payload: {
+            focus: "knowledge-maintenance",
+            batchId: id,
+            schedulingClass: "initial-root",
+          },
+        },
+        2,
+      );
+    expect(claimDueCognitionRuns(db, { now: 3, limit: 2 }).map((run) => run.id)).toEqual([
+      "root-a",
+      "older-ordinary",
+    ]);
+  });
+
+  test("simultaneous ordinary claims cannot erase a consumed root preference", () => {
+    for (let i = 0; i < 4; i++)
+      enqueueCognitionRun(
+        db,
+        { id: `z-ordinary-${i}`, kind: "synthesis", payload: { focus: "noticing" } },
+        1,
+      );
+    const payload = {
+      focus: "knowledge-maintenance",
+      batchId: "batch",
+      schedulingClass: "initial-root",
+    };
+    enqueueCognitionRun(db, { id: "a-root", kind: "synthesis", payload }, 2);
+    const first = claimDueCognitionRuns(db, { now: 10, limit: 4 });
+    expect(first[0]!.id).toBe("a-root");
+    for (const row of first) completeCognitionRun(db, row.id, { usage: null, now: 10 });
+    enqueueCognitionRun(db, { id: "another-root", kind: "synthesis", payload }, 3);
+    expect(claimDueCognitionRuns(db, { now: 10, limit: 1 })[0]!.id).toMatch(/^z-ordinary-/);
+  });
+
+  test("an initial-root failure keeps its retry delay", () => {
+    enqueueCognitionRun(
+      db,
+      {
+        id: "root-retry",
+        kind: "synthesis",
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "root-batch",
+          schedulingClass: "initial-root",
+        },
+      },
+      100,
+    );
+    expect(claimDueCognitionRuns(db, { now: 100 })).toHaveLength(1);
+    failCognitionRun(db, "root-retry", {
+      errorMessage: "transient",
+      terminal: false,
+      nextAttemptAt: 6000,
+      now: 101,
+    });
+    expect(claimDueCognitionRuns(db, { now: 5999 })).toHaveLength(0);
+    expect(claimDueCognitionRuns(db, { now: 6000 })).toHaveLength(1);
+  });
+
   test("a scheduled run is invisible until notBefore passes", () => {
     enqueueCognitionRun(
       db,

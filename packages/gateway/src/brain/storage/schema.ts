@@ -238,6 +238,12 @@ export function createBriefsStorageTables(db: Db): void {
     "CREATE INDEX IF NOT EXISTS idx_cognition_runs_scheduled_page ON cognition_runs(next_attempt_at ASC, id ASC)",
   );
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cognition_runs_synthesis_fairness
+      ON cognition_runs(last_attempt_at DESC,
+        CASE WHEN json_extract(payload_json,'$.focus')='knowledge-maintenance'
+          AND json_extract(payload_json,'$.schedulingClass')='initial-root' THEN 1 ELSE 0 END DESC,
+        id DESC)
+      WHERE kind='synthesis' AND last_attempt_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_cognition_runs_status_enqueued_page
       ON cognition_runs(status, enqueued_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_cognition_runs_kind_enqueued_page

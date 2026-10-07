@@ -47,6 +47,22 @@ import {
 import type { WriterCallFn } from "../../write-gate.js";
 import type Database from "better-sqlite3";
 
+/** Upgrade pending, never-attempted root batches without changing their due time. */
+function classifyInitialRootBatches(db: Database.Database, rootId: string): void {
+  db.prepare(
+    `UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.schedulingClass','initial-root')
+    WHERE id IN (SELECT r.id FROM knowledge_work w
+      JOIN knowledge_nodes n ON n.id=w.subject_id
+      JOIN knowledge_batches b ON b.id=w.batch_id
+      JOIN cognition_runs r ON r.id=b.run_id
+      WHERE w.subject_kind='node' AND w.subject_id=? AND w.status='batched' AND r.kind='synthesis' AND r.status='pending' AND r.attempts=0
+        AND json_extract(r.payload_json,'$.focus')='knowledge-maintenance'
+        AND json_extract(r.payload_json,'$.schedulingClass') IS NULL
+        AND n.kind='root' AND trim(n.plain_text)=''
+      ORDER BY r.enqueued_at,r.id LIMIT 32)`,
+  ).run(rootId);
+}
+
 function startKnowledgeBatch(
   db: Database.Database,
   input: CreateKnowledgeBatch,
@@ -69,6 +85,7 @@ function startKnowledgeBatch(
 }
 
 export const knowledgeWriterHandlers = {
+  "knowledge.classifyInitialRootBatches": classifyInitialRootBatches,
   "knowledge.admitOrganization": admitKnowledgeOrganization,
   "knowledge.queueProjectionCleanup": queueKnowledgeProjectionCleanup,
   "knowledge.ackProjectionCleanup": ackKnowledgeProjectionCleanup,
@@ -138,6 +155,8 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
     "knowledge.purge": (...args) => call("knowledge.purge", args),
     "knowledge.ackChanges": (...args) => call("knowledge.ackChanges", args),
     "knowledge.enqueue": (...args) => call("knowledge.enqueue", args),
+    "knowledge.classifyInitialRootBatches": (...args) =>
+      call("knowledge.classifyInitialRootBatches", args),
     "knowledge.startBatch": (...args) => call("knowledge.startBatch", args),
     "knowledge.appendFrontier": (...args) => call("knowledge.appendFrontier", args),
     "knowledge.frontierOutcome": (...args) => call("knowledge.frontierOutcome", args),
@@ -175,6 +194,8 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.purge": async (...args) => purgeKnowledgeBySource(db, ...args),
     "knowledge.ackChanges": async (...args) => ackKnowledgeChanges(db, ...args),
     "knowledge.enqueue": async (...args) => enqueueKnowledgeWork(db, ...args),
+    "knowledge.classifyInitialRootBatches": async (...args) =>
+      classifyInitialRootBatches(db, ...args),
     "knowledge.startBatch": async (...args) => startKnowledgeBatch(db, ...args),
     "knowledge.appendFrontier": async (...args) => appendKnowledgeFrontier(db, ...args),
     "knowledge.frontierOutcome": async (...args) => setKnowledgeFrontierOutcome(db, ...args),

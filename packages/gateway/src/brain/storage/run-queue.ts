@@ -679,8 +679,38 @@ export function claimDueCognitionRuns(
   // outside the queue entirely. Those rows carry no dedupe key, so they never
   // appear in the prefix reads the predicate is built on. Any OTHER writer of
   // this column would break it.
+  // After an initial-root attempt, three distinct ordinary synthesis runs must
+  // be admitted before another preferred slot. Retries conservatively refresh
+  // their row rather than counting again; next_attempt_at still governs eligibility.
+  // At tied claim times, roots sort first: simultaneous ordinary claims cannot
+  // erase the consumed preference. This can conservatively delay the next slot.
+  const preferInitialRoot = !db
+    .prepare(
+      `SELECT 1 FROM (
+    SELECT payload_json FROM cognition_runs WHERE kind='synthesis' AND last_attempt_at IS NOT NULL
+    ORDER BY last_attempt_at DESC,
+      CASE WHEN json_extract(payload_json,'$.focus')='knowledge-maintenance'
+        AND json_extract(payload_json,'$.schedulingClass')='initial-root' THEN 1 ELSE 0 END DESC,
+      id DESC LIMIT 3
+  ) WHERE json_extract(payload_json,'$.focus')='knowledge-maintenance'
+    AND json_extract(payload_json,'$.schedulingClass')='initial-root' LIMIT 1`,
+    )
+    .get();
+  const preferredId = preferInitialRoot
+    ? (db
+        .prepare<[number, number], { id: string }>(
+          `
+    SELECT id FROM cognition_runs WHERE kind='synthesis' AND status='pending'
+      AND next_attempt_at<=? AND attempts<?
+      AND json_extract(payload_json,'$.focus')='knowledge-maintenance'
+      AND json_extract(payload_json,'$.schedulingClass')='initial-root'
+    ORDER BY next_attempt_at,id LIMIT 1`,
+        )
+        .get(opts.now, maxAttempts)?.id ?? null)
+    : null;
+  const rankSql = CLAIM_KIND_RANK_SQL.replace("ELSE 2", "WHEN id=? THEN 1.5 ELSE 2");
   const rows = db
-    .prepare<[number, number, number, number], CognitionRunDbRow>(
+    .prepare<[number, number, number, string | null, number], CognitionRunDbRow>(
       `UPDATE cognition_runs
          SET attempts = attempts + 1,
              last_attempt_at = ?
@@ -689,19 +719,20 @@ export function claimDueCognitionRuns(
          WHERE status = 'pending'
            AND next_attempt_at <= ?
            AND attempts < ?
-         ORDER BY ${CLAIM_KIND_RANK_SQL}, next_attempt_at ASC
+         ORDER BY ${rankSql}, next_attempt_at ASC
          LIMIT ?
        )
        RETURNING *`,
     )
-    .all(opts.now, opts.now, maxAttempts, limit);
+    .all(opts.now, opts.now, maxAttempts, preferredId, limit);
   // RETURNING yields rows in scan order, not the subquery's ORDER BY —
   // re-sort to the same reactive-first, then oldest-due order so the caller
   // both CLAIMS and PROCESSES latency-sensitive reactive runs ahead of a
   // generative/periodic burst.
   rows.sort(
     (a, b) =>
-      claimKindRank(a.kind, a.dedupe_key) - claimKindRank(b.kind, b.dedupe_key) ||
+      (a.id === preferredId ? 1.5 : claimKindRank(a.kind, a.dedupe_key)) -
+        (b.id === preferredId ? 1.5 : claimKindRank(b.kind, b.dedupe_key)) ||
       a.next_attempt_at - b.next_attempt_at,
   );
   return rows.map((r) => ({
