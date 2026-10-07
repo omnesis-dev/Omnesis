@@ -466,11 +466,11 @@
   padding-left: 18px;
   margin-left: 4px;
 }
-.kn-timeline details {
+.kn-timeline .kn-revision {
   padding: 0 0 22px;
   position: relative;
 }
-.kn-timeline details:before {
+.kn-timeline .kn-revision:before {
   content: "";
   position: absolute;
   left: -22px;
@@ -480,8 +480,8 @@
   border-radius: 50%;
   background: var(--accent);
 }
-.kn-timeline summary {
-  cursor: pointer;
+.kn-revision > header > h4 {
+  margin: 0;
   font-size: 13px;
   line-height: 1.7;
 }

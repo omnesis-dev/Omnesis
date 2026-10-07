@@ -184,17 +184,17 @@ export function KnowledgeDetail({
         <div class="kn-timeline">
           ${history.map(
             (revision) =>
-              html`<details key=${revision.revision}>
-                <summary>
-                  <span>Version ${revision.revision}</span
+              html`<section class="kn-revision" key=${revision.revision}>
+                <header>
+                  <h4>Version ${revision.revision}</h4
                   ><time>${new Date(revision.createdAt).toLocaleString()}</time>
-                </summary>
+                </header>
                 <p class="kn-caption">
                   ${`${revision.diff?.changedClaimIds?.length ?? 0} claim${revision.diff?.changedClaimIds?.length === 1 ? "" : "s"} changed`}
                   · ${revision.validity === "stale" ? "Needed review" : "Current when saved"}
                 </p>
                 <${KnowledgeProse} text=${revision.plainText} references=${references} />
-              </details>`,
+              </section>`,
           )}
         </div>`}
       ${activeTab === "advanced" &&

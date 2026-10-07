@@ -514,7 +514,11 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await page.goBack();
   await page.getByRole("button", { name: "History", exact: true }).click();
   await expect(page.getByText(/Edit 1|Version 1|Revision 1/).first()).toBeVisible();
-  await page.getByText("Version 1", { exact: true }).click();
+  await expect(page.locator(".kn-timeline details")).toHaveCount(0);
+  await expect(page.locator(".kn-revision")).toHaveCount(2);
+  await expect(page.locator(".kn-revision .kn-prose")).toHaveCount(2);
+  for (const content of await page.locator(".kn-revision .kn-prose").all())
+    await expect(content).toBeVisible();
   await page.screenshot({
     path: info.outputPath("knowledge-history.png"),
     fullPage: true,
