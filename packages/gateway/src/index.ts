@@ -1745,6 +1745,7 @@ const ocrService = new OcrService({
     getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
     getGgufConfig: () => configStore.get().inference?.ocr?.gguf,
     getPageConcurrency: () => configStore.get().inference?.ocr?.pageConcurrency,
+    getRequestTimeoutSeconds: () => configStore.get().inference?.ocr?.requestTimeoutSeconds,
   },
 });
 

@@ -15,4 +15,4 @@
 // Only the service + its request-size cap are consumed outside this dir (by
 // the gateway wiring and the `/inference/ocr` route). The backends, the loader,
 // and the deps types are internal — imported directly by their siblings/tests.
-export { OcrService, MAX_IMAGE_BYTES } from "./ocr-service.js";
+export { OcrService, OcrTimeoutError, MAX_IMAGE_BYTES } from "./ocr-service.js";

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect } from "vitest";
-import { OcrService } from "./ocr-service.js";
+import { OcrAbortedError, OcrService, OcrTimeoutError } from "./ocr-service.js";
 import type { ResolvedAssignment } from "@omnesis/core";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -339,6 +339,94 @@ describe("OcrService", () => {
     });
     await svc.recognize(enc("%PDF-fake"), "application/pdf");
     expect(maxActive).toBe(2); // operator override caps in-flight pages at 2
+  });
+
+  /** A vision backend that answers only when the request is aborted. */
+  function hangingFetch(seen: AbortSignal[]) {
+    return async (_url: unknown, init?: unknown) => {
+      const signal = (init as RequestInit).signal as AbortSignal;
+      seen.push(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    };
+  }
+
+  test("stops the backend call at the OCR deadline", async () => {
+    const seen: AbortSignal[] = [];
+    const svc = new OcrService({
+      resolveAssignment: () => http(),
+      deps: { getRequestTimeoutSeconds: () => 1, fetchFn: hangingFetch(seen) },
+    });
+    const started = Date.now();
+    await expect(svc.recognize(png("dense"), "image/png")).rejects.toBeInstanceOf(OcrTimeoutError);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].aborted).toBe(true);
+  });
+
+  test("answers at the deadline even when the backend cannot be stopped", async () => {
+    const svc = new OcrService({
+      resolveAssignment: () => http(),
+      deps: {
+        getRequestTimeoutSeconds: () => 1,
+        // Ignores its signal and takes longer than the deadline.
+        fetchFn: async () => {
+          await new Promise((r) => setTimeout(r, 2_500));
+          return chatResponse("late");
+        },
+      },
+    });
+    const started = Date.now();
+    await expect(svc.recognize(png("slow"), "image/png")).rejects.toBeInstanceOf(OcrTimeoutError);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  test("stops the backend call when the caller stops waiting", async () => {
+    const seen: AbortSignal[] = [];
+    const svc = new OcrService({
+      resolveAssignment: () => http(),
+      deps: { fetchFn: hangingFetch(seen) },
+    });
+    const caller = new AbortController();
+    const pending = svc.recognize(png("img"), "image/png", { signal: caller.signal });
+    await new Promise((r) => setTimeout(r, 10));
+    caller.abort();
+    await expect(pending).rejects.toBeInstanceOf(OcrAbortedError);
+    expect(seen[0].aborted).toBe(true);
+  });
+
+  test("a queued request whose caller left never reaches the backend", async () => {
+    const seen: AbortSignal[] = [];
+    let release!: () => void;
+    const svc = new OcrService({
+      resolveAssignment: () => http(),
+      deps: {
+        getPageConcurrency: () => 1,
+        fetchFn: async (_url, init) => {
+          seen.push((init as RequestInit).signal as AbortSignal);
+          await new Promise<void>((r) => {
+            release = r;
+          });
+          return chatResponse("first");
+        },
+      },
+    });
+    const first = svc.recognize(png("1"), "image/png");
+    await new Promise((r) => setTimeout(r, 10));
+    const caller = new AbortController();
+    const queued = svc.recognize(png("2"), "image/png", { signal: caller.signal });
+    caller.abort();
+    await expect(queued).rejects.toBeInstanceOf(OcrAbortedError);
+
+    release();
+    expect((await first)?.text).toBe("first");
+    expect(seen).toHaveLength(1);
+    // The slot it would have taken is free for the next request.
+    const next = svc.recognize(png("3"), "image/png");
+    await new Promise((r) => setTimeout(r, 10));
+    release();
+    expect((await next)?.text).toBe("first");
   });
 
   test("dispose tears down the loaded capability", async () => {

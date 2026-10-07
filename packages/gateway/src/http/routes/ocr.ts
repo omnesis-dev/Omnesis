@@ -19,7 +19,7 @@ import { createLogger } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { scope } from "../scope.js";
 import { BadRequestError } from "../errors.js";
-import { MAX_IMAGE_BYTES, type OcrService } from "../../ocr/index.js";
+import { MAX_IMAGE_BYTES, OcrTimeoutError, type OcrService } from "../../ocr/index.js";
 import type { RouteApp } from "./types.js";
 
 const log = createLogger("gateway:http").child("routes:ocr");
@@ -65,10 +65,24 @@ export function mountOcrRoutes(app: RouteApp, deps: OcrRoutesDeps): void {
           .filter((n) => Number.isInteger(n) && n > 0)
       : undefined;
 
-    const result = await ocrService.recognize(body, mimeType, {
-      language,
-      ...(pages && pages.length > 0 ? { pages } : {}),
-    });
+    // The request's signal aborts when the collector disconnects, so the
+    // backend stops instead of reading an image nobody is waiting for. The
+    // service enforces the OCR deadline itself; past it, answer 504 so the
+    // collector records a timeout rather than a backend failure.
+    let result;
+    try {
+      result = await ocrService.recognize(body, mimeType, {
+        language,
+        signal: c.req.raw.signal,
+        ...(pages && pages.length > 0 ? { pages } : {}),
+      });
+    } catch (err) {
+      if (err instanceof OcrTimeoutError) {
+        log.warn(`OCR of ${body.byteLength} bytes (${mimeType}) stopped: ${err.message}`);
+        return c.json({ error: err.message, code: "OCR_TIMEOUT" as const }, 504);
+      }
+      throw err;
+    }
     if (result === null) {
       // OCR did not run: no backend is configured/loadable, or the input could
       // not be decoded. Successful blank OCR stays available with empty text.

@@ -161,6 +161,8 @@ function createTestGateway(database: Db, apiKey: string) {
           if (text === "TRIGGER_SLOW") {
             await new Promise((resolve) => setTimeout(resolve, 300));
           }
+          if (text === "TRIGGER_GATEWAY_TIMEOUT")
+            return Response.json({ error: "OCR timed out", code: "OCR_TIMEOUT" }, { status: 504 });
           if (text === "TRIGGER_DISABLED")
             return Response.json({ error: "not enabled" }, { status: 404 });
           if (text === "TRIGGER_ERROR") return Response.json({ error: "boom" }, { status: 500 });
@@ -543,6 +545,7 @@ describe("HttpGatewayClient.ocr", () => {
     const shortDeadline = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
       ocrRequestTimeoutMs: 100,
       ocrTimeoutCooldownMs: 350,
+      ocrResponseGraceMs: 0,
     });
     const requestsBefore = ocrRequestBodies.length;
     const timedOut = await shortDeadline.ocr(enc("TRIGGER_SLOW"), "image/png").catch((e) => e);
@@ -560,10 +563,28 @@ describe("HttpGatewayClient.ocr", () => {
     await new Promise((resolve) => setTimeout(resolve, 370));
   });
 
+  test("a gateway that stopped OCR at its deadline counts as a timeout", async () => {
+    const client = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
+      ocrRequestTimeoutMs: 100,
+      ocrTimeoutCooldownMs: 350,
+    });
+    for (let i = 0; i < 2; i++) {
+      await expect(client.ocr(enc("TRIGGER_GATEWAY_TIMEOUT"), "image/png")).rejects.toMatchObject({
+        kind: "transient",
+        message: "OCR request timed out after 100ms",
+      });
+    }
+    // Two in a row pause OCR, exactly as when the client stops waiting itself.
+    await expect(client.ocr(enc("suppressed"), "image/png")).rejects.toMatchObject({
+      message: "OCR requests paused after a request timeout",
+    });
+  });
+
   test("timeouts in a row pause OCR, and a paused request is never sent", async () => {
     const shortDeadline = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
       ocrRequestTimeoutMs: 100,
       ocrTimeoutCooldownMs: 350,
+      ocrResponseGraceMs: 0,
     });
     const requestsBefore = ocrRequestBodies.length;
     for (let i = 0; i < 2; i++) {
@@ -590,6 +611,7 @@ describe("HttpGatewayClient.ocr", () => {
   test("the OCR deadline can be changed after construction", async () => {
     const adjustable = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
       ocrRequestTimeoutMs: 100,
+      ocrResponseGraceMs: 0,
     });
     adjustable.setOcrRequestTimeoutMs(120);
     await expect(adjustable.ocr(enc("TRIGGER_SLOW"), "image/png")).rejects.toMatchObject({
@@ -603,6 +625,7 @@ describe("HttpGatewayClient.ocr", () => {
     const shortDeadline = new HttpGatewayClient(`http://localhost:${PORT}`, API_KEY, {
       ocrRequestTimeoutMs: 150,
       ocrTimeoutCooldownMs: 180,
+      ocrResponseGraceMs: 0,
     });
     const slow = shortDeadline.ocr(enc("TRIGGER_SLOW"), "image/png");
     const fast = shortDeadline.ocr(enc("concurrent-fast"), "image/png");

@@ -29,6 +29,7 @@
  */
 
 import { createLogger, assertNever } from "@omnesis/core";
+import { DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS } from "@omnesis/config";
 import { loadOcrFromResolved, type LoadOcrDeps } from "./loader.js";
 import {
   rasterizePdfToImages,
@@ -111,6 +112,52 @@ export interface OcrServiceDeps extends LoadOcrDeps {
    * the HTTP default is used.
    */
   getPageConcurrency?: () => number | undefined;
+  /**
+   * Operator override for how long one recognition may take, in seconds
+   * (`inference.ocr.requestTimeoutSeconds`). When unset, the shared default
+   * applies — the same one the collector waits on.
+   */
+  getRequestTimeoutSeconds?: () => number | undefined;
+}
+
+/** The caller stopped waiting before the backend was reached. */
+export class OcrAbortedError extends Error {
+  constructor() {
+    super("OCR request stopped: the caller stopped waiting");
+    this.name = "OcrAbortedError";
+  }
+}
+
+/** A recognition ran past the OCR deadline and was stopped. */
+export class OcrTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`OCR timed out after ${timeoutMs}ms`);
+    this.name = "OcrTimeoutError";
+  }
+}
+
+/**
+ * Settle with `work`, or reject as soon as `signal` aborts. A backend that
+ * cannot stop its call still finishes in the background; its result is
+ * dropped rather than holding the response past the deadline.
+ */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  work.catch(() => {});
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new OcrAbortedError());
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
 }
 
 export class OcrService {
@@ -167,34 +214,55 @@ export class OcrService {
    * configured or loadable (caller reports `available: false`). Throws on
    * decode/inference errors so the route surfaces a 5xx rather than silently
    * dropping the image.
+   *
+   * The OCR deadline (`inference.ocr.requestTimeoutSeconds`) bounds the
+   * whole call, queueing included, and a call past it rejects with
+   * `OcrTimeoutError`. `signal` aborts when the caller stops waiting. Either
+   * way, work still queued for a backend slot is dropped and the backend is
+   * told to stop the call it runs.
    */
   async recognize(
     image: Uint8Array,
     mimeType: string,
-    opts?: { language?: string; pages?: number[] },
+    opts?: { language?: string; pages?: number[]; signal?: AbortSignal },
   ): Promise<OcrResult | null> {
     const resolved = this.resolveAssignment();
+    const timeoutMs =
+      (this.deps.getRequestTimeoutSeconds?.() ?? DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS) * 1000;
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const signal = opts?.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
+    const call = { ...opts, signal };
     // Native subprocess backends (Apple Vision / Tesseract / gguf) hold a process
     // that a backend swap disposes, and are heavy enough that one at a time is
     // the right load. Run ensure+recognize inside the serialization fence so a
     // swap can't free a backend while an earlier request still runs on it, and so
     // we never spawn two native jobs at once.
-    if (resolved.kind === "local") {
-      return this.serialize(() => this.runRecognize(resolved, image, mimeType, opts));
-    }
+    //
     // HTTP / replay backends are stateless per call (dispose is a no-op), so
     // recognitions run concurrently — a self-hosted vision server batches them,
     // turning a sync's burst of attachments into a few parallel rounds. The
     // semaphore (`recognitionConcurrency`) bounds how many hit the backend.
-    return this.runRecognize(resolved, image, mimeType, opts);
+    const work =
+      resolved.kind === "local"
+        ? this.serialize(() => this.runRecognize(resolved, image, mimeType, call))
+        : this.runRecognize(resolved, image, mimeType, call);
+    try {
+      return await untilAborted(work, signal);
+    } catch (err) {
+      if (deadline.aborted) throw new OcrTimeoutError(timeoutMs);
+      throw err;
+    }
   }
 
   private async runRecognize(
     resolved: ResolvedAssignment,
     image: Uint8Array,
     mimeType: string,
-    opts?: { language?: string; pages?: number[] },
+    opts?: { language?: string; pages?: number[]; signal?: AbortSignal },
   ): Promise<OcrResult | null> {
+    // A native call waits its turn behind earlier ones; skip it if its caller
+    // left in the meantime.
+    if (opts?.signal?.aborted) throw new OcrAbortedError();
     const capability = await this.ensureCapability();
     if (!capability) return null;
     if (isPdf(mimeType)) {
@@ -228,8 +296,10 @@ export class OcrService {
       );
       return null;
     }
-    return this.withSlot(resolved, () =>
-      capability.recognize(bytes, mime, { language: opts?.language }),
+    return this.withSlot(
+      resolved,
+      () => capability.recognize(bytes, mime, { language: opts?.language, signal: opts?.signal }),
+      opts?.signal,
     );
   }
 
@@ -258,7 +328,7 @@ export class OcrService {
   private async recognizePdf(
     capability: OcrCapability,
     pdf: Uint8Array,
-    opts: { language?: string; pages?: number[] } | undefined,
+    opts: { language?: string; pages?: number[]; signal?: AbortSignal } | undefined,
     resolved: ResolvedAssignment,
   ): Promise<OcrResult | null> {
     const images = await this.rasterizePdf(pdf);
@@ -285,8 +355,14 @@ export class OcrService {
     const pageTexts: string[] = new Array(total).fill("");
     const results = await Promise.all(
       targets.map((i) =>
-        this.withSlot(resolved, () =>
-          capability.recognize(images[i], "image/png", { language: opts?.language }),
+        this.withSlot(
+          resolved,
+          () =>
+            capability.recognize(images[i], "image/png", {
+              language: opts?.language,
+              signal: opts?.signal,
+            }),
+          opts?.signal,
         ).then((r) => ({ i, text: r.text.trim() })),
       ),
     );
@@ -317,11 +393,16 @@ export class OcrService {
    * Run `fn` (one backend recognition) once a concurrency slot is free. The
    * limit is read per-acquire from the resolved backend, so it tracks a config
    * swap — and a shrink (e.g. HTTP→native) simply makes new waiters queue until
-   * the in-flight calls on the old backend drain.
+   * the in-flight calls on the old backend drain. A waiter whose caller stopped
+   * waiting leaves the queue without ever reaching the backend.
    */
-  private async withSlot<T>(resolved: ResolvedAssignment, fn: () => Promise<T>): Promise<T> {
+  private async withSlot<T>(
+    resolved: ResolvedAssignment,
+    fn: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const limit = this.recognitionConcurrency(resolved);
-    await this.acquire(limit);
+    await this.acquire(limit, signal);
     try {
       return await fn();
     } finally {
@@ -329,16 +410,26 @@ export class OcrService {
     }
   }
 
-  private acquire(limit: number): Promise<void> {
-    return new Promise<void>((resolve) => {
+  private acquire(limit: number, signal?: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const stopped = () => {
+        this.waiters = this.waiters.filter((w) => w !== attempt);
+        reject(new OcrAbortedError());
+      };
       const attempt = () => {
         if (this.active < limit) {
           this.active++;
+          signal?.removeEventListener("abort", stopped);
           resolve();
         } else {
           this.waiters.push(attempt);
         }
       };
+      if (signal?.aborted) {
+        reject(new OcrAbortedError());
+        return;
+      }
+      signal?.addEventListener("abort", stopped, { once: true });
       attempt();
     });
   }
