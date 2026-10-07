@@ -69,7 +69,9 @@ const proposal = z
     title: z.string().min(1).max(1000),
     markdown: z.string().max(262144),
     expectedRevision: z.number().int().nonnegative(),
-    inputVersions: versions,
+    inputVersions: versions.describe(
+      "Inside node: map EVERY claim ref in the proposed markdown to the exact revision returned by knowledge_reference for that ref. Include newly added dependencies: the offered frontier only includes existing input context and does not supply versions for all new citations. Reading a wiki does not automatically read its cited sources. Fetch each new ref or cite a fetched wiki claim directly; never invent a version or drop useful grounded context merely to avoid fetching it.",
+    ),
     claims: z.array(claimState).max(1024).optional(),
     metadata: z
       .object({

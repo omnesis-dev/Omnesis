@@ -109,6 +109,10 @@ evidence; there is no page or section quota. Markdown links to existing wikis
 do not establish evidential support. Keep a section heading inside the first
 relevant claim block, with newlines around its Markdown content, and retain
 separate claim spans for subsequent assertions.
+A scheduled wiki review considers the page's scope, related outcomes and a
+bounded selection of current evidence beyond its existing citations. Ordinary
+change propagation can remain focused on affected claims. Accurate older text
+does not by itself establish that a page includes the relevant developments.
 
 The root wiki is the compact overview and entry point to relevant detail pages.
 It links to existing wikis instead of reproducing their full contents.

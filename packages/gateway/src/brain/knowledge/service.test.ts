@@ -498,3 +498,40 @@ it("retains relations only for surviving refs and defaults new refs to supports"
   ]);
   expect(getKnowledgeDependencies(db, "relations")).toHaveLength(1);
 });
+
+it.each([
+  { reason: "Missing", ref: "source:evidence", supplied: undefined },
+  { reason: "Stale", ref: "source:evidence", supplied: "old-version" },
+  { reason: "Missing", ref: "wiki:upstream#claim:date", supplied: undefined },
+  { reason: "Stale", ref: "wiki:upstream#claim:date", supplied: 0 },
+])(
+  "identifies $reason dependency versions for $ref and requires an explicit refreshed read",
+  async ({ reason, ref, supplied }) => {
+    const verify = vi.fn(verifier.verify);
+    const brain = service({ ...verifier, verify });
+    if (ref.startsWith("wiki:")) await brain.save(proposal("upstream"));
+    verify.mockClear();
+    const input = {
+      ...proposal("dependent", ref),
+      inputVersions: supplied === undefined ? {} : { [ref]: supplied },
+    };
+    const unchanged = structuredClone(input);
+    const saving = brain.save(input);
+    await expect(saving).rejects.toMatchObject({
+      code: "revision_conflict",
+      message: expect.stringContaining(`${reason} dependency version for "${ref}"`),
+    });
+    await expect(saving).rejects.toMatchObject({
+      message: expect.stringContaining(`knowledge_reference with {"ref":"${ref}"}`),
+    });
+    await expect(saving).rejects.toMatchObject({
+      message: expect.stringContaining(`set node.inputVersions["${ref}"] to its returned revision`),
+    });
+    expect(verify).not.toHaveBeenCalled();
+    expect(getKnowledgeNode(db, "dependent")).toBeNull();
+    expect(input).toEqual(unchanged);
+    const current = brain.reference(ref);
+    const saved = await brain.save({ ...input, inputVersions: { [ref]: current.revision } });
+    expect(saved.node.revision).toBe(1);
+  },
+);

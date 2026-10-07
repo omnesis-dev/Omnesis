@@ -269,11 +269,14 @@ export class KnowledgeService {
       const support: KnowledgeReferenceView[] = [];
       for (const ref of claim.refs) {
         const view = this.reference(ref.raw);
-        if (input.inputVersions[ref.raw] !== view.revision)
+        if (input.inputVersions[ref.raw] !== view.revision) {
+          const reason = Object.hasOwn(input.inputVersions, ref.raw) ? "Stale" : "Missing";
+          const key = JSON.stringify(ref.raw);
           throw new KnowledgeStorageError(
             "revision_conflict",
-            "Read dependency versions again before synthesizing",
+            `${reason} dependency version for ${key}. Call knowledge_reference with {"ref":${key}}, review the returned evidence, and set node.inputVersions[${key}] to its returned revision before retrying knowledge_save. Reconcile the claim if the evidence changed; refreshing the frontier alone does not supply this dependency version.`,
           );
+        }
         if ((state.relations?.[ref.raw] ?? "supports") === "supports") support.push(view);
       }
       if ((state.epistemicStatus ?? "asserted") !== "asserted") {
