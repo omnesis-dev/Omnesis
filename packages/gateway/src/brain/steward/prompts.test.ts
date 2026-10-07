@@ -1325,6 +1325,19 @@ describe("Cognition Steward run prompts", () => {
         "do not add empty headings, invent content, or impose section or page quotas",
       );
       expect(prompt).toContain("publishing another page does not grant root mutation authority");
+      expect(prompt).toContain("Call knowledge_list({kind:'wiki'})");
+      expect(prompt).toContain(
+        "knowledge_fetch for a bounded selection of relevant existing pages",
+      );
+      expect(prompt).toContain("consider newly available pages as well as retained context");
+      expect(prompt).toContain(
+        "Merely adding headings to the old root does not complete this orientation review",
+      );
+      expect(prompt).toContain("short grounded summary with a meaningful link to that actual page");
+      expect(prompt).toContain("retain the factual claim refs that support the summary");
+      expect(prompt).toContain("Anchor time-sensitive context to evidence-backed dates");
+      expect(prompt).toContain("do not enumerate every page, force a new topic");
+      expect(prompt).toContain("report only claims actually reviewed");
     },
   );
 

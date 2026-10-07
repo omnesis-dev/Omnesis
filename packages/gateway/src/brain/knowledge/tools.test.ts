@@ -44,6 +44,38 @@ function run(kind: ClaimedCognitionRun["kind"], payload: unknown): ClaimedCognit
   return { id: "run", kind, payload, payloadJson: JSON.stringify(payload), attempts: 1 };
 }
 const context = { sessionId: "session", messageId: "message" };
+it("accepts the null owner identity returned when reading a root page", async () => {
+  await service.save({
+    id: "root",
+    kind: "root",
+    title: "Current context",
+    markdown: '<claim id="date" refs="source:evidence">Workshop Friday.</claim>',
+    expectedRevision: 0,
+    inputVersions: { "source:evidence": "v1" },
+  });
+  const node = service.fetch("root", true)!;
+  expect(node.ownerId).toBeNull();
+  const save = buildKnowledgeTools(service, { runId: "run" }).find(
+    (entry) => entry.name === "knowledge_save",
+  )!;
+  expect(
+    await save.invoke(
+      {
+        node: {
+          id: node.id,
+          kind: node.kind,
+          ownerId: node.ownerId,
+          title: node.title,
+          markdown: node.markdown,
+          expectedRevision: node.revision,
+          inputVersions: { "source:evidence": "v1" },
+        },
+      },
+      context,
+    ),
+  ).toMatchObject({ kind: "structured" });
+  expect(getKnowledgeNode(db, "root")?.revision).toBe(2);
+});
 it("bounds maintenance-input paging and binds it to the tool's run and batch", async () => {
   createKnowledgeWorkTables(db);
   const log = createLogger("knowledge-tools-test");

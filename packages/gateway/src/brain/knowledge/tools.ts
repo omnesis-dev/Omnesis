@@ -65,7 +65,7 @@ const proposal = z
   .object({
     id,
     kind: z.enum(["wiki", "root", "loop", "doc_annotation", "person_annotation", "brief"]),
-    ownerId: id.optional(),
+    ownerId: id.nullable().optional(),
     title: z.string().min(1).max(1000),
     markdown: z.string().max(262144),
     expectedRevision: z.number().int().nonnegative(),
