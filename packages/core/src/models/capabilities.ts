@@ -150,6 +150,12 @@ export interface OcrCapability {
     opts?: {
       /** ISO-639-1 hint to bias language-specific recognition. */
       language?: string;
+      /**
+       * Aborts when the caller stops waiting. A backend that can stop its work
+       * (an HTTP request, a subprocess) does, and rejects; one that cannot
+       * finishes and its result is discarded.
+       */
+      signal?: AbortSignal;
     },
   ): Promise<OcrResult>;
   dispose(): Promise<void>;

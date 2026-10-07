@@ -2938,6 +2938,13 @@ const ocrGgufConfig = z
   })
   .strict();
 
+/**
+ * How long one attachment's OCR may take, end to end, when
+ * `inference.ocr.requestTimeoutSeconds` is unset. Long enough for a
+ * self-hosted vision model to read a dense photo.
+ */
+export const DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS = 120;
+
 const ocrSettings = z
   .object({
     gguf: ocrGgufConfig.optional(),
@@ -2948,10 +2955,11 @@ const ocrSettings = z
      */
     pageConcurrency: z.number().int().positive().optional(),
     /**
-     * How long a collector waits for one attachment's OCR before giving up on
-     * it, in seconds. Unset = 30. Raise it for a backend that needs longer to
-     * read a dense image; an image that runs out of time is recorded as not
-     * extracted and retried later by sources that retry.
+     * How long one attachment's OCR may take, in seconds. Unset = 120. The
+     * gateway stops the backend at this deadline and the collector waits just
+     * past it, so both give up together. Raise it for a backend that needs
+     * longer to read a dense image; an image that runs out of time is recorded
+     * as not extracted and retried later by sources that retry.
      */
     requestTimeoutSeconds: z.number().int().positive().max(3600).optional(),
   })

@@ -35,6 +35,8 @@ export interface MtmdRunArgs {
   imagePath: string;
   prompt: string;
   timeoutMs: number;
+  /** Kills the process when the caller stops waiting. */
+  signal?: AbortSignal;
 }
 
 /** Run `llama-mtmd-cli` for one image and return its stdout (the generated text). */
@@ -96,7 +98,7 @@ const defaultMtmdRunner: MtmdRunner = (args) =>
         "-ngl",
         "99",
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { stdio: ["ignore", "pipe", "pipe"], signal: args.signal, killSignal: "SIGKILL" },
     );
     const out: Buffer[] = [];
     let err = "";
@@ -116,7 +118,11 @@ const defaultMtmdRunner: MtmdRunner = (args) =>
     });
     proc.on("error", (e) => {
       clearTimeout(timer);
-      fail(new Error(`llama-mtmd-cli failed to start: ${e.message}`));
+      fail(
+        args.signal?.aborted
+          ? new Error("llama-mtmd-cli stopped: the caller stopped waiting")
+          : new Error(`llama-mtmd-cli failed to start: ${e.message}`),
+      );
     });
     proc.on("close", (code) => {
       clearTimeout(timer);
@@ -161,7 +167,7 @@ export class GgufOcr implements OcrCapability {
   async recognize(
     image: Uint8Array,
     _mimeType: string,
-    _opts?: { language?: string },
+    opts?: { language?: string; signal?: AbortSignal },
   ): Promise<OcrResult> {
     // llama-mtmd-cli reads the image from a path, so spill the bytes to a temp
     // file for the duration of the call and remove it afterwards.
@@ -175,6 +181,7 @@ export class GgufOcr implements OcrCapability {
         imagePath,
         prompt: OCR_PROMPT,
         timeoutMs: this.timeoutMs,
+        signal: opts?.signal,
       });
       const text = layoutReplyText(raw.trim());
       log.debug(`GGUF OCR (${this.modelId}): ${image.byteLength} bytes → ${text.length} chars`);

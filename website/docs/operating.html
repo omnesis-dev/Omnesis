@@ -695,12 +695,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>tesseract</code> (with the <code>tesseract</code> binary installed), and
           <code>gguf</code>, a llama.cpp vision model you supply, run through
           <code>llama-mtmd-cli</code> with its model and projector paths set under
-          <code>inference.ocr.gguf</code>. A collector gives each image 30 seconds of OCR by
-          default; for a backend that needs longer on dense pages, set
-          <code>inference.ocr.requestTimeoutSeconds</code>. When OCR keeps timing out, collectors
-          pause it for a few minutes. The <code>agent</code> role does not run a local GGUF model;
-          to keep it on your machine, point it at a local OpenAI-compatible server such as Ollama,
-          llama-server or vLLM.
+          <code>inference.ocr.gguf</code>. Each image gets 120 seconds of OCR by default; for a
+          backend that needs longer on dense pages, set
+          <code>inference.ocr.requestTimeoutSeconds</code>. The gateway stops the backend at that
+          deadline, and also when the collector that asked stops waiting. When OCR keeps timing out,
+          collectors pause it for a few minutes. The <code>agent</code> role does not run a local
+          GGUF model; to keep it on your machine, point it at a local OpenAI-compatible server such
+          as Ollama, llama-server or vLLM.
         </p>
         <p>
           <code>omnesis model assign</code> covers every role, so the terminal and the portal's

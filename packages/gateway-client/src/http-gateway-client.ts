@@ -5,10 +5,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { createLogger, toErrorMessage } from "@omnesis/core";
 import { SyncError } from "@omnesis/types";
+import { DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS, type OmnesisConfig } from "@omnesis/config";
 import {
   DEFAULT_MAX_BACKPRESSURE_WAITS,
-  DEFAULT_OCR_REQUEST_TIMEOUT_MS,
   DEFAULT_OCR_TIMEOUT_COOLDOWN_MS,
+  OCR_RESPONSE_GRACE_MS,
   OCR_TIMEOUTS_BEFORE_COOLDOWN,
   DEFAULT_UPSERT_CHUNK,
   DEFAULT_UPSERT_CHUNK_BYTES,
@@ -44,7 +45,6 @@ import type {
   PendingStructuredPage,
 } from "@omnesis/source-sdk";
 import type { DocumentInput, AccountId, SourceId, SourceType, ProviderId } from "@omnesis/types";
-import type { OmnesisConfig } from "@omnesis/config";
 import type {
   TranscriptionResult,
   AudioTranscribeFn,
@@ -77,6 +77,17 @@ function isRetryable(status: number): boolean {
  * so it must survive unchanged.
  */
 class GatewayResponseError extends Error {}
+
+/** A transient `/inference/*` failure, with the HTTP status that reported it. */
+class InferenceBackendError extends SyncError {
+  constructor(
+    readonly status: number,
+    message: string,
+    opts: { retryAfterMs?: number } = {},
+  ) {
+    super("transient", message, opts);
+  }
+}
 
 /**
  * Whether a thrown value is the transport giving out rather than the gateway
@@ -113,6 +124,7 @@ function parseRetryAfterMs(header: string | null): number | undefined {
 export class HttpGatewayClient implements GatewayClient {
   private ocrRequestTimeoutMs: number;
   private readonly ocrTimeoutCooldownMs: number;
+  private readonly ocrResponseGraceMs: number;
   private readonly sourceWriteEpoch = new AsyncLocalStorage<{
     sourceId: SourceId;
     writeEpoch: number;
@@ -128,6 +140,8 @@ export class HttpGatewayClient implements GatewayClient {
     opts?: {
       ocrRequestTimeoutMs?: number;
       ocrTimeoutCooldownMs?: number;
+      /** How long past the OCR deadline to wait for the gateway's answer. */
+      ocrResponseGraceMs?: number;
       /** Revalidate peer compatibility before each request, including retries. */
       beforeRequest?: () => Promise<void>;
     },
@@ -135,12 +149,13 @@ export class HttpGatewayClient implements GatewayClient {
     this.beforeRequest = opts?.beforeRequest;
     this.ocrRequestTimeoutMs = validateTimerMs(
       "ocrRequestTimeoutMs",
-      opts?.ocrRequestTimeoutMs ?? DEFAULT_OCR_REQUEST_TIMEOUT_MS,
+      opts?.ocrRequestTimeoutMs ?? DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS * 1000,
     );
     this.ocrTimeoutCooldownMs = validateTimerMs(
       "ocrTimeoutCooldownMs",
       opts?.ocrTimeoutCooldownMs ?? DEFAULT_OCR_TIMEOUT_COOLDOWN_MS,
     );
+    this.ocrResponseGraceMs = opts?.ocrResponseGraceMs ?? OCR_RESPONSE_GRACE_MS;
   }
 
   private async request(path: string, options: RequestInit = {}) {
@@ -363,7 +378,7 @@ export class HttpGatewayClient implements GatewayClient {
   setOcrRequestTimeoutMs(ms: number | undefined): void {
     this.ocrRequestTimeoutMs = validateTimerMs(
       "ocrRequestTimeoutMs",
-      ms ?? DEFAULT_OCR_REQUEST_TIMEOUT_MS,
+      ms ?? DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS * 1000,
     );
   }
 
@@ -372,7 +387,8 @@ export class HttpGatewayClient implements GatewayClient {
    *
    * A request that is refused because OCR is paused was never sent: it throws
    * a transient `SyncError` carrying `retryAfterMs`. A request that reached the
-   * deadline throws a transient `SyncError` without one.
+   * deadline throws a transient `SyncError` without one — whether the gateway
+   * stopped it there (504) or the client stopped waiting a grace period later.
    */
   async ocr(
     image: Uint8Array,
@@ -395,8 +411,9 @@ export class HttpGatewayClient implements GatewayClient {
     // direct callers can still distinguish it from OCR that could not run.
     //
     // Sends raw bytes (no base64 inflation) with the attachment MIME type as
-    // Content-Type. A per-request deadline prevents one pathological binary
-    // from delaying every source page until an upstream proxy times out.
+    // Content-Type. The gateway holds the OCR deadline; the client waits a
+    // grace period past it so the gateway's answer arrives first, and only
+    // cuts the request off itself when the gateway does not answer at all.
     const params = new URLSearchParams();
     if (opts?.language) params.set("language", opts.language);
     if (opts?.pages && opts.pages.length > 0) params.set("pages", opts.pages.join(","));
@@ -406,7 +423,7 @@ export class HttpGatewayClient implements GatewayClient {
     const timeout = setTimeout(() => {
       timedOut = true;
       controller.abort();
-    }, this.ocrRequestTimeoutMs);
+    }, this.ocrRequestTimeoutMs + this.ocrResponseGraceMs);
     timeout.unref();
     try {
       const res = await this.inferenceFetch(
@@ -436,7 +453,8 @@ export class HttpGatewayClient implements GatewayClient {
           : undefined,
       };
     } catch (err) {
-      if (timedOut) {
+      const gatewayTimedOut = err instanceof InferenceBackendError && err.status === 504;
+      if (timedOut || gatewayTimedOut) {
         this.ocrTimeoutsSinceSuccess += 1;
         if (this.ocrTimeoutsSinceSuccess >= OCR_TIMEOUTS_BEFORE_COOLDOWN) {
           this.ocrCooldownUntil = Math.max(
@@ -509,8 +527,8 @@ export class HttpGatewayClient implements GatewayClient {
     if (res.status >= 500 || res.status === 429 || res.status === 408) {
       const detail = await res.text().catch(() => "");
       const retryAfterMs = parseRetryAfterMs(res.headers.get("retry-after"));
-      throw new SyncError(
-        "transient",
+      throw new InferenceBackendError(
+        res.status,
         `${label} backend error ${res.status}${detail ? `: ${detail}` : ""}`,
         retryAfterMs !== undefined ? { retryAfterMs } : {},
       );

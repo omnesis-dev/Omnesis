@@ -113,7 +113,7 @@ export class HttpVlmOcr implements OcrCapability {
   async recognize(
     image: Uint8Array,
     mimeType: string,
-    _opts?: { language?: string },
+    opts?: { language?: string; signal?: AbortSignal },
   ): Promise<OcrResult> {
     const dataUrl = `data:${mimeType || "image/png"};base64,${Buffer.from(image).toString("base64")}`;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -133,7 +133,8 @@ export class HttpVlmOcr implements OcrCapability {
         },
       ],
     });
-    const deadline = AbortSignal.timeout(this.timeoutMs);
+    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const deadline = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     const res = await retryRateLimitedRequest(
       () =>
         fetchWithInferenceUrlPolicy(

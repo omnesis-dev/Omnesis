@@ -57,7 +57,7 @@ const HELPER_BIN = join(CACHE_DIR, "apple-vision-ocr");
 /** Run the helper on `imagePath` and return its stdout (recognized text). */
 export type VisionHelperRunner = (
   imagePath: string,
-  opts: { language?: string; timeoutMs: number },
+  opts: { language?: string; timeoutMs: number; signal?: AbortSignal },
 ) => Promise<string>;
 
 function commandPresent(cmd: string, args: string[]): Promise<boolean> {
@@ -125,7 +125,11 @@ const defaultRunner: VisionHelperRunner = async (imagePath, opts) => {
   return new Promise<string>((resolve, reject) => {
     const args = [imagePath];
     if (opts.language) args.push(opts.language);
-    const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(bin, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      signal: opts.signal,
+      killSignal: "SIGKILL",
+    });
     const out: Buffer[] = [];
     let err = "";
     let settled = false;
@@ -144,7 +148,11 @@ const defaultRunner: VisionHelperRunner = async (imagePath, opts) => {
       clearTimeout(timer);
       if (!settled) {
         settled = true;
-        reject(new Error(`apple-vision helper failed to start: ${e.message}`));
+        reject(
+          opts.signal?.aborted
+            ? new Error("apple-vision helper stopped: the caller stopped waiting")
+            : new Error(`apple-vision helper failed to start: ${e.message}`),
+        );
       }
     });
     proc.on("close", (code) => {
@@ -180,7 +188,7 @@ export class AppleVisionOcr implements OcrCapability {
   async recognize(
     image: Uint8Array,
     _mimeType: string,
-    opts?: { language?: string },
+    opts?: { language?: string; signal?: AbortSignal },
   ): Promise<OcrResult> {
     // The helper reads the image from a path, so spill the bytes to a temp file
     // for the call and remove it afterwards.
@@ -188,7 +196,11 @@ export class AppleVisionOcr implements OcrCapability {
     await writeFile(imagePath, image);
     try {
       const text = (
-        await this.runHelper(imagePath, { language: opts?.language, timeoutMs: this.timeoutMs })
+        await this.runHelper(imagePath, {
+          language: opts?.language,
+          timeoutMs: this.timeoutMs,
+          signal: opts?.signal,
+        })
       ).trim();
       log.debug(`Apple Vision OCR: ${image.byteLength} bytes → ${text.length} chars`);
       return { text, language: opts?.language };

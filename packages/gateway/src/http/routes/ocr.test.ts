@@ -89,6 +89,34 @@ describe("POST /inference/ocr", () => {
     expect(body.available).toBe(false);
   });
 
+  test("answers 504 when OCR runs past its deadline", async () => {
+    const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    const ocrService = new OcrService({
+      resolveAssignment: () => ({
+        role: "ocr",
+        kind: "http",
+        backendKey: "vllm",
+        model: "vision-model",
+        url: "http://localhost:8000",
+        allowRemoteInference: false,
+        available: true,
+      }),
+      deps: {
+        getRequestTimeoutSeconds: () => 1,
+        fetchFn: async (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = (init as RequestInit).signal as AbortSignal;
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      },
+    });
+    app = createServer(db, dbPath, { ocrService });
+    const res = await post(new Uint8Array([...PNG_SIG, 1, 2, 3, 0, 0, 0, 0]));
+    expect(res.status).toBe(504);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("OCR_TIMEOUT");
+  });
+
   test("rejects an empty body with 400", async () => {
     const res = await post(new Uint8Array(0));
     expect(res.status).toBe(400);
