@@ -706,11 +706,20 @@ export function claimDueCognitionRuns(
   // ordering, and leave the shared backlog-rank predicate independent of it.
   const hasKnowledge = db
     .prepare(
-      `SELECT COUNT(*) AS n FROM sqlite_master
-    WHERE type='table' AND name IN ('knowledge_batches','knowledge_organization_cohorts')`,
+      `SELECT SUM(name IN ('knowledge_batches','knowledge_organization_cohorts')) AS n,
+        SUM(name IN ('knowledge_batch_regions','knowledge_nodes')) AS rootTables FROM sqlite_master
+    WHERE type='table' AND name IN ('knowledge_batches','knowledge_organization_cohorts','knowledge_batch_regions','knowledge_nodes')`,
     )
-    .get() as { n: number };
-  const preferredMarker = `(${INITIAL_ROOT_SQL}) OR (${ORGANIZATION_MARKER_SQL})`;
+    .get() as { n: number; rootTables: number };
+  // Reservations outlive completion and paid continuation. History must not
+  // require the predecessor to remain the batch's current run owner.
+  const reservedRoot =
+    hasKnowledge.rootTables === 2
+      ? `(json_extract(payload_json,'$.focus')='knowledge-maintenance' AND EXISTS(
+        SELECT 1 FROM knowledge_batch_regions rr JOIN knowledge_nodes rn ON rn.id=rr.node_id
+        WHERE rr.batch_id=json_extract(payload_json,'$.batchId') AND rn.kind='root'))`
+      : "0";
+  const preferredMarker = `(${INITIAL_ROOT_SQL}) OR (${ORGANIZATION_MARKER_SQL}) OR (${reservedRoot})`;
   // One shared preferred slot per four distinct synthesis admissions. Retained
   // payload markers count completed segments too. Ties conservatively consume
   // the slot, so parallel claims cannot erase a preference at the same clock tick.
@@ -732,6 +741,11 @@ export function claimDueCognitionRuns(
         AND c.id=json_extract(cognition_runs.payload_json,'$.organizationCohortId')
         AND c.status IN ('pending','completed')))`
       : "";
+  const eligibleRoot =
+    hasKnowledge.n === 2
+      ? ` OR ((${reservedRoot}) AND EXISTS(SELECT 1 FROM knowledge_batches b
+        WHERE ${BOUND_MAINTENANCE_BATCH_SQL}))`
+      : "";
   const preferredId = preferJointWork
     ? (db
         .prepare<[number, number, string], { id: string }>(
@@ -739,7 +753,7 @@ export function claimDueCognitionRuns(
     SELECT id FROM cognition_runs WHERE kind='synthesis' AND status='pending'
       AND next_attempt_at<=? AND attempts<?
       AND id NOT IN (SELECT value FROM json_each(?))
-      AND ((${INITIAL_ROOT_SQL})${eligibleOrganization})
+      AND ((${INITIAL_ROOT_SQL})${eligibleOrganization}${eligibleRoot})
     ORDER BY next_attempt_at,id LIMIT 1`,
         )
         .get(opts.now, maxAttempts, excluded)?.id ?? null)
@@ -749,6 +763,7 @@ export function claimDueCognitionRuns(
       ? `WHEN kind='synthesis'
     AND json_extract(payload_json,'$.focus')='knowledge-maintenance'
     AND COALESCE(json_extract(payload_json,'$.schedulingClass'),'')!='initial-root'
+    AND NOT (${reservedRoot})
     AND EXISTS(SELECT 1 FROM knowledge_batches b WHERE ${BOUND_MAINTENANCE_BATCH_SQL}
       AND b.tier IN ('immediate','soon'))
     THEN (SELECT CASE b.tier WHEN 'immediate' THEN 1.2 ELSE 1.3 END
