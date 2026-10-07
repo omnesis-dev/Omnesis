@@ -198,6 +198,40 @@ describe("MessageStore media lifecycle", () => {
     expect(store.dirtyCount).toBe(1);
   });
 
+  test("markDueMediaDirty re-arms the most recent due days first, up to its limit", () => {
+    store.addMessages([
+      voiceMsg({ id: "old", timestamp: ts("2026-01-02") }),
+      voiceMsg({ id: "mid", timestamp: ts("2026-01-03") }),
+      voiceMsg({ id: "new", timestamp: ts("2026-01-04") }),
+    ]);
+    const first = store.drain();
+    store.drain({ committedSeq: first.emitSeq });
+    expect(store.dirtyCount).toBe(0);
+
+    expect(store.markDueMediaDirty(9_999_999_999, 1)).toBe(1);
+    const { messagesByKey } = store.drain();
+    expect([...messagesByKey.keys()]).toEqual([`${CHAT}:2026-01-04`]);
+  });
+
+  test("hasDueMedia ignores the media a caller names", () => {
+    store.addMessages([
+      voiceMsg({ id: "a", timestamp: ts("2026-01-02") }),
+      voiceMsg({ id: "b", timestamp: ts("2026-01-03") }),
+    ]);
+    const far = 9_999_999_999;
+    expect(store.hasDueMedia([], far)).toBe(true);
+    expect(store.hasDueMedia([{ chatJid: CHAT, id: "a" }], far)).toBe(true);
+    expect(
+      store.hasDueMedia(
+        [
+          { chatJid: CHAT, id: "a" },
+          { chatJid: CHAT, id: "b" },
+        ],
+        far,
+      ),
+    ).toBe(false);
+  });
+
   test("markDueMediaDirty never re-arms non-pending (done / unavailable) media", () => {
     store.addMessages([voiceMsg({ id: "vn", timestamp: ts("2026-01-02") })]);
     store.recordMediaOutcome(CHAT, "vn", { kind: "terminal", error: "gone" }); // → unavailable
@@ -427,7 +461,7 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
     },
   );
 
-  test("bounds a durable voice-note backlog while primary messages keep committing", async () => {
+  test("works through a voice-note backlog one item per page while primary messages keep committing", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(Date.parse("2026-08-16T12:00:00.000Z"));
     const downloadMedia: MediaDownloadFn = vi.fn(async () => ({
@@ -447,32 +481,78 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
       voiceMsg({ id: "vn-3", timestamp: ts("2026-01-02", 12) }),
     ]);
 
+    // Each page commits its day with one more transcript and asks for the
+    // next page straight away while the backlog lasts — no waiting on a timer.
     const r1 = await src.sync(null);
     expect(conversation(r1.documents)).toContain("spoken 1");
     expect((r1.cursor as { committedSeq: number }).committedSeq).toBeGreaterThan(0);
-    expect(r1.hasMore).toBe(false);
+    expect(r1.hasMore).toBe(true);
     expect(transcribeAudio).toHaveBeenCalledTimes(1);
     expect(store.getMessageById(CHAT, "vn-1")?.mediaState).toBe("done");
     expect(store.getMessageById(CHAT, "vn-2")?.mediaState).toBe("pending");
-    expect(store.getMessageById(CHAT, "vn-2")?.mediaNextAttempt).toBeGreaterThan(
-      Math.floor(Date.now() / 1000),
-    );
     expect(store.getMessageById(CHAT, "vn-3")?.mediaState).toBe("pending");
 
-    // No chat activity: the durable retry wake makes the deferred rows due and
-    // re-dirties the same day after each committed cursor.
-    vi.advanceTimersByTime(61_000);
     const r2 = await src.sync(r1.cursor);
     expect(conversation(r2.documents)).toContain("spoken 2");
+    expect(r2.hasMore).toBe(true);
     expect(transcribeAudio).toHaveBeenCalledTimes(2);
     expect(store.getMessageById(CHAT, "vn-2")?.mediaState).toBe("done");
     expect(store.getMessageById(CHAT, "vn-3")?.mediaState).toBe("pending");
 
-    vi.advanceTimersByTime(61_000);
     const r3 = await src.sync(r2.cursor);
     expect(conversation(r3.documents)).toContain("spoken 3");
+    expect(r3.hasMore).toBe(false);
     expect(transcribeAudio).toHaveBeenCalledTimes(3);
     expect(store.getMessageById(CHAT, "vn-3")?.mediaState).toBe("done");
+  });
+
+  test("leaves a media backlog to a later run when the run is close to its deadline", async () => {
+    const downloadMedia: MediaDownloadFn = vi.fn(async () => ({
+      kind: "ok" as const,
+      data: new Uint8Array([1, 2, 3]),
+    }));
+    const transcribeAudio = vi.fn(async () => ({ text: "spoken" }));
+    const src = new WhatsAppMessagesSource(store, undefined, {
+      downloadMedia,
+      transcribeAudio,
+      mediaAttemptsPerPage: 1,
+    });
+    store.addMessages([
+      voiceMsg({ id: "vn-1", timestamp: ts("2026-01-02", 10) }),
+      voiceMsg({ id: "vn-2", timestamp: ts("2026-01-02", 11) }),
+    ]);
+    const run = (deadline: number) => ({
+      run: { id: "run-1", reason: "push" as const, start: "resume" as const, page: 0, deadline },
+    });
+
+    const r1 = await src.sync(null, run(Date.now() + 60_000));
+    expect(transcribeAudio).toHaveBeenCalledTimes(1);
+    expect(r1.hasMore).toBe(false);
+    // Still due: the next run, with time to spare, carries on.
+    expect(store.getMessageById(CHAT, "vn-2")?.mediaState).toBe("pending");
+    const r2 = await src.sync(r1.cursor, run(Date.now() + 60 * 60_000));
+    expect(transcribeAudio).toHaveBeenCalledTimes(2);
+    expect(r2.hasMore).toBe(false);
+  });
+
+  test("does not ask for another page when the due media made no progress", async () => {
+    // This store retries at once, so the note is due again right after the
+    // page that tried it; that must not keep the run spinning on it.
+    const downloadMedia: MediaDownloadFn = vi.fn(async () => ({
+      kind: "ok" as const,
+      data: new Uint8Array([1, 2, 3]),
+    }));
+    const transcribeAudio = vi.fn(async () => null);
+    const src = new WhatsAppMessagesSource(store, undefined, {
+      downloadMedia,
+      transcribeAudio,
+      mediaAttemptsPerPage: 1,
+    });
+    store.addMessages([voiceMsg({ id: "vn", timestamp: ts("2026-01-02") })]);
+
+    const result = await src.sync(null);
+    expect(transcribeAudio).toHaveBeenCalledTimes(1);
+    expect(result.hasMore).toBe(false);
   });
 
   test("shares the durable-media cap between voice transcription and attachments", async () => {
@@ -508,18 +588,15 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
     expect(extractAttachment).not.toHaveBeenCalled();
     expect(store.getMessageById(CHAT, "image")?.mediaState).toBe("pending");
 
-    const immediate = await src.sync(r1.cursor);
-    expect(extractAttachment).not.toHaveBeenCalled();
-    expect(store.getMessageById(CHAT, "image")?.mediaState).toBe("pending");
+    expect(r1.hasMore).toBe(true);
 
-    vi.advanceTimersByTime(61_000);
-    const r2 = await src.sync(immediate.cursor);
+    const r2 = await src.sync(r1.cursor);
     expect(extractAttachment).toHaveBeenCalledTimes(1);
     expect(r2.documents.some((d) => d.content.includes("image text"))).toBe(true);
     expect(store.getMessageById(CHAT, "image")?.mediaState).toBe("done");
   });
 
-  test("deferred old-media days do not crowd a recent primary message out of pagination", async () => {
+  test("an old-media backlog does not crowd a recent primary message out of pagination", async () => {
     const downloadMedia: MediaDownloadFn = vi.fn(async () => ({
       kind: "ok" as const,
       data: new Uint8Array([1, 2, 3]),
@@ -555,9 +632,7 @@ describe("WhatsAppMessagesSource media retry (integration)", () => {
     expect(r1.hasMore).toBe(true);
     expect(r1.documents.some((doc) => doc.content.includes("recent primary message"))).toBe(false);
     expect(transcribeAudio).toHaveBeenCalledTimes(1);
-    const deferred = store.getMessageById(CHAT, "old-1");
-    expect(deferred?.mediaState).toBe("pending");
-    expect(deferred?.mediaNextAttempt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(store.getMessageById(CHAT, "old-1")?.mediaState).toBe("pending");
 
     const r2 = await src.sync(r1.cursor);
     expect(r2.documents.some((doc) => doc.content.includes("recent primary message"))).toBe(true);
@@ -844,7 +919,8 @@ describe("attachment timestamps", () => {
       extractAttachment,
       attachmentConfig: resolveAttachmentConfig({ extractAttachments: true }),
       // Both files must extract in one pass for their timestamps to be
-      // comparable here; the default per-page budget would defer the second.
+      // comparable here; the default per-page budget would leave the second
+      // for the next page.
       mediaAttemptsPerPage: 10,
     });
 

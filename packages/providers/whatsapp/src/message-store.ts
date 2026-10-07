@@ -1569,25 +1569,25 @@ export class MessageStore {
   }
 
   /**
-   * Postpone overdue durable-media rows that the source did not admit into
-   * this page's processing budget. This is scheduling, not a failed attempt:
-   * state, attempt count, and last error remain untouched. Moving the due time
-   * forward lets a committed old day clear before the retry sweep re-dirties it,
-   * so a large enrichment backlog cannot crowd recent primary messages out of
-   * the oldest-first drain indefinitely.
+   * Whether any in-scope durable media other than `excluding` is due for an
+   * attempt now.
    */
-  deferMediaAttempts(items: readonly { chatJid: string; id: string }[], now = nowSeconds()): void {
-    if (items.length === 0) return;
-    const nextAttempt = now + MEDIA_RETRY_OVERDUE_RECHECK_MS / 1000;
-    const defer = this.db.prepare(
-      `UPDATE messages SET media_next_attempt = ?
-       WHERE chat_jid = ? AND id = ? AND media_state = 'pending'`,
-    );
-    const tx = this.db.transaction(() => {
-      for (const { chatJid, id } of items) defer.run(nextAttempt, chatJid, id);
-    });
-    tx();
-    this.scheduleNextMediaRetry();
+  hasDueMedia(
+    excluding: readonly { chatJid: string; id: string }[] = [],
+    now: number = nowSeconds(),
+  ): boolean {
+    const skip = new Set(excluding.map((m) => `${m.chatJid}\u0000${m.id}`));
+    const due = this.db
+      .prepare(
+        `SELECT chat_jid, id FROM messages
+         WHERE ${MEDIA_RETRY_ELIGIBILITY} AND media_next_attempt <= @now
+         LIMIT @limit`,
+      )
+      .all({ ...this.mediaRetryScope, now, limit: skip.size + 1 }) as {
+      chat_jid: string;
+      id: string;
+    }[];
+    return due.some((r) => !skip.has(`${r.chat_jid}\u0000${r.id}`));
   }
 
   /** Backoff delay that never gives up — used for `process-failed` retries. */
@@ -1619,15 +1619,22 @@ export class MessageStore {
    * voice note on a past day gets retried on schedule, not only if someone
    * happens to message that day again. Returns how many days were re-dirtied.
    *
+   * The most recent days go first, and a caller that can only process a few
+   * items per page re-arms only that many: re-dirtying a whole backlog at once
+   * would fill the oldest-first drain with media days and crowd out the
+   * primary messages that arrived meanwhile.
+   *
    * @param now Unix seconds (injectable for tests).
    * @param limit Max due day-chats to re-arm per sweep, bounding the re-emit burst.
    */
   markDueMediaDirty(now: number = nowSeconds(), limit = DEFAULT_DRAIN_LIMIT): number {
     const due = this.db
       .prepare(
-        `SELECT DISTINCT chat_jid, strftime('%Y-%m-%d', ts, 'unixepoch') AS date
+        `SELECT chat_jid, strftime('%Y-%m-%d', ts, 'unixepoch') AS date
          FROM messages
          WHERE ${MEDIA_RETRY_ELIGIBILITY} AND media_next_attempt <= @now
+         GROUP BY chat_jid, date
+         ORDER BY MAX(ts) DESC
          LIMIT @limit`,
       )
       .all({ ...this.mediaRetryScope, now, limit }) as { chat_jid: string; date: string }[];

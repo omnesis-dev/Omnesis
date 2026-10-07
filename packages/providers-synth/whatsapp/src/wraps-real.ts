@@ -241,7 +241,7 @@ export async function createWrapsRealWhatsApp(opts: CreateOptions): Promise<Sour
   controllers.set(String(sourceId), controller);
 
   return {
-    sync: (cursor) => source.sync(cursor),
+    sync: (cursor, opts) => source.sync(cursor, opts),
     onPushEvent: (cb: () => void) => source.onPushEvent(cb),
     onSourceError: (cb: (error: string) => void) => source.onSourceError(cb),
     onResync: () => source.onResync(),
