@@ -1211,6 +1211,8 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(prompt).toContain("initial root population");
     expect(prompt).toContain("Split compound legacy spans");
+    expect(prompt).toContain("Anchor relative deadlines and waiting periods");
+    expect(prompt).toContain("never to ingestion time or the day of this run");
     expect(prompt).toContain("An empty root has no claims to revalidate");
     expect(prompt).toContain("knowledge_fetch(editing=true)");
     expect(prompt).toContain("discovery leads, not verified evidence");
@@ -1225,6 +1227,25 @@ describe("Cognition Steward run prompts", () => {
       deps(),
     );
     expect(ordinary).not.toContain("This batch includes initial root population");
+  });
+
+  test("organization cohorts ask for joint durable context and an explicit no-page alternative", () => {
+    const prompt = buildCognitionRunPrompt(
+      claimed({
+        kind: "synthesis",
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "batch_joint",
+          organizationCohortId: "cohort_joint",
+        },
+      }),
+      deps(),
+    );
+    expect(prompt).toContain("joint organization pass");
+    expect(prompt).toContain("Completed decisions, settled arrangements");
+    expect(prompt).toContain("There is no page quota");
+    expect(prompt).toContain("knowledge_organization_complete");
+    expect(prompt).toContain("not the joint organization decision");
   });
 
   test("a malformed synthesis payload degrades to a no-op finish", () => {

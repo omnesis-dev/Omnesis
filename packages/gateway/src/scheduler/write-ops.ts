@@ -88,6 +88,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "knowledge.ackChanges", priority: "background" },
   { name: "knowledge.enqueue", priority: "background" },
   { name: "knowledge.startBatch", priority: "background" },
+  { name: "knowledge.startOrganization", priority: "background" },
+  { name: "knowledge.completeOrganization", priority: "background" },
   { name: "knowledge.classifyInitialRootBatches", priority: "background" },
   { name: "knowledge.appendFrontier", priority: "background" },
   { name: "knowledge.frontierOutcome", priority: "background" },

@@ -26,6 +26,43 @@ const frontier = (items: unknown[], done = false): ToolStep => ({
   result: { kind: "structured", data: { batchId: "b", done, items } },
 });
 describe("knowledge puppet protocol", () => {
+  it("records a scripted joint outcome after the source frontier is settled", () => {
+    const next = knowledgePuppet({ plan: () => ({ calls: [] }) });
+    const joint: ToolStep = {
+      name: "knowledge_next_frontier",
+      args: {},
+      result: {
+        kind: "structured",
+        data: {
+          batchId: "b",
+          done: false,
+          items: [],
+          organization: {
+            id: "cohort",
+            inputFingerprint: "joint-fp",
+            sourceIds: ["a", "b"],
+            readyToComplete: true,
+          },
+        },
+      },
+    };
+    expect(next(ctx, [joint])).toMatchObject({
+      kind: "tool",
+      name: "knowledge_organization_complete",
+      args: { id: "cohort", inputFingerprint: "joint-fp", outcome: "no_page" },
+    });
+    expect(
+      next(ctx, [
+        joint,
+        {
+          name: "knowledge_organization_complete",
+          args: {},
+          result: { kind: "structured", data: true },
+        },
+      ]),
+    ).toMatchObject({ name: "knowledge_next_frontier" });
+  });
+
   it.each([undefined, [], ["date"]])(
     "preserves explicit claim review scope %j",
     (reviewedClaimIds) => {

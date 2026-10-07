@@ -112,6 +112,35 @@ export function createKnowledgeWorkTables(db: Database.Database): void {
       reconsider_at INTEGER,
       PRIMARY KEY(subject_id,input_revision,phase,policy_version)
     );
+    CREATE INDEX IF NOT EXISTS knowledge_coverage_organization
+      ON knowledge_discovery_coverage(phase,policy_version,status,reviewed_at,subject_id);
+    CREATE TABLE IF NOT EXISTS knowledge_organization_cohorts (
+      id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL UNIQUE REFERENCES knowledge_batches(id) ON DELETE CASCADE,
+      input_fingerprint TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','completed','deferred','abandoned')),
+      outcome_json TEXT,
+      retry_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_organization_created ON knowledge_organization_cohorts(created_at);
+    CREATE TABLE IF NOT EXISTS knowledge_organization_members (
+      cohort_id TEXT NOT NULL REFERENCES knowledge_organization_cohorts(id) ON DELETE CASCADE,
+      source_id TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      PRIMARY KEY(cohort_id,source_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_organization_member_version
+      ON knowledge_organization_members(source_id,content_hash,cohort_id);
+    CREATE TABLE IF NOT EXISTS knowledge_organization_targets (
+      cohort_id TEXT NOT NULL REFERENCES knowledge_organization_cohorts(id) ON DELETE CASCADE,
+      node_id TEXT NOT NULL,
+      PRIMARY KEY(cohort_id,node_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_organization_target_node
+      ON knowledge_organization_targets(node_id,cohort_id);
     CREATE TABLE IF NOT EXISTS knowledge_candidates (
       id TEXT PRIMARY KEY,
       identity_key TEXT NOT NULL UNIQUE,

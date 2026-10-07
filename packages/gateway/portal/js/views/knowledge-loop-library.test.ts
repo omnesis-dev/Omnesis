@@ -2,13 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 import { expect, it } from "vitest";
 // @ts-expect-error — portal modules are plain JavaScript.
-import {
-  loopDeadline,
-  loopDeadlineLabel,
-  loopLibraryNode,
-  loopLibraryPath,
-  sortLibraryLoops,
-} from "./knowledge-loop-library.js";
+import * as loopLibrary from "./knowledge-loop-library.js";
+const { loopDeadline, loopDeadlineLabel, loopLibraryNode, loopLibraryPath, sortLibraryLoops } = loopLibrary;
 it("keeps canonical outcomes readable without a synthesis mirror", () => {
   const node = loopLibraryNode({
     id: "outcome/one",
@@ -42,22 +37,22 @@ it("sorts loaded outcomes by meaningful dates or canonical importance without mu
       lastUpdate: "2030-04-02",
     }),
   ];
-  expect(sortLibraryLoops(nodes, "deadline").map((node) => node.id)).toEqual([
+  expect(sortLibraryLoops(nodes, "deadline").map((node: { id: string }) => node.id)).toEqual([
     "first",
     "later",
     "none",
   ]);
-  expect(sortLibraryLoops(nodes, "importance").map((node) => node.id)).toEqual([
+  expect(sortLibraryLoops(nodes, "importance").map((node: { id: string }) => node.id)).toEqual([
     "none",
     "first",
     "later",
   ]);
-  expect(sortLibraryLoops(nodes, "updated").map((node) => node.id)).toEqual([
+  expect(sortLibraryLoops(nodes, "updated").map((node: { id: string }) => node.id)).toEqual([
     "later",
     "first",
     "none",
   ]);
-  expect(nodes.map((node) => node.id)).toEqual(["none", "later", "first"]);
+  expect(nodes.map((node: { id: string }) => node.id)).toEqual(["none", "later", "first"]);
   expect(loopDeadline({ unknown: "Not a date" })).toBeNull();
 });
 

@@ -9,6 +9,7 @@ import {
 } from "../../enrichment/temporal-annotations/storage.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { fitKnowledgeFrontierItem } from "./engine-frontier.js";
+import { ORGANIZATION_REASON_CODES } from "./organization-cohorts.js";
 import { getKnowledgeCandidate, listKnowledgeCandidates } from "./discovery.js";
 import { KnowledgeStorageError } from "./types.js";
 import { listKnowledgeLinks } from "./links.js";
@@ -120,6 +121,7 @@ export const KNOWLEDGE_MUTATING_TOOLS = new Set([
   "knowledge_candidate_decide",
   "knowledge_next_frontier",
   "knowledge_discovery_complete",
+  "knowledge_organization_complete",
   "knowledge_temporal_context",
 ]);
 
@@ -429,6 +431,37 @@ export function buildKnowledgeTools(
             items,
           };
         },
+      ),
+    );
+    tools.push(
+      tool(
+        "knowledge_organization_complete",
+        "Record the joint organization outcome only after all offered sources and synthesis repairs are settled. Copy organization.id and inputFingerprint from knowledge_next_frontier. organized requires the actual wiki target IDs and targetVersions you read, created or updated, with a supports path to this evidence; Use an outcome-compatible reasonCode: organized uses new_context_published, existing_context_updated or already_organized; no_page uses insufficient_shared_context or insufficient_evidence; deferred uses awaiting_more_evidence or insufficient_evidence. Explain richer reasoning in the normal run transcript, not this durable ledger. This does not create dependencies or certify claims. Then call knowledge_next_frontier until done=true.",
+        z
+          .object({
+            id,
+            inputFingerprint: z.string().min(1),
+            outcome: z.enum(["organized", "no_page", "deferred"]),
+            reasonCode: z.enum(ORGANIZATION_REASON_CODES),
+            targetIds: z.array(id).max(32).optional(),
+            targetVersions: z.record(z.string(), z.number().int().positive()).optional(),
+          })
+          .strict(),
+        true,
+        (input) =>
+          service.deps.writeGate["knowledge.completeOrganization"](
+            {
+              ...input,
+              batchId,
+              runId: context.runId,
+              retryAt:
+                service.deps.clock() +
+                (input.outcome === "deferred"
+                  ? Math.max(60000, service.deps.getSettings().knowledge.routineDelayMs)
+                  : Math.max(60000, service.deps.getSettings().knowledge.maxReviewIntervalMs)),
+            },
+            service.deps.clock(),
+          ),
       ),
     );
     tools.push(

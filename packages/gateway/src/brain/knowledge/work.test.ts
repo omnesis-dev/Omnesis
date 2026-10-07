@@ -3,6 +3,7 @@
 
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createBriefsStorageTables } from "../storage/schema.js";
 import {
   refreshKnowledgeWork,
   abandonKnowledgeBatch,
@@ -33,6 +34,7 @@ beforeEach(() => {
   db.exec(
     "CREATE TABLE documents(id TEXT PRIMARY KEY,content_hash TEXT NOT NULL,content TEXT NOT NULL)",
   );
+  createBriefsStorageTables(db);
   createKnowledgeTables(db);
   createKnowledgeWorkTables(db);
   db.prepare("INSERT INTO documents VALUES(?,'v1','A source')").run("source-a");

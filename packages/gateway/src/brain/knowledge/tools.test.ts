@@ -213,6 +213,7 @@ it("bounds decorated frontier responses without acknowledging omitted temporal c
     items: [
       {
         id: "source:evidence",
+        pendingClaimIds: [],
         depth: 0,
         inputFingerprint: "fingerprint",
         inputVersions: { "source:evidence": "v1" },

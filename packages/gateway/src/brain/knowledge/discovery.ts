@@ -286,15 +286,15 @@ export function knowledgeDiscoveryIdentity(
   return `discovery_${knowledgeHash([documentId, revision, phase, KNOWLEDGE_DISCOVERY_POLICY])}`;
 }
 
-function assertCandidateGrounded(
+export function assertCandidateGrounded(
   db: Database.Database,
   nodeId: string,
   evidenceIds: string[],
+  budget: { remaining: number } = { remaining: 8192 },
 ): void {
   const expected = new Set(evidenceIds);
   const visited = new Set<string>();
   const pending: Array<{ id: string; claimId: string | null }> = [{ id: nodeId, claimId: null }];
-  let remaining = 8192;
   const dependencies = db.prepare<
     [string, string | null, string | null, number],
     { kind: string; id: string; ref: string }
@@ -306,9 +306,9 @@ function assertCandidateGrounded(
     const key = JSON.stringify([id, claimId]);
     if (visited.has(key)) continue;
     visited.add(key);
-    const rows = dependencies.all(id, claimId, claimId, remaining + 1);
-    remaining -= rows.length + 1;
-    if (remaining < 0)
+    const rows = dependencies.all(id, claimId, claimId, Math.max(1, budget.remaining + 1));
+    budget.remaining -= rows.length + 1;
+    if (budget.remaining < 0)
       throw new KnowledgeStorageError(
         "claim_invalid",
         "Candidate grounding exceeds the bounded traversal budget",

@@ -28,6 +28,7 @@ let bench: BrainBench;
 let sourceId = "";
 let sourceRevision = "";
 let loopId = "";
+let briefId = "";
 const nodeOffers: Array<{ kind: string; matchesLoop: boolean; validity: unknown }> = [];
 
 beforeAll(async () => {
@@ -35,7 +36,7 @@ beforeAll(async () => {
     experimental: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
+    judge: "ship-all",
     decision: {
       policy(request) {
         const purpose = Object.keys(request.questions)[0]!;
@@ -64,6 +65,14 @@ beforeAll(async () => {
                   importance: 0.6,
                   docs: [sourceId],
                 }),
+                call("brief_create", {
+                  kind: "info",
+                  title: "Workshop preparation",
+                  description,
+                  confidence: 0.9,
+                  urgency: 0.3,
+                  citations: [sourceId],
+                }),
               ],
             };
           }
@@ -73,17 +82,21 @@ beforeAll(async () => {
               matchesLoop: item.node.id === loopId,
               validity: item.node.validity,
             });
-          if (item.node?.id !== loopId) return preserveCurrentOwner(item, ctx, steps);
+          if (!item.node || ![loopId, briefId].includes(item.node.id))
+            return preserveCurrentOwner(item, ctx, steps);
+          const isBrief = item.node.id === briefId;
           return {
             calls: [
               call("knowledge_save", {
                 inputFingerprint: item.inputFingerprint,
                 node: {
-                  id: loopId,
-                  kind: "loop",
-                  ownerId: loopId,
-                  title,
-                  markdown: `<claim id="outcome" refs="source:${sourceId}">${description}</claim>`,
+                  id: item.node.id,
+                  kind: isBrief ? "brief" : "loop",
+                  ownerId: item.node.id,
+                  title: item.node.title,
+                  markdown: isBrief
+                    ? `<claim id="outcome" refs="source:${sourceId}">## Description\n${description}\n\n## Body\n</claim>`
+                    : `<claim id="outcome" refs="source:${sourceId}">${description}</claim>`,
                   expectedRevision: item.node.revision,
                   inputVersions: { [`source:${sourceId}`]: sourceRevision },
                 },
@@ -95,7 +108,11 @@ beforeAll(async () => {
           if (item.source?.title !== document.title) return [];
           const created = steps.find((step) => step.name === "open_loop_create");
           loopId = createdLoop.parse(structuredData(created?.result)).loop.id;
-          return [loopId];
+          const brief = steps.find((step) => step.name === "brief_create");
+          briefId = z
+            .object({ brief: z.object({ id: z.string() }) })
+            .parse(structuredData(brief?.result)).brief.id;
+          return [];
         },
       }),
     },
@@ -106,7 +123,7 @@ afterAll(async () => {
   await bench?.destroy();
 }, 60_000);
 
-it("discovers a freshly created canonical loop and synthesizes its claims in the same run", async () => {
+it("automatically discovers a fresh canonical loop without explicit targets and grounds it in the same run", async () => {
   await bench.push(document);
   try {
     await bench.drainUntilQuiet();
@@ -128,7 +145,7 @@ it("discovers a freshly created canonical loop and synthesizes its claims in the
   const createdAt = steps!.findIndex((step) => step.tool === "open_loop_create");
   const completedAt = steps!.findIndex((step) => step.tool === "knowledge_discovery_complete");
   expect(completedAt).toBeGreaterThan(createdAt);
-  expect(steps![completedAt]!.args.targets).toEqual([loopId]);
+  expect(steps![completedAt]!.args.targets ?? []).toEqual([]);
   const savedAt = steps!.findIndex(
     (step) =>
       step.tool === "knowledge_save" &&
@@ -161,6 +178,21 @@ it("discovers a freshly created canonical loop and synthesizes its claims in the
       verification: "verified",
     }),
   ]);
+  const brief = await bench.harness.gatewayJson<{ claims: Array<{ verification: string }> }>(
+    `/admin/brain/knowledge/${encodeURIComponent(briefId)}`,
+  );
+  expect(brief.claims).toEqual([expect.objectContaining({ verification: "verified" })]);
+  expect(
+    steps!.some(
+      (step, index) =>
+        index > completedAt &&
+        step.tool === "knowledge_save" &&
+        typeof step.args.node === "object" &&
+        step.args.node !== null &&
+        "id" in step.args.node &&
+        step.args.node.id === briefId,
+    ),
+  ).toBe(true);
   expect(await bench.obs.loopsMatching(title)).toHaveLength(1);
   // A first root with usable orientation must be offered despite a gate that
   // rejects every impact request. The puppet may legitimately keep it empty.

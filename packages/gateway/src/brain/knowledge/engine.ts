@@ -22,6 +22,7 @@ import { KnowledgeIntake } from "./engine-intake.js";
 import { KnowledgeBatchPlanner } from "./engine-planning.js";
 import { organizationCandidatesForSource } from "./organization.js";
 import { fitKnowledgeFrontierItem } from "./engine-frontier.js";
+import { KnowledgeOrganization } from "./engine-organization.js";
 import { KnowledgeUpkeep } from "./engine-upkeep.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeService } from "./service.js";
@@ -61,6 +62,7 @@ interface BatchRow {
 export interface KnowledgeFrontierView {
   batchId: string;
   done: boolean;
+  organization?: ReturnType<KnowledgeOrganization["view"]>;
   items: Array<{
     id: string;
     inputFingerprint: string;
@@ -99,6 +101,7 @@ export class KnowledgeEngine {
   private readonly upkeep: KnowledgeUpkeep;
   private readonly planner: KnowledgeBatchPlanner;
   private readonly intake: KnowledgeIntake;
+  private readonly organization: KnowledgeOrganization;
   constructor(readonly deps: KnowledgeEngineDeps) {
     this.graph = new KnowledgeGraph(deps.db, () => deps.getSettings().knowledge.maxVisitedPerSeed);
     this.upkeep = new KnowledgeUpkeep(
@@ -111,6 +114,13 @@ export class KnowledgeEngine {
       id: (prefix) => this.id(prefix),
       source: (id) => this.source(id),
       pageArcs: (id, after, limit) => this.graph.page(id, after, limit),
+      roots: () => this.roots(),
+    });
+    this.organization = new KnowledgeOrganization({
+      deps,
+      id: (prefix) => this.id(prefix),
+      frontier: (id, depth) => this.frontier(id, depth),
+      arcs: (id) => this.graph.arcs(id),
       roots: () => this.roots(),
     });
     this.planner = new KnowledgeBatchPlanner({
@@ -203,20 +213,28 @@ export class KnowledgeEngine {
       .get();
     return root && this.orientation().some((node) => node.plainText.trim()) ? root.id : null;
   }
-  private orientation(): ReturnType<KnowledgeService["list"]> {
+  private orientation(): Array<
+    ReturnType<KnowledgeService["list"]>[number] & {
+      contentTruncated: boolean;
+      orientationIncomplete: boolean;
+    }
+  > {
     const ids = this.deps.db
       .prepare<
         [number],
         { id: string }
       >("SELECT id FROM knowledge_nodes WHERE kind!='root' ORDER BY COALESCE(json_extract(metadata_json,'$.importance'),0) DESC,updated_at DESC,id LIMIT ?")
-      .all(this.deps.getSettings().knowledge.maxFrontierNodes);
-    return ids.flatMap(({ id }) => {
+      .all(this.deps.getSettings().knowledge.maxFrontierNodes + 1);
+    const limit = this.deps.getSettings().knowledge.maxFrontierNodes;
+    return ids.slice(0, limit).flatMap(({ id }) => {
       const node = this.deps.service.fetch(id);
       if (!node) return [];
       const { claims: _claims, ...summary } = node;
       return [
         {
           ...summary,
+          contentTruncated: node.plainText.length > 1200,
+          orientationIncomplete: ids.length > limit,
           markdown: node.plainText.slice(0, 1200),
           plainText: node.plainText.slice(0, 1200),
         },
@@ -282,13 +300,24 @@ export class KnowledgeEngine {
       await this.intake.bootstrap();
       await this.upkeep.reviews();
       await this.upkeep.organization();
-      return { cascading: false, enqueued: await this.planner.plan() };
+      const enqueued = await this.planner.plan();
+      return { cascading: false, enqueued: enqueued + (await this.organization.plan()) };
     } finally {
       this.ticking = false;
     }
   }
 
   async next(batchId: string, runId: string): Promise<KnowledgeFrontierView> {
+    this.batch(batchId, runId);
+    if (!(await this.organization.current(batchId)))
+      return { batchId, done: true, interrupted: true, items: [] };
+    const result = await this.nextMaintenance(batchId, runId);
+    if (!(await this.organization.current(batchId)))
+      return { batchId, done: true, interrupted: true, items: [] };
+    const organization = this.organization.view(batchId);
+    return organization ? { ...result, organization } : result;
+  }
+  private async nextMaintenance(batchId: string, runId: string): Promise<KnowledgeFrontierView> {
     if (this.batch(batchId, runId).status === "abandoned")
       return { batchId, done: true, interrupted: true, items: [] };
     const cfg = this.deps.getSettings().knowledge;
@@ -399,12 +428,22 @@ export class KnowledgeEngine {
              WHERE t.node_id=? LIMIT 1`,
               )
               .get(batchId, item.nodeId);
+          const rootOrientation = node?.kind === "root" ? this.orientation() : undefined;
           const isInitialRoot =
-            node?.kind === "root" &&
-            !node.plainText.trim() &&
-            this.orientation().some((candidate) => candidate.plainText.trim());
+            !!rootOrientation &&
+            !node!.plainText.trim() &&
+            rootOrientation.some((candidate) => candidate.plainText.trim());
+          // A cheap gate cannot judge root changes from opaque revision IDs alone.
+          // If bounded context cannot fit, leave the decision to synthesis.
+          const rootContextUnavailable =
+            rootOrientation !== undefined &&
+            (rootOrientation.length === 0 ||
+              rootOrientation.some(
+                (candidate) => candidate.contentTruncated || candidate.orientationIncomplete,
+              ) ||
+              JSON.stringify(rootOrientation).length > Math.min(cfg.maxFrontierChars, 24000));
           const score =
-            isDiscoveryTarget || isInitialRoot
+            isDiscoveryTarget || isInitialRoot || rootContextUnavailable
               ? null
               : await judgeKnowledge(this.deps.decisions, source ? "discovery" : "impact", {
                   inputVersions: item.inputVersions,
@@ -413,6 +452,7 @@ export class KnowledgeEngine {
                     : undefined,
                   node,
                   changedInputs: this.batchSources(batchId),
+                  ...(rootOrientation ? { orientation: rootOrientation } : {}),
                 });
           if (
             !isReview &&

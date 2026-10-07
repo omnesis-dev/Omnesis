@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createLogger, type DecisionCapability } from "@omnesis/core";
 import {
   createSourceInventoryTables,
@@ -38,6 +38,7 @@ import {
 let db: Database.Database, engine: KnowledgeEngine, service: KnowledgeService;
 let now: number, serial: number, score: number, decisions: number;
 let settings: ReturnType<typeof resolveBrainSettings>;
+let decisionStates: unknown[];
 const log = createLogger("test:knowledge-engine");
 
 beforeEach(() => {
@@ -54,6 +55,7 @@ beforeEach(() => {
   serial = 0;
   score = 0.9;
   decisions = 0;
+  decisionStates = [];
   settings = resolveBrainSettings({ bootstrap: { enabled: false } });
   const writeGate = directKnowledgeGate(db);
   service = new KnowledgeService({
@@ -68,6 +70,7 @@ beforeEach(() => {
     dispose() {},
     async decide(request) {
       decisions++;
+      decisionStates.push(request.state);
       return {
         model: "scripted",
         answers: Object.fromEntries(
@@ -626,6 +629,179 @@ describe("knowledge coordinator", () => {
     expect(db.prepare("SELECT 1 FROM knowledge_nodes WHERE kind='wiki'").get()).toBeUndefined();
   });
 
+  it("jointly organizes considered disjoint sources and requires a versioned final disposition", async () => {
+    for (const id of ["cohort-a", "cohort-b"]) {
+      source(id);
+      recordKnowledgeCoverage(
+        db,
+        {
+          subjectId: id,
+          inputRevision: "v1",
+          phase: "organization",
+          policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+          status: "considered",
+        },
+        now,
+      );
+    }
+    db.exec("DELETE FROM knowledge_changes");
+    await engine.tick();
+    const batch = batchFor("cohort-a");
+    expect(batchFor("cohort-b").id).toBe(batch.id);
+    const view = await engine.next(batch.id, batch.runId);
+    expect(view.organization?.sourceIds).toEqual(["cohort-a", "cohort-b"]);
+    const completion = {
+      id: view.organization!.id,
+      batchId: batch.id,
+      runId: batch.runId,
+      inputFingerprint: view.organization!.inputFingerprint,
+      outcome: "no_page" as const,
+      reasonCode: "insufficient_shared_context" as const,
+      retryAt: now + settings.knowledge.maxReviewIntervalMs,
+    };
+    await expect(
+      directKnowledgeGate(db)["knowledge.completeOrganization"](completion, now),
+    ).rejects.toMatchObject({ code: "claim_invalid" });
+    for (const item of view.items)
+      await engine.completeSource(batch.id, batch.runId, item.id, item.inputFingerprint);
+    const ready = await engine.next(batch.id, batch.runId);
+    expect(ready).toMatchObject({ done: false, organization: { readyToComplete: true } });
+    await directKnowledgeGate(db)["knowledge.completeOrganization"](completion, now);
+    expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_dependencies").get()).toEqual({ n: 0 });
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_organization_cohorts").get()).toEqual({
+      n: 1,
+    });
+  });
+
+  it("interrupts a joint organization snapshot when its evidence changes without completing coverage", async () => {
+    for (const id of ["cohort-a", "cohort-b"]) {
+      source(id);
+      recordKnowledgeCoverage(
+        db,
+        {
+          subjectId: id,
+          inputRevision: "v1",
+          phase: "organization",
+          policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+          status: "considered",
+        },
+        now,
+      );
+    }
+    db.exec("DELETE FROM knowledge_changes");
+    await engine.tick();
+    const batch = batchFor("cohort-a");
+    await engine.next(batch.id, batch.runId);
+    source("cohort-a", "v2", "A changed fixture note.");
+    expect(await engine.next(batch.id, batch.runId)).toMatchObject({
+      done: true,
+      interrupted: true,
+    });
+    expect(
+      db.prepare("SELECT status,outcome_json AS outcome FROM knowledge_organization_cohorts").get(),
+    ).toMatchObject({ status: "abandoned", outcome: null });
+  });
+
+  it("does not silently finish a pending organization run after privacy cleanup erases its cohort", async () => {
+    for (const id of ["cohort-a", "cohort-b"]) {
+      source(id);
+      recordKnowledgeCoverage(
+        db,
+        {
+          subjectId: id,
+          inputRevision: "v1",
+          phase: "organization",
+          policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+          status: "considered",
+        },
+        now,
+      );
+    }
+    db.exec("DELETE FROM knowledge_changes");
+    await engine.tick();
+    const batch = batchFor("cohort-a");
+    const offered = await engine.next(batch.id, batch.runId);
+    for (const item of offered.items)
+      await engine.completeSource(batch.id, batch.runId, item.id, item.inputFingerprint);
+    const cascade = engine.deps.writeGate["knowledge.advanceCascade"];
+    vi.spyOn(engine.deps.writeGate, "knowledge.advanceCascade").mockImplementationOnce(
+      async (...args) => {
+        const result = await cascade(...args);
+        // Privacy cleanup can run after the frontier's initial snapshot check.
+        db.prepare("DELETE FROM knowledge_organization_cohorts WHERE batch_id=?").run(batch.id);
+        return result;
+      },
+    );
+    expect(await engine.next(batch.id, batch.runId)).toMatchObject({
+      done: true,
+      interrupted: true,
+    });
+    expect(db.prepare("SELECT status FROM knowledge_batches WHERE id=?").get(batch.id)).toEqual({
+      status: "abandoned",
+    });
+  });
+
+  it("fails open when root orientation has truncated prose", async () => {
+    saveKnowledgeNode(
+      db,
+      {
+        id: "root-existing",
+        kind: "root",
+        title: "Current context",
+        markdown: "Earlier context.",
+        expectedRevision: 0,
+        inputVersions: {},
+      },
+      now,
+    );
+    source();
+    await wiki("long-context", "source:input", "A fictional contextual sentence. ".repeat(80));
+    await engine.tick();
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    const batch = batchFor("root-existing");
+    score = 0;
+    const before = decisions;
+    const view = await engine.next(batch.id, batch.runId);
+    expect(view.items[0]?.node?.kind).toBe("root");
+    expect(decisions).toBe(before);
+  });
+
+  it("supplies readable synthesis context to a populated root impact decision", async () => {
+    saveKnowledgeNode(
+      db,
+      {
+        id: "root-existing",
+        kind: "root",
+        title: "Current context",
+        markdown: "Earlier context.",
+        expectedRevision: 0,
+        inputVersions: {},
+      },
+      now,
+    );
+    source();
+    await wiki();
+    await engine.tick();
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    const batch = batchFor("root-existing");
+    await engine.next(batch.id, batch.runId);
+    expect(decisionStates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          node: expect.objectContaining({ kind: "root" }),
+          orientation: expect.arrayContaining([
+            expect.objectContaining({ id: "project", plainText: "The workshop begins Friday." }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("keeps the root in a separate run and offers bounded orientation", async () => {
     source();
     await wiki();
@@ -808,10 +984,31 @@ describe("knowledge coordinator", () => {
     expect(
       db
         .prepare(
-          "SELECT COUNT(*) AS n FROM knowledge_batches WHERE status IN ('pending','running')",
+          "SELECT COUNT(*) AS n FROM knowledge_batches WHERE id IN (?,?,?) AND status='completed'",
         )
-        .get(),
-    ).toEqual({ n: 0 });
+        .get(a.id, b.id, rootBatch.id),
+    ).toEqual({ n: 3 });
+    // The completed repairs make both sources eligible for a separate joint
+    // organization pass. It must not be confused with either project repair.
+    const pending = db
+      .prepare<[], { id: string; cohortId: string | null }>(
+        `SELECT b.id,c.id AS cohortId FROM knowledge_batches b
+      LEFT JOIN knowledge_organization_cohorts c ON c.batch_id=b.id
+      WHERE b.status IN ('pending','running')`,
+      )
+      .all();
+    expect(pending).toEqual([{ id: expect.any(String), cohortId: expect.any(String) }]);
+    expect([a.id, b.id, rootBatch.id]).not.toContain(pending[0]!.id);
+    expect(
+      db
+        .prepare(
+          "SELECT source_id AS id,content_hash AS revision FROM knowledge_organization_members WHERE cohort_id=? ORDER BY source_id",
+        )
+        .all(pending[0]!.cohortId),
+    ).toEqual([
+      { id: "source-a", revision: "a-v2" },
+      { id: "source-b", revision: "b-v2" },
+    ]);
   });
 
   it("discovers new evidence for an existing page without requiring a pre-existing edge", async () => {
@@ -921,7 +1118,6 @@ describe("knowledge coordinator", () => {
         markdown: '<claim id="schedule" refs="source:input">The workshop begins Friday.</claim>',
         expectedRevision: repair.node!.revision,
         inputVersions: { "source:input": "v1" },
-        canonicalFields: repair.node!.canonicalFields,
       },
       repair.pendingClaimIds,
     );
@@ -1209,11 +1405,13 @@ describe("knowledge coordinator", () => {
       (item) => item.id === "project",
     )!;
     const settle = engine.deps.writeGate["knowledge.settleFrontier"];
-    engine.deps.writeGate["knowledge.settleFrontier"] = async (...args) => {
-      const result = await settle(...args);
-      purgeKnowledgeNode(db, "project", now);
-      return result;
-    };
+    vi.spyOn(engine.deps.writeGate, "knowledge.settleFrontier").mockImplementation(
+      async (...args) => {
+        const result = await settle(...args);
+        purgeKnowledgeNode(db, "project", now);
+        return result;
+      },
+    );
     await expect(
       engine.saveNode(
         batch.id,

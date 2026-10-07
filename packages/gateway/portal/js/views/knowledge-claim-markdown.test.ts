@@ -8,12 +8,9 @@ vi.mock("../lib/format.js", () => ({
   sourceIconUrl: (id: string) => (id === "fixture-notes" ? "data:image/png;base64,aGVsbG8=" : null),
 }));
 import DOMPurify from "dompurify";
-import {
-  claimMarkupRanges,
-  internalKnowledgeHref,
-  renderKnowledgeMarkdown,
-  extractKnowledgeReferences,
-} from "./knowledge-claim-markdown.js";
+// @ts-expect-error Plain JavaScript portal module.
+import * as knowledgeMarkdown from "./knowledge-claim-markdown.js";
+const { claimMarkupRanges, internalKnowledgeHref, renderKnowledgeMarkdown, extractKnowledgeReferences } = knowledgeMarkdown;
 function claim(markdown: string, id: string, parentId: string | null = null) {
   const open = `<claim id="${id}" refs="source:fixture">`;
   const start = markdown.indexOf(open) + open.length;

@@ -5,11 +5,8 @@ vi.mock("./format.js", () => ({
   sourceIconUrl: (id: string) => (id === "fixture-notes" ? "/icons/fixture.png" : null),
 }));
 // @ts-expect-error Plain JavaScript portal module.
-import {
-  knowledgeIconHtml,
-  knowledgeReferenceMetadata,
-  knowledgeLinkReference,
-} from "./knowledge-link-icons.js";
+import * as knowledgeLinks from "./knowledge-link-icons.js";
+const { knowledgeIconHtml, knowledgeReferenceMetadata, knowledgeLinkReference } = knowledgeLinks;
 
 it("uses the source registry identity and keeps unavailable source artwork neutral", () => {
   expect(knowledgeIconHtml({ reference: "source:document", sourceId: "fixture-notes" })).toContain(

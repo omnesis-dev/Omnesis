@@ -45,65 +45,7 @@ export function advanceKnowledgeOwnerSync(
           deletedNodeIds.push(...purgeKnowledgeNode(db, row.owner_id, now));
           return;
         }
-        const owner = readKnowledgeOwner(db, row.kind, row.owner_id);
-        const node = getKnowledgeNode(db, row.owner_id);
-        if (node && (node.kind !== owner.kind || node.ownerId !== owner.id))
-          throw new KnowledgeStorageError(
-            "claim_invalid",
-            "Canonical owner identity collides with another synthesis node",
-          );
-        if (!node || node.plainText !== owner.markdown) {
-          saveKnowledgeNode(
-            db,
-            buildLegacyOwnerKnowledge(db, owner, node?.revision ?? 0, now),
-            now,
-          );
-        } else {
-          const parsed = parseClaimMarkup(node.markdown);
-          const inputVersions: Record<string, KnowledgeRevision> = {};
-          for (const claim of parsed.claims)
-            for (const ref of claim.refs)
-              inputVersions[ref.raw] = resolveKnowledgeReference(db, ref).revision;
-          const dependencies = getKnowledgeDependencies(db, node.id);
-          saveKnowledgeNode(
-            db,
-            {
-              id: node.id,
-              kind: node.kind,
-              ownerId: node.ownerId,
-              title: owner.title,
-              markdown: node.markdown,
-              expectedRevision: node.revision,
-              inputVersions,
-              canonicalFields: owner.canonicalFields,
-              metadata: {
-                ...node.metadata,
-                ...(owner.canonicalFields.invalidatedAt != null ||
-                (owner.kind === "loop" && owner.canonicalFields.state !== "open") ||
-                (owner.kind === "brief" && historicalBriefFields(owner.canonicalFields, now))
-                  ? { activity: "historical" as const }
-                  : owner.kind === "brief"
-                    ? { activity: "active" as const }
-                    : {}),
-              },
-              claims: getKnowledgeClaims(db, node.id).map((claim) => ({
-                id: claim.id,
-                supportLogic: claim.supportLogic,
-                attribution: claim.attribution,
-                modality: claim.modality,
-                epistemicStatus: claim.epistemicStatus,
-                validFrom: claim.validFrom,
-                validUntil: claim.validUntil,
-                relations: Object.fromEntries(
-                  dependencies
-                    .filter((dep) => dep.claimId === claim.id)
-                    .map((dep) => [dep.ref, dep.relation]),
-                ),
-              })),
-            },
-            now,
-          );
-        }
+        reconcileKnowledgeOwner(db, row.kind, row.owner_id, now);
         updatedNodeIds.push(row.owner_id);
       })();
     } catch (error) {
@@ -120,4 +62,73 @@ export function advanceKnowledgeOwnerSync(
     deletedNodeIds,
     deferred,
   };
+}
+
+/** Reconcile exactly one persisted owner under the caller’s writer transaction. */
+export function reconcileKnowledgeOwner(
+  db: Database.Database,
+  kind: KnowledgeOwnerKind,
+  ownerId: string,
+  now: number,
+): void {
+  db.transaction(() => {
+    const owner = readKnowledgeOwner(db, kind, ownerId);
+    const node = getKnowledgeNode(db, ownerId);
+    if (node && (node.kind !== owner.kind || node.ownerId !== owner.id))
+      throw new KnowledgeStorageError(
+        "claim_invalid",
+        "Canonical owner identity collides with another synthesis node",
+      );
+    if (!node || node.plainText !== owner.markdown) {
+      saveKnowledgeNode(db, buildLegacyOwnerKnowledge(db, owner, node?.revision ?? 0, now), now);
+    } else {
+      const parsed = parseClaimMarkup(node.markdown);
+      const inputVersions: Record<string, KnowledgeRevision> = {};
+      for (const claim of parsed.claims)
+        for (const ref of claim.refs)
+          inputVersions[ref.raw] = resolveKnowledgeReference(db, ref).revision;
+      const dependencies = getKnowledgeDependencies(db, node.id);
+      saveKnowledgeNode(
+        db,
+        {
+          id: node.id,
+          kind: node.kind,
+          ownerId: node.ownerId,
+          title: owner.title,
+          markdown: node.markdown,
+          expectedRevision: node.revision,
+          inputVersions,
+          canonicalFields: owner.canonicalFields,
+          metadata: {
+            ...node.metadata,
+            ...(owner.canonicalFields.invalidatedAt != null ||
+            (owner.kind === "loop" && owner.canonicalFields.state !== "open") ||
+            (owner.kind === "brief" && historicalBriefFields(owner.canonicalFields, now))
+              ? { activity: "historical" as const }
+              : owner.kind === "brief"
+                ? { activity: "active" as const }
+                : {}),
+          },
+          claims: getKnowledgeClaims(db, node.id).map((claim) => ({
+            id: claim.id,
+            supportLogic: claim.supportLogic,
+            attribution: claim.attribution,
+            modality: claim.modality,
+            epistemicStatus: claim.epistemicStatus,
+            validFrom: claim.validFrom,
+            validUntil: claim.validUntil,
+            relations: Object.fromEntries(
+              dependencies
+                .filter((dep) => dep.claimId === claim.id)
+                .map((dep) => [dep.ref, dep.relation]),
+            ),
+          })),
+        },
+        now,
+      );
+    }
+    db.prepare(
+      "DELETE FROM knowledge_owner_changes WHERE kind=? AND owner_id=? AND operation='update'",
+    ).run(kind, ownerId);
+  })();
 }

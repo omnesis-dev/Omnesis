@@ -534,6 +534,31 @@ export function finishKnowledgeBatch(
       )
       .get(batchId);
     if (pending) return false;
+    // Cohort metadata may have been erased by privacy cleanup while a frontier
+    // call awaited another writer slice. A missing decision must never settle it.
+    const required = db
+      .prepare<[string], { id: string | null }>(
+        `SELECT json_extract(r.payload_json,'$.organizationCohortId') AS id
+      FROM knowledge_batches b JOIN cognition_runs r ON r.id=b.run_id WHERE b.id=?`,
+      )
+      .get(batchId);
+    if (
+      required?.id &&
+      !db
+        .prepare(
+          "SELECT 1 FROM knowledge_organization_cohorts WHERE id=? AND batch_id=? AND status IN ('completed','deferred')",
+        )
+        .get(required.id, batchId)
+    )
+      return false;
+    if (
+      db
+        .prepare(
+          "SELECT 1 FROM knowledge_organization_cohorts WHERE batch_id=? AND status='pending'",
+        )
+        .get(batchId)
+    )
+      return false;
     const batch = db
       .prepare<[string], { status: string }>("SELECT status FROM knowledge_batches WHERE id=?")
       .get(batchId);

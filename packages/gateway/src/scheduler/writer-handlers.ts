@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { KnowledgeStorageError } from "../brain/knowledge/types.js";
 import {
-  assertKnowledgeCanonicalFence,
-  refreshKnowledgeCanonicalOwners,
-  type KnowledgeCanonicalFence,
-} from "../brain/knowledge/canonical-fence.js";
+  captureCanonicalEnrollment,
+  enrollCanonicalMutation,
+} from "../brain/knowledge/canonical-enrollment.js";
+import { KnowledgeStorageError } from "../brain/knowledge/types.js";
 
 import {
   type SyncIssue,
@@ -65,6 +64,11 @@ type Db = Database.Database;
 const NEAR_DUP_DF_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import {
+  assertKnowledgeCanonicalFence,
+  refreshKnowledgeCanonicalOwners,
+  type KnowledgeCanonicalFence,
+} from "../brain/knowledge/canonical-fence.js";
 import { replaceSourceSyncIssues } from "../data/repositories/SourceSyncIssueRepository.js";
 import { promoteSourceWireContract } from "../data/repositories/SourceWireContractRepository.js";
 import { knowledgeWriterHandlers } from "../brain/knowledge/writer.js";
@@ -623,9 +627,16 @@ function guardedCanonicalMutation(
   try {
     const value = db.transaction(() => {
       assertKnowledgeCanonicalFence(db, fence);
+      const enrollment = captureCanonicalEnrollment(db, operation, args);
       const result = handler(db, ...args);
       if (result instanceof Promise)
         throw new Error("Canonical maintenance mutation must be synchronous");
+      const mutationTime = args.at(-1);
+      if (enrollment) {
+        if (typeof mutationTime !== "number" || !Number.isFinite(mutationTime))
+          throw new Error("Canonical owner mutation requires a timestamp");
+        enrollCanonicalMutation(db, fence, enrollment, mutationTime);
+      }
       return { result, owners: refreshKnowledgeCanonicalOwners(db, fence) };
     })();
     return { ok: true, value: value.result, owners: value.owners };

@@ -54,6 +54,7 @@ const ARTIFACT_TOOLS: Readonly<Record<CognitiveArtifact, readonly string[]>> = {
     "knowledge_candidate_decide",
     "knowledge_next_frontier",
     "knowledge_discovery_complete",
+    "knowledge_organization_complete",
     "knowledge_temporal_context",
   ],
   loop: [

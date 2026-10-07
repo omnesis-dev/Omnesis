@@ -38,11 +38,42 @@ const itemSchema = z
       .optional(),
   })
   .passthrough();
+const organizationSchema = z.object({
+  id: z.string(),
+  inputFingerprint: z.string(),
+  sourceIds: z.array(z.string()),
+  readyToComplete: z.boolean(),
+});
 const frontierSchema = z
-  .object({ batchId: z.string(), done: z.boolean(), items: z.array(itemSchema) })
+  .object({
+    batchId: z.string(),
+    done: z.boolean(),
+    items: z.array(itemSchema),
+    organization: organizationSchema.optional(),
+  })
   .passthrough();
 export type PuppetKnowledgeItem = z.infer<typeof itemSchema>;
 export interface KnowledgePuppetPolicy {
+  organize?: (
+    cohort: z.infer<typeof organizationSchema>,
+    ctx: RunContext,
+    steps: readonly ToolStep[],
+  ) => PuppetPlan;
+  organizationOutcome?: (
+    cohort: z.infer<typeof organizationSchema>,
+    steps: readonly ToolStep[],
+  ) => {
+    outcome: "organized" | "no_page" | "deferred";
+    reasonCode:
+      | "insufficient_shared_context"
+      | "already_organized"
+      | "insufficient_evidence"
+      | "awaiting_more_evidence"
+      | "new_context_published"
+      | "existing_context_updated";
+    targetIds?: string[];
+    targetVersions?: Record<string, number>;
+  };
   /** Script decisions from the actual source/node payload offered by the engine. */
   plan: (item: PuppetKnowledgeItem, ctx: RunContext, steps: readonly ToolStep[]) => PuppetPlan;
   /** Explicit negative-path scenarios may continue after an exact canonical-tool refusal. */
@@ -71,6 +102,26 @@ export function knowledgePuppet(
       };
     const frontier = parsed.data;
     if (frontier.done) return { kind: "final", text: "The engine reports this batch complete." };
+    if (frontier.organization?.readyToComplete) {
+      const since = steps.slice(frontierAt + 1);
+      if (since.some((step) => step.name === "knowledge_organization_complete"))
+        return { kind: "tool", name: "knowledge_next_frontier", args: {} };
+      const plan = policy.organize?.(frontier.organization, ctx, since) ?? { calls: [] };
+      const next = emitNextPlanned(plan, since, false);
+      if (next.kind === "tool") return next;
+      return {
+        kind: "tool",
+        name: "knowledge_organization_complete",
+        args: {
+          id: frontier.organization.id,
+          inputFingerprint: frontier.organization.inputFingerprint,
+          ...(policy.organizationOutcome?.(frontier.organization, since) ?? {
+            outcome: "no_page",
+            reasonCode: "insufficient_shared_context",
+          }),
+        },
+      };
+    }
     let after = frontierAt + 1;
     for (const offeredItem of frontier.items) {
       let item = offeredItem;
@@ -157,7 +208,9 @@ export function knowledgePuppet(
           return { kind: "final", text: "Root orientation unavailable; preserve pending work." };
         item = { ...item, orientation: orientation.data };
       }
-      const plan = policy.plan(item, ctx, steps);
+      // Cohort sources were already interpreted; joint organization has its own fixture policy.
+      const plan =
+        frontier.organization && item.source ? { calls: [] } : policy.plan(item, ctx, steps);
       const planSteps = item.fetchRequired
         ? since.filter(
             (step) =>
@@ -191,7 +244,7 @@ export function knowledgePuppet(
           args: {
             id: item.id,
             inputFingerprint: item.inputFingerprint,
-            targets: policy.targets?.(item, since) ?? [],
+            targets: frontier.organization ? [] : (policy.targets?.(item, since) ?? []),
           },
         };
       return {

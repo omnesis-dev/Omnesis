@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { queueKnowledgeProjectionCleanup } from "./mirror-storage.js";
+import { purgeNextOrganizationCohort } from "./storage-organization-purge.js";
 import { purgeKnowledgeOwner } from "./storage-owner-purge.js";
 import { knowledgeNodeFence } from "./storage-fence.js";
 import { snapshotKnowledgeRevision } from "./storage-history.js";
@@ -76,6 +77,11 @@ export function advanceKnowledgeCascade(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_candidate_sources'",
       )
       .get();
+    const hasOrganizationCohorts = !!db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_organization_members'",
+      )
+      .get();
     const hasBriefLinks = !!db
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='brief_related_loops'")
       .get();
@@ -123,6 +129,13 @@ export function advanceKnowledgeCascade(
           continue;
         }
       }
+
+      if (
+        hasOrganizationCohorts &&
+        item.kind === "purge" &&
+        purgeNextOrganizationCohort(db, item.target_id, item.target_kind)
+      )
+        continue;
 
       const expands =
         item.kind === "purge" ||

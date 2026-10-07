@@ -183,6 +183,28 @@ existing page, deferral and dismissal. It does not count as verified evidence.
 Durable admission and retry deadlines prevent a quiet candidate from creating
 a new agent turn on every scheduler tick.
 
+A separate joint organization pass groups up to eight already-considered source
+revisions into one maintenance cohort. The first pass becomes eligible once at
+least two sources are available; later admissions use `routineDelay` with a
+one-minute minimum, sharing the Brain's budget. Owners and existing wikis are
+retrieved as context. A settled decision or arrangement can justify a wiki even
+when it creates no loop or brief. Cohort membership creates no dependency edges.
+
+After the source and page frontier is settled, the agent records a version-fenced
+organization outcome: actual wiki targets, a no-page decision, or a
+missing-context deferral. The durable ledger stores bounded reason codes; richer
+reasoning stays in the normal agent transcript. Unchanged completed inputs wait for
+`maxReviewInterval`; deferred work waits for `routineDelay`, both with a
+one-minute floor. Fresh evidence can form a new cohort with previously reviewed
+context. Failed or stale cohorts do not advance the joint review ledger, and
+private evidence is excluded and its retained cohort review metadata is purged.
+These passes revisit admitted evidence; they do not grant historical consent.
+
+Canonical loop, brief and annotation writes made during maintenance automatically
+enroll affected owners for grounded synthesis review, even if the agent omits
+explicit discovery targets. Persisted evidence determines their association;
+unrelated owners receive a separate review.
+
 ## Bounding the spend
 
 Everything is measured in **tokens and runs**. The Brain reports no figure in

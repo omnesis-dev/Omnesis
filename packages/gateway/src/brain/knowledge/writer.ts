@@ -7,11 +7,15 @@ import {
   queueKnowledgeProjectionCleanup,
   ackKnowledgeProjectionCleanup,
 } from "./mirror-storage.js";
+import {
+  startOrganizationBatch,
+  completeOrganizationBatch,
+  abandonOrganizationBatch,
+} from "./organization-writer.js";
 import { admitKnowledgeOrganization } from "./organization.js";
 import {
   refreshKnowledgeWork,
   recordKnowledgeDiscoveryTargets,
-  abandonKnowledgeBatch,
   scheduleKnowledgeReview,
   setKnowledgeCheckpoint,
 } from "./work-lifecycle.js";
@@ -86,6 +90,8 @@ function startKnowledgeBatch(
 
 export const knowledgeWriterHandlers = {
   "knowledge.classifyInitialRootBatches": classifyInitialRootBatches,
+  "knowledge.startOrganization": startOrganizationBatch,
+  "knowledge.completeOrganization": completeOrganizationBatch,
   "knowledge.admitOrganization": admitKnowledgeOrganization,
   "knowledge.queueProjectionCleanup": queueKnowledgeProjectionCleanup,
   "knowledge.ackProjectionCleanup": ackKnowledgeProjectionCleanup,
@@ -100,7 +106,7 @@ export const knowledgeWriterHandlers = {
   "knowledge.saveOwned": saveOwnedKnowledgeNode,
   "knowledge.checkpoint": setKnowledgeCheckpoint,
   "knowledge.scheduleReview": scheduleKnowledgeReview,
-  "knowledge.abandonBatch": abandonKnowledgeBatch,
+  "knowledge.abandonBatch": abandonOrganizationBatch,
   "knowledge.save": saveKnowledgeNode,
   "knowledge.evidence": registerKnowledgeEvidence,
   "knowledge.sourceChanged": recordKnowledgeSourceChange,
@@ -132,6 +138,8 @@ export type KnowledgeWriterCall = <K extends keyof Handlers>(
 
 export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
   return {
+    "knowledge.startOrganization": (...args) => call("knowledge.startOrganization", args),
+    "knowledge.completeOrganization": (...args) => call("knowledge.completeOrganization", args),
     "knowledge.admitOrganization": (...args) => call("knowledge.admitOrganization", args),
     "knowledge.queueProjectionCleanup": (...args) => call("knowledge.queueProjectionCleanup", args),
     "knowledge.ackProjectionCleanup": (...args) => call("knowledge.ackProjectionCleanup", args),
@@ -170,6 +178,8 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
 
 export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
   return {
+    "knowledge.startOrganization": async (...args) => startOrganizationBatch(db, ...args),
+    "knowledge.completeOrganization": async (...args) => completeOrganizationBatch(db, ...args),
     "knowledge.admitOrganization": async (...args) => admitKnowledgeOrganization(db, ...args),
     "knowledge.queueProjectionCleanup": async (...args) =>
       queueKnowledgeProjectionCleanup(db, ...args),
@@ -185,7 +195,7 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.saveOwned": async (...args) => saveOwnedKnowledgeNode(db, ...args),
     "knowledge.checkpoint": async (...args) => setKnowledgeCheckpoint(db, ...args),
     "knowledge.scheduleReview": async (...args) => scheduleKnowledgeReview(db, ...args),
-    "knowledge.abandonBatch": async (...args) => abandonKnowledgeBatch(db, ...args),
+    "knowledge.abandonBatch": async (...args) => abandonOrganizationBatch(db, ...args),
     "knowledge.save": async (...args) => saveKnowledgeNode(db, ...args),
     "knowledge.evidence": async (...args) => registerKnowledgeEvidence(db, ...args),
     "knowledge.sourceChanged": async (...args) => recordKnowledgeSourceChange(db, ...args),
