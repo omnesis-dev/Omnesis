@@ -146,6 +146,26 @@ describe("Cognition Steward system prompt", () => {
     expect(prompt).toContain("Follow-up/review timing is a separate scheduling choice");
   });
 
+  test("preserves a loop's outcome identity while allowing clarification", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
+    expect(prompt).toContain(
+      "A shared person, topic, or project does not make two outcomes the same",
+    );
+    expect(prompt).toContain(
+      "Clarify a title or description when it still tracks the SAME outcome",
+    );
+    expect(prompt).toContain("never silently replace its completion criterion");
+    expect(prompt).toContain("correct the same-outcome framing with a transparent ledger note");
+    expect(prompt).toContain(
+      "dismiss/remove the loop under the retirement rules with an explicit reason",
+    );
+    expect(prompt).toContain(
+      "completion of a different task is not fulfilment of the original outcome",
+    );
+    expect(prompt).toContain("Maintain a separate loop for a distinct supported action");
+    expect(prompt).toContain("preserving relevant context links");
+  });
+
   test("carries no clock, so it never changes with the time of the run", () => {
     const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096, annotationsEnabled: true });
     expect(prompt).not.toContain("Current time:");

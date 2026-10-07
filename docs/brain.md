@@ -94,6 +94,14 @@ They do not imply evidential support. Operational blocking and completion stay
 in the loop's canonical fields. Closing or retiring a loop preserves its useful
 history; deleting private evidence has separate removal semantics.
 
+A loop keeps the same completion criterion as its evidence develops. Titles and
+descriptions may clarify that outcome; a shared person, topic or project does
+not make a different action the same outcome. Correct unsupported or
+misunderstood framing transparently in the ledger, or dismiss/remove the loop
+under the retirement rules with an explicit reason; never substitute another
+task's completion for fulfilment of the original outcome.
+Track a distinct supported action separately and preserve relevant context links.
+
 The root wiki is the compact overview itself, not a second full-sized page.
 Every write must fit `rootMaxChars`. It is injected as untrusted reference
 context; reading it does not create an automatic dependency on every claim.

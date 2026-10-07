@@ -1482,8 +1482,14 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "change (`docs`/`actors`/etc. replace the whole list). Bumps the " +
       "loop's last_update. Prefer this (plus open_loop_ledger_append) over " +
       "creating a new loop when the datum concerns the SAME obligation an " +
-      "existing loop tracks — a different ask that merely shares the " +
-      "person, day, or trip is its own new loop.",
+      "existing loop tracks. Clarify title/description only for the same " +
+      "outcome; a shared person, topic, or project does not establish identity. " +
+      "Never replace the completion criterion to make the old loop look done. " +
+      "Correct unsupported or misunderstood framing with a transparent ledger " +
+      "note, or dismiss/remove under the retirement rules with an explicit " +
+      "reason; a different task's completion does not " +
+      "fulfil it. Track a distinct supported action in a separate loop, " +
+      "preserving relevant context links.",
     schema: openLoopUpdateSchema,
     mutates: true,
     summarize: (args) => (args as { id?: string })?.id,
