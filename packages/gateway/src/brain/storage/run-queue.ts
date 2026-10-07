@@ -754,7 +754,7 @@ export function claimDueCognitionRuns(
     THEN (SELECT CASE b.tier WHEN 'immediate' THEN 1.2 ELSE 1.3 END
       FROM knowledge_batches b WHERE ${BOUND_MAINTENANCE_BATCH_SQL})`
       : "";
-  const rankSql = CLAIM_KIND_RANK_SQL.replace("ELSE 2", `${tierRank} WHEN id=? THEN 1.5 ELSE 2`);
+  const rankSql = CLAIM_KIND_RANK_SQL.replace("ELSE 2", `WHEN id=? THEN 1.1 ${tierRank} ELSE 2`);
   const rows = db
     .prepare<[number, number, number, string, string | null, number], CognitionRunDbRow>(
       `UPDATE cognition_runs

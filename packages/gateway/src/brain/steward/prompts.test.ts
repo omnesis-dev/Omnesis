@@ -1267,6 +1267,17 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(prompt).toContain("initial root population");
     expect(prompt).toContain("Split compound legacy spans");
+    expect(prompt).toContain(
+      "finish required operational mutations before the terminal knowledge_save",
+    );
+    expect(prompt).toContain(
+      "state or deadline changes, retirement, and ledger notes must succeed first",
+    );
+    expect(prompt).toContain("After operational mutations, call knowledge_next_frontier");
+    expect(prompt).toContain("fetch the retained owner again with knowledge_fetch(editing=true)");
+    expect(prompt).toContain(
+      "Do not settle an item while a required canonical action remains refused or incomplete",
+    );
     expect(prompt).toContain("Separate advice from each factual clause");
     expect(prompt).toContain(
       "Marking a span recommendation or unsupported does not qualify its displayed words",

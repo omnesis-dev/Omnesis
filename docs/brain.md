@@ -181,8 +181,9 @@ checks stop new admissions; already admitted work can finish and accrue spend.
 User feedback and new-data runs keep the highest queue priority. Within maintenance,
 the bound batch's immediate and soon tiers precede routine historical work. Initial
 root population and joint organization reviews share a preferred slot, at most once
-per four distinct synthesis admissions, so a large historical backlog cannot delay
-all organization until its end. Initial root work uses this bounded preference even
+per four distinct synthesis admissions. That slot precedes immediate and soon
+maintenance, so continuously arriving first-pass work cannot starve organization
+or initial root population; user feedback and new-data runs still precede it. Initial root work uses this bounded preference even
 when its batch is immediate. Retry deadlines and exclusive-run ordering still apply.
 Ready urgent evidence blocked by an existing reserved batch raises that batch's
 priority without clearing its retry deadline; adopted work can also raise priority.

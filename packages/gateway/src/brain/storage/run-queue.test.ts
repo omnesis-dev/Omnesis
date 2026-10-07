@@ -104,9 +104,46 @@ describe("steward run queue", () => {
     expect(claimDueCognitionRuns(db, { now: 102, limit: 5 }).map((run) => run.id)).toEqual([
       "feedback",
       "data",
+      "organization",
       "immediate",
       "soon",
-      "organization",
+    ]);
+  });
+
+  test("preferred joint work advances under a continuously replenished immediate backlog", () => {
+    maintenanceRun("routine");
+    maintenanceRun("soon");
+    db.exec("UPDATE knowledge_batches SET tier='soon' WHERE run_id='soon'");
+    organizationRun("organization-first");
+    let time = 200;
+    let serial = 0;
+    const take = () => {
+      // Keep an urgent first-pass inventory backlog present at every claim.
+      for (let index = 0; index < 4; index++) {
+        const id = `immediate-${serial++}`;
+        maintenanceRun(id);
+        db.prepare("UPDATE knowledge_batches SET tier='immediate' WHERE run_id=?").run(id);
+      }
+      const run = claimDueCognitionRuns(db, { now: time++, limit: 1 })[0]!;
+      completeCognitionRun(db, run.id, { usage: null, now: time });
+      return run.id;
+    };
+    expect(take()).toBe("organization-first");
+    maintenanceRun("root");
+    db.exec("UPDATE knowledge_batches SET tier='immediate' WHERE run_id='root'");
+    db.exec(
+      "UPDATE cognition_runs SET next_attempt_at=101,payload_json=json_set(payload_json,'$.schedulingClass','initial-root') WHERE id='root'",
+    );
+    for (let index = 0; index < 3; index++) expect(take()).toMatch(/^immediate-/);
+    expect(take()).toBe("root");
+    organizationRun("organization-next");
+    for (let index = 0; index < 3; index++) expect(take()).toMatch(/^immediate-/);
+    expect(take()).toBe("organization-next");
+    // Outside the preferred slot, normal maintenance urgency is unchanged.
+    db.exec("UPDATE cognition_runs SET status='completed' WHERE id LIKE 'immediate-%'");
+    expect(claimDueCognitionRuns(db, { now: time, limit: 2 }).map((run) => run.id)).toEqual([
+      "soon",
+      "routine",
     ]);
   });
 

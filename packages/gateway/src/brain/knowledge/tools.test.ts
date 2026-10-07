@@ -43,6 +43,18 @@ function run(kind: ClaimedCognitionRun["kind"], payload: unknown): ClaimedCognit
   return { id: "run", kind, payload, payloadJson: JSON.stringify(payload), attempts: 1 };
 }
 const context = { sessionId: "session", messageId: "message" };
+it("describes canonical operations and fresh reads before a terminal maintenance save", () => {
+  const save = buildKnowledgeTools(service, { runId: "run" }).find(
+    (entry) => entry.name === "knowledge_save",
+  )!;
+  expect(save.description).toContain(
+    "operational mutations must succeed BEFORE this terminal save",
+  );
+  expect(save.description).toContain("state, deadline, retirement, and ledger changes");
+  expect(save.description).toContain("knowledge_next_frontier and knowledge_fetch(editing=true)");
+  expect(save.description).toContain("required canonical action is refused or incomplete");
+});
+
 it("exposes only owner-specific saves within narrowed artifact grants, without wiki/root mutation", () => {
   const scoped = buildKnowledgeTools(service, { runId: "run", scopedOwnersOnly: true });
   const digest = withGrantedMutationsOnly(
