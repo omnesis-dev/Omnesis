@@ -278,12 +278,17 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_save",
-      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. For brief nodes, preserve the ## Description and ## Body sections in markdown. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. In maintenance, existing pages must match an offered frontier. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. For brief nodes, preserve the ## Description and ## Body sections in markdown. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. Preserve the supplied canonical node.ownerId when revising an owned node; never infer or fabricate it. In maintenance, existing pages must match an offered frontier and include its exact inputFingerprint at the top level beside node. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
       z
         .object({
           node: proposal,
           candidateId: id.optional(),
-          inputFingerprint: z.string().optional(),
+          inputFingerprint: z
+            .string()
+            .optional()
+            .describe(
+              "Required when revising an existing node in maintenance: copy the offered inputFingerprint verbatim at the top level beside node, not inside node. Optional for new nodes and saves outside maintenance.",
+            ),
           reviewedClaimIds: z
             .array(id)
             .max(1024)
@@ -296,6 +301,16 @@ export function buildKnowledgeTools(
       true,
       async (input) => {
         const node = input.node as KnowledgeProposal;
+        if (
+          context.batchId &&
+          context.engine &&
+          node.expectedRevision > 0 &&
+          !input.inputFingerprint?.trim()
+        )
+          throw new KnowledgeStorageError(
+            "claim_invalid",
+            "Maintenance saves of existing nodes require inputFingerprint at the top level beside node. Copy the offered frontier inputFingerprint verbatim; call knowledge_next_frontier if it is unavailable.",
+          );
         const candidate = input.candidateId
           ? getKnowledgeCandidate(service.deps.db, input.candidateId)
           : null;
