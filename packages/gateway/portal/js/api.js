@@ -237,7 +237,9 @@ async function request(method, path, opts = {}) {
  * `.error` out of the JSON body before throwing.
  */
 export async function search(text, { verbose = false, limit = 30 } = {}) {
-  const body = { text, verbose, limit };
+  // The browser's zone, so "yesterday" or "last week" in a query is the user's.
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const body = { text, verbose, limit, ...(timeZone ? { timeZone } : {}) };
   const res = await fetch("/search", {
     method: "POST",
     ...fetchOpts(),

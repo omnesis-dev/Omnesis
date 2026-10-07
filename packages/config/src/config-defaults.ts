@@ -145,6 +145,11 @@ export const CONFIG_DEFAULTS = {
       hnswOverFetch: 10,
       alwaysOverFetch: true,
     },
+    // Mirrors DEFAULT_TEMPORAL_ENABLED / DEFAULT_TEMPORAL_WEIGHT in the gateway's search-config.
+    temporal: {
+      enabled: true,
+      weight: 1.0,
+    },
     diversity: {
       enabled: true,
       bucketBy: "type",

@@ -303,6 +303,8 @@ const EXPECTED_INVENTORY = [
   "/search/sourcePriors/autoInverseFrequency/strength [number]",
   "/search/sourcePriors/bm25BypassRank [number]",
   "/search/sourcePriors/weights/* [number]",
+  "/search/temporal/enabled [boolean]",
+  "/search/temporal/weight [number]",
   "/search/vector/alwaysOverFetch [boolean]",
   "/search/vector/hnswOverFetch [number]",
   "/self/emails [stringArray]",

@@ -248,7 +248,7 @@
           </figcaption>
         </figure>
         <p>
-          Filters restrict both lanes before anything is ranked. The ranking settings, including
+          Filters restrict every lane before anything is ranked. The ranking settings, including
           <code>search.boosts.typeBoosts</code>, are described under
           <a href="/docs/operating#configuration">Operating → Configuration</a>.
         </p>
@@ -295,6 +295,31 @@
           <code>omnesis show</code>, and ends with a link to the original when the source provides
           one. The portal's search page and the apps run the same pipeline against the same index,
           with the same query language.
+        </p>
+        <h3 id="time-in-queries">Time in queries</h3>
+        <p>
+          Words that name a time, such as <code>last week</code>, <code>tomorrow</code>,
+          <code>in March</code>, <code>Q3 2025</code> or <code>15 juin</code>, are read as a
+          calendar window. A third lane then ranks only the documents inside that window by the rest
+          of the query, within the same filters, and its list is fused with the keyword and semantic
+          lists. A document is inside the window when it was sent or written there, or when it is
+          about a day there: a calendar event, a booking, or a date mentioned in its text. So
+          <code>dentist next month</code> finds the confirmation that arrived weeks ago, and
+          <code>invoice from last March</code> prefers that March's invoice over older ones that use
+          the same words.
+        </p>
+        <p>
+          The window is a preference, not a filter: a strong match from another time still appears.
+          To restrict results to a range, use <code>after:</code> and <code>before:</code> (see
+          <a href="#query-syntax">Query syntax</a>). A day or month written without a year reads as
+          its nearer occurrence, or as both the last and the next one when they are close or when
+          the period is a month or longer; words like <code>last</code>, <code>ago</code> and
+          <code>paid</code>, or <code>next</code>, <code>upcoming</code> and <code>tomorrow</code>,
+          settle the direction. English, French and Spanish phrases are read, in the time zone the
+          client sends (the portal, the CLI and the agents send theirs) or else the gateway's. The
+          lane is on by default; set <code>search.temporal.enabled</code> to <code>false</code> in
+          <code>omnesis.json</code> and restart the gateway to turn it off.
+          <code>search.temporal.weight</code> sets its weight in the fusion.
         </p>
 
         <p>

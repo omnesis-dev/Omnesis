@@ -15,13 +15,21 @@ export async function requestSearch(
   request: (path: string, init: RequestInit) => Promise<Response>,
   notice: (message: string) => void,
 ): Promise<{ response: Response; agentContext: boolean }> {
+  // Ordinary search reads the query's own dates ("last week") in this
+  // machine's zone; the agent-context debug route takes only text and limit.
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const searchInit = {
+    method: "POST",
+    body: JSON.stringify({ text: query, limit, ...(timeZone ? { timeZone } : {}) }),
+  };
+  if (!agentContext) return { response: await request("/search", searchInit), agentContext };
   const init = { method: "POST", body: JSON.stringify({ text: query, limit }) };
-  const response = await request(agentContext ? "/admin/search/agent-context" : "/search", init);
-  if (agentContext && (response.status === 404 || response.status === 405)) {
+  const response = await request("/admin/search/agent-context", init);
+  if (response.status === 404 || response.status === 405) {
     notice(
       "Agent context search is unavailable or disabled on this gateway; using ordinary search.",
     );
-    return { response: await request("/search", init), agentContext: false };
+    return { response: await request("/search", searchInit), agentContext: false };
   }
   return { response, agentContext };
 }

@@ -25,6 +25,8 @@ import { resolveRuntimeSettings } from "./runtime-settings.js";
 import { resolveNearDupConfig } from "./near-dupes/config.js";
 import { DATE_ENRICHMENT_DEFAULTS } from "./enrichment/dates/config.js";
 import {
+  DEFAULT_TEMPORAL_ENABLED,
+  DEFAULT_TEMPORAL_WEIGHT,
   DEFAULT_VECTOR_CONFIG,
   DEFAULT_DIVERSITY_BUCKET_BY,
   DEFAULT_SEARCH_BOOSTS,
@@ -250,6 +252,8 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
 
   it("matches the exported search default constants", () => {
     expect(defAt("/search/vector/hnswOverFetch")).toBe(DEFAULT_VECTOR_CONFIG.hnswOverFetch);
+    expect(defAt("/search/temporal/enabled")).toBe(DEFAULT_TEMPORAL_ENABLED);
+    expect(defAt("/search/temporal/weight")).toBe(DEFAULT_TEMPORAL_WEIGHT);
     expect(defAt("/search/sourcePriors/bm25BypassRank")).toBe(
       DEFAULT_SOURCE_PRIORS_BM25_BYPASS_RANK,
     );

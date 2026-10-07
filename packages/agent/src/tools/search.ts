@@ -98,6 +98,7 @@ export function createSearchDocumentsTool(deps: SearchToolDeps): ToolHandle {
             filters: args.filters,
             limit: args.limit ?? defaultLimit,
             currentConversationId: ctx.sessionId,
+            ...(ctx.timeZone ? { timeZone: ctx.timeZone } : {}),
           },
           ctx.abortSignal,
         );

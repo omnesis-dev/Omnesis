@@ -395,6 +395,36 @@ describe("search worker — real thread parity", () => {
     expect(remote.notices).toEqual(local.notices);
   });
 
+  test("a temporal lane request crosses to the worker and ranks identically", async () => {
+    const req: CandidateGenRequest = {
+      ...noEmbedderRequest(),
+      temporal: {
+        windows: [{ start: "2026-03-01T00:00:00.000Z", endExclusive: "2026-04-01T00:00:00.000Z" }],
+        eventDocumentIds: ["doc-note-1"],
+        text: "budget",
+        vector: dummyEmbedding,
+        weight: 1,
+      },
+    };
+
+    const local = runCandidateGen(
+      { indexDb: inProcDb, usearchRead: new UsearchReadRegistry(inProcDb, configDir) },
+      req,
+    );
+    const remote = await pool.candidateGen(req);
+
+    expect(remote.results).toEqual(local.results);
+    expect(remote.stageReports.temporal).toEqual(
+      expect.objectContaining({ ...local.stageReports.temporal, durationMs: expect.any(Number) }),
+    );
+    const laneDocs = remote.results
+      .filter((r) => r.scoreBreakdown?.temporalRank !== undefined)
+      .map((r) => r.documentId)
+      .sort();
+    // March by document time, plus the note the time index placed there.
+    expect(laneDocs).toEqual(["doc-chat-1", "doc-email-1", "doc-note-1"]);
+  });
+
   test("a worker ranks with the shared in-memory lexical index, identically to FTS5", async () => {
     const req = noEmbedderRequest();
     const viaFts = await pool.candidateGen(req);

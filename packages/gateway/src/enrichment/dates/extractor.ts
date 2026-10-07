@@ -20,13 +20,9 @@
  * Pure and stateless apart from the one-time per-culture model build; runs on
  * the CPU worker pool (`cpu.extractDatesFromDocs`), so it never touches the
  * main event loop, the writer, or a user-serving read handle.
- *
- * Library note: `@microsoft/recognizers-text-date-time` ships CommonJS/UMD
- * only, so it must be imported via NAMED imports (the `default` export is the
- * namespace object, not the recognizer class).
  */
 
-import { DateTimeRecognizer } from "@microsoft/recognizers-text-date-time";
+import { dateTimeModel, type RtModelResult, type RtResolutionValue } from "./recognizer.js";
 import {
   routeDateCulture,
   ENGLISH_CULTURE,
@@ -264,43 +260,6 @@ const CULTURE_RULES: Record<DateCulture, CultureTextRules> = {
     restCompound: null,
   },
 };
-
-/** The recognizer's result shape (its shipped typings are loose — narrow here). */
-interface RtResolutionValue {
-  timex?: string;
-  type?: string;
-  value?: string;
-  start?: string;
-  end?: string;
-  Mod?: string;
-}
-interface RtModelResult {
-  start: number;
-  /** Index of the LAST matched char (inclusive). */
-  end: number;
-  text: string;
-  /** e.g. "datetimeV2.date", "datetimeV2.daterange", "datetimeV2.duration". */
-  typeName: string;
-  resolution?: { values?: RtResolutionValue[] };
-}
-interface RtModel {
-  parse(query: string, referenceDate?: Date): RtModelResult[];
-}
-
-// Build one recognizer model per culture per worker, lazily — each is a few
-// MB and stateless; `parse(text, anchor)` takes the anchor per call, so one
-// model per culture serves every document with its own emission date.
-const _models = new Map<DateCulture, RtModel>();
-function model(culture: DateCulture): RtModel {
-  let m = _models.get(culture);
-  if (!m) {
-    // fallbackToDefaultCulture=false: a culture missing from the JS build
-    // must throw loudly here, never silently parse with English.
-    m = new DateTimeRecognizer(culture).getDateTimeModel(culture, false) as unknown as RtModel;
-    _models.set(culture, m);
-  }
-  return m;
-}
 
 /**
  * Build the anchor `Date` from the document's ISO emission timestamp. The
@@ -657,7 +616,7 @@ export function scanDatesFromText(
 
     let results: RtModelResult[];
     try {
-      results = model(culture).parse(chunk, anchor);
+      results = dateTimeModel(culture).parse(chunk, anchor);
     } catch {
       // A single malformed chunk must never sink the document.
       continue;

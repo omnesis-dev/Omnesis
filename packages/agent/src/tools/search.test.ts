@@ -122,6 +122,20 @@ describe("search_documents passes its own conversation to the port", () => {
     expect(seen?.currentConversationId).toBe("S");
   });
 
+  it("forwards the conversation's time zone for the query's own dates", async () => {
+    let seen: SearchPortInput | undefined;
+    const tool = createSearchDocumentsTool({
+      port: port(async (input) => {
+        seen = input;
+        return { query: input.query, durationMs: 1, results: [] };
+      }),
+    });
+    await tool.invoke({ query: "receipts last week" }, { ...ctx, timeZone: "America/Chicago" });
+    expect(seen?.timeZone).toBe("America/Chicago");
+    await tool.invoke({ query: "receipts last week" }, ctx);
+    expect(seen?.timeZone).toBeUndefined();
+  });
+
   it("exposes no conversation argument on the tool schema", () => {
     const tool = createSearchDocumentsTool({
       port: port(async () => ({ query: "", durationMs: 0, results: [] })),

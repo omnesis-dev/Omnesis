@@ -356,6 +356,20 @@ describe("createGatewaySearchPort.search", () => {
     }
   });
 
+  test("reads the query's own dates in the asker's zone", async () => {
+    const seen: Array<{ timeZone?: string }> = [];
+    const pipeline = {
+      search: async (query: { timeZone?: string }) => {
+        seen.push(query);
+        return { timing: { totalMs: 1 }, results: [] };
+      },
+    } as unknown as SearchPipeline;
+    const port = createGatewaySearchPort(pipeline);
+    await port.search({ query: "receipts last week", timeZone: "Asia/Tokyo" });
+    await port.search({ query: "receipts last week" });
+    expect(seen.map((q) => q.timeZone)).toEqual(["Asia/Tokyo", undefined]);
+  });
+
   test("carries mimeType from the search result into the DocRef", async () => {
     const port = createGatewaySearchPort(
       fakePipeline({ ...baseItem, mimeType: "application/pdf" }),

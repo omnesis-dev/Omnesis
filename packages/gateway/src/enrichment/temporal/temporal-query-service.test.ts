@@ -243,6 +243,32 @@ describe("TemporalQueryService", () => {
     expect(start.items.find((i) => i.id === "ta_spanning")?.anchored).toBe(true);
   });
 
+  it("reads only the items anchored inside a window, in the query's order", async () => {
+    insertTemporalAnnotation(
+      db,
+      {
+        id: "ta_spanning",
+        intervalStartMs: Date.parse("2026-07-01T00:00:00.000Z"),
+        intervalEndMs: Date.parse("2026-08-31T23:59:59.999Z"),
+        precision: "range",
+        canonical: "2026-07-01 .. 2026-08-31",
+        sentence: "Studio residency block over the whole summer.",
+        kind: "episode",
+        documentIds: [],
+        createdByRun: "run_synthetic",
+      },
+      Date.parse("2026-07-01T00:00:00.000Z"),
+    );
+    const input = { from: "2026-07-23", to: "2026-07-24", timeZone: "UTC" };
+    const page = await service.query(input);
+    const anchored = await service.anchoredItems(input);
+    expect(anchored.map((i) => i.id)).toEqual(
+      page.items.filter((i) => i.anchored).map((i) => i.id),
+    );
+    expect(anchored.map((i) => i.id)).not.toContain("ta_spanning");
+    expect(await service.anchoredItems({ ...input, limit: 1 })).toHaveLength(1);
+  });
+
   it("rejects an execution-specific broad window before reading projections", async () => {
     await expect(
       service.query(

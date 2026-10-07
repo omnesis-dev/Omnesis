@@ -93,6 +93,7 @@ import { BackupService, DEFAULT_PRE_UPDATE_BACKUP_COUNT } from "./http/services/
 import { ExportService } from "./http/services/ExportService.js";
 import { FsConversationStore } from "./agent/conversation-store.js";
 import { AgentLifecycle, resolveRoleBackend } from "./agent/agent-lifecycle.js";
+import { TemporalQueryService } from "./enrichment/temporal/temporal-query-service.js";
 import { sendAgentAnswerPush } from "./agent/answer-push.js";
 import { ConfigChangeOrchestrator } from "./http/services/ConfigChangeOrchestrator.js";
 import { InferenceRegistry } from "./inference/registry.js";
@@ -1295,6 +1296,13 @@ const mentionWorthGateActive = (): boolean => {
   mentionWorthGateActiveCache = { value, at: now };
   return value;
 };
+
+// The search pipeline's temporal lane reads event time through the same
+// temporal query the agents' `temporal_query` tool uses.
+searchPipeline.setTemporalIndex(
+  new TemporalQueryService(db, analyticsDb, { hideUnworthyMentions: mentionWorthGateActive }),
+  resolveDateEnrichmentSettings(config.enrichment).numericDateOrder,
+);
 
 const agentLifecycle = new AgentLifecycle({
   inferenceRegistry,

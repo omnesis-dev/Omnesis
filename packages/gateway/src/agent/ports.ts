@@ -157,6 +157,7 @@ export function createGatewaySearchPort(
         {
           text: parsed?.text ?? input.query,
           limit: input.limit,
+          ...(input.timeZone ? { timeZone: input.timeZone } : {}),
           filters: requestedFilters
             ? {
                 sourceIds: requestedFilters.sourceIds,
