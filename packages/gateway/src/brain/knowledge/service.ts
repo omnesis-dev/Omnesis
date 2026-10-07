@@ -5,7 +5,7 @@
 import { readKnowledgeOwner } from "./owner-adapters.js";
 import { parseClaimMarkup } from "./claims.js";
 import { uncoveredKnowledgeSpans } from "./coverage.js";
-import { parseClaimReference } from "./references.js";
+import { parseClaimReference, unavailableKnowledgeReference } from "./references.js";
 import {
   getKnowledgeNode,
   getKnowledgeClaims,
@@ -120,8 +120,7 @@ export class KnowledgeService {
       const doc = this.deps.db
         .prepare<[string], { content: string }>("SELECT content FROM documents WHERE id=?")
         .get(ref.id);
-      if (!doc || (ref.selector && !evidence))
-        throw new KnowledgeStorageError("reference_invalid", "Evidence is unavailable");
+      if (!doc || (ref.selector && !evidence)) throw unavailableKnowledgeReference(ref);
       return {
         ref: value,
         revision: target.revision,

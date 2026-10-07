@@ -148,7 +148,7 @@ describe("knowledge persistence", () => {
         }),
         13,
       ),
-    ).toThrow("Referenced claim");
+    ).toThrow('Reference "wiki:project#claim:missing" is unavailable');
   });
   it("allows navigation cycles without creating support cycles", () => {
     saveKnowledgeNode(db, input(), 10);
@@ -200,7 +200,7 @@ describe("knowledge persistence", () => {
         }),
         12,
       ),
-    ).toThrow("does not exist");
+    ).toThrow("is unavailable");
   });
   it("does not emit meaning changes for revision-only rewrites", () => {
     saveKnowledgeNode(db, input(), 10);
@@ -252,7 +252,7 @@ describe("source revisions and privacy", () => {
         }),
         13,
       ),
-    ).toThrow("passage is missing or stale");
+    ).toThrow("is unavailable");
   });
   it("immediately invalidates transitive dependents, and repeated source events are idempotent", () => {
     recordKnowledgeSourceChange(db, { documentId: "schedule", contentHash: "hash-one" }, 9);

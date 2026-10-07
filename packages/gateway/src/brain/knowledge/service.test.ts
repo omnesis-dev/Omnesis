@@ -48,6 +48,52 @@ const verifier: EntailCapability = {
   verify: async () => ({ label: "entailment", probability: 1 }),
   dispose: () => {},
 };
+it("names the exact unavailable reference in a rejected save and accepts its correction", async () => {
+  const brain = service(verifier);
+  const mistyped = "source:evidenc";
+  await expect(brain.save(proposal("project", mistyped))).rejects.toMatchObject({
+    code: "reference_invalid",
+    message: `Reference "${mistyped}" is unavailable. Check the ID and selector against search or fetch results before retrying.`,
+  });
+  expect(getKnowledgeNode(db, "project")).toBeNull();
+  await expect(brain.save(proposal("project"))).resolves.toMatchObject({ node: { id: "project" } });
+});
+
+it("does not distinguish missing, withdrawn or privacy-hidden references in errors", async () => {
+  const brain = service();
+  const capture = (ref: string) => {
+    try {
+      brain.reference(ref);
+    } catch (error) {
+      return (error as Error).message;
+    }
+    throw new Error("Expected reference rejection");
+  };
+  const missing = capture("source:unknown");
+  db.exec("INSERT INTO documents VALUES('unknown','Private text','v1')");
+  db.exec(
+    "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('unknown','v1',1,100)",
+  );
+  expect(capture("source:unknown")).toBe(missing);
+  const absentNode = capture("wiki:unavailable");
+  await brain.save(proposal("unavailable"));
+  db.prepare("UPDATE knowledge_nodes SET fields_json=? WHERE id='unavailable'").run(
+    JSON.stringify({ withdrawn: true }),
+  );
+  expect(capture("wiki:unavailable")).toBe(absentNode);
+  db.prepare("UPDATE knowledge_nodes SET fields_json='{}' WHERE id='unavailable'").run();
+  // The row still exists, but a pending privacy deletion hides it immediately.
+  db.exec("INSERT INTO knowledge_node_tombstones(id,deleted_at) VALUES('unavailable',101)");
+  expect(capture("wiki:unavailable")).toBe(absentNode);
+});
+
+it.each(["source:evidence#evidence:absent", "wiki:absent#claim:detail"])(
+  "preserves the exact selector in the unavailable error for %s",
+  (ref) => {
+    expect(() => service().reference(ref)).toThrow(`Reference "${ref}" is unavailable`);
+  },
+);
+
 it.each(["purge", "revision", "invalidation"] as const)(
   "rechecks the saved node after asynchronous projection: %s",
   async (change) => {

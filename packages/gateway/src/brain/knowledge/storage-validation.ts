@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
-import { parseClaimReference, type ClaimReference } from "./references.js";
+import {
+  parseClaimReference,
+  unavailableKnowledgeReference,
+  type ClaimReference,
+} from "./references.js";
 import {
   KnowledgeStorageError,
   type KnowledgeClaimState,
@@ -88,42 +92,36 @@ export function resolveKnowledgeReference(
       >("SELECT deleted FROM knowledge_source_revisions WHERE document_id=?")
       .get(ref.id);
     if (deleted?.deleted || !isKnowledgeEvidenceReadable(db, ref.id))
-      throw new KnowledgeStorageError("reference_invalid", "Evidence has been deleted");
+      throw unavailableKnowledgeReference(ref);
     const row = db
       .prepare<[string], { content_hash: string }>("SELECT content_hash FROM documents WHERE id=?")
       .get(ref.id);
-    if (!row)
-      throw new KnowledgeStorageError("reference_invalid", "Evidence document does not exist");
+    if (!row) throw unavailableKnowledgeReference(ref);
     if (
       ref.selector &&
       !db
         .prepare("SELECT 1 FROM knowledge_evidence WHERE id=? AND document_id=? AND content_hash=?")
         .get(ref.selector.id, ref.id, row.content_hash)
     )
-      throw new KnowledgeStorageError("reference_invalid", "Evidence passage is missing or stale");
+      throw unavailableKnowledgeReference(ref);
     return { targetId: ref.id, targetKind: "source", revision: row.content_hash, stale: false };
   }
   const node = targetNode(db, ref);
-  if (!node || knowledgeNodeFence(db, node.id).hidden)
-    throw new KnowledgeStorageError("reference_invalid", "Referenced synthesis does not exist");
-  if (JSON.parse(node.fields_json).withdrawn === true)
-    throw new KnowledgeStorageError("reference_invalid", "Referenced synthesis was withdrawn");
+  if (!node || knowledgeNodeFence(db, node.id).hidden) throw unavailableKnowledgeReference(ref);
+  if (JSON.parse(node.fields_json).withdrawn === true) throw unavailableKnowledgeReference(ref);
   if (
     ref.selector?.kind === "claim" &&
     !db
       .prepare("SELECT 1 FROM knowledge_claims WHERE node_id=? AND id=?")
       .get(node.id, ref.selector.id)
   ) {
-    throw new KnowledgeStorageError("reference_invalid", "Referenced claim does not exist");
+    throw unavailableKnowledgeReference(ref);
   }
   if (
     ref.selector?.kind === "field" &&
     !Object.hasOwn(JSON.parse(node.fields_json) as object, ref.selector.id)
   ) {
-    throw new KnowledgeStorageError(
-      "reference_invalid",
-      "Referenced canonical field does not exist",
-    );
+    throw unavailableKnowledgeReference(ref);
   }
   return {
     targetId: node.id,

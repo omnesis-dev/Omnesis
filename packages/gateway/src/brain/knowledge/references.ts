@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { KnowledgeStorageError } from "./types.js";
+
 export type ClaimReferenceKind = "source" | "wiki" | "loop" | "annotation" | "brief";
 export type ClaimSelectorKind = "evidence" | "claim" | "field";
 
@@ -37,4 +39,12 @@ export function parseClaimReference(raw: string): ClaimReference {
     return { raw, kind, id, selector: { kind: selectorKind, id: match[4]! } };
   }
   return { raw, kind, id };
+}
+
+/** Echo only the caller's validated reference, never the reason it is hidden. */
+export function unavailableKnowledgeReference(ref: ClaimReference): KnowledgeStorageError {
+  return new KnowledgeStorageError(
+    "reference_invalid",
+    `Reference ${JSON.stringify(ref.raw)} is unavailable. Check the ID and selector against search or fetch results before retrying.`,
+  );
 }
