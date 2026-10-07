@@ -44,7 +44,7 @@ const claimState = z
       .record(z.string(), z.enum(["supports", "contradicts", "context", "depends_on"]))
       .optional()
       .describe(
-        "Omit to preserve relations for retained refs; new refs default to supports. An explicit map replaces the previous map; {} resets every ref to supports.",
+        "Omit to preserve relations for retained refs, including context-only converted owner refs; new refs default to supports. After reading the evidence, explicitly map each entailing ref to supports for verifier checking and keep merely related refs as context. An explicit map replaces the previous map; {} resets every ref to supports, so do not use it to promote unreviewed context. Claim markup alone is not verification.",
       ),
     validFrom: z
       .number()
@@ -276,7 +276,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_save",
-      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Never invent verification. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. In maintenance, existing pages must match an offered frontier. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. In maintenance, existing pages must match an offered frontier. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
       z
         .object({
           node: proposal,

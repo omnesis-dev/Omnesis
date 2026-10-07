@@ -1183,6 +1183,10 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("inputFingerprint verbatim");
     expect(prompt).toContain("request a fresh frontier");
     expect(prompt).toContain("never drop a required repair target");
+    expect(prompt).toContain("Converted owner references start as context-only");
+    expect(prompt).toContain('claims[].relations[ref] = "supports"');
+    expect(prompt).toContain('retain "context" for merely related evidence');
+    expect(prompt).toContain("Claim tags and asserted status alone do not establish verification");
     expect(prompt).toContain("reviewedClaimIds");
     expect(prompt).toContain("pendingClaimIdsOmitted");
     expect(prompt).toContain("does not settle untouched claims");
