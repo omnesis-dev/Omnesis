@@ -10,6 +10,11 @@ import {
   renderKnowledgeMarkdown,
   internalKnowledgeHref,
 } from "./knowledge-claim-markdown.js";
+import {
+  summarizeMaintenance,
+  maintenanceReasonLabel,
+  maintenanceTierLabel,
+} from "./knowledge-maintenance-model.js";
 import { KnowledgeConnections } from "./knowledge-connections.js";
 
 export const knowledgePath = (id) => `/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`;
@@ -243,27 +248,30 @@ ${JSON.stringify({ claims, dependencies: node.dependencies ?? [] }, null, 2)}</p
 }
 export function KnowledgeStatus({ status, compact = false }) {
   if (!status) return null;
-  const work = status.work ?? [],
-    pending = work
-      .filter((row) => ["pending", "batched", "deferred"].includes(row.status))
-      .reduce((sum, row) => sum + row.count, 0),
-    cascades = status.cascades?.pending ?? 0;
+  const { waiting, assigned, cascades, waitingGroups, assignedGroups } = summarizeMaintenance(status);
+  const work = [...waitingGroups, ...assignedGroups];
+  const outstanding = waiting || assigned || cascades;
+  const counts = [
+    `${waiting} waiting`,
+    `${assigned} assigned`,
+    ...(cascades ? [`${cascades} pending cascade step${cascades === 1 ? "" : "s"}`] : []),
+  ].join(" · ");
   if (compact)
     return html`<div class="kn-maintenance">
       <div class="kn-maintenance-body">
         <strong
-          >${pending || cascades ? "Updates awaiting maintenance" : "No updates waiting"}</strong
+          >${outstanding ? "Updates awaiting maintenance" : "No updates waiting"}</strong
         >
-        · ${pending} queued · <a href="/portal/debug/cognition/maintenance">View maintenance</a>
+        · ${counts} · <a href="/portal/debug/cognition/maintenance">View maintenance</a>
       </div>
     </div>`;
   return html`<details class="kn-maintenance">
     <summary>
-      <span class=${`kn-status-dot ${pending || cascades ? "is-busy" : ""}`}></span
+      <span class=${`kn-status-dot ${outstanding ? "is-busy" : ""}`}></span
       ><strong
-        >${pending || cascades ? "Updates awaiting maintenance" : "No updates waiting"}</strong
+        >${outstanding ? "Updates awaiting maintenance" : "No updates waiting"}</strong
       ><span
-        >${pending ? `${pending} queued` : cascades ? "Applying changes" : "No queued work"}</span
+        >${counts}</span
       >
     </summary>
     <div class="kn-maintenance-body">
@@ -273,20 +281,19 @@ export function KnowledgeStatus({ status, compact = false }) {
             ${work.map(
               (row) =>
                 html`<li>
-                  ${row.count} ${readable(row.status)} · ${readable(row.tier)} ·
-                  ${readable(row.reason)}${row.readiness === "pending_content"
+                  ${row.count} ${row.status === "pending" ? "waiting" : "assigned"} · ${maintenanceTierLabel(row.tier)} ·
+                  ${maintenanceReasonLabel(row.reason)}${row.readiness === "pending_content"
                     ? " · Waiting for source content"
                     : row.readiness === "derivation"
                       ? " · Waiting for document processing"
                       : ""}${row.nextDueAt != null &&
-                  ["pending", "batched", "deferred"].includes(row.status)
+                  row.status === "pending"
                     ? ` · Next ${new Date(row.nextDueAt).toLocaleString()}`
                     : ""}
                 </li>`,
             )}
           </ul>`
         : html`<p>No scheduled work.</p>`}
-      <p>${`${cascades} pending cascade step${cascades === 1 ? "" : "s"}`}</p>
       <p>
         <a href="/portal/debug/cognition/bootstrap"
           >View discovery coverage and historical backfill</a

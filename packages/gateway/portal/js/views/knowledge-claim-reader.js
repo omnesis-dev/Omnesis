@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 import { html } from "htm/preact";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { renderKnowledgeMarkdown } from "./knowledge-claim-markdown.js";
+import { internalKnowledgeHref, renderKnowledgeMarkdown } from "./knowledge-claim-markdown.js";
 import { claimUsageGroups, useClaimUsage } from "./knowledge-claim-usage.js";
 import { KnowledgeIcon, knowledgeReferenceMetadata } from "../lib/knowledge-link-icons.js";
 
@@ -20,18 +20,30 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
   const usage = useClaimUsage(node, Boolean(preview));
   const popup = useRef(null);
   const timer = useRef(null);
+  const currentPreview = useRef(null);
+  const restoringFocus = useRef(false);
+  currentPreview.current = preview;
   const tooltipId = useId();
   function keepOpen() { clearTimeout(timer.current); }
   function close() { keepOpen(); setPreview(null); }
   function leave() {
     keepOpen();
     timer.current = setTimeout(() => setPreview((current) =>
-      current?.target.contains(document.activeElement) ? current : null,
+      current?.target.contains(document.activeElement) || popup.current?.contains(document.activeElement) ? current : null,
     ), 180);
   }
   useEffect(() => {
     close();
-    const escape = (event) => { if (event.key === "Escape") close(); };
+    const escape = (event) => {
+      if (event.key !== "Escape" || !currentPreview.current) return;
+      event.stopPropagation();
+      if (popup.current?.contains(document.activeElement)) {
+        restoringFocus.current = true;
+        currentPreview.current.target.focus({ preventScroll: true });
+        restoringFocus.current = false;
+      }
+      close();
+    };
     const reposition = () => setPreview((current) => current ? { ...current } : null);
     const scroll = (event) => { if (!popup.current?.contains(event.target)) reposition(); };
     window.addEventListener("keydown", escape);
@@ -55,10 +67,17 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
       ? below : Math.max(12, anchor.top - height - 8);
     element.style.left = `${left}px`;
     element.style.top = `${top}px`;
-    preview.target.setAttribute("aria-describedby", tooltipId);
-    return () => preview.target.removeAttribute("aria-describedby");
+    preview.target.setAttribute("aria-controls", tooltipId);
+    preview.target.setAttribute("aria-haspopup", "dialog");
+    preview.target.setAttribute("aria-expanded", "true");
+    return () => {
+      preview.target.removeAttribute("aria-controls");
+      preview.target.removeAttribute("aria-haspopup");
+      preview.target.removeAttribute("aria-expanded");
+    };
   }, [preview, tooltipId, usage]);
   function show(event) {
+    if (restoringFocus.current) return;
     const target = event.target.closest(".kn-claim-span");
     const id = target && rendered.targets.get(target.id);
     const claim = node.claims?.find((entry) => entry.id === id);
@@ -67,6 +86,15 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
     setPreview((current) => current?.target === target ? current : { target, claim });
   }
   function inspect(event) {
+    if (event.type === "keydown" && !event.shiftKey && ["Tab", "ArrowDown"].includes(event.key) &&
+      currentPreview.current?.target === event.target) {
+      const link = popup.current?.querySelector("a");
+      if (link) {
+        event.preventDefault();
+        link.focus();
+        return;
+      }
+    }
     if (event.type === "keydown" && !["Enter", " "].includes(event.key)) return;
     // Actual hyperlinks remain navigable; claim inspection never intercepts them.
     if (event.target.closest("a")) return;
@@ -102,8 +130,8 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
       onFocusOut=${leave}
       dangerouslySetInnerHTML=${{ __html: rendered.html }}
     />
-    ${claim && html`<aside ref=${popup} id=${tooltipId} role="tooltip" class="kn-claim-popover"
-      onMouseEnter=${keepOpen} onMouseLeave=${leave}>
+    ${claim && html`<aside ref=${popup} id=${tooltipId} role="dialog" aria-label="Claim details" class="kn-claim-popover"
+      onMouseEnter=${keepOpen} onMouseLeave=${leave} onFocusIn=${keepOpen} onFocusOut=${leave}>
       <div class="kn-claim-popover-heading"><strong>Claim ${claim.id}</strong>
         <span class="kn-badge">${verificationLabel(claim.verification)}</span>
       </div>
@@ -118,7 +146,9 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
       <strong>References from this claim (${claim.refs?.length ?? 0})</strong>
       ${claim.refs?.length ? html`<ul class="kn-claim-popover-refs">${claim.refs.map((ref) => {
         const metadata = knowledgeReferenceMetadata(ref, references);
-        return html`<li key=${ref}><${KnowledgeIcon} reference=${ref} ...${metadata} />${metadata.title ?? ref}</li>`;
+        const href = internalKnowledgeHref(ref);
+        const title = html`<${KnowledgeIcon} reference=${ref} ...${metadata} />${metadata.title ?? ref}`;
+        return html`<li key=${ref}>${href ? html`<a href=${href}>${title}</a>` : title}</li>`;
       })}</ul>`
         : html`<p class="kn-caption">No references from this claim.</p>`}
       <div class="kn-claim-usage">
@@ -126,7 +156,7 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
         ${usage.error && html`<p class="kn-caption">Usage could not be loaded. Open Connections to try again.</p>`}
         ${[["References to this claim", usedBy.claim], ["References to this page", usedBy.page]].map(([title, edges]) => edges.length > 0 && html`
           <strong>${title}</strong>
-          <ul class="kn-claim-popover-refs">${edges.map((edge) => html`<li key=${edge.node.id}><${KnowledgeIcon} ...${edge.node} />${edge.node.title || "Untitled record"}</li>`)}</ul>
+          <ul class="kn-claim-popover-refs">${edges.map((edge) => html`<li key=${edge.node.id}><a href=${`/portal/debug/cognition/knowledge/${encodeURIComponent(edge.node.id)}${edge.claimId ? `?claim=${encodeURIComponent(edge.claimId)}` : ""}`}><${KnowledgeIcon} ...${edge.node} />${edge.node.title || "Untitled record"}</a></li>`)}</ul>
         `)}
         ${usage.nextCursor && html`<p class="kn-caption">More connections are available in Connections.</p>`}
       </div>

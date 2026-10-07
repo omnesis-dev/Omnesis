@@ -161,7 +161,7 @@ it("describes queued and held maintenance honestly without inventing active prog
       work: [
         {
           count: 2,
-          status: "deferred",
+          status: "pending",
           tier: "routine",
           reason: "source_changed",
           readiness: "pending_content",
@@ -175,7 +175,7 @@ it("describes queued and held maintenance honestly without inventing active prog
   expect(text(tree)).not.toContain("is being maintained");
   expect(text(tree)).toContain("Waiting for source content");
   expect(text(tree)).toContain("7 pending cascade steps");
-  expect(text(tree)).toContain("2 deferred");
+  expect(text(tree)).toContain("2 waiting");
   expect(text(tree)).not.toContain("4 subjects");
   expect(
     hosts(tree).some((element) => element.props?.href === "/portal/debug/cognition/bootstrap"),
@@ -185,9 +185,16 @@ it("describes queued and held maintenance honestly without inventing active prog
 it("keeps library maintenance compact and links the dedicated queue view", () => {
   const tree = KnowledgeStatus({
     compact: true,
-    status: { work: [{ status: "pending", count: 3 }], cascades: { pending: 2 } },
+    status: {
+      work: [
+        { status: "pending", count: 3 },
+        { status: "deferred", count: 7 },
+        { status: "completed", count: 29 },
+      ],
+      cascades: { pending: 2 },
+    },
   });
-  expect(text(tree)).toContain("3 queued");
+  expect(text(tree)).toContain("3 waiting · 0 assigned");
   expect(text(tree)).not.toContain("Work queue");
   expect(hosts(tree).some((element) => element.type === "details")).toBe(false);
   expect(

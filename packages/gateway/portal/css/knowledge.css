@@ -668,59 +668,6 @@
   margin-bottom: 17px;
   text-decoration: none;
 }
-.kn-runs {
-  border-top: 1px solid var(--border);
-  margin-top: 32px;
-  padding-top: 17px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.kn-runs > summary {
-  cursor: pointer;
-}
-.kn-runs > summary > span {
-  margin-left: 10px;
-  font-size: 12px;
-}
-.kn-runs-body {
-  padding: 18px 0;
-}
-.kn-run-list {
-  display: flex;
-  gap: 8px;
-  overflow: auto;
-  padding-bottom: 12px;
-}
-.kn-run-list button {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 15px;
-  min-width: 175px;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  font-size: 12px;
-}
-.kn-run-list button.is-active {
-  border-color: var(--accent);
-}
-.kn-run-list small {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 12px;
-  margin-top: 5px;
-}
-.kn-batch-detail ul {
-  list-style: none;
-  padding: 0;
-}
-.kn-batch-detail li {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border-light);
-}
 @container (max-width:740px) {
   .kn-workspace {
     grid-template-columns: minmax(190px, 32%) minmax(0, 1fr);
@@ -824,9 +771,6 @@
   }
   .kn-root-card {
     padding: 20px;
-  }
-  .kn-runs {
-    margin-top: 24px;
   }
   .kn-header {
     margin-bottom: 18px;

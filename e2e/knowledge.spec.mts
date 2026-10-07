@@ -285,8 +285,8 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     animations: "disabled",
   });
   await page.goto(url("/portal/debug/cognition/maintenance"));
-  await expect(page.getByRole("heading", { name: "Recent maintenance batches" })).toBeVisible();
-  await page.getByRole("button", { name: /soon maintenance/i }).click();
+  await expect(page.getByRole("heading", { name: "Recent batches" })).toBeVisible();
+  await page.getByRole("link", { name: /soon maintenance/i }).click();
   await expect(page).toHaveURL(/maintenance\/browser-pending$/);
   await page.reload();
   await expect(page.locator(".kn-batch-detail")).toContainText("Paper workshop");
@@ -295,20 +295,26 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     fullPage: true,
     animations: "disabled",
   });
-  await page.getByRole("button", { name: /immediate maintenance/i }).click();
+  await page.getByRole("link", { name: /immediate maintenance/i }).click();
   await page.screenshot({
     path: info.outputPath("knowledge-maintenance-completed.png"),
     fullPage: true,
     animations: "disabled",
   });
-  await page.locator(".kn-maintenance > summary").click();
-  await expect(page.getByRole("heading", { name: "Work queue" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Pending work" })).toBeVisible();
+  await expect(page.locator(".km-batch-list")).toBeVisible();
+  await expect(page.locator(".km-batch-row")).toHaveCount(2);
+  await expect(page.locator(".km-queue")).toContainText("assigned to batches");
+  await expect(page.locator(".kn-run-list")).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("knowledge-upcoming-work.png"),
     fullPage: true,
     animations: "disabled",
   });
-  await page.locator(".kn-maintenance > summary").click();
+  await page.getByRole("button", { name: /^History/ }).click();
+  await expect(page.locator(".km-batch-row")).toHaveCount(1);
+  await page.getByRole("button", { name: /^Active/ }).click();
+  await expect(page.locator(".km-batch-row")).toHaveCount(1);
   await page.goto(url(route));
   const search = page.getByRole("searchbox", { name: "Search knowledge" });
   await search.fill("no-such-subject");
@@ -397,22 +403,47 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await page.getByRole("button", { name: "Markdown", exact: true }).click();
   const nestedClaim = page.getByRole("button", { name: "Inspect claim 3", exact: true });
   await nestedClaim.hover();
-  const preview = page.getByRole("tooltip");
+  const preview = page.getByRole("dialog", { name: "Claim details", exact: true });
   await expect(preview).toContainText("Claim pencils");
   await expect(preview).toContainText("Within claim");
   await expect(preview).toContainText("References from this claim (1)");
   await expect(preview).not.toContainText("source:");
   await expect(preview).toContainText("References to this page");
   await expect(preview).toContainText("Current focus");
+  const previewSource = preview.getByRole("link", { name: "Workshop planning note", exact: true });
+  await expect(previewSource).toHaveAttribute(
+    "href",
+    `/portal/doc/${encodeURIComponent(documentId!)}`,
+  );
+  await expect(previewSource.locator("img.kn-link-icon--source")).toBeVisible();
+  const previewConsumer = preview.getByRole("link", { name: "Current focus", exact: true });
+  await expect(previewConsumer).toHaveAttribute(
+    "href",
+    "/portal/debug/cognition/knowledge/browser-root?claim=focus",
+  );
   await preview.hover();
   await expect(preview).toBeVisible();
   await page.screenshot({ path: info.outputPath("claim-preview.png"), fullPage: true });
+  await previewSource.click();
+  await expect(page).toHaveURL(new RegExp(`/portal/doc/${documentId}`));
+  await page.goBack();
+  await nestedClaim.hover();
+  await previewConsumer.click();
+  await expect(page).toHaveURL(/knowledge\/browser-root\?claim=focus$/);
+  await expect(preview).toContainText("A paper workshop is being prepared.");
+  await page.goBack();
+  await nestedClaim.hover();
   await page.keyboard.press("Escape");
   await expect(preview).toHaveCount(0);
   await nestedClaim.focus();
   await page.mouse.move(0, 0);
   await expect(preview).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(previewSource).toBeFocused();
+  await expect(preview).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await expect(nestedClaim).toBeFocused();
   await page.getByRole("button", { name: "Inspect claim 3", exact: true }).click();
   await expect(preview).toContainText("Claim pencils");
   await expect(page.locator(".kn-prose")).toBeVisible();
