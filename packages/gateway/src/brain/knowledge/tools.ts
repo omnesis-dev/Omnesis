@@ -276,7 +276,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_save",
-      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. In maintenance, existing pages must match an offered frontier. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      `Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. For brief nodes, preserve the ## Description and ## Body sections in markdown. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. In maintenance, existing pages must match an offered frontier. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
       z
         .object({
           node: proposal,
@@ -434,7 +434,7 @@ export function buildKnowledgeTools(
     tools.push(
       tool(
         "knowledge_discovery_complete",
-        "After interpreting an offered source, reconcile existing loops, annotations and pages; optionally propose a reusable page. Copy the offered id including source: and the entire inputFingerprint verbatim. Include canonical owners needing grounded prose as targets; fresh owners are materialized before repair. Resolve unavailable target errors rather than dropping intended repairs. On revision conflict, fetch the frontier again. Known dependents are then inspected by the engine.",
+        "Source frontier items only: after interpreting an offered source, reconcile existing loops, annotations and pages; optionally propose a reusable page. A synthesis node is settled by knowledge_save, then knowledge_next_frontier; never complete a node or pair its fingerprint with a cited source ID. Copy the offered id including source: and the entire inputFingerprint verbatim. Include canonical owners needing grounded prose as targets; fresh owners are materialized before repair. Resolve unavailable target errors rather than dropping intended repairs. On revision conflict, fetch the frontier again. Known dependents are then inspected by the engine.",
         z
           .object({
             id,

@@ -1179,6 +1179,10 @@ describe("Cognition Steward run prompts", () => {
     });
     expect(prompt).toContain("knowledge_next_frontier({})");
     expect(prompt).toContain("never pass batchId");
+    expect(prompt).toContain("Completion has two distinct branches");
+    expect(prompt).toContain("knowledge_save records the reviewed claim outcomes");
+    expect(prompt).toContain("Never call knowledge_discovery_complete for a synthesis node");
+    expect(prompt).toContain("separately offered as a source frontier item");
     expect(prompt).toContain("including the source: prefix");
     expect(prompt).toContain("inputFingerprint verbatim");
     expect(prompt).toContain("request a fresh frontier");
@@ -1191,6 +1195,36 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("pendingClaimIdsOmitted");
     expect(prompt).toContain("does not settle untouched claims");
     expect(prompt).toContain("Your notes file is currently empty.");
+  });
+
+  test("initial root maintenance asks for evidence investigation before summarizing", () => {
+    const prompt = buildCognitionRunPrompt(
+      claimed({
+        kind: "synthesis",
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "batch_root",
+          schedulingClass: "initial-root",
+        },
+      }),
+      deps(),
+    );
+    expect(prompt).toContain("initial root population");
+    expect(prompt).toContain("Split compound legacy spans");
+    expect(prompt).toContain("An empty root has no claims to revalidate");
+    expect(prompt).toContain("knowledge_fetch(editing=true)");
+    expect(prompt).toContain("discovery leads, not verified evidence");
+    expect(prompt).toContain("Let the normal entailment verifier assess");
+    expect(prompt).toContain("keeping the root empty is valid");
+    expect(prompt).toContain("No new project wiki is required");
+    const ordinary = buildCognitionRunPrompt(
+      claimed({
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch_other" },
+      }),
+      deps(),
+    );
+    expect(ordinary).not.toContain("This batch includes initial root population");
   });
 
   test("a malformed synthesis payload degrades to a no-op finish", () => {
