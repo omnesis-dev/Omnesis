@@ -948,6 +948,13 @@ export class GoogleProvider implements Provider {
     });
   }
 
+  /** Release local resources without revoking a grant shared by other collectors. */
+  dispose(): void {
+    this.oauth2Client?.removeAllListeners("tokens");
+    this.oauth2Client = null;
+  }
+
+  /** Explicit account disconnection revokes the Google authorization. */
   async disconnect(): Promise<void> {
     if (this.oauth2Client) {
       try {
@@ -956,7 +963,7 @@ export class GoogleProvider implements Provider {
         // Ignore
       }
     }
-    this.oauth2Client = null;
+    this.dispose();
   }
 
   getAuth(): OAuth2Client {

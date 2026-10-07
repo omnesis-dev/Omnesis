@@ -102,7 +102,7 @@ export default defineProvider<GoogleContext>({
   },
 
   async disposeContext(ctx) {
-    await ctx.provider.disconnect();
+    ctx.provider.dispose();
   },
 
   sources: [
