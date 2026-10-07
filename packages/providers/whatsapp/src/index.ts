@@ -191,6 +191,7 @@ export default defineSource<WhatsAppSyncCursor>({
       downloadMedia: provider.getMediaDownloader(),
       onConnectionError: (handler) => provider.onConnectionError(handler),
       offConnectionError: (handler) => provider.offConnectionError(handler),
+      connectionFailure: () => provider.connectionFailure(),
     });
 
     return {

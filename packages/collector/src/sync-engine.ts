@@ -932,7 +932,14 @@ export class SyncEngine {
 
   /**
    * Wire up error reporting for a source that declares onSourceError.
-   * When the source reports a connection/auth error, immediately update status.
+   * When the source reports a connection error, immediately update status.
+   *
+   * The source stays scheduled and subscribed: a report is not a shutdown.
+   * A live-socket source keeps reconnecting on its own and wakes a sync
+   * through its push subscription once the link is back, and that sync's
+   * success is what clears the error. A failure that cannot heal by itself
+   * keeps showing because the tick's credential check parks an unlinked
+   * provider, and a source whose link is still down fails its syncs.
    */
   private setupSourceErrorHandler(source: RegisteredSource): void {
     if (!source.instance.onSourceError) return;
@@ -943,7 +950,6 @@ export class SyncEngine {
 
       log.error(`Source error for ${source.id}: ${error}`);
       SourceLifecycle.toError(status, error, log);
-      this.registry.stopSource(source.id);
       this.registry.emitStatusChange({
         event: "sync.error",
         sourceId: source.id,

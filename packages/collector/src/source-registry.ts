@@ -308,13 +308,9 @@ export class SourceRegistry {
    * Stop a source's sync timer, file watchers, and push debounce timers.
    * Does NOT remove the source instance from the providers map —
    * disabled sources keep their instance so they can be re-enabled.
-   *
-   * Public because `setupSourceErrorHandler` (still on the engine
-   * façade) calls it when a connection-level error fires; that path
-   * needs the same teardown but skips the disabled-state flip.
+   * Callers abort an in-flight sync themselves — see `abortSync`.
    */
-  // Leaves an in-flight sync running on purpose — see `abortSync`.
-  stopSource(sourceId: string): void {
+  private stopSource(sourceId: string): void {
     this.scheduler.clear(sourceId);
     this.fileWatchers.stopForSource(sourceId);
     this.clearPushDebounce(sourceId);
@@ -350,11 +346,10 @@ export class SourceRegistry {
    * runs to completion, and the page it was fetching when the source went away
    * is written afterwards — to a source the gateway has already erased.
    *
-   * Called by `unregisterSource` and `disableSource`, and deliberately NOT by
-   * `stopSource`: that also runs when a source reports a connection error, and
-   * a live-socket source can report one while a sync reads happily from the
-   * local store that socket already filled. Removal and disable are the cases
-   * where the source really is going away.
+   * Called by `unregisterSource` and `disableSource`, the cases where the
+   * source really is going away. A connection error reported by the source is
+   * not one: a live-socket source can report one while a sync reads happily
+   * from the local store that socket already filled.
    */
   abortSync(sourceId: string, reason: SyncAbortReason = "removed"): void {
     // The reason travels on the signal. A source that is told only "stop"

@@ -498,6 +498,7 @@ describe("Provider Connection Lifecycle", () => {
     });
 
     await expect(authPromise).rejects.toThrow("WhatsApp logged out");
+    expect(provider.connectionFailure()).toMatch(/device was unlinked/);
   });
 
   // Reconnect-loop hardening.
@@ -576,9 +577,15 @@ describe("Provider Connection Lifecycle", () => {
         await Promise.resolve();
       };
 
-      // Closes 1..10 stay within the cap — no error surfaced yet.
+      const source = new WhatsAppMessagesSource(provider.getStore(), "+5511999990000", {
+        connectionFailure: () => provider.connectionFailure(),
+      });
+
+      // Closes 1..10 stay within the cap — no error surfaced yet, and the
+      // source still syncs from its buffer through the fast burst.
       for (let i = 0; i < 10; i++) await emitClose();
       expect(errors.length).toBe(0);
+      expect(provider.connectionFailure()).toBeNull();
 
       // Drop the fast-backoff + open-time history-settle timers so the only timer
       // the cap close schedules is the one we assert on.
@@ -593,6 +600,10 @@ describe("Provider Connection Lifecycle", () => {
       expect(errors[0]).toMatch(/reconnect failed after 10 attempts/);
       expect(pendingTimers).toHaveLength(1);
       expect(pendingTimers[0].ms).toBe(COOLDOWN_MS);
+      // Until the link is back a sync fails with the surfaced message, so a
+      // scheduled tick cannot report the source healthy in the meantime.
+      expect(provider.connectionFailure()).toBe(errors[0]);
+      await expect(source.sync(null)).rejects.toThrow(errors[0]);
 
       // Firing the cool-down creates a fresh socket — the provider keeps trying.
       const before = createSocketCount();
@@ -609,6 +620,8 @@ describe("Provider Connection Lifecycle", () => {
       await Promise.resolve();
       expect(errors.length).toBe(1);
       expect(wake).toHaveBeenCalled();
+      expect(provider.connectionFailure()).toBeNull();
+      await expect(source.sync(null)).resolves.toBeDefined();
 
       // Restore real timers before disconnect — it awaits a timer-backed
       // credential-flush wait that the stub would never fire.

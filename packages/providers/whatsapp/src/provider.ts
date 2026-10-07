@@ -393,10 +393,11 @@ export class WhatsAppProvider implements Provider {
   private socketFactory: SocketFactory | undefined;
   private onQrCode: ((qr: string) => void) | undefined;
   private connectionErrorHandler?: (error: string) => void;
-  // True once the bounded fast-retry loop has exhausted and surfaced a degraded
-  // state to the operator. Gates the one-time error report and triggers a sync
+  // Set once the bounded fast-retry loop has exhausted and surfaced a degraded
+  // state to the operator, to the message it surfaced. Gates the one-time
+  // error report, fails syncs until the link is back, and triggers a sync
   // recovery on the next successful reconnect.
-  private surfacedConnectionError = false;
+  private surfacedConnectionError: string | null = null;
   // Bumped by every `connect()`, `suspend()`, and `disconnect()`. Each
   // `connectWithFactory` closure captures the value at its start; its
   // connection-update handler and reconnect runner bail when the live counter
@@ -627,7 +628,7 @@ export class WhatsAppProvider implements Provider {
       if (sock) await sock.end(undefined);
     } finally {
       this.connected = false;
-      this.surfacedConnectionError = false;
+      this.surfacedConnectionError = null;
       const authDir = this.activeAuthDir;
       this.activeAuthDir = null;
       if (authDir) await quiesceOmnesisMultiFileAuthState(authDir);
@@ -662,6 +663,17 @@ export class WhatsAppProvider implements Provider {
         `WhatsApp resume failed to start: ${err instanceof Error ? err.message : String(err)}`,
       ),
     );
+  }
+
+  /**
+   * Why the link cannot deliver messages right now, or null while it can (or
+   * is still inside its fast reconnect burst). A sync that succeeded against
+   * the buffered store meanwhile would clear the failure the operator was
+   * shown while WhatsApp is still unreachable.
+   */
+  connectionFailure(): string | null {
+    if (this.unlinked) return WhatsAppProvider.UNLINKED_MESSAGE;
+    return this.surfacedConnectionError;
   }
 
   getStore(): MessageStore {
@@ -859,6 +871,8 @@ export class WhatsAppProvider implements Provider {
   // enough not to hammer WhatsApp during a sustained outage, short enough that
   // the source self-heals within minutes of the link coming back.
   private static readonly RECONNECT_COOLDOWN_MS = 5 * 60_000;
+  private static readonly UNLINKED_MESSAGE =
+    "WhatsApp logged out — device was unlinked. Run 'add whatsapp' to re-pair.";
 
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1107,8 +1121,8 @@ export class WhatsAppProvider implements Provider {
             // The link is healthy again after a surfaced failure: poke a sync so
             // the source flips out of `error` now, even on a quiet reconnect that
             // delivers no message to fire the push path on its own.
-            if (this.surfacedConnectionError) {
-              this.surfacedConnectionError = false;
+            if (this.surfacedConnectionError !== null) {
+              this.surfacedConnectionError = null;
               this.store.wakeSync();
             }
             // Reconnect of an already-complete source won't re-seal, so refresh
@@ -1203,9 +1217,7 @@ export class WhatsAppProvider implements Provider {
               if (this.shuttingDown || isStale()) return;
               log.error("WhatsApp logged out — need to re-pair");
               this.connected = false;
-              this.connectionErrorHandler?.(
-                "WhatsApp logged out — device was unlinked. Run 'add whatsapp' to re-pair.",
-              );
+              this.connectionErrorHandler?.(WhatsAppProvider.UNLINKED_MESSAGE);
               clearTimeout(handshakeTimeout);
               reject(new Error("WhatsApp logged out"));
               return;
@@ -1233,8 +1245,8 @@ export class WhatsAppProvider implements Provider {
               // degraded state once for visibility, then keep retrying on a slow
               // cool-down so a transient WhatsApp-side outage self-heals without a
               // manual restart (the bounded fast loop alone would strand it).
-              if (!this.surfacedConnectionError) {
-                this.surfacedConnectionError = true;
+              if (this.surfacedConnectionError === null) {
+                this.surfacedConnectionError = msg;
                 this.connectionErrorHandler?.(msg);
               }
               reconnectAttempts = 0;

@@ -91,6 +91,8 @@ export interface WhatsAppMessagesSourceOptions {
   onConnectionError?: (handler: (error: string) => void) => void;
   /** Stop reporting to `handler`, so a torn-down source goes quiet. */
   offConnectionError?: (handler: (error: string) => void) => void;
+  /** Why the connection cannot deliver messages right now, or null while it can. */
+  connectionFailure?: () => string | null;
 }
 
 /**
@@ -113,6 +115,7 @@ export class WhatsAppMessagesSource {
   private mediaAttemptsPerPage: number;
   private registerConnectionError?: (handler: (error: string) => void) => void;
   private unregisterConnectionError?: (handler: (error: string) => void) => void;
+  private connectionFailure?: () => string | null;
 
   constructor(
     private store: MessageStore,
@@ -140,6 +143,7 @@ export class WhatsAppMessagesSource {
       minTimestamp: this.dataCutoff ? Math.ceil(Date.parse(this.dataCutoff) / 1000) : null,
     });
     this.unregisterConnectionError = options?.offConnectionError;
+    this.connectionFailure = options?.connectionFailure;
     if (this.dataCutoff) {
       log.info(`Data age cutoff: ${this.dataCutoff}`);
     }
@@ -156,7 +160,9 @@ export class WhatsAppMessagesSource {
 
   /**
    * Register a callback for connection errors.
-   * Fires when the WhatsApp device is unlinked or connection is permanently lost.
+   * Fires when the WhatsApp device is unlinked or the connection stops
+   * reconnecting. The source stays wired: the provider wakes a sync through
+   * the push path once the link is back, and that sync clears the error.
    */
   onSourceError(handler: (error: string) => void): Unsubscribe {
     this.registerConnectionError?.(handler);
@@ -176,6 +182,11 @@ export class WhatsAppMessagesSource {
   }
 
   async sync(cursor: SyncCursor | null): Promise<SyncResult> {
+    // Fail while the link is down so a scheduled sync cannot report the source
+    // healthy from what the store buffered before the outage. The buffered
+    // messages stay dirty and drain on the first sync after recovery.
+    const failure = this.connectionFailure?.();
+    if (failure) throw new Error(failure);
     const vocabularyEnabled = this.isTranscriptionVocabularyEnabled?.() === true;
     const state: WhatsAppSyncCursor = validateWhatsAppSyncCursor(cursor) ?? {
       phase: "bootstrap",
