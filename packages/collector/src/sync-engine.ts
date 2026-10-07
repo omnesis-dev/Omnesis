@@ -939,7 +939,8 @@ export class SyncEngine {
    * through its push subscription once the link is back, and that sync's
    * success is what clears the error. A failure that cannot heal by itself
    * keeps showing because the tick's credential check parks an unlinked
-   * provider, and a source whose link is still down fails its syncs.
+   * provider, and a source whose link is still down fails its syncs. A report
+   * that lands while a run is in flight is left to that source's next sync.
    */
   private setupSourceErrorHandler(source: RegisteredSource): void {
     if (!source.instance.onSourceError) return;
@@ -949,6 +950,10 @@ export class SyncEngine {
       if (!status || status.state === "disabled") return;
 
       log.error(`Source error for ${source.id}: ${error}`);
+      // A run in flight owns the status until it settles: flipping it here
+      // would drop the `syncing` guard and let a tick start a second run. The
+      // source's next sync reports the failure itself.
+      if (status.state === "syncing") return;
       SourceLifecycle.toError(status, error, log);
       this.registry.emitStatusChange({
         event: "sync.error",

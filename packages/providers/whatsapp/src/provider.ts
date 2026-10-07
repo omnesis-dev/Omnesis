@@ -51,7 +51,12 @@ import {
   isOmnesisAuthUnlinked,
 } from "./baileys-auth-state.js";
 import type { Boom } from "@hapi/boom";
-import type { SocketFactory, SocketFactoryResult, StoredMessage } from "./types.js";
+import type {
+  SocketFactory,
+  SocketFactoryResult,
+  StoredMessage,
+  WhatsAppConnectionFailure,
+} from "./types.js";
 import type { MediaDownloadFn, MediaDownloadResult } from "./messages.js";
 
 const log = createLogger("provider:whatsapp");
@@ -671,9 +676,10 @@ export class WhatsAppProvider implements Provider {
    * the buffered store meanwhile would clear the failure the operator was
    * shown while WhatsApp is still unreachable.
    */
-  connectionFailure(): string | null {
-    if (this.unlinked) return WhatsAppProvider.UNLINKED_MESSAGE;
-    return this.surfacedConnectionError;
+  connectionFailure(): WhatsAppConnectionFailure | null {
+    if (this.unlinked) return { kind: "auth", message: WhatsAppProvider.UNLINKED_MESSAGE };
+    if (this.surfacedConnectionError === null) return null;
+    return { kind: "network", message: this.surfacedConnectionError };
   }
 
   getStore(): MessageStore {
@@ -708,8 +714,8 @@ export class WhatsAppProvider implements Provider {
   }
 
   /**
-   * Register a callback for connection errors (e.g. device unlinked).
-   * Called when Baileys detects the device was logged out.
+   * Register a callback for connection errors: the device was unlinked, or
+   * the fast reconnect burst ran out.
    */
   onConnectionError(handler: (error: string) => void): void {
     this.connectionErrorHandler = handler;
@@ -995,7 +1001,9 @@ export class WhatsAppProvider implements Provider {
           log.error(
             `Failed to create WhatsApp socket: ${err instanceof Error ? err.message : String(err)}`,
           );
-          if (firstConnect) {
+          // Only the create-time connection rejects; a `resume()` reconnect
+          // retries like any other reconnect so a re-enabled source self-heals.
+          if (firstConnect && initial) {
             clearTimeout(handshakeTimeout);
             reject(err instanceof Error ? err : new Error(String(err)));
             return;
@@ -1012,7 +1020,8 @@ export class WhatsAppProvider implements Provider {
               `WhatsApp reconnect failed after ${WhatsAppProvider.MAX_RECONNECT_ATTEMPTS} attempts ` +
               `(socket creation error: ${err instanceof Error ? err.message : String(err)})`;
             log.error(msg);
-            this.connectionErrorHandler?.(msg);
+            reconnectAttempts = 0;
+            this.onReconnectBurstExhausted(msg, startSocket);
             return;
           }
           this.scheduleReconnect(startSocket, reconnectAttempts);
@@ -1241,16 +1250,8 @@ export class WhatsAppProvider implements Provider {
                 reject(new Error(msg));
                 return;
               }
-              // An established (or resumed) source lost its link. Surface the
-              // degraded state once for visibility, then keep retrying on a slow
-              // cool-down so a transient WhatsApp-side outage self-heals without a
-              // manual restart (the bounded fast loop alone would strand it).
-              if (this.surfacedConnectionError === null) {
-                this.surfacedConnectionError = msg;
-                this.connectionErrorHandler?.(msg);
-              }
               reconnectAttempts = 0;
-              this.scheduleCooldownRetry(startSocket, statusCode, reason);
+              this.onReconnectBurstExhausted(msg, startSocket, statusCode, reason);
               return;
             }
             this.scheduleReconnect(startSocket, reconnectAttempts, statusCode, reason);
@@ -1298,6 +1299,25 @@ export class WhatsAppProvider implements Provider {
    * outage self-heals. The fast-retry budget is reset by the caller, so each
    * cool-down fire kicks off a fresh bounded burst before the next cool-down.
    */
+  /**
+   * An established (or resumed) source spent its fast reconnect burst.
+   * Surface the degraded state once for visibility, then keep retrying on a
+   * slow cool-down so a transient outage self-heals without a manual restart
+   * (the bounded fast loop alone would strand it).
+   */
+  private onReconnectBurstExhausted(
+    msg: string,
+    runner: () => Promise<void>,
+    statusCode?: number,
+    reason?: string,
+  ): void {
+    if (this.surfacedConnectionError === null) {
+      this.surfacedConnectionError = msg;
+      this.connectionErrorHandler?.(msg);
+    }
+    this.scheduleCooldownRetry(runner, statusCode, reason);
+  }
+
   private scheduleCooldownRetry(
     runner: () => Promise<void>,
     statusCode?: number,

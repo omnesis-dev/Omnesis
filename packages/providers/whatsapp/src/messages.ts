@@ -11,7 +11,7 @@ import {
   deriveAttachmentStableId,
 } from "@omnesis/core";
 import { makeCursorValidator } from "@omnesis/source-sdk";
-import { SourceId, ProviderId, isTransientSyncError } from "@omnesis/types";
+import { SourceId, ProviderId, SyncError, isTransientSyncError } from "@omnesis/types";
 import {
   normalizeDayChat,
   buildContactsByLidJid,
@@ -31,7 +31,13 @@ import type {
   ProviderId as ProviderIdType,
 } from "@omnesis/types";
 import type { MessageStore } from "./message-store.js";
-import type { WhatsAppSyncCursor, StoredMessage, MediaOutcome, StoredContact } from "./types.js";
+import type {
+  WhatsAppConnectionFailure,
+  WhatsAppSyncCursor,
+  StoredMessage,
+  MediaOutcome,
+  StoredContact,
+} from "./types.js";
 
 const log = createLogger("source:whatsapp");
 
@@ -92,7 +98,7 @@ export interface WhatsAppMessagesSourceOptions {
   /** Stop reporting to `handler`, so a torn-down source goes quiet. */
   offConnectionError?: (handler: (error: string) => void) => void;
   /** Why the connection cannot deliver messages right now, or null while it can. */
-  connectionFailure?: () => string | null;
+  connectionFailure?: () => WhatsAppConnectionFailure | null;
 }
 
 /**
@@ -115,7 +121,7 @@ export class WhatsAppMessagesSource {
   private mediaAttemptsPerPage: number;
   private registerConnectionError?: (handler: (error: string) => void) => void;
   private unregisterConnectionError?: (handler: (error: string) => void) => void;
-  private connectionFailure?: () => string | null;
+  private connectionFailure?: () => WhatsAppConnectionFailure | null;
 
   constructor(
     private store: MessageStore,
@@ -186,7 +192,7 @@ export class WhatsAppMessagesSource {
     // healthy from what the store buffered before the outage. The buffered
     // messages stay dirty and drain on the first sync after recovery.
     const failure = this.connectionFailure?.();
-    if (failure) throw new Error(failure);
+    if (failure) throw new SyncError(failure.kind, failure.message);
     const vocabularyEnabled = this.isTranscriptionVocabularyEnabled?.() === true;
     const state: WhatsAppSyncCursor = validateWhatsAppSyncCursor(cursor) ?? {
       phase: "bootstrap",
