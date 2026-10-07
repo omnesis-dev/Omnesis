@@ -8,6 +8,7 @@ import { isHistoricalKnowledgeBrief } from "./owner-maintenance.js";
 import { pendingMaintenanceClaimIds } from "./claim-maintenance.js";
 import { getKnowledgeDependencies, getKnowledgeNode } from "./storage.js";
 import { knowledgeHash } from "./storage-validation.js";
+import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import {
   listKnowledgeFrontier,
   type KnowledgeFrontierInput,
@@ -167,7 +168,7 @@ export class KnowledgeEngine {
         .map((row) => row.id),
     );
   }
-  private frontier(id: string, depth: number): KnowledgeFrontierInput | null {
+  private frontier(id: string, depth: number, batchId?: string): KnowledgeFrontierInput | null {
     const versions: Record<string, string | number> = {};
     if (id.startsWith("source:")) {
       const source = this.source(id.slice(7));
@@ -177,6 +178,25 @@ export class KnowledgeEngine {
       const node = getKnowledgeNode(this.deps.db, id);
       if (!node || node.canonicalFields.withdrawn === true) return null;
       versions[`node:${id}`] = node.revision;
+      // Selection is durable input context, not a claim-support relationship.
+      // Scope it to source generations actually retained by this batch.
+      if (batchId) {
+        const discovered = this.deps.db
+          .prepare<[string, string], { id: string; revision: string }>(
+            `SELECT DISTINCT t.source_id AS id,t.source_revision AS revision
+          FROM knowledge_discovery_targets t
+          JOIN documents d ON d.id=t.source_id AND d.content_hash=t.source_revision
+          JOIN knowledge_frontier f ON f.batch_id=? AND f.node_id='source:'||t.source_id
+          JOIN json_each(f.input_versions_json) v ON v.key='source:'||t.source_id
+            AND v.value=t.source_revision
+          WHERE t.node_id=? ORDER BY t.source_id`,
+          )
+          .all(batchId, id);
+        for (const source of discovered)
+          if (isKnowledgeEvidenceReadable(this.deps.db, source.id))
+            versions[sourceKey(source.id)] = source.revision;
+      }
+
       if (node.kind === "root")
         for (const candidate of this.orientation())
           versions[`orientation:${candidate.id}`] = candidate.meaningRevision;
@@ -368,7 +388,7 @@ export class KnowledgeEngine {
       for (const item of unresolved
         .filter((row) => row.depth === depth)
         .slice(0, cfg.maxFrontierNodes)) {
-        const fresh = this.frontier(item.nodeId, item.depth);
+        const fresh = this.frontier(item.nodeId, item.depth, batchId);
         if (!fresh) {
           await this.settle(item, runId, "unchanged", []);
           progressed = true;
@@ -578,6 +598,30 @@ export class KnowledgeEngine {
       } else throw error;
     }
   }
+  /** Recover omitted input context without depending on a predecessor's transcript. */
+  maintenanceInputs(batchId: string, runId: string, nodeId: string, after?: string, limit = 32) {
+    const batch = this.batch(batchId, runId);
+    if (["completed", "abandoned"].includes(batch.status))
+      throw new KnowledgeStorageError("revision_conflict", "Maintenance batch is no longer active");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 32)
+      throw new KnowledgeStorageError("claim_invalid", "Input page limit must be between 1 and 32");
+    const offered = listKnowledgeFrontier(this.deps.db, batchId).find(
+      (item) => item.nodeId === nodeId && item.status === "offered",
+    );
+    if (!offered)
+      throw new KnowledgeStorageError("revision_conflict", "Inputs require an offered frontier");
+    const item = this.currentItem(batchId, nodeId, offered.inputFingerprint);
+    const keys = Object.keys(item.inputVersions)
+      .sort()
+      .filter((key) => !after || key > after);
+    const page = keys.slice(0, limit);
+    return {
+      inputFingerprint: item.inputFingerprint,
+      inputVersions: Object.fromEntries(page.map((key) => [key, item.inputVersions[key]!])),
+      ...(keys.length > limit ? { nextAfter: page.at(-1)! } : {}),
+    };
+  }
+
   private currentItem(batchId: string, nodeId: string, fingerprint: string): KnowledgeFrontierItem {
     const item = listKnowledgeFrontier(this.deps.db, batchId).find(
       (row) =>
@@ -587,7 +631,7 @@ export class KnowledgeEngine {
     );
     if (!item)
       throw new KnowledgeStorageError("revision_conflict", "Frontier item is no longer current");
-    const fresh = this.frontier(nodeId, item.depth);
+    const fresh = this.frontier(nodeId, item.depth, batchId);
     if (!fresh || fresh.inputFingerprint !== fingerprint)
       throw new KnowledgeStorageError(
         "revision_conflict",
@@ -743,7 +787,7 @@ export class KnowledgeEngine {
     const pending = pendingMaintenanceClaimIds(this.deps.db, item);
     const append = result.meaningChanged ? this.children(nodeId, item.depth) : [];
     if (pending.length) {
-      const successor = this.frontier(nodeId, item.depth);
+      const successor = this.frontier(nodeId, item.depth, batchId);
       if (successor) append.unshift({ ...successor, eligibleClaimIds: pending });
     }
     await this.settle(

@@ -1310,6 +1310,30 @@ describe("knowledge coordinator", () => {
       (item) => item.id === "project",
     )!;
     expect(repair).toBeDefined();
+    expect(repair.inputVersions["source:new-evidence"]).toBe("v1");
+    // A successor has no predecessor transcript, but retains its batch inputs.
+    const successorRunId = "continuation-run";
+    db.prepare("UPDATE knowledge_batches SET run_id=? WHERE id=?").run(successorRunId, batch.id);
+    expect(() => engine.maintenanceInputs(batch.id, batch.runId, "project")).toThrow(/owned/);
+    batch.runId = successorRunId;
+    const resumed = (await engine.next(batch.id, batch.runId)).items.find(
+      (item) => item.id === "project",
+    )!;
+    expect(resumed.inputVersions["source:new-evidence"]).toBe("v1");
+    const collected: Record<string, string | number> = {};
+    let after: string | undefined;
+    do {
+      const page = engine.maintenanceInputs(batch.id, batch.runId, "project", after, 1);
+      expect(page.inputFingerprint).toBe(resumed.inputFingerprint);
+      expect(Object.keys(page.inputVersions)).toHaveLength(1);
+      Object.assign(collected, page.inputVersions);
+      after = page.nextAfter;
+    } while (after);
+    expect(collected).toEqual(resumed.inputVersions);
+    expect(() => engine.maintenanceInputs(batch.id, batch.runId, "unoffered")).toThrow(/offered/);
+    expect(() => engine.maintenanceInputs(batch.id, batch.runId, "project", undefined, 33)).toThrow(
+      /limit/,
+    );
     await engine.saveNode(
       batch.id,
       batch.runId,
@@ -2209,4 +2233,152 @@ it("traverses lost support through a historical brief without rewriting its snap
     verified: false,
   });
   expect(getBrief(db, "past-brief")).toEqual(snapshot);
+});
+
+describe("durable discovery input context", () => {
+  it.each(["changed", "withdrawn"] as const)(
+    "rejects uncited discovery context %s while the verifier is paused",
+    async (change) => {
+      source("original");
+      await wiki("project", "source:original");
+      db.prepare("DELETE FROM knowledge_changes").run();
+      source("selected");
+      await engine.tick();
+      const batch = batchFor("selected");
+      const first = (await engine.next(batch.id, batch.runId)).items.find(
+        (item) => item.id === "source:selected",
+      )!;
+      await engine.completeSource(
+        batch.id,
+        batch.runId,
+        first.id,
+        first.inputFingerprint,
+        false,
+        undefined,
+        ["project"],
+      );
+      const offered = (await engine.next(batch.id, batch.runId)).items.find(
+        (item) => item.id === "project",
+      )!;
+      expect(offered.inputVersions["source:selected"]).toBe("v1");
+      const before = getKnowledgeNode(db, "project");
+      let enter!: () => void, release!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const paused = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      service.deps.getEntailmentVerifier = async () => ({
+        verify: async () => {
+          enter();
+          await paused;
+          return { label: "entailment", probability: 1 };
+        },
+        dispose() {},
+      });
+      const saving = engine.saveNode(
+        batch.id,
+        batch.runId,
+        "project",
+        offered.inputFingerprint,
+        {
+          id: "project",
+          kind: "wiki",
+          title: "Project",
+          markdown:
+            '<claim id="revised" refs="source:original">The workshop begins Friday.</claim>',
+          expectedRevision: offered.node!.revision,
+          // The newly selected context is deliberately absent from all citations.
+          inputVersions: { "source:original": "v1" },
+        },
+        offered.pendingClaimIds,
+      );
+      await entered;
+      if (change === "changed")
+        db.exec("UPDATE documents SET content_hash='v2' WHERE id='selected'");
+      else db.exec("UPDATE knowledge_source_revisions SET deleted=1 WHERE document_id='selected'");
+      const rejected = expect(saving).rejects.toMatchObject({ code: "revision_conflict" });
+      release();
+      await rejected;
+      expect(getKnowledgeNode(db, "project")).toEqual(before);
+      expect(
+        listKnowledgeFrontier(db, batch.id).find(
+          (item) => item.nodeId === "project" && item.inputFingerprint === offered.inputFingerprint,
+        )?.status,
+      ).toBe("offered");
+    },
+  );
+
+  it.each(["changed", "deleted", "removed"] as const)(
+    "refuses an offered snapshot after a selected source is %s",
+    async (change) => {
+      source("original");
+      await wiki("project", "source:original");
+      db.prepare("DELETE FROM knowledge_changes").run();
+      source("selected");
+      await engine.tick();
+      const batch = batchFor("selected");
+      const first = (await engine.next(batch.id, batch.runId)).items.find(
+        (item) => item.id === "source:selected",
+      )!;
+      await engine.completeSource(
+        batch.id,
+        batch.runId,
+        first.id,
+        first.inputFingerprint,
+        false,
+        undefined,
+        ["project"],
+      );
+      const offered = (await engine.next(batch.id, batch.runId)).items.find(
+        (item) => item.id === "project",
+      )!;
+      expect(offered.inputVersions["source:selected"]).toBe("v1");
+      if (change === "changed")
+        db.prepare("UPDATE documents SET content_hash='v2' WHERE id='selected'").run();
+      else if (change === "deleted")
+        db.prepare(
+          "UPDATE knowledge_source_revisions SET deleted=1 WHERE document_id='selected'",
+        ).run();
+      else {
+        db.exec("CREATE TABLE removed_sources(id TEXT PRIMARY KEY)");
+        db.prepare("INSERT INTO removed_sources VALUES('fictional')").run();
+      }
+      expect(() => engine.maintenanceInputs(batch.id, batch.runId, "project")).toThrow(
+        /inputs changed/,
+      );
+    },
+  );
+
+  it("does not offer dormant discovery selections outside the current batch", async () => {
+    source("original");
+    await wiki("project", "source:original");
+    source("dormant");
+    db.prepare("INSERT INTO knowledge_discovery_targets VALUES('dormant','v1','project',?)").run(
+      now,
+    );
+    db.prepare("DELETE FROM knowledge_changes").run();
+    source("selected");
+    await engine.tick();
+    const batch = batchFor("selected");
+    const first = (await engine.next(batch.id, batch.runId)).items.find(
+      (item) => item.id === "source:selected",
+    )!;
+    await engine.completeSource(
+      batch.id,
+      batch.runId,
+      first.id,
+      first.inputFingerprint,
+      false,
+      undefined,
+      ["project"],
+    );
+    const repair = (await engine.next(batch.id, batch.runId)).items.find(
+      (item) => item.id === "project",
+    )!;
+    expect(repair.inputVersions["source:selected"]).toBe("v1");
+    expect(repair.inputVersions["source:dormant"]).toBeUndefined();
+    expect(service.fetch("project", true)!.markdown).not.toContain("selected");
+  });
 });

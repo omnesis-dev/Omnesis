@@ -167,6 +167,10 @@ items for later calls. An oversized page is represented by `fetchRequired`, not
 truncated claim markup: fetch it explicitly with `knowledge_fetch(editing=true)`
 and resolve its current references before saving. Omitted input versions are
 marked explicitly; the internal frontier still retains the complete fingerprint.
+Use the run-bound `knowledge_maintenance_inputs` tool to page omitted versions.
+Newly discovered source inputs remain available across continuation turns even
+before a page cites them. They are context to inspect, not automatic support;
+the agent must fetch their content and establish claim dependencies explicitly.
 
 Each offered node also identifies pending claim IDs. A synthesis save names
 `reviewedClaimIds` for retained assertions it actually reviewed. Changed or removed

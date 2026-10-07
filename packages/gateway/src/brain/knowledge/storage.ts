@@ -9,6 +9,7 @@ import { parseClaimMarkup } from "./claims.js";
 import { snapshotKnowledgeRevision } from "./storage-history.js";
 import { invalidateKnowledgeDependents } from "./storage-invalidation.js";
 import { knowledgeNodeFence } from "./storage-fence.js";
+import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import { isClaimIdentifier } from "./references.js";
 import {
   KnowledgeStorageError,
@@ -76,19 +77,37 @@ export function saveKnowledgeNode(
   return db.transaction(() => {
     assertKnowledgeRunFence(db, input.runFence);
     assertKnowledgeRunFence(db, input.maintenance);
-    if (
-      input.maintenance &&
-      !db
-        .prepare(
-          `SELECT 1 FROM knowledge_frontier f JOIN knowledge_batches b ON b.id=f.batch_id
-      WHERE f.batch_id=? AND f.node_id=? AND f.input_fingerprint=? AND f.status='offered' AND b.status NOT IN ('completed','abandoned')`,
+    if (input.maintenance) {
+      const offered = db
+        .prepare<[string, string, string], { input_versions_json: string }>(
+          `SELECT f.input_versions_json FROM knowledge_frontier f JOIN knowledge_batches b ON b.id=f.batch_id
+        WHERE f.batch_id=? AND f.node_id=? AND f.input_fingerprint=? AND f.status='offered'
+          AND b.status NOT IN ('completed','abandoned')`,
         )
-        .get(input.maintenance.batchId, input.id, input.maintenance.inputFingerprint)
-    )
-      throw new KnowledgeStorageError(
-        "revision_conflict",
-        "Maintenance batch no longer owns this synthesis input",
+        .get(input.maintenance.batchId, input.id, input.maintenance.inputFingerprint);
+      if (!offered)
+        throw new KnowledgeStorageError(
+          "revision_conflict",
+          "Maintenance batch no longer owns this synthesis input",
+        );
+      // These are trusted offered inputs, not the model's chosen citations.
+      // Recheck uncited discovery context after any asynchronous verification.
+      const versions = JSON.parse(offered.input_versions_json) as Record<string, string | number>;
+      const sourceRevision = db.prepare<[string], { content_hash: string }>(
+        "SELECT content_hash FROM documents WHERE id=?",
       );
+      for (const [ref, expected] of Object.entries(versions)) {
+        if (!ref.startsWith("source:") || ref.includes("#")) continue;
+        const sourceId = ref.slice(7);
+        const current = sourceRevision.get(sourceId);
+        const readable = current && isKnowledgeEvidenceReadable(db, sourceId);
+        if ((readable ? current.content_hash : "missing") !== expected)
+          throw new KnowledgeStorageError(
+            "revision_conflict",
+            "Maintenance source inputs changed; request the next frontier again",
+          );
+      }
+    }
     if (db.prepare("SELECT 1 FROM knowledge_node_tombstones WHERE id=?").get(input.id))
       throw new KnowledgeStorageError(
         "reference_invalid",

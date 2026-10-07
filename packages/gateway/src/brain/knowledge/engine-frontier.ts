@@ -26,7 +26,7 @@ export function fitKnowledgeFrontierItem(
       title: (item.node?.title ?? item.source?.title ?? "").slice(0, 200),
       revision: item.node?.revision ?? item.source?.contentHash ?? "",
       instruction:
-        "Fetch the full node with knowledge_fetch(editing=true), or the source with fetch_many. Resolve current evidence references before saving. Use knowledge_list for root orientation. Review only the listed pending claims when their list is bounded; later frontier calls expose the remainder.",
+        "Fetch the full node with knowledge_fetch(editing=true), or the source with fetch_many. Page knowledge_maintenance_inputs for this offered id to recover omitted input versions, including newly discovered sources; fetch their content before saving. Use knowledge_list for root orientation. Review only the listed pending claims when their list is bounded; later frontier calls expose the remainder.",
     },
     ...(item.source
       ? {

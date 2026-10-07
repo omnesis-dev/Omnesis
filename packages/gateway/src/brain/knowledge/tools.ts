@@ -445,6 +445,20 @@ export function buildKnowledgeTools(
     };
     tools.push(
       tool(
+        "knowledge_maintenance_inputs",
+        "Read a bounded page of input versions for an offered maintenance item, including newly discovered evidence that may not yet appear in its claims. Call with the offered id when inputVersionsOmitted=true; follow nextAfter until absent. All pages must match the offered inputFingerprint; on a conflict or changed fingerprint refresh the frontier and restart pagination. Fetch the actual referenced content before synthesizing. These inputs are context to inspect, not automatically supporting evidence.",
+        z
+          .object({
+            id,
+            after: z.string().max(1024).optional(),
+            limit: z.number().int().min(1).max(32).optional(),
+          })
+          .strict(),
+        false,
+        (input) =>
+          engine.maintenanceInputs(batchId, context.runId, input.id, input.after, input.limit),
+      ),
+      tool(
         "knowledge_temporal_context",
         "Read the next page of time-index entries invalidated by this source change. Account for each: re-file only facts still supported by current evidence, or explain why they no longer hold. Repeat while hasMoreInvalidated=true. Ungrounded live entries require evidence review too.",
         z.object({ documentId: id }).strict(),
@@ -455,7 +469,7 @@ export function buildKnowledgeTools(
     tools.push(
       tool(
         "knowledge_next_frontier",
-        "Call with {} only: this tool is already bound to the current run and batch. Read the next bounded maintenance frontier. Copy offered IDs and fingerprints verbatim into save/completion calls; request a fresh frontier after revision conflicts. Follow fetchRequired to retrieve complete nodes or sources; inputVersionsOmitted requires resolving current references. If source.contentTruncated is true, fetch the complete source before synthesizing claims. If temporal.contextOmitted is true, call knowledge_temporal_context before completing the source. Continue until done=true, even when items is empty.",
+        "Call with {} only: this tool is already bound to the current run and batch. Read the next bounded maintenance frontier. Copy offered IDs and fingerprints verbatim into save/completion calls; request a fresh frontier after revision conflicts. Follow fetchRequired to retrieve complete nodes or sources; inputVersionsOmitted requires paging knowledge_maintenance_inputs for the offered id, then fetching the actual references. If source.contentTruncated is true, fetch the complete source before synthesizing claims. If temporal.contextOmitted is true, call knowledge_temporal_context before completing the source. Continue until done=true, even when items is empty.",
         z.object({}).strict(),
         true,
         async () => {

@@ -44,6 +44,39 @@ function run(kind: ClaimedCognitionRun["kind"], payload: unknown): ClaimedCognit
   return { id: "run", kind, payload, payloadJson: JSON.stringify(payload), attempts: 1 };
 }
 const context = { sessionId: "session", messageId: "message" };
+it("bounds maintenance-input paging and binds it to the tool's run and batch", async () => {
+  createKnowledgeWorkTables(db);
+  const log = createLogger("knowledge-tools-test");
+  const engine = new KnowledgeEngine({
+    db,
+    service,
+    writeGate: directKnowledgeGate(db),
+    getSettings: () => resolveBrainSettings(),
+    clock: () => 10,
+    log,
+    decisions: { getDecision: () => null, log, recordSpend: async () => {} },
+  });
+  const inputs = buildKnowledgeTools(service, {
+    runId: "run",
+    batchId: "missing-batch",
+    engine,
+  }).find((entry) => entry.name === "knowledge_maintenance_inputs")!;
+  expect(inputs.mutates).toBe(false);
+  expect(await inputs.invoke({ id: "page", limit: 33 }, context)).toMatchObject({
+    kind: "error",
+    code: "invalid_arguments",
+  });
+  expect(await inputs.invoke({ id: "page", batchId: "another-batch" }, context)).toMatchObject({
+    kind: "error",
+    code: "invalid_arguments",
+  });
+  expect(await inputs.invoke({ id: "page" }, context)).toMatchObject({ kind: "error" });
+  expect(
+    buildKnowledgeTools(service, { runId: "run" }).some(
+      (entry) => entry.name === "knowledge_maintenance_inputs",
+    ),
+  ).toBe(false);
+});
 it("describes canonical operations and fresh reads before a terminal maintenance save", () => {
   const save = buildKnowledgeTools(service, { runId: "run" }).find(
     (entry) => entry.name === "knowledge_save",

@@ -207,25 +207,41 @@ function nodePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Puppet
   const sourceIds = new Set(
     [...node.markdown.matchAll(/source:([^\s"#]+)/g)].map((match) => match[1]!),
   );
-  for (const step of steps) {
-    if (step.name !== "knowledge_next_frontier") continue;
-    const frontier = z
-      .object({
-        items: z.array(
-          z
-            .object({ source: z.object({ id: z.string(), title: z.string() }).optional() })
-            .passthrough(),
-        ),
-      })
-      .safeParse(structuredData(step.result));
-    for (const offered of frontier.success ? frontier.data.items : [])
-      if (offered.source && topics(offered.source.title).includes(topic))
-        sourceIds.add(offered.source.id);
-  }
+  const local = localSteps(steps, item);
   const calls: PuppetPlan["calls"] = [];
+  const inputVersions = { ...item.inputVersions };
+  if (item.inputVersionsOmitted) {
+    let after: string | undefined;
+    for (;;) {
+      calls.push(
+        call("knowledge_maintenance_inputs", { id: item.id, ...(after ? { after } : {}) }),
+      );
+      const page = z
+        .object({
+          inputFingerprint: z.string(),
+          inputVersions: z.record(z.string(), z.union([z.string(), z.number()])),
+          nextAfter: z.string().optional(),
+        })
+        .safeParse(
+          result(
+            local,
+            "knowledge_maintenance_inputs",
+            (step) => step.args?.id === item.id && step.args?.after === after,
+          ),
+        );
+      if (!page.success || page.data.inputFingerprint !== item.inputFingerprint) return { calls };
+      Object.assign(inputVersions, page.data.inputVersions);
+      if (!page.data.nextAfter) break;
+      if (after && page.data.nextAfter <= after) return { calls };
+      after = page.data.nextAfter;
+    }
+  }
+  // Source selections survive paid run continuation in the offered input context.
+  // They are read and grounded below, never treated as evidence by themselves.
+  for (const ref of Object.keys(inputVersions))
+    if (ref.startsWith("source:")) sourceIds.add(ref.slice(7).split("#")[0]!);
   const views: z.infer<typeof referenceSchema>[] = [];
   const evidence: z.infer<typeof evidenceSchema>[] = [];
-  const local = localSteps(steps, item);
   for (const id of [...sourceIds].sort()) {
     calls.push(call("knowledge_reference", { ref: `source:${id}` }));
     const view = referenceSchema.safeParse(
