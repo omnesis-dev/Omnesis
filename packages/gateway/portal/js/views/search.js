@@ -18,6 +18,7 @@ import { FacetPanel } from "../components/facets.js";
 import { PipelineDebug } from "../components/pipeline-debug.js";
 import { IndexerWarmingCard } from "../components/indexer-warming-card.js";
 import { STORAGE_PREFIXES } from "../lib/storage.js";
+import { replaceUrl } from "../lib/router.js";
 import { SearchProvenance } from "../components/search-provenance.js";
 import { provenanceForResults, provenancePanels, provenanceDocumentIds, graphContextNotice } from "../lib/search-provenance.js";
 
@@ -58,10 +59,27 @@ function clearSearchCache() {
   sessionStorage.removeItem(SEARCH_CACHE_KEY);
 }
 
-export function SearchView() {
+/**
+ * Mirror the completed search in the URL without adding a history entry, so
+ * the address bar can be shared or bookmarked. Only the search page's own
+ * address carries a query; other paths this view answers keep theirs.
+ */
+function syncQueryToUrl(text) {
+  if (typeof location === "undefined") return;
+  if (location.pathname !== "/portal/search" && location.pathname !== "/portal/search/") return;
+  const path = `/portal/search?q=${encodeURIComponent(text)}`;
+  if (location.pathname + location.search !== path) replaceUrl(path);
+}
+
+/**
+ * The search page. `initialQuery` comes from the URL (`/portal/search?q=…`),
+ * so a link can open the page on a search; each completed search is written
+ * back to the URL, which then always names what the page shows.
+ */
+export function SearchView({ initialQuery = "" } = {}) {
   const cached = loadSearchCache();
 
-  const [query, setQuery] = useState(cached?.query || "");
+  const [query, setQuery] = useState(initialQuery || cached?.query || "");
   const [verbose, setVerbose] = useState(cached?.verbose || false);
   const [results, setResults] = useState(cached?.results || null);
   const [response, setResponse] = useState(cached?.response || null);
@@ -129,7 +147,7 @@ export function SearchView() {
   // Save scroll position + state to sessionStorage on unmount
   useEffect(() => {
     inputRef.current?.focus();
-    if (cached?.scrollY != null) {
+    if (cached?.scrollY != null && (!initialQuery || initialQuery === cached?.query)) {
       requestAnimationFrame(() => window.scrollTo(0, cached.scrollY));
     }
     // Backfill people-bubbles when restoring from cache (the bubble
@@ -171,6 +189,7 @@ export function SearchView() {
       setResponse(res);
       setResults(res.results || []);
       setCompletedQuery(text);
+      syncQueryToUrl(text);
       setPeopleByDoc({});
       saveSearchCache({ query: text, verbose: v, results: res.results || [], response: res, scrollY: 0 });
       const ids = (res.results || []).map((x) => x.documentId).filter(Boolean);
@@ -198,6 +217,14 @@ export function SearchView() {
       if (sequence === searchSequence.current) setLoading(false);
     }
   }, []);
+
+  // A query in the URL that the page does not already show is searched, on
+  // arrival and when a link changes it while the page is open.
+  useEffect(() => {
+    if (!initialQuery || initialQuery === stateRef.current.response?.query?.original) return;
+    setQuery(initialQuery);
+    doSearch(initialQuery, stateRef.current.verbose);
+  }, [initialQuery]);
 
   // Diagnostic context is never cached. A capability change or a newer search
   // invalidates the in-flight response before it can attach to another query.

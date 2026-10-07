@@ -568,6 +568,10 @@ export function parseRoute() {
     return route;
   }
 
+  if (path === "/portal/search" || path === "/portal/search/") {
+    return { view: "search", query: new URLSearchParams(location.search).get("q") || "" };
+  }
+
   if (path === "/portal/agent" || path === "/portal/agent/") {
     return { view: "agent", convoId: null };
   }
