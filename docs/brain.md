@@ -102,12 +102,24 @@ under the retirement rules with an explicit reason; never substitute another
 task's completion for fulfilment of the original outcome.
 Track a distinct supported action separately and preserve relevant context links.
 
-The root wiki is the compact overview itself, not a second full-sized page.
+Wikis are navigable reference pages: a descriptive title, a concise introduction,
+and sections for distinct supported topics. Their structure grows with the
+evidence; there is no page or section quota. Markdown links to existing wikis
+(`wiki:<id>`) and tracked outcomes (`loop:<id>`) provide navigation. These links
+do not establish evidential support. Keep a section heading inside the first
+relevant claim block, with newlines around its Markdown content, and retain
+separate claim spans for subsequent assertions.
+
+The root wiki is the compact overview and entry point to relevant detail pages.
+It links to existing wikis instead of reproducing their full contents.
 Every write must fit `rootMaxChars`. It is injected as untrusted reference
 context; reading it does not create an automatic dependency on every claim.
 Once readable synthesis exists, the initial empty root receives bounded
 scheduling preference over ordinary synthesis, below reactive work. Initial
 orientation bypasses the impact gate; subsequent updates use normal maintenance.
+Publishing a new wiki schedules populated-root orientation at the configured
+`soon` delay; ordinary page edits use the routine delay. Multiple publications
+coalesce without moving an already scheduled refresh later.
 
 ## Bootstrap and upgrade
 

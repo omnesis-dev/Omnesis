@@ -14,6 +14,7 @@ import { retireLoop } from "../storage/retired-loops.js";
 import { createBrief, setBriefState, updateBrief } from "../storage/briefs.js";
 import { resolveBrainSettings } from "../config.js";
 import { cognitionSpendDay } from "../storage/spend.js";
+import { WIKI_AUTHORING_GUIDANCE } from "../knowledge/wiki-authoring.js";
 import {
   insertTemporalAnnotation,
   markTemporalAnnotationsRefilePresented,
@@ -1302,6 +1303,30 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(ordinary).not.toContain("This batch includes initial root population");
   });
+
+  test.each([
+    { focus: "knowledge-maintenance", batchId: "batch_page" },
+    { focus: "knowledge-maintenance", batchId: "batch_root", schedulingClass: "initial-root" },
+    { focus: "knowledge-maintenance", batchId: "batch_joint", organizationCohortId: "cohort" },
+  ])(
+    "maintenance wiki guidance preserves structure, grounding, and scoped navigation: %j",
+    (payload) => {
+      const prompt = buildCognitionRunPrompt(claimed({ kind: "synthesis", payload }), deps());
+      expect(prompt).toContain(WIKI_AUTHORING_GUIDANCE);
+      expect(prompt).toContain("descriptive Markdown ## sections");
+      expect(prompt).toContain("opening claim tag on its own line");
+      expect(prompt).toContain("smallest relevant supported paragraph");
+      expect(prompt).toContain("subsequent factual claims remain separate spans");
+      expect(prompt).toContain("[Page title](wiki:actual-page-id)");
+      expect(prompt).toContain("links to the most relevant existing wiki subpages");
+      expect(prompt).toContain("Navigation links are not evidence");
+      expect(prompt).toContain("within its hard character budget");
+      expect(prompt).toContain(
+        "do not add empty headings, invent content, or impose section or page quotas",
+      );
+      expect(prompt).toContain("publishing another page does not grant root mutation authority");
+    },
+  );
 
   test("organization cohorts ask for joint durable context and an explicit no-page alternative", () => {
     const prompt = buildCognitionRunPrompt(

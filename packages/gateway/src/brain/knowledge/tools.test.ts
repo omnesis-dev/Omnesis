@@ -13,6 +13,7 @@ import { createBrief, getBrief } from "../storage/briefs.js";
 import { resolveBrainSettings } from "../config.js";
 import { withGrantedMutationsOnly } from "../steward/runtime.js";
 import { buildKnowledgeTools } from "./tools.js";
+import { WIKI_AUTHORING_GUIDANCE } from "./wiki-authoring.js";
 import { KnowledgeEngine } from "./engine.js";
 import { KnowledgeService } from "./service.js";
 import { createKnowledgeTables, getKnowledgeNode } from "./storage.js";
@@ -53,6 +54,7 @@ it("describes canonical operations and fresh reads before a terminal maintenance
   expect(save.description).toContain("state, deadline, retirement, and ledger changes");
   expect(save.description).toContain("knowledge_next_frontier and knowledge_fetch(editing=true)");
   expect(save.description).toContain("required canonical action is refused or incomplete");
+  expect(save.description).toContain(WIKI_AUTHORING_GUIDANCE);
 });
 
 it("exposes only owner-specific saves within narrowed artifact grants, without wiki/root mutation", () => {

@@ -8,6 +8,8 @@ vi.mock("../lib/format.js", () => ({
   sourceIconUrl: (id: string) => (id === "fixture-notes" ? "data:image/png;base64,aGVsbG8=" : null),
 }));
 import DOMPurify from "dompurify";
+import { parseClaimMarkup } from "../../../src/brain/knowledge/claims.js";
+import { uncoveredKnowledgeSpans } from "../../../src/brain/knowledge/coverage.js";
 // @ts-expect-error Plain JavaScript portal module.
 import * as knowledgeMarkdown from "./knowledge-claim-markdown.js";
 const { claimMarkupRanges, internalKnowledgeHref, renderKnowledgeMarkdown, extractKnowledgeReferences } = knowledgeMarkdown;
@@ -18,6 +20,28 @@ function claim(markdown: string, id: string, parentId: string | null = null) {
   return { id, parentId, start, end };
 }
 describe("claim-aware Markdown", () => {
+  it("renders fully covered sections and page navigation with separate inspectable claims", () => {
+    const markdown = [
+      '<claim id="supplies" refs="source:fixture">\n## Supplies\n\nThe [materials page](wiki:materials) lists paper and pencils.\n</claim>',
+      '<claim id="collection" refs="source:fixture">\n## Next step\n\n[Collect supplies](loop:collection) tracks preparation.\n</claim>',
+    ].join("\n\n");
+    const parsed = parseClaimMarkup(markdown);
+    expect(uncoveredKnowledgeSpans(parsed)).toEqual([]);
+    const claims = parsed.claims.map((item) => ({
+      id: item.id,
+      parentId: item.parentId,
+      start: item.contentSpan.start,
+      end: item.contentSpan.end,
+    }));
+    const result = renderKnowledgeMarkdown(markdown, claims);
+    expect(result.html).toContain("<h2>Supplies</h2>");
+    expect(result.html).toContain("<h2>Next step</h2>");
+    expect(result.html).toContain('href="/portal/debug/cognition/knowledge/materials"');
+    expect(result.html).toContain('href="/portal/debug/cognition/knowledge/collection?kind=loop"');
+    expect(result.html).toContain('class="kn-link-icon kn-link-icon--wiki"');
+    expect(result.html).toContain('class="kn-link-icon kn-link-icon--loop"');
+    expect([...result.targets.values()]).toEqual(["supplies", "collection"]);
+  });
   it("resolves canonical portal links and excludes code examples from metadata hydration", () => {
     const markdown =
       "[Page](/portal/debug/cognition/knowledge/project) [Note](/portal/doc/letter%2Fone) ` [Example](source:private-example) `";

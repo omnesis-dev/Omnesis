@@ -54,6 +54,7 @@ import {
 } from "@omnesis/core";
 import { SUBJECT_ATTRIBUTION_REQUIRES_EVIDENCE } from "@omnesis/agent";
 import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
+import { WIKI_AUTHORING_GUIDANCE } from "../knowledge/wiki-authoring.js";
 import {
   parseCognitionMayDayRunPayload,
   parseCognitionDataRunPayload,
@@ -1223,6 +1224,7 @@ function buildSynthesisRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPro
     return [
       ...parts,
       "Maintain the evidence-backed synthesis graph for this batch.",
+      WIKI_AUTHORING_GUIDANCE,
       ...(payload.organizationCohortId
         ? [
             "This is a joint organization pass over a bounded cohort of already-interpreted evidence. Inspect all cohort source context together before deciding its durable meaning. Search existing wikis, loops, annotations and candidates for related context; fetching those records does not make them verified evidence. Completed decisions, settled arrangements, recurring constraints and enduring preferences can justify reusable wiki context even when no new task or brief is warranted.",

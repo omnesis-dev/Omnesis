@@ -105,6 +105,12 @@ export class KnowledgeIntake {
         change.kind === "source_evidence_changed"
       ) {
         const sourceEvidence = change.kind === "source_evidence_changed";
+        // The change ledger retains the committed creation revision even if
+        // the page has already been edited again before intake catches up.
+        const newWiki =
+          change.kind === "node_changed" &&
+          change.revision === "1" &&
+          getKnowledgeNode(this.context.deps.db, change.entityId)?.kind === "wiki";
         const alreadyPropagated =
           change.kind === "node_changed" &&
           this.context.deps.db
@@ -162,6 +168,8 @@ export class KnowledgeIntake {
           )
             continue;
           const now = this.context.deps.clock();
+          const initialRoot = node.kind === "root" && !node.plainText;
+          const newWikiOrientation = node.kind === "root" && newWiki;
           await this.context.deps.writeGate["knowledge.enqueue"](
             {
               id: this.context.id("kw"),
@@ -169,8 +177,10 @@ export class KnowledgeIntake {
               subjectKind: "node",
               reason: node.kind === "root" ? "root" : "change",
               inputRevision: String(node.revision),
-              tier: node.kind === "root" && !node.plainText ? "immediate" : "routine",
-              dueAt: node.kind === "root" && !node.plainText ? now : now + cfg.routineDelayMs,
+              tier: initialRoot ? "immediate" : newWikiOrientation ? "soon" : "routine",
+              dueAt: initialRoot
+                ? now
+                : now + (newWikiOrientation ? cfg.soonDelayMs : cfg.routineDelayMs),
             },
             now,
           );

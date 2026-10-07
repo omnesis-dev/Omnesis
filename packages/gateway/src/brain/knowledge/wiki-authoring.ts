@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+/** Shared model guidance, not a structural or semantic validation guarantee. */
+export const WIKI_AUTHORING_GUIDANCE = [
+  "Write wikis as navigable reference pages. Give node.title a clear descriptive title, introduce the page's scope, and organize distinct supported topics under descriptive Markdown ## sections. Keep sections proportionate to the available evidence; do not add empty headings, invent content, or impose section or page quotas. Preserve stable claim IDs when reorganizing supported prose.",
+  "Keep every nonblank Markdown span inside claim tags, including headings and navigation text. For a section, put the opening claim tag on its own line, then the ## heading, a blank line, the smallest relevant supported paragraph, and the closing tag on its own line. The heading describes that paragraph and shares its actual evidence; subsequent factual claims remain separate spans. Do not wrap a whole page in one compound claim or invent evidence merely to cover an editorial heading.",
+  "Use meaningful inline navigation to existing pages you have read: [Page title](wiki:actual-page-id), or [Outcome title](loop:actual-loop-id) for a related tracked outcome. Replace these placeholders with real IDs. Connect genuinely related pages, and use knowledge_link for warranted organizational relations within your granted scope. Navigation links are not evidence: use claim refs and supports relations only when their contents establish the assertion. Never invent a target page or create a page solely to fill a link.",
+  "The root is a compact entry point: include short grounded context and links to the most relevant existing wiki subpages, within its hard character budget. Link to detail instead of copying whole pages. Related-page and parent navigation should help the reader understand the actual structure, not force unrelated subjects into a hierarchy. Update the root only when its frontier authorizes it; publishing another page does not grant root mutation authority.",
+].join("\n\n");

@@ -936,6 +936,91 @@ describe("knowledge coordinator", () => {
     });
   });
 
+  it("coalesces newly published wiki orientation at the configured soon tier", async () => {
+    settings.knowledge.soonDelayMs = 120000;
+    const savePage = (id: string, kind: "root" | "wiki", revision = 0) =>
+      saveKnowledgeNode(
+        db,
+        {
+          id,
+          kind,
+          title: id,
+          markdown: `Planning context revision ${revision + 1}.`,
+          expectedRevision: revision,
+          inputVersions: {},
+        },
+        now,
+      );
+    savePage("overview", "root");
+    savePage("project", "wiki");
+    // Intake must recognize publication even if another edit already landed.
+    savePage("project", "wiki", 1);
+    const publishedAt = now;
+    await engine.tick();
+    const pending = () =>
+      db
+        .prepare(
+          "SELECT tier,due_at FROM knowledge_work WHERE subject_id='overview' AND reason='root' AND status='pending'",
+        )
+        .all();
+    expect(pending()).toEqual([{ tier: "soon", due_at: publishedAt + 120000 }]);
+    now += 1000;
+    savePage("another-project", "wiki");
+    await engine.tick();
+    expect(pending()).toEqual([{ tier: "soon", due_at: publishedAt + 120000 }]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_batches").get()).toEqual({ n: 0 });
+  });
+
+  it("ordinary wiki edits retain routine root orientation scheduling", async () => {
+    saveKnowledgeNode(
+      db,
+      {
+        id: "overview",
+        kind: "root",
+        title: "Overview",
+        markdown: "Earlier context.",
+        expectedRevision: 0,
+        inputVersions: {},
+      },
+      now,
+    );
+    saveKnowledgeNode(
+      db,
+      {
+        id: "project",
+        kind: "wiki",
+        title: "Project",
+        markdown: "Earlier planning context.",
+        expectedRevision: 0,
+        inputVersions: {},
+      },
+      now,
+    );
+    await engine.tick();
+    // Settle the already-enqueued publication obligation before a later edit.
+    db.exec("UPDATE knowledge_work SET status='completed' WHERE subject_id='overview'");
+    saveKnowledgeNode(
+      db,
+      {
+        id: "project",
+        kind: "wiki",
+        title: "Project",
+        markdown: "Revised planning context.",
+        expectedRevision: 1,
+        inputVersions: {},
+      },
+      now,
+    );
+    await engine.tick();
+    expect(
+      db
+        .prepare(
+          "SELECT tier,due_at FROM knowledge_work WHERE subject_id='overview' AND reason='root' AND status='pending'",
+        )
+        .all(),
+    ).toEqual([{ tier: "routine", due_at: now + settings.knowledge.routineDelayMs }]);
+  });
+
   it("fails open when root orientation has truncated prose", async () => {
     saveKnowledgeNode(
       db,
