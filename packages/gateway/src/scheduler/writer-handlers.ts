@@ -67,8 +67,14 @@ import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
 import {
   assertKnowledgeCanonicalFence,
   refreshKnowledgeCanonicalOwners,
+  knowledgeCanonicalOwnerVersion,
   type KnowledgeCanonicalFence,
 } from "../brain/knowledge/canonical-fence.js";
+import {
+  readKnowledgeCollectionRevision,
+  type KnowledgeReconciliationReceipt,
+} from "../brain/knowledge/reconciliation.js";
+import { findActiveBriefsForLoops } from "../brain/storage/briefs.js";
 import { replaceSourceSyncIssues } from "../data/repositories/SourceSyncIssueRepository.js";
 import { promoteSourceWireContract } from "../data/repositories/SourceWireContractRepository.js";
 import { knowledgeWriterHandlers } from "../brain/knowledge/writer.js";
@@ -616,7 +622,12 @@ function guardedCanonicalMutation(
   operation: string,
   args: unknown[],
 ):
-  | { ok: true; value: unknown; owners: KnowledgeCanonicalFence["owners"] }
+  | {
+      ok: true;
+      value: unknown;
+      owners: KnowledgeCanonicalFence["owners"];
+      collections?: KnowledgeReconciliationReceipt[];
+    }
   | { ok: false; code: "revision_conflict"; message: string } {
   if (!(operation.startsWith("cognition.") || operation.startsWith("temporalAnnotations.")))
     throw new Error("Unsupported canonical maintenance mutation");
@@ -627,6 +638,20 @@ function guardedCanonicalMutation(
   try {
     const value = db.transaction(() => {
       assertKnowledgeCanonicalFence(db, fence);
+      const briefGuard = fence.briefCreateGuard;
+      if (operation === "cognition.briefCreate" && briefGuard && !briefGuard.force) {
+        const now = args.at(-1);
+        if (typeof now !== "number") throw new Error("Brief creation requires a timestamp");
+        if (
+          findActiveBriefsForLoops(db, briefGuard.loopIds, now).some(
+            (brief) => !briefGuard.supersedes.includes(brief.id),
+          )
+        )
+          throw new KnowledgeStorageError(
+            "revision_conflict",
+            "An active brief now covers this loop. Read brief_list again and reconcile before creating another.",
+          );
+      }
       const enrollment = captureCanonicalEnrollment(db, operation, args);
       const result = handler(db, ...args);
       if (result instanceof Promise)
@@ -637,9 +662,23 @@ function guardedCanonicalMutation(
           throw new Error("Canonical owner mutation requires a timestamp");
         enrollCanonicalMutation(db, fence, enrollment, mutationTime);
       }
-      return { result, owners: refreshKnowledgeCanonicalOwners(db, fence) };
+      const owners = refreshKnowledgeCanonicalOwners(db, fence);
+      if (
+        enrollment &&
+        !owners.some((owner) => owner.kind === enrollment.kind && owner.id === enrollment.id)
+      )
+        owners.push({
+          kind: enrollment.kind,
+          id: enrollment.id,
+          version: knowledgeCanonicalOwnerVersion(db, enrollment.kind, enrollment.id),
+        });
+      const collections = fence.collections?.map((receipt) => ({
+        ...receipt,
+        revision: readKnowledgeCollectionRevision(db, receipt.collection),
+      }));
+      return { result, owners, collections };
     })();
-    return { ok: true, value: value.result, owners: value.owners };
+    return { ok: true, value: value.result, owners: value.owners, collections: value.collections };
   } catch (error) {
     if (error instanceof KnowledgeStorageError && error.code === "revision_conflict")
       return { ok: false, code: error.code, message: error.message };
@@ -1397,7 +1436,7 @@ export const writerHandlers = {
   // ── briefs (the Cognition Steward run queue) ─────────────────────────────
   "cognition.enqueue": (db: Db, input: EnqueueCognitionRunInput, now: number) =>
     enqueueCognitionRun(db, input, now),
-  "cognition.claimDue": (db: Db, opts: { now: number; limit?: number; maxAttempts?: number }) =>
+  "cognition.claimDue": (db: Db, opts: Parameters<typeof claimDueCognitionRuns>[1]) =>
     claimDueCognitionRuns(db, opts),
   "cognition.finalize": (db: Db, input: FinalizeCognitionRunInput): void =>
     finalizeCognitionRun(db, input),

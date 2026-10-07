@@ -3,8 +3,49 @@
 
 import { describe, test, expect } from "vitest";
 import { MAX_CHANGED_ADDRESSED_ENTRY_IDS } from "./addressed-entry-context.js";
-import { cognitionBriefLane, parseCognitionDataRunPayload } from "./run-payloads.js";
+import {
+  cognitionBriefLane,
+  parseCognitionDataRunPayload,
+  parseCognitionSynthesisRunPayload,
+} from "./run-payloads.js";
+import { decodeRunTrigger } from "./run-payload-view.js";
+import { cognitiveWorkflowIdForRun } from "./cognition/workflows.js";
+import { mutatingToolsFor } from "./cognition/authority.js";
 import { COGNITION_RUN_KINDS } from "./storage/types.js";
+
+describe("maintenance continuation lineage", () => {
+  const base = { focus: "knowledge-maintenance", batchId: "batch_example" };
+
+  test.each([
+    { continuedByRunId: "run_next" },
+    { continuedFromRunId: "run_previous" },
+    { continuedFromRunId: "run_previous", continuedByRunId: "run_next" },
+  ])("preserves maintenance identity and authority with %j", (lineage) => {
+    const payload = { ...base, ...lineage };
+    expect(parseCognitionSynthesisRunPayload(payload)).toEqual(payload);
+    expect(decodeRunTrigger("synthesis", payload)).toEqual({
+      type: "knowledge-maintenance",
+      batchId: "batch_example",
+    });
+    const workflow = cognitiveWorkflowIdForRun("synthesis", payload);
+    expect(workflow).toBe("knowledge-maintenance");
+    expect(mutatingToolsFor(workflow).has("knowledge_save")).toBe(true);
+    expect(cognitionBriefLane({ kind: "synthesis", payload })).toBe("reactive");
+  });
+
+  test("lineage cannot grant authority to an invalid payload", () => {
+    for (const payload of [
+      { ...base, continuedFromRunId: "" },
+      { ...base, continuedByRunId: 3 },
+      { ...base, continuedFromRunId: "run_previous", surpriseKey: true },
+      { continuedFromRunId: "run_previous" },
+    ]) {
+      expect(parseCognitionSynthesisRunPayload(payload)).toBeNull();
+      expect(decodeRunTrigger("synthesis", payload)).toEqual({ type: "unknown" });
+      expect(mutatingToolsFor(cognitiveWorkflowIdForRun("synthesis", payload)).size).toBe(0);
+    }
+  });
+});
 
 describe("cognitionBriefLane", () => {
   test("a sweep faces the strict bar unless its payload carries a declared lane", () => {

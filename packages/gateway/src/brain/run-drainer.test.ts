@@ -4,7 +4,7 @@
 /**
  * Success-criterion 5 (queue durability) at the drain level: exactly-
  * once claim → run → settle, crash re-claim with an attempt-numbered
- * prompt, non-`daily` serialization regardless of the N knob, spend
+ * prompt, legacy-run serialization regardless of the N knob, spend
  * recorded for failed attempts, retention pruning, and the live
  * kill-switch. Everything runs on a scripted zero-token backend and a
  * compressed injectable clock.
@@ -554,7 +554,7 @@ describe("steward run drainer", () => {
     expect(prompts[0]).toContain("Attempt: 2");
   });
 
-  test("non-daily runs serialize even at N=2; daily runs use the parallelism", async () => {
+  test("legacy data and daily runs remain exclusive even at N=2", async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     const gatedScript = async (input: TurnInput): Promise<AgentEvent[]> => {
@@ -574,14 +574,14 @@ describe("steward run drainer", () => {
     expect(getCognitionRun(db, "run_b")?.status).toBe("completed");
     expect(maxInFlight).toBe(1);
 
-    // Same shape, `daily` kind: the two runs overlap.
+    // Daily legacy work also reconciles shared state and stays exclusive.
     maxInFlight = 0;
     await writeGate.enqueueCognitionRun({ id: "run_c", kind: "daily", payload: {} }, now);
     await writeGate.enqueueCognitionRun({ id: "run_d", kind: "daily", payload: {} }, now);
     await drain.run(undefined, taskCtx);
     expect(getCognitionRun(db, "run_c")?.status).toBe("completed");
     expect(getCognitionRun(db, "run_d")?.status).toBe("completed");
-    expect(maxInFlight).toBe(2);
+    expect(maxInFlight).toBe(1);
   });
 
   test("a failing run retries with backoff, then fails terminally at the attempts cap", async () => {

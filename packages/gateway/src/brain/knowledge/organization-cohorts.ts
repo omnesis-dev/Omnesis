@@ -77,6 +77,24 @@ function due(db: Database.Database, id: string, revision: string, now: number): 
     )
     .get(id, revision, KNOWLEDGE_DISCOVERY_POLICY, now);
 }
+function hasActiveCohort(db: Database.Database): boolean {
+  return !!db
+    .prepare(
+      `SELECT 1 FROM knowledge_organization_cohorts c
+    JOIN knowledge_batches b ON b.id=c.batch_id
+    WHERE c.status!='abandoned' AND b.status IN ('pending','running') LIMIT 1`,
+    )
+    .get();
+}
+function previouslyCohorted(db: Database.Database, id: string, revision: string): boolean {
+  return !!db
+    .prepare(
+      `SELECT 1 FROM knowledge_organization_members m
+    JOIN knowledge_organization_cohorts c ON c.id=m.cohort_id
+    WHERE m.source_id=? AND m.content_hash=? AND c.policy_version=? LIMIT 1`,
+    )
+    .get(id, revision, KNOWLEDGE_DISCOVERY_POLICY);
+}
 function cadenceReady(db: Database.Database, now: number, intervalMs: number): boolean {
   const latest = db
     .prepare<
@@ -92,7 +110,8 @@ export function selectOrganizationCohort(
   db: Database.Database,
   options: OrganizationCohortOptions,
 ): OrganizationCohortSelection | null {
-  if (!cadenceReady(db, options.now, options.intervalMs)) return null;
+  if (hasActiveCohort(db)) return null;
+  const cadenceElapsed = cadenceReady(db, options.now, options.intervalMs);
   const limit = Math.max(2, Math.min(8, Math.trunc(options.limit ?? 8)));
   // SQL filters the ledger before LIMIT so settled history cannot hide new inputs.
   // Readability is also applied before LIMIT, using the same source exclusions as
@@ -104,7 +123,7 @@ export function selectOrganizationCohort(
     .prepare<[], { name: string }>("PRAGMA table_info(documents)")
     .all()
     .some((c) => c.name === "metadata");
-  const rows = (onlyDue: boolean, count: number) =>
+  const rows = (onlyDue: boolean, count: number, initialOnly = false) =>
     db
       .prepare<unknown[], { id: string; revision: string }>(
         `
@@ -122,6 +141,13 @@ export function selectOrganizationCohort(
       JOIN knowledge_batches b ON b.id=c.batch_id
       WHERE m.source_id=d.id AND m.content_hash=d.content_hash AND c.policy_version=?
       AND ((c.status='pending' AND b.status IN ('pending','running')) ${onlyDue ? "OR (c.status!='abandoned' AND c.retry_at>?)" : ""}))
+    ${
+      initialOnly
+        ? `AND NOT EXISTS(SELECT 1 FROM knowledge_organization_members m
+      JOIN knowledge_organization_cohorts c ON c.id=m.cohort_id
+      WHERE m.source_id=d.id AND m.content_hash=d.content_hash AND c.policy_version=?)`
+        : ""
+    }
     ORDER BY v.reviewed_at,d.id LIMIT ?`,
       )
       .all(
@@ -131,9 +157,14 @@ export function selectOrganizationCohort(
         ...(metadata ? [KNOWLEDGE_DOCUMENT_TYPE, OPEN_LOOP_DOCUMENT_TYPE] : []),
         KNOWLEDGE_DISCOVERY_POLICY,
         ...(onlyDue ? [options.now] : []),
+        ...(initialOnly ? [KNOWLEDGE_DISCOVERY_POLICY] : []),
         count,
       );
-  const selected = rows(true, limit);
+  // Drain first-pass backlog independently of routine repeat cadence. Requiring
+  // two fresh revisions avoids one extra model run for every isolated arrival.
+  const initial = rows(true, limit, true);
+  const selected = initial.length >= 2 ? initial : cadenceElapsed ? rows(true, limit) : [];
+
   if (!selected.length) return null;
   if (selected.length === 1) {
     const context = rows(false, 2).find((row) => row.id !== selected[0]!.id);
@@ -161,7 +192,9 @@ export function createOrganizationCohort(
       entries.length < 2 ||
       entries.length > 8 ||
       input.inputFingerprint !== fingerprint(input.sourceVersions) ||
-      !cadenceReady(db, now, input.intervalMs) ||
+      hasActiveCohort(db) ||
+      (!cadenceReady(db, now, input.intervalMs) &&
+        !entries.every(([id, revision]) => !previouslyCohorted(db, id, revision))) ||
       !entries.every(([id, revision]) => current(db, id, revision)) ||
       !entries.some(([id, revision]) => due(db, id, revision, now))
     )

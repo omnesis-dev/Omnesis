@@ -92,6 +92,13 @@ export interface KnowledgeClaim {
   validUntil: number | null;
 }
 
+export interface KnowledgeSaveResult {
+  node: KnowledgeNode;
+  meaningChanged: boolean;
+  /** Internal writer receipt; stripped before exposing tool results. */
+  reconciliationReceipt?: import("./reconciliation.js").KnowledgeReconciliationReceipt;
+}
+
 export interface SaveKnowledgeNodeInput {
   runFence?: import("./run-fence.js").KnowledgeRunFence;
   /** Internal scheduler lease, never supplied by model arguments. */

@@ -19,6 +19,7 @@ export interface CodexRuntimeGeneration {
   runtime: CodexAppServerRuntime;
   interactivePool: CodexRuntimePool | null;
   inferencePool?: CodexRuntimePool;
+  backgroundPool?: CodexRuntimePool;
   nestedPools?: Map<number, CodexRuntimePool>;
   nestedPool?: (depth: number) => CodexRuntimePool;
 }
@@ -35,6 +36,7 @@ export async function disposeCodexGeneration(generation: CodexRuntimeGeneration)
     generation.runtime.dispose(),
     generation.interactivePool?.dispose(),
     generation.inferencePool?.dispose(),
+    generation.backgroundPool?.dispose(),
     ...[...(generation.nestedPools?.values() ?? [])].map((pool) => pool.dispose()),
   ]);
 }
@@ -42,6 +44,7 @@ export async function disposeCodexGeneration(generation: CodexRuntimeGeneration)
 export function reassertCodexGenerationAuth(generation: CodexRuntimeGeneration): void {
   generation.interactivePool?.reassertAuth();
   generation.inferencePool?.reassertAuth();
+  generation.backgroundPool?.reassertAuth();
   for (const pool of generation.nestedPools?.values() ?? []) pool.reassertAuth();
 }
 
@@ -134,7 +137,7 @@ export class CodexGenerationSupervisor {
           : lane === "inference"
             ? lease.generation.inferencePool
             : lane === "background"
-              ? lease.generation.runtime
+              ? (lease.generation.backgroundPool ?? lease.generation.runtime)
               : (lease.generation.interactivePool ?? lease.generation.runtime);
       if (!runner)
         throw new Error("Codex runtime has no capacity configured for this execution lane");

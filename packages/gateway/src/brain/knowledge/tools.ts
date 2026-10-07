@@ -7,6 +7,7 @@ import {
   listTemporalAnnotationsAwaitingRefile,
   listUngroundedTemporalAnnotationsForDoc,
 } from "../../enrichment/temporal-annotations/storage.js";
+import { WikiToolReconciliation } from "./wiki-tool-reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { fitKnowledgeFrontierItem } from "./engine-frontier.js";
 import { ORGANIZATION_REASON_CODES } from "./organization-cohorts.js";
@@ -131,12 +132,18 @@ export function buildKnowledgeTools(
     runId: string;
     /** Narrow workflows receive only artifact-scoped owner mutation variants. */
     scopedOwnersOnly?: boolean;
+    /** Capture collection read receipts for independently executing maintenance. */
+    parallel?: boolean;
     engine?: KnowledgeEngine;
     batchId?: string;
     markTemporalPresented?: (ids: readonly string[], runId: string) => Promise<void>;
   },
 ): ToolHandle[] {
   const runFence = context.batchId ? { batchId: context.batchId, runId: context.runId } : undefined;
+  const reconciliation =
+    context.parallel && runFence
+      ? new WikiToolReconciliation(service.deps.db, runFence)
+      : undefined;
   const guarded = (entries: ToolHandle[]): ToolHandle[] =>
     entries.map((entry) =>
       !entry.mutates || !runFence || entry.name === "knowledge_next_frontier"
@@ -167,7 +174,18 @@ export function buildKnowledgeTools(
         })
         .strict(),
       false,
-      (input) => listKnowledgeCandidates(service.deps.db, input),
+      (input) =>
+        reconciliation
+          ? reconciliation.read(
+              () => listKnowledgeCandidates(service.deps.db, input),
+              (result) => [
+                ...(input.status === undefined && input.afterId === undefined
+                  ? ["candidates"]
+                  : []),
+                ...result.items.map((candidate) => `candidate:${candidate.id}`),
+              ],
+            )
+          : listKnowledgeCandidates(service.deps.db, input),
     ),
     tool(
       "knowledge_candidate_decide",
@@ -182,8 +200,22 @@ export function buildKnowledgeTools(
         })
         .strict(),
       true,
-      (input) =>
-        service.deps.writeGate["knowledge.settleCandidate"](input, service.deps.clock(), runFence),
+      async (input) => {
+        const fence =
+          reconciliation?.fence(
+            input.status === "merged"
+              ? ["pages", `candidate:${input.id}`]
+              : [`candidate:${input.id}`],
+          ) ?? runFence;
+        const result = await service.deps.writeGate["knowledge.settleCandidate"](
+          input,
+          service.deps.clock(),
+          fence,
+        );
+        return reconciliation && fence
+          ? reconciliation.accept(result, fence, [`candidate:${result.id}`])
+          : result;
+      },
     ),
     tool(
       "knowledge_links",
@@ -219,7 +251,13 @@ export function buildKnowledgeTools(
       "Read a synthesis node. Set editing=true only to repair its tagged claims; normal reading strips tags.",
       z.object({ id, editing: z.boolean().default(false) }).strict(),
       false,
-      (input) => service.fetch(input.id, input.editing),
+      (input) =>
+        reconciliation
+          ? reconciliation.read(
+              () => service.fetch(input.id, input.editing),
+              (node) => (node?.kind === "wiki" ? [`node:${node.id}`] : []),
+            )
+          : service.fetch(input.id, input.editing),
     ),
     tool(
       "knowledge_list",
@@ -234,7 +272,19 @@ export function buildKnowledgeTools(
         })
         .strict(),
       false,
-      (input) => service.list(input),
+      (input) =>
+        reconciliation
+          ? reconciliation.read(
+              () => service.list(input),
+              (nodes) => [
+                ...((input.kind === undefined || input.kind === "wiki") &&
+                input.afterId === undefined
+                  ? ["pages"]
+                  : []),
+                ...nodes.filter((node) => node.kind === "wiki").map((node) => `node:${node.id}`),
+              ],
+            )
+          : service.list(input),
     ),
     tool(
       "knowledge_reference",
@@ -259,7 +309,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_propose_page",
-      "After searching existing pages and candidates, propose a reusable page with a stable identity key, distinct scope and evidence versions. Prefer extending existing context; a document alone does not require its own wiki.",
+      "After inspecting existing pages with knowledge_list and candidates with knowledge_candidates, propose a reusable page with a stable identity key, distinct scope and evidence versions. Prefer extending existing context; a document alone does not require its own wiki.",
       z
         .object({
           identityKey: z.string().min(1).max(500),
@@ -269,12 +319,17 @@ export function buildKnowledgeTools(
         })
         .strict(),
       true,
-      (input) =>
-        service.deps.writeGate["knowledge.proposeCandidate"](
+      async (input) => {
+        const fence = reconciliation?.fence(["pages", "candidates"]) ?? runFence;
+        const result = await service.deps.writeGate["knowledge.proposeCandidate"](
           { id: `candidate_${randomUUID()}`, ...input },
           service.deps.clock(),
-          runFence,
-        ),
+          fence,
+        );
+        return reconciliation && fence
+          ? reconciliation.accept(result, fence, [`candidate:${result.id}`])
+          : result;
+      },
     ),
     tool(
       "knowledge_save",
@@ -301,6 +356,23 @@ export function buildKnowledgeTools(
       true,
       async (input) => {
         const node = input.node as KnowledgeProposal;
+        if (context.parallel && node.kind === "root")
+          throw new KnowledgeStorageError(
+            "revision_conflict",
+            "Root changes require an exclusive root maintenance run",
+          );
+        const fence =
+          node.kind === "wiki" && reconciliation
+            ? reconciliation.fence(
+                node.expectedRevision === 0
+                  ? [
+                      "pages",
+                      "candidates",
+                      ...(input.candidateId ? [`candidate:${input.candidateId}`] : []),
+                    ]
+                  : [`node:${node.id}`],
+              )
+            : runFence;
         if (
           context.batchId &&
           context.engine &&
@@ -332,15 +404,18 @@ export function buildKnowledgeTools(
                 input.inputFingerprint ?? "",
                 node,
                 input.reviewedClaimIds,
+                fence,
               )
             : await service.save(
                 node,
                 candidate
                   ? { candidateId: candidate.id, expectedCandidateRevision: candidate.revision }
                   : undefined,
-                runFence,
+                fence,
               );
-        return result;
+        return reconciliation && fence && node.kind === "wiki"
+          ? reconciliation.accept(result, fence, [`node:${result.node.id}`])
+          : result;
       },
     ),
   ];

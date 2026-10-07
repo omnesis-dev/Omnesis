@@ -2,6 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { cognitionAuthoredSqlExclusion } from "../cognition-authored.js";
+import {
+  readKnowledgeCollectionRevision,
+  type KnowledgeReconciliationReceipt,
+} from "./reconciliation.js";
 import { assertKnowledgeRunFence, type KnowledgeRunFence } from "./run-fence.js";
 import { KnowledgeStorageError } from "./types.js";
 import { knowledgeHash } from "./storage-validation.js";
@@ -142,6 +146,27 @@ export interface KnowledgeCandidate {
   status: "proposed" | "deferred" | "published" | "merged" | "dismissed";
   nodeId: string | null;
 }
+export type KnowledgeCandidateWriteResult = KnowledgeCandidate & {
+  /** Exact post-write generation, internal to the trusted maintenance runtime. */
+  reconciliationReceipt?: KnowledgeReconciliationReceipt;
+};
+function candidateWriteResult(
+  db: Database.Database,
+  candidate: KnowledgeCandidate,
+  fence?: KnowledgeRunFence,
+): KnowledgeCandidateWriteResult {
+  return {
+    ...candidate,
+    ...(fence?.reconciliation
+      ? {
+          reconciliationReceipt: {
+            collection: "wiki" as const,
+            revision: readKnowledgeCollectionRevision(db, "wiki"),
+          },
+        }
+      : {}),
+  };
+}
 interface CandidateRow extends Omit<KnowledgeCandidate, "evidenceIds"> {
   evidenceJson: string;
 }
@@ -190,7 +215,7 @@ export function proposeKnowledgeCandidate(
   input: KnowledgeCandidateInput,
   now: number,
   runFence?: KnowledgeRunFence,
-): KnowledgeCandidate {
+): KnowledgeCandidateWriteResult {
   if (
     !input.identityKey.trim() ||
     input.identityKey.length > 500 ||
@@ -229,13 +254,13 @@ export function proposeKnowledgeCandidate(
       const candidate = getKnowledgeCandidate(db, existing.id);
       if (!candidate)
         throw new KnowledgeStorageError("reference_invalid", "Candidate evidence is unavailable");
-      return candidate;
+      return candidateWriteResult(db, candidate, runFence);
     }
     db.prepare(
       `INSERT INTO knowledge_candidates(id,identity_key,title,scope,evidence_ids_json,created_at,updated_at,status)
       VALUES(?,?,?,?,?,?,?,'proposed')`,
     ).run(input.id, input.identityKey, input.title, input.scope, JSON.stringify(ids), now, now);
-    return getKnowledgeCandidate(db, input.id)!;
+    return candidateWriteResult(db, getKnowledgeCandidate(db, input.id)!, runFence);
   })();
 }
 export function settleKnowledgeCandidate(
@@ -249,7 +274,7 @@ export function settleKnowledgeCandidate(
   },
   now: number,
   runFence?: KnowledgeRunFence,
-): KnowledgeCandidate {
+): KnowledgeCandidateWriteResult {
   return db.transaction(() => {
     assertKnowledgeRunFence(db, runFence);
     const candidate = getKnowledgeCandidate(db, input.id);
@@ -275,7 +300,7 @@ export function settleKnowledgeCandidate(
     db.prepare(
       "UPDATE knowledge_candidates SET status=?,node_id=?,reconsider_at=?,revision=revision+1,updated_at=? WHERE id=?",
     ).run(input.status, input.nodeId ?? null, input.reconsiderAt ?? null, now, input.id);
-    return getKnowledgeCandidate(db, input.id)!;
+    return candidateWriteResult(db, getKnowledgeCandidate(db, input.id)!, runFence);
   })();
 }
 export function knowledgeDiscoveryIdentity(
@@ -365,6 +390,16 @@ export function publishKnowledgeCandidate(
       },
       now,
     );
-    return result;
+    return {
+      ...result,
+      ...(input.node.runFence?.reconciliation
+        ? {
+            reconciliationReceipt: {
+              collection: "wiki" as const,
+              revision: readKnowledgeCollectionRevision(db, "wiki"),
+            },
+          }
+        : {}),
+    };
   })();
 }

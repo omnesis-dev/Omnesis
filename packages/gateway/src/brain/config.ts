@@ -44,7 +44,7 @@ export const BRAIN_DEFAULTS = {
     maxReviewInterval: "30d",
     checkpointLead: "1d",
   },
-  workerConcurrency: 1,
+  workerConcurrency: 4,
   conversationDebounce: "1h",
   // Max-defer ceilings are derived from their debounce timescales: 6× the 1h
   // conversation debounce and 8× the 30m document debounce — long enough that a
@@ -178,7 +178,7 @@ export interface ResolvedBrainSettings {
     maxReviewIntervalMs: number;
     checkpointLeadMs: number;
   };
-  /** Queue workers draining in parallel (non-daily runs serialize regardless). */
+  /** Concurrent fenced maintenance workers; root and legacy runs stay exclusive. */
   workerConcurrency: number;
   /** Quiet period before new conversation messages enqueue one `data` run. */
   conversationDebounceMs: number;

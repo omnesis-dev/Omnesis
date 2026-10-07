@@ -32,7 +32,7 @@ describe("resolveBrainSettings", () => {
         maxReviewIntervalMs: 2592000000,
         checkpointLeadMs: 86400000,
       },
-      workerConcurrency: 1,
+      workerConcurrency: 4,
       conversationDebounceMs: 60 * 60 * 1000,
       conversationMaxDeferMs: 6 * 60 * 60 * 1000,
       documentUpdateDebounceMs: 30 * 60 * 1000,
@@ -181,6 +181,8 @@ describe("brain config schema", () => {
     expect(validateConfig({ brain: { nonsense: 1 } as never }).ok).toBe(false);
     expect(validateConfig({ brain: { dailyRunHour: 24 } }).ok).toBe(false);
     expect(validateConfig({ brain: { workerConcurrency: 0 } }).ok).toBe(false);
+    expect(validateConfig({ brain: { workerConcurrency: 32 } }).ok).toBe(true);
+    expect(validateConfig({ brain: { workerConcurrency: 33 } }).ok).toBe(false);
   });
 
   it("accepts a background-agent assignment keyed by the capability role id", () => {

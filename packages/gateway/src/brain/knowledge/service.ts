@@ -204,7 +204,7 @@ export class KnowledgeService {
     input: KnowledgeProposal,
     publication?: { candidateId: string; expectedCandidateRevision: number },
     runFence?: KnowledgeRunFence,
-  ): Promise<{ node: KnowledgeNode; meaningChanged: boolean }> {
+  ): Promise<import("./types.js").KnowledgeSaveResult> {
     if (publication && (input.kind !== "wiki" || input.expectedRevision !== 0))
       throw new KnowledgeStorageError(
         "claim_invalid",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { installKnowledgeReconciliationTriggers } from "./reconciliation.js";
 import type Database from "better-sqlite3";
 
 /** Called by the shared schema migration. These tables use the gateway's encrypted store. */
@@ -135,4 +136,5 @@ export function createKnowledgeTables(db: Database.Database): void {
   ])
     if (!claimColumns.has(name!))
       db.exec(`ALTER TABLE knowledge_claims ADD COLUMN ${name} ${definition}`);
+  installKnowledgeReconciliationTriggers(db);
 }

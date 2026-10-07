@@ -794,6 +794,13 @@
           are deleted after the activity-retention window.
         </p>
 
+        <p>
+          Once started, historical bootstrap fills its available batch fairly across sources.
+          Admitted history is ready immediately; the routine maintenance delay applies to live
+          changes. Independent maintenance uses four workers by default. Daily admission, backlog,
+          active-hour and spend limits still bound catch-up work.
+        </p>
+
         <h3 id="brain-spend">Bounding the spend</h3>
         <p>
           Everything is measured in tokens and runs, never in money: no model API Brain talks to
@@ -1159,8 +1166,12 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
               </tr>
               <tr>
                 <td><code>workerConcurrency</code></td>
-                <td>1</td>
-                <td>Queue workers. Runs that are not daily stay one at a time regardless.</td>
+                <td>4</td>
+                <td>
+                  Concurrent independent maintenance workers (1–32). Root updates and legacy runs
+                  execute one at a time. Codex also has a separate background runtime capacity under
+                  <code>inference.codex.backgroundPoolSize</code>, defaulting to 4.
+                </td>
               </tr>
               <tr>
                 <td><code>dailyRunHour</code></td>

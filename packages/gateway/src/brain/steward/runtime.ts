@@ -31,6 +31,7 @@ import { buildBuiltinTools, PlanStore, type ToolHandle, type ToolPorts } from "@
 import { experimentalVisible, type EntailCapability, type Logger } from "@omnesis/core";
 import { parseCognitionSynthesisRunPayload } from "../run-payloads.js";
 import { buildKnowledgeTools } from "../knowledge/tools.js";
+import { isParallelKnowledgeRun } from "../storage/run-queue.js";
 import { buildMaintenanceCanonicalTools } from "../knowledge/canonical-tool-fence.js";
 import { isGrantedMutation } from "../cognition/authority.js";
 import { cognitiveWorkflowIdForRun } from "../cognition/workflows.js";
@@ -551,6 +552,7 @@ export async function createCognitionRuntime(
   return {
     buildTools: (run, executionContext) => {
       const consumption = consumptionFor(run);
+      const parallel = isParallelKnowledgeRun(deps.db, run.id);
       const payload =
         run.kind === "synthesis" ? parseCognitionSynthesisRunPayload(run.payload) : null;
       const tools =
@@ -561,6 +563,7 @@ export async function createCognitionRuntime(
               { batchId: payload.batchId, runId: run.id },
               (writeGate) =>
                 buildCognitionToolset({ ...toolsetDeps, writeGate }, run, { consumption }),
+              { parallel },
             )
           : buildCognitionToolset(toolsetDeps, run, { consumption });
       if (deps.knowledge) {
@@ -568,6 +571,7 @@ export async function createCognitionRuntime(
           ...withGrantedMutationsOnly(
             buildKnowledgeTools(deps.knowledge.service, {
               runId: run.id,
+              parallel,
               scopedOwnersOnly: !isGrantedMutation(
                 cognitiveWorkflowIdForRun(run.kind, run.payload),
                 "knowledge_save",

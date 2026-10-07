@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { installKnowledgeReconciliationTriggers } from "./reconciliation.js";
 import type Database from "better-sqlite3";
 
 /** Work records retain identities and revisions, never copies of source or generated prose. */
@@ -196,4 +197,5 @@ export function createKnowledgeWorkTables(db: Database.Database): void {
     SELECT date(created_at/1000,'unixepoch','localtime'),COUNT(*) FROM knowledge_work
     WHERE subject_kind='source' AND reason IN ('discovery','upgrade')
     GROUP BY date(created_at/1000,'unixepoch','localtime')`);
+  installKnowledgeReconciliationTriggers(db);
 }

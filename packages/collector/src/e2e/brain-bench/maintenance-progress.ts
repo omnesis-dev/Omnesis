@@ -18,7 +18,7 @@ export function readMaintenanceProgress(db: Database.Database, horizon: number) 
     UNION ALL SELECT 'cleanup',json_array(document_id,node_id),1 FROM knowledge_projection_cleanup
     UNION ALL SELECT 'cascade-frontier',json_array(job_id,target_kind,target_id,after_node_id,done),0
       FROM knowledge_cascade_frontier
-    UNION ALL SELECT 'batch',json_array(id,status,revision),0 FROM knowledge_batches
+    UNION ALL SELECT 'batch',json_array(id,status,revision),1 FROM knowledge_batches
       WHERE status IN ('pending','running')
     ORDER BY phase,marker
   `,

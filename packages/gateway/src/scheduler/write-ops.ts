@@ -57,6 +57,7 @@ const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 500;
 
 const WRITE_OP_DEFS: readonly WriteOpDef[] = [
+  { name: "knowledge.continueRun", priority: "background" },
   { name: "knowledge.canonicalMutation", priority: "background" },
   { name: "knowledge.save", priority: "background" },
   { name: "knowledge.discoveryTargets", priority: "background" },

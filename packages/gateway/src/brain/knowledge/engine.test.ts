@@ -222,6 +222,148 @@ describe("knowledge coordinator", () => {
     expect(admitted).toEqual([{ subject_id: "a-new" }, { subject_id: "z-quiet" }]);
   });
 
+  it.each(["fresh", "upgrade"] as const)(
+    "fills one source's authorized batch without edit debounce on a %s database",
+    async (mode) => {
+      settings = resolveBrainSettings({
+        bootstrap: {
+          enabled: true,
+          batchSize: 8,
+          maxRuns: 50,
+          maxRunsPerDay: 50,
+          backlogTarget: 4,
+        },
+        knowledge: { bootstrapBatchSize: 4 },
+      });
+      db.prepare(
+        "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+      ).run(String(now));
+      for (let index = 0; index < 7; index++)
+        source(
+          `archive-${index}`,
+          "v1",
+          "Archived workshop record.",
+          now - (40 + index) * 86400000,
+        );
+      if (mode === "upgrade") {
+        source("considered", "v1", "Previously considered workshop record.");
+        recordKnowledgeCoverage(
+          db,
+          {
+            subjectId: "considered",
+            inputRevision: "v1",
+            phase: "organization",
+            policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+            status: "considered",
+          },
+          now,
+        );
+      }
+      db.exec("DELETE FROM knowledge_changes");
+      await engine.tick();
+      const rows = () =>
+        db
+          .prepare(
+            "SELECT subject_id,tier,due_at FROM knowledge_work WHERE reason='discovery' ORDER BY subject_id",
+          )
+          .all();
+      expect(rows()).toEqual(
+        Array.from({ length: 4 }, (_, index) => ({
+          subject_id: `archive-${index}`,
+          tier: "routine",
+          due_at: now,
+        })),
+      );
+      expect(settings.knowledge.routineDelayMs).toBeGreaterThan(0);
+      expect(
+        db.prepare("SELECT SUM(count) AS count FROM knowledge_historical_admissions").get(),
+      ).toEqual({ count: 4 });
+      await engine.tick();
+      expect(rows()).toHaveLength(4); // Pending/batched work still occupies its backlog allowance.
+    },
+  );
+
+  it("fills spare historical capacity in rounds without starving a quiet source", async () => {
+    settings = resolveBrainSettings({
+      bootstrap: { enabled: true, batchSize: 4, maxRuns: 50, maxRunsPerDay: 50, backlogTarget: 20 },
+      knowledge: { bootstrapBatchSize: 4 },
+    });
+    db.prepare(
+      "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+    ).run(String(now));
+    for (let index = 0; index < 6; index++) {
+      source(`prolific-${index}`, "v1", "Archived workshop record.", now - (40 + index) * 86400000);
+      db.prepare("UPDATE documents SET source_id='alpha' WHERE id=?").run(`prolific-${index}`);
+    }
+    source("quiet", "v1", "Archived workshop record.", now - 100 * 86400000);
+    db.prepare("UPDATE documents SET source_id='zeta' WHERE id='quiet'").run();
+    db.exec("DELETE FROM knowledge_changes");
+    await engine.tick();
+    expect(
+      db
+        .prepare(
+          "SELECT subject_id FROM knowledge_work WHERE reason='discovery' ORDER BY subject_id",
+        )
+        .all(),
+    ).toEqual([
+      { subject_id: "prolific-0" },
+      { subject_id: "prolific-1" },
+      { subject_id: "prolific-2" },
+      { subject_id: "quiet" },
+    ]);
+  });
+
+  it.each(["maxRuns", "maxRunsPerDay", "batchSize"] as const)(
+    "honors historical %s while filling a prolific source",
+    async (bound) => {
+      settings = resolveBrainSettings({
+        bootstrap: {
+          enabled: true,
+          maxRuns: 50,
+          maxRunsPerDay: 50,
+          backlogTarget: 50,
+          batchSize: 8,
+          [bound]: 2,
+        },
+        knowledge: { bootstrapBatchSize: 8 },
+      });
+      db.prepare(
+        "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+      ).run(String(now));
+      for (let index = 0; index < 5; index++)
+        source(`bounded-${index}`, "v1", "Archived workshop record.", now - 40 * 86400000);
+      db.exec("DELETE FROM knowledge_changes");
+      await engine.tick();
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM knowledge_work WHERE reason='discovery'").get(),
+      ).toEqual({ count: 2 });
+      if (bound !== "batchSize") {
+        await engine.tick();
+        expect(
+          db.prepare("SELECT COUNT(*) AS count FROM knowledge_work WHERE reason='discovery'").get(),
+        ).toEqual({ count: 2 });
+      }
+    },
+  );
+
+  it("does not fill historical capacity outside its active hours", async () => {
+    const localHour = new Date(now).getHours();
+    const hour = (offset: number) => `${String((localHour + offset) % 24).padStart(2, "0")}:00`;
+    settings = resolveBrainSettings({
+      bootstrap: { enabled: true, activeHours: { from: hour(1), to: hour(2) } },
+    });
+    db.prepare(
+      "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+    ).run(String(now));
+    for (let index = 0; index < 4; index++)
+      source(`closed-${index}`, "v1", "Archived workshop record.", now - 40 * 86400000);
+    db.exec("DELETE FROM knowledge_changes");
+    await engine.tick();
+    expect(
+      db.prepare("SELECT 1 FROM knowledge_work WHERE reason='discovery'").get(),
+    ).toBeUndefined();
+  });
+
   it("fills a same-source historical daily allowance without advancing semantic time", async () => {
     settings = resolveBrainSettings({
       bootstrap: { enabled: true, maxRunsPerDay: 2, maxRuns: 50, backlogTarget: 2, batchSize: 10 },
@@ -673,6 +815,55 @@ describe("knowledge coordinator", () => {
     await engine.tick();
     expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_organization_cohorts").get()).toEqual({
       n: 1,
+    });
+  });
+
+  it("advances initial joint review backlog before the routine repeat delay", async () => {
+    for (let i = 0; i < 10; i++) {
+      const id = `joint-backlog-${i}`;
+      source(id);
+      recordKnowledgeCoverage(
+        db,
+        {
+          subjectId: id,
+          inputRevision: "v1",
+          phase: "organization",
+          policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+          status: "considered",
+        },
+        now,
+      );
+    }
+    db.exec("DELETE FROM knowledge_changes");
+    const startedAt = now;
+    for (const [index, expectedSize] of [8, 2].entries()) {
+      await engine.tick();
+      const batch = batchFor(`joint-backlog-${index * 8}`);
+      let view = await engine.next(batch.id, batch.runId);
+      expect(view.organization?.sourceIds).toHaveLength(expectedSize);
+      for (const item of view.items)
+        await engine.completeSource(batch.id, batch.runId, item.id, item.inputFingerprint);
+      view = await engine.next(batch.id, batch.runId);
+      expect(view.organization?.readyToComplete).toBe(true);
+      await directKnowledgeGate(db)["knowledge.completeOrganization"](
+        {
+          id: view.organization!.id,
+          batchId: batch.id,
+          runId: batch.runId,
+          inputFingerprint: view.organization!.inputFingerprint,
+          outcome: "no_page",
+          reasonCode: "insufficient_shared_context",
+          retryAt: now + settings.knowledge.maxReviewIntervalMs,
+        },
+        now,
+      );
+      expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
+      now += 60000;
+    }
+    expect(now - startedAt).toBeLessThan(settings.knowledge.routineDelayMs);
+    await engine.tick();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_organization_cohorts").get()).toEqual({
+      n: 2,
     });
   });
 

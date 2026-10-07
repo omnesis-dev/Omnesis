@@ -4,6 +4,7 @@
 import { createKnowledgeTables } from "../brain/knowledge/schema.js";
 import { createKnowledgeDecisionTable } from "../brain/knowledge/decision-storage.js";
 import { installKnowledgeOwnerTriggers } from "../brain/knowledge/owner-triggers.js";
+import { installKnowledgeReconciliationTriggers } from "../brain/knowledge/reconciliation.js";
 import { createKnowledgeSourceTriggers } from "../brain/knowledge/source-triggers.js";
 import { createKnowledgeWorkTables } from "../brain/knowledge/work-schema.js";
 import { createNotificationQueueTables } from "../push/queue.js";
@@ -1479,6 +1480,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // Temporal annotations (experimental): interval-addressed semantic time the
   // background agent adds to and queries.
   createTemporalAnnotationTables(db);
+  installKnowledgeReconciliationTriggers(db);
   // Deterministic, source-owned projections over typed document dates. Kept
   // separate from mutable LLM temporal annotations and from DuckDB's
   // analytics-row projection store.

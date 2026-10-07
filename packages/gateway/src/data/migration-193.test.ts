@@ -151,3 +151,44 @@ it("upgrades a populated schema 192 file without rewriting legacy owners, then i
   ).toEqual({ count: 1 });
   expect(db.pragma("foreign_key_check")).toEqual([]);
 });
+
+it("installs reconciliation counters on an already-current database at startup", () => {
+  runMigrations(db);
+  const version = db.pragma("user_version", { simple: true });
+  const triggers = db
+    .prepare<
+      [],
+      { name: string }
+    >("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'knowledge_reconcile_%'")
+    .all();
+  for (const { name } of triggers) db.exec(`DROP TRIGGER "${name}"`);
+  db.exec("DROP TABLE knowledge_reconciliation_revisions");
+  reopen();
+  runSchemaSetup(db);
+  runMigrations(db);
+  expect(db.pragma("user_version", { simple: true })).toBe(version);
+  const revision = () =>
+    db
+      .prepare("SELECT revision FROM knowledge_reconciliation_revisions WHERE collection='loop'")
+      .get() as { revision: number };
+  const before = revision().revision;
+  createOpenLoop(
+    db,
+    {
+      id: "startup-loop",
+      title: "Prepare workshop",
+      confidence: 0.8,
+      importance: 0.5,
+      createdByRun: "fixture",
+    },
+    1,
+  );
+  expect(revision().revision).toBeGreaterThan(before);
+  expect(
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='knowledge_reconcile_knowledge_candidates_insert'",
+      )
+      .get(),
+  ).toBeTruthy();
+});

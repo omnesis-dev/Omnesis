@@ -72,3 +72,13 @@ test("future work stays outside the unchanged quiet horizon", () => {
   expect(readMaintenanceProgress(db, 100)).toEqual(before);
   expect(readMaintenanceProgress(db, 101).pending).toBe(1);
 });
+
+test("active organization batches prevent quiet before their frontier settles", () => {
+  const db = fixture();
+  db.exec("INSERT INTO knowledge_batches VALUES('cohort-batch','pending',1)");
+  expect(readMaintenanceProgress(db, 100).pending).toBe(1);
+  db.exec("UPDATE knowledge_batches SET status='running',revision=2");
+  expect(readMaintenanceProgress(db, 100).pending).toBe(1);
+  db.exec("UPDATE knowledge_batches SET status='completed',revision=3");
+  expect(readMaintenanceProgress(db, 100).pending).toBe(0);
+});

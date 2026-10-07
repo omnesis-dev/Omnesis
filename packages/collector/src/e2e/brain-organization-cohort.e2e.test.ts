@@ -31,6 +31,7 @@ const documents = [
 const versions: Record<string, string> = {};
 const wikiId = "wiki_fixture_studio_arrangement";
 let bench: BrainBench;
+let initialCohortId: string | undefined;
 beforeAll(async () => {
   bench = await BrainBench.start({
     experimental: true,
@@ -40,7 +41,7 @@ beforeAll(async () => {
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",
-      knowledge: { soonDelay: "1s", routineDelay: "1s" },
+      knowledge: { soonDelay: "1s", routineDelay: "6h" },
     },
     behaviors: {
       dynamic: knowledgePuppet({
@@ -53,6 +54,8 @@ beforeAll(async () => {
         },
         organize(cohort, _ctx, steps) {
           expect(cohort.sourceIds).toHaveLength(2);
+          initialCohortId ??= cohort.id;
+          if (cohort.id !== initialCohortId) return { calls: [] };
           const candidate = steps.find((step) => step.name === "knowledge_propose_page");
           const candidateId = candidate
             ? z.object({ id: z.string() }).parse(structuredData(candidate.result)).id
@@ -93,7 +96,9 @@ beforeAll(async () => {
             ],
           };
         },
-        organizationOutcome() {
+        organizationOutcome(cohort) {
+          if (cohort.id !== initialCohortId)
+            return { outcome: "no_page", reasonCode: "insufficient_shared_context" };
           return {
             outcome: "organized",
             reasonCode: "new_context_published",
@@ -144,4 +149,42 @@ it("jointly organizes already-considered disjoint sources into grounded wiki con
   expect(tools.filter((step) => step.tool === "knowledge_discovery_complete")).toHaveLength(2);
   expect(tools.some((step) => step.tool === "knowledge_organization_complete")).toBe(true);
   expect(tools.some((step) => step.result?.kind === "error")).toBe(false);
-}, 180_000);
+
+  // A fresh pair gets its first joint review without the six-hour repeat gap.
+  for (const document of [
+    email({
+      externalId: "joint-new-library",
+      title: "Library notice",
+      content: "The library has added a map cabinet.",
+    }),
+    email({
+      externalId: "joint-new-pottery",
+      title: "Pottery notice",
+      content: "The pottery fair has a new display stand.",
+    }),
+  ])
+    await bench.push(document);
+  await waitFor(
+    "next initial organization disposition",
+    () =>
+      bench.sql
+        .prepare(
+          "SELECT 1 FROM knowledge_organization_cohorts WHERE status='completed' AND id!=? LIMIT 1",
+        )
+        .get(initialCohortId!) ?? null,
+    90_000,
+  );
+  await bench.drainUntilQuiet();
+  const cohorts = bench.sql
+    .prepare<
+      [],
+      { createdAt: number; outcome: string }
+    >("SELECT created_at AS createdAt,outcome_json AS outcome FROM knowledge_organization_cohorts ORDER BY created_at")
+    .all();
+  expect(cohorts).toHaveLength(2);
+  expect(cohorts[1]!.createdAt - cohorts[0]!.createdAt).toBeLessThan(6 * 60 * 60 * 1000);
+  expect(JSON.parse(cohorts[1]!.outcome)).toMatchObject({ outcome: "no_page" });
+  expect(
+    bench.sql.prepare("SELECT COUNT(*) AS n FROM knowledge_nodes WHERE kind='wiki'").get(),
+  ).toEqual({ n: 1 });
+}, 300_000);

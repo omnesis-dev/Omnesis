@@ -488,6 +488,38 @@ describe("CognitionRunDriver", () => {
     expect(seen).toEqual(["tools:scripted-model", "validate:scripted-model"]);
   });
 
+  test("retains a tool-level cap signal when a backend ends normally with incomplete work", async () => {
+    const driver = makeDriver({
+      resolveBackend: () =>
+        scriptedBackend((input) => {
+          const events = happyScript("Segment stopped", { inputTokens: 10, outputTokens: 2 })(
+            input,
+          );
+          events.splice(1, 0, {
+            type: "agent.tool.result",
+            payload: {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+              toolCallId: "cap",
+              result: { kind: "error", code: "tool_iteration_cap", message: "Tool cap reached" },
+              durationMs: 0,
+            },
+          });
+          return events;
+        }),
+      validateRun: () => "Knowledge batch has remaining work",
+    });
+    const outcome = await driver.execute(claimed());
+    expect(outcome).toMatchObject({
+      ok: false,
+      toolLimitReached: true,
+      usage: { promptTokens: 10, completionTokens: 2 },
+    });
+    const transcript = transcripts.load(transcripts.list()[0]!.fileName);
+    expect(transcript.outcome).toBe("failed");
+    expect(transcript.events.some((event) => event.type === "agent.tool.result")).toBe(true);
+  });
+
   test("fails closed when post-turn validation reports incomplete durable work", async () => {
     const driver = makeDriver({
       validateRun: () => "subscription precision decisions remain pending",

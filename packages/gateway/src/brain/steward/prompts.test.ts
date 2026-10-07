@@ -1197,7 +1197,11 @@ describe("Cognition Steward run prompts", () => {
       claimed({
         kind: "synthesis",
         attempts: 2,
-        payload: { focus: "knowledge-maintenance", batchId: "batch_1" },
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "batch_1",
+          continuedFromRunId: "run_previous",
+        },
       }),
       deps(),
     );

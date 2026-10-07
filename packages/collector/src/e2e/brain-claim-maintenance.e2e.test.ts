@@ -40,7 +40,11 @@ beforeAll(async () => {
             sourceId = item.source.id;
             sourceRevision = item.source.contentHash;
             revised = item.source.content.includes("Saturday");
-            const calls = [call("knowledge_fetch", { id: pageId, editing: true })];
+            const calls = [
+              call("knowledge_list", { kind: "wiki" }),
+              call("knowledge_candidates", {}),
+              call("knowledge_fetch", { id: pageId, editing: true }),
+            ];
             const fetched = [...steps]
               .reverse()
               .find((step) => step.name === "knowledge_fetch" && step.args?.id === pageId);

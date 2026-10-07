@@ -4,19 +4,52 @@
 import { readKnowledgeOwner, type KnowledgeOwnerKind } from "./owner-adapters.js";
 import { assertKnowledgeRunFence, type KnowledgeRunFence } from "./run-fence.js";
 import { getKnowledgeNode } from "./storage-read.js";
-import { resolveKnowledgeReference } from "./storage-validation.js";
+import { knowledgeHash, resolveKnowledgeReference } from "./storage-validation.js";
 import { parseClaimReference } from "./references.js";
 import { KnowledgeStorageError } from "./types.js";
+import {
+  assertKnowledgeReconciliation,
+  type KnowledgeReconciliationReceipt,
+} from "./reconciliation.js";
 import type Database from "better-sqlite3";
 
 export interface KnowledgeCanonicalFence extends KnowledgeRunFence {
+  collections?: KnowledgeReconciliationReceipt[];
+  briefCreateGuard?: { loopIds: string[]; supersedes: string[]; force: boolean };
   owners: Array<{ kind: KnowledgeOwnerKind; id: string; version: string | null }>;
   evidenceVersions: Record<string, string | number | null>;
   inputs: Array<{ nodeId: string; fingerprint: string; versions: Record<string, string | number> }>;
 }
-function ownerVersion(db: Database.Database, kind: KnowledgeOwnerKind, id: string): string | null {
+export function knowledgeCanonicalOwnerVersion(
+  db: Database.Database,
+  kind: KnowledgeOwnerKind,
+  id: string,
+): string | null {
   try {
-    return readKnowledgeOwner(db, kind, id).versionFingerprint;
+    const owner = readKnowledgeOwner(db, kind, id).versionFingerprint;
+    // These children are surfaced by fetch but absent from the owner adapter's
+    // operational snapshot. Preserve their read version too, including changes
+    // that happen at the same virtual-clock millisecond.
+    const ledger =
+      kind === "loop" &&
+      db.prepare("SELECT 1 FROM sqlite_master WHERE name='open_loop_ledger' AND type='table'").get()
+        ? db.prepare("SELECT MAX(seq) AS seq FROM open_loop_ledger WHERE loop_id=?").get(id)
+        : null;
+    const claims =
+      kind === "brief" &&
+      db.prepare("SELECT 1 FROM sqlite_master WHERE name='brief_claims' AND type='table'").get()
+        ? db
+            .prepare(
+              "SELECT * FROM brief_claims WHERE brief_id=? AND invalidated_at IS NULL ORDER BY id LIMIT 1025",
+            )
+            .all(id)
+        : [];
+    if (claims.length > 1024)
+      throw new KnowledgeStorageError(
+        "revision_conflict",
+        "Canonical brief claim snapshot exceeds its bounded read budget",
+      );
+    return knowledgeHash([owner, ledger, claims]);
   } catch (error) {
     if (error instanceof KnowledgeStorageError && error.code === "reference_invalid") return null;
     throw error;
@@ -28,7 +61,7 @@ export function refreshKnowledgeCanonicalOwners(
 ): KnowledgeCanonicalFence["owners"] {
   return fence.owners.map((owner) => ({
     ...owner,
-    version: ownerVersion(db, owner.kind, owner.id),
+    version: knowledgeCanonicalOwnerVersion(db, owner.kind, owner.id),
   }));
 }
 function captureOwners(
@@ -56,7 +89,11 @@ function captureOwners(
     for (const id of input.supersedes) if (typeof id === "string") ids.add(id);
   if (ids.size > 128)
     throw new KnowledgeStorageError("revision_conflict", "Too many canonical owner targets");
-  return [...ids].map((id) => ({ kind, id, version: ownerVersion(db, kind, id) }));
+  return [...ids].map((id) => ({
+    kind,
+    id,
+    version: knowledgeCanonicalOwnerVersion(db, kind, id),
+  }));
 }
 
 /** Canonical argument document identities are read from the DB; caller hashes are ignored. */
@@ -142,10 +179,11 @@ export function assertKnowledgeCanonicalFence(
   fence: KnowledgeCanonicalFence,
 ): void {
   assertKnowledgeRunFence(db, fence);
+  for (const receipt of fence.collections ?? []) assertKnowledgeReconciliation(db, receipt);
   if (fence.owners.length > 128)
     throw new KnowledgeStorageError("revision_conflict", "Too many canonical owner targets");
   for (const owner of fence.owners)
-    if (ownerVersion(db, owner.kind, owner.id) !== owner.version)
+    if (knowledgeCanonicalOwnerVersion(db, owner.kind, owner.id) !== owner.version)
       throw new KnowledgeStorageError(
         "revision_conflict",
         "Canonical owner changed before maintenance mutation",

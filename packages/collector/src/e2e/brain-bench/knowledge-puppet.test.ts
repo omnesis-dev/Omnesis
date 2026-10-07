@@ -94,7 +94,23 @@ describe("knowledge puppet protocol", () => {
           },
         },
       ]);
-      expect(next(ctx, [offered])).toMatchObject({
+      expect(next(ctx, [offered])).toMatchObject({ kind: "tool", name: "knowledge_fetch" });
+      const fetched: ToolStep = {
+        name: "knowledge_fetch",
+        args: { id: "page", editing: true },
+        result: {
+          kind: "structured",
+          data: {
+            id: "page",
+            kind: "wiki",
+            title: "Workshop",
+            markdown: "Tagged page",
+            revision: 1,
+            ownerId: null,
+          },
+        },
+      };
+      expect(next(ctx, [offered, fetched])).toMatchObject({
         kind: "tool",
         name: "knowledge_save",
         args: { reviewedClaimIds: reviewedClaimIds ?? ["date", "place"] },
@@ -209,5 +225,90 @@ describe("knowledge puppet protocol", () => {
         },
       ]),
     ).toMatchObject({ kind: "final", text: expect.stringContaining("refused") });
+  });
+  it("opt-in conflicts reacquire the frontier and redo reconciliation instead of replaying stale writes", () => {
+    const next = knowledgePuppet({
+      maxRevisionConflictRetries: 2,
+      plan: (_item, _ctx, steps) => {
+        const current = steps.slice(
+          steps.findLastIndex((step) => step.name === "knowledge_next_frontier") + 1,
+        );
+        const search = current.find((step) => step.name === "open_loop_search");
+        const data = search?.result as { data?: { loops?: { id: string }[] } } | undefined;
+        const existing = data?.data?.loops?.[0];
+        return {
+          calls: [
+            call("open_loop_search", { query: "Workshop" }),
+            existing
+              ? call("open_loop_update", { id: existing.id })
+              : call("open_loop_create", { title: "Workshop" }),
+          ],
+        };
+      },
+    });
+    const failed: ToolStep[] = [
+      frontier([source]),
+      {
+        name: "open_loop_search",
+        args: { query: "Workshop" },
+        result: { kind: "structured", data: { loops: [] } },
+      },
+      { name: "open_loop_create", args: {}, result: { kind: "error", code: "revision_conflict" } },
+    ];
+    expect(next(ctx, failed)).toMatchObject({ kind: "tool", name: "knowledge_next_frontier" });
+    const refreshed = [...failed, frontier([source])];
+    expect(next(ctx, refreshed)).toMatchObject({ kind: "tool", name: "open_loop_search" });
+    expect(
+      next(ctx, [
+        ...refreshed,
+        {
+          name: "open_loop_search",
+          args: {},
+          result: { kind: "structured", data: { loops: [{ id: "peer-created" }] } },
+        },
+      ]),
+    ).toMatchObject({
+      kind: "tool",
+      name: "open_loop_update",
+      args: { id: "peer-created" },
+    });
+  });
+
+  it("bounds revision conflict recovery across refreshed frontiers", () => {
+    const next = knowledgePuppet({ maxRevisionConflictRetries: 1, plan: () => ({ calls: [] }) });
+    const conflict: ToolStep = {
+      name: "knowledge_save",
+      args: {},
+      result: { kind: "error", code: "revision_conflict" },
+    };
+    const first = [frontier([source]), conflict];
+    expect(next(ctx, first)).toMatchObject({ kind: "tool", name: "knowledge_next_frontier" });
+    expect(next(ctx, [...first, frontier([source]), conflict])).toMatchObject({
+      kind: "final",
+      text: expect.stringContaining("retry budget exhausted"),
+    });
+  });
+
+  it("opt-in retry preserves expected negative-path refusals and other error classes", () => {
+    const next = knowledgePuppet({
+      maxRevisionConflictRetries: 2,
+      plan: () => ({ calls: [call("open_loop_create", {})] }),
+      expectedRefusals: () => [{ tool: "open_loop_create", code: "revision_conflict" }],
+    });
+    const refusal: ToolStep = {
+      name: "open_loop_create",
+      args: {},
+      result: { kind: "error", code: "revision_conflict" },
+    };
+    expect(next(ctx, [frontier([source]), refusal])).toMatchObject({
+      kind: "tool",
+      name: "knowledge_discovery_complete",
+    });
+    expect(
+      next(ctx, [
+        frontier([source]),
+        { ...refusal, result: { kind: "error", code: "claim_invalid" } },
+      ]),
+    ).toMatchObject({ kind: "final", text: expect.stringContaining("preserve pending") });
   });
 });

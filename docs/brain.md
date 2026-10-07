@@ -122,9 +122,12 @@ history**. Assigning a model does not grant an unlimited historical reread.
 Existing `brain.bootstrap` enablement, ordering, active hours, backlog and
 admission caps apply. The default order is recent-first; older evidence remains
 eligible even without a future date.
-Admission rotates across sources, preserving the configured chronological order
-within each source. A bounded historical slot keeps continuous live arrivals
-from starving authorized backfill.
+Admission fills the available batch allowance in rounds across sources, preserving
+the configured chronological order within each source. A prolific source can use
+capacity left by exhausted sources. Admitted history is due immediately at routine
+priority on both fresh and upgraded databases; the routine edit-coalescing delay
+does not postpone an explicitly authorized first pass. A bounded historical slot
+keeps continuous live arrivals from starving authorized backfill.
 
 Initial collector enumerations carry a durable inventory identity through the
 generic cursor-page protocol. Partial pages and collector restarts keep that
@@ -164,6 +167,38 @@ Late sources, revised inputs and policy changes can reopen coverage. Pausing
 historical admission preserves completed work; resuming can revisit genuinely
 changed inputs.
 
+The run queue uses four maintenance workers by default (`brain.workerConcurrency`,
+maximum 32). Only maintenance tied to a live batch with reserved regions can
+execute in parallel; root aggregation and legacy runs, including daily reviews
+and digests, execute exclusively. Freed slots refill while siblings run. Each
+drain admits at most four times the worker count, rechecking the feature gate,
+daily budget and provider breaker before each claim. Active runs finish or abort before the scheduler invocation returns;
+each queue row is admitted at most once in that invocation. Budget
+checks stop new admissions; already admitted work can finish and accrue spend.
+A maintenance turn that reaches its tool-call limit after settling frontier inputs
+continues in a new run on the same durable batch. Completed inputs and reservations
+remain intact, each segment keeps its transcript and spend, and the successor must
+pass the usual admission budget. A cap reached without settled-input progress
+retains the ordinary failure policy.
+Codex background turns have independent runtime capacity, defaulting to four
+slots (`inference.codex.backgroundPoolSize`), so interactive requests and nested
+verification calls do not compete for those slots.
+
+Parallel runs retain server-held receipts for the canonical records and wiki
+collections they actually read. Writer transactions reject stale receipts,
+including a concurrent create after a negative search. The agent must repeat
+the relevant reads and reconcile before retrying. These checks establish version
+freshness; the model still reconciles meaning and decides whether scopes overlap.
+Root updates stay exclusive; parallel maintenance cannot rewrite the shared notes
+blob.
+Temporal annotation updates and deletions also require that exact annotation to
+have appeared in a current `temporal_query` result, or in the run's own successful
+write result. Querying another interval does not refresh an older annotation
+read. Collection receipts protect creates against intervening annotation writes;
+they do not prove that the query covered the proposed interval or that its
+meaning duplicates an existing event. Choosing the relevant interval and
+reconciling the returned evidence remain the agent's responsibility.
+
 ## Proactive review
 
 Changed evidence is the main repair trigger. Bounded proactive passes also
@@ -192,9 +227,12 @@ Durable admission and retry deadlines prevent a quiet candidate from creating
 a new agent turn on every scheduler tick.
 
 A separate joint organization pass groups up to eight already-considered source
-revisions into one maintenance cohort. The first pass becomes eligible once at
-least two sources are available; later admissions use `routineDelay` with a
-one-minute minimum, sharing the Brain's budget. Owners and existing wikis are
+revisions into one maintenance cohort, with at most one active cohort. At least
+two revisions that have never entered a cohort can advance their first joint
+review without waiting for the routine cadence, sharing the Brain's budget.
+Repeat reviews and a lone new revision paired with prior context use
+`routineDelay` with a one-minute minimum. Only already-considered evidence is
+eligible; this does not admit additional history. Owners and existing wikis are
 retrieved as context. A settled decision or arrangement can justify a wiki even
 when it creates no loop or brief. Cohort membership creates no dependency edges.
 

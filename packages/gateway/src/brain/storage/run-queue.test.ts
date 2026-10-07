@@ -12,6 +12,7 @@ import { DERIVATION_STAGES } from "../../domain/DocumentDerivation.js";
 import {
   cancelScheduledRunsForLoop,
   claimDueCognitionRuns,
+  isParallelKnowledgeRun,
   completeCognitionRun,
   countPendingCognitionRuns,
   enqueueCognitionRun,
@@ -57,6 +58,68 @@ describe("steward run queue", () => {
   afterEach(() => {
     db.close();
     cleanupDb(path);
+  });
+
+  function maintenanceRun(id: string) {
+    enqueueCognitionRun(
+      db,
+      {
+        id,
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: `batch-${id}` },
+      },
+      100,
+    );
+    db.prepare(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES(?,?,'fp','routine','pending',100,100)",
+    ).run(`batch-${id}`, id);
+    db.prepare("INSERT INTO knowledge_batch_regions VALUES(?,?)").run(
+      `batch-${id}`,
+      `source:${id}`,
+    );
+  }
+
+  test("claim excludes active and visited pending rows without spending their attempts", () => {
+    maintenanceRun("a");
+    maintenanceRun("b");
+    expect(
+      claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true }).map((r) => r.id),
+    ).toEqual(["a"]);
+    expect(
+      claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true, excludeIds: ["a"] }).map(
+        (r) => r.id,
+      ),
+    ).toEqual(["b"]);
+    expect(claimDueCognitionRuns(db, { now: 100, excludeIds: ["a", "b"] })).toEqual([]);
+    expect(getCognitionRun(db, "a")?.attempts).toBe(1);
+    expect(getCognitionRun(db, "b")?.attempts).toBe(1);
+  });
+
+  test("parallel admission waits for an exclusive head instead of skipping its priority", () => {
+    maintenanceRun("parallel");
+    enqueueCognitionRun(db, { id: "reaction", kind: "data", payload: {} }, 100);
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true })).toEqual([]);
+    expect(getCognitionRun(db, "reaction")?.attempts).toBe(0);
+    expect(getCognitionRun(db, "parallel")?.attempts).toBe(0);
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1 }).map((r) => r.id)).toEqual([
+      "reaction",
+    ]);
+  });
+
+  test("parallel authority requires a live matching batch and excludes root regions", () => {
+    maintenanceRun("parallel");
+    expect(isParallelKnowledgeRun(db, "parallel")).toBe(true);
+    db.exec("UPDATE knowledge_batches SET run_id='someone-else'");
+    expect(isParallelKnowledgeRun(db, "parallel")).toBe(false);
+    db.exec("UPDATE knowledge_batches SET run_id='parallel',status='completed'");
+    expect(isParallelKnowledgeRun(db, "parallel")).toBe(false);
+    db.exec("UPDATE knowledge_batches SET status='pending'");
+    db.exec(
+      "INSERT INTO knowledge_nodes VALUES('root','root',NULL,'Root','','',1,1,'hash','current','{}','{}',100,100)",
+    );
+    db.exec("INSERT INTO knowledge_batch_regions VALUES('batch-parallel','root')");
+    expect(isParallelKnowledgeRun(db, "parallel")).toBe(false);
+    expect(claimDueCognitionRuns(db, { now: 100, limit: 1, parallelOnly: true })).toEqual([]);
   });
 
   test("readiness and schedule CAS are evaluated in the same write", () => {

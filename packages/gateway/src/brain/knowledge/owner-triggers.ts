@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { installKnowledgeReconciliationTriggers } from "./reconciliation.js";
 import type Database from "better-sqlite3";
 
 /** Canonical table changes remain visible even when the model/scheduler is disabled. */
 export function installKnowledgeOwnerTriggers(db: Database.Database): void {
+  installKnowledgeReconciliationTriggers(db);
   const owners = [
     {
       table: "open_loops",

@@ -2807,8 +2807,9 @@ const brain = z
       .number()
       .int()
       .min(1)
+      .max(32)
       .describe(
-        "Agent-run-queue workers draining in parallel. Non-daily runs are serialized regardless of this knob.",
+        "Concurrent region-fenced knowledge maintenance runs (default 4, maximum 32). Root and legacy runs execute exclusively.",
       )
       .optional(),
     conversationDebounce: duration
@@ -3233,7 +3234,16 @@ const inference = z
           .int()
           .min(0)
           .describe(
-            "Concurrent top-level Codex agent turns. Default 3; 0 shares the serialized background runtime. Restart the gateway after changing.",
+            "Concurrent interactive Codex agent turns. Default 3; 0 uses the owner runtime. Restart the gateway after changing.",
+          )
+          .optional(),
+        backgroundPoolSize: z
+          .number()
+          .int()
+          .min(1)
+          .max(32)
+          .describe(
+            "Concurrent background Codex agent turns, independent of interactive and nested calls. Default 4; maximum 32. Restart the gateway after changing.",
           )
           .optional(),
         inferencePoolSize: z

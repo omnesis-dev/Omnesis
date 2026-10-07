@@ -109,25 +109,68 @@ describe("CodexRuntimePool routing", () => {
     expect(pool.describe().inFlight).toEqual([0, 0, 0]);
   });
 
-  it("queues the (N+1)th turn onto a member instead of rejecting", async () => {
+  it("assigns queued turns to the next idle member without waiting for a slow sibling", async () => {
     const fakes: FakeRuntime[] = [];
     const pool = makePool(2, fakes);
-
-    const runs = [0, 1, 2].map(async () => {
-      for await (const _ of pool.runTurn(turnOpts())) void _;
+    const runs = [0, 1, 2, 3].map(async () => {
+      for await (const event of pool.runTurn(turnOpts())) void event;
     });
     await tick();
+    expect(pool.describe()).toEqual({ size: 2, inFlight: [1, 1], queued: 2 });
+    expect(fakes.map((f) => f.turns)).toEqual([1, 1]);
 
-    // Two members, three turns: the pool never rejects; the extra turn piles on
-    // the least-busy member, so total in-flight is 3 across 2 members.
-    expect(pool.describe().inFlight.reduce((a, b) => a + b, 0)).toBe(3);
-    expect(Math.max(...pool.describe().inFlight)).toBe(2);
-
-    for (const f of fakes) {
-      f.releaseOne();
-      f.releaseOne();
-    }
+    fakes[1].releaseOne();
+    await tick();
+    expect(fakes.map((f) => f.turns)).toEqual([1, 2]);
+    expect(pool.describe().queued).toBe(1);
+    fakes[1].releaseOne();
+    await tick();
+    expect(fakes.map((f) => f.turns)).toEqual([1, 3]);
+    expect(pool.describe().queued).toBe(0);
+    fakes[0].releaseOne();
+    fakes[1].releaseOne();
     await Promise.all(runs);
+    expect(pool.describe().inFlight).toEqual([0, 0]);
+  });
+
+  it("cancels a FIFO waiter without consuming a member or blocking its successor", async () => {
+    const fakes: FakeRuntime[] = [];
+    const pool = makePool(1, fakes);
+    const consume = async (signal?: AbortSignal): Promise<void> => {
+      for await (const event of pool.runTurn({ ...turnOpts(), signal })) void event;
+    };
+    const running = consume();
+    const controller = new AbortController();
+    const canceled = consume(controller.signal);
+    const successor = consume();
+    await tick();
+    const rejected = expect(canceled).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    expect(pool.describe().queued).toBe(1);
+    fakes[0].releaseOne();
+    await tick();
+    expect(fakes[0].turns).toBe(2);
+    fakes[0].releaseOne();
+    await Promise.all([running, successor]);
+  });
+
+  it("rejects every queued waiter on disposal", async () => {
+    const fakes: FakeRuntime[] = [];
+    const pool = makePool(1, fakes);
+    const consume = async (): Promise<void> => {
+      for await (const event of pool.runTurn(turnOpts())) void event;
+    };
+    const running = consume();
+    const waiting = [consume(), consume()];
+    const rejected = waiting.map((promise) => expect(promise).rejects.toThrow("disposed"));
+    await tick();
+    await pool.dispose();
+    await Promise.all(rejected);
+    expect(pool.describe().queued).toBe(0);
+    expect(fakes[0].turns).toBe(1);
+    fakes[0].releaseOne();
+    await running;
   });
 });
 

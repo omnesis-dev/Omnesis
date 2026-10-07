@@ -72,7 +72,7 @@ export const CONFIG_DEFAULTS = {
     // Omnesis Brain / Cognition Steward (experimental). Runtime resolution lives in
     // packages/gateway/src/brain/config.ts; a cross-check test there keeps
     // these display mirrors honest.
-    workerConcurrency: 1,
+    workerConcurrency: 4,
     conversationDebounce: "1h",
     conversationMaxDefer: "6h",
     documentUpdateDebounce: "30m",

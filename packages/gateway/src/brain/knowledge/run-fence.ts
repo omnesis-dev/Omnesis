@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  assertKnowledgeReconciliation,
+  type KnowledgeReconciliationReceipt,
+} from "./reconciliation.js";
 import { KnowledgeStorageError } from "./types.js";
 import type Database from "better-sqlite3";
 
@@ -8,9 +12,12 @@ import type Database from "better-sqlite3";
 export interface KnowledgeRunFence {
   batchId: string;
   runId: string;
+  /** Generation observed through this run's reads, never model-supplied. */
+  reconciliation?: KnowledgeReconciliationReceipt;
 }
 export function assertKnowledgeRunFence(db: Database.Database, fence?: KnowledgeRunFence): void {
   if (!fence) return;
+  if (fence.reconciliation) assertKnowledgeReconciliation(db, fence.reconciliation);
   if (
     !db
       .prepare(

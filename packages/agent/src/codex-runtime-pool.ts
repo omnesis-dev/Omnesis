@@ -24,18 +24,24 @@ import type { AgentEvent, Logger } from "@omnesis/core";
 
 /**
  * Omnesis tracks one active turn per Codex app-server runtime. Each member
- * serializes its turns; the pool routes work to the least-busy member so up to
+ * serializes its turns; the pool assigns FIFO waiters to idle members so up to
  * N turns run concurrently. Members have isolated CODEX_HOME state directories
  * and reconcile auth.json against one login-owning home.
  *
- * The gateway owns separate pools for interactive work, inference, and nested
- * execution depths. Background agent turns use their serialized owner runtime;
- * a nested call always receives capacity independent of its waiting caller.
+ * The gateway owns separate pools for interactive work, background work,
+ * inference, and nested execution depths. A nested call always receives
+ * capacity independent of its waiting caller.
  */
 
 /** A pool member's runtime — the real {@link CodexAppServerRuntime} in
  *  production, a fake in tests. Only these two methods are used. */
 export type PoolMemberRuntime = CodexTurnRunner & { dispose(): Promise<void> };
+
+interface PoolWaiter {
+  resolve: (member: PoolMember) => void;
+  reject: (error: unknown) => void;
+  cleanup: () => void;
+}
 
 interface PoolMember {
   readonly index: number;
@@ -110,6 +116,7 @@ export class CodexRuntimePool implements CodexTurnRunner {
   private readonly sharedAuthPath: string;
   private readonly log: Logger;
   private disposed = false;
+  private readonly waiters: PoolWaiter[] = [];
 
   constructor(private readonly opts: CodexRuntimePoolOptions) {
     this.log = opts.logger;
@@ -154,19 +161,15 @@ export class CodexRuntimePool implements CodexTurnRunner {
   async *runTurn(opts: CodexRuntimeTurnOptions): AsyncIterable<AgentEvent> {
     opts.signal?.throwIfAborted();
     if (this.disposed) throw new Error("Codex runtime pool disposed");
-    const member = this.leaseLeastBusy();
-    const wasIdle = member.inFlight === 0;
-    member.inFlight += 1;
+    const member = await this.lease(opts.signal);
     try {
-      // Reconcile only on the idle→busy edge: it materializes the member home
-      // and re-shares the (possibly rotated) shared token before the turn, so
-      // divergence heals within one turn — and never touches a member that is
-      // mid-turn. A prepare failure surfaces as this turn's error and is
-      // retried on the next lease (no memoized failure).
-      if (wasIdle) this.prepareMember(member);
+      opts.signal?.throwIfAborted();
+      if (this.disposed) throw new Error("Codex runtime pool disposed");
+      // Each lease owns an idle member exclusively, including auth preparation.
+      this.prepareMember(member);
       yield* member.runtime.runTurn(opts);
     } finally {
-      member.inFlight -= 1;
+      this.release(member);
     }
   }
 
@@ -178,25 +181,58 @@ export class CodexRuntimePool implements CodexTurnRunner {
     reconcileMemberAuth(member.home, this.sharedAuthPath, this.log);
   }
 
-  /** Synchronous least-busy selection: no `await` between reading `inFlight`
-   *  and incrementing it (done by the caller), so concurrent leases are
-   *  serialized by the event loop and can't both pick the same idle member. */
-  private leaseLeastBusy(): PoolMember {
-    let chosen = this.members[0];
-    for (const member of this.members) {
-      if (member.inFlight < chosen.inFlight) chosen = member;
-      if (chosen.inFlight === 0) break;
+  /** Reserve an idle member synchronously, or join the shared FIFO. Keeping
+   *  waiters unassigned lets any free member take the next turn. */
+  private lease(signal?: AbortSignal): Promise<PoolMember> {
+    signal?.throwIfAborted();
+    if (this.disposed) throw new Error("Codex runtime pool disposed");
+    const member = this.members.find((candidate) => candidate.inFlight === 0);
+    if (member) {
+      member.inFlight = 1;
+      return Promise.resolve(member);
     }
-    return chosen;
+    return new Promise((resolve, reject) => {
+      const onAbort = (): void => {
+        const index = this.waiters.indexOf(waiter);
+        if (index !== -1) this.waiters.splice(index, 1);
+        waiter.cleanup();
+        reject(signal?.reason ?? new Error("Codex pool admission aborted"));
+      };
+      const waiter: PoolWaiter = {
+        resolve,
+        reject,
+        cleanup: () => signal?.removeEventListener("abort", onAbort),
+      };
+      this.waiters.push(waiter);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
-  describe(): { size: number; inFlight: number[] } {
-    return { size: this.members.length, inFlight: this.members.map((m) => m.inFlight) };
+  private release(member: PoolMember): void {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter.cleanup();
+      waiter.resolve(member);
+    } else {
+      member.inFlight = 0;
+    }
+  }
+
+  describe(): { size: number; inFlight: number[]; queued: number } {
+    return {
+      size: this.members.length,
+      inFlight: this.members.map((m) => m.inFlight),
+      queued: this.waiters.length,
+    };
   }
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter.cleanup();
+      waiter.reject(new Error("Codex runtime pool disposed"));
+    }
     await Promise.all(this.members.map((m) => m.runtime.dispose().catch(() => {})));
   }
 }

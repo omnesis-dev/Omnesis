@@ -3,6 +3,7 @@
 
 /** Leaf mutations shared by the worker and in-process test gate. */
 import { enqueueCognitionRun, type EnqueueCognitionRunInput } from "../storage/run-queue.js";
+import { continueKnowledgeRun } from "./continuation.js";
 import {
   queueKnowledgeProjectionCleanup,
   ackKnowledgeProjectionCleanup,
@@ -89,6 +90,7 @@ function startKnowledgeBatch(
 }
 
 export const knowledgeWriterHandlers = {
+  "knowledge.continueRun": continueKnowledgeRun,
   "knowledge.classifyInitialRootBatches": classifyInitialRootBatches,
   "knowledge.startOrganization": startOrganizationBatch,
   "knowledge.completeOrganization": completeOrganizationBatch,
@@ -138,6 +140,7 @@ export type KnowledgeWriterCall = <K extends keyof Handlers>(
 
 export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
   return {
+    "knowledge.continueRun": (...args) => call("knowledge.continueRun", args),
     "knowledge.startOrganization": (...args) => call("knowledge.startOrganization", args),
     "knowledge.completeOrganization": (...args) => call("knowledge.completeOrganization", args),
     "knowledge.admitOrganization": (...args) => call("knowledge.admitOrganization", args),
@@ -178,6 +181,7 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
 
 export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
   return {
+    "knowledge.continueRun": async (...args) => continueKnowledgeRun(db, ...args),
     "knowledge.startOrganization": async (...args) => startOrganizationBatch(db, ...args),
     "knowledge.completeOrganization": async (...args) => completeOrganizationBatch(db, ...args),
     "knowledge.admitOrganization": async (...args) => admitKnowledgeOrganization(db, ...args),

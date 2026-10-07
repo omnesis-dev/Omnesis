@@ -1595,11 +1595,9 @@ export interface WriteGate extends KnowledgeWriteGate {
     now: number,
   ): Promise<EnqueueCognitionRunResult>;
   /** Atomically claim due `pending` runs (bumps attempts). */
-  claimDueCognitionRuns(opts: {
-    now: number;
-    limit?: number;
-    maxAttempts?: number;
-  }): Promise<ClaimedCognitionRun[]>;
+  claimDueCognitionRuns(
+    opts: Parameters<typeof claimDueCognitionRuns>[1],
+  ): Promise<ClaimedCognitionRun[]>;
   /**
    * Settle one attempt: mark the row completed/failed and fold the
    * attempt's usage into its (day, mechanism, model) spend bucket, in
@@ -2244,6 +2242,7 @@ export function maintenanceCanonicalWriteGate(
       const result = await call("knowledge.canonicalMutation", [scope, op, args as unknown[]]);
       if (!result.ok) throw new KnowledgeStorageError(result.code, result.message);
       scope.owners = result.owners;
+      scope.collections = result.collections;
       return result.value as Awaited<WriterReturn<K>>;
     },
   );

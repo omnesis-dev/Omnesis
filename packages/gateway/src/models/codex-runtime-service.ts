@@ -58,13 +58,14 @@ const CODEX_MODEL_LIST_MAX_BUFFER = 20 * 1024 * 1024;
 /**
  * Number of extra app-server subprocesses backing the interactive lane. Each
  * runs one Codex turn at a time, so N members = up to N concurrent interactive
- * turns (app conversations and `/answer`). Background agent
- * work stays on the single serialized owner runtime. 0 disables the pool (all
- * interactive and background turns share the owner runtime). Kept conservative by
+ * turns (app conversations and `/answer`). Background work has its own pool.
+ * 0 disables the interactive pool (interactive turns use the owner runtime). Kept conservative by
  * default: each member is a live app-server subprocess competing for memory.
  */
 const DEFAULT_INTERACTIVE_POOL_SIZE = 3;
 const DEFAULT_INFERENCE_POOL_SIZE = 2;
+const DEFAULT_BACKGROUND_POOL_SIZE = 4;
+const MAX_BACKGROUND_POOL_SIZE = 32;
 
 /** A Codex turn's lane. Interactive turns spread across the pool for latency
  *  isolation; inference and nested calls have independent bounded capacity. */
@@ -82,10 +83,12 @@ export interface CodexRuntimeServiceOptions {
   loginTtlMs?: number;
   installer?: CodexRuntimeInstaller;
   /** Interactive-lane pool size. Defaults to {@link DEFAULT_INTERACTIVE_POOL_SIZE};
-   *  0 makes top-level interactive and background turns share the owner runtime. */
+   *  0 makes top-level interactive turns use the owner runtime. */
   interactivePoolSize?: number;
   /** Capacity for independent inference and each lazily created nested depth. */
   inferencePoolSize?: number;
+  /** Independent background capacity, from 1 to 32. Defaults to 4. */
+  backgroundPoolSize?: number;
   /** Current application subagent nesting cap; two further levels serve leaf inference. */
   getSubagentDepthCap?: () => number;
 }
@@ -100,6 +103,7 @@ export class CodexRuntimeService {
   private readonly commandOverride: string | undefined;
   private readonly interactivePoolSize: number;
   private readonly inferencePoolSize: number;
+  private readonly backgroundPoolSize: number;
   private readonly getSubagentDepthCap: () => number;
   private readonly env: NodeJS.ProcessEnv;
   private readonly supervisor: CodexGenerationSupervisor;
@@ -135,6 +139,14 @@ export class CodexRuntimeService {
     this.env = opts.env ?? process.env;
     this.interactivePoolSize = opts.interactivePoolSize ?? DEFAULT_INTERACTIVE_POOL_SIZE;
     this.inferencePoolSize = opts.inferencePoolSize ?? DEFAULT_INFERENCE_POOL_SIZE;
+    this.backgroundPoolSize = opts.backgroundPoolSize ?? DEFAULT_BACKGROUND_POOL_SIZE;
+    if (
+      !Number.isSafeInteger(this.backgroundPoolSize) ||
+      this.backgroundPoolSize < 1 ||
+      this.backgroundPoolSize > MAX_BACKGROUND_POOL_SIZE
+    ) {
+      throw new Error("Codex backgroundPoolSize must be an integer from 1 to 32");
+    }
     for (const [name, value, minimum] of [
       ["interactivePoolSize", this.interactivePoolSize, 0],
       ["inferencePoolSize", this.inferencePoolSize, 1],
@@ -219,13 +231,13 @@ export class CodexRuntimeService {
             logger: log.child("pool"),
           })
         : null;
-    const makeAuxiliaryPool = (name: string): CodexRuntimePool =>
+    const makeAuxiliaryPool = (name: string, size = this.inferencePoolSize): CodexRuntimePool =>
       new CodexRuntimePool({
         runtimeOptions,
         sharedHome: this.codexHome,
         poolHomeBase: join(this.paths.poolHomeBase, name),
         poolWorkspaceBase: join(this.paths.poolWorkspaceBase, name),
-        size: this.inferencePoolSize,
+        size,
         logger: log.child(name),
       });
     const nestedPools = new Map<number, CodexRuntimePool>();
@@ -233,6 +245,7 @@ export class CodexRuntimeService {
       runtime,
       interactivePool,
       inferencePool: makeAuxiliaryPool("inference"),
+      backgroundPool: makeAuxiliaryPool("background", this.backgroundPoolSize),
       nestedPools,
       nestedPool: (depth) => {
         const limit = this.getSubagentDepthCap() + 2;
@@ -257,9 +270,8 @@ export class CodexRuntimeService {
     maxToolIterations?: number;
     lane?: CodexLane;
   }): CodexAppServerBackend {
-    // Interactive turns spread across the pool (up to N concurrent); background
-    // turns serialize on the owner. Inference and nested calls have independent
-    // capacity even when the interactive pool is disabled.
+    // Interactive, background and inference turns have independent pools.
+    // Nested calls retain independent capacity at each execution depth.
     const runtime =
       opts.lane === "background"
         ? this.backgroundRunner

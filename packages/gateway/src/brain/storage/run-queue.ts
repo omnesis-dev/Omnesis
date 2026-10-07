@@ -619,7 +619,8 @@ export function listRecentSettledCognitionRuns(db: Db, limit: number = 10): Cogn
 /**
  * Atomically claim up to `limit` due pending runs under the attempts
  * cap, bumping `attempts` + `last_attempt_at` in one `UPDATE …
- * RETURNING` so two drain ticks can't claim the same row. The stamp takes
+ * RETURNING`. The admission coordinator excludes active and visited ids because
+ * in-flight rows remain pending. The stamp takes
  * the caller's `now`, so a virtual clock stays authoritative.
  */
 /**
@@ -662,12 +663,36 @@ function claimKindRank(kind: string, dedupeKey: string | null): number {
   return 2;
 }
 
+/** Only region-fenced maintenance can overlap; aggregate/root work stays exclusive. */
+const PARALLEL_KNOWLEDGE_RUN_SQL = `kind='synthesis'
+  AND json_extract(payload_json,'$.focus')='knowledge-maintenance'
+  AND COALESCE(json_extract(payload_json,'$.schedulingClass'),'')!='initial-root'
+  AND EXISTS(SELECT 1 FROM knowledge_batches b
+    WHERE b.id=json_extract(cognition_runs.payload_json,'$.batchId')
+      AND b.run_id=cognition_runs.id AND b.status IN ('pending','running')
+      AND EXISTS(SELECT 1 FROM knowledge_batch_regions r WHERE r.batch_id=b.id)
+      AND NOT EXISTS(SELECT 1 FROM knowledge_batch_regions r
+        JOIN knowledge_nodes n ON n.id=r.node_id WHERE r.batch_id=b.id AND n.kind='root'))`;
+
+export function isParallelKnowledgeRun(db: Db, runId: string): boolean {
+  return !!db
+    .prepare(`SELECT 1 FROM cognition_runs WHERE id=? AND (${PARALLEL_KNOWLEDGE_RUN_SQL})`)
+    .get(runId);
+}
+
 export function claimDueCognitionRuns(
   db: Db,
-  opts: { now: number; limit?: number; maxAttempts?: number },
+  opts: {
+    now: number;
+    limit?: number;
+    maxAttempts?: number;
+    excludeIds?: string[];
+    parallelOnly?: boolean;
+  },
 ): ClaimedCognitionRun[] {
   const limit = opts.limit ?? DEFAULT_COGNITION_RUN_CLAIM_LIMIT;
   const maxAttempts = opts.maxAttempts ?? DEFAULT_COGNITION_RUN_MAX_ATTEMPTS;
+  const excluded = JSON.stringify(opts.excludeIds ?? []);
   // `last_attempt_at` IS the claim time: a claim is the only thing that
   // constitutes an attempt on this queue, and this statement is the only
   // writer of the column for queued runs (settles touch status/completed_at,
@@ -698,19 +723,20 @@ export function claimDueCognitionRuns(
     .get();
   const preferredId = preferInitialRoot
     ? (db
-        .prepare<[number, number], { id: string }>(
+        .prepare<[number, number, string], { id: string }>(
           `
     SELECT id FROM cognition_runs WHERE kind='synthesis' AND status='pending'
       AND next_attempt_at<=? AND attempts<?
+      AND id NOT IN (SELECT value FROM json_each(?))
       AND json_extract(payload_json,'$.focus')='knowledge-maintenance'
       AND json_extract(payload_json,'$.schedulingClass')='initial-root'
     ORDER BY next_attempt_at,id LIMIT 1`,
         )
-        .get(opts.now, maxAttempts)?.id ?? null)
+        .get(opts.now, maxAttempts, excluded)?.id ?? null)
     : null;
   const rankSql = CLAIM_KIND_RANK_SQL.replace("ELSE 2", "WHEN id=? THEN 1.5 ELSE 2");
   const rows = db
-    .prepare<[number, number, number, string | null, number], CognitionRunDbRow>(
+    .prepare<[number, number, number, string, string | null, number], CognitionRunDbRow>(
       `UPDATE cognition_runs
          SET attempts = attempts + 1,
              last_attempt_at = ?
@@ -719,12 +745,14 @@ export function claimDueCognitionRuns(
          WHERE status = 'pending'
            AND next_attempt_at <= ?
            AND attempts < ?
+           AND id NOT IN (SELECT value FROM json_each(?))
          ORDER BY ${rankSql}, next_attempt_at ASC
          LIMIT ?
        )
+       ${opts.parallelOnly ? `AND (${PARALLEL_KNOWLEDGE_RUN_SQL})` : ""}
        RETURNING *`,
     )
-    .all(opts.now, opts.now, maxAttempts, preferredId, limit);
+    .all(opts.now, opts.now, maxAttempts, excluded, preferredId, limit);
   // RETURNING yields rows in scan order, not the subquery's ORDER BY —
   // re-sort to the same reactive-first, then oldest-due order so the caller
   // both CLAIMS and PROCESSES latency-sensitive reactive runs ahead of a

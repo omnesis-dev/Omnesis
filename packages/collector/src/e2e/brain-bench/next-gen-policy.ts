@@ -105,6 +105,8 @@ function sourcePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Pupp
   const calls: PuppetPlan["calls"] = [
     call("fetch_many", { documents: [{ documentId: source.id }] }),
     ...nextGenLoopCalls(item, steps),
+    call("knowledge_list", { kind: "wiki" }),
+    call("knowledge_candidates", {}),
   ];
   for (const topic of selected) {
     const id = pageId(topic);
@@ -266,6 +268,7 @@ function nodePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Puppet
 }
 
 export const nextGenPolicy: KnowledgePuppetPolicy = {
+  maxRevisionConflictRetries: 12,
   plan: (item, _ctx, steps) =>
     item.source ? sourcePlan(item, localSteps(steps, item)) : nodePlan(item, steps),
   targets: (item) => (item.source ? topics(item.source.title).map(pageId) : []),

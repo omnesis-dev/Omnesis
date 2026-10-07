@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   CodexGenerationSupervisor,
   type CodexRuntimeGeneration,
+  reassertCodexGenerationAuth,
 } from "./codex-generation-supervisor.js";
 import type {
   CodexAppServerRuntime,
@@ -293,7 +294,7 @@ describe("Codex nested execution admission", () => {
     expect(entered).toBe(true);
   });
 
-  it("disposes the owner, inference, interactive, and lazily allocated nested pools", async () => {
+  it("disposes the owner, background, inference, interactive, and lazily allocated nested pools", async () => {
     const selected = generation();
     const disposed: string[] = [];
     const pool = (name: string) =>
@@ -307,12 +308,93 @@ describe("Codex nested execution admission", () => {
     };
     selected.interactivePool = pool("interactive");
     selected.inferencePool = pool("inference");
+    selected.backgroundPool = pool("background");
     selected.nestedPools = new Map([
       [1, pool("child")],
       [2, pool("grandchild")],
     ]);
     await new CodexGenerationSupervisor(selected).dispose();
-    expect(disposed.sort()).toEqual(["child", "grandchild", "inference", "interactive", "owner"]);
+    expect(disposed.sort()).toEqual([
+      "background",
+      "child",
+      "grandchild",
+      "inference",
+      "interactive",
+      "owner",
+    ]);
+  });
+
+  it("keeps background parents, interactive turns, and nested judges on independent capacity", async () => {
+    const selected = generation();
+    const supervisor = new CodexGenerationSupervisor(selected);
+    const finishParents = deferred();
+    const parentsEntered = deferred();
+    const lanes: string[] = [];
+    let parents = 0;
+    selected.runtime.runTurn = async function* () {
+      yield* [];
+      throw new Error("background work must not use the login owner");
+    };
+    selected.backgroundPool = {
+      runTurn: async function* (opts: CodexRuntimeTurnOptions) {
+        parents += 1;
+        if (parents === 4) parentsEntered.resolve();
+        await opts.input.tools[0].invoke(
+          {},
+          { sessionId: "synthetic-session", messageId: "synthetic-message" },
+        );
+        await finishParents.promise;
+        yield* [];
+      },
+    } as unknown as CodexRuntimePool;
+    const independent = (lane: string) =>
+      ({
+        runTurn: async function* () {
+          lanes.push(lane);
+          yield* [];
+        },
+      }) as unknown as CodexRuntimePool;
+    selected.interactivePool = independent("interactive");
+    selected.inferencePool = independent("inference");
+    selected.nestedPool = (depth) => independent(`nested-${depth}`);
+    const opts = turnOptions();
+    opts.input.tools = [
+      {
+        name: "judge",
+        description: "Run a nested judge",
+        schema: z.object({}),
+        summarize: () => "judge",
+        invoke: async () => {
+          await consume(supervisor.runner("background").runTurn(turnOptions()));
+          return { kind: "error", code: "synthetic", message: "done" };
+        },
+      },
+    ];
+    const running = Array.from({ length: 4 }, () =>
+      consume(supervisor.runner("background").runTurn(opts)),
+    );
+    await parentsEntered.promise;
+    await consume(supervisor.runner("interactive").runTurn(turnOptions()));
+    await consume(supervisor.runner("inference").runTurn(turnOptions()));
+    expect(lanes.filter((lane) => lane === "nested-1")).toHaveLength(4);
+    expect(lanes).toContain("interactive");
+    expect(lanes).toContain("inference");
+    finishParents.resolve();
+    await Promise.all(running);
+    expect(supervisor.activeUses).toBe(0);
+  });
+
+  it("reasserts authentication on every lane including background", () => {
+    const selected = generation();
+    const lanes: string[] = [];
+    const pool = (lane: string) =>
+      ({ reassertAuth: () => lanes.push(lane) }) as unknown as CodexRuntimePool;
+    selected.backgroundPool = pool("background");
+    selected.interactivePool = pool("interactive");
+    selected.inferencePool = pool("inference");
+    selected.nestedPools = new Map([[1, pool("nested")]]);
+    reassertCodexGenerationAuth(selected);
+    expect(lanes.sort()).toEqual(["background", "inference", "interactive", "nested"]);
   });
 
   it("cancels an admission waiter without waiting for a generation switch", async () => {

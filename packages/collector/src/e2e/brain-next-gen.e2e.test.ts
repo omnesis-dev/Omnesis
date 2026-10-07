@@ -108,6 +108,7 @@ describe("next generation brain progressive maintenance", () => {
       sourceId: sourceId!,
     });
     let gatheringRevision = 0;
+    let gatheringMeaningRevision = 0;
     let originalSupplyHash = "";
     let arrivalRevision: number | undefined;
     for (;;) {
@@ -122,7 +123,27 @@ describe("next generation brain progressive maintenance", () => {
           .poll(async () => (await page("demo-camera"))?.markdown, { timeout: 120_000 })
           .toContain("Saturday");
         await bench.drainUntilQuiet({ includeUpcoming: false });
-        gatheringRevision = (await page("demo-gathering"))!.revision;
+        // Advancing time can admit the initial organization cohort independently
+        // of an upsert. Finish that scheduled work before measuring replay as a
+        // no-op; the replay itself will run at this same virtual-clock instant.
+        const replay = scenario.steps.find((entry) => entry.id === "unchanged-replay")!;
+        await bench.clock.set(Date.parse(scenario.epoch) + replay.minute * 60_000);
+        await expect
+          .poll(
+            () =>
+              bench.sql
+                .prepare<
+                  [],
+                  { count: number }
+                >("SELECT COUNT(*) AS count FROM knowledge_organization_cohorts WHERE status='completed'")
+                .get()!.count,
+            { timeout: 120_000 },
+          )
+          .toBeGreaterThan(0);
+        await bench.drainUntilQuiet({ includeUpcoming: false });
+        const settledGathering = (await page("demo-gathering"))!;
+        gatheringRevision = settledGathering.revision;
+        gatheringMeaningRevision = settledGathering.meaningRevision;
         arrivalRevision = await claimRevision("demo-gathering", "guest-arrival");
         expect(arrivalRevision).toBeDefined();
         originalSupplyHash = bench.sql
@@ -136,7 +157,9 @@ describe("next generation brain progressive maintenance", () => {
         ).toBeGreaterThanOrEqual(2);
       } else if (step.id === "unchanged-replay") {
         await bench.drainUntilQuiet({ includeUpcoming: false });
-        expect((await page("demo-gathering"))!.revision).toBe(gatheringRevision);
+        const replayed = (await page("demo-gathering"))!;
+        expect(replayed.revision).toBe(gatheringRevision);
+        expect(replayed.meaningRevision).toBe(gatheringMeaningRevision);
       } else if (step.id === "discovered-urgent-correction") {
         await expect
           .poll(async () => (await page("demo-gathering"))?.markdown, { timeout: 120_000 })
@@ -272,6 +295,10 @@ describe("next generation brain progressive maintenance", () => {
         expect(loops.find((loop) => loop.title === DEMO_LOOPS.crate)?.state).toBe("done");
         expect(loops.find((loop) => loop.title === DEMO_LOOPS.camera)?.state).toBe("done");
       }
+      // A page can expose this step's result before its cohort finishes repairing
+      // the remaining frontier. Finish due work before pushing the next scenario
+      // step, while keeping intentionally scheduled future reviews parked.
+      await bench.drainUntilQuiet({ includeUpcoming: false });
     }
     const decisions = await bench.harness.gatewayJson<{
       items: Array<{ purpose: string; score: number | null }>;

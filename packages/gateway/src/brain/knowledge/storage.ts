@@ -3,13 +3,19 @@
 
 /** Repository mutations run exclusively through the gateway writer worker. */
 import { recordAcceptedClaimMaintenance } from "./claim-maintenance.js";
+import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { parseClaimMarkup } from "./claims.js";
 import { snapshotKnowledgeRevision } from "./storage-history.js";
 import { invalidateKnowledgeDependents } from "./storage-invalidation.js";
 import { knowledgeNodeFence } from "./storage-fence.js";
 import { isClaimIdentifier } from "./references.js";
-import { KnowledgeStorageError, type KnowledgeNode, type SaveKnowledgeNodeInput } from "./types.js";
+import {
+  KnowledgeStorageError,
+  type KnowledgeNode,
+  type SaveKnowledgeNodeInput,
+  type KnowledgeSaveResult,
+} from "./types.js";
 import { appendKnowledgeChange, getKnowledgeNode, readKnowledgeNodeRow } from "./storage-read.js";
 import {
   knowledgeClaimFingerprint,
@@ -51,7 +57,7 @@ export function saveKnowledgeNode(
   db: Database.Database,
   input: SaveKnowledgeNodeInput,
   now: number,
-): { node: KnowledgeNode; meaningChanged: boolean } {
+): KnowledgeSaveResult {
   if (
     !isClaimIdentifier(input.id) ||
     input.id.startsWith("source:") ||
@@ -277,7 +283,18 @@ export function saveKnowledgeNode(
         at: now,
       });
     }
-    return { node: getKnowledgeNode(db, input.id)!, meaningChanged };
+    return {
+      node: getKnowledgeNode(db, input.id)!,
+      meaningChanged,
+      ...(input.runFence?.reconciliation
+        ? {
+            reconciliationReceipt: {
+              collection: "wiki" as const,
+              revision: readKnowledgeCollectionRevision(db, "wiki"),
+            },
+          }
+        : {}),
+    };
   })();
 }
 

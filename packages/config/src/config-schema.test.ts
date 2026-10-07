@@ -1258,16 +1258,23 @@ describe("validateConfig — stripUnknownKeys (lenient load)", () => {
 describe("Codex inference capacity", () => {
   test("accepts bounded independent capacity and disabled interactive pooling", () => {
     const result = validateConfig({
-      inference: { codex: { interactivePoolSize: 0, inferencePoolSize: 3 } },
+      inference: {
+        codex: { interactivePoolSize: 0, inferencePoolSize: 3, backgroundPoolSize: 32 },
+      },
     });
     expect(result.ok).toBe(true);
     if (result.ok)
       expect(result.config.inference?.codex).toEqual({
         interactivePoolSize: 0,
         inferencePoolSize: 3,
+        backgroundPoolSize: 32,
       });
   });
   test.each([
+    { backgroundPoolSize: 0 },
+    { backgroundPoolSize: -1 },
+    { backgroundPoolSize: 1.5 },
+    { backgroundPoolSize: 33 },
     { inferencePoolSize: 0 },
     { inferencePoolSize: -1 },
     { inferencePoolSize: 1.5 },

@@ -49,8 +49,7 @@ function evidence(id: string, policy = KNOWLEDGE_DISCOVERY_POLICY) {
 function select(now = 100) {
   return selectOrganizationCohort(db, { now, intervalMs: 100, retryMs: 500 });
 }
-function admit(now = 100, id = "cohort") {
-  const selection = select(now)!;
+function admit(now = 100, id = "cohort", selection = select(now)!) {
   db.prepare(
     "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES(?,?,?,'routine','pending',?,?)",
   ).run(`batch-${id}`, `run-${id}`, "fingerprint", now, now);
@@ -65,7 +64,7 @@ function admit(now = 100, id = "cohort") {
 }
 function finish(now = 110) {
   const cohort = getOrganizationCohortForBatch(db, "batch-cohort")!;
-  return completeOrganizationCohort(
+  const completed = completeOrganizationCohort(
     db,
     {
       id: cohort.id,
@@ -77,6 +76,9 @@ function finish(now = 110) {
     },
     now,
   );
+  if (completed)
+    db.prepare("UPDATE knowledge_batches SET status='completed' WHERE id=?").run(cohort.batchId);
+  return completed;
 }
 describe("bounded joint organization cohorts", () => {
   it("requires two current previously considered readable inputs and caps membership", () => {
@@ -106,6 +108,45 @@ describe("bounded joint organization cohorts", () => {
     expect(next.sourceVersions).toHaveProperty("c", "v1");
     expect(Object.keys(next.sourceVersions)).toHaveLength(2);
     expect(select(1000)?.sourceVersions).toEqual({ a: "v1", b: "v1", c: "v1" });
+  });
+  it("drains more than eight first-pass inputs without the repeat cadence gap", () => {
+    for (let i = 0; i < 10; i++) evidence(`fresh-${i}`);
+    const first = admit();
+    expect(Object.keys(first.sourceVersions)).toHaveLength(8);
+    expect(select(101)).toBeNull();
+    expect(finish()).toBe(true);
+    const second = admit(111, "second");
+    expect(Object.keys(second.sourceVersions)).toHaveLength(2);
+    expect(Object.keys(second.sourceVersions).every((id) => !(id in first.sourceVersions))).toBe(
+      true,
+    );
+    expect(select(120)).toBeNull();
+  });
+  it("rechecks global ownership and initial eligibility after selection", () => {
+    evidence("c");
+    evidence("d");
+    const disjointSelection = select()!;
+    evidence("a");
+    evidence("b");
+    const selectedBeforeAdmission = selectOrganizationCohort(db, {
+      now: 100,
+      intervalMs: 100,
+      retryMs: 500,
+      limit: 2,
+    })!;
+    expect(selectedBeforeAdmission.sourceVersions).toEqual({ a: "v1", b: "v1" });
+    admit(100, "cohort", selectedBeforeAdmission);
+    db.exec(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('raced-batch','raced-run','fp','routine','pending',1,1)",
+    );
+    const raced = { id: "raced", batchId: "raced-batch", intervalMs: 100, retryMs: 500 };
+    // Even a disjoint fresh selection cannot overlap another active cohort.
+    expect(select(101)).toBeNull();
+    expect(createOrganizationCohort(db, { ...raced, ...disjointSelection }, 101)).toBe(false);
+    expect(finish()).toBe(true);
+    // A stale selection is no longer initial after a competing admission.
+    expect(createOrganizationCohort(db, { ...raced, ...selectedBeforeAdmission }, 111)).toBe(false);
+    expect(createOrganizationCohort(db, { ...raced, ...disjointSelection }, 111)).toBe(true);
   });
   it("excludes sources whose maintenance work is already pending", () => {
     evidence("a");
@@ -358,6 +399,7 @@ describe("bounded joint organization cohorts", () => {
     expect(
       completeOrganizationCohort(db, { ...input, outcome: "deferred", retryAt: 500 }, 110),
     ).toBe(true);
+    db.prepare("UPDATE knowledge_batches SET status='completed' WHERE id=?").run(cohort.batchId);
     expect(select(499)).toBeNull();
     expect(select(500)).not.toBeNull();
   });

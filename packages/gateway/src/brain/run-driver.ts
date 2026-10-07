@@ -81,6 +81,8 @@ export interface CognitionRunOutcome {
   deferredUntil?: number;
   /** Progress already committed; yield without advancing semantic time. */
   continuation?: boolean;
+  /** Backend enforced a tool cap, including tool-level Codex refusals. */
+  toolLimitReached?: boolean;
   /** Present when `ok` is false. */
   errorMessage?: string;
   /**
@@ -268,6 +270,7 @@ export class CognitionRunDriver {
     const citations = new Map<string, DocRef>();
     const usage: AgentUsage = {};
     let sawUsage = false;
+    let toolLimitReached = false;
     let pendingText = "";
     let finalText = "";
     const openedDocIds = new Set<string>();
@@ -300,6 +303,13 @@ export class CognitionRunDriver {
           }
           break;
         }
+        case "agent.tool.result":
+          if (
+            event.payload.result.kind === "error" &&
+            event.payload.result.code === "tool_iteration_cap"
+          )
+            toolLimitReached = true;
+          break;
         case "agent.message.end": {
           finalText = pendingText.trim() || finalText;
           const u = event.payload.usage;
@@ -391,6 +401,7 @@ export class CognitionRunDriver {
       ok,
       ...(errorMessage !== undefined ? { errorMessage } : {}),
       ...(failure !== undefined ? { failure } : {}),
+      ...(toolLimitReached ? { toolLimitReached: true } : {}),
       ...(context !== undefined ? { context } : {}),
       modelId: backend.model,
       usage: runUsage,

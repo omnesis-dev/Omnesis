@@ -312,42 +312,53 @@ export class KnowledgeIntake {
           .all(after, limit - sources.length),
       );
     }
-    const docs = sources.flatMap((source) =>
-      listKnowledgeDiscoveryBacklog(this.context.deps.db, {
-        phase: "organization",
-        sourceId: source.source_id,
-        direction: backfill.direction,
-        ...(hasSourceInventoryTables(this.context.deps.db)
-          ? { excludeRecentInventoryWindowMs: cfg.recentWindowMs }
-          : {}),
-        limit: 1,
-        now: this.context.deps.clock(),
-      }),
-    );
-    const fresh = !this.context.deps.db
-      .prepare("SELECT 1 FROM knowledge_discovery_coverage LIMIT 1")
-      .get();
-    for (const doc of docs) {
-      const now = this.context.deps.clock();
-      await this.context.deps.writeGate["knowledge.enqueue"](
-        {
-          id: this.context.id("kw"),
-          subjectId: doc.id,
-          subjectKind: "source",
-          reason: "discovery",
-          inputRevision: doc.contentHash,
-          tier: fresh ? "immediate" : "routine",
-          dueAt: fresh ? now : now + cfg.routineDelayMs,
-        },
-        now,
-      );
+    let remaining = sources;
+    let admitted = 0;
+    let lastSourceId: string | undefined;
+    const hasInventory = hasSourceInventoryTables(this.context.deps.db);
+    // One document per source per round gives every selected source a turn,
+    // then reuses spare capacity from exhausted sources. Pending writes exclude
+    // the previous round's inputs, so reads stay bounded by admissions + sources.
+    while (remaining.length && admitted < limit) {
+      const nextRound: typeof sources = [];
+      for (const source of remaining) {
+        if (admitted >= limit) break;
+        lastSourceId = source.source_id;
+        const [doc] = listKnowledgeDiscoveryBacklog(this.context.deps.db, {
+          phase: "organization",
+          sourceId: source.source_id,
+          direction: backfill.direction,
+          ...(hasInventory ? { excludeRecentInventoryWindowMs: cfg.recentWindowMs } : {}),
+          limit: 1,
+          now: this.context.deps.clock(),
+        });
+        if (!doc) continue;
+        const now = this.context.deps.clock();
+        await this.context.deps.writeGate["knowledge.enqueue"](
+          {
+            id: this.context.id("kw"),
+            subjectId: doc.id,
+            subjectKind: "source",
+            reason: "discovery",
+            inputRevision: doc.contentHash,
+            // Historical reading is explicitly admitted work, not a live edit
+            // awaiting coalescing. Keep its lower priority without delaying it.
+            tier: "routine",
+            dueAt: now,
+          },
+          now,
+        );
+        admitted++;
+        nextRound.push(source);
+      }
+      remaining = nextRound;
     }
-    if (sources.length)
+    if (lastSourceId !== undefined)
       await this.context.deps.writeGate["knowledge.checkpoint"](
         {
           id: "knowledge:bootstrap:source",
           expectedRevision: checkpoint?.revision ?? 0,
-          value: { sourceId: sources.at(-1)!.source_id },
+          value: { sourceId: lastSourceId },
         },
         this.context.deps.clock(),
       );

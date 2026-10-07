@@ -1215,6 +1215,9 @@ const codexRuntimeService = new CodexRuntimeService({
   interactivePoolSize:
     parseNonNegativeIntEnv("OMNESIS_CODEX_INTERACTIVE_POOL_SIZE") ??
     config.inference?.codex?.interactivePoolSize,
+  backgroundPoolSize:
+    parseNonNegativeIntEnv("OMNESIS_CODEX_BACKGROUND_POOL_SIZE") ??
+    config.inference?.codex?.backgroundPoolSize,
   inferencePoolSize:
     parseNonNegativeIntEnv("OMNESIS_CODEX_INFERENCE_POOL_SIZE") ??
     config.inference?.codex?.inferencePoolSize,

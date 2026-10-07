@@ -150,6 +150,66 @@ describe("CodexRuntimeService parsers", () => {
     },
   );
 
+  it.each([0, -1, 1.5, 33, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid background capacity %s",
+    (backgroundPoolSize) => {
+      expect(
+        () => new CodexRuntimeService({ configDir: "/synthetic/config", backgroundPoolSize }),
+      ).toThrow("backgroundPoolSize must be an integer from 1 to 32");
+    },
+  );
+
+  it("defaults to four background turns with independent interactive capacity and immediate refill", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-capacity-"));
+    let finish!: () => void;
+    let finishSecond!: () => void;
+    const allDone = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const secondDone = new Promise<void>((resolve) => {
+      finishSecond = resolve;
+    });
+    const started: string[] = [];
+    const turn = vi
+      .spyOn(CodexAppServerRuntime.prototype, "runTurn")
+      .mockImplementation(async function* (opts) {
+        const message = opts.input.userMessage;
+        started.push(message);
+        if (message.startsWith("background-")) {
+          await (message === "background-1" ? Promise.race([allDone, secondDone]) : allDone);
+        }
+        yield* [];
+      });
+    const service = new CodexRuntimeService({ configDir: dir });
+    const run = async (lane: "background" | "interactive", userMessage: string) => {
+      const backend = service.createBackend({ model: "gpt-example-frontier", lane });
+      for await (const event of backend.runTurn({
+        sessionId: "synthetic-session",
+        messageId: userMessage,
+        userMessage,
+        systemPrompt: "",
+        history: [],
+        tools: [],
+      }))
+        void event;
+    };
+    const runs = Array.from({ length: 5 }, (_, index) => run("background", `background-${index}`));
+    try {
+      await waitUntil(async () => started.length === 4);
+      expect(started).toEqual(["background-0", "background-1", "background-2", "background-3"]);
+      await run("interactive", "interactive");
+      expect(started).toContain("interactive");
+      finishSecond();
+      await waitUntil(async () => started.includes("background-4"));
+    } finally {
+      finish();
+      await Promise.all(runs);
+      await service.dispose();
+      turn.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts current Codex device codes with a longer second group", () => {
     expect(
       parseCodexDeviceLoginOutput(

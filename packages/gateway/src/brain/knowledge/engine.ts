@@ -726,15 +726,20 @@ export class KnowledgeEngine {
     inputFingerprint: string,
     input: Parameters<KnowledgeService["save"]>[0],
     reviewedClaimIds?: readonly string[],
+    runFence?: import("./run-fence.js").KnowledgeRunFence,
   ) {
     this.batch(batchId, runId);
     const item = this.currentItem(batchId, nodeId, inputFingerprint);
     if (item.nodeId !== input.id || item.status !== "offered")
       throw new KnowledgeStorageError("claim_invalid", "Save must match an offered synthesis node");
-    const result = await this.deps.service.save({
-      ...input,
-      maintenance: { batchId, runId, inputFingerprint, reviewedClaimIds },
-    });
+    const result = await this.deps.service.save(
+      {
+        ...input,
+        maintenance: { batchId, runId, inputFingerprint, reviewedClaimIds },
+      },
+      undefined,
+      runFence,
+    );
     const pending = pendingMaintenanceClaimIds(this.deps.db, item);
     const append = result.meaningChanged ? this.children(nodeId, item.depth) : [];
     if (pending.length) {

@@ -58,6 +58,7 @@ beforeAll(async () => {
             return {
               calls: [
                 call("fetch_many", { documents: [{ documentId: sourceId }] }),
+                call("open_loop_search", { query: title }),
                 call("open_loop_create", {
                   title,
                   description,
@@ -65,6 +66,7 @@ beforeAll(async () => {
                   importance: 0.6,
                   docs: [sourceId],
                 }),
+                call("brief_list", {}),
                 call("brief_create", {
                   kind: "info",
                   title: "Workshop preparation",

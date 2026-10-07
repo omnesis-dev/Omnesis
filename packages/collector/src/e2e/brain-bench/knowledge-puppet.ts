@@ -76,6 +76,10 @@ export interface KnowledgePuppetPolicy {
   };
   /** Script decisions from the actual source/node payload offered by the engine. */
   plan: (item: PuppetKnowledgeItem, ctx: RunContext, steps: readonly ToolStep[]) => PuppetPlan;
+  /** Opt-in contention recovery: reacquire the real frontier and rebuild all
+   * reads after a revision conflict. Bounded per run; negative-path refusals
+   * remain explicit and are never retried. */
+  maxRevisionConflictRetries?: number;
   /** Explicit negative-path scenarios may continue after an exact canonical-tool refusal. */
   expectedRefusals?: (item: PuppetKnowledgeItem) => readonly { tool: string; code: string }[];
   /** A source may discover existing nodes that had no dependency edge when it arrived. */
@@ -95,6 +99,28 @@ export function knowledgePuppet(
       }
     if (frontierAt < 0) return { kind: "tool", name: "knowledge_next_frontier", args: {} };
     const parsed = frontierSchema.safeParse(structuredData(steps[frontierAt]!.result));
+    const last = steps.at(-1);
+    const isConflict = (step: ToolStep): boolean =>
+      step.result !== null &&
+      typeof step.result === "object" &&
+      (step.result as { kind?: unknown }).kind === "error" &&
+      (step.result as { code?: unknown }).code === "revision_conflict";
+    const expectedConflict =
+      parsed.success &&
+      last &&
+      parsed.data.items.some((item) =>
+        policy
+          .expectedRefusals?.(item)
+          .some((expected) => expected.tool === last.name && expected.code === "revision_conflict"),
+      );
+    if (last && isConflict(last) && policy.maxRevisionConflictRetries && !expectedConflict) {
+      if (steps.filter(isConflict).length <= policy.maxRevisionConflictRetries)
+        return { kind: "tool", name: "knowledge_next_frontier", args: {} };
+      return {
+        kind: "final",
+        text: "Maintenance revision-conflict retry budget exhausted; preserve pending work.",
+      };
+    }
     if (!parsed.success)
       return {
         kind: "final",
@@ -183,7 +209,10 @@ export function knowledgePuppet(
           };
         item = { ...item, source: { ...item.source, content: view.data.text } };
       }
-      if (item.fetchRequired && item.fetchRequired.kind !== "source") {
+      if (
+        (item.fetchRequired && item.fetchRequired.kind !== "source") ||
+        item.node?.kind === "wiki"
+      ) {
         const fetched = [...since]
           .reverse()
           .find(

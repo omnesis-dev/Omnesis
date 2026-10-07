@@ -933,10 +933,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           refresh the model list.
         </p>
         <p>
-          Codex runs three interactive turns at once by default and two other inference calls, and
-          queues the rest. Tune this with <code>inference.codex.interactivePoolSize</code> and
+          Codex reserves separate capacity for three interactive turns, four background turns, and
+          two inference calls by default, and queues the rest. Tune this with
+          <code>inference.codex.interactivePoolSize</code>,
+          <code>inference.codex.backgroundPoolSize</code> (1–32), and
           <code>inference.codex.inferencePoolSize</code> (or the
-          <code>OMNESIS_CODEX_INTERACTIVE_POOL_SIZE</code> and
+          <code>OMNESIS_CODEX_INTERACTIVE_POOL_SIZE</code>,
+          <code>OMNESIS_CODEX_BACKGROUND_POOL_SIZE</code>, and
           <code>OMNESIS_CODEX_INFERENCE_POOL_SIZE</code> environment variables, which win) and
           restart the gateway. More slots use more memory, and every process shares the same ChatGPT
           allowance.
