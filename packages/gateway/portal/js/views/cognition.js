@@ -1061,13 +1061,13 @@ export function LoopDetail({ id, embedded = false, synthesisText = null }) {
         onLoadMore=${ledgerPage.loadMore}
         label="Load more ledger entries"
       />
-      <details class="debug-operations-advanced"><summary>Advanced</summary>
+      <section class="debug-operations-advanced"><h3 class="cognition-section">Advanced</h3>
       <${Field} label="Id"><span class="cognition-mono">${loop.id}</span></${Field}>
       <${Field} label="Confidence">${fmt01(loop.confidence)}</${Field}>
       ${!embedded && html`<${Field} label="Importance">${fmt01(loop.importance)}</${Field}>`}
       <${Field} label="Last decay check">${fmtTs(loop.lastDecayCheck)}</${Field}>
       <${Field} label="Decay checks">${loop.decayCheckCount}</${Field}>
-      </details>
+      </section>
     </div>
   `;
 }

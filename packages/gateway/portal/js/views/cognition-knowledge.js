@@ -28,6 +28,7 @@ import { extractKnowledgeReferences } from "./knowledge-claim-markdown.js";
 import { navigate, replaceUrl } from "../lib/router.js";
 import {
   LoopContext,
+  LoopActivity,
   loopLibraryNode,
   loopDeadlineLabel,
   sortLibraryLoops,
@@ -395,7 +396,7 @@ export function KnowledgeTab({ selectedId }) {
               onChange=${(event) => setValidity(event.target.value)}
             >
               <option value="">Any status</option>
-              <option value="current">Inputs current</option>
+              <option value="current">Up to date with linked evidence</option>
               <option value="stale">Needs review</option>
             </select>`}
             ${kind === "loop" &&
@@ -483,7 +484,7 @@ export function KnowledgeTab({ selectedId }) {
                 href=${knowledgeSelectionHref(null, kind)}
                 onClick=${navigateKnowledgeSelection}
                 >← Back to library</a
-              >${(detail?.node?.kind === "loop" || (!detail && kind === "loop")) &&
+              >${(!detail && kind === "loop") &&
               html`<${LoopContext}
                 id=${selectedId}
                 refresh=${refresh}
@@ -510,6 +511,16 @@ export function KnowledgeTab({ selectedId }) {
                   ? html`<${KnowledgeDetail}
                         ...${detail}
                         references=${references}
+                        headerContent=${detail.node.kind === "loop" && html`<${LoopContext}
+                          id=${selectedId}
+                          refresh=${refresh}
+                          onReady=${setCanonicalLoopId}
+                          synthesisText=${detail.node.plainText ?? null}
+                          embedded
+                        />`}
+                        overviewContent=${detail.node.kind === "loop" && html`<${LoopActivity}
+                          id=${selectedId} refresh=${refresh} synthesisText=${detail.node.plainText ?? null}
+                        />`}
                         hideTitle=${detail.node.kind === "loop" && canonicalLoopId === selectedId}
                         activeTab=${activeTab}
                         selectedClaim=${selectedClaim}

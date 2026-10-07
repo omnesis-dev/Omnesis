@@ -52,9 +52,8 @@ export function sortLibraryLoops(nodes, order) {
     return new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime();
   });
 }
-export function LoopContext({ id, refresh = 0, onReady, synthesisText = null }) {
+export function LoopContext({ id, refresh = 0, onReady, synthesisText = null, embedded = false }) {
   const [state, setState] = useState({ loading: true });
-  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     let alive = true;
     setState({ loading: true });
@@ -73,16 +72,17 @@ export function LoopContext({ id, refresh = 0, onReady, synthesisText = null }) 
       alive = false;
     };
   }, [id, refresh, onReady]);
+  const className = embedded ? "kn-loop-context kn-loop-context--embedded" : "kn-loop-context";
   if (state.loading)
-    return html`<section class="kn-loop-context" role="status">Loading outcome…</section>`;
+    return html`<section class=${className} role="status">Loading outcome…</section>`;
   if (state.error)
-    return html`<section class="kn-loop-context" role="alert">
+    return html`<section class=${className} role="alert">
       Outcome details could not be loaded. ${state.error}
     </section>`;
   const loop = state.data.loop;
-  return html`<section class="kn-loop-context" aria-label="Tracked outcome">
+  return html`<section class=${className} aria-label="Loop details">
     <div class="kn-loop-summary">
-      <span class="kn-eyebrow">Tracked outcome</span>
+      ${!embedded && html`<span class="kn-eyebrow">Loop</span>`}
       <h2>${loop.title || "Untitled outcome"}</h2>
     </div>
     <dl>
@@ -103,11 +103,15 @@ export function LoopContext({ id, refresh = 0, onReady, synthesisText = null }) 
         </dd>
       </div>
     </dl>
-    <details class="kn-loop-activity" onToggle=${(event) => setExpanded(event.currentTarget.open)}>
-      <summary>Outcome details and activity</summary>
-      <div class="debug-operations">
-        ${expanded && html`<${LoopDetail} key=${`${id}:${refresh}`} id=${id} embedded synthesisText=${synthesisText} />`}
-      </div>
-    </details>
+    ${!embedded && html`<${LoopActivity} id=${id} refresh=${refresh} synthesisText=${synthesisText} />`}
+  </section>`;
+}
+
+export function LoopActivity({ id, refresh = 0, synthesisText = null }) {
+  return html`<section class="kn-loop-activity" aria-label="Outcome details and activity">
+    <h3>Outcome details and activity</h3>
+    <div class="debug-operations">
+      <${LoopDetail} key=${`${id}:${refresh}`} id=${id} embedded synthesisText=${synthesisText} />
+    </div>
   </section>`;
 }

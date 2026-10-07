@@ -929,6 +929,13 @@
   margin-bottom: 20px;
   background: var(--bg-secondary);
 }
+.kn-loop-context--embedded {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+}
 .kn-loop-summary {
   display: grid;
   gap: 8px;
@@ -953,11 +960,9 @@
   margin: 0;
   font-size: 14px;
 }
-.kn-loop-activity > summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 13px;
-  padding: 8px 0;
+.kn-loop-activity > h3 {
+  font-size: 15px;
+  margin: 24px 0 0;
 }
 .kn-loop-activity .cognition-detail-titlebar {
   display: none;

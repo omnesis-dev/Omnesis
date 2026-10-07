@@ -42,7 +42,7 @@ export const knowledgeReferenceHref = internalKnowledgeHref;
 export function KnowledgeBadge({ value }) {
   const label =
     {
-      current: "Inputs current",
+      current: "Up to date with linked evidence",
       stale: "Needs review",
       verified: "Verified",
       unverified: "Not verified",
@@ -71,6 +71,8 @@ export function KnowledgeDetail({
   historyLoading = false,
   historyError = false,
   hideTitle = false,
+  headerContent = null,
+  overviewContent = null,
   selectedClaim = null,
   onClaim = () => {},
 }) {
@@ -90,6 +92,7 @@ export function KnowledgeDetail({
         ${kindLabel(node.kind)} <${KnowledgeBadge} value=${node.validity} />
       </div>
       ${!hideTitle && html`<h2>${node.title}</h2>`}
+      ${headerContent}
       <p class="kn-caption">
         ${`Updated ${dateLabel(node.updatedAt)}`}${claims.length
           ? ` · ${verified} of ${claims.length} claims verified`
@@ -133,7 +136,7 @@ export function KnowledgeDetail({
         : html`<div class="kn-empty">
             <h3>This page is taking shape</h3>
             <p>Its first synthesis has not been written yet.</p>
-          </div>`} `}
+          </div>`}${overviewContent} `}
       ${activeTab === "connections" &&
       html`<${KnowledgeConnections}
         node=${node}
@@ -202,22 +205,22 @@ ${JSON.stringify(
               : new Date(node.metadata.nextReviewAt).toLocaleString()}
           </dd>
         </dl>
-        <details>
-          <summary>Tagged Markdown</summary>
+        <section>
+          <h4>Tagged Markdown</h4>
           <pre class="kn-code">${node.markdown}</pre>
-        </details>
-        <details>
-          <summary>Canonical fields and review metadata</summary>
+        </section>
+        <section>
+          <h4>Canonical fields and review metadata</h4>
           <pre class="kn-code">
 ${JSON.stringify({ fields: node.canonicalFields, review: node.metadata }, null, 2)}</pre
           >
-        </details>
-        <details>
-          <summary>Exact claim dependencies</summary>
+        </section>
+        <section>
+          <h4>Exact claim dependencies</h4>
           <pre class="kn-code">
 ${JSON.stringify({ claims, dependencies: node.dependencies ?? [] }, null, 2)}</pre
           >
-        </details>`}
+        </section>`}
     </div>
   </article>`;
 }

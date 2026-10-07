@@ -329,7 +329,15 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   const library = page.getByRole("navigation", { name: "Knowledge pages" });
   await library.getByRole("link", { name: /Prepare workshop materials/ }).click();
   await expect(page).toHaveURL(/knowledge\/browser-materials$/);
-  await expect(page.getByRole("region", { name: "Tracked outcome" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Loop details" })).toBeVisible();
+  await expect(page.locator(".kn-reader .kn-loop-context")).toHaveCount(1);
+  await expect(page.locator(".kn-reading-pane > .kn-loop-context")).toHaveCount(0);
+  await expect(page.locator(".kn-loop-activity")).toBeVisible();
+  await expect(page.locator(".kn-loop-activity details")).toHaveCount(0);
+  await expect(page.locator(".kn-loop-activity")).toContainText("Confidence");
+  await expect(page.locator('option[value="current"]')).toHaveText(
+    "Up to date with linked evidence",
+  );
   await expect(search).toHaveValue("workshop");
   await expect(page.getByRole("combobox", { name: "Knowledge type" })).toHaveValue("");
   await expect(library).toContainText("Workshop supplies");
@@ -339,7 +347,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   );
   await page.goBack();
   await expect(page).toHaveURL(/knowledge\/browser-materials$/);
-  await expect(page.getByRole("region", { name: "Tracked outcome" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Loop details" })).toBeVisible();
   await page.goForward();
   await expect(page).toHaveURL(/knowledge\/browser-supplies$/);
   await expect(page.locator(".kn-reader")).toContainText(
@@ -473,7 +481,10 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     animations: "disabled",
   });
   await page.getByRole("button", { name: "Advanced", exact: true }).click();
-  await page.getByText("Tagged Markdown", { exact: true }).click();
+  await expect(page.locator(".kn-reader-body details")).toHaveCount(0);
+  await expect(page.locator(".kn-reader-body pre")).toHaveCount(3);
+  for (const block of await page.locator(".kn-reader-body pre").all())
+    await expect(block).toBeVisible();
   await page.screenshot({
     path: info.outputPath("knowledge-advanced.png"),
     fullPage: true,
@@ -770,16 +781,13 @@ test("populated operational readers preserve mobile navigation", async ({ page }
     await expect(page.locator(".cognition-content").getByText(/^Loading/)).toHaveCount(0);
     if (section === "loops") {
       await expect(page).toHaveURL(/knowledge\/browser-materials-loop\?kind=loop$/);
-      await expect(page.getByRole("region", { name: "Tracked outcome" })).toContainText(
-        "2027-01-15",
-      );
+      await expect(page.getByRole("region", { name: "Loop details" })).toContainText("2027-01-15");
       await expect(
         page
-          .getByRole("region", { name: "Tracked outcome" })
+          .getByRole("region", { name: "Loop details" })
           .getByRole("heading", { name: "Prepare workshop materials", exact: true }),
       ).toBeVisible();
-      await expect(page.locator(".kn-reader h2")).toHaveCount(0);
-      await page.getByText("Outcome details and activity", { exact: true }).click();
+      await expect(page.locator(".kn-reader h2")).toHaveCount(1);
       await expect(page.locator(".kn-loop-activity")).toContainText(
         "Materials remain to be gathered.",
       );
@@ -832,16 +840,15 @@ test("populated operational readers preserve mobile navigation", async ({ page }
       await page.getByRole("combobox", { name: "Sort loops" }).selectOption("importance");
       await page.goto(url("/portal/debug/cognition/loops/browser-legacy-loop"));
       await expect(page).toHaveURL(/knowledge\/browser-legacy-loop\?kind=loop$/);
-      await expect(page.getByRole("region", { name: "Tracked outcome" })).toContainText(
+      await expect(page.getByRole("region", { name: "Loop details" })).toContainText(
         "Prepare name cards",
       );
       await expect(page.getByRole("heading", { name: "No synthesis available" })).toBeVisible();
       await expect(
         page
-          .getByRole("region", { name: "Tracked outcome" })
+          .getByRole("region", { name: "Loop details" })
           .getByRole("heading", { name: "Prepare name cards", exact: true }),
       ).toBeVisible();
-      await page.getByText("Outcome details and activity", { exact: true }).click();
       await expect(page.locator(".kn-loop-activity")).toContainText(
         "Write the workshop name cards.",
       );
