@@ -137,6 +137,15 @@ describe("Cognition Steward system prompt", () => {
     expect(prompt).toContain("given verbatim in every run message, beneath its rules");
   });
 
+  test("preserves estimated timing without fabricating deadline precision", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
+    expect(prompt).toContain('type "approximate"');
+    expect(prompt).toContain("keep the note without inventing a date");
+    expect(prompt).toContain("Never fabricate HH:mm, midnight or end-of-day precision");
+    expect(prompt).toContain("source event/request date, not ingestion or the current run");
+    expect(prompt).toContain("Follow-up/review timing is a separate scheduling choice");
+  });
+
   test("carries no clock, so it never changes with the time of the run", () => {
     const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096, annotationsEnabled: true });
     expect(prompt).not.toContain("Current time:");
@@ -1195,6 +1204,13 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("pendingClaimIdsOmitted");
     expect(prompt).toContain("does not settle untouched claims");
     expect(prompt).toContain("Your notes file is currently empty.");
+    expect(prompt).toContain(
+      "An informative new future plan may merit awareness without an immediate task",
+    );
+    expect(prompt).toContain(
+      "A window that has not elapsed does not justify chasing completion now",
+    );
+    expect(prompt).toContain("set nextShow to that review time");
   });
 
   test("initial root maintenance asks for evidence investigation before summarizing", () => {

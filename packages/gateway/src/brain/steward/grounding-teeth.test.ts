@@ -528,14 +528,20 @@ describe("grounding teeth (asserted claims + temporal annotation evidence)", () 
     expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
   });
 
-  test("a scheduled reminder reaches the judge marked timing-satisfied", async () => {
+  test("a scheduled reminder reaches the judge with explicit display and event timing", async () => {
     const seen: BriefJudgeCandidate[] = [];
     await tool(buildTools({ getBriefJudge: () => spyJudge("ship", seen) }), "brief_create").invoke(
       { ...briefArgs(), nextShow: "2026-08-01T06:00:00.000Z", eventAt: "2026-08-01T00:00:00.000Z" },
       CTX,
     );
-    expect(seen[0]!.scheduledForLater).toBe(true);
-    expect(seen[0]!.hasEventAt).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      scheduledForLater: true,
+      hasEventAt: true,
+      now: new Date(NOW).toISOString(),
+      nextShow: "2026-08-01T06:00:00.000Z",
+      eventAt: "2026-08-01T00:00:00.000Z",
+    });
   });
 
   test("the judge runs AFTER the claims teeth: a claim-fix refusal never reaches it", async () => {

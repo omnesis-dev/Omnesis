@@ -1363,7 +1363,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .unknown()
         .optional()
         .describe(
-          'Optional deadline structure. Recommended shape: {"type": "any_time"|"by"|"approximate"|"on_day", "date"?: "YYYY-MM-DD", "note"?: string} — a due "date" lets the feed rank this loop\'s briefs as due/overdue once it arrives.',
+          'Optional deadline structure. Recommended shape: {"type": "any_time"|"by"|"approximate"|"on_day", "date"?: "YYYY-MM-DD", "note"?: string} — Preserve source precision and modality: estimates use type "approximate" with a note containing the source window and event/date anchor, and date only when supported. Do not invent HH:mm, midnight or end-of-day precision. A review time is not the deadline.',
         ),
       actors: idList
         .optional()
@@ -1450,7 +1450,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .unknown()
         .optional()
         .describe(
-          "New deadline structure (same recommended shape as open_loop_create); pass null to clear.",
+          "New deadline structure (same recommended shape as open_loop_create); estimates stay approximate with a note and source event/date anchor. Do not invent clock precision or replace the deadline with a review time; pass null to clear.",
         ),
       actors: idList
         .optional()
@@ -1736,8 +1736,16 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       ),
       relevantUntil: isoDateTime.optional().describe("When the brief stops being relevant."),
       relatedLoopIds: idList.optional().describe("Open loops this brief is attached to."),
-      nextShow: isoDateTime.optional().describe("Earliest display time (default: immediately)."),
-      eventAt: isoDateTime.optional().describe("Time of the real-world event the brief concerns."),
+      nextShow: isoDateTime
+        .optional()
+        .describe(
+          "Earliest display time (default: immediately). For a justified later follow-up, choose its review time; this is not the source deadline. Do not surface a completion chase before the anchored expected window without separate evidence requiring earlier action.",
+        ),
+      eventAt: isoDateTime
+        .optional()
+        .describe(
+          "Time of the real-world event the brief concerns. Do not fabricate an exact timestamp from an approximate window or substitute a chosen follow-up time.",
+        ),
       supersedes: idList
         .optional()
         .describe(
@@ -1777,9 +1785,9 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "replace it, or force:true only if this card is genuinely distinct. " +
       "Cite the source documents; pass each factual, document-derived " +
       "statement the card asserts as assertedClaims (verified at write time " +
-      "against its quoted evidence); set eventAt for time-bound items and " +
+      "against its quoted evidence); set eventAt only for a source-supported event moment and " +
       "relevantUntil when relevance expires. Do NOT create a brief whose " +
-      "relevance has already passed. The brief is stamped with this run's id.",
+      "relevance has already passed. An informative future plan need not ask for action now; do not chase completion before its anchored expected window without separate evidence requiring earlier action. Use nextShow for a justified later follow-up. The brief is stamped with this run's id.",
     schema: briefCreateSchema,
     mutates: true,
     summarize: (args) => (args as { title?: string })?.title,
@@ -1855,6 +1863,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       // interrupt bar, so it is not created. An absent/disabled judge means no
       // gate; a configured judge outage also holds rather than shipping an
       // unreviewed card.
+      const judgeNow = clock();
       const judged = await runBriefJudgeGate(deps, {
         kind: a.kind,
         lane: deps.briefLane,
@@ -1863,8 +1872,11 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         ...(a.body !== undefined ? { body: a.body } : {}),
         citationCount: citations.known.length,
         relatedLoopCount: loops.known.length,
-        scheduledForLater: a.nextShow !== undefined && isoToMs(a.nextShow) > clock(),
+        scheduledForLater: a.nextShow !== undefined && isoToMs(a.nextShow) > judgeNow,
         hasEventAt: a.eventAt !== undefined,
+        now: new Date(judgeNow).toISOString(),
+        ...(a.eventAt !== undefined ? { eventAt: a.eventAt } : {}),
+        ...(a.nextShow !== undefined ? { nextShow: a.nextShow } : {}),
       });
       if (judged.kind === "hold") {
         if (deps.sweepId !== undefined) {
@@ -1955,7 +1967,12 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       urgency: fraction.optional().describe("Same anchors as brief_create."),
       relevantUntil: isoDateTime.nullable().optional(),
       relatedLoopIds: idList.optional(),
-      nextShow: isoDateTime.nullable().optional(),
+      nextShow: isoDateTime
+        .nullable()
+        .optional()
+        .describe(
+          "Earliest display time for a justified follow-up; separate from the source deadline. Do not chase completion before its expected window without evidence requiring earlier action.",
+        ),
       eventAt: isoDateTime.nullable().optional(),
       assertedClaims: assertedClaimsField
         .optional()
