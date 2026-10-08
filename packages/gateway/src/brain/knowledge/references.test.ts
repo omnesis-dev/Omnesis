@@ -28,6 +28,8 @@ describe("claim references", () => {
     });
   });
   it.each([
+    "doc:example_document",
+    "document:example_document",
     "https://example.com",
     "source:../secret",
     "source:x%22",
@@ -42,6 +44,11 @@ describe("claim references", () => {
     "wiki:<script>",
     `wiki:${"x".repeat(129)}`,
   ])("rejects %s", (raw) => {
-    expect(() => parseClaimReference(raw)).toThrow();
+    expect(() => parseClaimReference(raw)).toThrow(
+      expect.objectContaining({
+        code: "reference_invalid",
+        message: expect.stringContaining("Use source:<documentId> for a whole fetched document"),
+      }),
+    );
   });
 });

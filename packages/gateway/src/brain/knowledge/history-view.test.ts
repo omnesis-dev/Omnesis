@@ -47,7 +47,11 @@ it("paginates immutable historical summaries and reconstructs oversized markup e
   db.prepare("UPDATE knowledge_revisions SET title=? WHERE node_id=\'workshop\'").run(
     "\u0002".repeat(1000),
   );
-  for (let revision = 1; revision < 8; revision++) save(revision);
+  for (let revision = 1; revision < 8; revision++)
+    save(
+      revision,
+      `<claim id="date" refs="source:evidence">Workshop revision ${revision}.</claim>`,
+    );
   const summaries: number[] = [];
   let beforeRevision: number | undefined;
   do {
@@ -88,6 +92,41 @@ it("immediately fences old-only private ancestry before physical history cleanup
   expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_revisions").get()).toEqual({ n: 2 });
   expect(() => readKnowledgeHistory(db, { id: "workshop" })).toThrow("unavailable");
   expect(() => readKnowledgeHistory(db, { id: "workshop", revision: 1 })).toThrow("unavailable");
+});
+it("finds legacy claim loss through long no-op tails and retains same-length edits", () => {
+  const first = '<claim id="date" refs="source:evidence">Workshop starts Friday.</claim>';
+  const second = '<claim id="location" refs="source:evidence">Workshop is in the studio.</claim>';
+  save(0, first + second);
+  save(1, first); // Legacy replacement: no explicit removal-intent record.
+  const changed = first.replace("Friday", "Monday");
+  expect(changed.length).toBe(first.length);
+  save(2, changed);
+  for (let revision = 3; revision < 32; revision++) save(revision, changed);
+  const page = readKnowledgeHistory(db, { id: "workshop", limit: 2 });
+  if (!("items" in page)) throw new Error("Expected revision summaries");
+  expect(page.items.map((item) => item.revision)).toEqual([32, 3]);
+  expect(page.items[0]?.latest).toBe(true);
+  expect(page.nextBeforeRevision).toBe(3);
+  const older = readKnowledgeHistory(db, {
+    id: "workshop",
+    beforeRevision: page.nextBeforeRevision!,
+    limit: 2,
+  });
+  if (!("items" in older)) throw new Error("Expected revision summaries");
+  expect(older.items.map((item) => item.revision)).toEqual([2, 1]);
+  expect(older.items[0]).toMatchObject({
+    removedClaimCount: 1,
+    declaredRemovalIntentCount: 0,
+    previousRevision: 1,
+  });
+  expect(older.items[1]?.baseline).toBe(true);
+  expect(older.nextBeforeRevision).toBeNull();
+  const snapshot = readKnowledgeHistory(db, {
+    id: "workshop",
+    revision: older.items[0]!.previousRevision,
+  });
+  if (!("markdownChunk" in snapshot)) throw new Error("Expected history chunk");
+  expect(snapshot.markdownChunk).toBe(first + second);
 });
 it("keeps an emoji intact at the maximum character boundary", () => {
   const prefix = '<claim id="date" refs="source:evidence">';

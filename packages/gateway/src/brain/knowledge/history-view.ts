@@ -2,7 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { getKnowledgeNode } from "./storage-read.js";
-import { listKnowledgeNodeRevisions } from "./storage-history.js";
+import {
+  listKnowledgeNodeRevisions,
+  listKnowledgeContentRevisionSummaries,
+} from "./storage-history.js";
 import { KnowledgeStorageError } from "./types.js";
 import type Database from "better-sqlite3";
 
@@ -84,29 +87,18 @@ export function readKnowledgeHistory(db: Database.Database, request: KnowledgeHi
     return best;
   }
   const limit = Math.max(1, Math.min(5, request.limit ?? 5));
-  const revisions = listKnowledgeNodeRevisions(db, request.id, {
+  const revisions = listKnowledgeContentRevisionSummaries(db, request.id, {
     beforeRevision: request.beforeRevision,
     limit: limit + 1,
   });
-  const items = revisions.slice(0, limit).map((snapshot) => ({
-    revision: snapshot.revision,
-    previousRevision: snapshot.previousRevision,
-    title: snapshot.title,
-    createdAt: snapshot.createdAt,
-    historicalValidity: snapshot.validity,
-    markdownChars: snapshot.markdown.length,
-    changedClaimCount: snapshot.diff.changedClaimIds.length,
-    removedClaimCount: snapshot.diff.claimRemovals?.length ?? 0,
-    titleChanged: snapshot.diff.titleChanged,
-    validityChanged: snapshot.diff.validityChanged,
-  }));
+  const items = revisions.slice(0, limit);
   const result = {
     warning: WARNING,
     currentRevision: node.revision,
     items,
     nextBeforeRevision: revisions.length > limit ? items.at(-1)!.revision : null,
     instruction:
-      "Request {id, revision} to read an immutable historical snapshot in bounded chunks. Page older revisions with nextBeforeRevision. These summaries carry no current evidence versions.",
+      "Summaries include the newest snapshot, content/title changes and the oldest retained baseline; verification-only repeats are skipped. removedClaimCount counts actual prior claim IDs missing from that snapshot; declaredRemovalIntentCount separately counts recorded intent. Follow nextBeforeRevision to inspect older changes, then request {id,revision} and all nextOffset chunks for selected snapshots. These summaries carry no current evidence versions.",
   };
   if (Buffer.byteLength(JSON.stringify(result)) > MAX_SUMMARY_RESPONSE_BYTES)
     throw new KnowledgeStorageError(

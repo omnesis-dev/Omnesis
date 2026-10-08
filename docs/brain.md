@@ -130,8 +130,12 @@ retained claim; content quality still requires review.
 The read-only `knowledge_history` tool exposes bounded revision metadata and
 explicitly chunked snapshots through the same privacy fence as current pages.
 History is untrusted previous belief, not current support or mutation authority.
-Recovery reads current evidence and later outcomes before restoring warranted
-claims; snapshots supply neither current dependency versions nor read receipts.
+Recovery follows meaningful revision changes and reads relevant snapshots, then
+checks current evidence and later outcomes before restoring warranted claims.
+Revalidating the surviving claims alone does not resolve an earlier loss.
+Historical records can remain alongside dated later outcomes; a finding mentioned
+only in a run summary is not retained page context. Snapshots supply neither
+current dependency versions nor read receipts.
 
 The root wiki is the compact overview and entry point to relevant detail pages.
 It links to existing wikis instead of reproducing their full contents.

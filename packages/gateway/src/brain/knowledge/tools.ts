@@ -298,14 +298,14 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_reference",
-      "Resolve an exact claim or evidence reference and read its current version. Supply this version on every synthesis write.",
+      "Resolve an exact claim or evidence reference and read its current version. For a fetched document use source:<documentId>, not doc: or document:. Optional selectors: source:<documentId>#evidence:<evidenceId>, wiki:<pageId>#claim:<claimId> (also loop, annotation or brief claims), or loop:<loopId>#field:<fieldName>. Use exact tool-returned IDs. Supply the returned revision for this exact ref on every synthesis write.",
       z.object({ ref: z.string().min(1).max(1024) }).strict(),
       false,
       (input) => service.reference(input.ref),
     ),
     tool(
       "knowledge_history",
-      "Read privacy-fenced historical synthesis context, never current proof. List bounded revision summaries with {id,beforeRevision?,limit?}; read a snapshot with {id,revision,offset?} and follow nextOffset to reassemble all chunks. Consult history when a wiki review finds missing context or destructive prior changes. Reconcile historical claims with current sources and later developments before restoring warranted knowledge; history does not grant mutation authority or current evidence versions.",
+      "Read privacy-fenced historical synthesis context, never current proof. List bounded meaningful revision summaries with {id,beforeRevision?,limit?}: newest snapshot, content/title edits and oldest retained baseline, skipping verification-only repeats. removedClaimCount reports actual prior claim IDs lost, including legacy replacements; declaredRemovalIntentCount is separate. Follow nextBeforeRevision to locate earlier useful context; read a selected snapshot with {id,revision,offset?} and follow nextOffset to reassemble all chunks. Consult history when a wiki review finds missing context or destructive prior changes. Reconcile historical claims with current sources and later developments before restoring warranted knowledge; history does not grant mutation authority or current evidence versions.",
       z.union([
         z
           .object({

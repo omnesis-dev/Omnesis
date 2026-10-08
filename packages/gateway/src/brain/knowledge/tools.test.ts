@@ -431,3 +431,30 @@ it("bounds decorated frontier responses without acknowledging omitted temporal c
     .invoke({ documentId: "evidence" }, context);
   expect(mark).toHaveBeenCalledWith(["casualty"], "run");
 });
+
+it("returns actionable reference syntax errors without leaking existence and accepts a corrected source ref", async () => {
+  const reference = buildKnowledgeTools(service, { runId: "run" }).find(
+    (tool) => tool.name === "knowledge_reference",
+  )!;
+  const malformed = await Promise.all(
+    ["doc:evidence", "doc:absent", "document:evidence", "document:absent"].map((ref) =>
+      reference.invoke({ ref }, context),
+    ),
+  );
+  for (const result of malformed) expect(result).toEqual(malformed[0]);
+  expect(malformed[0]).toMatchObject({
+    kind: "error",
+    code: "reference_invalid",
+    message: expect.stringContaining("Use source:<documentId> for a whole fetched document"),
+  });
+  const selector = await reference.invoke({ ref: "source:evidence#claim:date" }, context);
+  expect(selector).toMatchObject({
+    kind: "error",
+    code: "reference_invalid",
+    message: expect.stringContaining("source:<documentId>#evidence:<evidenceId>"),
+  });
+  expect(await reference.invoke({ ref: "source:evidence" }, context)).toMatchObject({
+    kind: "structured",
+    data: { ref: "source:evidence", revision: "v1", text: "Workshop Friday." },
+  });
+});
