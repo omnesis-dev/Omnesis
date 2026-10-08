@@ -30,6 +30,10 @@ import {
 } from "@omnesis/core";
 import { STREAM_COLUMN } from "../analytics/internal.js";
 import { ScopedSqlDeniedError } from "../analytics/sandbox-tables.js";
+import {
+  readKnowledgeDocumentContext,
+  resolveKnowledgeDocumentAlias,
+} from "../brain/knowledge/document-context.js";
 import { readDocConnections } from "../brain/doc-connections.js";
 import { assemblePersonLookup, type PersonLookupGate } from "../domain/person-lookup.js";
 import {
@@ -415,107 +419,118 @@ export function createGatewayDocumentPort(
   authorization?: CorpusAuthorization,
 ): DocumentPort {
   return {
+    supportsKnowledgeAliases: true,
     async fetch(
       documentId: string,
       opts?: { includeNeighbors?: boolean },
     ): Promise<DocumentPortResult | null> {
-      const permitted = authorization ? permittedSourceIds(db, authorization) : null;
-      const rows =
-        options?.maxStoredDocumentBytes === undefined && !permitted
-          ? listDocumentsByIds(db, [documentId])
-          : db.transaction((id: string, maxBytes: number | undefined) => {
-              const size = db
-                .prepare<[string], { source_id: string; stored_bytes: number }>(
-                  `SELECT
+      return db.transaction(() => {
+        const resolvedId = resolveKnowledgeDocumentAlias(db, documentId);
+        if (!resolvedId) return null;
+        documentId = resolvedId;
+        const permitted = authorization ? permittedSourceIds(db, authorization) : null;
+        const rows =
+          options?.maxStoredDocumentBytes === undefined && !permitted
+            ? listDocumentsByIds(db, [documentId])
+            : db.transaction((id: string, maxBytes: number | undefined) => {
+                const size = db
+                  .prepare<[string], { source_id: string; stored_bytes: number }>(
+                    `SELECT
                      source_id,
                      length(CAST(content AS BLOB)) +
                      length(CAST(metadata AS BLOB)) +
                      length(CAST(title AS BLOB)) AS stored_bytes
                    FROM documents
                    WHERE id = ?`,
-                )
-                .get(id);
-              if (size && permitted && !permitted.has(size.source_id)) return [];
-              if (size && maxBytes !== undefined && size.stored_bytes > maxBytes) {
-                throw new Error("Document exceeds the configured read-size limit");
-              }
-              // The size check and full read share one synchronous SQLite
-              // transaction/snapshot, so a collector update cannot enlarge
-              // the body between authorization and materialization.
-              return listDocumentsByIds(db, [id]);
-            })(documentId, options?.maxStoredDocumentBytes);
-      const row = rows[0];
-      if (!row) return null;
-      const sourceType = row.sourceId.split(":", 1)[0] ?? row.sourceId;
-      let metadata: Record<string, unknown> | undefined;
-      try {
-        metadata = JSON.parse(row.metadata) as Record<string, unknown>;
-      } catch {
-        metadata = undefined;
-      }
-      const url = typeof metadata?.sourceUrl === "string" ? metadata.sourceUrl : undefined;
-      const appUrl = typeof metadata?.appUrl === "string" ? metadata.appUrl : undefined;
-      const documentType =
-        typeof metadata?.documentType === "string" ? metadata.documentType : undefined;
-      const mimeType = extraMimeType(metadata);
-      const ref: DocRef = {
-        documentId: row.id,
-        sourceType,
-        sourceId: row.sourceId,
-        documentType,
-        title: row.title,
-        snippet: row.content.slice(0, 500),
-        ts: parseEpochMillis(row.sourceCreatedAt),
-        url,
-        appUrl,
-        mimeType,
-        unitName: unitNameFor(syncStatus, row.sourceId),
-      };
-      // Inline connections on the deep read: open loops the document is a
-      // source for, the durable annotations recorded about it (grounded priors
-      // to reground, never facts), and the temporal annotations it grounds.
-      // Only loop and temporal connections require experimental mode.
-      if (!authorization?.restricted) {
-        const conn = readDocConnections(db, row.id, {
-          annotations: true,
-          temporalAnnotations: experimentalVisible(),
-          openLoops: experimentalVisible(),
-        });
-        if (conn.openLoops.length > 0) ref.openLoops = conn.openLoops;
-        if (conn.annotations.length > 0) ref.annotations = conn.annotations;
-        if (conn.temporalAnnotations.length > 0) {
-          ref.temporalAnnotations = conn.temporalAnnotations;
+                  )
+                  .get(id);
+                if (size && permitted && !permitted.has(size.source_id)) return [];
+                if (size && maxBytes !== undefined && size.stored_bytes > maxBytes) {
+                  throw new Error("Document exceeds the configured read-size limit");
+                }
+                // The size check and full read share one synchronous SQLite
+                // transaction/snapshot, so a collector update cannot enlarge
+                // the body between authorization and materialization.
+                return listDocumentsByIds(db, [id]);
+              })(documentId, options?.maxStoredDocumentBytes);
+        const row = rows[0];
+        if (!row) return null;
+        const sourceType = row.sourceId.split(":", 1)[0] ?? row.sourceId;
+        let metadata: Record<string, unknown> | undefined;
+        try {
+          metadata = JSON.parse(row.metadata) as Record<string, unknown>;
+        } catch {
+          metadata = undefined;
         }
-      }
-      const result: DocumentPortResult = {
-        ref,
-        document: {
-          id: row.id,
+        const url = typeof metadata?.sourceUrl === "string" ? metadata.sourceUrl : undefined;
+        const appUrl = typeof metadata?.appUrl === "string" ? metadata.appUrl : undefined;
+        const documentType =
+          typeof metadata?.documentType === "string" ? metadata.documentType : undefined;
+        const mimeType = extraMimeType(metadata);
+        const ref: DocRef = {
+          documentId: row.id,
+          sourceType,
           sourceId: row.sourceId,
+          documentType,
           title: row.title,
-          content: row.content,
-          metadata,
-          sourceCreatedAt: row.sourceCreatedAt,
-          updatedAt: row.updatedAt,
-        },
-      };
-      // Honor includeNeighbors: a bounded 1-hop expansion via the one
-      // shared walker — compact DocRefs, bodies dropped, ordered
-      // most-structural-first (newest within a type). `neighborsTruncated`
-      // tells the agent the set is a recency-ordered sample, not the full
-      // neighbourhood.
-      if (opts?.includeNeighbors && !authorization?.restricted) {
-        const expansion = expandOneHop(
-          db,
-          row.id,
-          options?.graphContext ? { policy: graphContextPolicy() } : {},
-        );
-        if (expansion.neighbors.length > 0) {
-          result.neighbors = expansion.neighbors.map((n) => oneHopNeighborToDocRef(n, syncStatus));
-          result.neighborsTruncated = expansion.truncated;
+          snippet: row.content.slice(0, 500),
+          ts: parseEpochMillis(row.sourceCreatedAt),
+          url,
+          appUrl,
+          mimeType,
+          unitName: unitNameFor(syncStatus, row.sourceId),
+        };
+        // Inline connections on the deep read: open loops the document is a
+        // source for, the durable annotations recorded about it (grounded priors
+        // to reground, never facts), and the temporal annotations it grounds.
+        // Only loop and temporal connections require experimental mode.
+        if (!authorization?.restricted) {
+          const conn = readDocConnections(db, row.id, {
+            annotations: true,
+            temporalAnnotations: experimentalVisible(),
+            openLoops: experimentalVisible(),
+          });
+          if (conn.openLoops.length > 0) ref.openLoops = conn.openLoops;
+          if (conn.annotations.length > 0) ref.annotations = conn.annotations;
+          if (conn.temporalAnnotations.length > 0) {
+            ref.temporalAnnotations = conn.temporalAnnotations;
+          }
         }
-      }
-      return result;
+        const result: DocumentPortResult = {
+          ref,
+          document: {
+            id: row.id,
+            sourceId: row.sourceId,
+            title: row.title,
+            content: row.content,
+            metadata,
+            sourceCreatedAt: row.sourceCreatedAt,
+            updatedAt: row.updatedAt,
+            ...(!authorization?.restricted
+              ? { knowledgeContext: readKnowledgeDocumentContext(db, row.id) }
+              : {}),
+          },
+        };
+        // Honor includeNeighbors: a bounded 1-hop expansion via the one
+        // shared walker — compact DocRefs, bodies dropped, ordered
+        // most-structural-first (newest within a type). `neighborsTruncated`
+        // tells the agent the set is a recency-ordered sample, not the full
+        // neighbourhood.
+        if (opts?.includeNeighbors && !authorization?.restricted) {
+          const expansion = expandOneHop(
+            db,
+            row.id,
+            options?.graphContext ? { policy: graphContextPolicy() } : {},
+          );
+          if (expansion.neighbors.length > 0) {
+            result.neighbors = expansion.neighbors.map((n) =>
+              oneHopNeighborToDocRef(n, syncStatus),
+            );
+            result.neighborsTruncated = expansion.truncated;
+          }
+        }
+        return result;
+      })();
     },
   };
 }

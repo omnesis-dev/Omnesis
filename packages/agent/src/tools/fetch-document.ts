@@ -24,7 +24,7 @@ export const fetchDocumentArgsSchema = z.object({
     .min(1)
     .describe(
       "Document ID returned by a prior search_documents call (the `documentId` " +
-        "field on a result item).",
+        "field on a result item), or an alias explicitly supported by this tool description.",
     ),
   includeNeighbors: z
     .boolean()
@@ -49,7 +49,10 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
       "Fetch the full body of a previously surfaced document. Returns the " +
       "document plus, if asked, its neighbors in the reference graph. Call " +
       "this when a search snippet is insufficient — don't fetch every " +
-      "candidate, only the ones likely to answer the question.",
+      "candidate, only the ones likely to answer the question." +
+      (deps.port.supportsKnowledgeAliases
+        ? " Also accepts wiki:<pageId> links from maintained context. A knowledgeContext overlay separates claim provenance from navigation; follow its documentIds with fetch tools. Missing or stale projections are unavailable, so use search instead."
+        : ""),
     schema: fetchDocumentArgsSchema,
     summarize(args: unknown): string | undefined {
       if (!args || typeof args !== "object") return undefined;

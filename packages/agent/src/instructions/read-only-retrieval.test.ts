@@ -10,6 +10,27 @@ import {
   renderReadOnlyRetrievalPlaybook,
 } from "./read-only-retrieval.js";
 
+describe("maintained knowledge retrieval", () => {
+  it("uses returned document IDs for orientation while keeping source grounding explicit", () => {
+    const guidance = renderCognitionRetrievalGuidance();
+    expect(guidance).toContain("open it with `fetch_many` using its returned `documentId`");
+    expect(guidance).toContain("not independent proof");
+    expect(guidance).toContain(
+      "Context or project links help navigation; they do not establish a claim",
+    );
+    expect(guidance).toContain(
+      "not finding a completion record does not prove that something never happened",
+    );
+    expect(guidance).toContain("do not force a wiki into every answer");
+  });
+
+  it("omits maintained knowledge guidance on surfaces without cognition", () => {
+    expect(renderReadOnlyRetrievalPlaybook({ includeCognition: false })).not.toContain(
+      "## Maintained wiki pages",
+    );
+  });
+});
+
 describe("canonical read-only retrieval instructions", () => {
   it("renders live source filters and DuckDB schema without provider knowledge", () => {
     const instructions = renderReadOnlyRetrievalPlaybook({

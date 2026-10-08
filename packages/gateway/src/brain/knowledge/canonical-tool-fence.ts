@@ -144,7 +144,9 @@ export function buildMaintenanceCanonicalTools(
               if (version === undefined)
                 throw new KnowledgeStorageError(
                   "revision_conflict",
-                  "Fetch or search this canonical owner before revising it.",
+                  owner.kind === "doc_annotation" || owner.kind === "person_annotation"
+                    ? `Read annotation_search({${owner.kind === "doc_annotation" ? "docId: targetDocumentId" : "personId: targetPersonId"}}) and review the returned annotation before revising or retiring it. knowledge_fetch and evidence-reference reads do not supply this canonical owner receipt.`
+                    : "Fetch or search this canonical owner before revising it.",
                 );
               owner.version = version;
             }

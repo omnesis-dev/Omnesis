@@ -40,7 +40,10 @@ export function createFetchManyTool(deps: FetchDocumentToolDeps): ToolHandle {
       "Fetch the full bodies of SEVERAL previously surfaced documents at once, " +
       "concurrently, in one round-trip. Put each documentId in `documents`. " +
       "Returns one document (or error) per entry in order. Only fetch the hits " +
-      "likely to answer the question, not every candidate.",
+      "likely to answer the question, not every candidate." +
+      (deps.port.supportsKnowledgeAliases
+        ? " documentId also accepts wiki:<pageId> links from maintained context. knowledgeContext separates claim provenance from navigation; follow returned documentIds, and use search when a page is unavailable."
+        : ""),
     schema,
     summarize(args: unknown): string | undefined {
       const d = (args as { documents?: unknown[] } | null)?.documents;

@@ -110,6 +110,8 @@ export interface DocumentPortResult {
 }
 
 export interface DocumentPort {
+  /** This adapter resolves canonical wiki links through the same authorized corpus read. */
+  readonly supportsKnowledgeAliases?: boolean;
   fetch(
     documentId: string,
     opts?: { includeNeighbors?: boolean },

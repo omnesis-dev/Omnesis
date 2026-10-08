@@ -5,6 +5,12 @@ tracked outcomes (loops), document and person annotations, a time index, and
 briefs. A compact **root wiki** provides current orientation to agent runs.
 These records are synthesis, not independent evidence.
 
+The answering agent can open indexed knowledge pages through its ordinary document
+fetch tools, including `wiki:<pageId>` links. Reads include bounded claim evidence
+pointers and separate navigation links, with document IDs that can be fetched for
+verification. Unavailable or obsolete projections fall back to search. Restricted
+source grants do not receive this context overlay.
+
 A document annotation should add context established across sources or substantially
 compress a long substantive document. Restating a short source, its title, or its
 boilerplate does not earn another record. Person annotations and time-index entries

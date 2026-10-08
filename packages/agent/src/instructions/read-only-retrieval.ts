@@ -170,6 +170,12 @@ export function renderCognitionRetrievalGuidance(): string {
 - \`entity_context\` returns the curated neighbourhood around one document, person, loop, or dated entry: **build on it, don't re-derive it.** Use the _curated_ overlay as the backbone for “what is connected to this” rather than reconstructing the same context with many calls. Add a confirming corpus search when the request asks for everything, because curated context is not the whole corpus.
 - Speak in the user's language. Do not expose internal terms such as projections, annotations, or loops when ordinary phrases such as calendar event, inferred date, or outstanding item communicate the result.
 
+## Maintained wiki pages
+
+When search returns a maintained page relevant to the question (document type \`knowledge\`), open it with \`fetch_many\` using its returned \`documentId\`. Use its synthesis to orient the investigation and locate related evidence instead of reconstructing the topic from scratch. The root wiki is orientation too, not independent proof.
+
+Follow supporting evidence for decisive, disputed, or current-status claims, and check the dates of the underlying sources. Context or project links help navigation; they do not establish a claim. A stale page or missing support is a lead to investigate, not a fact to repeat. Search for later evidence when needed: an old condition does not establish today's status, and not finding a completion record does not prove that something never happened. If no relevant page exists, use the ordinary source retrieval path; do not force a wiki into every answer.
+
 ## When a document and what is tracked about it disagree
 
 A document can carry tracked items — outstanding items it is a source for, dated entries it grounds, notes recorded about it. Some surfaces attach them to the document result directly; on the rest, \`entity_context\` names them for any document. Either way those items were written **after** the document, from everything known by then, so they can describe a situation the document itself predates.

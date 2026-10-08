@@ -5,7 +5,8 @@ import Database from "better-sqlite3";
 import { z } from "zod";
 import { beforeEach, afterEach, it, expect } from "vitest";
 import { createLogger, type EntailCapability } from "@omnesis/core";
-import { createAnnotationStorageTables } from "../storage/annotations.js";
+import { createAnnotationStorageTables, createDocAnnotation } from "../storage/annotations.js";
+import { createConsumptionEdgesTables } from "../storage/consumption-edges.js";
 import { createBrief, getBrief } from "../storage/briefs.js";
 import { createBriefClaimsTables } from "../storage/brief-claims.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
@@ -486,6 +487,60 @@ it("requires annotation reconciliation for the actual subject", async () => {
   expect(
     await tools.find((tool) => tool.name === "annotate_durable")!.invoke(args, parallelContext),
   ).toMatchObject({ kind: "structured" });
+});
+
+it("points annotation retirement to the canonical subject read that permits the write", async () => {
+  createConsumptionEdgesTables(db);
+  createDocAnnotation(
+    db,
+    {
+      id: "workshop-note",
+      docId: "evidence",
+      claimType: "topic",
+      claimText: "The workshop begins Friday.",
+      evidenceDocId: "evidence",
+      evidenceQuote: "The workshop begins Friday.",
+      confidence: 0.8,
+      claimBasis: "quoted",
+      createdByRun: "prior",
+    },
+    1,
+  );
+  const tools = buildMaintenanceCanonicalTools(
+    db,
+    directWriteGate(db),
+    { batchId: "batch", runId: "run" },
+    (writeGate) =>
+      buildAnnotationTools({
+        db,
+        writeGate,
+        clock: () => 10,
+        runId: "run",
+        log: createLogger("test:annotation-retirement"),
+      }),
+    { parallel: true },
+  );
+  const retract = tools.find((tool) => tool.name === "annotation_retract")!;
+  const refusal = await retract.invoke({ id: "workshop-note" }, parallelContext);
+  expect(refusal).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+    message: expect.stringContaining("annotation_search({docId: targetDocumentId})"),
+  });
+  expect(refusal).toMatchObject({
+    message: expect.stringContaining("knowledge_fetch and evidence-reference reads do not supply"),
+  });
+  expect(db.prepare("SELECT id FROM doc_annotations WHERE id='workshop-note'").get()).toBeTruthy();
+  await tools
+    .find((tool) => tool.name === "annotation_search")!
+    .invoke({ docId: "evidence" }, parallelContext);
+  expect(await retract.invoke({ id: "workshop-note" }, parallelContext)).toMatchObject({
+    kind: "structured",
+    resultType: "annotation.retracted",
+  });
+  expect(
+    db.prepare("SELECT id FROM doc_annotations WHERE id='workshop-note'").get(),
+  ).toBeUndefined();
 });
 
 it("rejects a fetched loop update after a ledger append at the same timestamp", async () => {
