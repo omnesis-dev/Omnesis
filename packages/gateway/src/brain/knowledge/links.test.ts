@@ -41,7 +41,7 @@ function node(id: string, kind: KnowledgeNodeKind = "wiki") {
   ).node;
 }
 function link(fromId: string, toId: string, kind: KnowledgeLinkKind) {
-  setKnowledgeLink(db, { fromId, toId, kind, fromRevision: 1, toRevision: 1 });
+  setKnowledgeLink(db, { fromId, toId, kind, fromRevision: 1, toRevision: 1 }, undefined, 1);
 }
 describe("synthesis organization links", () => {
   it("organizes separate outcomes under context without creating evidence or closing the parent", () => {
@@ -92,14 +92,19 @@ describe("synthesis organization links", () => {
       2,
     );
     expect(() => link("first", "second", "related_to")).toThrow(/changed/);
-    setKnowledgeLink(db, {
-      fromId: "first",
-      toId: "second",
-      kind: "related_to",
-      fromRevision: 2,
-      toRevision: 1,
-      remove: true,
-    });
+    setKnowledgeLink(
+      db,
+      {
+        fromId: "first",
+        toId: "second",
+        kind: "related_to",
+        fromRevision: 2,
+        toRevision: 1,
+        remove: true,
+      },
+      undefined,
+      1,
+    );
     expect(listKnowledgeLinks(db, "second")).toEqual([]);
   });
 });
@@ -130,26 +135,36 @@ it("durably coalesces parent review only for actual hierarchical mutations, incl
     db.prepare("SELECT COUNT(*) AS n FROM knowledge_work WHERE subject_id='parent'").get(),
   ).toEqual({ n: 1 });
   db.prepare("UPDATE knowledge_work SET status='batched' WHERE subject_id='parent'").run();
-  setKnowledgeLink(db, {
-    fromId: "child-a",
-    toId: "parent",
-    kind: "part_of",
-    fromRevision: 1,
-    toRevision: 1,
-    remove: true,
-  });
+  setKnowledgeLink(
+    db,
+    {
+      fromId: "child-a",
+      toId: "parent",
+      kind: "part_of",
+      fromRevision: 1,
+      toRevision: 1,
+      remove: true,
+    },
+    undefined,
+    1,
+  );
   expect(
     db.prepare("SELECT status FROM knowledge_work WHERE subject_id='parent' ORDER BY status").all(),
   ).toEqual([{ status: "batched" }, { status: "pending" }]);
   const before = db.prepare("SELECT COUNT(*) AS n FROM knowledge_work").get();
-  setKnowledgeLink(db, {
-    fromId: "child-a",
-    toId: "parent",
-    kind: "part_of",
-    fromRevision: 1,
-    toRevision: 1,
-    remove: true,
-  });
+  setKnowledgeLink(
+    db,
+    {
+      fromId: "child-a",
+      toId: "parent",
+      kind: "part_of",
+      fromRevision: 1,
+      toRevision: 1,
+      remove: true,
+    },
+    undefined,
+    1,
+  );
   expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_work").get()).toEqual(before);
   expect(getKnowledgeNode(db, "parent")?.revision).toBe(1);
   expect(getKnowledgeDependencies(db, "parent")).toEqual([]);

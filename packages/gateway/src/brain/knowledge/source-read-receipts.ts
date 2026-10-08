@@ -67,12 +67,24 @@ export function withKnowledgeSourceReadReceipts(
         if (tool.name === "knowledge_discovery_complete") {
           const parsed = completion.safeParse(args);
           const item = parsed.success ? offered.get(parsed.data.id) : undefined;
+          // A read hint must name an actually offered source, not a guessed ID.
+          // The engine still rechecks durable frontier authority at settlement.
           if (
             parsed.success &&
             parsed.data.id.startsWith("source:") &&
-            (!item ||
-              item.fingerprint !== parsed.data.inputFingerprint ||
-              readVersions.get(parsed.data.id.slice(7)) !== item.revision ||
+            (!item || item.fingerprint !== parsed.data.inputFingerprint)
+          )
+            return {
+              kind: "error",
+              code: "revision_conflict",
+              message:
+                "This source ID and inputFingerprint do not match a source offered in this run. Request knowledge_next_frontier and copy its exact offered id and inputFingerprint before retrying; do not substitute a search result or reconstruct an ID.",
+            };
+          if (
+            parsed.success &&
+            parsed.data.id.startsWith("source:") &&
+            item &&
+            (readVersions.get(parsed.data.id.slice(7)) !== item.revision ||
               snapshot(parsed.data.id.slice(7))?.revision !== item.revision ||
               !isKnowledgeEvidenceReadable(db, parsed.data.id.slice(7)))
           )

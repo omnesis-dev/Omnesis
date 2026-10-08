@@ -17,6 +17,7 @@ import {
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { proposeKnowledgeCandidate, getKnowledgeCandidate } from "./discovery.js";
 import { directKnowledgeGate } from "./writer.js";
+import { WikiPublicationReads } from "./wiki-publication.js";
 
 let db: Database.Database;
 beforeEach(() => {
@@ -271,6 +272,7 @@ it.each(["abandoned", "reassigned"])(
     db.exec(
       "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('batch','run','fingerprint','routine','running',1,1)",
     );
+    db.prepare("INSERT INTO documents VALUES(?,?,?)").run("materials", "Bring paper.", "m1");
     const candidate = proposeKnowledgeCandidate(
       db,
       {
@@ -278,25 +280,40 @@ it.each(["abandoned", "reassigned"])(
         identityKey: "project:workshop",
         title: "Workshop",
         scope: "Planning",
-        evidenceVersions: { evidence: "v1" },
+        evidenceVersions: { evidence: "v1", materials: "m1" },
       },
       1,
     );
-    const brain = service({
-      verify: async () => {
-        if (change === "abandoned") db.exec("UPDATE knowledge_batches SET status='abandoned'");
-        else db.exec("UPDATE knowledge_batches SET run_id='replacement'");
-        return { label: "entailment", probability: 1 };
-      },
-      dispose: () => {},
+    const reads = new WikiPublicationReads(db);
+    reads.library();
+    reads.candidatesRead([candidate.id], true);
+    const creationReceipt = reads.receipt(candidate.id, {
+      reason: "The workshop planning scope combines its date and materials requirements.",
+      relatedPageIds: [],
     });
+    const verify = vi.fn(async () => {
+      if (change === "abandoned") db.exec("UPDATE knowledge_batches SET status='abandoned'");
+      else db.exec("UPDATE knowledge_batches SET run_id='replacement'");
+      return { label: "entailment" as const, probability: 1 };
+    });
+    const brain = service({ verify, dispose: () => {} });
     await expect(
       brain.save(
-        proposal("new-page"),
-        { candidateId: candidate.id, expectedCandidateRevision: candidate.revision },
+        {
+          ...proposal("new-page"),
+          markdown:
+            '<claim id="date" refs="source:evidence">Workshop Friday.</claim> <claim id="materials" refs="source:materials">Bring paper.</claim>',
+          inputVersions: { "source:evidence": "v1", "source:materials": "m1" },
+        },
+        {
+          candidateId: candidate.id,
+          expectedCandidateRevision: candidate.revision,
+          creationReceipt,
+        },
         { batchId: "batch", runId: "run" },
       ),
     ).rejects.toMatchObject({ code: "revision_conflict" });
+    expect(verify).toHaveBeenCalled();
     expect(getKnowledgeNode(db, "new-page")).toBeNull();
     expect(getKnowledgeCandidate(db, candidate.id)?.status).toBe("proposed");
   },
@@ -551,7 +568,7 @@ it.each([
   { reason: "Missing", ref: "wiki:upstream#claim:date", supplied: undefined },
   { reason: "Stale", ref: "wiki:upstream#claim:date", supplied: 0 },
 ])(
-  "identifies $reason dependency versions for $ref and requires an explicit refreshed read",
+  "identifies $reason dependency versions for $ref and explains receipt recovery without refreshing overrides",
   async ({ reason, ref, supplied }) => {
     const verify = vi.fn(verifier.verify);
     const brain = service({ ...verifier, verify });
@@ -571,7 +588,17 @@ it.each([
       message: expect.stringContaining(`knowledge_reference with {"ref":"${ref}"}`),
     });
     await expect(saving).rejects.toMatchObject({
-      message: expect.stringContaining(`set node.inputVersions["${ref}"] to its returned revision`),
+      message: expect.stringContaining(
+        `omit node.inputVersions["${ref}"] (or the whole map) to use its read receipt`,
+      ),
+    });
+    await expect(saving).rejects.toMatchObject({
+      message: expect.stringContaining("Explicit overrides are never refreshed silently"),
+    });
+    await expect(saving).rejects.toMatchObject({
+      message: expect.stringContaining(
+        "Scoped owner synthesis tools still require explicit inputVersions",
+      ),
     });
     expect(verify).not.toHaveBeenCalled();
     expect(getKnowledgeNode(db, "dependent")).toBeNull();

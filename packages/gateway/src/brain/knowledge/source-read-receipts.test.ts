@@ -144,10 +144,35 @@ it("requires its own offered snapshot and does not inherit predecessor read rece
   await predecessor.invoke("knowledge_next_frontier");
   const successor = fixture();
   expect(await successor.invoke("knowledge_discovery_complete", completion)).toMatchObject({
-    code: "source_read_required",
+    code: "revision_conflict",
   });
   await successor.invoke("knowledge_next_frontier");
   expect(await successor.invoke("knowledge_discovery_complete", completion)).toMatchObject({
     code: "source_read_required",
   });
 });
+
+it.each([
+  { id: "source:other", inputFingerprint: "fp" },
+  { id: "source:doc", inputFingerprint: "old-fingerprint" },
+])(
+  "rejects unoffered completion $id/$inputFingerprint before suggesting a source read",
+  async (input) => {
+    const f = fixture();
+    await f.invoke("knowledge_next_frontier");
+    // Even a valid full read cannot grant authority to a different ID/fingerprint.
+    await f.invoke("fetch_many", { documents: [{ documentId: "doc" }] });
+    const result = await f.invoke("knowledge_discovery_complete", input);
+    expect(result).toMatchObject({
+      kind: "error",
+      code: "revision_conflict",
+      message: expect.stringContaining("copy its exact offered id and inputFingerprint"),
+    });
+    expect(result).not.toMatchObject({ code: "source_read_required" });
+    expect(f.settled).not.toHaveBeenCalled();
+    expect(await f.invoke("knowledge_discovery_complete", completion)).toMatchObject({
+      kind: "structured",
+    });
+    expect(f.settled).toHaveBeenCalledOnce();
+  },
+);

@@ -232,6 +232,60 @@ describe("assembled Cognition Steward through the real driver", () => {
     });
   }
 
+  test("maintenance identity reads only current readable sources owned by its batch", async () => {
+    const { loopId } = await seedLoopWithBrief();
+    for (const id of ["original", "reply", "unrelated"]) {
+      db.prepare(
+        `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,metadata,source_created_at,source_updated_at,ingested_at,updated_at)
+        VALUES (?, 'fixture', ?, ?, ?, 'fictional body', 'v1', '{}', '2026-07-01', '2026-07-01', '2026-07-01', '2026-07-01')`,
+      ).run(id, `fixture-${id}`, id, id);
+    }
+    db.prepare("INSERT INTO open_loop_docs(loop_id,doc_id) VALUES (?,'original')").run(loopId);
+    db.prepare(
+      `INSERT INTO document_links(source_doc_id,link_type,raw_target,normalized_target,target_doc_id,resolved_at,created_at)
+      VALUES ('reply','part-of-thread','original','original','original','2026-07-01','2026-07-01')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at)
+      VALUES ('owned-batch','owned-run','fp','soon','running',?,?)`,
+    ).run(NOW, NOW);
+    db.prepare(
+      `INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,batch_id)
+      VALUES ('work','reply','source','change','v1',?,'soon',?,?,?,'batched','owned-batch')`,
+    ).run(NOW, NOW, NOW, NOW);
+    const read = (runId: string) =>
+      buildCognitionToolset(
+        toolsetDeps,
+        claimed({
+          id: runId,
+          kind: "synthesis",
+          payload: { focus: "knowledge-maintenance", batchId: "owned-batch" },
+        }),
+      ).find((t) => t.name === "open_loop_search")!;
+    const search = read("owned-run");
+    const ids = async (tool: ToolHandle) =>
+      (
+        structuredData(await tool.invoke({ query: "unmatched-lexical-probe" })).loops as Array<{
+          id: string;
+        }>
+      ).map((row) => row.id);
+    expect(await ids(search)).toContain(loopId);
+    expect(await ids(read("foreign-run"))).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET subject_id='unrelated'").run();
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET subject_id='reply',input_revision='stale'").run();
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET input_revision='v1'").run();
+    db.prepare(
+      "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES ('purge','source','reply','v1',?)",
+    ).run(NOW);
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("DELETE FROM knowledge_cascade_jobs WHERE target_id='reply'").run();
+    expect(await ids(search)).toContain(loopId);
+    db.prepare("INSERT INTO removed_sources(id,removed_at) VALUES ('fixture-reply',?)").run(NOW);
+    expect(await ids(search)).not.toContain(loopId);
+  });
+
   test("interactive annotations retain consumption provenance with background annotations disabled", async () => {
     const evidence = "The venue requires a response before Friday.";
     db.prepare(

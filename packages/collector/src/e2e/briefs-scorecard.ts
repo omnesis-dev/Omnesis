@@ -172,11 +172,14 @@ export interface CognitionRunProbeRow {
 
 export function runsForDoc(db: Database.Database, docId: string): CognitionRunProbeRow[] {
   return db
-    .prepare<
-      [string],
-      CognitionRunProbeRow
-    >("SELECT id, kind, status, payload_json, dedupe_key, usage_json FROM cognition_runs WHERE dedupe_key = ?")
-    .all(`data:doc:${docId}`);
+    .prepare<[string, string], CognitionRunProbeRow>(
+      `SELECT DISTINCT r.id,r.kind,r.status,r.payload_json,r.dedupe_key,r.usage_json
+       FROM cognition_runs r WHERE r.dedupe_key=? OR EXISTS (
+         SELECT 1 FROM knowledge_work w JOIN knowledge_batches b ON b.id=w.batch_id
+         WHERE w.subject_kind='source' AND w.subject_id=? AND (b.run_id=r.id OR json_extract(r.payload_json,'$.batchId')=b.id)
+       ) ORDER BY r.enqueued_at,r.id`,
+    )
+    .all(`data:doc:${docId}`, docId);
 }
 
 export function loopsWithMarker(
@@ -224,7 +227,7 @@ export interface DailyMix {
   datumsDelivered: number;
   /** Datums the waker must turn into runs (created events). */
   eligibleWakes: number;
-  /** Datums the waker must skip (bulk mail, stale/backfill data). */
+  /** Inputs with no scripted canonical outcome. Discovery may still inspect them. */
   wakerSkips: number;
   /** Agent runs a correct engine completes (wakes + one folded update run). */
   expectedRuns: number;
@@ -409,7 +412,7 @@ async function waitForCompletedRuns(
  * step by step — each expected run is awaited before the next datum of
  * the same arc is pushed, so reconcile always races only where the arc
  * intends it to (the concurrent pair). Throws on any instrument-integrity
- * violation (a skipped datum waking the agent, a wake never completing):
+ * violation (a negative input creating an obligation, a run never completing):
  * the engine under the scripted backend is deterministic, so a violation
  * means the instrument is broken, not that the agent scored badly.
  */
@@ -419,17 +422,13 @@ async function deliverArcSet(
   set: ArcSet,
   opts: { guard?: ScorecardRunGuard } = {},
 ): Promise<void> {
-  const preexisting = db
-    .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM cognition_runs WHERE kind = 'data'")
-    .get();
-  if ((preexisting?.n ?? 0) !== 0) {
-    throw new Error(
-      `instrument integrity: ${preexisting?.n} data runs exist before arc delivery — ` +
-        `the seeded universe must be pure backfill (recency gate breach?)`,
-    );
-  }
-
   const negatives: string[] = [];
+  const attributedRuns = new Set<string>();
+  const settleUsage = (key: string, runs: CognitionRunProbeRow[]): void => {
+    const unseen = runs.filter((run) => !attributedRuns.has(run.id));
+    for (const run of unseen) attributedRuns.add(run.id);
+    opts.guard?.settle(key, usageOfRuns(unseen));
+  };
   // Steps flagged `late` are held back until every arc's regular steps have
   // been delivered — the long-horizon probe: a full day of unrelated traffic
   // lands between the commitment and its resolution.
@@ -449,7 +448,7 @@ async function deliverArcSet(
     await opts.guard?.reserve(datumKey);
     await push();
     const runs = await settleWait();
-    opts.guard?.settle(datumKey, usageOfRuns(runs));
+    settleUsage(datumKey, runs);
     await refreshIndex();
   };
   const deliverStep = async (step: { doc: ArcDocument; expectRun: boolean }): Promise<void> => {
@@ -496,7 +495,7 @@ async function deliverArcSet(
           1,
           `completed run for ${doc.externalId}`,
         );
-        opts.guard?.settle(`${doc.externalId}#created`, usageOfRuns(runs));
+        settleUsage(`${doc.externalId}#created`, runs);
       }
       await refreshIndex();
       continue;
@@ -527,9 +526,9 @@ async function deliverArcSet(
         2,
         `folded update run for ${doc.externalId}`,
       );
-      opts.guard?.settle(
+      settleUsage(
         `${doc.externalId}#updated`,
-        usageOfRuns(all.filter((r) => !createdRunIds.has(r.id))),
+        all.filter((r) => !createdRunIds.has(r.id)),
       );
       await refreshIndex();
       continue;
@@ -587,7 +586,7 @@ async function deliverArcSet(
         throw new Error(`dismissal of ${briefId} (${arc.id}) failed: ${JSON.stringify(res)}`);
       }
       const runs = await waitForCompletedFeedbackRun(db, briefId, `feedback run for ${arc.id}`);
-      opts.guard?.settle(datumKey, usageOfRuns(runs));
+      settleUsage(datumKey, runs);
       await refreshIndex();
     }
   }
@@ -597,7 +596,7 @@ async function deliverArcSet(
     await deliverStep(step);
   }
 
-  // Let the queue settle, then check the waker skipped what it had to.
+  // Let current work settle, then check negative inputs created no obligations.
   // Only DUE pending rows block settling: a real-model agent legitimately
   // leaves future-dated pending rows behind (schedule_agent_run follow-ups,
   // decay status checks) — those are agent output, not unfinished delivery.
@@ -618,12 +617,27 @@ async function deliverArcSet(
   for (const externalId of negatives) {
     const docId = docIdByExternal(db, externalId);
     if (docId === null) throw new Error(`instrument integrity: ${externalId} never landed`);
-    const runs = runsForDoc(db, docId);
-    if (runs.length !== 0) {
-      throw new Error(
-        `instrument integrity: skipped datum ${externalId} woke the agent (${runs.length} runs)`,
-      );
-    }
+    await waitFor(`current interpretation of negative source ${externalId}`, () =>
+      db
+        .prepare(
+          `SELECT 1 FROM knowledge_discovery_coverage c JOIN documents d ON d.id=c.subject_id
+       WHERE d.id=? AND c.input_revision=d.content_hash AND c.phase='interpretation' AND c.status IN ('considered','gated')`,
+        )
+        .get(docId)
+        ? true
+        : null,
+    );
+    // Discovery may inspect old or bulk inputs; a negative fixture must not
+    // manufacture a canonical outcome merely because a model run occurred.
+    const mutations =
+      db
+        .prepare<
+          [string, string],
+          { n: number }
+        >("SELECT (SELECT COUNT(*) FROM open_loop_docs WHERE doc_id=?) + (SELECT COUNT(*) FROM brief_citations WHERE doc_id=?) AS n")
+        .get(docId, docId)?.n ?? 0;
+    if (mutations)
+      throw new Error(`instrument integrity: negative source ${externalId} created a loop`);
   }
 }
 
@@ -728,9 +742,22 @@ async function collectScorecardObservations(
   );
   const runsCompleted = runs.items.filter((r) => r.status === "completed").length;
   const runsFailed = runs.items.filter((r) => r.status === "failed").length;
-  const dataRunsCompleted = runs.items.filter(
-    (r) => r.status === "completed" && r.kind === "data",
-  ).length;
+  const expectedSourceIds = new Set(
+    set.arcs
+      .flatMap((arc) =>
+        arc.steps
+          .filter((step) => step.expectRun)
+          .map((step) => docIdByExternal(db, step.doc.externalId)),
+      )
+      .filter((id): id is string => id !== null),
+  );
+  const dataRunsCompleted = new Set(
+    [...expectedSourceIds].flatMap((id) =>
+      runsForDoc(db, id)
+        .filter((run) => run.status === "completed")
+        .map((run) => run.id),
+    ),
+  ).size;
 
   const spend = await harness.gatewayJson<{
     items: Array<{ day: string; runs: number; promptTokens: number; completionTokens: number }>;
@@ -749,24 +776,15 @@ async function collectScorecardObservations(
   // Update evidence, from the DB: which runs each datum enqueued, and which
   // run ids are stamped on each loop's ledger — a later datum "landed" on a
   // loop when its run appended to that loop's ledger (or the loop cites the
-  // datum's document). The triggering doc is read from the dedupe key
-  // (`data:doc:<id>`), which survives completion — a completed run's
-  // payload is deliberately wiped (the no-prior-version-storage discard).
+  // datum's document). Current sources join durable work to their batch and
+  // continuation runs; explicit legacy recovery retains its data dedupe key.
+  // Source prose and prior revisions are not needed for this attribution.
   const runIdsByDocId = new Map<string, string[]>();
-  for (const row of db
-    .prepare<
-      [],
-      { id: string; dedupe_key: string | null }
-    >("SELECT id, dedupe_key FROM cognition_runs WHERE kind = 'data'")
-    .all()) {
-    const docId = row.dedupe_key?.startsWith("data:doc:")
-      ? row.dedupe_key.slice("data:doc:".length)
-      : null;
-    if (docId === null) continue;
-    const ids = runIdsByDocId.get(docId) ?? [];
-    ids.push(row.id);
-    runIdsByDocId.set(docId, ids);
-  }
+  for (const docId of docIdsByExternalId.values())
+    runIdsByDocId.set(
+      docId,
+      runsForDoc(db, docId).map((run) => run.id),
+    );
   const ledgerRunIdsByLoopId = new Map<string, string[]>();
   for (const row of db
     .prepare<
@@ -1114,6 +1132,10 @@ export interface ScorecardRunResult {
  * runs guardless by default (zero tokens by construction); the instrument
  * e2e attaches a recording guard there to validate the plumbing itself.
  */
+function isPricedScorecard(backend: ScorecardBackendSpec): boolean {
+  return backend.kind === "http";
+}
+
 export async function runScorecard(opts: {
   gatewayMode: "experimental";
   backend: ScorecardBackendSpec;
@@ -1122,8 +1144,10 @@ export async function runScorecard(opts: {
   /** When set, the observable end-state is dumped here before teardown. */
   artifactsDir?: string;
 }): Promise<ScorecardRunResult> {
-  if (opts.backend.kind === "http" && !opts.guard) {
-    throw new Error("priced (http) scorecard backends require a spend guard");
+  if (isPricedScorecard(opts.backend)) {
+    throw new Error(
+      "Priced scorecard execution is unavailable: maintenance batches and continuation runs require actual-run budget reservation and usage settlement. The legacy per-document spend guard does not cover this scheduler. Use the scripted instrument lane.",
+    );
   }
   prepareScorecardEnv();
   const set = generateArcSet(opts.seed);
@@ -1161,6 +1185,8 @@ export async function runScorecard(opts: {
     extraGatewayConfig: {
       brain: {
         workerConcurrency: 2,
+        bootstrap: { enabled: false },
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
         conversationDebounce: "2s",
         documentUpdateDebounce: "2s",
       },

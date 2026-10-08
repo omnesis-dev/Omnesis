@@ -58,18 +58,19 @@ export function debugNavigation(experimental, tab, cognitionTab) {
   return { groups, active, key };
 }
 
-function routeLink(event, key) {
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+function routeLink(event, key, currentKey) {
+  if ((event.button != null && event.button !== 0) || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
     return;
   event.preventDefault();
-  navigate(`/portal/debug/${key}`);
+  if (key !== currentKey) navigate(`/portal/debug/${key}`);
 }
 
-export function DebugNavigation({ experimental, tab, cognitionTab }) {
+export function DebugNavigation({ experimental, tab, routeTab = tab, cognitionTab }) {
   const { groups, active, key } = debugNavigation(experimental, tab, cognitionTab);
+  const currentKey = routeTab === tab ? key : null;
   return html`<header class="debug-navigation">
     <div class="debug-navigation-top">
-      <a class="debug-navigation-home" href="/portal/debug" onClick=${(e) => routeLink(e, "data")}
+      <a class="debug-navigation-home" href="/portal/debug" onClick=${(e) => routeLink(e, "data", currentKey)}
         >Debug</a
       >
       <nav aria-label="Debug areas" class="debug-area-links">
@@ -80,7 +81,7 @@ export function DebugNavigation({ experimental, tab, cognitionTab }) {
               class=${group.key === active.key ? "is-active" : ""}
               aria-current=${group.key === active.key ? "true" : undefined}
               href=${`/portal/debug/${group.items[0].key}`}
-              onClick=${(e) => routeLink(e, group.items[0].key)}
+              onClick=${(e) => routeLink(e, group.items[0].key, currentKey)}
               >${group.label}</a
             >`,
         )}
@@ -94,7 +95,7 @@ export function DebugNavigation({ experimental, tab, cognitionTab }) {
             class=${key === item.key ? "is-active" : ""}
             aria-current=${key === item.key ? "page" : undefined}
             href=${`/portal/debug/${item.key}`}
-            onClick=${(e) => routeLink(e, item.key)}
+            onClick=${(e) => routeLink(e, item.key, currentKey)}
             >${item.label}</a
           >`,
       )}

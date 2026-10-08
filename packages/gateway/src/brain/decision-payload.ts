@@ -238,7 +238,7 @@ export function recordDecisionPayload(
   id: string,
   capture: DecisionPayloadCapture,
   payload: DecisionPayload,
-  now = Date.now(),
+  now: number,
 ): void {
   db.transaction(() => {
     if (

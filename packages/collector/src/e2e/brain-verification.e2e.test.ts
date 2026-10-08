@@ -257,6 +257,7 @@ describe("Brain Bench — the re-verification lane", () => {
               docTitle: s.doc.title,
               plan: (ctx: RunContext): PuppetPlan => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: s.claimType,
@@ -693,6 +694,7 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
               docTitle: PRIOR_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "booking",
@@ -711,6 +713,8 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
               docTitle: DEPENDENT_DOC.title,
               plan: () => ({
                 calls: [
+                  call("brief_list", {}),
+                  call("fetch_many", { documents: [{ documentId: priorDocId }] }),
                   // The read that makes the prior eligible to be declared.
                   call("annotation_search", { docId: priorDocId }),
                   call("brief_create", {
@@ -745,6 +749,7 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
               contentContains: BREAKER_QUOTE,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "delivery-window",
@@ -763,6 +768,8 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
               contentContains: MULTI_QUOTE,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("fetch_many", { documents: [{ documentId: anchorDocId }] }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "site-visit",

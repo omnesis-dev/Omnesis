@@ -205,7 +205,7 @@ describe("rhythm: the daily boundary", () => {
               }),
             },
           ],
-          maintainNode: preserveCurrentOwner,
+          maintainNode: refreshCurrentOwner,
         }),
         behaviors: [
           { flavour: "daily.source", plan: { calls: [], finalText: "Nothing in the batch." } },
@@ -566,11 +566,13 @@ describe("rhythm: the morning digest", () => {
 
 describe("rhythm: historical admission coverage", () => {
   let bench: BrainBench;
-  const sourceId = "synthetic:history@example.com";
+  let sourceId: string;
   const ids = ["rhythm-history-1", "rhythm-history-2", "rhythm-history-3", "rhythm-history-4"];
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
+      // This suite bounds exactly the four archived revisions seeded below.
+      syncSources: false,
       clock: "virtual",
       brain: {
         knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
@@ -593,6 +595,7 @@ describe("rhythm: historical admission coverage", () => {
         dynamic: sourceInterpretations({ maintainNode: preserveCurrentOwner, sources: [] }),
       },
     });
+    sourceId = bench.harness.getSourceIds()[0]!;
     await bench.drainUntilQuiet();
     const instant = (await bench.clock.now()).now;
     await bench.clock.set(localMidnight(instant) + 12 * HOUR);
@@ -734,6 +737,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
               docTitle: "Riverside Estate site visit and invoice",
               plan: (ctx) => ({
                 calls: [
+                  call("open_loop_search", { query: "Riverside Estate site visit invoice" }),
                   call("open_loop_create", {
                     title: "Book the Riverside Estate site visit",
                     description: "The visit still needs a date.",

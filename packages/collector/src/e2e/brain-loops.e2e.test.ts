@@ -282,6 +282,7 @@ describe("Brain Bench — open loops", () => {
                     id: ref("open_loop_create", "loop.id"),
                     note: `Review of the ${B} lease requested.`,
                   }),
+                  call("brief_list"),
                   call("brief_create", {
                     kind: "loop",
                     title: `${B} lease needs your comments`,

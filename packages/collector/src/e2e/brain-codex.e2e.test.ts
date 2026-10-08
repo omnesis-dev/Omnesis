@@ -61,7 +61,22 @@ describe("Codex inference through the Brain engine", () => {
     const run = await bench.obs.interpretationForSource(docId!);
     const calls = await bench.obs.executedTools(run.id);
     const briefs = await bench.obs.briefsMatching("codex-bench-");
-    expect(briefs.map((brief) => brief.title)).toEqual(["codex-bench-accepted"]);
+    expect(
+      briefs.map((brief) => brief.title),
+      JSON.stringify(calls.map((call) => ({ tool: call.tool, result: call.result }))),
+    ).toEqual(["codex-bench-accepted"]);
+    expect(
+      calls
+        .filter((call) => call.tool === "brief_list" || call.tool === "brief_create")
+        .map((call) => call.tool),
+    ).toEqual([
+      "brief_list",
+      "brief_create",
+      "brief_list",
+      "brief_create",
+      "brief_list",
+      "brief_create",
+    ]);
     expect(
       calls
         .filter((call) => call.tool === "brief_create")

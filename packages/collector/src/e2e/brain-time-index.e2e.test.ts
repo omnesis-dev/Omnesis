@@ -36,13 +36,41 @@ import {
   fileTemporal,
   ref,
 } from "./brain-bench/index.js";
+import type { PuppetKnowledgeItem } from "./brain-bench/knowledge-puppet.js";
 import type {
   AdminTemporalAnnotation,
   ExecutedTool,
   SourceInterpretation,
+  RunContext,
 } from "./brain-bench/index.js";
 
 compressCognitionCadences();
+
+/** This suite reconciles the fixture's dated entries before mutating the shared index. */
+function temporalSourceInterpretations(options: Parameters<typeof sourceInterpretations>[0]) {
+  return sourceInterpretations({
+    ...options,
+    sources: options.sources.map((source) => ({
+      ...source,
+      plan: (ctx: RunContext, item: PuppetKnowledgeItem) => {
+        const plan = typeof source.plan === "function" ? source.plan(ctx, item) : source.plan;
+        if (!plan.calls.some((entry) => entry.tool.startsWith("temporal_annotation_"))) return plan;
+        return {
+          ...plan,
+          calls: [
+            call("temporal_query", {
+              from: "2027-01-01",
+              to: "2030-01-01",
+              origins: ["annotation"],
+              limit: 100,
+            }),
+            ...plan.calls,
+          ],
+        };
+      },
+    })),
+  });
+}
 const log = createLogger("collector:brain-bench");
 
 // ── the shapes the routes actually serve ────────────────────────────────────
@@ -271,6 +299,7 @@ const SOURCE_INTERPRETATIONS: SourceInterpretation[] = [
     docTitle: LOOP_DOC.title,
     plan: (ctx) => ({
       calls: [
+        call("open_loop_search", { query: "TIX-LOOP annexe handover" }),
         call("open_loop_create", {
           title: "Countersign the TIX-LOOP annexe handover",
           description: "Both copies are due back.",
@@ -355,7 +384,7 @@ describe("Brain Bench — steward-written temporal annotations", () => {
       // grounded write below proves the gate ran and let it through.
       entailment: "accept-all",
       behaviors: {
-        dynamic: sourceInterpretations({
+        dynamic: temporalSourceInterpretations({
           sources: SOURCE_INTERPRETATIONS,
           maintainNode: preserveCurrentOwner,
         }),
@@ -777,7 +806,7 @@ describe("Brain Bench — the entailment gate's reject arm on a temporal write",
       experimental: true,
       entailment: "reject-all",
       behaviors: {
-        dynamic: sourceInterpretations({
+        dynamic: temporalSourceInterpretations({
           sources: [
             {
               docTitle: REJECT_DOC.title,
@@ -877,7 +906,7 @@ describe("Brain Bench — a supporting document's edit and the entries it touche
       },
       experimental: true,
       behaviors: {
-        dynamic: sourceInterpretations({
+        dynamic: temporalSourceInterpretations({
           sources: [
             {
               docTitle: SUPPORTING_DOC.title,
@@ -887,6 +916,7 @@ describe("Brain Bench — a supporting document's edit and the entries it touche
               docTitle: BASIS_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("fetch_many", { documents: [{ documentId: supportingDocId }] }),
                   fileTemporal({
                     when: "2027-07-09",
                     sentence: "TIX-FERRY the ferry crossing departs at 08:30 (ref QF-2214).",
@@ -1009,7 +1039,7 @@ describe("Brain Bench — the re-file loop after a grounding quote breaks", () =
       },
       experimental: true,
       behaviors: {
-        dynamic: sourceInterpretations({
+        dynamic: temporalSourceInterpretations({
           sources: [
             {
               contentContains: "moved to the fifth of May 2027",
@@ -1164,7 +1194,7 @@ describe("Brain Bench — paginated temporal casualties in source maintenance", 
         knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
       },
       behaviors: {
-        dynamic: sourceInterpretations({
+        dynamic: temporalSourceInterpretations({
           sources: [
             {
               docTitle: original.title,

@@ -598,14 +598,17 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
 
     assigned = true;
     expect(await drain.run(undefined, ctx)).toEqual({ kind: "done", value: { idle: false } });
-    expect(
-      db
-        .prepare<
-          [],
-          { status: string }
-        >("SELECT status FROM cognition_runs WHERE id = 'run_hot_assignment'")
-        .get()?.status,
-    ).toBe("completed");
+    await expect
+      .poll(
+        () =>
+          db
+            .prepare<
+              [],
+              { status: string }
+            >("SELECT status FROM cognition_runs WHERE id = 'run_hot_assignment'")
+            .get()?.status,
+      )
+      .toBe("completed");
 
     enqueueCognitionRun(
       db,

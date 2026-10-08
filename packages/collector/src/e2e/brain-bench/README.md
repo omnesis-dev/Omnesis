@@ -457,3 +457,14 @@ typecheck` alone will not see them, so run `typecheck:tests` before pushing.
   matches two-word windows, so `Cedar Grove Supplies` also trips as `Grove Supplies`.
 - One bench boots one gateway subprocess. Group tests that can share a boot into one
   `describe`, and prefer several tests per bench over several benches per file.
+
+### Scorecard instrument availability
+
+The loop scorecard's scripted lane drives current source maintenance through real
+frontiers and canonical tools. Legacy retry fixtures remain explicit recovery
+scenarios. The HTTP model scorecard lane refuses startup: its per-document spend
+reservation cannot bound historical discovery, batched sources, owner reviews or
+continuation runs. Re-enabling that lane requires reservation before each actual
+model run and usage settlement exactly once per run, including failed and continued
+segments. This restriction does not change other separately budgeted evaluation
+commands.

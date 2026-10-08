@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 import { describe, expect, it, vi } from "vitest";
+import { parseHTML } from "linkedom";
 // Browser coverage exercises DOMPurify's actual DOM implementation. Here the
 // spy verifies that the complete generated output passes the strict policy.
 vi.mock("dompurify", () => ({ default: { sanitize: vi.fn((value) => value) } }));
@@ -49,7 +50,9 @@ describe("claim-aware Markdown", () => {
     expect(extractKnowledgeReferences(markdown)).toEqual(["source:letter/one", "node:loop_fixture"]);
     const rendered = renderKnowledgeMarkdown(markdown).html;
     expect(rendered).toContain('href="/portal/doc/letter%2Fone?evidence=paragraph#selection"');
-    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/loop_fixture?kind=loop&field=status#detail"');
+    expect(parseHTML(rendered).document.querySelector('a[href*="loop_fixture"]')?.getAttribute("href")).toBe(
+      "/portal/debug/cognition/knowledge/loop_fixture?kind=loop&field=status#detail",
+    );
     expect(rendered).toContain('class="kn-link-icon kn-link-icon--source"');
   });
 
@@ -171,8 +174,9 @@ describe("claim-aware Markdown", () => {
     expect(internalKnowledgeHref("loop:task#field:state")).toBe(
       "/portal/debug/cognition/knowledge/task?kind=loop&field=state",
     );
-    expect(renderKnowledgeMarkdown("[State](loop:task#field:state)").html).toContain(
-      'href="/portal/debug/cognition/knowledge/task?kind=loop&field=state"',
+    const rendered = parseHTML(renderKnowledgeMarkdown("[State](loop:task#field:state)").html);
+    expect(rendered.document.querySelector("a")?.getAttribute("href")).toBe(
+      "/portal/debug/cognition/knowledge/task?kind=loop&field=state",
     );
   });
   it("refuses invalid offsets rather than highlighting matching prose elsewhere", () => {

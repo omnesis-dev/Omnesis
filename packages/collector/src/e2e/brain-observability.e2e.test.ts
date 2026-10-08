@@ -165,10 +165,12 @@ describe("Brain Bench — the operator surface", () => {
                     importance: 0.8,
                     docs: [ctx.subject],
                   }),
+                  call("open_loop_fetch", { id: ref("open_loop_create", "loop.id") }),
                   call("open_loop_ledger_append", {
                     id: ref("open_loop_create", "loop.id"),
                     note: "Balance of four hundred and eighty due by the end of the month.",
                   }),
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "payment-due",
@@ -178,6 +180,7 @@ describe("Brain Bench — the operator surface", () => {
                     confidence: 0.9,
                     claimBasis: "quoted",
                   }),
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "loop",
                     title: `Invoice CG-8821 is due (${INVOICE_MARKER})`,
@@ -204,6 +207,7 @@ describe("Brain Bench — the operator surface", () => {
               docTitle: ROOM_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("open_loop_search", { query: "Studio Northstar rehearsal room" }),
                   call("open_loop_create", {
                     title: `Confirm the rehearsal room (${ROOM_MARKER})`,
                     description: "The hold lapses on Friday.",
@@ -211,12 +215,14 @@ describe("Brain Bench — the operator surface", () => {
                     importance: 0.5,
                     docs: [ctx.subject],
                   }),
+                  call("open_loop_fetch", { id: ref("open_loop_create", "loop.id") }),
                   // Deferred, not resolved — the pulse must count it apart from
                   // the open ones without losing it from the total.
                   call("open_loop_update", {
                     id: ref("open_loop_create", "loop.id"),
                     state: "snoozed",
                   }),
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: `Rehearsal room held until Friday (${ROOM_MARKER})`,
@@ -679,6 +685,7 @@ describe("Brain Bench — the golden snapshot", () => {
               docTitle: GOLDEN_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("open_loop_search", { query: "hall booking balance" }),
                   call("open_loop_create", {
                     title: "Pay the hall booking balance",
                     description: "Due fourteen days before the date.",
@@ -686,10 +693,12 @@ describe("Brain Bench — the golden snapshot", () => {
                     importance: 0.7,
                     docs: [ctx.subject],
                   }),
+                  call("open_loop_fetch", { id: ref("open_loop_create", "loop.id") }),
                   call("open_loop_ledger_append", {
                     id: ref("open_loop_create", "loop.id"),
                     note: "Balance falls due fourteen days before the booking.",
                   }),
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "payment-due",
@@ -699,6 +708,7 @@ describe("Brain Bench — the golden snapshot", () => {
                     confidence: 0.9,
                     claimBasis: "quoted",
                   }),
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "loop",
                     title: "Hall booking balance is coming due",

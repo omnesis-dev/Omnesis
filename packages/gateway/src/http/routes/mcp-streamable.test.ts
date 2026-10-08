@@ -862,7 +862,13 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
         documentByUrl: { lookup: async (url) => ({ url, durationMs: 0 }) },
       },
     });
-    const { app, runtime } = appFixture(service(() => scoped));
+    const { app, runtime } = appFixture(
+      new DirectMcpService(
+        scoped,
+        () => Promise.resolve({}),
+        () => scoped,
+      ),
+    );
     closeables.push(runtime);
     const { client, transport } = await connect(app, restrictedDirectToken);
     closeables.push(client, transport);

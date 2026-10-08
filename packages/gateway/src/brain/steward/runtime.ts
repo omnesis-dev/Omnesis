@@ -31,6 +31,7 @@ import { buildBuiltinTools, PlanStore, type ToolHandle, type ToolPorts } from "@
 import { experimentalVisible, type EntailCapability, type Logger } from "@omnesis/core";
 import { parseCognitionSynthesisRunPayload } from "../run-payloads.js";
 import { buildKnowledgeTools } from "../knowledge/tools.js";
+import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
 import { withKnowledgeSourceReadReceipts } from "../knowledge/source-read-receipts.js";
 import { isParallelKnowledgeRun } from "../storage/run-queue.js";
 import { buildMaintenanceCanonicalTools } from "../knowledge/canonical-tool-fence.js";
@@ -205,7 +206,7 @@ export interface CognitionToolsetDeps {
  * The documents a run reconciles from — its `seedDocIds`. A `data` run seeds
  * from its datum; a loop-scoped check (decay or a `time_based` tied to a
  * loop) seeds from that loop's documents so it re-reconciles the loop's
- * neighbourhood. Every other run kind has no single datum focus → no seeds,
+ * neighbourhood. Maintenance uses its bounded current source work; other kinds have no seeds,
  * and `open_loop_search` stays lexical + semantic.
  */
 function cognitionSeedDocIds(db: Db, run: ClaimedCognitionRun): string[] {
@@ -213,6 +214,27 @@ function cognitionSeedDocIds(db: Db, run: ClaimedCognitionRun): string[] {
   if (data) return [data.docId];
   const boot = parseCognitionBootstrapRunPayload(run.payload);
   if (boot) return [boot.docId];
+  const maintenance = parseCognitionSynthesisRunPayload(run.payload);
+  if (maintenance?.focus === "knowledge-maintenance" && maintenance.batchId) {
+    // Current run-owned source work only: no corpus-wide or another batch's
+    // neighborhood. Recomputed by the tool dependency getter before each read.
+    return db.transaction(() =>
+      db
+        .prepare<[string, string], { id: string }>(
+          `
+      SELECT DISTINCT d.id FROM knowledge_batches b
+      JOIN knowledge_work w ON w.batch_id=b.id AND w.subject_kind='source'
+      JOIN documents d ON d.id=w.subject_id AND d.content_hash=w.input_revision
+      WHERE b.id=? AND b.run_id=? AND b.status IN ('pending','running')
+      AND NOT EXISTS (SELECT 1 FROM knowledge_cascade_jobs j WHERE j.kind='purge'
+        AND j.target_kind='source' AND j.target_id=d.id)
+      ORDER BY d.id LIMIT 32`,
+        )
+        .all(maintenance.batchId!, run.id)
+        .filter((row) => isKnowledgeEvidenceReadable(db, row.id))
+        .map((row) => row.id),
+    )();
+  }
   const loopId = runScopeLoopId(run.payload);
   if (loopId !== undefined) {
     const loop = getOpenLoop(db, loopId);
@@ -248,7 +270,7 @@ export function buildCognitionToolset(
   const own = buildCognitionOwnTools({
     ...ownToolsInput(deps, {
       runId: run.id,
-      seedDocIds: cognitionSeedDocIds(deps.db, run),
+      seedDocIds: [],
       briefLane: cognitionBriefLane(run),
       // Present only on a sweep run: what the judge held is the one production
       // number that cannot be recovered from `created_by_run` afterwards, so
@@ -258,6 +280,9 @@ export function buildCognitionToolset(
       ...(opts.consumption ? { consumption: opts.consumption } : {}),
     }),
     ...(checkRecord ? { checkRecord } : {}),
+    get seedDocIds() {
+      return cognitionSeedDocIds(deps.db, run);
+    },
   });
   // A merge-adjudication run gets its one dedicated verdict tool, scoped to
   // the run's own candidate. Background runs only — the interactive own-tools

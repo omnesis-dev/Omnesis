@@ -149,6 +149,6 @@ describe("historical discovery: relevance gate", () => {
       >("SELECT score,rubric_version FROM knowledge_decisions WHERE purpose='discovery'")
       .all();
     expect(verdicts.some((v) => v.score === 0)).toBe(true);
-    expect(verdicts.every((v) => v.rubric_version === "knowledge-discovery-value-v3")).toBe(true);
+    expect(verdicts.every((v) => v.rubric_version === "knowledge-discovery-value-v5")).toBe(true);
   });
 });

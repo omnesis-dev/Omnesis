@@ -529,6 +529,9 @@ describe("seeded-state artifacts", () => {
       "oauth_execution_bindings",
       "oauth_refresh_tokens",
       "principal_credentials",
+      "knowledge_decision_inputs",
+      "knowledge_decision_input_subjects",
+      "knowledge_decision_privacy",
     ]) {
       expect(seededStateTableSpec(table, ["secret"])).toBeNull();
     }

@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 it("retains exact captured request and result after ordinary source changes without reconstructing historical input", () => {
-  recordKnowledgeDecisionPayload(db, "decision", capture(), payload);
+  recordKnowledgeDecisionPayload(db, "decision", capture(), payload, 1);
   db.prepare("UPDATE documents SET content_hash='v2' WHERE id='doc'").run();
   expect(readKnowledgeDecisionDebug(db, "decision")).toEqual({
     availability: "available",
@@ -80,7 +80,7 @@ it.each(["delete", "tombstone", "purge", "source-removal"] as const)(
   "physically erases captured bodies on %s and refuses late insertion",
   (kind) => {
     const before = capture();
-    recordKnowledgeDecisionPayload(db, "decision", before, payload);
+    recordKnowledgeDecisionPayload(db, "decision", before, payload, 1);
     if (kind === "delete") db.prepare("DELETE FROM documents WHERE id='doc'").run();
     if (kind === "tombstone")
       db.prepare("UPDATE knowledge_source_revisions SET deleted=1 WHERE document_id='doc'").run();
@@ -91,7 +91,7 @@ it.each(["delete", "tombstone", "purge", "source-removal"] as const)(
     expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_decision_inputs").get()).toEqual({
       count: 0,
     });
-    recordKnowledgeDecisionPayload(db, "late", before, payload);
+    recordKnowledgeDecisionPayload(db, "late", before, payload, 1);
     expect(readKnowledgeDecisionDebug(db, "late").availability).toBe("unavailable");
   },
 );
@@ -99,16 +99,22 @@ it("does not resurrect pre-deletion input after same-ID same-version recreation"
   const before = capture();
   db.prepare("DELETE FROM documents WHERE id='doc'").run();
   db.prepare("INSERT INTO documents VALUES('doc','fixture','v1')").run();
-  recordKnowledgeDecisionPayload(db, "late", before, payload);
+  recordKnowledgeDecisionPayload(db, "late", before, payload, 1);
   expect(readKnowledgeDecisionDebug(db, "late").availability).toBe("unavailable");
-  recordKnowledgeDecisionPayload(db, "fresh", capture(), payload);
+  recordKnowledgeDecisionPayload(db, "fresh", capture(), payload, 1);
   expect(readKnowledgeDecisionDebug(db, "fresh").availability).toBe("available");
 });
 it("reports oversized exact input as unavailable rather than exposing a silently partial snapshot", () => {
-  recordKnowledgeDecisionPayload(db, "large", capture(), {
-    ...payload,
-    requestJson: "x".repeat(131073),
-  });
+  recordKnowledgeDecisionPayload(
+    db,
+    "large",
+    capture(),
+    {
+      ...payload,
+      requestJson: "x".repeat(131073),
+    },
+    1,
+  );
   expect(readKnowledgeDecisionDebug(db, "large")).toEqual({
     availability: "oversized",
     error: null,

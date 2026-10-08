@@ -189,6 +189,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
               docTitle: CLAIMS_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: `Invoice 4471 is due (${CLAIMS_MARKER})`,
@@ -222,6 +223,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
               docTitle: FAIL_OPEN_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: JUDGE_HOLD_TITLE,
@@ -237,6 +239,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
               docTitle: HANDLED_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "loop",
                     title: JUDGE_SHIP_TITLE,
@@ -262,6 +265,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
               docTitle: IRRELEVANT_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: `Depot hours changed (${IRRELEVANT_MARKER})`,
@@ -277,6 +281,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
               docTitle: DATED_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: `Load-in opens early for the rehearsal (${DATED_MARKER})`,
@@ -294,6 +299,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
               docTitle: READ_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: `Street permit window opens soon (${READ_MARKER})`,
@@ -310,6 +316,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
               docTitle: SUPERSEDE_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: `Provisional van hire quote (${SUPERSEDE_MARKER})`,
@@ -320,6 +327,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
                   }),
                   // Same run, so the replacement can reference the id the
                   // first create actually minted.
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: `Corrected van hire quote (${SUPERSEDE_MARKER})`,
@@ -455,7 +463,9 @@ describe("Brain Bench — briefs (no brief judge)", () => {
   }, 120_000);
 
   test("dismissing a brief settles a feedback run whose lesson lands", async () => {
-    const [handledDocId] = await bench.pushAndSettle([HANDLED_DOC, IRRELEVANT_DOC]);
+    // Independent setup records: this scenario tests feedback, not competing creates.
+    const [handledDocId] = await bench.pushAndSettle([HANDLED_DOC]);
+    await bench.pushAndSettle([IRRELEVANT_DOC]);
     const handled = await briefWith(bench, HANDLED_MARKER);
     const irrelevant = await briefWith(bench, IRRELEVANT_MARKER);
 
@@ -653,6 +663,7 @@ describe("Brain Bench — briefs (brief judge assigned)", () => {
               docTitle: FAIL_OPEN_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: JUDGE_HOLD_TITLE,
@@ -674,6 +685,7 @@ describe("Brain Bench — briefs (brief judge assigned)", () => {
               docTitle: HANDLED_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "loop",
                     title: JUDGE_SHIP_TITLE,
@@ -690,6 +702,7 @@ describe("Brain Bench — briefs (brief judge assigned)", () => {
               docTitle: JUDGE_OUTAGE_DOC.title,
               plan: (ctx) => ({
                 calls: [
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: JUDGE_OUTAGE_TITLE,

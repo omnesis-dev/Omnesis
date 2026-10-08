@@ -915,3 +915,125 @@ describe("scripted loop-model HTTP server", () => {
     }
   });
 });
+
+test("maintenance reads the actual offered source before completing discovery", () => {
+  const prompt =
+    "Loop agent run run_current (kind: synthesis, attempt 1).\nMaintain the evidence-backed synthesis graph for this batch.";
+  const first = decideNextTurn(history(prompt, []), new Map());
+  expect(first).toMatchObject({ kind: "tool", name: "knowledge_next_frontier" });
+  const steps = [
+    {
+      name: "knowledge_next_frontier",
+      args: {},
+      result: {
+        kind: "structured",
+        data: {
+          batchId: "b",
+          done: false,
+          items: [
+            {
+              id: "source:fixture",
+              depth: 0,
+              inputFingerprint: "fp",
+              inputVersions: { "source:fixture": "v1" },
+              source: {
+                id: "fixture",
+                title: "Neutral reference",
+                content: "A fictional reference paragraph.",
+                contentHash: "v1",
+              },
+            },
+          ],
+        },
+      },
+    },
+  ];
+  expect(decideNextTurn(history(prompt, steps), new Map())).toMatchObject({
+    kind: "tool",
+    name: "fetch_many",
+    args: { documents: [{ documentId: "fixture" }] },
+  });
+  expect(
+    decideNextTurn(
+      history(prompt, [
+        ...steps,
+        {
+          name: "fetch_many",
+          args: { documents: [{ documentId: "fixture" }] },
+          result: { kind: "structured", data: {} },
+        },
+      ]),
+      new Map(),
+    ),
+  ).toMatchObject({
+    kind: "tool",
+    name: "knowledge_discovery_complete",
+    args: { id: "source:fixture", inputFingerprint: "fp" },
+  });
+});
+
+test("maintenance selects updated behavior from the actual folded source body", () => {
+  const prompt =
+    "Loop agent run run_revision (kind: synthesis, attempt 1).\nMaintain the evidence-backed synthesis graph for this batch.";
+  const title = "Fictional observatory reference";
+  const behaviors = new Map<string, ArcDocBehavior>([
+    [
+      title,
+      {
+        onCreated: { kind: "ignore" },
+        onUpdated: {
+          kind: "inform",
+          marker: "OBS-REFERENCE",
+          briefTitle: "Observatory reference revised",
+        },
+        updatedContents: [
+          "First revision adds an inventory.",
+          "Final revision adds inventory and access instructions.",
+        ],
+      },
+    ],
+  ]);
+  const next = (content: string) =>
+    decideNextTurn(
+      history(prompt, [
+        {
+          name: "knowledge_next_frontier",
+          args: {},
+          result: {
+            kind: "structured",
+            data: {
+              batchId: "b",
+              done: false,
+              items: [
+                {
+                  id: "source:revision",
+                  depth: 0,
+                  inputFingerprint: "current-fingerprint",
+                  inputVersions: { "source:revision": "current-version" },
+                  source: { id: "revision", title, content, contentHash: "current-version" },
+                },
+              ],
+            },
+          },
+        },
+        {
+          name: "fetch_many",
+          args: { documents: [{ documentId: "revision" }] },
+          result: fetchResult(title),
+        },
+      ]),
+      behaviors,
+    );
+  expect(next("Initial overview.")).toMatchObject({
+    kind: "tool",
+    name: "knowledge_discovery_complete",
+  });
+  expect(next("First revision adds an inventory.")).toMatchObject({
+    kind: "tool",
+    name: "brief_list",
+  });
+  expect(next("Final revision adds inventory and access instructions.")).toMatchObject({
+    kind: "tool",
+    name: "brief_list",
+  });
+});

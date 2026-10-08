@@ -26,8 +26,8 @@ export interface KnowledgeLinkInput {
 export function setKnowledgeLink(
   db: Database.Database,
   input: KnowledgeLinkInput,
-  runFence?: KnowledgeRunFence,
-  now = Date.now(),
+  runFence: KnowledgeRunFence | undefined,
+  now: number,
 ): void {
   db.transaction(() => {
     assertKnowledgeRunFence(db, runFence);

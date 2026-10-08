@@ -15,7 +15,7 @@ import {
   getKnowledgeNode,
   saveKnowledgeNode,
 } from "../brain/knowledge/storage.js";
-import { runMigrations } from "./migrations.js";
+import { LATEST_SCHEMA_VERSION, runMigrations } from "./migrations.js";
 import { runSchemaSetup } from "./schema.js";
 
 let directory: string;
@@ -114,7 +114,7 @@ it("upgrades a populated schema 192 file without rewriting legacy owners, then i
   const beforeAnnotation = getDocAnnotation(db, "observation");
   reopen();
   runMigrations(db);
-  expect(db.pragma("user_version", { simple: true })).toBe(193);
+  expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);
   expect(getOpenLoop(db, "closed-task")).toEqual(beforeLoop);
   expect(getDocAnnotation(db, "observation")).toEqual(beforeAnnotation);
   convertKnowledgeOwner(db, "loop", "closed-task", 2);

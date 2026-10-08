@@ -3,7 +3,7 @@
 
 import Database from "better-sqlite3";
 import { beforeEach, afterEach, expect, it } from "vitest";
-import { createKnowledgeTables } from "./knowledge/schema.js";
+import { createKnowledgeTables, saveKnowledgeNode } from "./knowledge/storage.js";
 import { createBriefsStorageTables } from "./storage/schema.js";
 import {
   captureDecisionPayloadSubjects,
@@ -40,9 +40,19 @@ function sourceCapture() {
   )!;
 }
 function node(id: string) {
-  db.prepare(
-    "INSERT INTO knowledge_nodes(id,kind,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at) VALUES(?,'wiki',?,'text','text',1,1,'hash','current','{}','{}',1,1)",
-  ).run(id, id);
+  // Use the normal writer so claim and revision dependency foreign keys remain real.
+  saveKnowledgeNode(
+    db,
+    {
+      id,
+      kind: "wiki",
+      title: id,
+      markdown: '<claim id="fact" refs="source:first">Observatory access lasts two hours.</claim>',
+      expectedRevision: 0,
+      inputVersions: { "source:first": "v1" },
+    },
+    1,
+  );
 }
 function dependency(nodeId: string, targetKind: string, targetId: string, historical = false) {
   if (historical)
@@ -70,7 +80,7 @@ it("retains the exact multi-source request, result and error, erasing all when a
     db.prepare("SELECT count(*) AS count FROM knowledge_decision_input_subjects").get(),
   ).toEqual({ count: 0 });
   db.prepare("INSERT INTO documents VALUES('second','fictional','v1')").run();
-  recordDecisionPayload(db, "late", capture, payload);
+  recordDecisionPayload(db, "late", capture, payload, 2);
   expect(readDecisionPayload(db, "late").availability).toBe("unavailable");
 });
 it.each(["source-purge", "node-purge", "node-delete", "node-tombstone"])(
@@ -91,7 +101,7 @@ it.each(["source-purge", "node-purge", "node-delete", "node-tombstone"])(
         { kind: "source", id: "second" },
       ]),
     );
-    recordDecisionPayload(db, "impact", capture, payload);
+    recordDecisionPayload(db, "impact", capture, payload, 2);
     // Historical capture keeps its original ancestry even after ordinary edits.
     db.prepare("DELETE FROM knowledge_revision_dependencies WHERE node_id='detail'").run();
     if (kind.endsWith("purge"))
@@ -107,7 +117,7 @@ it.each(["source-purge", "node-purge", "node-delete", "node-tombstone"])(
     expect(db.prepare("SELECT count(*) AS count FROM knowledge_decision_inputs").get()).toEqual({
       count: 0,
     });
-    recordDecisionPayload(db, "late", capture, payload);
+    recordDecisionPayload(db, "late", capture, payload, 2);
     expect(readDecisionPayload(db, "late").availability).toBe("unavailable");
   },
 );
@@ -160,10 +170,13 @@ it("keeps over-budget and unbounded scopes unavailable without truncating captur
       decisionPayloadErasureGeneration(db),
     ),
   ).toBeNull();
-  recordDecisionPayload(db, "oversized", sourceCapture(), {
-    ...payload,
-    requestJson: "x".repeat(131073),
-  });
+  recordDecisionPayload(
+    db,
+    "oversized",
+    sourceCapture(),
+    { ...payload, requestJson: "x".repeat(131073) },
+    1,
+  );
   expect(readDecisionPayload(db, "oversized")).toEqual({
     availability: "oversized",
     request: null,

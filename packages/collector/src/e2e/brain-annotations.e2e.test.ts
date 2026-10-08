@@ -237,6 +237,7 @@ describe("annotations with the entailment role unassigned", () => {
               docTitle: DOC_CLAMP.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "order-status",
@@ -246,6 +247,7 @@ describe("annotations with the entailment role unassigned", () => {
                     confidence: 0.99,
                     claimBasis: "quoted",
                   }),
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "delivery-window",
@@ -255,6 +257,7 @@ describe("annotations with the entailment role unassigned", () => {
                     confidence: 0.99,
                     claimBasis: "inferred",
                   }),
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "payment-terms",
@@ -273,6 +276,7 @@ describe("annotations with the entailment role unassigned", () => {
               expectedRefusals: [{ tool: "annotate_durable", code: "evidence_not_found" }],
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "availability",
@@ -293,6 +297,7 @@ describe("annotations with the entailment role unassigned", () => {
               ],
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "access",
@@ -310,6 +315,7 @@ describe("annotations with the entailment role unassigned", () => {
               docTitle: DOC_FAIL_OPEN.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "capacity",
@@ -327,6 +333,9 @@ describe("annotations with the entailment role unassigned", () => {
               plan: (ctx) => ({
                 calls: [
                   call("lookup_people", { query: "Maya Reeves" }),
+                  call("annotation_search", {
+                    personId: ref("lookup_people", "results.0.canonicalId"),
+                  }),
                   call("annotate_person", {
                     personId: ref("lookup_people", "results.0.canonicalId"),
                     claimType: "role",
@@ -343,6 +352,7 @@ describe("annotations with the entailment role unassigned", () => {
               docTitle: DOC_SUPERSEDE.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "booking-status",
@@ -353,6 +363,7 @@ describe("annotations with the entailment role unassigned", () => {
                     claimBasis: "quoted",
                   }),
                   // Replaces the belief above with a corrected one, in one call.
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "booking-status",
@@ -365,6 +376,7 @@ describe("annotations with the entailment role unassigned", () => {
                   }),
                   // A second live belief, under its own claim type, retired by a
                   // pure supersede in favour of the one above.
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "catering",
@@ -374,6 +386,7 @@ describe("annotations with the entailment role unassigned", () => {
                     confidence: 0.8,
                     claimBasis: "quoted",
                   }),
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotation_supersede", {
                     id: ref("annotate_durable", "id", 2),
                     supersededBy: ref("annotate_durable", "id", 1),
@@ -385,6 +398,7 @@ describe("annotations with the entailment role unassigned", () => {
               docTitle: DOC_REVISE.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "quote-status",
@@ -395,16 +409,19 @@ describe("annotations with the entailment role unassigned", () => {
                     claimBasis: "quoted",
                   }),
                   // Wording only: identity, basis and confidence must survive.
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotation_revise", {
                     id: ref("annotate_durable", "id", 0),
                     claimText: "Stellar Sound quoted four hundred and ten for the monitor pair.",
                   }),
                   // A basis downgrade with NO new confidence must still pull the
                   // standing 0.9 under the synthesized ceiling.
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotation_revise", {
                     id: ref("annotate_durable", "id", 0),
                     claimBasis: "synthesized",
                   }),
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "price-hold",
@@ -414,6 +431,7 @@ describe("annotations with the entailment role unassigned", () => {
                     confidence: 0.8,
                     claimBasis: "quoted",
                   }),
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotation_retract", { id: ref("annotate_durable", "id", 1) }),
                 ],
               }),
@@ -422,6 +440,8 @@ describe("annotations with the entailment role unassigned", () => {
               docTitle: DOC_MULTI.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("fetch_many", { documents: [{ documentId: multiEvidenceDocId }] }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "attendance",
@@ -444,6 +464,7 @@ describe("annotations with the entailment role unassigned", () => {
               docTitle: DOC_PRIOR.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "review-due",
@@ -464,6 +485,7 @@ describe("annotations with the entailment role unassigned", () => {
                   // The prior was written by an EARLIER run, so only this read
                   // can put it in front of the model this run.
                   call("annotation_search", { docId: priorDocId }),
+                  call("brief_list", {}),
                   call("brief_create", {
                     kind: "info",
                     title: "Cedar Grove Supplies review needs attendees",
@@ -477,6 +499,7 @@ describe("annotations with the entailment role unassigned", () => {
                   }),
                   // The negative arm: a prior this run never saw cannot be
                   // declared as a dependency.
+                  call("open_loop_search", { query: "account review attendees" }),
                   call("open_loop_create", {
                     title: "Confirm the account review attendees",
                     confidence: 0.8,
@@ -891,6 +914,7 @@ describe("the entailment gate decides whether a grounded claim may persist", () 
               ],
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "catering-status",
@@ -907,6 +931,7 @@ describe("the entailment gate decides whether a grounded claim may persist", () 
               docTitle: DOC_ENTAIL_ACCEPT.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "rehearsal-status",
@@ -923,6 +948,8 @@ describe("the entailment gate decides whether a grounded claim may persist", () 
               docTitle: DOC_ENTAIL_MULTI.title,
               plan: (ctx) => ({
                 calls: [
+                  call("annotation_search", { docId: ctx.subject }),
+                  call("fetch_many", { documents: [{ documentId: entailAcceptDocId }] }),
                   call("annotate_durable", {
                     docId: ctx.subject,
                     claimType: "standing-booking",

@@ -24,7 +24,8 @@
 
 import "./synth-env.js";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { cognitionTranscriptsDir } from "@omnesis/gateway/src/brain/transcripts.js";
 import { createLogger } from "@omnesis/core";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
@@ -275,6 +276,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       docTitle: GRANT_DOC.title,
       plan: (ctx) => ({
         calls: [
+          call("open_loop_search", { query: MARK_GRANTED }),
           call("open_loop_create", {
             title: `Confirm the rehearsal slot ${MARK_GRANTED}`,
             description: "Tracked from the booking request.",
@@ -282,6 +284,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
             importance: 0.7,
             docs: [ctx.subject],
           }),
+          call("brief_list", {}),
           call("brief_create", {
             kind: "info",
             title: `Rehearsal hold expires ${MARK_GRANTED}`,
@@ -290,6 +293,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
             confidence: 0.85,
             urgency: 0.6,
           }),
+          call("annotation_search", { docId: ctx.subject }),
           call("annotate_durable", {
             docId: ctx.subject,
             claimType: "commitment",
@@ -704,7 +708,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     expect(order).toEqual(["feedback", "data", "synthesis", "bootstrap", "verification"]);
   }, 240_000);
 
-  test("worker concurrency parallelizes daily batches and still serializes the rest", async () => {
+  test("legacy daily and data runs remain exclusive with multiple worker slots", async () => {
     await bench.patchConfig({ brain: { workerConcurrency: 2 } });
     // The drainer re-reads the knob per tick; give it one.
     await sleep(1_000);
@@ -712,7 +716,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     const sourceIds = bench.harness.getSourceIds();
     expect(sourceIds.length).toBeGreaterThanOrEqual(2);
 
-    // ── daily, non-digest: allowed to use the full N in parallel.
+    // Legacy daily work has no scoped maintenance frontier and remains exclusive.
     const now = Date.now();
     const dailyIds = [`run_${randomUUID()}`, `run_${randomUUID()}`];
     seedBatch(
@@ -730,8 +734,8 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       now,
     );
     const dailyMax = await maxConcurrent(bench, dailyIds);
-    expect(dailyMax).toBe(2);
-    expectOneClaimBatch(bench, dailyIds);
+    expect(dailyMax).toBe(1);
+    expectExclusiveClaims(bench, dailyIds);
 
     // ── data: reconcile-before-create is read-then-write, so these never overlap.
     await bench.pushAll([SLOW_DOC_A, SLOW_DOC_B]);
@@ -758,22 +762,19 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       then,
     );
     const dataMax = await maxConcurrent(bench, dataIds);
-    // Not vacuous: the pair was claimed by ONE tick, so the drainer had both
-    // in hand and chose to run them one after the other.
-    expectOneClaimBatch(bench, dataIds);
+    // Each run genuinely executed once; exclusive admission claims them separately.
+    expectExclusiveClaims(bench, dataIds);
     expect(dataMax).toBe(1);
   }, 240_000);
 });
 
 /**
- * Assert a set of runs was claimed by a single drain tick: the claim statement
- * stamps one `last_attempt_at` across the whole batch, so equal stamps (with
- * no re-claim) mean the drainer held them all at once.
+ * Exclusive admission claims one run at a time; every probe must actually execute.
  */
-function expectOneClaimBatch(bench: BrainBench, ids: readonly string[]): void {
+function expectExclusiveClaims(bench: BrainBench, ids: readonly string[]): void {
   const rows = runRows(bench, ids);
   expect(rows.map((r) => r.attempts)).toEqual(ids.map(() => 1));
-  expect(new Set(rows.map((r) => r.lastAttemptAt)).size).toBe(1);
+  expect(new Set(rows.map((r) => r.lastAttemptAt)).size).toBe(ids.length);
 }
 
 /**
@@ -1104,7 +1105,7 @@ describe("brain engine — failure, backpressure and the budget", () => {
     expect(held.attempts).toBeLessThan(5);
   }, 300_000);
 
-  test("an unresolvable backend soft-fails the run and writes no transcript", async () => {
+  test("an unavailable backend parks unclaimed work without attempts or a transcript", async () => {
     const config = await readConfig(bench);
     const inference = config.inference as { assignments?: Record<string, string> };
     const original = inference.assignments?.["background-agent"];
@@ -1120,8 +1121,8 @@ describe("brain engine — failure, backpressure and the budget", () => {
     const orphanRunId = `run_${randomUUID()}`;
     assignmentRemoved = false;
 
-    // Both are claimed by the same tick (limit 2) and then executed strictly
-    // one at a time, so the assignment can be pulled between them.
+    // Exclusive legacy admission starts the first row and leaves its successor
+    // unclaimed. Removing the assignment must park that owed work untouched.
     seedBatch(
       bench,
       [
@@ -1154,23 +1155,27 @@ describe("brain engine — failure, backpressure and the budget", () => {
     await bench.patchConfig({ inference: { assignments: { "background-agent": null } } });
     assignmentRemoved = true;
 
-    await waitFor(
-      () => `run ${orphanRunId} to soft-fail: ${JSON.stringify(runRow(bench, orphanRunId))}`,
-      () => {
-        const r = runRow(bench, orphanRunId);
-        return r && r.attempts >= 1 && r.lastError !== null ? r : null;
-      },
-      120_000,
-      150,
-    );
+    await waitSettled(bench, [holdRunId]);
+    // Disabled ticks return before recording drain metrics; give admission a
+    // compressed cadence interval without requiring nonexistent successful ticks.
+    await sleep(1_000);
 
     const orphan = runRow(bench, orphanRunId)!;
-    // Soft, not terminal: still pending, rescheduled, one attempt burned.
     expect(orphan.status).toBe("pending");
-    expect(orphan.attempts).toBe(1);
+    expect(orphan.attempts).toBe(0);
     expect(orphan.failureCode).toBeNull();
-    expect(orphan.lastError).toContain("background-agent backend unavailable");
-    expect(orphan.nextAttemptAt).toBeGreaterThan(virtualNow);
+    expect(orphan.lastError).toBeNull();
+    expect(orphan.lastAttemptAt).toBeNull();
+    expect(orphan.nextAttemptAt).toBe(virtualNow - 1_000);
+    expect(bench.puppetCalls.some((entry) => entry.runId === orphanRunId)).toBe(false);
+    // The gated admin transcript route is unavailable while the engine is off.
+    // Inspect the actual isolated transcript directory before restoring admission.
+    const transcriptDir = cognitionTranscriptsDir(bench.harness.getConfigDir());
+    expect(
+      existsSync(transcriptDir)
+        ? readdirSync(transcriptDir).filter((name) => name.includes(orphanRunId))
+        : [],
+    ).toEqual([]);
 
     // The gateway is alive and says why it is idle.
     const off = await bench.obs.status();
@@ -1178,10 +1183,7 @@ describe("brain engine — failure, backpressure and the budget", () => {
     expect(off.briefs.active).toBe(false);
     expect(off.briefs.reason).toBeTruthy();
 
-    // Restore the model and cross the back-off: the run is retried, not lost.
-    // (The admin surface 404s while the gate is shut, so the transcript
-    // assertion below waits for the engine to come back — restoring the model
-    // cannot conjure a transcript for an attempt that never opened a session.)
+    // Restoring the assignment admits the still-due row once, without a retry.
     await bench.patchConfig({
       inference: { assignments: { "background-agent": original! } },
     });
@@ -1192,14 +1194,9 @@ describe("brain engine — failure, backpressure and the budget", () => {
       200,
     );
 
-    // No session ran, so there is nothing to transcribe.
-    const transcripts = await bench.obs.transcripts({ runId: orphanRunId });
-    expect(transcripts.items).toEqual([]);
-
-    await bench.clock.set(orphan.nextAttemptAt + 10);
     await waitSettled(bench, [orphanRunId]);
     expect(runRow(bench, orphanRunId)!.status).toBe("completed");
-    expect(runRow(bench, orphanRunId)!.attempts).toBe(2);
+    expect(runRow(bench, orphanRunId)!.attempts).toBe(1);
 
     await bench.patchConfig({ brain: { workerConcurrency: 1 } });
     await sleep(1_000);
@@ -1332,6 +1329,7 @@ describe("brain engine — a scheduled check that collides with a pending one", 
               expectedRefusals: [{ tool: "schedule_agent_run", code: "schedule_conflict" }],
               plan: (ctx) => ({
                 calls: [
+                  call("open_loop_search", { query: MARK_COLLIDE }),
                   call("open_loop_create", {
                     title: `Confirm the sound check window (${MARK_COLLIDE})`,
                     confidence: 0.9,
@@ -1371,6 +1369,7 @@ describe("brain engine — a scheduled check that collides with a pending one", 
               expectedRefusals: [{ tool: "schedule_agent_run", code: "schedule_conflict" }],
               plan: (ctx) => ({
                 calls: [
+                  call("open_loop_search", { query: MARK_STAND }),
                   call("open_loop_create", {
                     title: `Confirm the catering headcount (${MARK_STAND})`,
                     confidence: 0.9,

@@ -152,29 +152,33 @@ function run(thread, inputs) {
         const createNext = () => {
           const variant = variants.shift();
           if (!variant) return complete();
-          call(
-            thread,
-            "brief_create",
-            {
-              kind: "info",
-              title: `codex-bench-${variant}`,
-              body: quote,
-              citations: [docId],
-              confidence: 0.9,
-              urgency: 0.6,
-              annotationDependencies: [],
-              assertedClaims: [
-                {
-                  claimText: variant === "unsupported-claim" ? "unsupported-claim" : quote,
-                  evidenceDocId: docId,
-                  evidenceQuote: quote,
-                  confidence: 0.9,
-                  claimBasis: "quoted",
-                },
-              ],
-            },
-            createNext,
-          );
+          call(thread, "brief_list", {}, (reply) => {
+            if (parseTool(reply)?.kind === "error")
+              return finish(thread, "Brief inventory read refused; preserve pending work.");
+            call(
+              thread,
+              "brief_create",
+              {
+                kind: "info",
+                title: `codex-bench-${variant}`,
+                body: quote,
+                citations: [docId],
+                confidence: 0.9,
+                urgency: 0.6,
+                annotationDependencies: [],
+                assertedClaims: [
+                  {
+                    claimText: variant === "unsupported-claim" ? "unsupported-claim" : quote,
+                    evidenceDocId: docId,
+                    evidenceQuote: quote,
+                    confidence: 0.9,
+                    claimBasis: "quoted",
+                  },
+                ],
+              },
+              createNext,
+            );
+          });
         };
         call(thread, "fetch_many", { documents: [{ documentId: docId }] }, createNext);
       };

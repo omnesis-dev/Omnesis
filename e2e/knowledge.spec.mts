@@ -285,8 +285,11 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     animations: "disabled",
   });
   await page.goto(url("/portal/debug/cognition/maintenance"));
-  await expect(page.getByRole("heading", { name: "Recent batches" })).toBeVisible();
-  await page.getByRole("link", { name: /soon maintenance/i }).click();
+  await expect(page.getByRole("heading", { name: "Maintenance batches" })).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Maintenance batch list" })
+    .getByRole("link", { name: /Maintenance batch.*Soon/i })
+    .click();
   await expect(page).toHaveURL(/maintenance\/browser-pending$/);
   await page.reload();
   await expect(page.locator(".kn-batch-detail")).toContainText("Paper workshop");
@@ -295,7 +298,10 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     fullPage: true,
     animations: "disabled",
   });
-  await page.getByRole("link", { name: /immediate maintenance/i }).click();
+  await page
+    .getByRole("navigation", { name: "Maintenance batch list" })
+    .getByRole("link", { name: /Maintenance batch.*Immediate/i })
+    .click();
   await page.screenshot({
     path: info.outputPath("knowledge-maintenance-completed.png"),
     fullPage: true,
@@ -316,7 +322,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await page.getByRole("button", { name: /^Active/ }).click();
   await expect(page.locator(".km-batch-row")).toHaveCount(1);
   await page.goto(url(route));
-  const search = page.getByRole("searchbox", { name: "Search knowledge" });
+  const search = page.getByRole("searchbox", { name: "Search loaded knowledge" });
   await search.fill("no-such-subject");
   await expect(page.getByText("No matching pages", { exact: true })).toBeVisible();
   await search.fill("workshop");
@@ -644,7 +650,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     animations: "disabled",
   });
   await page.getByRole("link", { name: /Back to library/ }).click();
-  await expect(page.getByRole("searchbox", { name: "Search knowledge" })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search loaded knowledge" })).toBeVisible();
   await page.screenshot({
     path: info.outputPath("knowledge-mobile-library.png"),
     fullPage: true,
@@ -675,7 +681,7 @@ test("knowledge network failure offers a working retry", async ({ page }, info) 
   });
   await page.unroute("**/admin/brain/knowledge/library?*");
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(page.getByRole("searchbox", { name: "Search knowledge" })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search loaded knowledge" })).toBeVisible();
   await expect(page.getByText("Knowledge could not be loaded", { exact: true })).toHaveCount(0);
 });
 

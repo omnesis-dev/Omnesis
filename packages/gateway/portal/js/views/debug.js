@@ -165,7 +165,7 @@ export function DebugView({
 
   return html`
     <div class="debug-view debug-workspace">
-      <${DebugNavigation} tab=${activeTab} cognitionTab=${cognitionTab} experimental=${experimental} />
+      <${DebugNavigation} tab=${activeTab} routeTab=${tab} cognitionTab=${cognitionTab} experimental=${experimental} />
       ${DEBUG_INTROS[activeTab] && html`<header class="debug-section-heading"><h1>${DEBUG_INTROS[activeTab][0]}</h1><p>${DEBUG_INTROS[activeTab][1]}</p></header>`}
       ${activeTab === "data" && html`<${DataView}
         store=${dataParams?.store ?? null}

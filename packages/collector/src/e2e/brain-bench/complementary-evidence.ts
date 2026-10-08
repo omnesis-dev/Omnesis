@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
-import { expect } from "vitest";
+import { waitFor } from "../briefs-scorecard.js";
 import { call, structuredData, type PuppetPlan, type ToolStep } from "./puppet-plan.js";
 import type { BrainBench } from "./bench.js";
 
@@ -49,19 +49,15 @@ export async function waitForComplementaryEvidence(
   bench: BrainBench,
   title: string,
 ): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        const response = await bench.harness.gatewayJson<{ results: Array<{ title: string }> }>(
-          "/search",
-          {
-            method: "POST",
-            body: JSON.stringify({ text: title, limit: 10 }),
-          },
-        );
-        return response.results.some((result) => result.title === title);
-      },
-      { timeout: 60_000 },
-    )
-    .toBe(true);
+  await waitFor(
+    `indexed complementary evidence: ${title}`,
+    async () => {
+      const response = await bench.harness.gatewayJson<{ results: Array<{ title: string }> }>(
+        "/search",
+        { method: "POST", body: JSON.stringify({ text: title, limit: 10 }) },
+      );
+      return response.results.some((result) => result.title === title) ? true : null;
+    },
+    60_000,
+  );
 }

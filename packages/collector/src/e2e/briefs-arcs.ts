@@ -174,6 +174,8 @@ export type ArcAction =
 export interface ArcDocBehavior {
   onCreated: ArcAction;
   onUpdated?: ArcAction;
+  /** Exact source bodies identifying updated revisions in maintenance frontiers. */
+  updatedContents?: readonly string[];
 }
 
 export interface ArcDocument {
@@ -1450,7 +1452,14 @@ export function generateArcSet(seed: number): ArcSet {
 
   const behaviors = new Map<string, ArcDocBehavior>();
   for (const arc of arcs) {
-    for (const step of arc.steps) behaviors.set(step.doc.title, step.doc.behavior);
+    for (const step of arc.steps) {
+      behaviors.set(
+        step.doc.title,
+        arc.kind === "doc-edit"
+          ? { ...step.doc.behavior, updatedContents: docEditRevisions }
+          : step.doc.behavior,
+      );
+    }
   }
 
   return { seed, people, arcs, behaviors, docEditRevisions };

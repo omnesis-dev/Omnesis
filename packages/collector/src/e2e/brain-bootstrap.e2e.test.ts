@@ -47,6 +47,8 @@ describe("historical discovery: writes and revision coverage", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
+      // Admission limits apply only to this scenario's explicit history.
+      syncSources: false,
       clock: "virtual",
       brain: {
         ...OFF,
@@ -163,6 +165,8 @@ describe("historical discovery: boundary with live intake", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
+      // Admission limits apply only to this scenario's explicit history.
+      syncSources: false,
       clock: "virtual",
       brain: { ...OFF, bootstrap: { enabled: true, maxRunsPerDay: 10, maxRuns: 50 } },
       behaviors: {
@@ -215,6 +219,8 @@ describe("historical discovery: admission lifecycle", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
+      // Admission limits apply only to this scenario's explicit history.
+      syncSources: false,
       clock: "virtual",
       brain: {
         ...OFF,
@@ -321,6 +327,8 @@ describe("historical discovery: provider outage", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
+      // Admission limits apply only to this scenario's explicit history.
+      syncSources: false,
       clock: "virtual",
       brain: {
         ...OFF,
@@ -334,6 +342,7 @@ describe("historical discovery: provider outage", () => {
               docTitle: "Storage term renewal",
               plan: (ctx) => ({
                 calls: [
+                  call("temporal_query", { from: "2031-10-01", to: "2031-11-01" }),
                   call("temporal_annotation_add", {
                     when: "2031-10-09",
                     sentence: "BS-OUTAGE storage term renews.",

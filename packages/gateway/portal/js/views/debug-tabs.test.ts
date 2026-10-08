@@ -13,9 +13,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // `vi.hoisted` because vi.mock is lifted above the imports — a plain const
 // would not exist yet when the factory runs.
-const { replaceRoute } = vi.hoisted(() => ({ replaceRoute: vi.fn() }));
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 
-vi.mock("../lib/router.js", () => ({ replaceRoute }));
+vi.mock("../lib/router.js", () => ({ navigate }));
 vi.mock("../api.js", () => ({
   getBackgroundJobs: vi.fn(async () => ({ jobs: [] })),
   getMetrics: vi.fn(async () => ({})),
@@ -59,72 +59,78 @@ describe("Debug tab bar", () => {
     });
   }
 
-  function tabButton(label: string): HTMLElement {
-    const match = [...host.querySelectorAll("button.config-tab")].find(
-      (b) => b.textContent === label,
+  function tabLink(label: string): HTMLElement {
+    const match = [...host.querySelectorAll("a")].find(
+      (b) => b.textContent?.trim() === label,
     );
     if (!match) throw new Error(`no tab labelled ${label}`);
     return match as unknown as HTMLElement;
   }
 
   function activeTabLabel(): string | undefined {
-    return host.querySelector("button.config-tab.active")?.textContent ?? undefined;
+    return host.querySelector('a[aria-current="page"]')?.textContent?.trim() ?? undefined;
   }
 
   test("renders the tab the route names", async () => {
     await mount({ tab: "graph", experimental: false });
-    expect(activeTabLabel()).toBe("Graph");
+    expect(activeTabLabel()).toBe("Document graph");
     expect(host.querySelector(".stub-graph")).not.toBeNull();
   });
 
   test("selecting another tab rewrites the path to that tab", async () => {
     await mount({ tab: "graph", experimental: false });
     await act(async () => {
-      tabButton("Doctor").click();
+      tabLink("System").click();
     });
-    expect(replaceRoute).toHaveBeenCalledWith("/portal/debug/doctor");
+    expect(navigate).toHaveBeenCalledWith("/portal/debug/doctor");
   });
 
-  test("re-selecting the open tab is a no-op, so its query state survives", async () => {
+  test("re-selecting the open tab is a no-op, so its query and fragment survive", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("https://portal.example.org/portal/debug/graph?node=fixture#details"),
+    });
     await mount({ tab: "graph", experimental: false });
     await act(async () => {
-      tabButton("Graph").click();
+      tabLink("Document graph").click();
     });
-    expect(replaceRoute).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(window.location.search).toBe("?node=fixture");
+    expect(window.location.hash).toBe("#details");
   });
 
   test("a Cognition route falls back to the default tab until experimental arrives", async () => {
     // The flag resolves async, so a cold deep link mounts with it still false.
     await mount({ tab: "cognition", experimental: false });
     expect(host.querySelector(".stub-cognition")).toBeNull();
-    expect(activeTabLabel()).toBe("Data");
+    expect(activeTabLabel()).toBe("Tables");
 
     // While the two disagree, a click must still be able to repair the URL —
     // the no-op guard compares against the route, not the rendered tab.
     await act(async () => {
-      tabButton("Data").click();
+      tabLink("Tables").click();
     });
-    expect(replaceRoute).toHaveBeenCalledWith("/portal/debug/data");
+    expect(navigate).toHaveBeenCalledWith("/portal/debug/data");
   });
 
   test("the same route resolves to Cognition once experimental is on", async () => {
     await mount({ tab: "cognition", experimental: true });
-    expect(activeTabLabel()).toBe("Cognition");
+    expect(activeTabLabel()).toBe("Agent runs");
     expect(host.querySelector(".stub-cognition")).not.toBeNull();
   });
 
   test("the Watch tab is gated the same way, and carries the watch id it was given", async () => {
     await mount({ tab: "watch", experimental: false, watchDebugId: "watch-01" });
     expect(host.querySelector(".stub-watch")).toBeNull();
-    expect(activeTabLabel()).toBe("Data");
+    expect(activeTabLabel()).toBe("Tables");
 
     await mount({ tab: "watch", experimental: true, watchDebugId: "watch-01" });
-    expect(activeTabLabel()).toBe("Watch");
+    expect(activeTabLabel()).toBe("Watch runtime");
     expect(host.querySelector(".stub-watch")).not.toBeNull();
   });
 
   test("an unrenderable tab shows the default without claiming to be it", async () => {
     await mount({ tab: "nonexistent", experimental: false });
-    expect(activeTabLabel()).toBe("Data");
+    expect(activeTabLabel()).toBe("Tables");
   });
 });

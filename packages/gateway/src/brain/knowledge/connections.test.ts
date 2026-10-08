@@ -40,7 +40,12 @@ function page(id: string, ref?: string, version: string | number = "hash") {
   ).node;
 }
 function related(fromId: string, toId: string) {
-  setKnowledgeLink(db, { fromId, toId, kind: "related_to", fromRevision: 1, toRevision: 1 });
+  setKnowledgeLink(
+    db,
+    { fromId, toId, kind: "related_to", fromRevision: 1, toRevision: 1 },
+    undefined,
+    1,
+  );
 }
 it("shows both dependency directions and organizational links with distinct semantics", () => {
   page("project", "source:schedule");

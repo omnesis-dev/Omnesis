@@ -74,7 +74,7 @@ it("follows exact claim supports without broadening to neighboring claims", () =
       title: "Observatory",
       expectedRevision: 0,
       markdown:
-        '<claim id="overview" refs="wiki:details#claim:design,wiki:details#claim:permit">The approved observatory uses a reflector.</claim>',
+        '<claim id="overview" refs="wiki:details#claim:design wiki:details#claim:permit">The approved observatory uses a reflector.</claim>',
       inputVersions: { "wiki:details#claim:design": 1, "wiki:details#claim:permit": 1 },
     },
     2,

@@ -28,7 +28,7 @@ export function recordKnowledgeDecisionPayload(
   id: string,
   capture: KnowledgeUrgencyCapture,
   payload: KnowledgeDecisionPayload,
-  now = Date.now(),
+  now: number,
 ): void {
   const scope = captureDecisionPayloadSubjects(
     db,

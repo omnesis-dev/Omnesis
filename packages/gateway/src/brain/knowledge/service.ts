@@ -301,7 +301,7 @@ export class KnowledgeService {
           const key = JSON.stringify(ref.raw);
           throw new KnowledgeStorageError(
             "revision_conflict",
-            `${reason} dependency version for ${key}. Call knowledge_reference with {"ref":${key}}, review the returned evidence, and set node.inputVersions[${key}] to its returned revision before retrying knowledge_save. Reconcile the claim if the evidence changed; refreshing the frontier alone does not supply this dependency version.`,
+            `${reason} dependency version for ${key}. Call knowledge_reference with {"ref":${key}} and review the returned evidence. For knowledge_save, that read records the exact version in this run: omit node.inputVersions[${key}] (or the whole map) to use its read receipt. Explicit overrides are never refreshed silently; remove a stale override or copy the exact returned revision. Scoped owner synthesis tools still require explicit inputVersions. Reconcile the affected claim if evidence changed; unchanged claims can retain their editing-read versions. Refreshing the frontier alone does not read this dependency.`,
           );
         }
         if ((state.relations?.[ref.raw] ?? "supports") === "supports") support.push(view);

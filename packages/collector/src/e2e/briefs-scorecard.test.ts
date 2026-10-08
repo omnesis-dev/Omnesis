@@ -12,6 +12,7 @@
 import { describe, expect, test } from "vitest";
 import { arcById, generateArcSet, FROZEN_ARC_SEED, type ArcSet } from "./briefs-arcs.js";
 import {
+  runScorecard,
   attributeLoops,
   computeDailyMix,
   computeScorecardMetrics,
@@ -366,4 +367,19 @@ describe("computeScorecardMetrics", () => {
       /representsDays/,
     );
   });
+});
+
+test("priced scorecards refuse startup until actual maintenance runs are budgeted", async () => {
+  await expect(
+    runScorecard({
+      gatewayMode: "experimental",
+      seed: 1,
+      backend: {
+        kind: "http",
+        backendName: "fixture",
+        url: "http://127.0.0.1:1",
+        modelId: "fixture",
+      },
+    }),
+  ).rejects.toThrow("actual-run budget reservation");
 });

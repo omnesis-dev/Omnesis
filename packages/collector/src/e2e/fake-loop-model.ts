@@ -28,6 +28,13 @@
 
 import { createServer, type Server } from "node:http";
 import { parseCognitionRunEnvelope } from "@omnesis/core";
+import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
+import { refreshCurrentOwner } from "./brain-bench/source-interpretations.js";
+import {
+  readRunContext,
+  collectToolSteps as collectMaintenanceSteps,
+  type PuppetPlan,
+} from "./brain-bench/puppet-plan.js";
 import type { ArcAction, ArcDocBehavior } from "./briefs-arcs.js";
 
 const SCRIPTED_LOOP_MODEL_ID = "scripted-loop-agent-v1";
@@ -516,6 +523,54 @@ function planFor(
   ];
 }
 
+/** Current maintenance uses durable frontiers; legacy recovery below remains explicit. */
+function maintenanceTurn(
+  messages: readonly WireMessage[],
+  behaviors: ReadonlyMap<string, ArcDocBehavior>,
+): NextTurn | null {
+  const prompt = messages.find((message) => message.role === "user")?.content ?? "";
+  const context = readRunContext(prompt);
+  if (context?.flavour !== "synthesis.knowledge") return null;
+  return knowledgePuppet({
+    maxRevisionConflictRetries: 8,
+    plan(item, ctx, steps) {
+      if (!item.source) return refreshCurrentOwner(item, ctx, steps);
+      const frontierAt = steps.map((step) => step.name).lastIndexOf("knowledge_next_frontier");
+      const local = steps.slice(frontierAt + 1);
+      const behavior = behaviors.get(item.source.title);
+      const action =
+        behavior?.onUpdated && behavior.updatedContents?.includes(item.source.content)
+          ? behavior.onUpdated
+          : behavior?.onCreated;
+      const plan = action
+        ? planFor(action, item.source.id, local)
+        : { finalText: "No scripted mutation for this source." };
+      const calls: PuppetPlan["calls"] = [
+        { tool: "fetch_many", args: { documents: [{ documentId: item.source.id }] } },
+      ];
+      if (!Array.isArray(plan)) return { calls, finalText: plan.finalText };
+      for (const call of plan) {
+        if (call.name.startsWith("brief_") && call.name !== "brief_list")
+          calls.push({ tool: "brief_list", args: {} });
+        if (
+          ["open_loop_update", "open_loop_delete", "open_loop_ledger_append"].includes(call.name) &&
+          typeof call.args.id === "string"
+        )
+          calls.push({ tool: "open_loop_fetch", args: { id: call.args.id } });
+        calls.push({
+          tool: call.name,
+          args: ["open_loop_create", "open_loop_update", "brief_create", "brief_update"].includes(
+            call.name,
+          )
+            ? { annotationDependencies: [], ...call.args }
+            : call.args,
+        });
+      }
+      return { calls };
+    },
+  })(context, collectMaintenanceSteps(messages));
+}
+
 /**
  * Derive the next turn from the full message history — the scripted
  * agent's whole brain. Pure; exported for unit tests.
@@ -527,6 +582,8 @@ export function decideNextTurn(
 ): NextTurn {
   const prompt = messages.find((m) => m.role === "user")?.content ?? "";
   const meta = parseRunPrompt(prompt);
+  const maintenance = maintenanceTurn(messages, behaviors);
+  if (maintenance) return maintenance;
 
   if (meta.kind === "feedback") {
     const fb = parseFeedbackPrompt(prompt);
@@ -684,12 +741,26 @@ export async function startScriptedLoopModelServer(
         );
         const prompt = body.messages.find((m) => m.role === "user")?.content ?? "";
         const meta = parseRunPrompt(prompt);
+        const steps = collectToolSteps(body.messages);
+        const frontierAt = steps.map((step) => step.name).lastIndexOf("knowledge_next_frontier");
+        const frontier = structuredData(steps[frontierAt]?.result);
+        const completed = new Set(
+          steps
+            .slice(frontierAt + 1)
+            .filter((step) => step.name === "knowledge_discovery_complete")
+            .map((step) => (step.args as { id?: unknown })?.id),
+        );
+        const source = (
+          frontier?.items as
+            | Array<{ id: string; source?: { id: string; content: string } }>
+            | undefined
+        )?.find((item) => item.source && !completed.has(item.id))?.source;
         calls.push({
           at: Date.now(),
           runId: meta.runId,
           kind: meta.kind,
           event: meta.event,
-          docId: meta.docId,
+          docId: meta.docId ?? source?.id ?? null,
           prompt,
           emitted: turn,
         });
