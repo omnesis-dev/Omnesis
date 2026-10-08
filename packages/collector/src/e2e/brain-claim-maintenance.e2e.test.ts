@@ -98,9 +98,14 @@ beforeAll(async () => {
           const firstPartial = revised && node.markdown.includes("Friday");
           return {
             calls: [
+              call("knowledge_list", { kind: "wiki" }),
               call("knowledge_save", {
                 inputFingerprint: item.inputFingerprint,
                 reviewedClaimIds: firstPartial ? [] : item.pendingClaimIds,
+                placementAssessment: {
+                  status: "standalone",
+                  reason: "The workshop date and supplies form one self-contained reference page.",
+                },
                 node: {
                   id: pageId,
                   kind: "wiki",

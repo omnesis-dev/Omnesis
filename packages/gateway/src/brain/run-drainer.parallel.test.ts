@@ -182,19 +182,19 @@ test.each(["abort", "claim-error", "settle-error"] as const)(
   },
 );
 
-test("continuations yield to the next invocation and admission count is bounded", async () => {
+test("immediate continuations are admitted only once across renewed rounds", async () => {
   for (let i = 0; i < 10; i++) await enqueue(`run-${i}`);
   const execute = vi.fn((_run: ClaimedCognitionRun) =>
     Promise.resolve({ ...success, ok: false, continuation: true, deferredUntil: 100 }),
   );
   const drain = setup(execute, { limit: 1 });
   await drain.run();
-  expect(execute).toHaveBeenCalledTimes(4);
+  expect(execute).toHaveBeenCalledTimes(10);
   expect(new Set(execute.mock.calls.map((args) => (args[0] as ClaimedCognitionRun).id)).size).toBe(
-    4,
+    10,
   );
   await drain.run();
-  expect(execute).toHaveBeenCalledTimes(8);
+  expect(execute).toHaveBeenCalledTimes(20);
 });
 
 test.each(["budget", "disabled", "yield"] as const)(
@@ -311,3 +311,85 @@ test("a tool cap without settled frontier progress remains a terminal failure", 
   expect(getCognitionRun(db, "stalled")?.status).toBe("failed");
   expect(db.prepare("SELECT COUNT(*) AS n FROM cognition_runs").get()).toEqual({ n: 1 });
 });
+
+test("renews admission rounds behind a slow sibling without exceeding capacity", async () => {
+  for (let i = 0; i < 20; i++) await enqueue(`work-${String(i).padStart(2, "0")}`);
+  const work = controlled();
+  const drain = setup(work.execute);
+  const pending = drain.run();
+  try {
+    await vi.waitFor(() => expect(work.starts).toHaveLength(2));
+    for (let i = 1; i < 19; i++) {
+      work.releases.get(`work-${String(i).padStart(2, "0")}`)!();
+      await vi.waitFor(() => expect(work.starts).toHaveLength(i + 2));
+    }
+    expect(work.live()).toBe(2);
+    expect(work.peak()).toBe(2);
+    expect(getCognitionRun(db, "work-00")?.attempts).toBe(1);
+  } finally {
+    drain.controller.abort();
+    for (const release of work.releases.values()) release();
+    await pending;
+  }
+  expect(work.live()).toBe(0);
+});
+
+test.each(["root", "daily", "digest"] as const)(
+  "a newly due %s head stops renewed parallel admissions until siblings settle",
+  async (mode) => {
+    for (let i = 0; i < 12; i++) await enqueue(`work-${String(i).padStart(2, "0")}`);
+    const work = controlled();
+    const drain = setup(work.execute);
+    const pending = drain.run();
+    try {
+      await vi.waitFor(() => expect(work.starts).toHaveLength(2));
+      for (let i = 1; i < 8; i++) {
+        work.releases.get(`work-${String(i).padStart(2, "0")}`)!();
+        await vi.waitFor(() => expect(work.starts).toHaveLength(i + 2));
+      }
+      await enqueue("exclusive", mode);
+      db.prepare("UPDATE cognition_runs SET next_attempt_at=0 WHERE id='exclusive'").run();
+      const claims = vi.spyOn(gate, "claimDueCognitionRuns");
+      work.releases.get("work-08")!();
+      await vi.waitFor(() => expect(claims).toHaveBeenCalled());
+      expect(work.starts).toHaveLength(9);
+      expect(getCognitionRun(db, "exclusive")?.attempts).toBe(0);
+      work.releases.get("work-00")!();
+      await vi.waitFor(() => expect(work.starts.at(-1)).toBe("exclusive"));
+      expect(work.live()).toBe(1);
+      drain.controller.abort();
+      work.releases.get("exclusive")!();
+    } finally {
+      drain.controller.abort();
+      for (const release of work.releases.values()) release();
+      await pending;
+    }
+    expect(work.live()).toBe(0);
+    expect(getCognitionRun(db, "work-09")?.attempts).toBe(0);
+  },
+);
+
+test.each(["abort", "yield"] as const)(
+  "honors %s at a renewal boundary before admitting more work",
+  async (stop) => {
+    for (let i = 0; i < 8; i++) await enqueue(`run-${i}`);
+    const execute = vi.fn(() => Promise.resolve(success));
+    const drain = setup(execute, { limit: 1 });
+    const claim = gate.claimDueCognitionRuns;
+    let admissions = 0;
+    vi.spyOn(gate, "claimDueCognitionRuns").mockImplementation(async (input) => {
+      const runs = await claim(input);
+      admissions += runs.length;
+      if (admissions === 4)
+        setImmediate(() => {
+          if (stop === "abort") drain.controller.abort();
+          else drain.ctx.shouldYield = () => true;
+        });
+      return runs;
+    });
+    await drain.run();
+    expect(admissions).toBe(4);
+    expect(execute).toHaveBeenCalledTimes(4);
+    expect(getCognitionRun(db, "run-4")?.attempts).toBe(0);
+  },
+);

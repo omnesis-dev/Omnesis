@@ -13,6 +13,8 @@ export interface KnowledgeRevisionDiff {
   changedFieldKeys: string[];
   titleChanged: boolean;
   validityChanged: boolean;
+  /** Trusted editorial outcome; contains no related-page identities or prose. */
+  placementAssessment?: import("./placement-assessment.js").KnowledgePlacementRecord;
 }
 export interface KnowledgeNodeRevision {
   nodeId: string;

@@ -26,6 +26,7 @@ import {
   type KnowledgeRevision,
   type SaveKnowledgeNodeInput,
 } from "./types.js";
+import type { KnowledgeEditingSnapshot } from "./dependency-receipts.js";
 import type { EntailCapability, Logger } from "@omnesis/core";
 import type Database from "better-sqlite3";
 import type { KnowledgeRunFence } from "./run-fence.js";
@@ -74,6 +75,14 @@ export class KnowledgeService {
       markdown: editing ? node.markdown : node.plainText,
       claims: getKnowledgeClaims(this.deps.db, id),
     };
+  }
+
+  /** The editing body and inherited dependency versions belong to one DB snapshot. */
+  editingSnapshot(id: string): KnowledgeEditingSnapshot | null {
+    return this.deps.db.transaction(() => {
+      const node = this.fetch(id, true);
+      return node ? { node, dependencies: getKnowledgeDependencies(this.deps.db, id) } : null;
+    })();
   }
 
   list(options: Parameters<typeof listKnowledgeNodes>[1] = {}): KnowledgeNode[] {

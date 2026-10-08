@@ -525,7 +525,7 @@ export function settleKnowledgeFrontier(
         AND EXISTS(SELECT 1 FROM knowledge_claims c WHERE c.node_id=knowledge_nodes.id)
         AND NOT EXISTS(SELECT 1 FROM knowledge_claims c WHERE c.node_id=knowledge_nodes.id AND c.verification!='verified')
         AND EXISTS(SELECT 1 FROM knowledge_work w WHERE w.batch_id=? AND w.subject_kind='node'
-          AND w.subject_id=knowledge_nodes.id AND w.reason='review')`,
+          AND w.subject_id=knowledge_nodes.id AND w.reason='review' AND w.status='batched')`,
       ).run(now, now, input.outcome.nodeId, input.outcome.resultRevision, input.outcome.batchId);
     }
   })();

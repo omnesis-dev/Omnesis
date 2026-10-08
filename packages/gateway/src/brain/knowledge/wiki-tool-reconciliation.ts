@@ -33,7 +33,7 @@ export class WikiToolReconciliation {
   /** Keep the revision actually returned, not a later collection snapshot. */
   readNode<T extends { id: string; kind: string; revision: number } | null>(read: () => T): T {
     const node = read();
-    if (node?.kind === "wiki") this.nodeReads.set(node.id, node.revision);
+    if (node && ["wiki", "root"].includes(node.kind)) this.nodeReads.set(node.id, node.revision);
     return node;
   }
 
@@ -51,6 +51,21 @@ export class WikiToolReconciliation {
   acceptNode<T extends { node: { id: string; revision: number } }>(result: T): T {
     this.nodeReads.set(result.node.id, result.node.revision);
     return result;
+  }
+
+  /** Placement judges observed context; unrelated writes do not invalidate it. */
+  placementFence(fence: KnowledgeRunFence): KnowledgeRunFence {
+    const revision = this.reads.get("pages");
+    if (revision === undefined)
+      throw knowledgeReconciliationConflict(
+        "wiki",
+        'Read knowledge_list({kind:"wiki"}) before assessing placement.',
+      );
+    return {
+      ...fence,
+      placementLibrary: { collection: "wiki", revision },
+      placementNodeReads: Object.fromEntries(this.nodeReads),
+    };
   }
 
   fence(keys: readonly string[]): KnowledgeRunFence {

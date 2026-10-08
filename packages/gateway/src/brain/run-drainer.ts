@@ -22,6 +22,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { agentFailureScope } from "@omnesis/agent";
 import { QueueTracker } from "../background-jobs/trackers.js";
 import { periodicJob } from "../background-jobs/scheduler-job.js";
@@ -654,8 +655,8 @@ export function createCognitionDrainerTasks(
     idlePeriodMs: opts.drainIdleMs ?? envInt("OMNESIS_COGNITION_DRAIN_IDLE_MS") ?? 30_000,
     startDelayMs:
       opts.drainStartDelayMs ?? envInt("OMNESIS_COGNITION_DRAIN_START_DELAY_MS") ?? 8_000,
-    // Admissions are count-bounded, but admitted runs may need minutes of
-    // model round-trips to finish or abort before the task can return.
+    // Admission rounds yield to the event loop; the scheduler budget bounds
+    // renewal. Admitted runs must still finish or abort before this task returns.
     latencyBudgetMs: 10 * 60_000,
     initialArgs: undefined,
     isIdle: isIdleResult,
@@ -708,9 +709,16 @@ export function createCognitionDrainerTasks(
         const limit = Number.isFinite(configured)
           ? Math.max(1, Math.min(32, Math.trunc(configured)))
           : 4;
-        // Bound each scheduler invocation even when cheap runs refill instantly.
-        const admissionLimit = limit * 4;
-        while (visited.size < admissionLimit) {
+        // Renew bounded rounds while the scheduler permits work. A total-count
+        // cutoff strands free slots behind the slowest admitted sibling. Keep
+        // visited IDs across rounds so immediate retries cannot monopolize them.
+        const roundLimit = limit * 4;
+        let roundAdmissions = 0;
+        while (true) {
+          if (roundAdmissions === roundLimit) {
+            await yieldToEventLoop();
+            roundAdmissions = 0;
+          }
           if (
             ctx.signal.aborted ||
             ctx.shouldYield() ||
@@ -740,6 +748,7 @@ export function createCognitionDrainerTasks(
             continue;
           }
           visited.add(run.id);
+          roundAdmissions++;
           reportUnreadyDataRuns(opts.db, claimed, log);
           const parallel = isParallelKnowledgeRun(opts.db, run.id);
           // A batch can lose parallel eligibility while its writer claim returns.

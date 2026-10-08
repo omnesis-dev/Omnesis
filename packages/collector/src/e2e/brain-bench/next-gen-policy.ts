@@ -263,8 +263,14 @@ function nodePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Puppet
   }
   if (views.length === sourceIds.size && evidence.length === sourceIds.size)
     calls.push(
+      call("knowledge_list", { kind: "wiki" }),
       call("knowledge_save", {
         inputFingerprint: item.inputFingerprint,
+        placementAssessment: {
+          status: "standalone",
+          reason:
+            "This scripted topic retains its own scope; shared source context alone does not establish a parent relationship.",
+        },
         node: {
           id: node.id,
           kind: "wiki",

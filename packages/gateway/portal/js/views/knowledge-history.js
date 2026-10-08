@@ -21,6 +21,10 @@ export function knowledgeRevisionText(revision) {
 export function KnowledgeHistoryRevision({ revision, previous }) {
   const [expanded, setExpanded] = useState(false);
   const [page, setPage] = useState(0);
+  const placementStatus = revision.diff?.placementAssessment?.status;
+  const placementLabel = placementStatus === "integrated" ? "connected"
+    : placementStatus === "standalone" ? "standalone"
+      : placementStatus === "deferred" ? "deferred" : null;
   const before = knowledgeRevisionText(previous);
   const after = knowledgeRevisionText(revision);
   return html`<section class="kn-revision">
@@ -31,6 +35,7 @@ export function KnowledgeHistoryRevision({ revision, previous }) {
     <p class="kn-caption">
       ${`${revision.diff?.changedClaimIds?.length ?? 0} claim${revision.diff?.changedClaimIds?.length === 1 ? "" : "s"} changed`}
       · ${revision.validity === "stale" ? "Needed review" : "Current when saved"}
+      ${placementLabel ? ` · Placement: ${placementLabel}` : null}
     </p>
     <details onToggle=${(event) => setExpanded(event.currentTarget.open)}>
       <summary>${previous === null ? "Initial version" : `Changes from version ${revision.previousRevision}`}</summary>

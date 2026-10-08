@@ -1672,6 +1672,12 @@ describe("knowledge coordinator", () => {
         inputVersions: { "source:input": "v1" },
       },
       offered.pendingClaimIds,
+      {
+        batchId: batch.id,
+        runId: batch.runId,
+        placementLibrary: { collection: "wiki", revision: 0 },
+      },
+      { status: "standalone", reason: "Self-contained workshop reference." },
     );
     await engine.next(batch.id, batch.runId);
     expect(getKnowledgeNode(db, "reviewed")!.metadata).toMatchObject({
@@ -1720,6 +1726,12 @@ describe("knowledge coordinator", () => {
         inputVersions: { "source:input": "v1" },
       },
       offered.pendingClaimIds,
+      {
+        batchId: batch.id,
+        runId: batch.runId,
+        placementLibrary: { collection: "wiki", revision: 0 },
+      },
+      { status: "standalone", reason: "Self-contained workshop reference." },
     );
     expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
     const verification = getKnowledgeNode(db, "overdue")!.metadata.lastVerifiedAt;
@@ -2166,6 +2178,12 @@ it("keeps untouched eligible claims pending after a partial page save", async ()
       inputVersions: { "source:input": "v1" },
     },
     ["second"],
+    {
+      batchId: batch.id,
+      runId: batch.runId,
+      placementLibrary: { collection: "wiki", revision: 0 },
+    },
+    { status: "standalone", reason: "Self-contained workshop reference." },
   );
   expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
   expect(
@@ -2462,6 +2480,12 @@ it("refreshes changed parent topology and retains a successor review when a link
     refreshed.inputFingerprint,
     proposal(refreshed),
     refreshed.pendingClaimIds,
+    {
+      batchId: batch.id,
+      runId: batch.runId,
+      placementLibrary: { collection: "wiki", revision: 0 },
+    },
+    { status: "standalone", reason: "Self-contained workshop reference." },
   );
   expect(getKnowledgeNode(db, "parent")?.revision).toBe(2);
   expect(getKnowledgeNode(db, "parent")?.markdown).toContain('refs="source:input"');

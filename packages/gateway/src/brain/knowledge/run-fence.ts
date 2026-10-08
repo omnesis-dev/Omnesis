@@ -14,6 +14,9 @@ export interface KnowledgeRunFence {
   runId: string;
   /** Generation observed through this run's reads, never model-supplied. */
   reconciliation?: KnowledgeReconciliationReceipt;
+  /** Distinct trusted library and counterpart reads for page placement. */
+  placementLibrary?: KnowledgeReconciliationReceipt;
+  placementNodeReads?: Readonly<Record<string, number>>;
 }
 export function assertKnowledgeRunFence(db: Database.Database, fence?: KnowledgeRunFence): void {
   if (!fence) return;

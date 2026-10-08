@@ -73,8 +73,13 @@ describe("progressive policy continuation context", () => {
       tool: "knowledge_save",
       args: {
         inputFingerprint: "offered-inputs",
+        placementAssessment: { status: "standalone", reason: expect.any(String) },
         node: { inputVersions: { "source:selected#evidence:one": "v1" } },
       },
+    });
+    expect(grounded.calls.at(-2)).toEqual({
+      tool: "knowledge_list",
+      args: { kind: "wiki" },
     });
   });
 

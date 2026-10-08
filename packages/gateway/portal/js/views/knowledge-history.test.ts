@@ -92,3 +92,29 @@ it("includes title-only changes", () => {
   expect(diff.props.before).toContain("# Workshop reference");
   expect(diff.props.after).toContain("# Revised heading");
 });
+
+
+it.each([
+  ["integrated", "connected"],
+  ["standalone", "standalone"],
+  ["deferred", "deferred"],
+])("shows one compact %s placement judgment without expanding the diff", (status, label) => {
+  const current = revision(2);
+  current.diff.placementAssessment = { status, batchId: "private-batch-marker", reason: "private-reason-marker" };
+  const tree = KnowledgeHistoryRevision({ revision: current, previous: revision(1) });
+  const all = nodes(tree);
+  const caption = all.find((node) => node.type === "p" && node.props.class === "kn-caption");
+  expect(JSON.stringify(caption)).toContain(`Placement: ${label}`);
+  expect(JSON.stringify(tree).match(/Placement:/g)).toHaveLength(1);
+  expect(JSON.stringify(tree)).not.toContain("private-batch-marker");
+  expect(JSON.stringify(tree)).not.toContain("private-reason-marker");
+  expect(JSON.stringify(tree)).not.toContain("verified");
+  expect(all.find((node) => node.type === "details").props.open).toBeUndefined();
+  expect(all.some((node) => node.type === PrivacyPolicyDiff)).toBe(false);
+});
+it.each([undefined, { status: "unrecognized" }])("omits placement text without a recognized assessment", (assessment) => {
+  const current = revision(2);
+  current.diff.placementAssessment = assessment;
+  expect(JSON.stringify(KnowledgeHistoryRevision({ revision: current, previous: revision(1) })))
+    .not.toContain("Placement:");
+});

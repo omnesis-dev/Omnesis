@@ -50,6 +50,29 @@ beforeAll(async () => {
             versions[item.source.id] = item.source.contentHash;
             return { calls: [] };
           }
+          if (item.node?.id === wikiId)
+            return {
+              calls: [
+                call("knowledge_list", { kind: "wiki" }),
+                call("knowledge_save", {
+                  inputFingerprint: item.inputFingerprint,
+                  reviewedClaimIds: item.pendingClaimIds,
+                  placementAssessment: {
+                    status: "standalone",
+                    reason:
+                      "The workshop location and supplies form one reference page without a broader project page in this library.",
+                  },
+                  node: {
+                    id: wikiId,
+                    kind: "wiki",
+                    title: item.node.title,
+                    markdown: item.node.markdown,
+                    expectedRevision: item.node.revision,
+                    inputVersions: item.inputVersions,
+                  },
+                }),
+              ],
+            };
           return preserveCurrentOwner(item, ctx, steps);
         },
         organize(cohort, _ctx, steps) {

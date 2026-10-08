@@ -74,9 +74,14 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
         const args = edit(item, markup(sourceId, false));
         return {
           calls: [
+            call("knowledge_list", { kind: "wiki" }),
             call("knowledge_history", { id: pageId, revision: item.node!.revision }),
             call("knowledge_save", {
               ...args,
+              placementAssessment: {
+                status: "standalone",
+                reason: "Self-contained workshop storage reference.",
+              },
               node: {
                 ...args.node,
                 claimRemovals: [
@@ -219,6 +224,103 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
     ["Workshop program", parentId],
     ["Equipment inventory", childId],
   ]);
+  let hierarchyRequested = false;
+  let omissionTested = false;
+  const maintain = knowledgePuppet({
+    targets: () => [],
+    maxRevisionConflictRetries: 4,
+    plan(item, ctx, steps) {
+      if (item.source) {
+        const id = titles.get(item.source.title);
+        if (!id) hierarchyRequested = true;
+      }
+      return placementPlan(item, ctx, steps);
+    },
+  });
+  const placementPlan: Parameters<typeof knowledgePuppet>[0]["plan"] = (item, ctx, steps) => {
+    if (item.source) {
+      const id = titles.get(item.source.title);
+      if (!id)
+        return {
+          calls: [
+            call("knowledge_fetch", { id: childId }),
+            call("knowledge_fetch", { id: parentId }),
+            call("knowledge_link", {
+              fromId: childId,
+              toId: parentId,
+              kind: "part_of",
+              fromRevision: ref("knowledge_fetch", "revision", 0),
+              toRevision: ref("knowledge_fetch", "revision", 1),
+            }),
+          ],
+        };
+      return {
+        calls: [
+          call("knowledge_list", { kind: "wiki" }),
+          call("knowledge_candidates", {}),
+          call("knowledge_propose_page", {
+            identityKey: id,
+            title: item.source.title,
+            scope: item.source.content,
+            evidenceVersions: { [item.source.id]: item.source.contentHash },
+          }),
+          call("knowledge_save", {
+            candidateId: ref("knowledge_propose_page", "id"),
+            node: {
+              id,
+              kind: "wiki",
+              title: item.source.title,
+              expectedRevision: 0,
+              markdown: `<claim id="summary" refs="source:${item.source.id}">${item.source.content}</claim>`,
+              inputVersions: { [`source:${item.source.id}`]: item.source.contentHash },
+            },
+          }),
+        ],
+      };
+    }
+    if (item.node && (item.id === parentId || item.id === childId))
+      return {
+        calls: [
+          call("knowledge_list", { kind: "wiki" }),
+          call("knowledge_links", { id: item.id }),
+          ...(hierarchyRequested
+            ? [
+                call("knowledge_fetch", { id: item.id, editing: true }),
+                call("knowledge_fetch", {
+                  id: item.id === parentId ? childId : parentId,
+                }),
+              ]
+            : []),
+          call("knowledge_save", {
+            inputFingerprint: item.inputFingerprint,
+            reviewedClaimIds: item.pendingClaimIds,
+            placementAssessment: hierarchyRequested
+              ? {
+                  status: "integrated",
+                  reason: "Detail page belongs to the workshop program.",
+                  links: [
+                    {
+                      fromId: childId,
+                      toId: parentId,
+                      kind: "part_of",
+                      otherRevision: ref("knowledge_fetch", "revision", 1),
+                    },
+                  ],
+                }
+              : { status: "standalone", reason: "Distinct workshop reference scope." },
+            node: {
+              id: item.id,
+              kind: "wiki",
+              title: item.node.title,
+              expectedRevision: item.node.revision,
+              markdown: item.node.markdown,
+              inputVersions: item.inputVersions,
+            },
+          }),
+        ],
+      };
+    return preserveCurrentOwner(item, ctx, steps);
+  };
   bench = await BrainBench.start({
     experimental: true,
     syncSources: false,
@@ -242,70 +344,71 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
       knowledge: { soonDelay: "1s", routineDelay: "6h" },
     },
     behaviors: {
-      dynamic: knowledgePuppet({
-        // Publication must schedule its own placement review; this deliberately names no targets.
-        targets: () => [],
-        plan(item, ctx, steps) {
-          if (item.source) {
-            const id = titles.get(item.source.title);
-            if (!id)
-              return {
-                calls: [
-                  call("knowledge_fetch", { id: childId }),
-                  call("knowledge_fetch", { id: parentId }),
-                  call("knowledge_link", {
-                    fromId: childId,
-                    toId: parentId,
-                    kind: "part_of",
-                    fromRevision: ref("knowledge_fetch", "revision", 0),
-                    toRevision: ref("knowledge_fetch", "revision", 1),
-                  }),
-                ],
-              };
-            return {
-              calls: [
-                call("knowledge_list", { kind: "wiki" }),
-                call("knowledge_candidates", {}),
-                call("knowledge_propose_page", {
-                  identityKey: id,
-                  title: item.source.title,
-                  scope: item.source.content,
-                  evidenceVersions: { [item.source.id]: item.source.contentHash },
-                }),
-                call("knowledge_save", {
-                  candidateId: ref("knowledge_propose_page", "id"),
-                  node: {
-                    id,
-                    kind: "wiki",
-                    title: item.source.title,
-                    expectedRevision: 0,
-                    markdown: `<claim id="summary" refs="source:${item.source.id}">${item.source.content}</claim>`,
-                    inputVersions: { [`source:${item.source.id}`]: item.source.contentHash },
-                  },
-                }),
-              ],
-            };
-          }
-          if (item.node && (item.id === parentId || item.id === childId))
-            return {
-              calls: [
-                call("knowledge_links", { id: item.id }),
-                call("knowledge_save", {
-                  inputFingerprint: item.inputFingerprint,
-                  node: {
-                    id: item.id,
-                    kind: "wiki",
-                    title: item.node.title,
-                    expectedRevision: item.node.revision,
-                    markdown: item.node.markdown,
-                    inputVersions: item.inputVersions,
-                  },
-                }),
-              ],
-            };
-          return preserveCurrentOwner(item, ctx, steps);
-        },
-      }),
+      dynamic(ctx, steps) {
+        const last = steps.at(-1);
+        const fetched = z
+          .object({ id: z.string(), title: z.string(), markdown: z.string(), revision: z.number() })
+          .safeParse(last ? structuredData(last.result) : null);
+        const frontierStep = [...steps]
+          .reverse()
+          .find((step) => step.name === "knowledge_next_frontier");
+        const frontier = z
+          .object({
+            items: z.array(
+              z.object({
+                id: z.string(),
+                inputFingerprint: z.string(),
+                inputVersions: z.record(z.string(), z.union([z.string(), z.number()])),
+                pendingClaimIds: z.array(z.string()).optional(),
+              }),
+            ),
+          })
+          .safeParse(frontierStep ? structuredData(frontierStep.result) : null);
+        const item = frontier.success
+          ? frontier.data.items.find((item) => item.id === parentId)
+          : undefined;
+        if (
+          !omissionTested &&
+          item &&
+          last?.name === "knowledge_fetch" &&
+          fetched.success &&
+          fetched.data.id === parentId
+        ) {
+          omissionTested = true;
+          return {
+            kind: "tool",
+            name: "knowledge_save",
+            args: {
+              inputFingerprint: item.inputFingerprint,
+              reviewedClaimIds: item.pendingClaimIds,
+              node: {
+                id: parentId,
+                kind: "wiki",
+                title: fetched.data.title,
+                markdown: fetched.data.markdown,
+                expectedRevision: fetched.data.revision,
+                inputVersions: item.inputVersions,
+              },
+            },
+          };
+        }
+        return maintain(
+          ctx,
+          steps.filter(
+            (step) =>
+              !(
+                step.name === "knowledge_save" &&
+                step.result &&
+                typeof step.result === "object" &&
+                "kind" in step.result &&
+                step.result.kind === "error" &&
+                "message" in step.result &&
+                typeof step.result.message === "string" &&
+                step.result.message.includes("placementAssessment")
+              ),
+          ),
+        );
+      },
     },
   });
   const reviews = (id: string) =>
@@ -357,6 +460,26 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
     >("SELECT run_id FROM knowledge_batches WHERE status='completed'")
     .all();
   const tools = (await Promise.all(runs.map((run) => bench!.obs.executedTools(run.run_id)))).flat();
-  expect(tools.filter((step) => step.result?.kind === "error")).toEqual([]);
+  const errors = tools.filter((step) => step.result?.kind === "error");
+  const placementErrors = errors.filter((step) => step.result?.code === "claim_invalid");
+  expect(placementErrors).toHaveLength(1);
+  expect(placementErrors[0]!.result).toMatchObject({
+    code: "claim_invalid",
+    message: expect.stringContaining("placementAssessment"),
+  });
+  expect(
+    errors
+      .filter((step) => step.result?.code !== "claim_invalid")
+      .every((step) => step.result?.code === "revision_conflict"),
+  ).toBe(true);
   expect(tools.filter((step) => step.tool === "knowledge_link")).toHaveLength(1);
+  for (const id of [parentId, childId]) {
+    const latest = bench.sql
+      .prepare<
+        [string],
+        { diff_json: string }
+      >("SELECT diff_json FROM knowledge_revisions WHERE node_id=? ORDER BY revision DESC LIMIT 1")
+      .get(id)!;
+    expect(JSON.parse(latest.diff_json).placementAssessment.status).toBe("integrated");
+  }
 }, 300_000);

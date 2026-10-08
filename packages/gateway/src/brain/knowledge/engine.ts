@@ -784,6 +784,7 @@ export class KnowledgeEngine {
     input: Parameters<KnowledgeService["save"]>[0],
     reviewedClaimIds?: readonly string[],
     runFence?: import("./run-fence.js").KnowledgeRunFence,
+    placementAssessment?: import("./placement-assessment.js").KnowledgePlacementAssessment,
   ) {
     this.batch(batchId, runId);
     const item = this.currentItem(batchId, nodeId, inputFingerprint);
@@ -792,7 +793,14 @@ export class KnowledgeEngine {
     const result = await this.deps.service.save(
       {
         ...input,
-        maintenance: { batchId, runId, inputFingerprint, reviewedClaimIds },
+        maintenance: {
+          batchId,
+          runId,
+          inputFingerprint,
+          reviewedClaimIds,
+          placementAssessment,
+          placementRetryDelayMs: this.deps.getSettings().knowledge.routineDelayMs,
+        },
       },
       undefined,
       runFence,
@@ -808,7 +816,9 @@ export class KnowledgeEngine {
       runId,
       result.meaningChanged ? "changed" : "unchanged",
       append,
-      pending.length ? undefined : result.node.revision,
+      pending.length || result.placementAssessment?.status === "deferred"
+        ? undefined
+        : result.node.revision,
     );
     // Settlement yields to the writer too: recheck before exposing saved prose.
     const current = getKnowledgeNode(this.deps.db, nodeId);

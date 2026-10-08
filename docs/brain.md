@@ -222,10 +222,24 @@ items for later calls. An oversized page is represented by `fetchRequired`, not
 truncated claim markup: fetch it explicitly with `knowledge_fetch(editing=true)`
 and resolve its current references before saving. Omitted input versions are
 marked explicitly; the internal frontier still retains the complete fingerprint.
-Use the run-bound `knowledge_maintenance_inputs` tool to page omitted versions.
+Use the run-bound `knowledge_maintenance_inputs` tool to page omitted versions
+once per fingerprint, including uncited context. Repeated paging is unnecessary
+while assembling a save against that same fingerprint.
 Newly discovered source inputs remain available across continuation turns even
 before a page cites them. They are context to inspect, not automatic support;
 the agent must fetch their content and establish claim dependencies explicitly.
+
+The model-facing `knowledge_save` can omit `node.inputVersions`. A complete actual
+editing read retains an immutable run-local snapshot of stored dependency
+versions for unchanged claim trees and semantic state. Successful
+`knowledge_reference` reads supply versions for new or edited claim uses. A
+shared ref used by an edited claim cannot inherit solely from an unchanged
+neighbor. Explicit overrides still take precedence, including stale values that
+must fail. The engine never fills missing evidence versions by silently reading
+the latest database state. Bounded receipts expire with the run; eviction or a
+new revision requires another actual read. Other scoped synthesis tools retain
+their explicit version contract. This removes version transcription, not source
+inspection, verification, privacy checks or explicit claim-review coverage.
 
 Each offered node also identifies pending claim IDs. A synthesis save names
 `reviewedClaimIds` for retained assertions it actually reviewed. Changed or removed
@@ -245,8 +259,11 @@ The run queue uses four maintenance workers by default (`brain.workerConcurrency
 maximum 32). Only maintenance tied to a live batch with reserved regions can
 execute in parallel; root aggregation and legacy runs, including daily reviews
 and digests, execute exclusively. Freed slots refill while siblings run. Each
-drain admits at most four times the worker count, rechecking the feature gate,
-daily budget and provider breaker before each claim. Active runs finish or abort before the scheduler invocation returns;
+drain renews admission rounds of four times the worker count, yielding to the
+event loop between rounds and rechecking the feature gate, daily budget and
+provider breaker before each claim. Scheduler yield, abort or the invocation
+time budget stops new admissions; a slow sibling alone does not prevent refill.
+Active runs finish or abort before the scheduler invocation returns;
 each queue row is admitted at most once in that invocation. Budget
 checks stop new admissions; already admitted work can finish and accrue spend.
 User feedback and new-data runs keep the highest queue priority. Within maintenance,
@@ -347,6 +364,17 @@ pages. A parent summary cites exact child claims when it derives from those
 claims, so later evidence changes use the ordinary dependency maintenance path.
 Organizational links alone are not factual support and do not propagate all
 changes through the hierarchy.
+
+Completing a whole-page wiki review requires a structured placement assessment
+alongside the terminal save. `integrated` validates actual persisted links and
+current reads of their counterparts; `standalone` records an explicit scope
+judgment after reading the library, without asserting a global absence proof.
+`deferred` preserves accepted prose and schedules a bounded review successor.
+The accepted revision records the assessment status separately from claim
+verification, without retaining counterpart identities or free-form reasoning
+in history metadata. Ordinary claim repairs, partial reviews and other node kinds
+do not require this assessment. A recorded decision makes omissions inspectable;
+it does not prove that the model chose a useful organization.
 
 Page curation distinguishes evidence arrival order from event order. Older
 observations discovered later should enrich dated history rather than silently

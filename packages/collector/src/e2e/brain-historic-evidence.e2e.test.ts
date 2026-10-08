@@ -86,9 +86,13 @@ beforeAll(async () => {
               id: item.source.id,
               revision: item.source.contentHash,
             });
-            const calls = [];
+            const calls = [
+              call("knowledge_list", { kind: "wiki" }),
+              call("knowledge_candidates", {}),
+            ];
             if (item.source.title === promise.title)
               calls.push(
+                call("open_loop_search", { query: loopTitle }),
                 call("open_loop_create", {
                   title: loopTitle,
                   description: promise.content,
@@ -150,8 +154,18 @@ beforeAll(async () => {
           const custom = node.id === "historic-instructions" || node.id === "console-project";
           return {
             calls: [
+              ...(custom ? [call("knowledge_list", { kind: "wiki" })] : []),
               call("knowledge_save", {
                 inputFingerprint: item.inputFingerprint,
+                ...(custom
+                  ? {
+                      placementAssessment: {
+                        status: "standalone",
+                        reason:
+                          "Archived instructions and the current equipment project have distinct scopes; neither is a parent of the other.",
+                      },
+                    }
+                  : {}),
                 node: {
                   id: node.id,
                   kind: node.kind,

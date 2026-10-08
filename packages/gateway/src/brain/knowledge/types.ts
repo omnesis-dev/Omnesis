@@ -97,6 +97,7 @@ export interface KnowledgeSaveResult {
   meaningChanged: boolean;
   /** Internal writer receipt; stripped before exposing tool results. */
   reconciliationReceipt?: import("./reconciliation.js").KnowledgeReconciliationReceipt;
+  placementAssessment?: import("./placement-assessment.js").KnowledgePlacementRecord;
 }
 
 export interface SaveKnowledgeNodeInput {
@@ -107,6 +108,8 @@ export interface SaveKnowledgeNodeInput {
     runId: string;
     inputFingerprint: string;
     reviewedClaimIds?: readonly string[];
+    placementAssessment?: import("./placement-assessment.js").KnowledgePlacementAssessment;
+    placementRetryDelayMs?: number;
   };
   id: string;
   kind: KnowledgeNodeKind;

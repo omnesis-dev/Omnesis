@@ -7,6 +7,7 @@ import { knowledgeOrganizationVersion } from "./organization-context.js";
 import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
 import { assertKnowledgeNavigation } from "./navigation.js";
 import { recordAcceptedClaimMaintenance } from "./claim-maintenance.js";
+import { recordKnowledgePlacement } from "./placement-assessment.js";
 import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { parseClaimMarkup } from "./claims.js";
@@ -281,6 +282,7 @@ export function saveKnowledgeNode(
         JSON.stringify(dep.inputVersion),
       );
     recordAcceptedClaimMaintenance(db, input);
+    const placementAssessment = recordKnowledgePlacement(db, input, now);
     const newClaims = new Map(
       parsed.claims.map((claim) => [
         claim.id,
@@ -320,6 +322,7 @@ export function saveKnowledgeNode(
           : {}),
         titleChanged: existing?.title !== input.title,
         validityChanged: existing?.validity !== readKnowledgeNodeRow(db, input.id)?.validity,
+        ...(placementAssessment ? { placementAssessment } : {}),
       },
       now,
     );
@@ -335,6 +338,7 @@ export function saveKnowledgeNode(
     return {
       node: getKnowledgeNode(db, input.id)!,
       meaningChanged,
+      ...(placementAssessment ? { placementAssessment } : {}),
       ...(input.runFence?.reconciliation
         ? {
             reconciliationReceipt: {

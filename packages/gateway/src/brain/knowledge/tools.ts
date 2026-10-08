@@ -7,6 +7,7 @@ import {
   listTemporalAnnotationsAwaitingRefile,
   listUngroundedTemporalAnnotationsForDoc,
 } from "../../enrichment/temporal-annotations/storage.js";
+import { KnowledgeDependencyReceipts } from "./dependency-receipts.js";
 import { WikiToolReconciliation } from "./wiki-tool-reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { fitKnowledgeFrontierItem } from "./engine-frontier.js";
@@ -17,7 +18,7 @@ import { listKnowledgeLinks } from "./links.js";
 import { ClaimMarkupError } from "./claims.js";
 import type { ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
-import type { KnowledgeService, KnowledgeProposal } from "./service.js";
+import type { KnowledgeService } from "./service.js";
 import type { KnowledgeEngine, KnowledgeFrontierView } from "./engine.js";
 
 const id = z.string().min(1).max(256);
@@ -148,11 +149,12 @@ export function buildKnowledgeTools(
     markTemporalPresented?: (ids: readonly string[], runId: string) => Promise<void>;
   },
 ): ToolHandle[] {
+  const dependencyReceipts = new KnowledgeDependencyReceipts();
   const runFence = context.batchId ? { batchId: context.batchId, runId: context.runId } : undefined;
-  const reconciliation =
-    context.parallel && runFence
-      ? new WikiToolReconciliation(service.deps.db, runFence)
-      : undefined;
+  const placementReads = runFence
+    ? new WikiToolReconciliation(service.deps.db, runFence)
+    : undefined;
+  const reconciliation = context.parallel ? placementReads : undefined;
   const guarded = (entries: ToolHandle[]): ToolHandle[] =>
     entries.map((entry) =>
       !entry.mutates || !runFence || entry.name === "knowledge_next_frontier"
@@ -260,10 +262,15 @@ export function buildKnowledgeTools(
       "Read a synthesis node. Set editing=true only to repair its tagged claims; normal reading strips tags.",
       z.object({ id, editing: z.boolean().default(false) }).strict(),
       false,
-      (input) =>
-        reconciliation
-          ? reconciliation.readNode(() => service.fetch(input.id, input.editing))
-          : service.fetch(input.id, input.editing),
+      (input) => {
+        const read = () => {
+          if (!input.editing) return service.fetch(input.id, false);
+          const snapshot = service.editingSnapshot(input.id);
+          if (snapshot) dependencyReceipts.rememberEditing(snapshot);
+          return snapshot?.node ?? null;
+        };
+        return placementReads ? placementReads.readNode(read) : read();
+      },
     ),
     tool(
       "knowledge_list",
@@ -279,8 +286,8 @@ export function buildKnowledgeTools(
         .strict(),
       false,
       (input) =>
-        reconciliation
-          ? reconciliation.read(
+        placementReads
+          ? placementReads.read(
               () => service.list(input),
               (nodes) => [
                 ...((input.kind === undefined || input.kind === "wiki") &&
@@ -294,10 +301,14 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_reference",
-      "Resolve an exact claim or evidence reference and read its current version. For a fetched document use source:<documentId>, not doc: or document:. Optional selectors: source:<documentId>#evidence:<evidenceId>, wiki:<pageId>#claim:<claimId> (also loop, annotation or brief claims), or loop:<loopId>#field:<fieldName>. Use exact tool-returned IDs. Supply the returned revision for this exact ref on every synthesis write.",
+      "Resolve an exact claim or evidence reference and read its current version. For a fetched document use source:<documentId>, not doc: or document:. Optional selectors: source:<documentId>#evidence:<evidenceId>, wiki:<pageId>#claim:<claimId> (also loop, annotation or brief claims), or loop:<loopId>#field:<fieldName>. Use exact tool-returned IDs. knowledge_save retains this exact read revision for the current run, so you can omit its inputVersions entry. Explicit version overrides remain supported and are never silently refreshed. Scoped owner synthesis tools still require explicit versions.",
       z.object({ ref: z.string().min(1).max(1024) }).strict(),
       false,
-      (input) => service.reference(input.ref),
+      (input) => {
+        const result = service.deps.db.transaction(() => service.reference(input.ref))();
+        dependencyReceipts.rememberReference(result);
+        return result;
+      },
     ),
     tool(
       "knowledge_history",
@@ -365,10 +376,16 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_save",
-      `Replace the full synthesis page, preserving existing claim spans and stable IDs by default. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. For brief nodes, preserve the ## Description and ## Body sections in markdown. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. Preserve the supplied canonical node.ownerId when revising an owned node; never infer or fabricate it. In maintenance, existing pages must match an offered frontier and include its exact inputFingerprint at the top level beside node. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      `Replace the full synthesis page, preserving existing claim spans and stable IDs by default. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. For brief nodes, preserve the ## Description and ## Body sections in markdown. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. Preserve the supplied canonical node.ownerId when revising an owned node; never infer or fabricate it. node.inputVersions is optional here: an actual knowledge_fetch(editing:true) lets unchanged claim trees retain their stored dependency versions; new or edited uses need knowledge_reference reads in this run or explicit exact versions. This never marks untouched claims reviewed. In maintenance, existing pages must match an offered frontier and include its exact inputFingerprint at the top level beside node. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
       z
         .object({
-          node: proposal,
+          node: proposal.extend({
+            inputVersions: versions
+              .optional()
+              .describe(
+                "Optional explicit dependency-version overrides. After knowledge_fetch(editing:true), unchanged tagged claim trees and semantic state can retain that exact snapshot's stored versions. New or edited uses require a successful knowledge_reference read in this run or an explicit exact version. A ref reused by an edited/new claim cannot inherit merely because another claim was unchanged. Explicit stale overrides remain errors. Reading a page does not read its cited sources; no versions are invented or refreshed from current database state.",
+              ),
+          }),
           candidateId: id.optional(),
           inputFingerprint: z
             .string()
@@ -383,17 +400,55 @@ export function buildKnowledgeTools(
             .describe(
               "Existing pending claim IDs actually reviewed in this save. Untouched claims omitted here remain pending; changing or removing a claim is recorded automatically. Use the offered pendingClaimIds, or an explicit subset for partial review.",
             ),
+          placementAssessment: z
+            .discriminatedUnion("status", [
+              z
+                .object({
+                  status: z.literal("integrated"),
+                  reason: z.string().trim().min(1).max(500),
+                  links: z
+                    .array(
+                      z
+                        .object({
+                          fromId: id,
+                          toId: id,
+                          kind: z.enum(["part_of", "belongs_to_project", "related_to"]),
+                          otherRevision: z.number().int().nonnegative(),
+                        })
+                        .strict(),
+                    )
+                    .min(1)
+                    .max(16),
+                })
+                .strict(),
+              z
+                .object({
+                  status: z.literal("standalone"),
+                  reason: z.string().trim().min(1).max(500),
+                })
+                .strict(),
+              z
+                .object({
+                  status: z.literal("deferred"),
+                  reason: z.string().trim().min(1).max(500),
+                })
+                .strict(),
+            ])
+            .optional()
+            .describe(
+              "Required for terminal review=true wiki saves only. Read the wiki library before integrated or standalone judgment; integrated requires persisted incident links and knowledge_fetch reads of their counterparts. Normal reading is sufficient for placement; editing:true is needed to edit tagged claims. Standalone is an explicit scope judgment, not proof no related page exists. Deferred preserves grounded prose and schedules bounded follow-up. Partial claim repair and other node kinds do not require this field.",
+            ),
         })
         .strict(),
       true,
       async (input) => {
-        const node = input.node as KnowledgeProposal;
+        const node = dependencyReceipts.complete(input.node);
         if (context.parallel && node.kind === "root")
           throw new KnowledgeStorageError(
             "revision_conflict",
             "Root changes require an exclusive root maintenance run",
           );
-        const fence =
+        let fence =
           node.kind === "wiki" && reconciliation
             ? node.expectedRevision === 0
               ? reconciliation.fence([
@@ -403,6 +458,13 @@ export function buildKnowledgeTools(
                 ])
               : reconciliation.nodeFence(node.id, node.expectedRevision)
             : runFence;
+        if (
+          input.placementAssessment &&
+          input.placementAssessment.status !== "deferred" &&
+          placementReads &&
+          fence
+        )
+          fence = placementReads.placementFence(fence);
         if (
           context.batchId &&
           context.engine &&
@@ -435,6 +497,7 @@ export function buildKnowledgeTools(
                 node,
                 input.reviewedClaimIds,
                 fence,
+                input.placementAssessment,
               )
             : await service.save(
                 node,
@@ -445,7 +508,9 @@ export function buildKnowledgeTools(
               );
         return reconciliation && fence && node.kind === "wiki"
           ? reconciliation.acceptNode(reconciliation.accept(result, fence))
-          : result;
+          : placementReads
+            ? placementReads.acceptNode(result)
+            : result;
       },
     ),
   ];
@@ -475,7 +540,7 @@ export function buildKnowledgeTools(
     tools.push(
       tool(
         "knowledge_maintenance_inputs",
-        "Read a bounded page of input versions for an offered maintenance item, including newly discovered evidence that may not yet appear in its claims. Call with the offered id when inputVersionsOmitted=true; follow nextAfter until absent. All pages must match the offered inputFingerprint; on a conflict or changed fingerprint refresh the frontier and restart pagination. Fetch the actual referenced content before synthesizing. These inputs are context to inspect, not automatically supporting evidence.",
+        "Read a bounded page of input versions for an offered maintenance item, including newly discovered evidence that may not yet appear in its claims. Call with the offered id when inputVersionsOmitted=true; follow nextAfter until absent. Read each input page once per offered inputFingerprint; on a conflict or changed fingerprint refresh the frontier and restart pagination. Inspect newly selected evidence even if uncited. Do not repeatedly page or transcribe unchanged dependency hashes: knowledge_save can preserve versions from an actual editing read. Fetch supporting content for new or revised assertions. These inputs are context to inspect, not automatically supporting evidence.",
         z
           .object({
             id,
