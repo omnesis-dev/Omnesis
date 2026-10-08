@@ -945,6 +945,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           allowance.
         </p>
 
+        <p>
+          A Codex turn that receives no model-stream activity for five minutes is interrupted,
+          releasing its runtime slot. Time spent executing Omnesis tools is excluded. Set
+          <code>inference.codex.turnIdleTimeoutMs</code> (1000–3600000 milliseconds), or
+          <code>OMNESIS_CODEX_TURN_IDLE_TIMEOUT_MS</code> to override it, and restart the gateway.
+          This limits silence rather than the total duration of an active turn.
+        </p>
+
         <h2 id="troubleshooting">Troubleshooting</h2>
         <p>
           Start with <code>omnesis doctor</code>: it names most problems and the fix for each. Then

@@ -1270,6 +1270,21 @@ describe("Codex inference capacity", () => {
         backgroundPoolSize: 32,
       });
   });
+  test.each([1000, 300000, 3600000])(
+    "accepts Codex model-stream idle timeout %s",
+    (turnIdleTimeoutMs) => {
+      const result = validateConfig({ inference: { codex: { turnIdleTimeoutMs } } });
+      expect(result.ok).toBe(true);
+      if (result.ok)
+        expect(result.config.inference?.codex?.turnIdleTimeoutMs).toBe(turnIdleTimeoutMs);
+    },
+  );
+  test.each([0, 999, 1000.5, 3600001, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects Codex model-stream idle timeout %s",
+    (turnIdleTimeoutMs) => {
+      expect(validateConfig({ inference: { codex: { turnIdleTimeoutMs } } }).ok).toBe(false);
+    },
+  );
   test.each([
     { backgroundPoolSize: 0 },
     { backgroundPoolSize: -1 },

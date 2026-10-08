@@ -3229,6 +3229,15 @@ const inference = z
       .optional(),
     codex: z
       .object({
+        turnIdleTimeoutMs: z
+          .number()
+          .int()
+          .min(1000)
+          .max(3600000)
+          .describe(
+            "Maximum Codex model-stream silence in milliseconds while awaiting output, excluding Omnesis tool execution. Default 300000 (five minutes); 1000–3600000. Restart the gateway after changing.",
+          )
+          .optional(),
         interactivePoolSize: z
           .number()
           .int()

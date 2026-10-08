@@ -89,6 +89,8 @@ export interface CodexRuntimeServiceOptions {
   inferencePoolSize?: number;
   /** Independent background capacity, from 1 to 32. Defaults to 4. */
   backgroundPoolSize?: number;
+  /** Model-stream inactivity limit, excluding local tool execution. Default five minutes. */
+  turnIdleTimeoutMs?: number;
   /** Current application subagent nesting cap; two further levels serve leaf inference. */
   getSubagentDepthCap?: () => number;
 }
@@ -104,6 +106,7 @@ export class CodexRuntimeService {
   private readonly interactivePoolSize: number;
   private readonly inferencePoolSize: number;
   private readonly backgroundPoolSize: number;
+  private readonly turnIdleTimeoutMs: number;
   private readonly getSubagentDepthCap: () => number;
   private readonly env: NodeJS.ProcessEnv;
   private readonly supervisor: CodexGenerationSupervisor;
@@ -140,6 +143,13 @@ export class CodexRuntimeService {
     this.interactivePoolSize = opts.interactivePoolSize ?? DEFAULT_INTERACTIVE_POOL_SIZE;
     this.inferencePoolSize = opts.inferencePoolSize ?? DEFAULT_INFERENCE_POOL_SIZE;
     this.backgroundPoolSize = opts.backgroundPoolSize ?? DEFAULT_BACKGROUND_POOL_SIZE;
+    this.turnIdleTimeoutMs = opts.turnIdleTimeoutMs ?? 300000;
+    if (
+      !Number.isSafeInteger(this.turnIdleTimeoutMs) ||
+      this.turnIdleTimeoutMs < 1000 ||
+      this.turnIdleTimeoutMs > 3600000
+    )
+      throw new Error("Codex turnIdleTimeoutMs must be an integer from 1000 to 3600000");
     if (
       !Number.isSafeInteger(this.backgroundPoolSize) ||
       this.backgroundPoolSize < 1 ||
@@ -213,6 +223,7 @@ export class CodexRuntimeService {
       args: this.args,
       versionArgs: this.versionArgs,
       env: this.env,
+      turnIdleTimeoutMs: this.turnIdleTimeoutMs,
     };
     const runtime = new CodexAppServerRuntime({
       ...runtimeOptions,

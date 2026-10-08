@@ -1221,6 +1221,9 @@ const codexRuntimeService = new CodexRuntimeService({
   inferencePoolSize:
     parseNonNegativeIntEnv("OMNESIS_CODEX_INFERENCE_POOL_SIZE") ??
     config.inference?.codex?.inferencePoolSize,
+  turnIdleTimeoutMs:
+    parseNonNegativeIntEnv("OMNESIS_CODEX_TURN_IDLE_TIMEOUT_MS") ??
+    config.inference?.codex?.turnIdleTimeoutMs,
   getSubagentDepthCap: () =>
     configStore.get().agent?.subagentDepthCap ?? CONFIG_DEFAULTS.agent.subagentDepthCap,
 });

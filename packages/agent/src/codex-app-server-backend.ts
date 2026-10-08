@@ -151,6 +151,8 @@ export interface CodexAppServerRuntimeOptions {
   versionArgs?: readonly string[];
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
+  /** Maximum silence between meaningful model events, excluding pending tool work. */
+  turnIdleTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   logger?: Logger;
 }
@@ -199,6 +201,7 @@ export class CodexAppServerRuntime {
   private readonly versionArgs: readonly string[];
   private readonly startupTimeoutMs: number;
   private readonly requestTimeoutMs: number;
+  private readonly turnIdleTimeoutMs: number;
   private readonly env: NodeJS.ProcessEnv;
   private readonly log: Logger;
 
@@ -218,6 +221,9 @@ export class CodexAppServerRuntime {
     this.versionArgs = opts.versionArgs ?? DEFAULT_CODEX_VERSION_ARGS;
     this.startupTimeoutMs = opts.startupTimeoutMs ?? 10_000;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 120_000;
+    this.turnIdleTimeoutMs = opts.turnIdleTimeoutMs ?? 300_000;
+    if (!Number.isSafeInteger(this.turnIdleTimeoutMs) || this.turnIdleTimeoutMs <= 0)
+      throw new Error("Codex turn idle timeout must be a positive integer");
     this.env = opts.env ?? process.env;
     this.log = opts.logger ?? log;
   }
@@ -335,6 +341,7 @@ export class CodexAppServerRuntime {
       handles,
       queue,
       usage: {},
+      progressUsage: {},
       completed: false,
       answer: input.finalAnswerOnly ? { deltas: "", phased: false } : undefined,
       toolCalls: 0,
@@ -342,6 +349,9 @@ export class CodexAppServerRuntime {
       maxToolIterations,
       signal,
       heldForTurnId: [],
+      client,
+      pendingTools: new Set(),
+      progressItems: new Set(),
     };
 
     const abort = (): void => {
@@ -412,6 +422,7 @@ export class CodexAppServerRuntime {
       turnId = parsedTurnId;
       state.turnId = turnId;
       this.releaseHeldMessages(state);
+      this.armIdleWatchdog(state);
 
       while (true) {
         const next = await queue.shift();
@@ -453,8 +464,14 @@ export class CodexAppServerRuntime {
       }
     } finally {
       signal?.removeEventListener("abort", abort);
+      state.completed = true;
+      clearTimeout(state.idleTimer);
       // A turn that never learned its id judges anything still held as foreign.
       this.releaseHeldMessages(state);
+      // Never hand the runtime/pool lease onward while an admitted mutation or
+      // this turn's timed-out child is still alive. Cancellation is not rollback.
+      await Promise.allSettled([...state.pendingTools]);
+      await state.idleCleanup;
       if (this.activeTurn === state) this.activeTurn = null;
       queue.close();
     }
@@ -462,10 +479,13 @@ export class CodexAppServerRuntime {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    const active = this.activeTurn;
     this.completeActiveTurn("canceled");
     const starting = this.startingClient;
     const client = this.client;
     this.client = null;
+    await Promise.allSettled([...(active?.pendingTools ?? [])]);
+    await active?.idleCleanup;
     if (starting) {
       try {
         const started = await starting;
@@ -629,9 +649,6 @@ export class CodexAppServerRuntime {
   private async handleToolCall(params: unknown): Promise<unknown> {
     const state = this.activeTurn;
     const p = asRecord(params);
-    const callId = stringField(p, "callId") ?? "codex_tool_call";
-    const tool = stringField(p, "tool") ?? "";
-    const rawArgs = p?.arguments ?? {};
 
     if (state && this.holdUntilTurnId(state, params)) {
       return new Promise((resolve) => {
@@ -639,7 +656,7 @@ export class CodexAppServerRuntime {
       });
     }
 
-    if (!state || !this.acceptTurnScopedParams(state, params)) {
+    if (!state || state.completed || !this.acceptTurnScopedParams(state, params)) {
       return {
         success: false,
         contentItems: [
@@ -655,6 +672,24 @@ export class CodexAppServerRuntime {
       };
     }
 
+    clearTimeout(state.idleTimer);
+    const pending = this.invokeToolCall(state, p);
+    state.pendingTools.add(pending);
+    try {
+      return await pending;
+    } finally {
+      state.pendingTools.delete(pending);
+      this.armIdleWatchdog(state);
+    }
+  }
+
+  private async invokeToolCall(
+    state: ActiveCodexTurn,
+    p: Record<string, unknown> | null,
+  ): Promise<unknown> {
+    const callId = stringField(p, "callId") ?? "codex_tool_call";
+    const tool = stringField(p, "tool") ?? "";
+    const rawArgs = p?.arguments ?? {};
     state.toolCalls += 1;
     const handle = state.handles.get(tool);
     const parsedArgs = handle ? handle.schema.safeParse(rawArgs) : null;
@@ -742,7 +777,7 @@ export class CodexAppServerRuntime {
 
   private handleNotification(method: string, params: unknown): void {
     const state = this.activeTurn;
-    if (!state) return;
+    if (!state || state.completed) return;
     if (this.holdUntilTurnId(state, params)) {
       state.heldForTurnId?.push(() => this.handleNotification(method, params));
       return;
@@ -752,6 +787,7 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
       const delta = stringField(p, "delta");
+      if (delta) this.armIdleWatchdog(state);
       if (state.answer) {
         state.answer.deltas += delta ?? "";
         return;
@@ -772,6 +808,7 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
       const delta = stringField(p, "delta");
+      if (delta) this.armIdleWatchdog(state);
       if (delta) {
         state.queue.push(
           wrapEvent("agent.thinking.delta", {
@@ -787,7 +824,16 @@ export class CodexAppServerRuntime {
     if (method === "thread/tokenUsage/updated") {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
-      state.usage = parseCodexUsage(p?.tokenUsage);
+      const usage = parseCodexUsage(p?.tokenUsage);
+      if (
+        (["inputTokens", "outputTokens", "cacheReadTokens"] as const).some(
+          (key) => (usage[key] ?? 0) > (state.progressUsage[key] ?? 0),
+        )
+      )
+        this.armIdleWatchdog(state);
+      for (const key of ["inputTokens", "outputTokens", "cacheReadTokens"] as const)
+        state.progressUsage[key] = Math.max(state.progressUsage[key] ?? 0, usage[key] ?? 0);
+      state.usage = usage;
       const contextInputTokens = parseCodexContextInputTokens(p?.tokenUsage);
       if (contextInputTokens !== undefined) state.contextInputTokens = contextInputTokens;
       if (Object.keys(state.usage).length > 0) {
@@ -838,6 +884,18 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const item = asRecord(asRecord(params)?.item);
       const itemType = stringField(item, "type");
+      const itemId = stringField(item, "id");
+      if (
+        itemId &&
+        itemType &&
+        ["agentMessage", "reasoning", "dynamicToolCall"].includes(itemType)
+      ) {
+        const progress = `${method}:${itemId}`;
+        if (!state.progressItems.has(progress)) {
+          state.progressItems.add(progress);
+          this.armIdleWatchdog(state);
+        }
+      }
       if (state.answer && itemType === "agentMessage") {
         const phase = stringField(item, "phase");
         if (phase) state.answer.phased = true;
@@ -863,6 +921,21 @@ export class CodexAppServerRuntime {
         `Codex emitted native event "${method}", which Omnesis disables in this experimental backend.`,
       );
     }
+  }
+
+  private armIdleWatchdog(state: ActiveCodexTurn): void {
+    clearTimeout(state.idleTimer);
+    if (this.activeTurn !== state || state.completed || !state.turnId || state.pendingTools.size)
+      return;
+    state.idleTimer = setTimeout(() => {
+      if (this.activeTurn !== state || state.completed || state.pendingTools.size) return;
+      this.failActiveTurn(
+        "codex_turn_idle_timeout",
+        "Codex stopped making progress while waiting for model output. The idle runtime was stopped; this turn was not replayed.",
+      );
+      if (this.client === state.client) this.client = null;
+      state.idleCleanup = state.client.dispose();
+    }, this.turnIdleTimeoutMs);
   }
 
   private handleClientExit(
@@ -931,6 +1004,7 @@ export class CodexAppServerRuntime {
     const state = this.activeTurn;
     if (!state || state.completed) return;
     state.completed = true;
+    clearTimeout(state.idleTimer);
     if (stopReason === "end_turn" && state.answer) {
       const text = state.answer.final ?? state.answer.unphased ?? state.answer.deltas;
       if (text)
@@ -1002,6 +1076,7 @@ export class CodexAppServerBackend implements ChatBackend {
         versionArgs: opts.versionArgs,
         startupTimeoutMs: opts.startupTimeoutMs,
         requestTimeoutMs: opts.requestTimeoutMs,
+        turnIdleTimeoutMs: opts.turnIdleTimeoutMs,
         env: opts.env,
         logger: opts.logger,
       });
@@ -1206,6 +1281,7 @@ interface ActiveCodexTurn {
   handles: Map<string, ToolHandle>;
   queue: AsyncQueue<AgentEvent>;
   usage: AgentEndUsage;
+  progressUsage: AgentEndUsage;
   /** The input size of the turn's latest model request, cached input included. */
   contextInputTokens?: number;
   completed: boolean;
@@ -1216,6 +1292,11 @@ interface ActiveCodexTurn {
   signal?: AbortSignal;
   /** Turn-scoped messages received before `turn/start` returned the turn id; null once released. */
   heldForTurnId: Array<() => void> | null;
+  client: CodexJsonRpcClient;
+  pendingTools: Set<Promise<unknown>>;
+  progressItems: Set<string>;
+  idleTimer?: ReturnType<typeof setTimeout>;
+  idleCleanup?: Promise<void>;
 }
 
 type AgentEndUsage = {
@@ -1327,12 +1408,14 @@ class CodexJsonRpcClient {
     this.proc = null;
     this.rejectAll(new Error("Codex app-server disposed"));
     if (!proc) return;
+    // A spawn failure emits error/close without exit and never owns a live PID.
+    if (proc.pid === undefined) return;
     if (proc.exitCode !== null || proc.signalCode !== null) return;
 
     await new Promise<void>((resolve) => {
       const killTimer = setTimeout(() => {
         proc.kill("SIGKILL");
-        resolve();
+        // Keep waiting for the actual exit before the runtime can be reused.
       }, 2_000);
       proc.once("exit", () => {
         clearTimeout(killTimer);

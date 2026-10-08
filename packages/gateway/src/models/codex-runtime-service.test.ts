@@ -159,6 +159,65 @@ describe("CodexRuntimeService parsers", () => {
     },
   );
 
+  it.each([0, 999, 1000.5, 3600001, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid model-stream idle timeout %s",
+    (turnIdleTimeoutMs) => {
+      expect(
+        () => new CodexRuntimeService({ configDir: "/synthetic/config", turnIdleTimeoutMs }),
+      ).toThrow("turnIdleTimeoutMs must be an integer from 1000 to 3600000");
+    },
+  );
+
+  it.each(["owner", "interactive", "background", "inference"] as const)(
+    "propagates configured model-stream idle timeout to the %s runtime",
+    async (lane) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-idle-"));
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command: process.execPath,
+        args: [fakeCodexPath, "app-server", "--listen", "stdio://"],
+        versionArgs: [fakeCodexPath, "--version"],
+        env: { ...process.env, OMNESIS_FAKE_CODEX_SCENARIO: "hang" },
+        interactivePoolSize: lane === "owner" ? 0 : 1,
+        backgroundPoolSize: 1,
+        inferencePoolSize: 1,
+        turnIdleTimeoutMs: 1000,
+      });
+      try {
+        const events: AgentEvent[] = [];
+        for await (const event of service
+          .createBackend({
+            model: "gpt-example-frontier",
+            lane: lane === "owner" ? "interactive" : lane,
+          })
+          .runTurn(
+            {
+              sessionId: "idle-propagation",
+              messageId: lane,
+              userMessage: "Wait for scripted output.",
+              systemPrompt: "",
+              history: [],
+              tools: [],
+            },
+            AbortSignal.timeout(5000),
+          ))
+          events.push(event);
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "agent.error",
+              payload: expect.objectContaining({ code: "codex_turn_idle_timeout" }),
+            }),
+          ]),
+        );
+      } finally {
+        await service.dispose();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    10000,
+  );
+
   it("defaults to four background turns with independent interactive capacity and immediate refill", async () => {
     const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-capacity-"));
     let finish!: () => void;

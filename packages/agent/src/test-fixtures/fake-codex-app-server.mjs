@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -10,6 +10,8 @@ const version = process.env.OMNESIS_FAKE_CODEX_VERSION ?? "0.142.4";
 const cliArgs = process.argv.slice(2);
 
 if (process.argv.includes("--version")) {
+  if (process.env.OMNESIS_FAKE_CODEX_SCENARIO === "missing-cwd")
+    rmSync(process.env.OMNESIS_FAKE_CODEX_WORKSPACE, { recursive: true, force: true });
   process.stdout.write(`codex-cli ${version}\n`);
   process.exit(0);
 }
@@ -191,6 +193,44 @@ rl.on("line", (line) => {
 });
 
 function runScenario() {
+  if (scenario === "watchdog-recovery") {
+    const marker = `${logPath}.silent`;
+    if (!existsSync(marker)) {
+      writeFileSync(marker, "silent");
+      // Delay exit to prove the next lease waits for actual process cleanup.
+      process.on("SIGTERM", () => setTimeout(() => process.exit(0), 120));
+    } else complete("completed");
+    return;
+  }
+  if (scenario === "watchdog-progress") {
+    let count = 0;
+    const timer = setInterval(() => {
+      notify("item/reasoning/textDelta", {
+        threadId,
+        turnId,
+        delta: "Synthetic reasoning progress.",
+      });
+      if (++count === 8) {
+        clearInterval(timer);
+        complete("completed");
+      }
+    }, 50);
+    return;
+  }
+  if (scenario === "watchdog-heartbeats") {
+    setInterval(() => {
+      notify("item/agentMessage/delta", {
+        threadId: "foreign-thread",
+        turnId: "foreign-turn",
+        delta: "Foreign output",
+      });
+      notify("account/rateLimits/updated", {});
+      notifyUsage();
+      notify("item/started", { threadId, turnId, item: { id: "same", type: "reasoning" } });
+      notify("error", { threadId, turnId, error: { message: "retrying" }, willRetry: true });
+    }, 30);
+    return;
+  }
   if (scenario.startsWith("recovery")) {
     const marker = `${logPath}.exited`;
     if (scenario === "recovery-active-exit" && !existsSync(marker)) {
@@ -419,6 +459,7 @@ function runScenario() {
     },
     (response) => {
       log("tool_call_response", response);
+      if (scenario === "watchdog-after-tool") return;
       notify("item/agentMessage/delta", {
         threadId,
         turnId,

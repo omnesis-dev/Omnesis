@@ -70,6 +70,7 @@ function makeBackend(opts: {
   requestedTool?: string;
   version?: string;
   reasoningEffort?: string;
+  turnIdleTimeoutMs?: number;
 }): CodexAppServerBackend {
   return new CodexAppServerBackend({
     model: "gpt-5.4",
@@ -81,12 +82,14 @@ function makeBackend(opts: {
     versionArgs: [fakeCodexPath, "--version"],
     startupTimeoutMs: 2_000,
     requestTimeoutMs: 2_000,
+    turnIdleTimeoutMs: opts.turnIdleTimeoutMs,
     toolTimeoutMs: 2_000,
     maxToolIterations: 4,
     env: {
       ...process.env,
       OMNESIS_FAKE_CODEX_LOG: opts.logPath,
       OMNESIS_FAKE_CODEX_SCENARIO: opts.scenario ?? "tool",
+      ...(opts.workspaceDir ? { OMNESIS_FAKE_CODEX_WORKSPACE: opts.workspaceDir } : {}),
       ...(opts.version ? { OMNESIS_FAKE_CODEX_VERSION: opts.version } : {}),
       ...(opts.requestedTool ? { OMNESIS_FAKE_CODEX_TOOL: opts.requestedTool } : {}),
       OPENAI_API_KEY: "must-not-leak",
@@ -171,6 +174,155 @@ describe("parseCodexUsage", () => {
 });
 
 describe("CodexAppServerBackend", () => {
+  it("settles a failed spawn without waiting for an exit event that cannot occur", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-spawn-failure-")));
+    const logPath = join(dir, "events.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      logPath,
+      scenario: "missing-cwd",
+    });
+    try {
+      // The version probe succeeds, then removes the synthetic empty cwd before spawn.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const events = await collect(backend.runTurn(baseInput()));
+        expect(events.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+        expect(events.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+          "error",
+        );
+      }
+      expect(existsSync(logPath)).toBe(false);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("times out model silence once and awaits child exit before a queued fresh turn", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-idle-")));
+    const logPath = join(dir, "events.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath,
+      scenario: "watchdog-recovery",
+      turnIdleTimeoutMs: 100,
+    });
+    try {
+      const first = collect(backend.runTurn(baseInput()));
+      await waitForLog(logPath, (logs) => logs.some((entry) => entry.event === "turn_start"));
+      const pid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+      const queued = collect(backend.runTurn(baseInput()));
+      const failed = await first;
+      expect(failed.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+      expect(
+        failed.find((event) => event.type === "agent.message.end")?.payload.failure,
+      ).toMatchObject({ code: "codex_turn_idle_timeout", retryable: true });
+      expect(() => process.kill(pid, 0)).toThrow();
+      const next = await queued;
+      expect(next.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+        "end_turn",
+      );
+      expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(2);
+      expect(readLog(logPath).filter((entry) => entry.event === "turn_start")).toHaveLength(2);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["watchdog-progress", "end_turn"],
+    ["watchdog-heartbeats", "error"],
+  ])("counts only meaningful active-turn progress for %s", async (scenario, expected) => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-progress-")));
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath: join(dir, "events.jsonl"),
+      scenario,
+      turnIdleTimeoutMs: 180,
+    });
+    try {
+      const events = await collect(backend.runTurn(baseInput()));
+      const end = events.find((event) => event.type === "agent.message.end");
+      expect(end?.payload.stopReason).toBe(expected);
+      if (expected === "error") expect(end?.payload.failure?.code).toBe("codex_turn_idle_timeout");
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["timeout", "cancel", "dispose"])(
+    "awaits a noncooperative mutation before %s releases the turn",
+    async (ending) => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-tool-wait-")));
+      const logPath = join(dir, "events.jsonl");
+      const backend = makeBackend({
+        codexHome: join(dir, "home"),
+        logPath,
+        scenario: "watchdog-after-tool",
+        turnIdleTimeoutMs: 100,
+      });
+      let entered!: () => void, finish!: () => void;
+      const entry = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      let mutationFinished = false,
+        finished = false;
+      const tool: ToolHandle = {
+        ...fakeToolHandle("search_documents", () => ({
+          kind: "structured",
+          resultType: "mutation",
+          data: "done",
+        })),
+        mutates: true,
+        async invoke() {
+          entered();
+          await gate;
+          mutationFinished = true;
+          return { kind: "structured", resultType: "mutation", data: "done" };
+        },
+      };
+      const abort = new AbortController();
+      let disposal: Promise<void> | undefined;
+      const turn = collect(backend.runTurn(baseInput({ tools: [tool] }), abort.signal)).finally(
+        () => {
+          finished = true;
+        },
+      );
+      try {
+        await entry;
+        if (ending === "cancel") abort.abort();
+        if (ending === "dispose") disposal = backend.dispose();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        expect(finished).toBe(false);
+        expect(mutationFinished).toBe(false);
+        finish();
+        const events = await turn;
+        await disposal;
+        expect(mutationFinished).toBe(true);
+        const end = events.find((event) => event.type === "agent.message.end");
+        if (ending === "timeout") {
+          expect(end?.payload.failure?.code).toBe("codex_turn_idle_timeout");
+          expect(
+            events.find((event) => event.type === "agent.tool.result")?.payload.result,
+          ).toMatchObject({ kind: "structured", resultType: "mutation", data: "done" });
+        } else expect(end?.payload.stopReason).toBe("canceled");
+        expect(readLog(logPath).filter((event) => event.event === "turn_start")).toHaveLength(1);
+      } finally {
+        finish();
+        await turn;
+        await disposal;
+        await backend.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("replaces an idle exited client before accepting concurrent queued turns", async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-recovery-")));
     const logPath = join(dir, "events.jsonl");
