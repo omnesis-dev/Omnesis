@@ -126,7 +126,13 @@ unless `node.claimRemovals` explicitly names each omitted claim and its reason.
 `reviewedClaimIds` records review, not deletion permission. The writer rechecks
 removal intent and records it in the revision diff. Empty wiki replacements are
 refused. These checks prevent accidental omission, not semantic loss within a
-retained claim; content quality still requires review.
+retained claim; content quality still requires review. New links to synthesis pages in wiki or root Markdown must exist, be readable
+and match their declared kind. Unchanged legacy dangling targets do not block unrelated repairs. These
+checks cover Markdown links, not raw HTML links, and grant no evidence support
+or mutation authority. Ordinary repairs use the revision actually read for that
+page, so unrelated wiki edits do not invalidate the repair. Same-page changes
+and cited evidence changes still conflict; new-page publication and candidate
+decisions retain library-wide reconciliation checks.
 The read-only `knowledge_history` tool exposes bounded revision metadata and
 explicitly chunked snapshots through the same privacy fence as current pages.
 History is untrusted previous belief, not current support or mutation authority.
@@ -135,7 +141,9 @@ checks current evidence and later outcomes before restoring warranted claims.
 Revalidating the surviving claims alone does not resolve an earlier loss.
 Historical records can remain alongside dated later outcomes; a finding mentioned
 only in a run summary is not retained page context. Snapshots supply neither
-current dependency versions nor read receipts.
+current dependency versions nor read receipts. Exact evidence references supply
+only their quoted spans; attribution, dates and headings need supporting context
+in those spans or another cited source reference.
 
 The root wiki is the compact overview and entry point to relevant detail pages.
 It links to existing wikis instead of reproducing their full contents.

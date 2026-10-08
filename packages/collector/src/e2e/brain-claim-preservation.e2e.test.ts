@@ -28,7 +28,7 @@ const markup = (sourceId: string, both: boolean) =>
     ? `<claim id="tools" refs="source:${sourceId}">Tools belong in the second cabinet.</claim>`
     : "");
 
-it("refuses empty and placeholder wiki replacements, then accepts deliberate narrow removal", async () => {
+it("refuses destructive replacements and unavailable navigation, then accepts deliberate narrow removal", async () => {
   let sourceId = "";
   const edit = (item: PuppetKnowledgeItem, markdown: string) => ({
     inputFingerprint: item.inputFingerprint,
@@ -135,7 +135,7 @@ it("refuses empty and placeholder wiki replacements, then accepts deliberate nar
             "kind" in step.result &&
             step.result.kind === "error",
         );
-        if (item && refused.length < 2)
+        if (item && refused.length < 3)
           return {
             kind: "tool",
             name: "knowledge_save",
@@ -143,7 +143,12 @@ it("refuses empty and placeholder wiki replacements, then accepts deliberate nar
               item,
               refused.length === 0
                 ? ""
-                : '<claim id="review" refs="">Existing context remains current.</claim>',
+                : refused.length === 1
+                  ? '<claim id="review" refs="">Existing context remains current.</claim>'
+                  : markup(sourceId, true).replace(
+                      "Blue labels identify the first cabinet.",
+                      "Blue labels identify the first cabinet. [Related reference](wiki:wiki_missing_reference)",
+                    ),
             ),
           };
         return maintain(
@@ -180,7 +185,7 @@ it("refuses empty and placeholder wiki replacements, then accepts deliberate nar
   const errors = tools.filter(
     (step) => step.tool === "knowledge_save" && step.result?.kind === "error",
   );
-  expect(errors).toHaveLength(2);
+  expect(errors).toHaveLength(3);
   expect(errors[0]!.result).toMatchObject({
     code: "claim_invalid",
     message: expect.stringContaining("cannot be saved empty"),
@@ -188,6 +193,10 @@ it("refuses empty and placeholder wiki replacements, then accepts deliberate nar
   expect(errors[1]!.result).toMatchObject({
     code: "claim_invalid",
     message: expect.stringContaining("omits existing claims"),
+  });
+  expect(errors[2]!.result).toMatchObject({
+    code: "reference_invalid",
+    message: expect.stringContaining("Internal navigation target is unavailable"),
   });
   expect(
     bench.sql.prepare("SELECT revision,markdown FROM knowledge_nodes WHERE id=?").get(pageId),

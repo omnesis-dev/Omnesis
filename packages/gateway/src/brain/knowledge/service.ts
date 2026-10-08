@@ -5,6 +5,7 @@
 import { readKnowledgeOwner } from "./owner-adapters.js";
 import { parseClaimMarkup } from "./claims.js";
 import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
+import { assertKnowledgeNavigation } from "./navigation.js";
 import { readKnowledgeHistory, type KnowledgeHistoryRequest } from "./history-view.js";
 import { uncoveredKnowledgeSpans } from "./coverage.js";
 import { parseClaimReference, unavailableKnowledgeReference } from "./references.js";
@@ -227,6 +228,7 @@ export class KnowledgeService {
       parsed.claims.map((claim) => claim.id),
       parsed.text,
     );
+    assertKnowledgeNavigation(this.deps.db, input, parsed.text);
     const owner =
       input.kind === "wiki" || input.kind === "root"
         ? null

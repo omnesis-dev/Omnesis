@@ -87,13 +87,34 @@ export function readKnowledgeCollectionRevision(
   return row.revision;
 }
 
+const COLLECTION_REPAIR: Record<KnowledgeCollection, string> = {
+  wiki: 'For proposal/publication, call knowledge_list({kind:"wiki"}) without afterId and knowledge_candidates({}) without status or afterId; page candidates until the intended candidate is returned. For an existing wiki revision, call knowledge_fetch({id:targetId,editing:true}). For a candidate decision, read that candidate through knowledge_candidates again.',
+  loop: "Repeat open_loop_search for the intended subject; read the target through open_loop_fetch before revising it.",
+  brief:
+    "Repeat brief_list for the relevant records; read the target through brief_fetch before revising it.",
+  doc_annotation:
+    "Repeat annotation_search({docId:targetDocumentId}) for the exact document being annotated and review the returned annotations.",
+  person_annotation:
+    "Repeat annotation_search({personId:targetPersonId}) for the exact person being annotated and review the returned annotations.",
+  temporal:
+    "Repeat temporal_query for the relevant time window and subject; when revising or deleting, ensure the target annotation is returned.",
+};
+
+export function knowledgeReconciliationConflict(
+  collection: KnowledgeCollection,
+  repair = COLLECTION_REPAIR[collection],
+): KnowledgeStorageError {
+  return new KnowledgeStorageError(
+    "revision_conflict",
+    `The reconciled collection changed or its read receipt is missing: ${collection}. ${repair} Review the refreshed results before retrying. Evidence-reference reads (knowledge_reference or fetch_many) do not refresh this collection receipt. Retain already-read source inputVersions that are still current; this conflict alone does not require rereading their evidence.`,
+  );
+}
+
 export function assertKnowledgeReconciliation(
   db: Database.Database,
   receipt: KnowledgeReconciliationReceipt,
+  repair?: string,
 ): void {
   if (readKnowledgeCollectionRevision(db, receipt.collection) !== receipt.revision)
-    throw new KnowledgeStorageError(
-      "revision_conflict",
-      "The reconciled collection changed. Search or list it again before creating or revising an owner.",
-    );
+    throw knowledgeReconciliationConflict(receipt.collection, repair);
 }

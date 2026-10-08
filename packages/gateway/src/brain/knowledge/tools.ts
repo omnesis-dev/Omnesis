@@ -263,10 +263,7 @@ export function buildKnowledgeTools(
       false,
       (input) =>
         reconciliation
-          ? reconciliation.read(
-              () => service.fetch(input.id, input.editing),
-              (node) => (node?.kind === "wiki" ? [`node:${node.id}`] : []),
-            )
+          ? reconciliation.readNode(() => service.fetch(input.id, input.editing))
           : service.fetch(input.id, input.editing),
     ),
     tool(
@@ -331,7 +328,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_evidence",
-      "Register an exact source quote against the content hash actually read. Returns a stable addressable evidence reference.",
+      "Register an exact source quote against the content hash actually read. Returns a stable addressable evidence reference. This reference supplies only the quoted text: surrounding author, date and other document context are not implicitly included. If a claim needs that context, quote a sufficient contextual span or cite the already-read whole source as support as well. Headings inside claim tags must also be supported.",
       z
         .object({
           documentId: id,
@@ -399,15 +396,13 @@ export function buildKnowledgeTools(
           );
         const fence =
           node.kind === "wiki" && reconciliation
-            ? reconciliation.fence(
-                node.expectedRevision === 0
-                  ? [
-                      "pages",
-                      "candidates",
-                      ...(input.candidateId ? [`candidate:${input.candidateId}`] : []),
-                    ]
-                  : [`node:${node.id}`],
-              )
+            ? node.expectedRevision === 0
+              ? reconciliation.fence([
+                  "pages",
+                  "candidates",
+                  ...(input.candidateId ? [`candidate:${input.candidateId}`] : []),
+                ])
+              : reconciliation.nodeFence(node.id, node.expectedRevision)
             : runFence;
         if (
           context.batchId &&
@@ -450,7 +445,7 @@ export function buildKnowledgeTools(
                 fence,
               );
         return reconciliation && fence && node.kind === "wiki"
-          ? reconciliation.accept(result, fence, [`node:${result.node.id}`])
+          ? reconciliation.acceptNode(reconciliation.accept(result, fence))
           : result;
       },
     ),

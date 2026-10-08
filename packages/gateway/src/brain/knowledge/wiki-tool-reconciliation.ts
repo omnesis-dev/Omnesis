@@ -3,10 +3,10 @@
 
 import {
   assertKnowledgeReconciliation,
+  knowledgeReconciliationConflict,
   readKnowledgeCollectionRevision,
   type KnowledgeReconciliationReceipt,
 } from "./reconciliation.js";
-import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeRunFence } from "./run-fence.js";
 import type Database from "better-sqlite3";
 
@@ -15,6 +15,7 @@ import type Database from "better-sqlite3";
  * reads cannot prove that a differently worded duplicate is absent elsewhere. */
 export class WikiToolReconciliation {
   private readonly reads = new Map<string, number>();
+  private readonly nodeReads = new Map<string, number>();
 
   constructor(
     private readonly db: Database.Database,
@@ -29,15 +30,51 @@ export class WikiToolReconciliation {
     return result;
   }
 
+  /** Keep the revision actually returned, not a later collection snapshot. */
+  readNode<T extends { id: string; kind: string; revision: number } | null>(read: () => T): T {
+    const node = read();
+    if (node?.kind === "wiki") this.nodeReads.set(node.id, node.revision);
+    return node;
+  }
+
+  nodeFence(id: string, expectedRevision: number): KnowledgeRunFence {
+    if (this.nodeReads.get(id) !== expectedRevision)
+      throw knowledgeReconciliationConflict(
+        "wiki",
+        "Read the existing target wiki with knowledge_fetch({id:targetId,editing:true}) and use its returned revision as expectedRevision; a guessed revision is not a read receipt.",
+      );
+    // The writer atomically checks this same expectedRevision and all dependencies.
+    // Unrelated page or candidate writes do not invalidate this node read.
+    return { ...this.run };
+  }
+
+  acceptNode<T extends { node: { id: string; revision: number } }>(result: T): T {
+    this.nodeReads.set(result.node.id, result.node.revision);
+    return result;
+  }
+
   fence(keys: readonly string[]): KnowledgeRunFence {
+    const repair = [
+      ...(keys.includes("pages")
+        ? ['Read current wiki pages with knowledge_list({kind:"wiki"}) without afterId.']
+        : []),
+      ...(keys.includes("candidates")
+        ? ["Read knowledge_candidates({}) without status or afterId."]
+        : []),
+      ...(keys.some((key) => key.startsWith("candidate:"))
+        ? [
+            "Read knowledge_candidates and follow nextCursor until the intended candidate is returned.",
+          ]
+        : []),
+      ...(keys.some((key) => key.startsWith("node:"))
+        ? ["Read the existing target wiki with knowledge_fetch({id:targetId,editing:true})."]
+        : []),
+    ].join(" ");
     const revision = this.reads.get(keys[0]!);
     if (revision === undefined || keys.some((key) => this.reads.get(key) !== revision))
-      throw new KnowledgeStorageError(
-        "revision_conflict",
-        "Read current wiki pages with knowledge_list and candidates with knowledge_candidates before proposing or publishing; fetch an existing wiki before revising it.",
-      );
+      throw knowledgeReconciliationConflict("wiki", repair);
     const reconciliation: KnowledgeReconciliationReceipt = { collection: "wiki", revision };
-    assertKnowledgeReconciliation(this.db, reconciliation);
+    assertKnowledgeReconciliation(this.db, reconciliation, repair);
     return { ...this.run, reconciliation };
   }
 

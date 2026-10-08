@@ -3,6 +3,7 @@
 
 /** Repository mutations run exclusively through the gateway writer worker. */
 import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
+import { assertKnowledgeNavigation } from "./navigation.js";
 import { recordAcceptedClaimMaintenance } from "./claim-maintenance.js";
 import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
@@ -109,13 +110,16 @@ export function saveKnowledgeNode(
           );
       }
     }
-    if (input.enforceClaimPreservation)
+    // This internal flag identifies model saves; recheck navigation after verification too.
+    if (input.enforceClaimPreservation) {
       assertKnowledgeClaimPreservation(
         db,
         input,
         parsed.claims.map((claim) => claim.id),
         parsed.text,
       );
+      assertKnowledgeNavigation(db, input, parsed.text);
+    }
     if (db.prepare("SELECT 1 FROM knowledge_node_tombstones WHERE id=?").get(input.id))
       throw new KnowledgeStorageError(
         "reference_invalid",

@@ -83,6 +83,24 @@ it("invalidates a concurrent negative search even when the proposed identity key
     }),
   ).toMatchObject({ kind: "error", code: "revision_conflict" });
   expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_candidates").get()).toEqual({ n: 1 });
+  // Reading valid evidence does not reconcile concurrent library changes.
+  expect(await call(second, "knowledge_reference", { ref: "source:evidence" })).toMatchObject({
+    kind: "structured",
+    data: { revision: "v1" },
+  });
+  const refused = await call(second, "knowledge_propose_page", {
+    ...proposal,
+    identityKey: "alternate-workshop",
+  });
+  expect(refused).toMatchObject({
+    kind: "error",
+    code: "revision_conflict",
+    message: expect.stringContaining('knowledge_list({kind:"wiki"})'),
+  });
+  if (refused.kind !== "error") throw new Error("Expected reconciliation refusal");
+  expect(refused.message).toContain("knowledge_candidates({})");
+  expect(refused.message).toContain("do not refresh this collection receipt");
+  expect(refused.message).toContain("Retain already-read source inputVersions");
   // Refreshing one half of the reconciliation must not silently refresh the other.
   await call(second, "knowledge_candidates", {});
   expect(
@@ -270,4 +288,72 @@ it("does not certify arbitrary empty page tails as proposal reconciliation", asy
     code: "revision_conflict",
   });
   expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_candidates").get()).toEqual({ n: 0 });
+});
+
+it("allows disjoint existing wiki repairs after both actual reads despite intervening library writes", async () => {
+  const other = { ...node, id: "materials" };
+  saveKnowledgeNode(db, node, 1);
+  saveKnowledgeNode(db, other, 1);
+  const first = tools("first");
+  const second = tools("second");
+  await call(first, "knowledge_fetch", { id: node.id, editing: true });
+  await call(second, "knowledge_fetch", { id: other.id, editing: true });
+  let entered = 0;
+  let release!: () => void;
+  const bothVerifying = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  service.deps.getEntailmentVerifier = async () => ({
+    async verify() {
+      if (++entered === 2) release();
+      await bothVerifying;
+      return { label: "entailment" as const, probability: 1 };
+    },
+    dispose() {},
+  });
+  const results = await Promise.all([
+    call(first, "knowledge_save", {
+      node: { ...node, expectedRevision: 1, title: "Workshop revised" },
+    }),
+    call(second, "knowledge_save", {
+      node: { ...other, expectedRevision: 1, title: "Materials revised" },
+    }),
+  ]);
+  expect(entered).toBe(2);
+  for (const result of results)
+    expect(result).toMatchObject({ kind: "structured", data: { node: { revision: 2 } } });
+  // An exact own-write response remains a read; an unrelated write does not erase it.
+  expect(
+    await call(first, "knowledge_save", {
+      node: { ...node, expectedRevision: 2, title: "Workshop revised" },
+    }),
+  ).toMatchObject({ kind: "structured", data: { node: { revision: 3 } } });
+});
+
+it("still refuses a same-wiki mutation during asynchronous verification", async () => {
+  saveKnowledgeNode(db, node, 1);
+  const entries = tools("run");
+  await call(entries, "knowledge_fetch", { id: node.id, editing: true });
+  service.deps.getEntailmentVerifier = async () => ({
+    async verify() {
+      saveKnowledgeNode(db, { ...node, expectedRevision: 1, title: "Concurrent revision" }, 2);
+      return { label: "entailment" as const, probability: 1 };
+    },
+    dispose() {},
+  });
+  expect(
+    await call(entries, "knowledge_save", {
+      node: { ...node, expectedRevision: 1, title: "Stale proposed revision" },
+    }),
+  ).toMatchObject({ kind: "error", code: "revision_conflict" });
+  expect(getKnowledgeNode(db, node.id)).toMatchObject({
+    revision: 2,
+    title: "Concurrent revision",
+  });
+  // Failed writes cannot grant the winner's revision to this run.
+  expect(
+    await call(entries, "knowledge_save", {
+      node: { ...node, expectedRevision: 2 },
+    }),
+  ).toMatchObject({ kind: "error", code: "revision_conflict" });
 });
