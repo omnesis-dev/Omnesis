@@ -54,7 +54,7 @@ function mentionItems(documentIds: string[]): TemporalItem[] {
         allDay: true,
         label: "8 October",
         kind: "event",
-        modality: "mentioned",
+        modality: "asserted",
         status: "active",
         mention: {
           documentId,
@@ -213,6 +213,7 @@ describe("SearchPipeline temporal lane", () => {
         return texts.map(() => new Float32Array(EMBEDDING_DIM).fill(0.01));
       },
       embedQuery,
+      async dispose() {},
     });
 
     it("embeds the query without its time phrase for the lane", async () => {
