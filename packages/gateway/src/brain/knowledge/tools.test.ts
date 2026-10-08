@@ -119,7 +119,13 @@ it("describes canonical operations and fresh reads before a terminal maintenance
   expect(save.description).toContain("state, deadline, retirement, and ledger changes");
   expect(save.description).toContain("knowledge_next_frontier and knowledge_fetch(editing=true)");
   expect(save.description).toContain("required canonical action is refused or incomplete");
-  expect(save.description).toContain(WIKI_AUTHORING_GUIDANCE);
+  expect(save.description).not.toContain(WIKI_AUTHORING_GUIDANCE);
+  expect(save.description).toContain("Replace the full synthesis page");
+  expect(save.description).toContain("node.claimRemovals");
+  expect(save.description).toContain(
+    "reviewedClaimIds reports review and does not authorize removal",
+  );
+  expect(save.description).toContain("Every nonblank synthesis text span must be covered by tags");
 });
 
 it("exposes only owner-specific saves within narrowed artifact grants, without wiki/root mutation", () => {

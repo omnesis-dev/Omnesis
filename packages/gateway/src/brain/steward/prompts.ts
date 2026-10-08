@@ -11,12 +11,13 @@
  * Both are laid out for prefix caching. The system prompt is byte-identical
  * across runs for the same settings and the same `OMNESIS.md`, which it
  * carries as its tail. A run message opens with the static text it has — the
- * kind's own rules (for `data` and `bootstrap` runs) and the shared brief
- * rules (for every kind that can write a brief) — and only then carries the
+ * kind's own rules (for `data` and `bootstrap` runs) and shared brief rules.
+ * Knowledge maintenance leads with its frontier task and wiki guidance, with
+ * brief-only rules after the assignment. Other runs only then carry the
  * volatile tail: the envelope, the clock, the self-memory, the notes and the
  * per-run data. A `data` or `bootstrap` run therefore reuses everything before
  * that tail across runs of its kind; every other kind reuses the system
- * prompt, the tool schemas and the brief rules.
+ * prompt and tool schemas, plus the static rules preceding its assignment.
  *
  * Prompt-level contracts encoded here, each pinned by tests:
  *   - every run prompt states the run id and attempt, and a re-attempt is
@@ -167,7 +168,7 @@ export function buildCognitionSystemPrompt(input: CognitionSystemPromptInput): s
 
   return `# Identity
 
-You are the **Omnesis Cognition Steward** — a background agent over the user's entire digital life (email, messages, calendar, files, notes, health, finance — everything Omnesis indexes locally on their machine). You run headlessly: the user never talks to you and never sees your replies. You act proactively on the user's behalf by maintaining **open loops** and creating **briefs** — a brief is the ONLY way you can actively bring anything you conclude to the user's attention.
+You are the **Omnesis Cognition Steward** — a background agent over the user's entire digital life (email, messages, calendar, files, notes, health, finance — everything Omnesis indexes locally on their machine). You run headlessly: the user never talks to you and never sees your replies. You act proactively on the user's behalf by maintaining **open loops** and creating **briefs** — a brief is the ONLY way you can actively bring anything you conclude to the user's attention. When knowledge tools are offered, you also curate evidence-backed reference pages and a compact root orientation: preserve useful understanding, reconcile consequential later developments, and make relevant context navigable. Reference synthesis and proactive notification are separate decisions.
 
 # The objects you manage
 
@@ -210,7 +211,7 @@ Everything runs locally on the user's own machine, over the user's own data, for
 
 # Your persistent memory
 
-You carry knowledge across runs in a set of COMPLEMENTARY stores. Each fact lives in exactly ONE place — its most specific home — and duplicating a fact across stores is what rots your memory. The decision is mechanical: a thing needing attention (a task, an unanswered request, an unresolved decision) is an **open loop**; structured source time is already a **temporal projection**, while only a model-derived interpretation that adds meaning belongs in a **temporal annotation**; ${input.annotationsEnabled ? "a durable fact about one document is a **document annotation**; a durable fact about one person — the user included — is a **person annotation** (the user's own facts are your injected self-memory); " : ""}and a behavioural lesson or a user-level preference that rests on no single document is a **note**. Never restate one store's content in another.
+You carry knowledge across runs in a set of COMPLEMENTARY stores. Each fact has ONE canonical home — its most specific store — so operational ownership stays consistent. The decision is mechanical: a thing needing attention (a task, an unanswered request, an unresolved decision) is an **open loop**; structured source time is already a **temporal projection**, while only a model-derived interpretation that adds meaning belongs in a **temporal annotation**; ${input.annotationsEnabled ? "a durable fact about one document is a **document annotation**; a durable fact about one person — the user included — is a **person annotation** (the user's own facts are your injected self-memory); " : ""}and a behavioural lesson or a user-level preference that rests on no single document is a **note**. Do not create another canonical owner for the same fact. This canonical single-home rule does not forbid grounded wiki synthesis referencing the owning record or its evidence: pages organize understanding without creating a second operational owner.
 
 **Notes** — your small, durable **operating manual for THIS user**: the lessons you drew from their dismissal feedback ("don't raise certificate-revocation warnings without first checking the source of truth"; "casual social follow-ups don't warrant surfacing") and the user-level preferences or standing decisions that rest on no single document ("treats a self-chat thread as their reminder system"). ${input.annotationsEnabled ? "It is NOT a fact store: a grounded fact about the user is a self annotation, a fact about another person is their annotation, a fact about one document is a document annotation; meaningful model-derived temporal context is a temporal annotation and an obligation is a loop — route each to its own home, not here. " : "It is for LONG-LIVED, user-level truths only — NOT short-term events (a booking, a this-week deadline: those are loops) and NOT a run journal (the loop ledger already records what you did). "}Apply this test before you write a note: **would it still be true AND useful with every loop closed and every source document deleted?** If not, it is not a note — and a note NEVER names a loop id, a price, a booking reference, or a specific future date. Maintain it with notes_append / notes_edit / notes_rewrite — notes_edit replaces one exact span, the tool for targeted upkeep without re-emitting the whole file. The notes file is capped at ${input.notesMaxBytes} bytes and given verbatim in every run message, beneath its rules, so keep it curated — compact it with notes_rewrite when it grows stale or nears the cap. An append that lands over the cap is still accepted and schedules a background compaction run — the file may briefly overshoot up to twice the cap while compaction restores it — so never withhold a real lesson because the file is full. Scope every lesson NARROWLY: about the specific thing you misread, never a blanket rule that quarantines a whole source, sender, or category — every source was connected deliberately by the user and stays in scope, so skepticism applies per datum, not per source.${annotationsMemory}${renderOperatorInstructionsSection(input.operatorInstructions)}`;
 }
@@ -1222,9 +1223,10 @@ function buildSynthesisRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPro
 
   if (payload.focus === "knowledge-maintenance") {
     return [
-      ...parts,
-      "Maintain the evidence-backed synthesis graph for this batch.",
+      "Maintain the evidence-backed synthesis graph for this batch. Choose the task from the current offered frontier:",
+      "Claim repair: without review=true, reconcile the affected claims and their current evidence, preserving unrelated supported context. Page curation: a wiki with review=true needs a useful reference page about its subject, including consequential supported later developments and historical context, not just revalidation of surviving claims. Root orientation: consider the current library and select useful grounded context and navigation within its budget. Organization: reconcile coherent evidence into reusable existing or new context when warranted; no page change is a valid outcome. These goals do not change the frontier's permissions or completion rules.",
       WIKI_AUTHORING_GUIDANCE,
+      ...parts,
       ...(payload.organizationCohortId
         ? [
             "This is a joint organization pass over a bounded cohort of already-interpreted evidence. The cohort is an admission window, not a single topic: inspect coherent subsets independently. Unrelated members do not make a supported subset unsuitable for a page. Fetch truncated sources fully before completing their interpretation; batch independent fetches. When a subset suggests a meaningful connection beyond the cohort, use bounded targeted search or graph traversal to reconcile that context rather than scanning the whole corpus. Inspect all cohort source context together before deciding its durable meaning. Search existing wikis, loops, annotations and candidates for related context; fetching those records does not make them verified evidence. Completed decisions, settled arrangements, recurring constraints and enduring preferences can justify reusable wiki context even when no new task or brief is warranted.",
@@ -1747,8 +1749,9 @@ function buildRunPromptParts(
  * seam of the run driver. The message is laid out static-first for prefix
  * caching: the kind's static rules (`data` and `bootstrap` only), then the
  * shared brief rules, then the volatile tail (envelope, clock, standing
- * memory, per-run data). Every lane
- * that can write a brief carries the house style and the
+ * memory, per-run data). Knowledge maintenance instead leads with its
+ * frontier task, then carries explicitly brief-only rules after that assignment.
+ * Every lane that can write a brief carries the house style and the
  * chain-of-verification hop, added here once so no builder (or builder
  * branch — the daily kind alone fans out to digest and per-source batch) can
  * silently miss them. Three kinds are excluded because they never create a
@@ -1767,6 +1770,19 @@ export function buildCognitionRunPrompt(
       ? [BRIEF_CRAFT_RULE, BRIEF_CLAIM_VERIFICATION_RULE]
       : []),
   ];
+  const synthesisPayload =
+    run.kind === "synthesis" ? parseCognitionSynthesisRunPayload(run.payload) : undefined;
+  if (synthesisPayload?.focus === "knowledge-maintenance") {
+    // The frontier's reference-maintenance task leads; brief rules apply only
+    // if this turn independently decides a user-facing notification is useful.
+    return [
+      ...(rules ? [rules] : []),
+      body,
+      "The following house style and verification rules apply only when writing a brief. They do not set the form, tense or notification threshold of a reference wiki or root orientation.",
+      BRIEF_CRAFT_RULE,
+      BRIEF_CLAIM_VERIFICATION_RULE,
+    ].join("\n\n");
+  }
   return [...staticPrefix, body].join("\n\n");
 }
 

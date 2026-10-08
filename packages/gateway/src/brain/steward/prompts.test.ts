@@ -180,6 +180,25 @@ describe("Cognition Steward system prompt", () => {
     expect(prompt).toContain("preserving relevant context links");
   });
 
+  test.each([true, false])(
+    "separates reference curation from canonical ownership and notification (annotations=%s)",
+    (annotationsEnabled) => {
+      const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096, annotationsEnabled });
+      expect(prompt).toContain("When knowledge tools are offered");
+      expect(prompt).toContain(
+        "Reference synthesis and proactive notification are separate decisions",
+      );
+      expect(prompt).toContain("single-home rule does not forbid grounded wiki synthesis");
+      expect(prompt).toContain("without creating a second operational owner");
+      const persistentMemory = prompt.slice(prompt.indexOf("# Your persistent memory"));
+      expect(persistentMemory).toContain("Each fact has ONE canonical home");
+      expect(persistentMemory).toContain(
+        "single-home rule does not forbid grounded wiki synthesis",
+      );
+      expect(prompt).not.toContain("Never restate one store's content in another");
+    },
+  );
+
   test("carries no clock, so it never changes with the time of the run", () => {
     const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096, annotationsEnabled: true });
     expect(prompt).not.toContain("Current time:");
@@ -1253,6 +1272,32 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(prompt).toContain("set nextShow to that review time");
   });
+
+  test.each([
+    { focus: "knowledge-maintenance", batchId: "batch_page" },
+    { focus: "knowledge-maintenance", batchId: "batch_root", schedulingClass: "initial-root" },
+    { focus: "knowledge-maintenance", batchId: "batch_joint", organizationCohortId: "cohort" },
+  ])(
+    "maintenance leads with frontier goals and one editorial contract before brief-only rules: %j",
+    (payload) => {
+      const prompt = buildCognitionRunPrompt(claimed({ kind: "synthesis", payload }), deps());
+      expect(prompt.startsWith("Maintain the evidence-backed synthesis graph")).toBe(true);
+      expect(prompt).toContain("Claim repair: without review=true");
+      expect(prompt).toContain("Page curation: a wiki with review=true");
+      expect(prompt).toContain("Root orientation: consider the current library");
+      expect(prompt).toContain("Organization: reconcile coherent evidence");
+      expect(prompt).toContain(
+        "These goals do not change the frontier's permissions or completion rules",
+      );
+      expect(prompt.split(WIKI_AUTHORING_GUIDANCE)).toHaveLength(2);
+      expect(prompt.indexOf(WIKI_AUTHORING_GUIDANCE)).toBeLessThan(prompt.indexOf("Current time:"));
+      const briefScope = prompt.indexOf("apply only when writing a brief");
+      expect(briefScope).toBeGreaterThan(prompt.indexOf(WIKI_AUTHORING_GUIDANCE));
+      expect(briefScope).toBeLessThan(prompt.indexOf("How a brief reads — the house style."));
+      expect(prompt).toContain("Verify before you brief");
+      expect(parseCognitionRunEnvelope(prompt)?.runId).toBe("run_7");
+    },
+  );
 
   test("initial root maintenance asks for evidence investigation before summarizing", () => {
     const prompt = buildCognitionRunPrompt(

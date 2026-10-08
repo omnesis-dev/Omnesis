@@ -17,6 +17,16 @@ calling a model. Invalidated claims remain visibly stale until maintenance;
 privacy-deleted evidence is denied immediately while bounded cleanup removes
 derived content and index projections.
 
+Maintenance assignments distinguish affected-claim repair from whole-page
+curation (`review=true`), root orientation and evidence organization. A page
+review considers useful subject context and consequential later developments;
+root work selects relevant context and navigation from the current library.
+These are model goals, not additional completion guarantees. Brief house style
+and brief verification remain available when a notification is warranted,
+but apply only to writing briefs and follow the maintenance assignment.
+A wiki may synthesize grounded context from canonical owners and evidence;
+it does not become another operational owner of their state.
+
 The `decision` role scores urgency, discovery relevance, dependency impact and
 proactive review. Its ordered-level answers are normalized to 0–1. Missing or
 invalid judgements take the conservative path; they do not establish that
