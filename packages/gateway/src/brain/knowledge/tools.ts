@@ -235,7 +235,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_link",
-      "Organize context and outcomes. belongs_to_project connects a node to its project wiki; part_of connects subloops to loops or pages to parent pages. These are navigation links and do not imply evidential support. Change operational blocking through open_loop_update.",
+      "Organize context and outcomes. belongs_to_project connects a node to its project wiki; part_of connects subloops to loops or pages to parent pages. These are navigation links and do not imply evidential support. Actual hierarchy changes schedule review of affected wiki/root pages. After changing hierarchy during maintenance, call knowledge_next_frontier before saving an affected page so its topology input is current. Change operational blocking through open_loop_update.",
       z
         .object({
           fromId: id,
@@ -253,7 +253,7 @@ export function buildKnowledgeTools(
         })
         .strict(),
       true,
-      (input) => service.deps.writeGate["knowledge.link"](input, runFence),
+      (input) => service.deps.writeGate["knowledge.link"](input, runFence, service.deps.clock()),
     ),
     tool(
       "knowledge_fetch",

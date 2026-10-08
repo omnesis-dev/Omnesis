@@ -545,11 +545,18 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await page.goBack();
   await page.getByRole("button", { name: "History", exact: true }).click();
   await expect(page.getByText(/Edit 1|Version 1|Revision 1/).first()).toBeVisible();
-  await expect(page.locator(".kn-timeline details")).toHaveCount(0);
-  await expect(page.locator(".kn-revision")).toHaveCount(2);
-  await expect(page.locator(".kn-revision .kn-prose")).toHaveCount(2);
-  for (const content of await page.locator(".kn-revision .kn-prose").all())
-    await expect(content).toBeVisible();
+  await expect(page.locator(".kn-timeline details")).toHaveCount(2);
+  await expect(page.locator(".kn-timeline details[open]")).toHaveCount(0);
+  await expect(page.locator(".kn-revision .kn-prose")).toHaveCount(0);
+  await expect(page.locator(".kn-revision .privacy-policy-diff")).toHaveCount(0);
+  const latestRevision = page.locator(".kn-revision").first();
+  await latestRevision.locator("summary").click();
+  await expect(latestRevision.locator("details")).toHaveAttribute("open", "");
+  await expect(latestRevision.getByRole("table", { name: "Changes in version 2" })).toBeVisible();
+  await expect(latestRevision.locator(".privacy-policy-diff-row--add").first()).toBeVisible();
+  await expect(latestRevision.locator(".privacy-policy-diff-row--same").first()).toBeVisible();
+  await latestRevision.locator("summary").click();
+  await expect(page.locator(".kn-timeline details[open]")).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("knowledge-history.png"),
     fullPage: true,

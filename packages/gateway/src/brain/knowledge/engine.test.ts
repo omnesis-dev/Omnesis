@@ -23,6 +23,7 @@ import { createKnowledgeSourceTriggers } from "./source-triggers.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { directKnowledgeGate } from "./writer.js";
+import { setKnowledgeLink } from "./links.js";
 import { KnowledgeService } from "./service.js";
 import { KnowledgeEngine, type KnowledgeEngineDeps } from "./engine.js";
 import { KNOWLEDGE_DISCOVERY_POLICY, recordKnowledgeCoverage } from "./discovery.js";
@@ -1811,7 +1812,7 @@ describe("knowledge coordinator", () => {
         id: "source:ambiguous",
         kind: "wiki",
         title: "Context",
-        markdown: "",
+        markdown: '<claim id="fact" refs="">A fictional note.</claim>',
         expectedRevision: 0,
         inputVersions: {},
       }),
@@ -2286,8 +2287,7 @@ describe("durable discovery input context", () => {
           id: "project",
           kind: "wiki",
           title: "Project",
-          markdown:
-            '<claim id="revised" refs="source:original">The workshop begins Friday.</claim>',
+          markdown: '<claim id="fact" refs="source:original">The workshop begins Friday.</claim>',
           expectedRevision: offered.node!.revision,
           // The newly selected context is deliberately absent from all citations.
           inputVersions: { "source:original": "v1" },
@@ -2381,4 +2381,88 @@ describe("durable discovery input context", () => {
     expect(repair.inputVersions["source:dormant"]).toBeUndefined();
     expect(service.fetch("project", true)!.markdown).not.toContain("selected");
   });
+});
+
+it("refreshes changed parent topology and retains a successor review when a link changes during verification", async () => {
+  source();
+  await wiki("parent");
+  await wiki("child");
+  db.exec("DELETE FROM knowledge_changes");
+  setKnowledgeLink(
+    db,
+    { fromId: "child", toId: "parent", kind: "part_of", fromRevision: 1, toRevision: 1 },
+    undefined,
+    now,
+  );
+  await engine.tick();
+  const batch = batchFor("parent");
+  expect(batch).toBeDefined();
+  const first = (await engine.next(batch.id, batch.runId)).items.find(
+    (item) => item.id === "parent",
+  )!;
+  expect(first.review).toBe(true);
+  expect(first.inputVersions["organization:parent"]).toEqual(expect.any(String));
+  let mutated = false;
+  service.deps.getEntailmentVerifier = async () => ({
+    async verify() {
+      if (!mutated) {
+        mutated = true;
+        setKnowledgeLink(
+          db,
+          {
+            fromId: "child",
+            toId: "parent",
+            kind: "part_of",
+            fromRevision: 1,
+            toRevision: 1,
+            remove: true,
+          },
+          undefined,
+          now,
+        );
+      }
+      return { label: "entailment" as const, probability: 1 };
+    },
+    dispose() {},
+  });
+  const proposal = (item: typeof first) => ({
+    id: "parent",
+    kind: "wiki" as const,
+    title: "parent",
+    markdown: item.node!.markdown,
+    expectedRevision: item.node!.revision,
+    inputVersions: item.inputVersions,
+  });
+  await expect(
+    engine.saveNode(
+      batch.id,
+      batch.runId,
+      "parent",
+      first.inputFingerprint,
+      proposal(first),
+      first.pendingClaimIds,
+    ),
+  ).rejects.toMatchObject({ code: "revision_conflict" });
+  expect(getKnowledgeNode(db, "parent")?.revision).toBe(1);
+  expect(
+    db
+      .prepare(
+        "SELECT 1 FROM knowledge_work WHERE subject_id='parent' AND reason='review' AND status='pending'",
+      )
+      .get(),
+  ).toBeDefined();
+  const refreshed = (await engine.next(batch.id, batch.runId)).items.find(
+    (item) => item.id === "parent",
+  )!;
+  expect(refreshed.inputFingerprint).not.toBe(first.inputFingerprint);
+  await engine.saveNode(
+    batch.id,
+    batch.runId,
+    "parent",
+    refreshed.inputFingerprint,
+    proposal(refreshed),
+    refreshed.pendingClaimIds,
+  );
+  expect(getKnowledgeNode(db, "parent")?.revision).toBe(2);
+  expect(getKnowledgeNode(db, "parent")?.markdown).toContain('refs="source:input"');
 });

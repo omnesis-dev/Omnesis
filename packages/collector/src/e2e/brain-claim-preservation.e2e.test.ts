@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./synth-env.js";
-import { afterAll, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import {
   BrainBench,
@@ -18,7 +18,7 @@ import type { PuppetKnowledgeItem } from "./brain-bench/knowledge-puppet.js";
 
 compressCognitionCadences();
 let bench: BrainBench | undefined;
-afterAll(async () => {
+afterEach(async () => {
   await bench?.destroy();
 }, 60_000);
 const pageId = "workshop-storage-reference";
@@ -211,3 +211,152 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
     { id: "tools", reason: "Retired material-location section after review." },
   ]);
 }, 180_000);
+
+it("reviews published pages with omitted discovery targets and both hierarchy endpoints", async () => {
+  const parentId = "wiki_fixture_workshop_program";
+  const childId = "wiki_fixture_workshop_equipment";
+  const titles = new Map([
+    ["Workshop program", parentId],
+    ["Equipment inventory", childId],
+  ]);
+  bench = await BrainBench.start({
+    experimental: true,
+    syncSources: false,
+    entailment: "accept-all",
+    judge: "hold-all",
+    decision: {
+      policy: (request) =>
+        Object.fromEntries(
+          Object.entries(request.questions).map(([key, question]) => {
+            if (question.type !== "score") throw new Error(`Unexpected decision ${key}`);
+            return [
+              key,
+              { type: "score" as const, score: question.criteria.length - 1, confidence: 1 },
+            ];
+          }),
+        ),
+    },
+    brain: {
+      bootstrap: { enabled: false },
+      derivationBarrier: "0s",
+      knowledge: { soonDelay: "1s", routineDelay: "6h" },
+    },
+    behaviors: {
+      dynamic: knowledgePuppet({
+        // Publication must schedule its own placement review; this deliberately names no targets.
+        targets: () => [],
+        plan(item, ctx, steps) {
+          if (item.source) {
+            const id = titles.get(item.source.title);
+            if (!id)
+              return {
+                calls: [
+                  call("knowledge_fetch", { id: childId }),
+                  call("knowledge_fetch", { id: parentId }),
+                  call("knowledge_link", {
+                    fromId: childId,
+                    toId: parentId,
+                    kind: "part_of",
+                    fromRevision: ref("knowledge_fetch", "revision", 0),
+                    toRevision: ref("knowledge_fetch", "revision", 1),
+                  }),
+                ],
+              };
+            return {
+              calls: [
+                call("knowledge_list", { kind: "wiki" }),
+                call("knowledge_candidates", {}),
+                call("knowledge_propose_page", {
+                  identityKey: id,
+                  title: item.source.title,
+                  scope: item.source.content,
+                  evidenceVersions: { [item.source.id]: item.source.contentHash },
+                }),
+                call("knowledge_save", {
+                  candidateId: ref("knowledge_propose_page", "id"),
+                  node: {
+                    id,
+                    kind: "wiki",
+                    title: item.source.title,
+                    expectedRevision: 0,
+                    markdown: `<claim id="summary" refs="source:${item.source.id}">${item.source.content}</claim>`,
+                    inputVersions: { [`source:${item.source.id}`]: item.source.contentHash },
+                  },
+                }),
+              ],
+            };
+          }
+          if (item.node && (item.id === parentId || item.id === childId))
+            return {
+              calls: [
+                call("knowledge_links", { id: item.id }),
+                call("knowledge_save", {
+                  inputFingerprint: item.inputFingerprint,
+                  node: {
+                    id: item.id,
+                    kind: "wiki",
+                    title: item.node.title,
+                    expectedRevision: item.node.revision,
+                    markdown: item.node.markdown,
+                    inputVersions: item.inputVersions,
+                  },
+                }),
+              ],
+            };
+          return preserveCurrentOwner(item, ctx, steps);
+        },
+      }),
+    },
+  });
+  const reviews = (id: string) =>
+    bench!.sql
+      .prepare<
+        [string],
+        { count: number }
+      >("SELECT count(*) AS count FROM knowledge_work WHERE subject_id=? AND reason='review' AND tier='soon' AND status='completed'")
+      .get(id)!.count;
+  for (const [externalId, title, content, id] of [
+    [
+      "program-placement",
+      "Workshop program",
+      "The community workshop runs a weekly repair session.",
+      parentId,
+    ],
+    [
+      "equipment-placement",
+      "Equipment inventory",
+      "The equipment inventory lists two soldering stations.",
+      childId,
+    ],
+  ]) {
+    await bench.push(email({ externalId: externalId!, title: title!, content: content! }));
+    await expect.poll(() => reviews(id!), { timeout: 90_000 }).toBeGreaterThan(0);
+    await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
+  }
+  const before = [reviews(parentId), reviews(childId)];
+  await bench.push(
+    email({
+      externalId: "workshop-hierarchy",
+      title: "Workshop organization",
+      content: "The equipment inventory is a section of the community workshop program.",
+    }),
+  );
+  await expect
+    .poll(() => [reviews(parentId), reviews(childId)], { timeout: 90_000 })
+    .toEqual(before.map((count) => count + 1));
+  await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
+  expect(
+    bench.sql
+      .prepare("SELECT kind FROM knowledge_links WHERE from_id=? AND to_id=?")
+      .get(childId, parentId),
+  ).toEqual({ kind: "part_of" });
+  const runs = bench.sql
+    .prepare<
+      [],
+      { run_id: string }
+    >("SELECT run_id FROM knowledge_batches WHERE status='completed'")
+    .all();
+  const tools = (await Promise.all(runs.map((run) => bench!.obs.executedTools(run.run_id)))).flat();
+  expect(tools.filter((step) => step.result?.kind === "error")).toEqual([]);
+  expect(tools.filter((step) => step.tool === "knowledge_link")).toHaveLength(1);
+}, 300_000);

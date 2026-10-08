@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { listTemporalAnnotationsAwaitingRefile } from "../../enrichment/temporal-annotations/storage.js";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
+import { knowledgeOrganizationVersion } from "./organization-context.js";
 import { isHistoricalKnowledgeBrief } from "./owner-maintenance.js";
 import { pendingMaintenanceClaimIds } from "./claim-maintenance.js";
 import { getKnowledgeDependencies, getKnowledgeNode } from "./storage.js";
@@ -179,6 +180,8 @@ export class KnowledgeEngine {
       const node = getKnowledgeNode(this.deps.db, id);
       if (!node || node.canonicalFields.withdrawn === true) return null;
       versions[`node:${id}`] = node.revision;
+      if (node.kind === "wiki" || node.kind === "root")
+        versions[`organization:${id}`] = knowledgeOrganizationVersion(this.deps.db, id);
       // Selection is durable input context, not a claim-support relationship.
       // Scope it to source generations actually retained by this batch.
       if (batchId) {

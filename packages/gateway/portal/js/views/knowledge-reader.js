@@ -16,6 +16,7 @@ import {
   maintenanceTierLabel,
 } from "./knowledge-maintenance-model.js";
 import { KnowledgeConnections } from "./knowledge-connections.js";
+import { knowledgeHistoryComparisons, KnowledgeHistoryRevision } from "./knowledge-history.js";
 
 export const knowledgePath = (id) => `/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`;
 export const knowledgeKinds = [
@@ -175,8 +176,8 @@ export function KnowledgeDetail({
       html`<div class="kn-section-intro">
           <h3>How this page evolved</h3>
           <p>
-            Previous versions preserve context about earlier understanding. Showing the latest 30
-            saved versions.
+            Previous versions preserve context about earlier understanding. Showing changes for the latest 30
+            saved versions; expand a version to compare it with its predecessor.
           </p>
         </div>
         ${!history.length &&
@@ -187,19 +188,12 @@ export function KnowledgeDetail({
           <p>Saved revisions will appear here as this page develops.</p>
         </div>`}
         <div class="kn-timeline">
-          ${history.map(
-            (revision) =>
-              html`<section class="kn-revision" key=${revision.revision}>
-                <header>
-                  <h4>Version ${revision.revision}</h4
-                  ><time>${new Date(revision.createdAt).toLocaleString()}</time>
-                </header>
-                <p class="kn-caption">
-                  ${`${revision.diff?.changedClaimIds?.length ?? 0} claim${revision.diff?.changedClaimIds?.length === 1 ? "" : "s"} changed`}
-                  · ${revision.validity === "stale" ? "Needed review" : "Current when saved"}
-                </p>
-                <${KnowledgeProse} text=${revision.plainText} references=${references} />
-              </section>`,
+          ${knowledgeHistoryComparisons(history).map(
+            ({ revision, previous }) => html`<${KnowledgeHistoryRevision}
+              key=${`${node.id}:${revision.revision}`}
+              revision=${revision}
+              previous=${previous}
+            />`,
           )}
         </div>`}
       ${activeTab === "advanced" &&

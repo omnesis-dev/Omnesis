@@ -39,7 +39,8 @@ export class KnowledgeQueryService {
   }
   history(id: string, beforeRevision?: number) {
     this.fetch(id);
-    return listKnowledgeNodeRevisions(this.db, id, { beforeRevision, limit: 30 });
+    // The portal displays thirty revisions and compares the oldest with this extra predecessor.
+    return listKnowledgeNodeRevisions(this.db, id, { beforeRevision, limit: 31 });
   }
   status() {
     return {

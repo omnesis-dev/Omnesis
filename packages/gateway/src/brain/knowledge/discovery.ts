@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomUUID } from "node:crypto";
 import { cognitionAuthoredSqlExclusion } from "../cognition-authored.js";
+import { enqueueKnowledgeWork } from "./work.js";
 import {
   readKnowledgeCollectionRevision,
   type KnowledgeReconciliationReceipt,
@@ -380,6 +382,21 @@ export function publishKnowledgeCandidate(
         "A new page must contain grounded claim spans",
       );
     const result = saveKnowledgeNode(db, input.node, now);
+    // Publication must not depend on the creating turn remembering integration targets.
+    // Review chooses placement; a standalone page remains a valid outcome.
+    enqueueKnowledgeWork(
+      db,
+      {
+        id: `kw_${randomUUID()}`,
+        subjectId: result.node.id,
+        subjectKind: "node",
+        reason: "review",
+        inputRevision: String(result.node.revision),
+        tier: "soon",
+        dueAt: now,
+      },
+      now,
+    );
     settleKnowledgeCandidate(
       db,
       {

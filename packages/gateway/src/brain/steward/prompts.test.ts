@@ -1365,6 +1365,12 @@ describe("Cognition Steward run prompts", () => {
       expect(prompt).toContain("[Page title](wiki:actual-page-id)");
       expect(prompt).toContain("links to the most relevant existing wiki subpages");
       expect(prompt).toContain("Navigation links are not evidence");
+      expect(prompt).toContain("Evidence arrival order is not event order");
+      expect(prompt).toContain("Assess placement in the existing library");
+      expect(prompt).toContain("Standalone pages are valid");
+      expect(prompt).toContain("from child to parent with part_of");
+      expect(prompt).toContain("including incoming children");
+      expect(prompt).toContain("a hierarchy edge is navigation, not support");
       expect(prompt).toContain("within its hard character budget");
       expect(prompt).toContain(
         "do not add empty headings, invent content, or impose section or page quotas",

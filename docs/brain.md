@@ -336,6 +336,24 @@ enroll affected owners for grounded synthesis review, even if the agent omits
 explicit discovery targets. Persisted evidence determines their association;
 unrelated owners receive a separate review.
 
+Publishing a wiki also queues a durable whole-page review. That review assesses
+placement in the existing library, useful context, chronology and navigation;
+a standalone page is a valid outcome. Hierarchical links point from a child to
+its parent. Adding or removing a `part_of` or `belongs_to_project` link to a wiki
+or root queues review of the affected wiki/root endpoints; retrying an unchanged
+link does not. This refreshes both the parent summary and child navigation. Parent
+review reads current organizational context before integrating relevant detail
+pages. A parent summary cites exact child claims when it derives from those
+claims, so later evidence changes use the ordinary dependency maintenance path.
+Organizational links alone are not factual support and do not propagate all
+changes through the hierarchy.
+
+Page curation distinguishes evidence arrival order from event order. Older
+observations discovered later should enrich dated history rather than silently
+replace still-supported newer state. This is an authoring responsibility;
+structural claim validation alone cannot prove that a page is a useful or
+chronologically coherent synthesis.
+
 ## Bounding the spend
 
 Everything is measured in **tokens and runs**. The Brain reports no figure in
@@ -452,19 +470,21 @@ Brain activity (Activity, Agent runs, Maintenance, Discovery, Calibration,
 Legacy memory), System diagnostics, and Data tools. Existing deep links stay
 valid. Maintenance owns the repair queue and batch frontier; Discovery owns
 bootstrap coverage and history controls. Loops live in the Knowledge library,
-with canonical state and expandable outcome details beside their synthesis.
+with canonical state and outcome details beside their synthesis.
 Briefs retain their delivery inspector and link to synthesis when available.
 Legacy memory keeps agent notes and the retired-loop recurrence ledger distinct
 from the root overview.
 
 The experimental Knowledge library reads the same canonical data used by
 agent tools. Browse or filter the library, then open a page’s Overview,
-Connections, History, or Advanced view. Inline claim spans open Connections
-focused on that claim’s verification and relationships; clear the claim selection
-to inspect the whole page. Page links and claim-specific references navigate to
-their targets. Connections is the single relationship view, separating incoming
-and outgoing evidence dependencies from organization links with bounded pagination. Source links explain the grounding; raw claim markup
-and storage metadata remain in Advanced. Empty, pending, and unavailable states
+Connections, History, or Advanced view. Overview switches between rendered
+Markdown and raw claim markup. Hovering or focusing a claim previews its
+verification and incoming and outgoing references; the reference links navigate
+to the relevant page or passage. Connections shows flat incoming and outgoing
+reference lists, combining evidence and organizational links with bounded
+pagination. History offers a collapsed diff against each revision's predecessor;
+expand a revision to inspect additions and removals. Advanced contains storage
+metadata and exact claim mappings. Empty, pending, and unavailable states
 are explicit rather than presented as verified understanding. Admin diagnostics include `/admin/brain/knowledge`, `/status`,
 `/batches`, `/decisions`, `/:id`, `/:id/connections` and `/:id/history` under that prefix.
 They show synthesis, claim provenance, maintenance progress and metadata-only

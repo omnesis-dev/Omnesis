@@ -10,6 +10,7 @@ import {
   saveKnowledgeNode,
 } from "./storage.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
+import { knowledgeOrganizationVersion } from "./organization-context.js";
 import { listKnowledgeLinks, setKnowledgeLink, type KnowledgeLinkKind } from "./links.js";
 import type { KnowledgeNodeKind } from "./types.js";
 
@@ -101,4 +102,67 @@ describe("synthesis organization links", () => {
     });
     expect(listKnowledgeLinks(db, "second")).toEqual([]);
   });
+});
+
+it("durably coalesces parent review only for actual hierarchical mutations, including removal", () => {
+  node("parent");
+  node("child-a");
+  node("child-b");
+  const initial = knowledgeOrganizationVersion(db, "parent");
+  const childInitial = knowledgeOrganizationVersion(db, "child-a");
+  link("child-a", "parent", "part_of");
+  const linked = knowledgeOrganizationVersion(db, "parent");
+  expect(linked).not.toBe(initial);
+  expect(knowledgeOrganizationVersion(db, "child-a")).not.toBe(childInitial);
+  expect(
+    db.prepare("SELECT reason,status FROM knowledge_work WHERE subject_id='child-a'").get(),
+  ).toEqual({ reason: "review", status: "pending" });
+  const work = db
+    .prepare("SELECT id,reason,status FROM knowledge_work WHERE subject_id='parent'")
+    .get();
+  expect(work).toMatchObject({ reason: "review", status: "pending" });
+  link("child-a", "parent", "part_of");
+  expect(
+    db.prepare("SELECT id,reason,status FROM knowledge_work WHERE subject_id='parent'").all(),
+  ).toEqual([work]);
+  link("child-b", "parent", "belongs_to_project");
+  expect(
+    db.prepare("SELECT COUNT(*) AS n FROM knowledge_work WHERE subject_id='parent'").get(),
+  ).toEqual({ n: 1 });
+  db.prepare("UPDATE knowledge_work SET status='batched' WHERE subject_id='parent'").run();
+  setKnowledgeLink(db, {
+    fromId: "child-a",
+    toId: "parent",
+    kind: "part_of",
+    fromRevision: 1,
+    toRevision: 1,
+    remove: true,
+  });
+  expect(
+    db.prepare("SELECT status FROM knowledge_work WHERE subject_id='parent' ORDER BY status").all(),
+  ).toEqual([{ status: "batched" }, { status: "pending" }]);
+  const before = db.prepare("SELECT COUNT(*) AS n FROM knowledge_work").get();
+  setKnowledgeLink(db, {
+    fromId: "child-a",
+    toId: "parent",
+    kind: "part_of",
+    fromRevision: 1,
+    toRevision: 1,
+    remove: true,
+  });
+  expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_work").get()).toEqual(before);
+  expect(getKnowledgeNode(db, "parent")?.revision).toBe(1);
+  expect(getKnowledgeDependencies(db, "parent")).toEqual([]);
+});
+
+it("changes organization context when a child becomes privacy-hidden or is deleted", () => {
+  node("parent");
+  node("child");
+  link("child", "parent", "part_of");
+  const before = knowledgeOrganizationVersion(db, "parent");
+  db.prepare("INSERT INTO knowledge_node_tombstones(id,deleted_at) VALUES('child',1)").run();
+  expect(knowledgeOrganizationVersion(db, "parent")).not.toBe(before);
+  expect(listKnowledgeLinks(db, "parent")).toEqual([]);
+  db.prepare("DELETE FROM knowledge_nodes WHERE id='child'").run();
+  expect(knowledgeOrganizationVersion(db, "parent")).not.toBe(before);
 });

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomUUID } from "node:crypto";
+import { enqueueKnowledgeWork } from "./work.js";
 import { assertKnowledgeRunFence, type KnowledgeRunFence } from "./run-fence.js";
 import { getKnowledgeNode } from "./storage.js";
 import { KnowledgeStorageError } from "./types.js";
@@ -25,6 +27,7 @@ export function setKnowledgeLink(
   db: Database.Database,
   input: KnowledgeLinkInput,
   runFence?: KnowledgeRunFence,
+  now = Date.now(),
 ): void {
   db.transaction(() => {
     assertKnowledgeRunFence(db, runFence);
@@ -49,12 +52,30 @@ export function setKnowledgeLink(
         "claim_invalid",
         "Task decomposition connects loops; page organization connects wikis",
       );
+    const schedulePages = () => {
+      if (!["part_of", "belongs_to_project"].includes(input.kind)) return;
+      for (const page of [from, to]) {
+        if (!["wiki", "root"].includes(page.kind)) continue;
+        enqueueKnowledgeWork(
+          db,
+          {
+            id: `kw_${randomUUID()}`,
+            subjectId: page.id,
+            subjectKind: "node",
+            reason: "review",
+            inputRevision: String(page.revision),
+            tier: "soon",
+            dueAt: now,
+          },
+          now,
+        );
+      }
+    };
     if (input.remove) {
-      db.prepare("DELETE FROM knowledge_links WHERE from_id=? AND to_id=? AND kind=?").run(
-        input.fromId,
-        input.toId,
-        input.kind,
-      );
+      const result = db
+        .prepare("DELETE FROM knowledge_links WHERE from_id=? AND to_id=? AND kind=?")
+        .run(input.fromId, input.toId, input.kind);
+      if (result.changes) schedulePages();
       return;
     }
     if (input.kind === "part_of" || input.kind === "supersedes") {
@@ -72,11 +93,10 @@ export function setKnowledgeLink(
           "Organizational hierarchy exceeds the bounded write budget",
         );
     }
-    db.prepare("INSERT OR IGNORE INTO knowledge_links(from_id,to_id,kind) VALUES(?,?,?)").run(
-      input.fromId,
-      input.toId,
-      input.kind,
-    );
+    const result = db
+      .prepare("INSERT OR IGNORE INTO knowledge_links(from_id,to_id,kind) VALUES(?,?,?)")
+      .run(input.fromId, input.toId, input.kind);
+    if (result.changes) schedulePages();
   })();
 }
 export function listKnowledgeLinks(

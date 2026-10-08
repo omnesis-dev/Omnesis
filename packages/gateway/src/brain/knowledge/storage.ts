@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { knowledgeOrganizationVersion } from "./organization-context.js";
+
 /** Repository mutations run exclusively through the gateway writer worker. */
 import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
 import { assertKnowledgeNavigation } from "./navigation.js";
@@ -99,6 +101,14 @@ export function saveKnowledgeNode(
         "SELECT content_hash FROM documents WHERE id=?",
       );
       for (const [ref, expected] of Object.entries(versions)) {
+        if (
+          ref === `organization:${input.id}` &&
+          knowledgeOrganizationVersion(db, input.id) !== expected
+        )
+          throw new KnowledgeStorageError(
+            "revision_conflict",
+            "Parent organization changed; read knowledge_links and request the next frontier before retrying. Organizational links are context, not evidence.",
+          );
         if (!ref.startsWith("source:") || ref.includes("#")) continue;
         const sourceId = ref.slice(7);
         const current = sourceRevision.get(sourceId);

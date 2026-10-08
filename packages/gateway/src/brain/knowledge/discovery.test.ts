@@ -227,6 +227,19 @@ describe("progressive knowledge discovery", () => {
       3,
     );
     expect(getKnowledgeCandidate(db, "candidate-workshop")?.nodeId).toBe(node.id);
+    expect(
+      db
+        .prepare("SELECT subject_id,reason,tier,status FROM knowledge_work WHERE subject_id=?")
+        .all(node.id),
+    ).toEqual([{ subject_id: node.id, reason: "review", tier: "soon", status: "pending" }]);
+    expect(
+      db.prepare("SELECT 1 FROM knowledge_discovery_targets WHERE node_id=?").get(node.id),
+    ).toBeUndefined();
+    saveKnowledgeNode(db, { ...node, expectedRevision: 1 }, 4);
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM knowledge_work WHERE subject_id=?").get(node.id),
+    ).toEqual({ n: 1 });
+
     expect(() =>
       publishKnowledgeCandidate(
         db,

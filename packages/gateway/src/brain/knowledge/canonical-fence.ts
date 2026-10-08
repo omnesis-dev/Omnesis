@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { knowledgeOrganizationVersion } from "./organization-context.js";
 import { readKnowledgeOwner, type KnowledgeOwnerKind } from "./owner-adapters.js";
 import { assertKnowledgeRunFence, type KnowledgeRunFence } from "./run-fence.js";
 import { getKnowledgeNode } from "./storage-read.js";
@@ -220,6 +221,8 @@ export function assertKnowledgeCanonicalFence(
       let actual: string | number;
       if (ref.startsWith("node:"))
         actual = getKnowledgeNode(db, ref.slice(5))?.revision ?? "missing";
+      else if (ref.startsWith("organization:"))
+        actual = knowledgeOrganizationVersion(db, ref.slice(13));
       else if (ref.startsWith("orientation:"))
         actual = getKnowledgeNode(db, ref.slice(12))?.meaningRevision ?? "missing";
       else if (ref.startsWith("blocked_by:"))

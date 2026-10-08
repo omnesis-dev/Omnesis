@@ -594,7 +594,10 @@
           New internal links to synthesis pages are checked for available targets before saving;
           unchanged older links are not retroactively validated. Independent page repairs can run
           without conflicting solely because another wiki changed. Wikis should synthesize durable
-          context, while the time index retains individual events.
+          context, while the time index retains individual events. Newly published pages receive a
+          placement review; adding or removing a parent relationship schedules review of the
+          affected pages. Standalone pages remain valid, and organizational links do not count as
+          factual evidence.
         </p>
         <p>
           Synthesis uses Markdown with addressable claim spans. Normal reading hides the tags, while
@@ -619,9 +622,10 @@
           and which pages use the claim or whole page as support. Claim links open the referenced
           passage in Overview. Connections shows the page’s incoming and outgoing references,
           including context and organization links. Source documents appear once as an icon and
-          linked title. History displays saved versions in full without expanding them. Advanced
-          contains identifiers, metadata, and exact claim mappings. Maintenance status distinguishes
-          pending work from completed work; a current page is not necessarily verified. Maintenance
+          linked title. History shows each saved version’s changes from its predecessor in a
+          collapsed diff; expand a version to inspect its additions and removals. Advanced contains
+          identifiers, metadata, and exact claim mappings. Maintenance status distinguishes pending
+          work from completed work; a current page is not necessarily verified. Maintenance
           separates inputs waiting to be grouped, inputs assigned to batches, and recent batch
           history. Historical deferred records are excluded from the waiting count. Select a batch
           to inspect its checks and open the agent transcript.
