@@ -21,11 +21,13 @@ export function extractKnowledgeReferences(markdown) {
   return [...refs];
 }
 
-/** Only the typed internal reference grammar becomes a portal navigation URL. */
+/** Only recognized internal references become portal navigation URLs. */
 export function internalKnowledgeHref(value) {
+  // Canonical URLs already navigate correctly; metadata normalization drops selectors.
+  if (/^\/portal\//.test(value ?? "")) return null;
   const match =
     /^(source|wiki|loop|annotation|brief):([^#]+)(?:#(claim|field|evidence):(.+))?$/.exec(
-      value ?? "",
+      knowledgeLinkReference(value) ?? "",
     );
   if (!match) return null;
   const path =

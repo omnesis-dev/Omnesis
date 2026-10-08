@@ -7,6 +7,8 @@ import type Database from "better-sqlite3";
 
 export interface KnowledgeRevisionDiff {
   changedClaimIds: string[];
+  /** Intent recorded by model-facing full-page replacement saves. */
+  claimRemovals?: Array<{ id: string; reason: string }>;
   changedRefs: string[];
   changedFieldKeys: string[];
   titleChanged: boolean;

@@ -4,6 +4,8 @@
 /** Model-facing synthesis boundary. Verification attestations never come from tool arguments. */
 import { readKnowledgeOwner } from "./owner-adapters.js";
 import { parseClaimMarkup } from "./claims.js";
+import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
+import { readKnowledgeHistory, type KnowledgeHistoryRequest } from "./history-view.js";
 import { uncoveredKnowledgeSpans } from "./coverage.js";
 import { parseClaimReference, unavailableKnowledgeReference } from "./references.js";
 import {
@@ -31,7 +33,7 @@ import type { ResolvedBrainSettings } from "../config.js";
 
 export type KnowledgeProposal = Omit<
   SaveKnowledgeNodeInput,
-  "claims" | "canonicalFields" | "rootMaxChars"
+  "claims" | "canonicalFields" | "rootMaxChars" | "enforceClaimPreservation"
 > & {
   claims?: Omit<KnowledgeClaimState, "verification">[];
 };
@@ -55,6 +57,10 @@ export interface KnowledgeReferenceView {
 
 export class KnowledgeService {
   constructor(readonly deps: KnowledgeServiceDeps) {}
+
+  history(input: KnowledgeHistoryRequest) {
+    return readKnowledgeHistory(this.deps.db, input);
+  }
 
   fetch(
     id: string,
@@ -215,6 +221,12 @@ export class KnowledgeService {
         "claim_invalid",
         "Every nonblank synthesis text span must be inside a claim tag; structural coverage is checked separately from factual support",
       );
+    assertKnowledgeClaimPreservation(
+      this.deps.db,
+      input,
+      parsed.claims.map((claim) => claim.id),
+      parsed.text,
+    );
     const owner =
       input.kind === "wiki" || input.kind === "root"
         ? null
@@ -366,6 +378,7 @@ export class KnowledgeService {
       metadata.lastVerifiedAt = this.deps.clock();
     const node = {
       ...input,
+      enforceClaimPreservation: true,
       runFence,
       metadata,
       canonicalFields: owner?.canonicalFields ?? {},

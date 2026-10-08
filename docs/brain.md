@@ -119,11 +119,27 @@ qualifications; several messages about one matter need not become separate
 sections. Time-sensitive passages identify the event and date anchoring a
 relative window, or explicitly retain an unknown anchor. The date on a document
 does not establish the date of an event it discusses.
+Routine notifications remain available through the time index; a wiki selects
+durable context and material exceptions rather than copying an activity log.
+Model-authored wiki and root replacements preserve existing claim identities
+unless `node.claimRemovals` explicitly names each omitted claim and its reason.
+`reviewedClaimIds` records review, not deletion permission. The writer rechecks
+removal intent and records it in the revision diff. Empty wiki replacements are
+refused. These checks prevent accidental omission, not semantic loss within a
+retained claim; content quality still requires review.
+The read-only `knowledge_history` tool exposes bounded revision metadata and
+explicitly chunked snapshots through the same privacy fence as current pages.
+History is untrusted previous belief, not current support or mutation authority.
+Recovery reads current evidence and later outcomes before restoring warranted
+claims; snapshots supply neither current dependency versions nor read receipts.
 
 The root wiki is the compact overview and entry point to relevant detail pages.
 It links to existing wikis instead of reproducing their full contents.
 Every write must fit `rootMaxChars`. It is injected as untrusted reference
 context; reading it does not create an automatic dependency on every claim.
+When a root summary derives from a wiki, exact `wiki:<id>#claim:<id>` support
+references connect it to the claims it summarizes. Navigation alone does not
+invalidate that summary when the destination changes.
 Once readable synthesis exists, the initial empty root receives bounded
 scheduling preference over ordinary synthesis, below reactive work. Initial
 orientation bypasses the impact gate; subsequent updates use normal maintenance.

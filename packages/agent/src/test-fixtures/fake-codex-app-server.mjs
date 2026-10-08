@@ -463,7 +463,10 @@ function runScenario() {
       notify("item/agentMessage/delta", {
         threadId,
         turnId,
-        delta: "Synthetic tool response received.",
+        delta:
+          scenario === "unicode-tool"
+            ? response.result.contentItems[0].text
+            : "Synthetic tool response received.",
       });
       notifyUsage();
       complete("completed");
@@ -527,7 +530,13 @@ function complete(status, message) {
 
 function send(message) {
   log("server_message", message);
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+  const encoded = Buffer.from(`${JSON.stringify(message)}\n`);
+  if (scenario === "unicode-tool") {
+    // Literal separators and byte-sized writes exercise the receiving transport.
+    for (const byte of encoded) process.stdout.write(Buffer.from([byte]));
+  } else {
+    process.stdout.write(encoded);
+  }
 }
 
 function log(event, payload) {

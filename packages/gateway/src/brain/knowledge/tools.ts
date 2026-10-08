@@ -73,6 +73,13 @@ const proposal = z
       "Inside node: map EVERY claim ref in the proposed markdown to the exact revision returned by knowledge_reference for that ref. Include newly added dependencies: the offered frontier only includes existing input context and does not supply versions for all new citations. Reading a wiki does not automatically read its cited sources. Fetch each new ref or cite a fetched wiki claim directly; never invent a version or drop useful grounded context merely to avoid fetching it.",
     ),
     claims: z.array(claimState).max(1024).optional(),
+    claimRemovals: z
+      .array(z.object({ id, reason: z.string().trim().min(1).max(1000) }).strict())
+      .max(1024)
+      .optional()
+      .describe(
+        "Wiki/root full replacement only: explicitly name each existing claim deliberately omitted and explain why. Preserve all other claim spans. reviewedClaimIds does not authorize removal. New pages cannot remove claims; empty wiki replacements are refused.",
+      ),
     metadata: z
       .object({
         importance: z.number().min(0).max(1).optional(),
@@ -295,6 +302,32 @@ export function buildKnowledgeTools(
       z.object({ ref: z.string().min(1).max(1024) }).strict(),
       false,
       (input) => service.reference(input.ref),
+    ),
+    tool(
+      "knowledge_history",
+      "Read privacy-fenced historical synthesis context, never current proof. List bounded revision summaries with {id,beforeRevision?,limit?}; read a snapshot with {id,revision,offset?} and follow nextOffset to reassemble all chunks. Consult history when a wiki review finds missing context or destructive prior changes. Reconcile historical claims with current sources and later developments before restoring warranted knowledge; history does not grant mutation authority or current evidence versions.",
+      z.union([
+        z
+          .object({
+            id,
+            beforeRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+            limit: z.number().int().min(1).max(5).optional(),
+          })
+          .strict(),
+        z
+          .object({
+            id,
+            revision: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER - 1),
+            offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+          })
+          .strict(),
+      ]),
+      false,
+      (input) => service.history(input),
     ),
     tool(
       "knowledge_evidence",

@@ -31,6 +31,7 @@ import {
   type ToolResult,
 } from "@omnesis/core";
 
+import { readJsonRpcLines, encodeJsonRpcLine } from "./json-rpc-lines.js";
 import { zodToJsonSchema } from "./zod-to-json-schema.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import {
@@ -1351,8 +1352,7 @@ class CodexJsonRpcClient {
       windowsHide: true,
     });
 
-    const stdout = createInterface({ input: this.proc.stdout });
-    stdout.on("line", (line) => this.handleLine(line));
+    readJsonRpcLines(this.proc.stdout, (line) => this.handleLine(line));
     const stderr = createInterface({ input: this.proc.stderr });
     stderr.on("line", (line) => {
       const trimmed = line.trim();
@@ -1429,7 +1429,7 @@ class CodexJsonRpcClient {
     if (!this.proc || !this.proc.stdin.writable) {
       throw new Error("Codex app-server stdin is not writable");
     }
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+    this.proc.stdin.write(encodeJsonRpcLine(message));
   }
 
   private handleLine(line: string): void {

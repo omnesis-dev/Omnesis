@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Repository mutations run exclusively through the gateway writer worker. */
+import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
 import { recordAcceptedClaimMaintenance } from "./claim-maintenance.js";
 import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
@@ -108,6 +109,13 @@ export function saveKnowledgeNode(
           );
       }
     }
+    if (input.enforceClaimPreservation)
+      assertKnowledgeClaimPreservation(
+        db,
+        input,
+        parsed.claims.map((claim) => claim.id),
+        parsed.text,
+      );
     if (db.prepare("SELECT 1 FROM knowledge_node_tombstones WHERE id=?").get(input.id))
       throw new KnowledgeStorageError(
         "reference_invalid",
@@ -288,6 +296,14 @@ export function saveKnowledgeNode(
               knowledgeHash(oldFields[key] ?? null) !== knowledgeHash(fields[key] ?? null),
           )
           .sort(),
+        ...(input.enforceClaimPreservation && input.claimRemovals?.length
+          ? {
+              claimRemovals: input.claimRemovals.map((removal) => ({
+                id: removal.id,
+                reason: removal.reason.trim(),
+              })),
+            }
+          : {}),
         titleChanged: existing?.title !== input.title,
         validityChanged: existing?.validity !== readKnowledgeNodeRow(db, input.id)?.validity,
       },

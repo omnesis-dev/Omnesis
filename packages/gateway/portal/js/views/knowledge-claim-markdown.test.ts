@@ -20,6 +20,35 @@ function claim(markdown: string, id: string, parentId: string | null = null) {
   return { id, parentId, start, end };
 }
 describe("claim-aware Markdown", () => {
+  it("preserves canonical portal query and fragment selectors while hydrating references", () => {
+    const documentHref = "/portal/doc/letter%2Fone?evidence=paragraph#selection";
+    const pageHref = "/portal/debug/cognition/knowledge/loop_fixture?kind=loop&field=status#detail";
+    const markdown = `[Document](${documentHref}) [Outcome](${pageHref})`;
+    expect(internalKnowledgeHref(documentHref)).toBeNull();
+    expect(internalKnowledgeHref(pageHref)).toBeNull();
+    expect(extractKnowledgeReferences(markdown)).toEqual(["source:letter/one", "node:loop_fixture"]);
+    const rendered = renderKnowledgeMarkdown(markdown).html;
+    expect(rendered).toContain('href="/portal/doc/letter%2Fone?evidence=paragraph#selection"');
+    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/loop_fixture?kind=loop&field=status#detail"');
+    expect(rendered).toContain('class="kn-link-icon kn-link-icon--source"');
+  });
+
+  it("routes bare canonical page IDs locally with icons without rewriting external lookalikes", () => {
+    const markdown = "[Task](loop_fixture) [Page](wiki_fixture#claim:detail) [Root](root_fixture) [Remote](https://example.org/loop_fixture) [Relative](notes/loop_fixture)";
+    expect(extractKnowledgeReferences(markdown)).toEqual([
+      "loop:loop_fixture", "wiki:wiki_fixture#claim:detail", "wiki:root_fixture",
+    ]);
+    const rendered = renderKnowledgeMarkdown(markdown).html;
+    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/loop_fixture?kind=loop"');
+    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/wiki_fixture?claim=detail"');
+    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/root_fixture"');
+    expect(rendered).toContain('class="kn-link-icon kn-link-icon--loop"');
+    expect(rendered).toContain('class="kn-link-icon kn-link-icon--wiki"');
+    expect(rendered).toContain('href="https://example.org/loop_fixture"');
+    expect(rendered).toContain('href="notes/loop_fixture"');
+    expect(internalKnowledgeHref("loop_fixture/../../admin")).toBeNull();
+    expect(internalKnowledgeHref("loop_fixture?redirect=https://example.org")).toBeNull();
+  });
   it("renders fully covered sections and page navigation with separate inspectable claims", () => {
     const markdown = [
       '<claim id="supplies" refs="source:fixture">\n## Supplies\n\nThe [materials page](wiki:materials) lists paper and pencils.\n</claim>',

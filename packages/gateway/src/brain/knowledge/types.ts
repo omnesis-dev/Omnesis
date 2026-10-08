@@ -118,6 +118,10 @@ export interface SaveKnowledgeNodeInput {
   /** Every reference names its observed source content hash or synthesis meaningRevision; edit revision is only for OCC. */
   inputVersions: Record<string, KnowledgeRevision>;
   claims?: KnowledgeClaimState[];
+  /** Explicit intent for omitted wiki/root claims; independent of review completion. */
+  claimRemovals?: Array<{ id: string; reason: string }>;
+  /** Internal model-save boundary flag, never accepted from tool arguments. */
+  enforceClaimPreservation?: boolean;
   metadata?: KnowledgeReviewMetadata;
   canonicalFields?: Record<string, unknown>;
   /** Root budget applies to the tagged representation too, so prompt injection stays bounded. */

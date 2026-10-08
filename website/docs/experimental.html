@@ -588,6 +588,12 @@
           soon tier; ordinary page edits use the routine tier.
         </p>
         <p>
+          Wiki updates preserve existing claims unless the agent explicitly records their removal
+          and its reason. Empty wiki replacements are refused. This protects against accidentally
+          dropping sections; it does not establish that retained or rewritten claims are complete.
+          Wikis should synthesize durable context, while the time index retains individual events.
+        </p>
+        <p>
           Synthesis uses Markdown with addressable claim spans. Normal reading hides the tags, while
           editing and inspection retain provenance. Wiki and root writes require every nonblank text
           span, including headings, to sit inside a claim tag. This structural coverage check is

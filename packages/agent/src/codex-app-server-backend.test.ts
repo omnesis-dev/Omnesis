@@ -174,6 +174,44 @@ describe("parseCodexUsage", () => {
 });
 
 describe("CodexAppServerBackend", () => {
+  it("roundtrips Unicode separators through a real tool and chunked app-server output", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-unicode-"));
+    const logPath = join(dir, "fake-codex.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      logPath,
+      scenario: "unicode-tool",
+    });
+    const result: ToolResult = {
+      kind: "structured",
+      resultType: "synthetic.unicode",
+      data: { text: "alpha\u2028beta\u2029gamma😀" },
+    };
+    try {
+      const events = await collect(
+        backend.runTurn(baseInput({ tools: [fakeToolHandle("search_documents", () => result)] })),
+      );
+      const response = firstPayload<{ result: { contentItems: Array<{ text: string }> } }>(
+        readLog(logPath),
+        "tool_call_response",
+      );
+      const text = response.result.contentItems[0]!.text;
+      expect(JSON.parse(text)).toEqual(result);
+      expect(events.find((event) => event.type === "agent.tool.result")?.payload.result).toEqual(
+        result,
+      );
+      expect(events.find((event) => event.type === "agent.text.delta")?.payload.delta).toBe(text);
+      expect(events.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+      expect(events.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+        "end_turn",
+      );
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("settles a failed spawn without waiting for an exit event that cannot occur", async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-spawn-failure-")));
     const logPath = join(dir, "events.jsonl");

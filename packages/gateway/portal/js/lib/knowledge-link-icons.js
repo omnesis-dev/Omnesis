@@ -53,6 +53,11 @@ export function knowledgeReferenceMetadata(reference, references = {}) {
 
 /** Resolve typed and canonical portal links without treating remote URLs as private references. */
 export function knowledgeLinkReference(value) {
+  // A bare canonical page ID is local navigation, not a relative filesystem URL.
+  const bare = /^(wiki|loop|root)_[A-Za-z0-9_-]+(?:#(?:claim|field):[A-Za-z0-9_-]+)?$/.exec(
+    value ?? "",
+  );
+  if (bare) return `${bare[1] === "root" ? "wiki" : bare[1]}:${value}`;
   if (
     /^(source|wiki|loop|annotation|brief):[^#]+(?:#(?:claim|field|evidence):.+)?$/.test(value ?? "")
   )
