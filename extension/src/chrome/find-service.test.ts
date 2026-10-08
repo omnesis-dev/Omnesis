@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it, vi } from "vitest";
-import { FindService, findSnippet } from "./find-service.js";
+import { FIND_RUN_HISTORY, FindService, findSnippet } from "./find-service.js";
 import type { ExtensionConfig } from "./storage.js";
 
 function sse(events: unknown[]): Response {
@@ -866,5 +866,108 @@ it("migrates a cached prefixed query to separate text and mode", async () => {
     mode: "agentic",
     resultsQuery: "invented query",
     resultsMode: "agentic",
+  });
+});
+
+describe("Find search history", () => {
+  const runId = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  function answering(h: ReturnType<typeof harness>): void {
+    h.search(async ({ text }) =>
+      sse([
+        { type: "agent.text.delta", payload: { delta: `Explanation for ${text}` } },
+        {
+          type: "find.results",
+          payload: { results: [hit(text, `https://example.org/${encodeURIComponent(text)}`)] },
+        },
+        { type: "find.complete", payload: { mode: "agentic" } },
+      ]),
+    );
+  }
+
+  it("serves each Find page its own finished search after a newer one, across a worker restart", async () => {
+    const h = harness();
+    await enable(h);
+    answering(h);
+    const first = await h.service.search("first", "agentic", runId(1));
+    expect(first).toMatchObject({ runId: runId(1), resultsQuery: "first", running: false });
+    await h.service.search("second", null, runId(2));
+    const searches = h.fetch.mock.calls.filter(([url]) =>
+      new URL(String(url)).pathname.startsWith("/browser/find/search"),
+    ).length;
+
+    const restarted = new FindService(h.deps);
+    expect(await restarted.status(true, runId(1))).toMatchObject({
+      runId: runId(1),
+      resultsQuery: "first",
+      resultsMode: "agentic",
+      results: [{ documentId: "first" }],
+      agentText: "Explanation for first",
+      running: false,
+      interrupted: false,
+    });
+    expect(await restarted.status(false, runId(2))).toMatchObject({
+      runId: runId(2),
+      resultsQuery: "second",
+      results: [{ documentId: "second" }],
+    });
+    // Coming back to a search reads it; it never asks the gateway to search again.
+    expect(
+      h.fetch.mock.calls.filter(([url]) =>
+        new URL(String(url)).pathname.startsWith("/browser/find/search"),
+      ),
+    ).toHaveLength(searches);
+  });
+
+  it("forgets the oldest searches beyond the history and reports a forgotten one without results", async () => {
+    const h = harness();
+    await enable(h);
+    answering(h);
+    for (let n = 1; n <= FIND_RUN_HISTORY + 2; n++)
+      await h.service.search(`query ${n}`, null, runId(n));
+    expect(await h.service.status(false, runId(1))).toMatchObject({
+      resultsQuery: "",
+      results: [],
+      running: false,
+    });
+    expect((await h.service.status(false, runId(1))).runId).toBeUndefined();
+    expect(await h.service.status(false, runId(2))).toMatchObject({
+      runId: runId(2),
+      resultsQuery: "query 2",
+    });
+  });
+
+  it("keeps a search superseded mid-stream as interrupted under its own id", async () => {
+    const h = harness();
+    await enable(h);
+    let started = false;
+    h.search(async ({ text }, signal) =>
+      text === "slow"
+        ? new Promise<Response>((_resolve, reject) => {
+            started = true;
+            signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          })
+        : h.respond({ results: [hit("fast", "https://example.org/fast")] }),
+    );
+    const slow = h.service.search("slow", null, runId(1));
+    await vi.waitFor(() => expect(started).toBe(true));
+    await h.service.search("fast", null, runId(2));
+    expect(await slow).toMatchObject({ runId: runId(1), resultsQuery: "slow", interrupted: true });
+  });
+
+  it("erases every kept search with the retrieved cache on revocation", async () => {
+    const h = harness();
+    await enable(h);
+    answering(h);
+    await h.service.search("first", null, runId(1));
+    await h.service.search("second", null, runId(2));
+    h.revoke();
+    await h.service.status();
+    h.restore();
+    await enable(h);
+    for (const id of [runId(1), runId(2)]) {
+      const view = await h.service.status(false, id);
+      expect(view).toMatchObject({ results: [], resultsQuery: "" });
+      expect(view.runId).toBeUndefined();
+    }
   });
 });

@@ -34,6 +34,22 @@ describe("Find worker entrypoints", () => {
             snippet: "Invented passage",
           },
         ],
+        runs: [
+          {
+            id: "earlier-run",
+            query: "earlier question",
+            complete: true,
+            results: [
+              {
+                id: "earlier",
+                title: "Invented earlier page",
+                url: "https://example.org/earlier",
+                source: "Example",
+                snippet: "Invented earlier passage",
+              },
+            ],
+          },
+        ],
       },
       [FIND_TOKEN_KEY]: { pairing: identity, token: "read-token" },
     };
@@ -144,6 +160,27 @@ describe("Find worker entrypoints", () => {
         { id: "test", url: "https://example.org/find.html?q=anything" },
         vi.fn(),
       ),
+    ).toBe(false);
+    const earlier = await new Promise((resolve) => {
+      expect(
+        background.message({ type: "find-view", runId: "earlier-run" }, fullPage, resolve),
+      ).toBe(true);
+    });
+    expect(earlier).toMatchObject({
+      runId: "earlier-run",
+      resultsQuery: "earlier question",
+      results: [{ id: "earlier" }],
+    });
+    await new Promise((resolve) =>
+      background.message(
+        { type: "find-result", resultId: "earlier", runId: "earlier-run" },
+        fullPage,
+        resolve,
+      ),
+    );
+    expect(update).toHaveBeenLastCalledWith(17, { url: "https://example.org/earlier" });
+    expect(
+      background.message({ type: "find-view", runId: "not a run id!" }, fullPage, vi.fn()),
     ).toBe(false);
     await background.clear();
     expect(stored[FIND_TOKEN_KEY]).toBeNull();

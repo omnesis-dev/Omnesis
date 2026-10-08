@@ -232,16 +232,17 @@
           query requests up to 30 results. Search results show titles, matching snippets, site icons
           and source links. Select a result with the keyboard and press Enter, or click it, to
           navigate that same Find tab. Ctrl or Command + Enter opens another tab. Query and result
-          state remain available. The configured decision model chooses direct index search or a
-          read-only agent search. A blue indicator marks automatic agentic mode. Search views show
-          streamed agent text and tool activity, followed by structured search results. Without an
-          enabled decision model, Find uses direct search. Each query starts a fresh task, with no
-          timeline or follow-up conversation. Results can also link directly to a source record when
-          its provider supplies a browser URL; a separately captured web page is not required. A
-          search ends after three minutes. When an OpenAI-compatible agent backend answers HTTP 429
-          (rate limited), each model request of the research retries up to three times with up to 90
-          seconds of waiting, enough for a per-minute quota to reset, within that three-minute
-          limit.
+          state remain available. Going Back to Find, or reloading it, shows that search's results
+          again without searching again; the browser keeps the current search and the five before
+          it. The configured decision model chooses direct index search or a read-only agent search.
+          A blue indicator marks automatic agentic mode. Search views show streamed agent text and
+          tool activity, followed by structured search results. Without an enabled decision model,
+          Find uses direct search. Each query starts a fresh task, with no timeline or follow-up
+          conversation. Results can also link directly to a source record when its provider supplies
+          a browser URL; a separately captured web page is not required. A search ends after three
+          minutes. When an OpenAI-compatible agent backend answers HTTP 429 (rate limited), each
+          model request of the research retries up to three times with up to 90 seconds of waiting,
+          enough for a per-minute quota to reset, within that three-minute limit.
         </p>
         <p>
           Use <code>om /search your query</code> for direct index search, or

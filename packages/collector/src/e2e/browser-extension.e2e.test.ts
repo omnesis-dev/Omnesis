@@ -845,13 +845,34 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
     const copy = await newPage;
     await expect.poll(() => copy.url(), { timeout: 10_000, interval: 100 }).toBe(articleUrl);
     expect(context.pages()).toHaveLength(pageCount + 1);
-    expect(panel.url()).toBe(findUrl);
+    // Each search is named in this page's URL so Back can return to it.
+    const searchedUrl = new URL(panel.url());
+    const runId = searchedUrl.searchParams.get("run");
+    expect(panel.url().split("?")[0]).toBe(findUrl.split("?")[0]);
+    expect(searchedUrl.searchParams.get("q")).toBe("Waypoint");
+    expect(runId).toBe(
+      ((await extensionStorage())["omnesis.find.state.v1"] as { runId?: string }).runId,
+    );
     await copy.close();
     // A normal card click navigates this Find tab even when the destination is already open.
     await row.locator(".find-result-open").click();
     await expect.poll(() => panel.url(), { timeout: 10_000, interval: 100 }).toBe(articleUrl);
     expect(article.url()).toBe(articleUrl);
     expect(context.pages()).toHaveLength(pageCount);
+    // Back shows the same results again without starting another search.
+    await panel.goBack();
+    await expect
+      .poll(() => panel.locator(".find-result-title").filter({ hasText: webTitle }).count(), {
+        timeout: 20_000,
+        interval: 250,
+      })
+      .toBe(1);
+    // A page that searched again would have renamed its URL before its results rendered.
+    expect(panel.url()).toBe(searchedUrl.href);
+    expect(await panel.locator("#find-query").inputValue()).toBe("Waypoint");
+    expect(((await extensionStorage())["omnesis.find.state.v1"] as { runId?: string }).runId).toBe(
+      runId,
+    );
     await panel.close();
     await article.close();
   }, 180_000);

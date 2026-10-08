@@ -5,7 +5,12 @@ import { readFileSync } from "node:fs";
 import { parseHTML } from "linkedom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
-import { highlightFindText, initFindPanel, type FindPanelView } from "./find-panel.js";
+import {
+  highlightFindText,
+  initFindPanel,
+  type FindPanelOptions,
+  type FindPanelView,
+} from "./find-panel.js";
 import { FIND_STATE_KEY } from "./find-service.js";
 import type { FindMode } from "./find-query.js";
 
@@ -13,7 +18,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-function panel(options: { initialQuery?: string; initialMode?: FindMode | null } = {}) {
+function panel(options: FindPanelOptions = {}, initialView: Partial<FindPanelView> = {}) {
   const { document, window } = parseHTML(
     readFileSync(new URL("../../public/notes.html", import.meta.url), "utf8"),
   );
@@ -57,13 +62,19 @@ function panel(options: { initialQuery?: string; initialMode?: FindMode | null }
         source: "Example",
       },
     ],
+    ...initialView,
   };
   let changed:
     | ((changes: Record<string, { newValue?: unknown }>, area: string) => void)
     | undefined;
   const openOptionsPage = vi.fn().mockResolvedValue(undefined);
   const send = vi.fn(async (message: unknown) => {
-    const msg = message as { type: string; query?: string; mode?: FindMode | null };
+    const msg = message as {
+      type: string;
+      query?: string;
+      mode?: FindMode | null;
+      runId?: string;
+    };
     if (msg.type === "notes-view") return { enabled: true };
     if (msg.type === "find-result") return { ok: true };
     if (msg.type === "find-update" || msg.type === "find-query")
@@ -72,7 +83,7 @@ function panel(options: { initialQuery?: string; initialMode?: FindMode | null }
         query: msg.query!,
         mode: msg.mode ?? undefined,
         ...(msg.type === "find-query"
-          ? { resultsQuery: msg.query!, resultsMode: msg.mode ?? undefined }
+          ? { resultsQuery: msg.query!, resultsMode: msg.mode ?? undefined, runId: msg.runId }
           : {}),
       };
     return view;
@@ -128,6 +139,7 @@ describe("Find panel", () => {
         type: "find-query",
         query: "invented full-page query",
         mode: null,
+        runId: expect.any(String),
       }),
     );
     expect(p.input.value).toBe("invented full-page query");
@@ -148,6 +160,7 @@ describe("Find panel", () => {
           type: "find-query",
           query: "invented guide",
           mode,
+          runId: expect.any(String),
         }),
       );
       expect(p.input.value).toBe("invented guide");
@@ -160,6 +173,7 @@ describe("Find panel", () => {
         type: "find-query",
         query: "invented guide",
         mode: "agentic",
+        runId: expect.any(String),
       }),
     );
     expect(p.input.value).toBe("invented guide");
@@ -331,6 +345,7 @@ describe("Find panel", () => {
           type: "find-query",
           query: "invented",
           mode: "agentic",
+          runId: expect.any(String),
         }),
       );
       expect(
@@ -348,7 +363,9 @@ describe("Find panel", () => {
     button.click();
     expect(
       p.send.mock.calls.filter(([message]) => (message as { type: string }).type === "find-query"),
-    ).toEqual([[{ type: "find-query", query: "invented", mode: "agentic" }]]);
+    ).toEqual([
+      [{ type: "find-query", query: "invented", mode: "agentic", runId: expect.any(String) }],
+    ]);
     expect(p.input.value).toBe("invented");
   });
   it("allows retry after an agent request fails", async () => {
@@ -575,6 +592,7 @@ describe("Find panel", () => {
       type: "find-query",
       query: "A new invented question",
       mode: null,
+      runId: expect.any(String),
     });
   });
   it("treats indexed HTML as text", () => {
@@ -614,5 +632,62 @@ describe("Find panel", () => {
       "brief",
       "UI",
     ]);
+  });
+  describe("coming back to a search", () => {
+    const sent = (p: ReturnType<typeof panel>, type: string) =>
+      p.send.mock.calls
+        .map(([message]) => message as { type: string; runId?: string })
+        .filter((message) => message.type === type);
+
+    it("names each search it starts so the page URL can return to it", async () => {
+      const onSearch = vi.fn();
+      const p = panel({ initialQuery: "invented guide", initialMode: "agentic", onSearch });
+      await vi.waitFor(() => expect(sent(p, "find-query")).toHaveLength(1));
+      const [query] = sent(p, "find-query");
+      expect(onSearch).toHaveBeenCalledWith({
+        query: "invented guide",
+        mode: "agentic",
+        runId: query!.runId,
+      });
+      p.document.querySelector<HTMLAnchorElement>(".find-result-open")!.click();
+      await vi.waitFor(() => expect(sent(p, "find-result")).toHaveLength(1));
+      expect(sent(p, "find-result")[0]).toMatchObject({ runId: query!.runId });
+    });
+
+    it("shows its earlier search on Back or reload without searching again", async () => {
+      const onSearch = vi.fn();
+      const p = panel(
+        { initialQuery: "invented", runId: "earlier-run", onSearch },
+        { runId: "earlier-run", mode: "agentic", query: "something newer" },
+      );
+      await vi.waitFor(() => expect(p.document.querySelectorAll(".find-result")).toHaveLength(2));
+      expect(sent(p, "find-query")).toHaveLength(0);
+      expect(onSearch).not.toHaveBeenCalled();
+      expect(sent(p, "find-status")[0]).toMatchObject({ runId: "earlier-run" });
+      expect(p.input.value).toBe("invented");
+      p.update({ agentText: "A later update" });
+      await vi.waitFor(() =>
+        expect(sent(p, "find-view")[0]).toMatchObject({ runId: "earlier-run" }),
+      );
+    });
+
+    it("asks before searching again when its earlier search is no longer saved", async () => {
+      const p = panel(
+        { initialQuery: "invented old question", runId: "forgotten-run" },
+        { resultsQuery: "", results: [] },
+      );
+      await vi.waitFor(() =>
+        expect(p.document.getElementById("find-status")?.textContent).toContain(
+          "no longer saved in the browser",
+        ),
+      );
+      expect(sent(p, "find-query")).toHaveLength(0);
+      expect(p.input.value).toBe("invented old question");
+      p.document
+        .getElementById("find-form")!
+        .dispatchEvent(new p.window.Event("submit", { cancelable: true }));
+      await vi.waitFor(() => expect(sent(p, "find-query")).toHaveLength(1));
+      expect(sent(p, "find-query")[0]!.runId).not.toBe("forgotten-run");
+    });
   });
 });
