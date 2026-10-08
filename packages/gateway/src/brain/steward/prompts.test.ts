@@ -1354,6 +1354,12 @@ describe("Cognition Steward run prompts", () => {
       deps(),
     );
     expect(prompt).toContain("joint organization pass");
+    expect(prompt).toContain("cohort is an admission window, not a single topic");
+    expect(prompt).toContain("inspect coherent subsets independently");
+    expect(prompt).toContain("use bounded targeted search or graph traversal");
+    expect(prompt).toContain(
+      "Fetch truncated sources fully before completing their interpretation",
+    );
     expect(prompt).toContain("Completed decisions, settled arrangements");
     expect(prompt).toContain("There is no page quota");
     expect(prompt).toContain("knowledge_organization_complete");

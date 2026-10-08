@@ -8,6 +8,7 @@ import { isHistoricalKnowledgeBrief } from "./owner-maintenance.js";
 import { pendingMaintenanceClaimIds } from "./claim-maintenance.js";
 import { getKnowledgeDependencies, getKnowledgeNode } from "./storage.js";
 import { knowledgeHash } from "./storage-validation.js";
+import { assertKnowledgeDiscoveryComplete } from "./discovery-completion.js";
 import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import {
   listKnowledgeFrontier,
@@ -697,6 +698,14 @@ export class KnowledgeEngine {
         "claim_invalid",
         "Read the offered source before completing discovery",
       );
+    const sourceRevision = String(item.inputVersions[nodeId]);
+    assertKnowledgeDiscoveryComplete(
+      this.deps.db,
+      nodeId.slice(7),
+      sourceRevision,
+      phases,
+      this.deps.clock(),
+    );
     if (proposedTargets.length)
       await this.deps.writeGate["knowledge.discoveryTargets"](
         {
@@ -738,6 +747,7 @@ export class KnowledgeEngine {
           },
           append: children,
           regionNodeIds: region,
+          requiredDiscovery: { subjectId: nodeId.slice(7), inputRevision: sourceRevision },
           coverage: [...new Set(phases)].map((phase) => ({
             subjectId: nodeId.slice(7),
             inputRevision: String(item.inputVersions[nodeId]),

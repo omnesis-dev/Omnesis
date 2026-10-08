@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -78,6 +78,7 @@ let dynamicTools = [];
 const pendingServerRequests = new Map();
 
 log("startup", {
+  pid: process.pid,
   argv: process.argv.slice(2),
   cwd: process.cwd(),
   codexHome: process.env.CODEX_HOME ?? null,
@@ -169,7 +170,10 @@ rl.on("line", (line) => {
     send({ id: msg.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
     if (firstTurn && (scenario === "early-events" || scenario === "stale-native-output")) {
       runScenario();
-    } else if (firstTurn && !oneChunk) {
+    } else if (
+      (firstTurn || scenario.startsWith("recovery") || scenario.startsWith("structured")) &&
+      !oneChunk
+    ) {
       setTimeout(runScenario, 0);
     }
     if (oneChunk) process.nextTick(() => process.stdout.uncork());
@@ -187,6 +191,42 @@ rl.on("line", (line) => {
 });
 
 function runScenario() {
+  if (scenario.startsWith("recovery")) {
+    const marker = `${logPath}.exited`;
+    if (scenario === "recovery-active-exit" && !existsSync(marker)) {
+      writeFileSync(marker, "exited");
+      process.exit(7);
+    }
+    complete("completed");
+    return;
+  }
+  if (scenario.startsWith("structured")) {
+    const category = scenario.slice("structured-".length);
+    const info = {
+      quota: "usageLimitExceeded",
+      auth: "unauthorized",
+      context: "contextWindowExceeded",
+      internal: "internalServerError",
+      stream: { responseStreamDisconnected: { httpStatusCode: null } },
+      httpauth: { httpConnectionFailed: { httpStatusCode: 401 } },
+      httpquota: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
+      unknown: "private-unknown-category",
+      retry: "serverOverloaded",
+    }[category];
+    const error = {
+      message: "private-provider-detail",
+      codexErrorInfo: info,
+      additionalDetails: "private-extra",
+    };
+    if (category === "retry") {
+      notify("error", { threadId, turnId, error, willRetry: true });
+      complete("completed");
+    } else {
+      notify("turn/completed", { threadId, turn: { id: turnId, status: "failed", error } });
+    }
+    return;
+  }
+
   if (
     scenario === "completion-phases" ||
     scenario === "completion-unphased" ||

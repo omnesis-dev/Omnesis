@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
@@ -171,6 +171,126 @@ describe("parseCodexUsage", () => {
 });
 
 describe("CodexAppServerBackend", () => {
+  it("replaces an idle exited client before accepting concurrent queued turns", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-recovery-")));
+    const logPath = join(dir, "events.jsonl");
+    const backend = makeBackend({ codexHome: join(dir, "home"), logPath, scenario: "recovery" });
+    try {
+      expect(
+        (await collect(backend.runTurn(baseInput()))).find(
+          (event) => event.type === "agent.message.end",
+        )?.payload.stopReason,
+      ).toBe("end_turn");
+      const pid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+      process.kill(pid, "SIGTERM");
+      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+      const turns = await Promise.all([
+        collect(backend.runTurn(baseInput())),
+        collect(backend.runTurn(baseInput())),
+      ]);
+      for (const events of turns) {
+        expect(events.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+        expect(events.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+          "end_turn",
+        );
+      }
+      expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(2);
+      expect(readLog(logPath).filter((entry) => entry.event === "turn_start")).toHaveLength(3);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails an exited active turn once and gives its queued successor a fresh client", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-active-exit-")));
+    const logPath = join(dir, "events.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath,
+      scenario: "recovery-active-exit",
+    });
+    try {
+      const [failed, recovered] = await Promise.all([
+        collect(backend.runTurn(baseInput())),
+        collect(backend.runTurn(baseInput())),
+      ]);
+      expect(failed.filter((event) => event.type === "agent.message.end")).toHaveLength(1);
+      expect(
+        failed.find((event) => event.type === "agent.message.end")?.payload.failure?.code,
+      ).toBe("codex_process_exited");
+      expect(
+        recovered.find((event) => event.type === "agent.message.end")?.payload.stopReason,
+      ).toBe("end_turn");
+      expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(2);
+      expect(readLog(logPath).filter((entry) => entry.event === "turn_start")).toHaveLength(2);
+      await backend.dispose();
+      const afterDispose = await collect(backend.runTurn(baseInput()));
+      expect(
+        afterDispose.find((event) => event.type === "agent.message.end")?.payload.stopReason,
+      ).toBe("error");
+      expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(2);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["quota", "codex_usage_limited"],
+    ["auth", "codex_not_authenticated"],
+    ["context", "context_window_exceeded"],
+    ["internal", "codex_server_error"],
+    ["stream", "codex_stream_disconnected"],
+    ["httpauth", "codex_not_authenticated"],
+    ["httpquota", "codex_usage_limited"],
+    ["unknown", "codex_runtime_error"],
+  ])(
+    "preserves safe structured %s classification without restarting a live child",
+    async (category, code) => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-structured-")));
+      const logPath = join(dir, "events.jsonl");
+      const backend = makeBackend({
+        codexHome: join(dir, "home"),
+        logPath,
+        scenario: `structured-${category}`,
+      });
+      try {
+        for (let turn = 0; turn < 2; turn++) {
+          const events = await collect(backend.runTurn(baseInput()));
+          expect(
+            events.find((event) => event.type === "agent.message.end")?.payload.failure?.code,
+          ).toBe(code);
+          expect(JSON.stringify(events)).not.toContain("private-");
+        }
+        expect(readLog(logPath).filter((entry) => entry.event === "startup")).toHaveLength(1);
+        expect(readLog(logPath).filter((entry) => entry.event === "turn_start")).toHaveLength(2);
+      } finally {
+        await backend.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("lets app-server retry notifications reach their authoritative completion", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-retry-")));
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath: join(dir, "events.jsonl"),
+      scenario: "structured-retry",
+    });
+    try {
+      const events = await collect(backend.runTurn(baseInput()));
+      expect(events.some((event) => event.type === "agent.error")).toBe(false);
+      expect(events.find((event) => event.type === "agent.message.end")?.payload.stopReason).toBe(
+        "end_turn",
+      );
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("parses and gates the supported Codex CLI line", () => {
     expect(parseCodexCliVersion("codex-cli 0.142.4")).toBe("0.142.4");
     expect(parseCodexCliVersion("codex 0.142.0")).toBe("0.142.0");

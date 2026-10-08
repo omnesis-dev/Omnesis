@@ -548,9 +548,15 @@ export class CodexAppServerRuntime {
       env: buildCodexEnv(this.env, this.codexHome),
       requestTimeoutMs: this.requestTimeoutMs,
       log: this.log,
-      onNotification: (method, params) => this.handleNotification(method, params),
-      onServerRequest: (method, params) => this.handleServerRequest(method, params),
-      onExit: (code, sig) => this.handleClientExit(code, sig),
+      onNotification: (method, params) => {
+        if (this.client === client) this.handleNotification(method, params);
+      },
+      onServerRequest: (method, params) => {
+        if (this.client !== client)
+          return Promise.reject(new Error("Codex client is no longer active"));
+        return this.handleServerRequest(method, params);
+      },
+      onExit: (code, sig) => this.handleClientExit(client, code, sig),
     });
     client.start();
     this.client = client;
@@ -804,11 +810,8 @@ export class CodexAppServerRuntime {
       if (status === "failed") {
         const error = asRecord(turn?.error);
         this.failActiveTurn(
-          "codex_turn_failed",
-          friendlyCodexErrorMessage(
-            stringField(error, "message") ?? "Codex turn failed",
-            this.codexHome,
-          ),
+          codexErrorCode(error),
+          friendlyCodexErrorMessage(error, this.codexHome),
         );
       } else if (
         status !== "interrupted" &&
@@ -826,11 +829,8 @@ export class CodexAppServerRuntime {
       if (!this.acceptTurnScopedParams(state, params)) return;
       const p = asRecord(params);
       const error = asRecord(p?.error);
-      const message = stringField(error, "message") ?? "Codex runtime error";
-      this.failActiveTurn(
-        codexErrorCode(message),
-        friendlyCodexErrorMessage(message, this.codexHome),
-      );
+      if (p?.willRetry === true) return;
+      this.failActiveTurn(codexErrorCode(error), friendlyCodexErrorMessage(error, this.codexHome));
       return;
     }
 
@@ -865,7 +865,15 @@ export class CodexAppServerRuntime {
     }
   }
 
-  private handleClientExit(code: number | null, sig: NodeJS.Signals | null): void {
+  private handleClientExit(
+    client: CodexJsonRpcClient,
+    code: number | null,
+    sig: NodeJS.Signals | null,
+  ): void {
+    // An idle exit must also invalidate reuse. A late exit from a disposed
+    // predecessor must never clear its replacement or fail the replacement's turn.
+    if (this.client !== client) return;
+    this.client = null;
     if (!this.activeTurn || this.activeTurn.completed) return;
     this.failActiveTurn(
       "codex_process_exited",
@@ -1235,6 +1243,7 @@ interface PendingRequest {
 class CodexJsonRpcClient {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
+  private exited = false;
   private pending = new Map<RequestId, PendingRequest>();
   private disposed = false;
 
@@ -1270,10 +1279,12 @@ class CodexJsonRpcClient {
     });
 
     this.proc.once("error", (err) => {
+      this.exited = true;
       this.rejectAll(new Error(`Codex app-server failed to start: ${err.message}`));
       this.opts.onExit(null, null);
     });
     this.proc.once("exit", (code, sig) => {
+      this.exited = true;
       if (!this.disposed) {
         this.rejectAll(new Error(`Codex app-server exited (${sig ?? code ?? "unknown"})`));
         this.opts.onExit(code, sig);
@@ -1287,6 +1298,7 @@ class CodexJsonRpcClient {
     timeoutMs = this.opts.requestTimeoutMs,
   ): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error("Codex app-server disposed"));
+    if (this.exited) return Promise.reject(new Error("Codex app-server exited"));
     const id = this.nextId++;
     const message = { method, id, params };
     return new Promise((resolve, reject) => {
@@ -1496,8 +1508,78 @@ function isNativeCodexNotification(method: string): boolean {
   );
 }
 
+/** Preserve only known protocol categories; raw provider details may contain private data. */
+function structuredCodexFailure(err: unknown): { code: string; message: string } | null {
+  const info = asRecord(err)?.codexErrorInfo;
+  const categories: Record<string, { code: string; message: string }> = {
+    contextWindowExceeded: {
+      code: "context_window_exceeded",
+      message: CONTEXT_WINDOW_EXCEEDED_MESSAGE,
+    },
+    usageLimitExceeded: {
+      code: "codex_usage_limited",
+      message: "Codex reported a usage or rate limit.",
+    },
+    rateLimitExceeded: {
+      code: "codex_usage_limited",
+      message: "Codex reported a usage or rate limit.",
+    },
+    sessionBudgetExceeded: {
+      code: "codex_usage_limited",
+      message: "Codex reported a session budget limit.",
+    },
+    unauthorized: {
+      code: "codex_not_authenticated",
+      message: "Codex authentication failed. Check the Codex backend login.",
+    },
+    serverOverloaded: {
+      code: "codex_server_error",
+      message: "Codex reported an overloaded server.",
+    },
+    internalServerError: {
+      code: "codex_server_error",
+      message: "Codex reported an internal server error.",
+    },
+  };
+  if (typeof info === "string") return Object.hasOwn(categories, info) ? categories[info]! : null;
+  const variants = asRecord(info);
+  for (const [variant, code, message] of [
+    [
+      "httpConnectionFailed",
+      "codex_connection_failed",
+      "Codex could not connect to its upstream service.",
+    ],
+    [
+      "responseStreamConnectionFailed",
+      "codex_connection_failed",
+      "Codex could not open its response stream.",
+    ],
+    ["responseStreamDisconnected", "codex_stream_disconnected", "Codex lost its response stream."],
+    [
+      "responseTooManyFailedAttempts",
+      "codex_retry_exhausted",
+      "Codex exhausted its upstream retry attempts.",
+    ],
+  ] as const) {
+    if (!variants || !Object.hasOwn(variants, variant)) continue;
+    const status = asRecord(variants[variant])?.httpStatusCode;
+    if (status === 401 || status === 403) return categories.unauthorized!;
+    if (status === 429) return categories.rateLimitExceeded!;
+    return { code, message };
+  }
+  return null;
+}
+
+function codexErrorText(err: unknown): string {
+  return err instanceof Error
+    ? err.message
+    : (stringField(asRecord(err), "message") ?? String(err));
+}
+
 function codexErrorCode(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
+  const structured = structuredCodexFailure(err);
+  if (structured) return structured.code;
+  const msg = codexErrorText(err);
   if (isCodexContextWindowError(msg)) return "context_window_exceeded";
   if (/not found|ENOENT/i.test(msg)) return "codex_binary_missing";
   if (/unsupported codex cli version/i.test(msg)) return "codex_unsupported_version";
@@ -1508,7 +1590,9 @@ function codexErrorCode(err: unknown): string {
 }
 
 function friendlyCodexErrorMessage(err: unknown, codexHome: string): string {
-  const msg = err instanceof Error ? err.message : String(err);
+  const structured = structuredCodexFailure(err);
+  if (structured) return structured.message;
+  const msg = codexErrorText(err);
   if (isCodexContextWindowError(msg)) return CONTEXT_WINDOW_EXCEEDED_MESSAGE;
   if (/not found|ENOENT/i.test(msg)) {
     return "Codex CLI was not found. Install or configure a supported Codex CLI runtime.";

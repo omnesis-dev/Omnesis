@@ -6,6 +6,7 @@ import { cognitionSpendDay } from "../storage/spend.js";
 import { snapshotClaimMaintenance, settleClaimMaintenance } from "./claim-maintenance.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { recordKnowledgeCoverage, type KnowledgeCoverageInput } from "./discovery.js";
+import { assertKnowledgeDiscoveryComplete } from "./discovery-completion.js";
 import { KnowledgeStorageError } from "./types.js";
 import type Database from "better-sqlite3";
 import type { MaintenanceTier } from "./planner.js";
@@ -487,6 +488,8 @@ export interface SettleKnowledgeFrontierInput {
   outcome: SetKnowledgeFrontierOutcome;
   append: readonly KnowledgeFrontierInput[];
   coverage?: readonly KnowledgeCoverageInput[];
+  /** Trusted source-completion obligation; checked against coverage in this commit. */
+  requiredDiscovery?: { subjectId: string; inputRevision: string };
   regionNodeIds?: readonly string[];
 }
 
@@ -499,6 +502,14 @@ export function settleKnowledgeFrontier(
   db.transaction(() => {
     reserveKnowledgeRegion(db, input.outcome.batchId, input.regionNodeIds ?? []);
     for (const coverage of input.coverage ?? []) recordKnowledgeCoverage(db, coverage, now);
+    if (input.requiredDiscovery)
+      assertKnowledgeDiscoveryComplete(
+        db,
+        input.requiredDiscovery.subjectId,
+        input.requiredDiscovery.inputRevision,
+        [],
+        now,
+      );
     setKnowledgeFrontierOutcome(db, input.outcome, now);
     appendKnowledgeFrontier(db, input.outcome.batchId, input.append);
     // A verified review is useful even when accepted meaning is unchanged.

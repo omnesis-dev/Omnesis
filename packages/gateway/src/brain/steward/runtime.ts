@@ -31,6 +31,7 @@ import { buildBuiltinTools, PlanStore, type ToolHandle, type ToolPorts } from "@
 import { experimentalVisible, type EntailCapability, type Logger } from "@omnesis/core";
 import { parseCognitionSynthesisRunPayload } from "../run-payloads.js";
 import { buildKnowledgeTools } from "../knowledge/tools.js";
+import { withKnowledgeSourceReadReceipts } from "../knowledge/source-read-receipts.js";
 import { isParallelKnowledgeRun } from "../storage/run-queue.js";
 import { buildMaintenanceCanonicalTools } from "../knowledge/canonical-tool-fence.js";
 import { isGrantedMutation } from "../cognition/authority.js";
@@ -622,7 +623,9 @@ export async function createCognitionRuntime(
           },
         };
       }
-      return tools;
+      return payload?.focus === "knowledge-maintenance" && payload.batchId
+        ? withKnowledgeSourceReadReceipts(deps.db, tools)
+        : tools;
     },
     buildOwnTools: (runId) => [
       ...buildCognitionInteractiveOwnTools(toolsetDeps, runId),

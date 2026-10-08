@@ -113,6 +113,12 @@ A scheduled wiki review considers the page's scope, related outcomes and a
 bounded selection of current evidence beyond its existing citations. Ordinary
 change propagation can remain focused on affected claims. Accurate older text
 does not by itself establish that a page includes the relevant developments.
+Reviews reconcile earlier requests with available later replies and both open
+and completed outcomes. Durable decisions retain their attribution and material
+qualifications; several messages about one matter need not become separate
+sections. Time-sensitive passages identify the event and date anchoring a
+relative window, or explicitly retain an unknown anchor. The date on a document
+does not establish the date of an event it discusses.
 
 The root wiki is the compact overview and entry point to relevant detail pages.
 It links to existing wikis instead of reproducing their full contents.
@@ -132,6 +138,13 @@ provenance. Legacy attachments become explicitly unverified context, not
 verified claims. Existing notes remain available while the root acquires
 grounded understanding. Conversion and page organization have separate
 coverage, keyed by source revision and policy version.
+Source discovery can settle only after both interpretation and organization are
+considered for the current revision and policy; conversion remains optional.
+A truncated source preview is not a full read. The maintenance tool boundary
+requires a full-content read for that exact generation before accepting
+considered coverage. An organization cohort is an admission window, not a
+proposed topic: the agent investigates coherent subsets and related existing
+context before deciding whether a useful page is warranted.
 
 Historical organization is opt-in: use **Cognition → Bootstrap → Start reading
 history**. Assigning a model does not grant an unlimited historical reread.
