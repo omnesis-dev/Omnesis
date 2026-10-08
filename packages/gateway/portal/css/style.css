@@ -18701,3 +18701,11 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
 .knowledge-inspector > details { margin: 12px 0; }
 .knowledge-inspector .cognition-row { display: block; }
 .knowledge-inspector .cognition-row[aria-current="page"] { background: var(--bg-secondary); }
+
+/* Current-revision discovery coverage shares the historical chart geometry. */
+.kh-chart { gap: 4px; height: 132px; }
+.kh-col { min-width: 16px; border-radius: 4px; }
+.kh-col .tl-stack { border-radius: 4px; }
+.kh-col:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -2px; }
+.kh-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 16px; font-size: .8rem; color: var(--text-secondary); }
+.kh-footer > span { max-width: 70ch; }

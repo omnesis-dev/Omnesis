@@ -108,6 +108,7 @@ export function KnowledgeDetail({
   hideTitle = false,
   headerContent = null,
   overviewContent = null,
+  overviewRenderer = null,
   selectedClaim = null,
   onClaim = () => {},
 }) {
@@ -160,13 +161,11 @@ export function KnowledgeDetail({
       html`<p class="kn-root-note">
         The compact overview your agents use to stay oriented. Details live in the pages it connects
         to.
-      </p>`}<${KnowledgeContent}
-        key=${node.id}
-        node=${node}
-        references=${references}
-        onClaim=${onClaim}
-        selectedClaim=${selectedClaim}
-      />${overviewContent} `}
+      </p>`}${overviewRenderer ? overviewRenderer(html`<${KnowledgeContent}
+        key=${node.id} node=${node} references=${references} onClaim=${onClaim} selectedClaim=${selectedClaim}
+      />`) : html`<${KnowledgeContent}
+        key=${node.id} node=${node} references=${references} onClaim=${onClaim} selectedClaim=${selectedClaim}
+      />`}${overviewContent} `}
       ${activeTab === "connections" &&
       html`<${KnowledgeConnections}
         node=${node}

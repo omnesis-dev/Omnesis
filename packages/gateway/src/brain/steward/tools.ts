@@ -33,6 +33,8 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { TEMPORAL_KINDS } from "@omnesis/core";
 import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
+import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
+import { documentRecordContext } from "../record-check/document-context.js";
 import { getOpenLoop, listOpenLoopLedger, searchOpenLoopsLexical } from "../storage/open-loops.js";
 import { searchRetiredLoopsLexical } from "../storage/retired-loops.js";
 import { findActiveBriefsForLoops, getBrief, listBriefs } from "../storage/briefs.js";
@@ -655,7 +657,10 @@ async function recordCheckRefusal(
   if (outcome.save) return null;
   return ok("record.not_saved", {
     reason:
-      `judged not to belong in the owner's life memory (score ${outcome.score.toFixed(2)}, ` +
+      (input.record.type === "doc-fact"
+        ? "judged not to add sufficient value beyond the document source"
+        : "judged not to belong in the owner's life memory") +
+      ` (score ${outcome.score.toFixed(2)}, ` +
       `below ${outcome.threshold})`,
     guidance:
       "Not saved. Do not retry or reword this record; continue with anything else the " +
@@ -3345,12 +3350,44 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       if (gate.kind === "refused") return entailmentRefusal(gate.verdict);
       const id = `anno_${idGen()}`;
       if (a.supersedes === undefined) {
+        // Marginal-value checks need the subject, not merely a supporting
+        // quote. Read only safe original sources; unavailable context leaves
+        // this relevance gate open without sending source text to the model.
+        let documentContext;
+        if (
+          deps.checkRecord &&
+          (deps.checkRecord.needsDocumentContext?.() ?? true) &&
+          isKnowledgeEvidenceReadable(db, a.docId)
+        ) {
+          const subject = fetchEvidenceDoc(db, a.docId);
+          const atoms = [{ docId: a.evidenceDocId, quote: a.evidenceQuote }, ...additional];
+          const currentAtomsReadable = () =>
+            atoms.every((atom) => {
+              if (!isKnowledgeEvidenceReadable(db, atom.docId)) return false;
+              const current = fetchEvidenceDoc(db, atom.docId);
+              return current !== null && quoteInEvidence(current, atom.quote);
+            });
+          if (subject && !subject.generated && currentAtomsReadable()) {
+            const subjectRefusal = await vetAnnotationSourceEvidence(deps, [
+              { docId: a.docId, quote: subject.content },
+            ]);
+            if (
+              subjectRefusal === null &&
+              isKnowledgeEvidenceReadable(db, a.docId) &&
+              fetchEvidenceDoc(db, a.docId)?.contentHash === subject.contentHash &&
+              currentAtomsReadable()
+            ) {
+              documentContext = documentRecordContext(a.docId, subject.content, atoms);
+            }
+          }
+        }
         const dropped = await recordCheckRefusal(
           deps,
           {
             recordId: id,
             record: { type: "doc-fact", kind: a.claimType, text: a.claimText },
             documentId: a.docId,
+            ...(documentContext ? { documentContext } : {}),
           },
           ctx.abortSignal,
         );

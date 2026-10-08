@@ -335,16 +335,22 @@ describe("worth gate: persisted legacy datum recovery alongside current source d
     const decisions = bench.sql
       .prepare<
         [],
-        { score: number | null; rubric_version: string }
-      >("SELECT score,rubric_version FROM knowledge_decisions")
+        { purpose: string; score: number | null; rubric_version: string }
+      >("SELECT purpose,score,rubric_version FROM knowledge_decisions")
       .all();
     expect(decisions.length).toBeGreaterThan(0);
     expect(
       decisions.every((entry) => entry.score === null || (entry.score >= 0 && entry.score <= 1)),
     ).toBe(true);
-    expect(decisions.every((entry) => entry.rubric_version === "knowledge-decisions-v2")).toBe(
-      true,
-    );
+    expect(
+      decisions.every(
+        (entry) =>
+          entry.rubric_version ===
+          (entry.purpose === "discovery"
+            ? "knowledge-discovery-value-v3"
+            : "knowledge-decisions-v2"),
+      ),
+    ).toBe(true);
   });
 
   test("every judged run has exactly one ledger row", () => {

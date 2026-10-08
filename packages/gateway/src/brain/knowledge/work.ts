@@ -6,6 +6,7 @@ import { cognitionSpendDay } from "../storage/spend.js";
 import { snapshotClaimMaintenance, settleClaimMaintenance } from "./claim-maintenance.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { recordKnowledgeCoverage, type KnowledgeCoverageInput } from "./discovery.js";
+import { sourceHasDiscoveryObligation } from "./discovery-gate.js";
 import { assertKnowledgeDiscoveryComplete } from "./discovery-completion.js";
 import { KnowledgeStorageError } from "./types.js";
 import type Database from "better-sqlite3";
@@ -500,6 +501,28 @@ export function settleKnowledgeFrontier(
   now: number,
 ): void {
   db.transaction(() => {
+    for (const coverage of input.coverage ?? []) {
+      if (coverage.status !== "gated") continue;
+      if (
+        input.outcome.nodeId !== `source:${coverage.subjectId}` ||
+        input.requiredDiscovery?.subjectId !== coverage.subjectId ||
+        input.requiredDiscovery.inputRevision !== coverage.inputRevision
+      )
+        throw new KnowledgeStorageError(
+          "revision_conflict",
+          "Gated coverage requires its exact source completion obligation",
+        );
+      const review = db
+        .prepare(
+          `SELECT 1 FROM knowledge_work WHERE batch_id=? AND subject_id=? AND reason='review' LIMIT 1`,
+        )
+        .get(input.outcome.batchId, coverage.subjectId);
+      if (review || sourceHasDiscoveryObligation(db, coverage.subjectId))
+        throw new KnowledgeStorageError(
+          "revision_conflict",
+          "Source gained a reconciliation obligation before the gate settled; inspect the current frontier",
+        );
+    }
     reserveKnowledgeRegion(db, input.outcome.batchId, input.regionNodeIds ?? []);
     for (const coverage of input.coverage ?? []) recordKnowledgeCoverage(db, coverage, now);
     if (input.requiredDiscovery)

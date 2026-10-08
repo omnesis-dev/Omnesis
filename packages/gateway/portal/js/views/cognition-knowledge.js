@@ -4,8 +4,8 @@
 import { html } from "htm/preact";
 import { useEffect, useState, useRef } from "preact/hooks";
 import {
-  getCognitionLoops,
-  getCognitionLoop,
+  getKnowledgeLibrary,
+  getKnowledgeLibraryRetirement,
   getKnowledgeNodes,
   getKnowledgeNode,
   getKnowledgeHistory,
@@ -29,26 +29,12 @@ import { navigate, replaceUrl } from "../lib/router.js";
 import {
   LoopContext,
   LoopActivity,
-  loopLibraryNode,
   loopDeadlineLabel,
   sortLibraryLoops,
 } from "./knowledge-loop-library.js";
 
-async function canonicalLoopCards(data) {
-  if (data.canonical) return data;
-  const items = await Promise.all(
-    data.items.map(async (node) => {
-      if (node.kind !== "loop") return node;
-      try {
-        const { loop } = await getCognitionLoop(node.id, { includeChildren: false });
-        return { ...node, ...loopLibraryNode(loop), validity: node.validity };
-      } catch {
-        return { ...node, canonicalFields: {} };
-      }
-    }),
-  );
-  return { ...data, items };
-}
+import { BriefDetail, libraryStatusOptions, libraryStateLabel, RetirementMetadata, RetiredLoopDetail } from "./knowledge-canonical-library.js";
+
 const preview = (text) =>
   String(text ?? "")
     .replace(/<[^>]*>/g, "")
@@ -56,9 +42,12 @@ const preview = (text) =>
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/[#*`_]/g, "")
     .trim();
-export function knowledgeSelectionHref(id, kind = "") {
+export function knowledgeSelectionHref(id, kind = "", status = "all") {
   const path = id ? knowledgePath(id) : "/portal/debug/cognition/knowledge";
-  return path + (kind ? `?kind=${encodeURIComponent(kind)}` : "");
+  const query = new URLSearchParams();
+  if (kind) query.set("kind", kind);
+  if (["loop", "brief"].includes(kind) && status !== "all") query.set("status", status);
+  return path + (query.size ? `?${query}` : "");
 }
 
 /** Preserve normal new-tab actions while ordinary selections reuse the mounted library. */
@@ -76,10 +65,10 @@ export function navigateKnowledgeSelection(event) {
   navigate(event.currentTarget.getAttribute("href"));
 }
 
-function PageCard({ node, selectedId, kind }) {
+function PageCard({ node, selectedId, kind, status }) {
   return html`<a
     class=${`kn-card ${selectedId === node.id ? "is-selected" : ""}`}
-    href=${knowledgeSelectionHref(node.id, kind)}
+    href=${knowledgeSelectionHref(node.id, kind || (["loop", "brief"].includes(node.kind) ? node.kind : ""), status)}
     onClick=${navigateKnowledgeSelection}
     aria-current=${selectedId === node.id ? "page" : undefined}
     ><div class="kn-card-meta">
@@ -87,20 +76,21 @@ function PageCard({ node, selectedId, kind }) {
       html`<span class="kn-needs-review">Needs review</span>`}
     </div>
     <h3><${KnowledgeIcon} kind=${node.kind} />${node.title}</h3>
+    ${["loop", "brief"].includes(node.kind) && html`<div class="kn-loop-card-meta"><span class="kn-badge">${libraryStateLabel(node)}</span>${node.kind === "brief" && html`<span>${node.canonicalFields?.briefKind ?? ""}</span>`}<${RetirementMetadata} node=${node} /></div>`}
     ${node.kind === "loop" &&
     html`<div class="kn-loop-card-meta">
-      <span>${node.canonicalFields?.state ?? "Outcome"}</span>${node.canonicalFields?.deadline &&
+${node.canonicalFields?.deadline &&
       html`<span>${loopDeadlineLabel(node.canonicalFields.deadline)}</span>`}${typeof node
         .canonicalFields?.importance === "number" &&
       html`<span>Importance ${Math.round(node.canonicalFields.importance * 100)}%</span>`}
     </div>`}
     <p>${preview(node.plainText).slice(0, 140) || "A page waiting to take shape."}</p>
     <span class="kn-card-date"
-      >Updated ${dateLabel(node.updatedAt)} <span aria-hidden="true">↗</span></span
+      >${node.kind === "brief" ? `Created ${dateLabel(node.canonicalFields?.createdAt)}` : `Updated ${dateLabel(node.updatedAt)}`} <span aria-hidden="true">↗</span></span
     ></a
   >`;
 }
-export function KnowledgeTab({ selectedId }) {
+export function KnowledgeTab({ selectedId, developer = false }) {
   const generation = useRef(0);
   const routeSearch = window.location.search;
   const requestedKind = new URLSearchParams(routeSearch).get("kind");
@@ -112,7 +102,8 @@ export function KnowledgeTab({ selectedId }) {
   const [kind, setKind] = useState(routeKind),
     [query, setQuery] = useState(""),
     [validity, setValidity] = useState("");
-  const [loopState, setLoopState] = useState("all"),
+  const requestedStatus = new URLSearchParams(routeSearch).get("status") ?? (new URLSearchParams(routeSearch).get("view") === "retired" ? "retired" : "all");
+  const [loopState, setLoopState] = useState(requestedStatus),
     [loopSort, setLoopSort] = useState("updated");
   const [page, setPage] = useState({ items: [], more: false }),
     [root, setRoot] = useState(null);
@@ -131,6 +122,7 @@ export function KnowledgeTab({ selectedId }) {
   const [rootState, setRootState] = useState("loading");
   useEffect(() => {
     setKind(routeKind);
+    setLoopState(requestedStatus);
   }, [selectedId, routeSearch]);
   useEffect(() => {
     const params = new URLSearchParams(routeSearch);
@@ -176,23 +168,14 @@ export function KnowledgeTab({ selectedId }) {
     setLoading(true);
     setError("");
     setPage({ items: [], more: false });
-    (kind === "loop"
-      ? getCognitionLoops({ limit: 30, ...(loopState === "all" ? {} : { state: loopState }) }).then(
-          (data) => ({
-            items: data.items.map(loopLibraryNode),
-            cursor: data.pageInfo?.nextCursor ?? data.nextCursor ?? null,
-            canonical: true,
-          }),
-        )
-      : getKnowledgeNodes({ kind: kind || undefined, limit: 30 })
-    )
-      .then(canonicalLoopCards)
+    getKnowledgeLibrary({ kind: kind || undefined, limit: 30,
+      ...(["loop", "brief"].includes(kind) && loopState !== "all" ? { status: loopState } : {}) })
       .then((nodes) => {
         if (alive)
           setPage({
             items: nodes.items,
-            cursor: nodes.cursor,
-            more: nodes.canonical ? !!nodes.cursor : nodes.items.length === 30,
+            cursor: nodes.pageInfo?.nextCursor,
+            more: !!nodes.pageInfo?.nextCursor,
           });
       })
       .catch((failure) => {
@@ -231,10 +214,11 @@ export function KnowledgeTab({ selectedId }) {
     setDetailMissing(false);
     setReferences({});
     if (selectedId)
-      getKnowledgeNode(selectedId)
+      (selectedId.startsWith("retired-loop:") ? getKnowledgeLibraryRetirement(selectedId) : getKnowledgeNode(selectedId))
         .then(async (node) => {
           if (!alive) return;
-          setDetail({ node, history: [], historyLoading: true });
+          setDetail({ node, history: [], historyLoading: node.libraryType !== "retired-loop" });
+          if (node.libraryType === "retired-loop") return;
           const historyItems = await getKnowledgeHistory(selectedId)
             .then((history) => {
               if (alive)
@@ -303,28 +287,13 @@ export function KnowledgeTab({ selectedId }) {
     setError("");
     setLoading(true);
     try {
-      const result =
-        kind === "loop"
-          ? await getCognitionLoops({
-              limit: 30,
-              cursor: page.cursor,
-              ...(loopState === "all" ? {} : { state: loopState }),
-            }).then((data) => ({
-              items: data.items.map(loopLibraryNode),
-              cursor: data.pageInfo?.nextCursor ?? data.nextCursor ?? null,
-              canonical: true,
-            }))
-          : await getKnowledgeNodes({
-              kind: kind || undefined,
-              limit: 30,
-              afterId: page.items.at(-1)?.id,
-            });
-      const data = await canonicalLoopCards(result);
+      const data = await getKnowledgeLibrary({ kind: kind || undefined, limit: 30, cursor: page.cursor,
+        ...(["loop", "brief"].includes(kind) && loopState !== "all" ? { status: loopState } : {}) });
       if (current === generation.current)
         setPage((value) => ({
           items: [...value.items, ...data.items],
-          cursor: data.cursor,
-          more: data.canonical ? !!data.cursor : data.items.length === 30,
+          cursor: data.pageInfo?.nextCursor,
+          more: !!data.pageInfo?.nextCursor,
         }));
     } catch (failure) {
       if (current === generation.current) setError(failure.message);
@@ -334,7 +303,7 @@ export function KnowledgeTab({ selectedId }) {
   }
   const filtered = (kind === "loop" ? sortLibraryLoops(page.items, loopSort) : page.items).filter(
     (node) =>
-      (kind === "loop" || !validity || node.validity === validity) &&
+      (["loop", "brief"].includes(kind) || !validity || node.validity === validity) &&
       (!query ||
         `${node.title} ${node.plainText ?? ""}`
           .toLocaleLowerCase()
@@ -378,7 +347,9 @@ export function KnowledgeTab({ selectedId }) {
               onChange=${(event) => {
                 const next = event.target.value;
                 setKind(next);
+                setLoopState("all");
                 const query = new URLSearchParams(window.location.search);
+                query.delete("status"); query.delete("view");
                 if (next) query.set("kind", next);
                 else query.delete("kind");
                 replaceUrl(
@@ -389,7 +360,7 @@ export function KnowledgeTab({ selectedId }) {
               ${knowledgeKinds.map(
                 ([value, label]) => html`<option value=${value}>${label}</option>`,
               )}</select
-            >${kind !== "loop" &&
+            >${!["loop", "brief"].includes(kind) &&
             html`<select
               aria-label="Page status"
               value=${validity}
@@ -399,16 +370,17 @@ export function KnowledgeTab({ selectedId }) {
               <option value="current">Up to date with linked evidence</option>
               <option value="stale">Needs review</option>
             </select>`}
-            ${kind === "loop" &&
-            html`<select
-                aria-label="Loop status"
+            ${["loop", "brief"].includes(kind) && html`<select
+                aria-label=${kind === "brief" ? "Brief status" : "Loop status"}
                 value=${loopState}
-                onChange=${(event) => setLoopState(event.target.value)}
-              >
-                <option value="all">All outcomes</option>
-                <option value="active">Active</option>
-                <option value="resolved">Resolved</option></select
-              ><select
+                onChange=${(event) => {
+                  const status = event.target.value; setLoopState(status);
+                  const params = new URLSearchParams(window.location.search);
+                  if (status === "all") params.delete("status"); else params.set("status", status);
+                  params.delete("view"); replaceUrl(`${window.location.pathname}?${params}`);
+                }}
+              >${libraryStatusOptions(kind).map(([value, label]) => html`<option value=${value}>${label}</option>`)}</select>`}
+            ${kind === "loop" && html`<select
                 aria-label="Sort loops"
                 value=${loopSort}
                 onChange=${(event) => setLoopSort(event.target.value)}
@@ -436,6 +408,7 @@ export function KnowledgeTab({ selectedId }) {
                 node=${node}
                 selectedId=${selectedId}
                 kind=${kind}
+                status=${loopState}
               />`,
           )}${loading &&
           html`<div class="kn-loading" role="status">
@@ -463,6 +436,8 @@ export function KnowledgeTab({ selectedId }) {
                 setLoopState("all");
                 const parameters = new URLSearchParams(window.location.search);
                 parameters.delete("kind");
+                parameters.delete("status");
+                parameters.delete("view");
                 replaceUrl(
                   `${window.location.pathname}${parameters.size ? `?${parameters}` : ""}${window.location.hash}`,
                 );
@@ -481,17 +456,17 @@ export function KnowledgeTab({ selectedId }) {
         ${selectedId
           ? html`<a
                 class="kn-back"
-                href=${knowledgeSelectionHref(null, kind)}
+                href=${knowledgeSelectionHref(null, kind, loopState)}
                 onClick=${navigateKnowledgeSelection}
                 >← Back to library</a
-              >${(!detail && kind === "loop") &&
+              >${(!detail && kind === "loop" && !selectedId.startsWith("retired-loop:")) &&
               html`<${LoopContext}
                 id=${selectedId}
                 refresh=${refresh}
                 onReady=${setCanonicalLoopId}
                 synthesisText=${detail?.node?.plainText ?? null}
               />`}${detailError
-                ? kind === "loop" && detailMissing
+                ? kind === "brief" ? html`<${BriefDetail} id=${selectedId} />` : kind === "loop" && detailMissing
                   ? html`<div class="kn-empty">
                       <h2>No synthesis available</h2>
                       <p>
@@ -508,7 +483,7 @@ export function KnowledgeTab({ selectedId }) {
                       </button>
                     </div>`
                 : detail
-                  ? html`<${KnowledgeDetail}
+                  ? detail.node.libraryType === "retired-loop" ? html`<${RetiredLoopDetail} node=${detail.node} developer=${developer} />` : html`<${KnowledgeDetail}
                         ...${detail}
                         references=${references}
                         headerContent=${detail.node.kind === "loop" && html`<${LoopContext}
@@ -518,6 +493,7 @@ export function KnowledgeTab({ selectedId }) {
                           synthesisText=${detail.node.plainText ?? null}
                           embedded
                         />`}
+                        overviewRenderer=${detail.node.kind === "brief" ? (content) => html`<${BriefDetail} id=${selectedId} content=${content} embedded />` : null}
                         overviewContent=${detail.node.kind === "loop" && html`<${LoopActivity}
                           id=${selectedId} refresh=${refresh} synthesisText=${detail.node.plainText ?? null}
                         />`}

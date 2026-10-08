@@ -380,7 +380,7 @@
                   Reusable context for projects and topics, with claim-level provenance. A compact
                   root wiki provides current orientation and must fit its configured size limit.
                 </td>
-                <td>Debug → Knowledge → Library</td>
+                <td>Debug → Cognition → Library</td>
               </tr>
               <tr>
                 <td>Time index</td>
@@ -409,7 +409,7 @@
                   document and a confidence. The agent's <a href="/docs/agent#memory">memory</a>
                   reads the same notes.
                 </td>
-                <td>The document or person page; Debug → Knowledge → Library</td>
+                <td>The document or person page; Debug → Cognition → Library</td>
               </tr>
               <tr>
                 <td>Briefs</td>
@@ -610,26 +610,28 @@
           <code>brain.knowledge.rootMaxChars</code> (8000 characters by default).
         </p>
         <p>
-          Debug groups readable knowledge separately from Brain activity. Agent runs, maintenance
-          batches, discovery controls, and calibration live under <strong>Brain activity</strong>;
-          gateway diagnostics and database tools remain under <strong>System</strong> and
+          Debug groups the library, agent runs, maintenance batches, discovery controls, and
+          confidence and feedback diagnostics under <strong>Cognition</strong>. Agent runs includes
+          current execution health, full transcripts and tool calls, and token spending; gateway
+          diagnostics and database tools remain under <strong>System</strong> and
           <strong>Data tools</strong>.
         </p>
         <p>
-          Open <strong>Debug → Knowledge → Library</strong> to browse the Brain’s library. Selecting
+          Open <strong>Debug → Cognition → Library</strong> to browse the Brain’s library. Selecting
           an entry keeps the library’s filters and loaded results in place. In Overview, switch
-          between rendered Markdown and Raw to inspect the original claim tags. Hover, focus, or
-          select an underlined claim to preview its verification, assessment, supporting references,
-          and which pages use the claim or whole page as support. Claim links open the referenced
-          passage in Overview. Connections shows the page’s incoming and outgoing references,
-          including context and organization links. Source documents appear once as an icon and
-          linked title. History shows each saved version’s changes from its predecessor in a
-          collapsed diff; expand a version to inspect its additions and removals. Advanced contains
-          identifiers, metadata, and exact claim mappings. Maintenance status distinguishes pending
-          work from completed work; a current page is not necessarily verified. Maintenance
-          separates inputs waiting to be grouped, inputs assigned to batches, and recent batch
-          history. Historical deferred records are excluded from the waiting count. Select a batch
-          to inspect its checks and open the agent transcript.
+          between rendered Markdown and Raw to inspect the original claim tags. Hover over or focus
+          the quote indicator at the end of a claim to preview its verification, assessment,
+          supporting references, and which pages use the claim or whole page as support. The claim
+          is underlined while its preview is open; hovering over the text itself does not open a
+          preview. Claim links open the referenced passage in Overview. Connections shows the page’s
+          incoming and outgoing references, including context and organization links. Source
+          documents appear once as an icon and linked title. History shows each saved version’s
+          changes from its predecessor in a collapsed diff; expand a version to inspect its
+          additions and removals. Advanced contains identifiers, metadata, and exact claim mappings.
+          Maintenance status distinguishes pending work from completed work; a current page is not
+          necessarily verified. Maintenance separates inputs waiting to be grouped, inputs assigned
+          to batches, and recent batch history. Historical deferred records are excluded from the
+          waiting count. Select a batch to inspect its checks and open the agent transcript.
         </p>
         <p>
           Loops live in the same Library. Choose <strong>Loops</strong> in the type filter to browse
@@ -638,7 +640,11 @@
           <strong>Outcome details and activity</strong> shows people, evidence, related briefs,
           scheduled checks, and the activity ledger without expanding a section. Advanced fields are
           also shown without disclosure controls. Outcomes remain readable before synthesis is
-          available. Older loop links redirect to their Library entry.
+          available. Status filters and pills distinguish active, resolved, and retired outcomes in
+          the same list; outcome details retain recurrence information. Briefs also live in the
+          Library, with their status filters, feedback actions, and full metadata. Older loop and
+          brief links open the corresponding Library entry. Behavioral notes has the brain’s
+          operating lessons; these are distinct from the root wiki’s account of your life.
         </p>
         <div class="table-wrap">
           <table>
@@ -806,22 +812,33 @@
         </p>
         <h3 id="brain-record-check">Checking what it writes</h3>
         <p>
-          The same decision model also checks what Brain writes. When a live or catch-up run saves a
-          new dated entry or annotation drawn from a document, Jev reads that one sentence and
-          scores whether it belongs in your life memory; promotional dates, product news and
-          descriptions of what a document is score low. The agent still reads and searches as much
-          as it wants; only the record it settles on is scored.
+          The same decision model also checks new annotations and dated entries written during live,
+          historical, or maintenance runs. For document annotations it reads bounded source context
+          and supporting excerpts: the annotation should add meaningful cross-source context or
+          substantially compress a long substantive document. Restating a short source or shortening
+          boilerplate is insufficient. Person and time-index entries are judged for their personal
+          relevance; an automated notice can still contain a meaningful fact. This check happens
+          after the agent’s research and drafting, so it does not avoid the initial synthesis turn.
           <code>brain.annotations.recordCheck</code> sets what happens: <code>shadow</code> (the
           default) saves every record at once and scores it afterwards, <code>enforce</code> scores
           it first, drops a low-scored record and tells the agent not to retry it, and
           <code>off</code> asks nothing. If Jev does not answer within 15 seconds, the record is
-          saved. Corrections to an existing record, entries Brain writes for its own scheduling,
-          anything you hand to the assistant, and memory you ask for directly are never checked.
-          Each verdict is shown on the run it was made for, with the record and the document it came
-          from, and its tokens appear as <strong>Decision model · record check</strong>. Verdicts
-          are deleted after the activity-retention window.
+          saved. Missing or unsafe source context also leaves a document annotation unjudged rather
+          than guessing its added value. Corrections to an existing record, entries Brain writes for
+          its own scheduling, anything you hand to the assistant, and memory you ask for directly
+          are never checked. Each verdict is shown on the run it was made for, with the record and
+          the document it came from, and its tokens appear as
+          <strong>Decision model · record check</strong>. Verdicts are deleted after the
+          activity-retention window.
         </p>
 
+        <p>
+          Discovery includes a month-by-month coverage chart. Switch between
+          <strong>Read evidence</strong> and <strong>Connect context</strong> to inspect the two
+          discovery stages. Reviewed, gated, deferred, failed, and pending sources remain distinct.
+          Counts describe current imported document versions, not history outside your sync range; a
+          connection review does not necessarily produce a wiki page.
+        </p>
         <p>
           Once started, historical bootstrap fills its available batch fairly across sources.
           Admitted history is ready immediately; the routine maintenance delay applies to live

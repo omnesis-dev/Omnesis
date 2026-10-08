@@ -125,8 +125,8 @@ export interface CognitionRunDriverDeps {
   buildTools?: (run: ClaimedCognitionRun, context: CognitionRunExecutionContext) => ToolHandle[];
   /** Seam for the per-kind run prompts. Default: the generic envelope. */
   promptBuilder?: CognitionPromptBuilder;
-  /** Seam for the Cognition Steward system prompt — static across runs for the same settings. */
-  systemPrompt?: () => string;
+  /** Trusted workflow instructions precede any changing reference context. */
+  systemPrompt?: (run?: ClaimedCognitionRun) => string;
   /**
    * Post-turn completion barrier. A successful model turn is not allowed to
    * settle its queue row until this confirms every required side effect is
@@ -147,7 +147,7 @@ export class CognitionRunDriver {
     context: CognitionRunExecutionContext,
   ) => ToolHandle[];
   private readonly promptBuilder: CognitionPromptBuilder;
-  private readonly systemPrompt: () => string;
+  private readonly systemPrompt: (run?: ClaimedCognitionRun) => string;
   private readonly clock: Clock;
   /** Per-model-call prompt-cache accounting, at debug level. */
   private readonly cacheLog: Logger;
@@ -259,10 +259,10 @@ export class CognitionRunDriver {
       sessionId: `loop-agent-run-${run.id}-a${run.attempts}`,
       backend,
       tools: this.buildTools(run, { modelId: backend.model }),
-      systemPrompt: this.systemPrompt(),
+      systemPrompt: this.systemPrompt(run),
       // Stable per workflow, never per run: every run of one workflow shares
-      // the system prompt, the tool schemas and its static rules, and a
-      // provider that routes by this key keeps that prefix warm for them all.
+      // trusted instruction prefix and permission-scoped tool schemas.
+      // Changing reference context follows those instructions.
       promptCacheKey: cognitionPromptCacheKey(run),
     });
 

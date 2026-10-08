@@ -23,7 +23,10 @@ import { cognitionSpendDay, getCognitionSpendDayTotal } from "../storage/spend.j
 import { createOpenLoopMirror } from "../steward/mirror.js";
 import { buildCognitionOwnTools } from "../steward/tools.js";
 import { RecordCheck, type CheckRecord } from "./check.js";
+import { documentRecordContext } from "./document-context.js";
 import {
+  DOCUMENT_RECORD_VALUE_QUESTIONS,
+  RECORD_BELONGS_QUESTIONS,
   RECORD_BELONGS_THRESHOLD,
   RECORD_CHECK_RUBRIC_VERSION,
   RECORD_CHECK_SPEND_MECHANISM,
@@ -197,6 +200,124 @@ describe("record check", () => {
   });
 
   describe("modes", () => {
+    test("source-context work is needed only while a live record gate can judge it", () => {
+      const mode = check(new ScriptedDecision(), "off");
+      const bound = mode.check.forRun(run("bootstrap", { docId: "doc", datumAt: NOW }))!;
+      expect(bound.needsDocumentContext?.()).toBe(false);
+      mode.setMode("shadow");
+      expect(bound.needsDocumentContext?.()).toBe(true);
+      mode.setMode("enforce");
+      expect(bound.needsDocumentContext?.()).toBe(true);
+      const absent = check(null, "enforce").check.forRun(
+        run("bootstrap", { docId: "doc", datumAt: NOW }),
+      )!;
+      expect(absent.needsDocumentContext?.()).toBe(false);
+    });
+
+    test("a document annotation without safe subject context fails open without a guessed model score", async () => {
+      const doc = insertDoc("context-unavailable", BOOKING);
+      const decision = new ScriptedDecision({ [BOOKING]: 0.1 });
+      const bound = check(decision, "enforce").check.forRun(
+        run("bootstrap", { docId: doc, datumAt: NOW }),
+      )!;
+      await expect(
+        bound({
+          recordId: "missing-context",
+          documentId: doc,
+          record: { type: "doc-fact", kind: "topic", text: BOOKING },
+        }),
+      ).resolves.toEqual({ save: true });
+      expect(decision.calls).toHaveLength(0);
+      expect(listDecisionsForRun(db, "run_1")).toMatchObject([
+        {
+          verdict: "unavailable",
+          score: null,
+          enforced: true,
+          error: "Document annotation source context unavailable",
+        },
+      ]);
+    });
+
+    test("sends bounded source context to the value check but persists only its redacted summary", async () => {
+      const doc = insertDoc("context-redaction", BOOKING);
+      const decision = new ScriptedDecision({ [BOOKING]: 2.1 });
+      const bound = check(decision, "enforce").check.forRun(
+        run("bootstrap", { docId: doc, datumAt: NOW }),
+      )!;
+      const context = documentRecordContext(doc, "Subject-only private marker XQZ", [
+        { docId: "other", quote: "Other-source private marker VJT" },
+      ]);
+      await expect(
+        bound({
+          recordId: "with-context",
+          documentId: doc,
+          record: { type: "doc-fact", kind: "context", text: BOOKING },
+          documentContext: context,
+        }),
+      ).resolves.toEqual({ save: true });
+      expect(decision.calls[0]!.questions).toEqual(DOCUMENT_RECORD_VALUE_QUESTIONS);
+      expect(decision.calls[0]!.state).toMatchObject({ document_context: context });
+      const request = listDecisionsForRun(db, "run_1")[0]!.requestJson!;
+      expect(request).not.toContain("Subject-only private marker");
+      expect(request).not.toContain("Other-source private marker");
+      expect(JSON.parse(request).state.document_context).toMatchObject({
+        redacted: true,
+        replayable: false,
+        other_source_count: 1,
+      });
+    });
+
+    test.each(["timeline", "doc-fact", "person-fact"] as const)(
+      "enforce applies the current rubric and keeps its exact boundary for %s",
+      async (type) => {
+        const doc = insertDoc(`boundary-${type}`, BOOKING);
+        const decision = new ScriptedDecision({ [BOOKING]: RECORD_BELONGS_THRESHOLD });
+        const bound = check(decision, "enforce").check.forRun(
+          run("bootstrap", { docId: doc, datumAt: NOW }),
+        )!;
+        await expect(
+          bound({
+            recordId: `boundary-${type}`,
+            documentId: doc,
+            record: { type, kind: null, text: BOOKING },
+            ...(type === "doc-fact"
+              ? {
+                  documentContext: documentRecordContext(doc, BOOKING, [
+                    { docId: doc, quote: BOOKING },
+                  ]),
+                }
+              : {}),
+          }),
+        ).resolves.toEqual({ save: true });
+        expect(decision.calls).toEqual([
+          {
+            state: {
+              record_type: type,
+              record_kind: "",
+              record: BOOKING,
+              ...(type === "doc-fact"
+                ? {
+                    document_context: documentRecordContext(doc, BOOKING, [
+                      { docId: doc, quote: BOOKING },
+                    ]),
+                  }
+                : {}),
+            },
+            questions:
+              type === "doc-fact" ? DOCUMENT_RECORD_VALUE_QUESTIONS : RECORD_BELONGS_QUESTIONS,
+          },
+        ]);
+        expect(listDecisionsForRun(db, "run_1")).toMatchObject([
+          {
+            rubricVersion: "record-value-v3",
+            verdict: "pass",
+            score: RECORD_BELONGS_THRESHOLD,
+            enforced: true,
+          },
+        ]);
+      },
+    );
+
     test("shadow records a skip that took no effect and saves the record", async () => {
       const doc = insertDoc("m1", NOTICE);
       const decision = new ScriptedDecision({ [NOTICE]: 0.1 });
@@ -362,7 +483,12 @@ describe("record check", () => {
     };
     const QUOTE = "the new cycle room opens on 3 October 2026";
 
-    function tools(overrides: { checkRecord?: CheckRecord } = {}): ToolHandle[] {
+    function tools(
+      overrides: Pick<
+        Parameters<typeof buildCognitionOwnTools>[0],
+        "checkRecord" | "validateAnnotationEvidence"
+      > = {},
+    ): ToolHandle[] {
       const writeGate = directWriteGate(db);
       return buildCognitionOwnTools({
         db,
@@ -418,6 +544,123 @@ describe("record check", () => {
       ...over,
     });
 
+    test("document value checks receive trusted subject context and distinct other evidence", async () => {
+      const subject = insertDoc("context-subject", `Members update: ${QUOTE}.`);
+      const other = insertDoc("context-other", BOOKING);
+      const captured: Parameters<CheckRecord>[0][] = [];
+      const list = tools({
+        checkRecord: async (input) => {
+          captured.push(input);
+          return {
+            save: false,
+            decisionId: "declined",
+            score: 0.1,
+            threshold: RECORD_BELONGS_THRESHOLD,
+          };
+        },
+      });
+      const result = await tool(list, "annotate_durable").invoke(
+        {
+          docId: subject,
+          claimType: "context",
+          claimText: "A workshop context observation.",
+          evidenceDocId: subject,
+          evidenceQuote: QUOTE,
+          additionalEvidence: [{ docId: other, quote: BOOKING }],
+          confidence: 0.6,
+          claimBasis: "synthesized",
+        },
+        CTX,
+      );
+      expect(resultType(result)).toBe("record.not_saved");
+      expect(captured[0]!.documentContext).toMatchObject({
+        subject_text: `Members update: ${QUOTE}.`,
+        evidence: [
+          { source: 0, is_subject: true, quote: QUOTE },
+          { source: 1, is_subject: false, quote: BOOKING },
+        ],
+      });
+    });
+
+    test("changed other-source support after asynchronous subject validation cannot enter the value check", async () => {
+      const body = `Members update: ${QUOTE}.`;
+      const subject = insertDoc("context-race-subject", body);
+      const other = insertDoc("context-race-other", BOOKING);
+      const captured: Parameters<CheckRecord>[0][] = [];
+      const list = tools({
+        validateAnnotationEvidence: async (id, quote) => {
+          if (id === subject && quote === body) {
+            const replacement = "The source has changed.";
+            db.prepare("UPDATE documents SET content=?,content_hash=? WHERE id=?").run(
+              replacement,
+              createHash("sha256").update(replacement).digest("hex"),
+              other,
+            );
+          }
+          return null;
+        },
+        checkRecord: async (input) => {
+          captured.push(input);
+          return {
+            save: false,
+            decisionId: "declined",
+            score: 0.1,
+            threshold: RECORD_BELONGS_THRESHOLD,
+          };
+        },
+      });
+      await tool(list, "annotate_durable").invoke(
+        {
+          docId: subject,
+          claimType: "context",
+          claimText: "A workshop context observation.",
+          evidenceDocId: subject,
+          evidenceQuote: QUOTE,
+          additionalEvidence: [{ docId: other, quote: BOOKING }],
+          confidence: 0.6,
+          claimBasis: "synthesized",
+        },
+        CTX,
+      );
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.documentContext).toBeUndefined();
+    });
+
+    test("a privacy-hidden subject never enters a document check's extra source context", async () => {
+      const subject = insertDoc("context-hidden", "A source-only private marker.");
+      const other = insertDoc("context-visible", BOOKING);
+      db.prepare(
+        "UPDATE knowledge_source_revisions SET deleted=1,updated_at=? WHERE document_id=?",
+      ).run(NOW, subject);
+      const captured: Parameters<CheckRecord>[0][] = [];
+      const list = tools({
+        checkRecord: async (input) => {
+          captured.push(input);
+          return {
+            save: false,
+            decisionId: "declined",
+            score: 0.1,
+            threshold: RECORD_BELONGS_THRESHOLD,
+          };
+        },
+      });
+      await tool(list, "annotate_durable").invoke(
+        {
+          docId: subject,
+          claimType: "context",
+          claimText: "A workshop context observation.",
+          evidenceDocId: other,
+          evidenceQuote: BOOKING,
+          confidence: 0.6,
+          claimBasis: "quoted",
+        },
+        CTX,
+      );
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.documentContext).toBeUndefined();
+      expect(JSON.stringify(captured)).not.toContain("source-only private marker");
+    });
+
     test("enforce: a dropped doc, person and temporal record is not saved, and the agent is told not to retry", async () => {
       const doc = insertDoc("m1", `Members update: ${QUOTE}.`);
       db.prepare(
@@ -429,7 +672,9 @@ describe("record check", () => {
         "Maya Reeves announced the cycle room opening.": 0.2,
         "the members update announces the cycle room": 0.3,
       });
-      const checkRecord = check(decision, "enforce").check.forRun(bootstrapRun(doc))!;
+      const checkRecord = check(decision, "enforce").check.forRun(
+        run("bootstrap", { docId: doc, datumAt: NOW }),
+      )!;
       const list = tools({ checkRecord });
 
       const temporal = await tool(list, "temporal_annotation_add").invoke(

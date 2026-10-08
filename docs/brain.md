@@ -5,6 +5,14 @@ tracked outcomes (loops), document and person annotations, a time index, and
 briefs. A compact **root wiki** provides current orientation to agent runs.
 These records are synthesis, not independent evidence.
 
+A document annotation should add context established across sources or substantially
+compress a long substantive document. Restating a short source, its title, or its
+boilerplate does not earn another record. Person annotations and time-index entries
+serve separate retrieval needs. The record check evaluates document added value
+using bounded source context; its ledger retains redacted context metadata rather
+than additional copies of supporting source text. The check runs after drafting,
+so its token benefit is downstream; the preflight discovery gate avoids whole runs.
+
 The autonomous Brain is experimental and unstable. Enable
 `OMNESIS_EXPERIMENTAL=1` and assign a reachable `background-agent` model to
 start it. Either alone leaves autonomous work inactive. Evidence invalidation
@@ -56,7 +64,10 @@ unchanged, skipped or deferred outcomes. Only material changes expand repair
 into dependents. Concurrent edits invalidate an obsolete proposal rather than
 letting it overwrite a newer revision. Interrupted work remains durable.
 The first frontier is gated before starting the agent: a fully skipped batch
-does not consume a synthesis turn.
+does not consume a synthesis turn. Discovery checks judge bounded source content once;
+work with existing repair or discovery obligations bypasses this skip decision.
+Sources too large to judge in full also retain the interpretation path. Skipped
+history remains eligible for bounded reconsideration during organization.
 
 New evidence needs discovery even when no dependency points to it yet. The
 agent searches established context, adds evidence to existing synthesis, or

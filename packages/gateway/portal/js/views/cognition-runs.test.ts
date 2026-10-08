@@ -96,14 +96,14 @@ describe("briefMatchesFilter", () => {
 });
 
 describe("resolveSection", () => {
-  test("aliases the legacy scheduled tab to runs; junk falls back to overview", () => {
+  test("aliases the legacy scheduled tab to runs; junk falls back to runs", () => {
     expect(cognition.resolveSection("scheduled")).toBe("runs");
     expect(cognition.resolveSection("runs")).toBe("runs");
-    expect(cognition.resolveSection("memory")).toBe("memory");
+    expect(cognition.resolveSection("memory")).toBe("notes");
     // The Calendar is a Debug tab of its own, not a Cognition section.
-    expect(cognition.resolveSection("calendar")).toBe("overview");
-    expect(cognition.resolveSection(undefined)).toBe("overview");
-    expect(cognition.resolveSection("bogus")).toBe("overview");
+    expect(cognition.resolveSection("calendar")).toBe("runs");
+    expect(cognition.resolveSection(undefined)).toBe("runs");
+    expect(cognition.resolveSection("bogus")).toBe("runs");
   });
 });
 

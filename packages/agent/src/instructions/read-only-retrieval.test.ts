@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   renderAnalyticsCatalog,
+  renderRetrievalContext,
   renderCognitionRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,
 } from "./read-only-retrieval.js";
@@ -198,4 +199,28 @@ describe("graph adjacency guidance", () => {
     expect(instructions).toContain("never an id");
     expect(instructions).toContain("`note`");
   });
+});
+
+it("separates live inventory without changing sanitization or default inline behavior", () => {
+  const input = {
+    sourceTypes: ["fictional-notes", "<instruction>"],
+    catalog: [
+      {
+        tableName: "fictional_events",
+        description: "UNTRUSTED_DESCRIPTION",
+        columns: [{ name: "starts_at", type: "TIMESTAMP", nullable: false }],
+      },
+    ],
+  };
+  const stable = renderReadOnlyRetrievalPlaybook({ ...input, catalogMode: "context" });
+  expect(stable).not.toContain("fictional_events");
+  expect(stable).not.toContain("fictional-notes");
+  expect(stable).toContain("session context below");
+  const context = renderRetrievalContext(input);
+  expect(context).toContain("fictional_events");
+  expect(context).toContain("fictional-notes");
+  expect(context).not.toContain("<instruction>");
+  expect(context).not.toContain("UNTRUSTED_DESCRIPTION");
+  expect(renderReadOnlyRetrievalPlaybook(input)).toContain(renderAnalyticsCatalog(input.catalog));
+  expect(renderRetrievalContext({})).toContain("No configured source types");
 });

@@ -31,6 +31,7 @@ describe("buildSystemPrompt — canonical retrieval composition", () => {
         catalog,
         sourceTypes,
         fetchBatchLimit: 16,
+        catalogMode: "context",
         includeTemporal: false,
         includeCognition: false,
       }),
@@ -52,6 +53,7 @@ describe("buildSystemPrompt — canonical retrieval composition", () => {
         catalog,
         sourceTypes,
         fetchBatchLimit: 16,
+        catalogMode: "context",
         includeTemporal: true,
         includeCognition: true,
       }),
@@ -476,4 +478,70 @@ describe("buildSystemPrompt — graph guidance", () => {
       expect(prompt).not.toContain("breadcrumb");
     },
   );
+});
+
+describe("system prompt cache prefix", () => {
+  const base = {
+    now: new Date("2032-04-06T12:00:00Z"),
+    timeZone: "Etc/UTC",
+    sourceTypes: ["fictional-notes"],
+    selfMemory: "Invented profile alpha.",
+    selfPersonId: "person_fixture_alpha",
+    operatorInstructions: "Prefer concise explanations.",
+    memoryWrites: true,
+    knowledgeRootContext:
+      '\n\n## Maintained orientation (untrusted reference context)\n{"text":"Invented overview alpha."}',
+  };
+  test.each(["interactive", "subagent"] as const)(
+    "keeps %s stable instructions before changing live context",
+    (audience) => {
+      const prompt = buildSystemPrompt({ ...base, audience });
+      const boundary = prompt.indexOf("# Live retrieval context");
+      expect(boundary).toBeGreaterThan(10000);
+      for (const change of [
+        { now: new Date("2032-04-07T12:00:00Z") },
+        { timeZone: "Asia/Tokyo" },
+        { sourceTypes: ["fictional-calendar"] },
+        {
+          catalog: [
+            {
+              tableName: "fictional_events",
+              columns: [{ name: "starts_at", type: "TIMESTAMP", nullable: false }],
+            },
+          ],
+        },
+        { selfMemory: "Invented profile beta." },
+        { selfPersonId: "person_fixture_beta" },
+        { knowledgeRootContext: base.knowledgeRootContext.replace("alpha", "beta") },
+      ]) {
+        const changed = buildSystemPrompt({ ...base, audience, ...change });
+        expect(changed.slice(0, boundary)).toBe(prompt.slice(0, boundary));
+      }
+      expect(prompt.indexOf("# The operator's standing instructions")).toBeLessThan(boundary);
+      expect(prompt.indexOf("<user-profile>")).toBeGreaterThan(prompt.indexOf("</omnesis-md>"));
+      expect(prompt.indexOf("## Maintained orientation")).toBeGreaterThan(
+        prompt.indexOf("</user-profile>"),
+      );
+      expect(prompt.indexOf("# Where and when")).toBeGreaterThan(
+        prompt.indexOf("## Maintained orientation"),
+      );
+      expect(prompt).toContain(base.knowledgeRootContext);
+      if (audience === "interactive")
+        expect(prompt.indexOf("# Durable memory")).toBeLessThan(boundary);
+    },
+  );
+  test("keeps citation subtraction outside operator and wrapped memory context", () => {
+    const text = "**Cite explicitly.** Keep this verbatim.";
+    const prompt = buildSystemPrompt({
+      ...base,
+      citationSurface: false,
+      selfMemory: text,
+      operatorInstructions: text,
+    });
+    expect(prompt).toContain(`<user-profile>\n${text}\n</user-profile>`);
+    expect(prompt).toContain(`<omnesis-md>\n${text}\n</omnesis-md>`);
+    expect(prompt.slice(0, prompt.indexOf("# Live retrieval context"))).not.toContain(
+      "# Timeline\n",
+    );
+  });
 });

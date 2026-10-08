@@ -502,6 +502,9 @@ export class CachedScanProbe<T extends { computedAt: number }> {
  * the whole gate so the module stays testable with a two-line fake.
  */
 export interface BootstrapTimelineReader {
+  knowledgeDiscoveryByMonth?: () => Promise<
+    import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]
+  >;
   bootstrapCorpusByMonth(
     recencyFloor: string,
     todayIso: string,

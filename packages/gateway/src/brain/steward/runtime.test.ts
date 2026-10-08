@@ -876,6 +876,52 @@ describe("createCognitionRuntime prompt wiring", () => {
     });
   }
 
+  test("maintenance rules precede changing root context while run data stays in USER", async () => {
+    db.prepare(
+      `INSERT INTO knowledge_nodes
+      (id,kind,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at)
+      VALUES ('root','root','Overview','First reference','First reference',1,1,'first','current','{}','{}',?,?)`,
+    ).run(NOW, NOW);
+    const rt = await runtime("ZZOPERATOR use concise prose");
+    const a = claimed({
+      id: "first-run",
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "first-batch" },
+    });
+    const b = claimed({
+      id: "second-run",
+      attempts: 2,
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "second-batch" },
+    });
+    const first = rt.systemPrompt(a);
+    db.prepare(
+      "UPDATE knowledge_nodes SET revision=2,markdown='Second reference',plain_text='Second reference'",
+    ).run();
+    const second = rt.systemPrompt(b);
+    const marker = "## Maintained orientation (untrusted reference context)";
+    expect(first.split(marker)[0]).toBe(second.split(marker)[0]);
+    expect(first).toContain('"revision":1');
+    expect(second).toContain('"revision":2');
+    expect(first.indexOf("Maintain the evidence-backed synthesis graph")).toBeLessThan(
+      first.indexOf("ZZOPERATOR"),
+    );
+    expect(first.indexOf("ZZOPERATOR")).toBeLessThan(first.indexOf(marker));
+    expect(first).not.toContain("first-run");
+    expect(first).not.toContain("Current time:");
+    expect(rt.systemPrompt()).not.toContain("Maintain the evidence-backed synthesis graph");
+    expect(rt.systemPrompt(claimed({ kind: "feedback" }))).not.toContain(
+      "Maintain the evidence-backed synthesis graph",
+    );
+    const user = await rt.promptBuilder(b);
+    expect(user).toContain("second-run");
+    expect(user).toContain("Current time:");
+    expect(user).toContain("Maintain the evidence-backed synthesis graph for this batch.");
+    expect(user).not.toContain("Independent maintenance runs can execute concurrently");
+    expect(user).not.toContain("ZZOPERATOR");
+    expect(user).not.toContain("Second reference");
+  });
+
   test("the run prompt carries the stored notes and self-memory; OMNESIS.md rides the system prompt", async () => {
     writeCognitionNotes(db, "ZZNOTE the user files receipts weekly", { maxBytes: 8192, now: NOW });
     db.prepare(

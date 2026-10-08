@@ -2,6 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { NotFoundError } from "../../http/errors.js";
+import {
+  readKnowledgeLibrary,
+  readKnowledgeLibraryRetirement,
+  type KnowledgeLibraryOptions,
+} from "./library.js";
 import { readKnowledgeConnections } from "./connections.js";
 import {
   getKnowledgeNode,
@@ -22,6 +27,12 @@ export class KnowledgeQueryService {
       ...node,
       markdown: node.plainText,
     }));
+  }
+  library(options: KnowledgeLibraryOptions = {}) {
+    return readKnowledgeLibrary(this.db, options);
+  }
+  libraryRetirement(id: string) {
+    return readKnowledgeLibraryRetirement(this.db, id);
   }
   fetch(id: string, editing = false) {
     const node = getKnowledgeNode(this.db, id);

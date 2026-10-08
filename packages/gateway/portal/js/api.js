@@ -1644,3 +1644,6 @@ export const approveBrowserNotesAuthorization = (id) => request("POST", `/admin/
 
 export const getBrowserFindAuthorization = (id) => request("GET", `/admin/browser-find/authorizations/${encodeURIComponent(id)}`);
 export const approveBrowserFindAuthorization = (id) => request("POST", `/admin/browser-find/authorizations/${encodeURIComponent(id)}/approve`);
+
+export const getKnowledgeLibrary = (query = {}) => request("GET", "/admin/brain/knowledge/library", { query });
+export const getKnowledgeLibraryRetirement = (id) => request("GET", `/admin/brain/knowledge/library/${encodeURIComponent(id)}`);

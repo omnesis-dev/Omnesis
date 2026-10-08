@@ -72,7 +72,11 @@ import {
   type NearbyTimelineContext,
 } from "./nearby-timeline-context.js";
 import { loadDigestHorizon, localTimeZone } from "./digest-horizon.js";
-import { buildCognitionRunPrompt, buildCognitionSystemPrompt } from "./prompts.js";
+import {
+  buildCognitionRunPrompt,
+  buildCognitionSystemPrompt,
+  buildCognitionWorkflowInstructions,
+} from "./prompts.js";
 import { RunConsumptionTracker } from "./consumption.js";
 import { createOpenLoopMirror, type OpenLoopMirror } from "./mirror.js";
 import type { KnowledgeEngine } from "../knowledge/engine.js";
@@ -95,7 +99,7 @@ type Db = Database.Database;
 export interface CognitionRuntime {
   buildTools: (run: ClaimedCognitionRun, context?: CognitionRunExecutionContext) => ToolHandle[];
   promptBuilder: (run: ClaimedCognitionRun) => string | Promise<string>;
-  systemPrompt: () => string;
+  systemPrompt: (run?: ClaimedCognitionRun) => string;
   /**
    * Build ONLY the Cognition Steward's own mutating tools (open loops, briefs, notes,
    * schedule, annotate, temporal annotation), stamped with `runId` as their
@@ -697,6 +701,7 @@ export async function createCognitionRuntime(
       const self = resolveSelfMemory(deps.db, cfg.annotations.enabled);
       consumptionFor(run).note("person", [...self.annotationIds]);
       const basePrompt = buildCognitionRunPrompt(run, {
+        maintenanceRulesInSystem: true,
         db: deps.db,
         graphContext: deps.searchPipeline.agentSearchV2Enabled,
         clock,
@@ -726,14 +731,15 @@ export async function createCognitionRuntime(
       }
       return basePrompt;
     },
-    systemPrompt: () => {
-      // Static for the same settings and the same OMNESIS.md, so the
-      // provider's prefix cache reuses it across runs. The self id lets the
-      // agent write self-memory; the memory itself rides the run message.
+    systemPrompt: (run) => {
+      // Trusted rules stay ahead of the changing root reference context.
+      // Operator instructions retain their own authority section; derived
+      // root prose stays explicitly untrusted even in the system tail.
       const settings = deps.getSettings();
       const annotationsOn = settings.annotations.enabled;
       return (
         buildCognitionSystemPrompt({
+          workflowInstructions: buildCognitionWorkflowInstructions(run),
           notesMaxBytes: settings.notesMaxBytes,
           annotationsEnabled: annotationsOn,
           selfPersonId: annotationsOn ? fetchSelfPersonId(deps.db) : null,

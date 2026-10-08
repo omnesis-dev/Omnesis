@@ -54,7 +54,7 @@ let configDir: string;
 let app: ReturnType<typeof createServer>;
 let ioBacklogCalls = 0;
 /** Mutable so a test can express a ceiling the lane has actually passed. */
-let bootstrapSettings = {
+let bootstrapSettings: import("./bootstrap-status.js").BootstrapSettingsView = {
   enabled: true,
   direction: "recent-first" as const,
   backlogTarget: 200,
@@ -240,6 +240,13 @@ beforeEach(() => {
         return { remaining: 42, dateScanPending: 0, corpusTotal: 100 };
       },
       bootstrapCorpusByMonth: async () => [],
+      knowledgeDiscoveryByMonth: async () => [
+        {
+          month: "2025-06",
+          interpretation: { considered: 2, gated: 1, deferred: 0, failed: 0, pending: 3 },
+          organization: { considered: 1, gated: 0, deferred: 1, failed: 0, pending: 4 },
+        },
+      ],
     },
     getBootstrapSettings: () => bootstrapSettings,
     getBudgetSettings: () => budgetSettings,
@@ -2215,4 +2222,39 @@ describe("GET /admin/brain/budget", () => {
   test("is admin-only", async () => {
     expect([401, 403]).toContain((await get("/admin/brain/budget", READ_TOKEN)).status);
   });
+});
+
+test("knowledge timeline serves cached IO phase counts with dated snapshot without legacy milestones", async () => {
+  bootstrapSettings = { ...bootstrapSettings, knowledge: true };
+  const pending = await get("/admin/brain/bootstrap/timeline?cached=1");
+  expect(await pending.json()).toEqual({ mode: "knowledge", pending: true });
+  const response = await get("/admin/brain/bootstrap/timeline");
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result).toMatchObject({
+    mode: "knowledge",
+    pending: false,
+    months: [
+      {
+        month: "2025-06",
+        interpretation: { considered: 2, pending: 3 },
+        organization: { considered: 1, pending: 4 },
+      },
+    ],
+  });
+  expect(typeof result.computedAt).toBe("string");
+  expect(Number.isFinite(Date.parse(result.computedAt))).toBe(true);
+  expect(result).not.toHaveProperty("milestones");
+  expect(await (await get("/admin/brain/bootstrap/timeline?cached=1")).json()).toEqual(result);
+});
+
+test("Library exposes canonical owner pages and validates status filters", async () => {
+  const page = await get("/admin/brain/knowledge/library?kind=loop&limit=1");
+  expect(page.status).toBe(200);
+  expect(await page.json()).toMatchObject({
+    items: [],
+    pageInfo: { hasMore: false, limit: 1, nextCursor: null },
+  });
+  expect((await get("/admin/brain/knowledge/library?kind=wiki&status=retired")).status).toBe(400);
+  expect((await get("/admin/brain/knowledge/library/retired-loop%3Amissing")).status).toBe(404);
 });

@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { listTemporalAnnotationsAwaitingRefile } from "../../enrichment/temporal-annotations/storage.js";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
 import { knowledgeOrganizationVersion } from "./organization-context.js";
 import { isHistoricalKnowledgeBrief } from "./owner-maintenance.js";
@@ -17,6 +16,7 @@ import {
   type KnowledgeFrontierItem,
 } from "./work.js";
 import { planMaintenanceGroups } from "./planner.js";
+import { sourceHasDiscoveryObligation } from "./discovery-gate.js";
 import { judgeKnowledge, type KnowledgeDecisionDeps } from "./decision.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
@@ -467,17 +467,35 @@ export class KnowledgeEngine {
               ) ||
               JSON.stringify(rootOrientation).length > Math.min(cfg.maxFrontierChars, 24000));
           const score =
-            isDiscoveryTarget || isInitialRoot || rootContextUnavailable
+            isReview ||
+            isDiscoveryTarget ||
+            isInitialRoot ||
+            rootContextUnavailable ||
+            node?.validity === "stale" ||
+            (source &&
+              (!source.content.trim() ||
+                source.content.length > 24000 ||
+                sourceHasDiscoveryObligation(this.deps.db, source.id)))
               ? null
-              : await judgeKnowledge(this.deps.decisions, source ? "discovery" : "impact", {
-                  inputVersions: item.inputVersions,
-                  source: source
-                    ? { ...source, content: source.content.slice(0, 24000) }
-                    : undefined,
-                  node,
-                  changedInputs: this.batchSources(batchId),
-                  ...(rootOrientation ? { orientation: rootOrientation } : {}),
-                });
+              : await judgeKnowledge(
+                  this.deps.decisions,
+                  source ? "discovery" : "impact",
+                  source
+                    ? {
+                        source: {
+                          title: source.title,
+                          content: source.content,
+                          sourceCreatedAt: source.sourceCreatedAt,
+                          sourceUpdatedAt: source.sourceUpdatedAt,
+                        },
+                      }
+                    : {
+                        inputVersions: item.inputVersions,
+                        node,
+                        changedInputs: this.batchSources(batchId),
+                        ...(rootOrientation ? { orientation: rootOrientation } : {}),
+                      },
+                );
           if (
             !isReview &&
             !isDiscoveryTarget &&
@@ -485,8 +503,7 @@ export class KnowledgeEngine {
             score !== null &&
             score < 0.25 &&
             (source
-              ? this.graph.arcs(sourceKey(source.id)).length === 0 &&
-                listTemporalAnnotationsAwaitingRefile(this.deps.db, source.id, 1).length === 0
+              ? !sourceHasDiscoveryObligation(this.deps.db, source.id)
               : node?.validity !== "stale")
           ) {
             if (source)
@@ -757,6 +774,12 @@ export class KnowledgeEngine {
             phase,
             policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
             status: gated ? "gated" : "considered",
+            ...(gated
+              ? {
+                  reconsiderAt:
+                    this.deps.clock() + this.deps.getSettings().knowledge.maxReviewIntervalMs,
+                }
+              : {}),
           })),
         },
         this.deps.clock(),

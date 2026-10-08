@@ -82,6 +82,7 @@ function writes(title: string, records: readonly string[], docFact = false): Sou
     docTitle: title,
     plan: (ctx) => ({
       calls: [
+        call("temporal_query", { from: "2027-10-03", to: "2027-10-04" }),
         ...records.map((sentence, i) =>
           call("temporal_annotation_add", {
             // Distinct days so the reconcile refusal never fires between them.
@@ -94,6 +95,7 @@ function writes(title: string, records: readonly string[], docFact = false): Sou
         ),
         ...(docFact
           ? [
+              call("annotation_search", { docId: ctx.subject }),
               call("annotate_durable", {
                 docId: ctx.subject,
                 claimType: "topic",
@@ -190,12 +192,24 @@ describe("record check: a scripted decision model on source interpretation", () 
     expect(decisions[2]!.request?.state).toMatchObject({
       record_type: "doc-fact",
       record: NOISE_FACT,
+      document_context: { redacted: true, replayable: false, other_source_count: 0 },
     });
+    const docCheck = bench.decision.calls.find(
+      (c) => (c.request.state as { record?: string }).record === NOISE_FACT,
+    )!;
+    expect(docCheck.request.state).toMatchObject({
+      document_context: {
+        subject_text: expect.stringContaining(QUOTE),
+        subject_truncated: false,
+        evidence: [{ source: 0, is_subject: true, quote: QUOTE }],
+      },
+    });
+    expect(JSON.stringify(decisions[2]!.request)).not.toContain(QUOTE);
     for (const d of decisions) {
       expect(d).toMatchObject({
         lane: "synthesis",
         documentId: docId,
-        rubricVersion: "record-belongs-v1",
+        rubricVersion: "record-value-v3",
       });
     }
     // Discovery decisions belong to the knowledge ledger, independently of record checks.

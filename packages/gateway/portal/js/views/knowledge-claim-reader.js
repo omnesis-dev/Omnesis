@@ -6,12 +6,16 @@ import { internalKnowledgeHref, renderKnowledgeMarkdown } from "./knowledge-clai
 import { claimUsageGroups, useClaimUsage } from "./knowledge-claim-usage.js";
 import { KnowledgeIcon, knowledgeReferenceMetadata } from "../lib/knowledge-link-icons.js";
 
+import { bindClaimIndicatorTails } from "./knowledge-claim-layout.js";
+
+const EMPTY_REFERENCES = {};
+
 const label = (value) => String(value ?? "").replaceAll("_", " ");
 const verificationLabel = (value) => ({
   verified: "Verified", unverified: "Not verified", rejected: "Not supported",
 })[value] ?? label(value);
 
-export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}, selectedClaim = null }) {
+export function KnowledgeClaimReader({ node, references = EMPTY_REFERENCES, onClaim = () => {}, selectedClaim = null }) {
   const rendered = useMemo(
     () => renderKnowledgeMarkdown(node.markdown, node.claims, references),
     [node.markdown, node.claims, references],
@@ -19,6 +23,8 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
   const [preview, setPreview] = useState(null);
   const usage = useClaimUsage(node, Boolean(preview));
   const popup = useRef(null);
+  const prose = useRef(null);
+  useLayoutEffect(() => { if (prose.current) bindClaimIndicatorTails(prose.current); }, [rendered]);
   const timer = useRef(null);
   const currentPreview = useRef(null);
   const restoringFocus = useRef(false);
@@ -67,18 +73,20 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
       ? below : Math.max(12, anchor.top - height - 8);
     element.style.left = `${left}px`;
     element.style.top = `${top}px`;
+    const span = document.getElementById(`${preview.target.id}-span`);
+    span?.classList.add("kn-claim-span--active");
     preview.target.setAttribute("aria-controls", tooltipId);
     preview.target.setAttribute("aria-haspopup", "dialog");
     preview.target.setAttribute("aria-expanded", "true");
     return () => {
+      span?.classList.remove("kn-claim-span--active");
       preview.target.removeAttribute("aria-controls");
-      preview.target.removeAttribute("aria-haspopup");
       preview.target.removeAttribute("aria-expanded");
     };
   }, [preview, tooltipId, usage]);
   function show(event) {
     if (restoringFocus.current) return;
-    const target = event.target.closest(".kn-claim-span");
+    const target = event.target.closest(".kn-claim-indicator");
     const id = target && rendered.targets.get(target.id);
     const claim = node.claims?.find((entry) => entry.id === id);
     if (!claim) return;
@@ -98,7 +106,7 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
     if (event.type === "keydown" && !["Enter", " "].includes(event.key)) return;
     // Actual hyperlinks remain navigable; claim inspection never intercepts them.
     if (event.target.closest("a")) return;
-    const target = event.target.closest(".kn-claim-span");
+    const target = event.target.closest(".kn-claim-indicator");
     const id = target && rendered.targets.get(target.id);
     if (!id) return;
     event.preventDefault();
@@ -122,6 +130,7 @@ export function KnowledgeClaimReader({ node, references = {}, onClaim = () => {}
   return html`<div class="kn-claim-reader">
     <div
       class="kn-prose"
+      ref=${prose}
       onClick=${inspect}
       onKeyDown=${inspect}
       onMouseOver=${show}

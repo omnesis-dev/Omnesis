@@ -35,6 +35,7 @@ import {
 import {
   addressedDataSteeringMode,
   buildCognitionRunPrompt,
+  buildCognitionWorkflowInstructions,
   fenceSafe,
   buildCognitionSystemPrompt,
   cognitionRunCarriesBriefRules,
@@ -1226,6 +1227,77 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(prompt).toContain("fewer than two of the flagged temporal annotations are still live");
     expect(prompt).toContain("Do nothing");
+  });
+
+  test("document annotations require synthesis or substantial compression without widening their subject", () => {
+    const system = buildCognitionSystemPrompt({ notesMaxBytes: 8000, annotationsEnabled: true });
+    expect(system).toContain(
+      "adds multi-source contextual synthesis or substantially compresses a long source",
+    );
+    expect(system).toContain("even when the source is personally meaningful");
+    expect(system).toContain(
+      "one document, while its contextual synthesis may draw on several evidence documents",
+    );
+    expect(system).not.toContain("one document and nothing wider");
+    const maintenance = buildCognitionWorkflowInstructions(
+      claimed({
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "annotation-review" },
+      }),
+    );
+    expect(maintenance).toContain("Document annotations need additive value");
+    expect(maintenance).toContain("reread their actual subject and supporting sources");
+    expect(maintenance).toContain(
+      "retire redundant annotations through canonical annotation tools",
+    );
+    expect(maintenance).toContain(
+      "Single-source support or raw document length alone does not justify retirement",
+    );
+    expect(maintenance).toContain("do not manufacture annotations to mark a source processed");
+  });
+
+  test("common maintenance instructions are stable across variants and volatile run context", () => {
+    const first = claimed({
+      id: "cache-first",
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "batch-first" },
+    });
+    const second = claimed({
+      id: "cache-second",
+      kind: "synthesis",
+      attempts: 2,
+      payload: {
+        focus: "knowledge-maintenance",
+        batchId: "batch-second",
+        organizationCohortId: "cohort-second",
+      },
+    });
+    const common = buildCognitionWorkflowInstructions(first);
+    expect(common).toBe(buildCognitionWorkflowInstructions(second));
+    const a = buildCognitionRunPrompt(first, {
+      ...deps(),
+      clock: () => NOW,
+      memory: { notes: "First private note", selfMemory: "" },
+    });
+    const b = buildCognitionRunPrompt(second, {
+      ...deps(),
+      clock: () => NOW + 60000,
+      memory: { notes: "Second private note", selfMemory: "" },
+    });
+    expect(a.startsWith(common)).toBe(true);
+    expect(b.startsWith(common)).toBe(true);
+    expect(common).toContain("Verify before you brief");
+    expect(common).toContain("knowledge_next_frontier");
+    for (const dynamic of [
+      "cache-first",
+      "cache-second",
+      "batch-first",
+      "First private note",
+      "Current time:",
+    ])
+      expect(common).not.toContain(dynamic);
+    expect(b.indexOf("joint organization pass")).toBeLessThan(b.indexOf("Loop agent run"));
+    expect(buildCognitionWorkflowInstructions(claimed({ kind: "feedback" }))).toBe("");
   });
 
   test("knowledge maintenance retains the run identity and standing context", () => {

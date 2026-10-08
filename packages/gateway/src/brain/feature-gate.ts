@@ -238,7 +238,7 @@ export interface BriefsRunQueueBootDeps {
   /** Seam overrides for tests; production uses `cognition` instead. */
   promptBuilder?: CognitionPromptBuilder;
   buildTools?: (run: ClaimedCognitionRun) => ToolHandle[];
-  systemPrompt?: () => string;
+  systemPrompt?: (run?: ClaimedCognitionRun) => string;
 }
 
 /**
@@ -352,7 +352,7 @@ export async function bootBriefs(deps: {
         context?: CognitionRunExecutionContext,
       ) => ToolHandle[];
       promptBuilder?: CognitionPromptBuilder;
-      systemPrompt?: () => string;
+      systemPrompt?: (run?: ClaimedCognitionRun) => string;
       buildOwnTools?: (runId: string) => ToolHandle[];
       validateRun?: (run: ClaimedCognitionRun) => string | null;
     } = {};

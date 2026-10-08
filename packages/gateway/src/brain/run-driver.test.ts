@@ -457,6 +457,7 @@ describe("CognitionRunDriver", () => {
   test("the prompt-builder and system-prompt seams are honoured", async () => {
     const prompts: string[] = [];
     const systemPrompts: string[] = [];
+    const routedRuns: Array<string | undefined> = [];
     const driver = makeDriver({
       resolveBackend: () =>
         scriptedBackend((input) => {
@@ -464,11 +465,15 @@ describe("CognitionRunDriver", () => {
           return happyScript("ok")(input);
         }, prompts),
       promptBuilder: (run) => `custom prompt for ${run.id}`,
-      systemPrompt: () => "custom system prompt",
+      systemPrompt: (run) => {
+        routedRuns.push(run?.id);
+        return "custom system prompt";
+      },
     });
     await driver.execute(claimed());
     expect(prompts).toEqual(["custom prompt for run_1"]);
     expect(systemPrompts).toEqual(["custom system prompt"]);
+    expect(routedRuns).toEqual(["run_1"]);
   });
 
   test("passes the resolved model id to per-run tools and completion validation", async () => {

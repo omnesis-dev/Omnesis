@@ -382,25 +382,26 @@ export function createAgentService(
     // telling their own agent how to behave, and it applies whoever asked —
     // what may actually leave the machine is still the privacy reviewer's call.
     const operatorInstructions = deps.getOperatorInstructions?.() ?? "";
-    return (
-      buildSystemPrompt({
-        audience: options.audience,
-        now: new Date(),
-        timeZone: context.timeZone,
-        catalog,
-        sourceTypes,
-        experimental,
-        selfMemory,
-        selfPersonId,
-        memoryWrites: options.memoryWrites === true && !restricted,
-        temporal: !restricted,
-        operatorInstructions,
-        citationSurface: options.citationSurface,
-        copyableValues: options.copyableValues === true,
-        // Source-restricted grants receive no graph context on their searches.
-        graphContext: !restricted && searchPipeline.agentSearchV2Enabled,
-      }) + (restricted ? "" : renderKnowledgeRootContext(db, deps.getKnowledgeRootMaxChars?.()))
-    );
+    return buildSystemPrompt({
+      audience: options.audience,
+      now: new Date(),
+      timeZone: context.timeZone,
+      catalog,
+      sourceTypes,
+      experimental,
+      selfMemory,
+      selfPersonId,
+      knowledgeRootContext: restricted
+        ? ""
+        : renderKnowledgeRootContext(db, deps.getKnowledgeRootMaxChars?.()),
+      memoryWrites: options.memoryWrites === true && !restricted,
+      temporal: !restricted,
+      operatorInstructions,
+      citationSurface: options.citationSurface,
+      copyableValues: options.copyableValues === true,
+      // Source-restricted grants receive no graph context on their searches.
+      graphContext: !restricted && searchPipeline.agentSearchV2Enabled,
+    });
   };
   return new AgentService({
     backendFactory,
@@ -459,10 +460,9 @@ export function createAgentService(
     // Source-specific knowledge (table schemas, available `source:`
     // filter values) is pulled from the registry here so nothing in the
     // prompt template knows about any individual provider.
-    // Prompt caching (cache_control: ephemeral) absorbs the per-session token
-    // cost. The rendered block varies by calendar date and by the caller's
-    // zone, so sessions opened the same day from the same place share a cached
-    // prefix; nothing in it changes faster than that.
+    // Stable built-in guidance precedes live catalog, memory, root and caller
+    // date context, preserving its prefix across session-context changes.
+    // A live session retains its prompt until a profile switch or disk resume.
     systemPrompt: (profile, context) =>
       buildLiveSystemPrompt(context, {
         audience: "interactive",

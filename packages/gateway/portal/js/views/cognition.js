@@ -19,7 +19,6 @@ import { transcriptEventsToTurns } from "./agent-reducer.js";
 import {
   getKnowledgeNode,
   getCognitionBrief,
-  getCognitionBriefs,
   openBriefThread,
   getCognitionLoop,
   getCognitionLoopBriefs,
@@ -27,11 +26,9 @@ import {
   getCognitionLoopScheduled,
   getCognitionPulse,
   getCognitionNotes,
-  getCognitionRetiredLoops,
   getCognitionRun,
   getCognitionRunKinds,
   getCognitionRuns,
-  getCognitionCoverage,
   getCognitionSpend,
   getCognitionMechanismSpend,
   getStatus,
@@ -59,13 +56,11 @@ function annotate(target) {
 }
 
 const SECTIONS = [
-  { key: "overview", label: "Overview" },
   { key: "runs", label: "Runs" },
-  { key: "briefs", label: "Briefs" },
-  { key: "memory", label: "Memory" },
+  { key: "notes", label: "Behavioral notes" },
   { key: "knowledge", label: "Knowledge" },
   { key: "maintenance", label: "Maintenance" },
-  { key: "calibration", label: "Calibration" },
+  { key: "calibration", label: "Confidence & feedback" },
   { key: "bootstrap", label: "Bootstrap" },
 ];
 const VALID_SECTIONS = new Set(SECTIONS.map((s) => s.key));
@@ -77,12 +72,14 @@ const VALID_SECTIONS = new Set(SECTIONS.map((s) => s.key));
  * Exported for tests.
  */
 export function resolveSection(subTab) {
-  if (subTab === "loops") return "knowledge";
+  if (subTab === "memory") return "notes";
+  if (subTab === "loops" || subTab === "briefs") return "knowledge";
   if (subTab === "scheduled") return "runs";
-  return subTab && VALID_SECTIONS.has(subTab) ? subTab : "overview";
+  return subTab && VALID_SECTIONS.has(subTab) ? subTab : "runs";
 }
 
 function cognitionPath(section, id) {
+  if (section === "briefs") return `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=brief`;
   if (section === "loops") return `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop`;
   return id
     ? `/portal/debug/cognition/${section}/${encodeURIComponent(id)}`
@@ -244,7 +241,7 @@ function EntityId({ kind, id }) {
     href=${href}
     title=${`${kind}: ${id}`}
     onClick=${(e) => { e.preventDefault(); navigate(href); }}
-  >${kind === "loop" && html`<${KnowledgeIcon} kind="loop" />`}${id}</a>`;
+  >${["loop", "brief"].includes(kind) && html`<${KnowledgeIcon} kind=${kind} />`}${id}</a>`;
 }
 
 // A person reference rendered as its name linking to the person page. The
@@ -561,7 +558,7 @@ function useCognitionPulse() {
   };
 }
 
-// ── Trigger rendering (shared by runs + overview) ────────────────────
+// ── Trigger rendering (runs and their details) ────────────────────
 
 function triggerSummary(trigger) {
   if (!trigger) return "—";
@@ -701,23 +698,6 @@ export function StatCard({ label, value, sub, tone }) {
   `;
 }
 
-function OverviewRunRow({ run }) {
-  const status = runDisplayStatus(run);
-  const time = runTimeLabel(run);
-  const href = cognitionPath("runs", run.id);
-  return html`
-    <a
-      class="cognition-mini-row"
-      href=${href}
-      onClick=${(e) => { e.preventDefault(); navigate(href); }}
-    >
-      <${Pill} color=${runStatusColor(status)}>${status}</${Pill}>
-      <span class="cognition-mini-row-main">${triggerSummary(run.trigger)}</span>
-      <span class="cognition-mini-row-time" title=${fmtTs(time.iso)}>${time.label}</span>
-    </a>
-  `;
-}
-
 // Fold per-(day, mechanism, model) spend rows into one row per mechanism
 // (runs + prompt/completion token totals), biggest spender first. The gateway
 // supplies each mechanism's display label; fall back to the raw id so a row
@@ -738,131 +718,29 @@ export function aggregateSpendByMechanism(rows) {
   return [...byMechanism.values()].sort((a, b) => b.tokens - a.tokens);
 }
 
-function OverviewTab({ pulse }) {
-  // The pulse provides bounded recent/upcoming samples plus exact counts;
-  // spend is slower-moving, so it refreshes once a minute.
+function RunHealthSummary({ pulse }) {
   const spend = useLoader(() => getCognitionSpend({ days: 1 }), []);
   const mechanismSpend = useLoader(() => getCognitionMechanismSpend({ days: 14 }), []);
-  // Per-source coverage — a tally of work done. Keep the loaded cursor pages
-  // stable while the operator inspects them rather than collapsing back to
-  // page one on the spend figures' refresh cadence. The heading's figure
-  // counts DOCUMENTS carrying the reviewed marker corpus-wide; the table's
-  // counters are per-(source, workflow) runs. The two are different units and
-  // will not agree, which is why the heading says "marked".
-  const coverage = useCursorPage({
-    resetKey: "overview-coverage",
-    pageSize: 50,
-    loadPage: ({ limit, cursor }) => getCognitionCoverage({ limit, cursor }),
-    selectMeta: (payload) => ({
-      bootstrapProcessedDocs: payload.bootstrapProcessedDocs ?? 0,
-    }),
-    mergeMeta: (previous, next) => next ?? previous,
-    itemKey: (row) => `${row.sourceId}:${row.workflowId}:${row.workflowVersion}`,
-  });
-  // The gate's own verdict. When the Brain is idle because its model cannot
-  // run, that is the first thing worth saying — an "Idle" tile over a parked
-  // queue reads as "nothing to do" rather than "nothing can be done".
   const { gate, briefsGate, brainBlocked } = useBrainGate();
   useAutoReload(gate.reload, 60_000);
   useAutoReload(spend.reload, 60_000);
   useAutoReload(mechanismSpend.reload, 60_000);
-
-  const settled = pulse.recentSettled;
-  const nextWake = pulse.upcoming[0] ?? null;
   const spendToday = spend.data?.items?.[0] ?? null;
   const spendByMechanism = aggregateSpendByMechanism(mechanismSpend.data?.rows ?? []);
-
-  const agentValue = brainBlocked
-    ? "Inactive"
-    : pulse.running.length > 0
-      ? "Running"
-      : pulse.queuedCount > 0
-        ? "Waking"
-        : "Idle";
-  const agentSub = brainBlocked
-    ? "not running"
-    : pulse.running.length > 0
-      ? triggerSummary(pulse.running[0].trigger)
-      : pulse.queuedCount > 0
-        ? `${pulse.queuedCount} run${pulse.queuedCount === 1 ? "" : "s"} due now`
-        : nextWake
-          ? `next wake ${fmtRel(nextWake.nextAttemptAt)}`
-          : "nothing scheduled";
-
-  return html`
-    <div class="cognition-overview">
-      <${LoadState}
-        loading=${!pulse.ready && pulse.loading}
-        error=${pulse.error}
-      />
-      <${BrainInactiveBanner} />
-      <nav class="brain-destinations" aria-label="Explore the Brain">
-        <a href="/portal/debug/cognition/knowledge"><span>What it knows ↗</span><strong>Knowledge library</strong><p>Read the life overview, project pages, and the evidence behind them.</p></a>
-        <a href="/portal/debug/cognition/maintenance"><span>What is changing ↗</span><strong>Maintenance</strong><p>Follow evidence changes through scheduled repairs and synthesis batches.</p></a>
-        <a href="/portal/debug/cognition/bootstrap"><span>What it is learning ↗</span><strong>Discovery</strong><p>Inspect initial coverage and control exploration of older history.</p></a>
-      </nav>
-      <div class="cognition-cards">
-        <${StatCard}
-          label="Agent"
-          value=${agentValue}
-          sub=${agentSub}
-          tone=${pulse.running.length > 0 ? "live" : null}
-        />
-        <${StatCard}
-          label="Queue"
-          value=${pulse.queuedCount + pulse.upcomingCount}
-          sub=${`${pulse.queuedCount} due · ${pulse.upcomingCount} scheduled`}
-        />
-        <${StatCard}
-          label="Open loops"
-          value=${pulse.openLoopCount}
-          sub=${`${pulse.snoozedLoopCount} snoozed`}
-        />
-        <${StatCard}
-          label="Unread briefs"
-          value=${pulse.unreadBriefCount}
-          sub=${`${pulse.briefsTotal} total`}
-        />
-        <${StatCard}
-          label="Spend"
-          value=${spendToday ? fmtTokens(spendToday.promptTokens + spendToday.completionTokens) : "0"}
-          sub=${spendToday
-            ? `${spendToday.runs} run${spendToday.runs === 1 ? "" : "s"}${cacheHitLabel(spendToday)} · ${spendToday.day}`
-            : "no runs recorded"}
-        />
-      </div>
-
-      <${RunningNowStrip} running=${pulse.running} />
-
-      ${pulse.failed24hCount > 0 &&
-      html`
-        <div class="cognition-failed-callout">
-          ⚠️ ${pulse.failed24hCount} run${pulse.failed24hCount === 1 ? "" : "s"} failed in the last 24h —${" "}
-          <a
-            href=${cognitionPath("runs")}
-            onClick=${(e) => { e.preventDefault(); navigate(cognitionPath("runs")); }}
-          >inspect</a>
-        </div>
-      `}
-
-      <div class="cognition-overview-columns">
-        <section>
-          <h3 class="cognition-section">Recent activity</h3>
-          <${LoadState} loading=${pulse.loading} error=${pulse.error} />
-          ${pulse.ready && settled.length === 0
-            ? html`<div class="debug-empty">No settled runs yet.</div>`
-            : settled.slice(0, 10).map((r) => html`<${OverviewRunRow} key=${r.id} run=${r} />`)}
-        </section>
-        <section>
-          <h3 class="cognition-section">Upcoming checks</h3>
-          ${pulse.ready && pulse.upcoming.length === 0
-            ? html`<div class="debug-empty">Nothing scheduled.</div>`
-            : pulse.upcoming.slice(0, 10).map((r) => html`<${OverviewRunRow} key=${r.id} run=${r} />`)}
-        </section>
-      </div>
-
-      <section>
-        <h3 class="cognition-section">Spend by mechanism · last 14 recorded days</h3>
+  return html`<section aria-label="Agent health and spend">
+    <${LoadState} loading=${!pulse.ready && pulse.loading} error=${pulse.error || spend.error} />
+    ${brainBlocked && html`<${BrainInactiveNotice} gate=${briefsGate} />`}
+    <div class="cognition-cards">
+      <${StatCard} label="Agent" value=${brainBlocked ? "Inactive" : pulse.running.length ? "Running" : pulse.queuedCount ? "Waking" : "Idle"}
+        sub=${`${pulse.running.length} running`} tone=${pulse.running.length ? "live" : null} />
+      <${StatCard} label="Queue" value=${pulse.queuedCount + pulse.upcomingCount}
+        sub=${`${pulse.queuedCount} due · ${pulse.upcomingCount} scheduled`} />
+      <${StatCard} label="Failed (24h)" value=${pulse.failed24hCount} sub="Inspect failed runs below" />
+      <${StatCard} label="Tokens today" value=${spendToday ? fmtTokens(spendToday.promptTokens + spendToday.completionTokens) : "0"}
+        sub=${spendToday ? `${spendToday.runs} runs${cacheHitLabel(spendToday)} · ${spendToday.day}` : "No spend recorded"} />
+    </div>
+      <details class="debug-operations-advanced">
+        <summary>Token breakdown · last 14 recorded days</summary>
         <${LoadState} loading=${mechanismSpend.loading} error=${mechanismSpend.error} />
         ${!mechanismSpend.loading && spendByMechanism.length === 0
           ? html`<div class="debug-empty">No spend recorded.</div>`
@@ -884,70 +762,9 @@ function OverviewTab({ pulse }) {
               </tbody>
             </table></div>
           `}
-      </section>
+      </details>
 
-      <section>
-        <h3 class="cognition-section">
-          Source coverage
-          ${coverage.meta
-            ? html`<span class="cognition-section-sub">
-                ${coverage.meta.bootstrapProcessedDocs} legacy historical document${
-                  coverage.meta.bootstrapProcessedDocs === 1 ? "" : "s"
-                } marked reviewed
-              </span>`
-            : null}
-        </h3>
-        <${LoadState} loading=${coverage.loading} error=${coverage.error} />
-        ${!coverage.loading && coverage.items.length === 0
-          ? html`<div class="debug-empty">No source has been reviewed yet.</div>`
-          : html`
-            <div class="debug-table-scroll" role="region" aria-label="Brain diagnostics table" tabindex="0"><table class="debug-table">
-              <thead>
-                <tr>
-                  <th>Source</th><th>Workflow</th><th>Status</th><th>Unit</th>
-                  <th class="num">Eligible</th><th class="num">Processed</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${coverage.items.map(
-                  (row) => html`
-                    <tr key=${`${row.sourceId}:${row.workflowId}:${row.workflowVersion}`}>
-                      <td><${SourceChip} sourceId=${row.sourceId} sourceType=${row.sourceType} /></td>
-                      <td title=${row.workflowId}>${row.workflowLabel}</td>
-                      <td>${row.status}</td>
-                      <td>${row.unit === "source-revisions" ? "Source revisions" : "Documents"}</td>
-                      <td class="num">${row.eligible || "—"}</td>
-                      <td class="num">${row.processed}</td>
-                    </tr>
-                  `,
-                )}
-              </tbody>
-            </table></div>
-          `}
-        <${LoadMore}
-          hasMore=${coverage.hasMore}
-          loading=${coverage.loadingMore}
-          error=${coverage.loadMoreError}
-          onLoadMore=${coverage.loadMore}
-          label="Load more coverage"
-        />
-      </section>
-    </div>
-  `;
-}
-
-// A source rendered as its registry icon + id. The icon comes from
-// `sourceIconUrl`, like every other source glyph in this view; a source id the
-// registry cannot type renders as the bare id. Deliberately not link-coloured —
-// it names a source rather than navigating to one.
-function SourceChip({ sourceId, sourceType }) {
-  const iconUrl = sourceType ? sourceIconUrl(sourceType) : null;
-  return html`<span class="cognition-doc-chip cognition-source-chip">
-    ${iconUrl
-      ? html`<img class="source-icon" src=${iconUrl} alt=${sourceType} />`
-      : html`<span class="cognition-doc-icon-fallback" aria-hidden="true">📄</span>`}
-    <span class="cognition-doc-chip-title">${sourceId}</span>
-  </span>`;
+  </section>`;
 }
 
 // ── Loops ────────────────────────────────────────────────────────────
@@ -1207,7 +1024,7 @@ function RunsTab({ selectedId, pulse }) {
 
   return html`
     <section class=${`debug-operations${selectedId ? " has-selection" : ""}`}>
-      <${BrainInactiveBanner} />
+      <${RunHealthSummary} pulse=${pulse} />
       <div class="cognition-filters">
         <${Segmented}
           options=${RUN_VIEW_FILTERS}
@@ -1697,14 +1514,6 @@ function FormattedTranscript({ t }) {
 
 // The eight stored states, folded into the five buckets an operator scans
 // by; the precise `dismissed_*` state stays visible on each row's pill.
-const BRIEF_FILTERS = [
-  { value: "all", label: "All" },
-  { value: "unread", label: "Unread" },
-  { value: "read", label: "Read" },
-  { value: "snoozed", label: "Snoozed" },
-  { value: "dismissed", label: "Dismissed" },
-];
-
 /** Whether a brief belongs to a filter bucket. Exported for tests. */
 export function briefMatchesFilter(brief, filter) {
   switch (filter) {
@@ -1715,66 +1524,6 @@ export function briefMatchesFilter(brief, filter) {
       return brief.state.startsWith("dismissed_") && brief.state !== "dismissed_snoozed";
     default: return true;
   }
-}
-
-function BriefsTab({ selectedId }) {
-  const [filter, setFilter] = useState("all");
-  // The disabled-Brain banner below polls the gate itself.
-  const page = useCursorPage({
-    resetKey: filter,
-    pageSize: 50,
-    loadPage: ({ limit, cursor }) =>
-      getCognitionBriefs({
-        limit,
-        cursor,
-        ...(filter === "all" ? {} : { state: filter }),
-      }),
-  });
-  const briefs = page.items.filter((brief) => briefMatchesFilter(brief, filter));
-
-  const list = html`
-    <div>
-      ${page.items.length === 0 && !page.loading && !page.error
-        ? html`<div class="debug-empty" style="padding:16px;">No briefs yet. Useful updates from the Brain will appear here.</div>`
-        : briefs.length === 0 && !page.loading && !page.error
-        ? html`<div class="debug-empty" style="padding:16px;">No briefs in this state.</div>`
-        : briefs.map((b) => html`
-          <${ListRow} section="briefs" id=${b.id} selected=${b.id === selectedId}>
-            <div class="cognition-row-top">
-              <span class="cognition-row-pills">
-                <${Pill} color=${briefStateColor(b.state)}>${b.state.replace(/^dismissed_/, "")}</${Pill}>
-                <span class="cognition-row-kind">${b.kind}</span>
-              </span>
-              <span class="cognition-row-time" title=${fmtTs(b.createdAt)}>${fmtRel(b.createdAt)}</span>
-            </div>
-            <div class="cognition-row-title">${b.title || "(untitled)"}</div>
-          </${ListRow}>
-        `)}
-      <${LoadMore}
-        hasMore=${page.hasMore}
-        loading=${page.loadingMore}
-        error=${page.loadMoreError}
-        onLoadMore=${page.loadMore}
-        label="Load more briefs"
-      />
-    </div>
-  `;
-
-  return html`
-    <section class=${`debug-operations${selectedId ? " has-selection" : ""}`}>
-      <${BrainInactiveBanner} />
-      <div class="cognition-filters">
-        <${Segmented} options=${BRIEF_FILTERS} value=${filter} onChange=${setFilter} />
-      </div>
-      <${LoadState} loading=${page.loading} error=${page.error} />
-      <p class="debug-operations-count">${briefs.length} loaded briefs</p>
-      ${selectedId && html`<a class="debug-operations-back" href=${cognitionPath("briefs")}>← Back to briefs</a>`}
-      <${MasterDetail}
-        list=${list}
-        detail=${selectedId ? html`<${BriefDetail} id=${selectedId} />` : briefs.length ? html`<${EmptyDetail} noun="brief" />` : null}
-      />
-    </section>
-  `;
 }
 
 // "Why am I seeing this?" — the procedure behind a durable artifact, named.
@@ -1801,7 +1550,7 @@ export function ArtifactProvenance({ provenance }) {
   `;
 }
 
-function BriefDetail({ id }) {
+export function BriefDetail({ id, content = null, embedded = false }) {
   const { data, error, loading } = useLoader(() => getCognitionBrief(id), [id]);
   const [threadBusy, setThreadBusy] = useState(false);
   const [threadError, setThreadError] = useState(null);
@@ -1821,16 +1570,16 @@ function BriefDetail({ id }) {
   return html`
     <div class="cognition-detail-body">
       <div class="cognition-detail-titlebar">
-        <h2 class="cognition-detail-title">${brief.title || "(untitled)"}</h2>
+        ${!embedded && html`<h2 class="cognition-detail-title">${brief.title || "(untitled)"}</h2>`}
         ${annotate({ targetType: "brief", targetId: brief.id, label: brief.title || `Brief ${brief.id}` })}
       </div>
       <div style="margin-bottom:12px;">
         <${Pill} color=${briefStateColor(brief.state)}>${brief.state}</${Pill}>
         <span style="color:var(--text-secondary);">${brief.kind}</span>
       </div>
-      <${KnowledgeOwnerLink} id=${brief.id} />
-      <${Field} label="Description">${brief.description || "—"}</${Field}>
-      <${Field} label="Body">${brief.body ? html`<div class="kn-prose" dangerouslySetInnerHTML=${{ __html: renderMarkdown(brief.body, { blockImages: true }) }} />` : "—"}</${Field}>
+      ${!embedded && html`<${KnowledgeOwnerLink} id=${brief.id} />`}
+      ${content ?? html`<${Field} label="Description">${brief.description || "—"}</${Field}>
+      <${Field} label="Body">${brief.body ? html`<div class="kn-prose" dangerouslySetInnerHTML=${{ __html: renderMarkdown(brief.body, { blockImages: true }) }} />` : "—"}</${Field}>`}
       <${Field} label="Citations"><${DocList} docs=${brief.citations} /></${Field}>
       <${Field} label="Asserted claims"><${BriefClaimList} claims=${claims} /></${Field}>
       <${Field} label="Why am I seeing this?"
@@ -1871,88 +1620,26 @@ function BriefDetail({ id }) {
 
 // ── Memory ───────────────────────────────────────────────────────────
 
-const RETIRED_OUTCOME_COLOR = {
-  done: "#86efac",
-  dismissed: "#cbd5e1",
-  decayed: "#fde68a",
-  deleted: "#fca5a5",
-};
-
-function MemoryTab() {
+function BehavioralNotesTab() {
   // The disabled-Brain banner below polls the gate itself.
   const notes = useLoader(() => getCognitionNotes(), []);
-  const retired = useCursorPage({
-    resetKey: "retired-loops",
-    pageSize: 50,
-    loadPage: ({ limit, cursor }) => getCognitionRetiredLoops({ limit, cursor }),
-  });
   const notesText = notes.data?.content ?? "";
-  const rows = retired.items;
 
   return html`
     <div class="cognition-memory">
       <${BrainInactiveBanner} />
       <section style="margin-bottom:24px;">
         <div class="cognition-detail-titlebar">
-          <h2 class="cognition-detail-title">Agent notes</h2>
           ${annotate({ targetType: "agent_notes", label: "Agent notes" })}
         </div>
         <p class="debug-sub" style="margin:0 0 10px;">
-          Agent notes retained alongside the root overview. Read the current synthesis in the <a href="/portal/debug/cognition/knowledge">Knowledge library</a>.
+          Standing preferences and lessons that guide how the agent works. Grounded subject knowledge belongs in the <a href="/portal/debug/cognition/knowledge">Library</a>.
         </p>
         <${LoadState} loading=${notes.loading} error=${notes.error} />
         ${!notes.loading && !notes.error && html`
           <pre class="cognition-notes">${
             notesText.length > 0 ? notesText : "(the notes file is empty)"}</pre>
         `}
-      </section>
-
-      <section>
-        <h2 class="cognition-detail-title">Consolidation store</h2>
-        <p class="debug-sub" style="margin:0 0 10px;">
-          The append-only <code>retired_loops</code> record — every loop the
-          agent resolved or removed, with its recurrence cadence. The agent's
-          learned-recurrence memory.
-        </p>
-        <${LoadState} loading=${retired.loading} error=${retired.error} />
-        ${!retired.loading && !retired.error && (rows.length === 0
-          ? html`<div class="debug-empty">No retired loops yet.</div>`
-          : html`
-            <div class="debug-table-scroll" role="region" aria-label="Brain diagnostics table" tabindex="0"><table class="debug-table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Outcome</th>
-                  <th class="num">Recurrences</th>
-                  <th class="num">Cadence (days)</th>
-                  <th>Retired</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows.map((r) => html`
-                  <tr key=${r.id}>
-                    <td>
-                      <span class="cognition-retired-title">
-                        ${r.title}
-                        ${annotate({ targetType: "retired_loop", targetId: r.id, label: r.title || `Retired loop ${r.id}` })}
-                      </span>
-                    </td>
-                    <td><${Pill} color=${RETIRED_OUTCOME_COLOR[r.outcome] ?? "#94a3b8"}>${r.outcome}</${Pill}></td>
-                    <td class="num">${r.recurrenceCount}</td>
-                    <td class="num">${r.cadenceDays == null ? "—" : r.cadenceDays}</td>
-                    <td>${fmtTs(r.retiredAt)}</td>
-                  </tr>
-                `)}
-              </tbody>
-            </table></div>
-          `)}
-        <${LoadMore}
-          hasMore=${retired.hasMore}
-          loading=${retired.loadingMore}
-          error=${retired.loadMoreError}
-          onLoadMore=${retired.loadMore}
-          label="Load more retired loops"
-        />
       </section>
     </div>
   `;
@@ -1961,11 +1648,9 @@ function MemoryTab() {
 // ── Rail + root ──────────────────────────────────────────────────────
 
 const SECTION_INTROS = {
-  overview: ["Brain activity", "What is running, what is waiting, and where attention is going."],
   runs: ["Agent runs", "Inspect decisions, scheduled work, transcripts, and costs."],
-  briefs: ["Briefs", "What the Brain surfaced, why it matters, and its delivery history."],
-  memory: ["Legacy memory", "Agent notes and the recurrence history of retired loops."],
-  calibration: ["Calibration", "Compare stated confidence with observed outcomes."],
+  notes: ["Behavioral notes", "Standing preferences and lessons used by the agent."],
+  calibration: ["Confidence & feedback", "Compare stated confidence with observed outcomes."],
   bootstrap: ["Discovery", "Build knowledge from recent evidence and deliberately explore older history."],
 };
 
@@ -1981,12 +1666,10 @@ export function CognitionView({ subTab, selectedId, developer = false } = {}) {
     <div class="cognition-view">
       ${SECTION_INTROS[section] && html`<header class="debug-section-heading"><h1>${SECTION_INTROS[section][0]}</h1><p>${SECTION_INTROS[section][1]}</p></header>`}
         <div class="cognition-content">
-          ${section === "knowledge" && html`<${KnowledgeTab} selectedId=${selectedId} />`}
+          ${section === "knowledge" && html`<${KnowledgeTab} selectedId=${selectedId} developer=${developer} />`}
           ${section === "maintenance" && html`<${KnowledgeMaintenanceTab} selectedId=${selectedId} />`}
-          ${section === "overview" && html`<${OverviewTab} pulse=${pulse} />`}
           ${section === "runs" && html`<${RunsTab} selectedId=${selectedId} pulse=${pulse} />`}
-          ${section === "briefs" && html`<${BriefsTab} selectedId=${selectedId} />`}
-          ${section === "memory" && html`<${MemoryTab} />`}
+          ${section === "notes" && html`<${BehavioralNotesTab} />`}
           ${section === "calibration" && html`<${CalibrationTab} />`}
           ${section === "bootstrap" && html`<${BootstrapTab} />`}
         </div>

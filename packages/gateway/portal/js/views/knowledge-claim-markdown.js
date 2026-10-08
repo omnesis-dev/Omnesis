@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 import { Marked, Renderer } from "marked";
 import DOMPurify from "dompurify";
+import { knowledgeIconGlyphs } from "../lib/knowledge-icon-glyphs.js";
 import {
   knowledgeIconHtml,
   knowledgeReferenceMetadata,
@@ -35,7 +36,7 @@ export function internalKnowledgeHref(value) {
       ? `/portal/doc/${encodeURIComponent(match[2])}`
       : `/portal/debug/cognition/knowledge/${encodeURIComponent(match[2])}`;
   const query = new URLSearchParams();
-  if (match[1] === "loop") query.set("kind", "loop");
+  if (["loop", "brief"].includes(match[1])) query.set("kind", match[1]);
   if (match[3]) query.set(match[3], match[4]);
   return path + (query.size ? `?${query}` : "");
 }
@@ -106,7 +107,16 @@ export function renderKnowledgeMarkdown(markdown, claims = [], references = {}) 
       const tag = level === "block" ? "div" : "span";
       const body =
         level === "block" ? this.parser.parse(token.tokens) : this.parser.parseInline(token.tokens);
-      return `<${tag} class="kn-claim-span" id="${token.id}" tabindex="0" role="button" aria-label="Inspect claim ${token.label}">${body}</${tag}>`;
+      const marker = `<span id="${prefix}icon-${icons.size}"></span>`;
+      icons.set(marker, `<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${knowledgeIconGlyphs.quote}</svg>`);
+      const indicator = `<button type="button" class="kn-claim-indicator" id="${token.id}" aria-label="Inspect claim ${token.label}" aria-haspopup="dialog">${marker}</button>`;
+      // Keep the indicator on the final text line, inside the last paragraph,
+      // heading, list item or table cell rather than after its block container.
+      const ending = /(<\/(?:p|h[1-6]|li|td|th)>)(\s*(?:<\/[^>]+>\s*)*)$/;
+      const content = level === "block" && ending.test(body)
+        ? body.replace(ending, (_, close, rest) => indicator + close + rest)
+        : body + indicator;
+      return `<${tag} class="kn-claim-span" id="${token.id}-span">${content}</${tag}>`;
     },
   });
   const parser = new Marked({

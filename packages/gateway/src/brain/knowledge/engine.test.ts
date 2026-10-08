@@ -26,7 +26,11 @@ import { directKnowledgeGate } from "./writer.js";
 import { setKnowledgeLink } from "./links.js";
 import { KnowledgeService } from "./service.js";
 import { KnowledgeEngine, type KnowledgeEngineDeps } from "./engine.js";
-import { KNOWLEDGE_DISCOVERY_POLICY, recordKnowledgeCoverage } from "./discovery.js";
+import {
+  KNOWLEDGE_DISCOVERY_POLICY,
+  recordKnowledgeCoverage,
+  proposeKnowledgeCandidate,
+} from "./discovery.js";
 import { listKnowledgeFrontier } from "./work.js";
 import {
   advanceKnowledgeCascade,
@@ -440,6 +444,37 @@ describe("knowledge coordinator", () => {
     ).toEqual({ reconsider_at: now + settings.knowledge.maxReviewIntervalMs });
   });
 
+  it("revisits legacy gated coverage with no explicit reconsideration timestamp", async () => {
+    source("legacy-gated");
+    db.exec("DELETE FROM knowledge_changes");
+    recordKnowledgeCoverage(
+      db,
+      {
+        subjectId: "legacy-gated",
+        inputRevision: "v1",
+        phase: "organization",
+        policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+        status: "gated",
+      },
+      now - settings.knowledge.maxReviewIntervalMs - 1,
+    );
+    expect(
+      db
+        .prepare(
+          "SELECT reconsider_at FROM knowledge_discovery_coverage WHERE subject_id='legacy-gated'",
+        )
+        .get(),
+    ).toEqual({ reconsider_at: null });
+    score = 0;
+    await engine.tick();
+    const batch = batchFor("legacy-gated");
+    expect((await engine.next(batch.id, batch.runId)).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "source:legacy-gated", review: true }),
+      ]),
+    );
+  });
+
   it("discovers newly arriving historical evidence even with bootstrap disabled", async () => {
     source("late", "old", "An archived proposal arrived today.", now - 400 * 86400000);
     await engine.tick();
@@ -760,6 +795,123 @@ describe("knowledge coordinator", () => {
     ).toEqual([{ input_revision: "v2" }]);
   });
 
+  it("sends source discovery its complete evidence once without sibling bodies or opaque versions", async () => {
+    source("focused", "opaque-v1", "Unique meaningful content to inspect.");
+    source("sibling", "opaque-v2", "Unrelated sibling content.");
+    await engine.tick();
+    const before = decisionStates.length;
+    const batch = batchFor("focused");
+    await engine.next(batch.id, batch.runId);
+    const state = decisionStates
+      .slice(before)
+      .find((state) => (state as { source?: { title: string } }).source?.title === "focused");
+    expect(state).toEqual({
+      source: {
+        title: "focused",
+        content: "Unique meaningful content to inspect.",
+        sourceCreatedAt: new Date(now).toISOString(),
+        sourceUpdatedAt: new Date(now).toISOString(),
+      },
+    });
+    const serialized = JSON.stringify(state);
+    expect(serialized.split("Unique meaningful content to inspect.")).toHaveLength(2);
+    expect(serialized).not.toContain("Unrelated sibling content");
+    expect(serialized).not.toContain("opaque-v1");
+  });
+
+  it.each(["oversize", "uncertain", "candidate", "saturated-candidates", "linked", "target"])(
+    "offers %s sources instead of discarding their context",
+    async (mode) => {
+      source(
+        "protected",
+        "v1",
+        mode === "oversize"
+          ? "Routine status. ".repeat(2000) + "A new commitment follows."
+          : "A potentially useful note.",
+      );
+      if (mode === "candidate")
+        proposeKnowledgeCandidate(
+          db,
+          {
+            id: "protected-candidate",
+            identityKey: "protected-context",
+            title: "Protected context",
+            scope: "An unresolved synthesis decision",
+            evidenceVersions: { protected: "v1" },
+          },
+          now,
+        );
+      if (mode === "saturated-candidates") {
+        for (let i = 0; i < 129; i++)
+          proposeKnowledgeCandidate(
+            db,
+            {
+              id: `bounded-candidate-${i}`,
+              identityKey: `bounded-${i}`,
+              title: "Bounded context",
+              scope: "A previous proposal",
+              evidenceVersions: { protected: "v1" },
+            },
+            now,
+          );
+        db.exec("UPDATE knowledge_candidates SET status='dismissed'");
+      }
+      if (mode === "linked")
+        await wiki("connected", "source:protected", "A potentially useful note.");
+      if (mode === "target") {
+        source("other");
+        await wiki("selected", "source:other");
+        db.prepare(
+          "INSERT INTO knowledge_discovery_targets(source_id,source_revision,node_id,created_at) VALUES('protected','v1','selected',?)",
+        ).run(now);
+      }
+      await engine.tick();
+      score = mode === "uncertain" ? 0.5 : 0;
+      const before = decisionStates.length;
+      const batch = batchFor("protected");
+      const view = await engine.next(batch.id, batch.runId);
+      expect(view.items.some((item) => item.id === "source:protected")).toBe(true);
+      expect(
+        db.prepare("SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id='protected'").get(),
+      ).toBeUndefined();
+      const sourceJudgements = decisionStates
+        .slice(before)
+        .filter((state) => (state as { source?: { title: string } }).source?.title === "protected");
+      expect(sourceJudgements).toHaveLength(mode === "uncertain" ? 1 : 0);
+    },
+  );
+
+  it("rechecks connections atomically when a low-value judgement reaches the writer", async () => {
+    source();
+    await engine.tick();
+    score = 0;
+    const settle = writeGate["knowledge.settleFrontier"];
+    vi.spyOn(writeGate, "knowledge.settleFrontier").mockImplementationOnce(async (input, at) => {
+      proposeKnowledgeCandidate(
+        db,
+        {
+          id: "racing-candidate",
+          identityKey: "racing-context",
+          title: "New context",
+          scope: "A pending interpretation",
+          evidenceVersions: { input: "v1" },
+        },
+        now,
+      );
+      return settle(input, at);
+    });
+    const batch = batchFor("input");
+    await expect(engine.next(batch.id, batch.runId)).rejects.toMatchObject({
+      code: "revision_conflict",
+    });
+    expect(
+      db.prepare("SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id='input'").get(),
+    ).toBeUndefined();
+    expect((await engine.next(batch.id, batch.runId)).items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "source:input" })]),
+    );
+  });
+
   it("gates irrelevant discovery without creating false synthesis or losing coverage", async () => {
     source();
     await engine.tick();
@@ -771,6 +923,19 @@ describe("knowledge coordinator", () => {
       db.prepare("SELECT status FROM knowledge_discovery_coverage WHERE subject_id='input'").all(),
     ).toEqual([{ status: "gated" }, { status: "gated" }]);
     expect(db.prepare("SELECT 1 FROM knowledge_nodes WHERE kind='wiki'").get()).toBeUndefined();
+    expect(
+      db
+        .prepare(
+          "SELECT DISTINCT reconsider_at FROM knowledge_discovery_coverage WHERE subject_id='input'",
+        )
+        .all(),
+    ).toEqual([{ reconsider_at: now + settings.knowledge.maxReviewIntervalMs }]);
+    now += settings.knowledge.maxReviewIntervalMs + 1;
+    await engine.tick();
+    const revisit = batchFor("input");
+    expect((await engine.next(revisit.id, revisit.runId)).items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "source:input", review: true })]),
+    );
   });
 
   it("jointly organizes considered disjoint sources and requires a versioned final disposition", async () => {

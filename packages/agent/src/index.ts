@@ -132,6 +132,7 @@ export {
   CORPUS_CONTENT_IS_DATA,
   SUBJECT_ATTRIBUTION_REQUIRES_EVIDENCE,
   renderAnalyticsCatalog,
+  renderRetrievalContext,
   renderAnalyticsRetrievalGuidance,
   renderCognitionRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,

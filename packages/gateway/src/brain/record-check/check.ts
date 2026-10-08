@@ -30,6 +30,7 @@ import {
   parseCognitionSynthesisRunPayload,
 } from "../run-payloads.js";
 import {
+  DOCUMENT_RECORD_VALUE_QUESTIONS,
   RECORD_BELONGS_QUESTIONS,
   RECORD_BELONGS_QUESTION_ID,
   RECORD_BELONGS_THRESHOLD,
@@ -37,6 +38,7 @@ import {
   recordBelongsState,
   type RecordType,
 } from "./rubric.js";
+import type { DocumentRecordContext } from "./document-context.js";
 import type { DecisionCapability, Logger } from "@omnesis/core";
 import type { RecordCheckMode } from "../config.js";
 import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
@@ -55,6 +57,8 @@ export interface RecordCheckInput {
   record: { type: RecordType; kind: string | null; text: string };
   /** The document the record rests on; anchors the ledger row. */
   documentId: string;
+  /** Source-vetted bounded context, required to judge doc-fact added value. */
+  documentContext?: DocumentRecordContext;
 }
 
 type RecordCheckOutcome =
@@ -62,10 +66,13 @@ type RecordCheckOutcome =
   | { save: false; decisionId: string; score: number; threshold: number };
 
 /** The check bound to one run. Never throws, except when `signal` aborts. */
-export type CheckRecord = (
+export type CheckRecord = ((
   input: RecordCheckInput,
   signal?: AbortSignal,
-) => Promise<RecordCheckOutcome>;
+) => Promise<RecordCheckOutcome>) & {
+  /** Live hint avoids source-context work while the gate is inactive. */
+  needsDocumentContext?: () => boolean;
+};
 
 interface RecordCheckDeps {
   /** The live decision backend, or null when the capability is absent. */
@@ -92,7 +99,10 @@ export class RecordCheck {
   forRun(run: ClaimedCognitionRun): CheckRecord | null {
     const lane = checkedLane(run);
     if (lane === null) return null;
-    return (input, signal) => this.check(run.id, lane, input, signal);
+    const check: CheckRecord = (input, signal) => this.check(run.id, lane, input, signal);
+    check.needsDocumentContext = () =>
+      this.deps.getMode() !== "off" && this.deps.getDecision() !== null;
+    return check;
   }
 
   /** Resolves once every background judgement has been recorded. */
@@ -136,17 +146,34 @@ export class RecordCheck {
     enforced: boolean,
     signal: AbortSignal | undefined,
   ): Promise<RecordCheckOutcome> {
-    const judgement = await askScore(
-      decision,
-      { state: recordBelongsState(input.record), questions: RECORD_BELONGS_QUESTIONS },
-      RECORD_BELONGS_QUESTION_ID,
-      {
-        recordSpend: this.deps.recordSpend,
-        log: this.deps.log,
-        ...(enforced ? { timeoutMs: ENFORCE_TIMEOUT_MS } : {}),
-        ...(signal ? { signal } : {}),
-      },
-    );
+    const state = recordBelongsState(input.record, input.documentContext);
+    const questions =
+      input.record.type === "doc-fact" ? DOCUMENT_RECORD_VALUE_QUESTIONS : RECORD_BELONGS_QUESTIONS;
+    // Context cannot be inferred from the record alone. Preserve the write
+    // without a guessed score if a document's safe source view is unavailable.
+    const judgement =
+      input.record.type === "doc-fact" && !input.documentContext
+        ? {
+            modelId: decision.modelId,
+            requestJson: JSON.stringify({ model: decision.modelId, state, questions }),
+            responseJson: null,
+            score: null,
+            error: "Document annotation source context unavailable",
+            latencyMs: 0,
+            inputTokens: null,
+          }
+        : await askScore(decision, { state, questions }, RECORD_BELONGS_QUESTION_ID, {
+            recordSpend: this.deps.recordSpend,
+            log:
+              input.record.type === "doc-fact"
+                ? {
+                    ...this.deps.log,
+                    warn: () => this.deps.log.warn("Document annotation value check unavailable"),
+                  }
+                : this.deps.log,
+            ...(enforced ? { timeoutMs: ENFORCE_TIMEOUT_MS } : {}),
+            ...(signal ? { signal } : {}),
+          });
     const verdict: DecisionVerdict =
       judgement.score === null
         ? "unavailable"
@@ -165,12 +192,48 @@ export class RecordCheck {
       contentHash: null,
       requestedModelId: decision.modelId,
       modelId: judgement.modelId,
-      requestJson: judgement.requestJson,
-      responseJson: judgement.responseJson,
+      // Extra-source text has no decision-ledger deletion reference. Retain
+      // only an explicitly redacted context summary, not those new contents.
+      requestJson:
+        input.record.type === "doc-fact" && input.documentContext
+          ? JSON.stringify({
+              model: decision.modelId,
+              questions,
+              state: {
+                ...state,
+                document_context: {
+                  redacted: true,
+                  replayable: false,
+                  subject_characters: input.documentContext.subject_characters,
+                  subject_truncated: input.documentContext.subject_truncated,
+                  evidence_truncated: input.documentContext.evidence_truncated,
+                  other_source_count: new Set(
+                    input.documentContext.evidence
+                      .filter((e) => !e.is_subject)
+                      .map((e) => e.source),
+                  ).size,
+                },
+              },
+            })
+          : judgement.requestJson,
+      responseJson:
+        input.record.type === "doc-fact" && judgement.score !== null
+          ? JSON.stringify({
+              model: decision.modelId,
+              answers: {
+                [RECORD_BELONGS_QUESTION_ID]: { type: "score", score: judgement.score },
+              },
+            })
+          : judgement.responseJson,
       score: judgement.score,
       threshold: RECORD_BELONGS_THRESHOLD,
       verdict,
-      error: judgement.error,
+      error:
+        input.record.type === "doc-fact" && judgement.error
+          ? input.documentContext
+            ? "Document annotation value check unavailable"
+            : judgement.error
+          : judgement.error,
       reusedFrom: null,
       recordId: input.recordId,
       enforced,

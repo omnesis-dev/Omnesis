@@ -24,6 +24,29 @@ export function mountKnowledgeAdminRoutes(
     const limit = limitParam(c.req.query("limit"), "limit", 30, 100);
     return c.json({ items: query.list({ kind, afterId: c.req.query("afterId"), limit }) });
   });
+  app.get("/admin/brain/knowledge/library", scope.admin(), (c) => {
+    requireVisible();
+    const kind = enumParam(c.req.query("kind"), "kind", [
+      "wiki",
+      "root",
+      "loop",
+      "brief",
+      "doc_annotation",
+      "person_annotation",
+    ] as const);
+    return c.json(
+      query.library({
+        kind,
+        status: c.req.query("status"),
+        cursor: c.req.query("cursor"),
+        limit: limitParam(c.req.query("limit"), "limit", 30, 100),
+      }),
+    );
+  });
+  app.get("/admin/brain/knowledge/library/:id", scope.admin(), (c) => {
+    requireVisible();
+    return c.json(query.libraryRetirement(c.req.param("id")));
+  });
   app.get("/admin/brain/knowledge/decisions", scope.admin(), (c) => {
     requireVisible();
     return c.json({ items: query.decisions(limitParam(c.req.query("limit"), "limit", 30, 100)) });

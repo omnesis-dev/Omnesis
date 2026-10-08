@@ -211,6 +211,8 @@ it("selects library entries without leaving the document or changing the library
     "/portal/debug/cognition/knowledge/outcome%2Fone?kind=loop",
   );
   expect(knowledgeSelectionHref(null, "wiki")).toBe("/portal/debug/cognition/knowledge?kind=wiki");
+  expect(knowledgeSelectionHref("retired-loop:example", "loop", "retired")).toContain("?kind=loop&status=retired");
+  expect(knowledgeSelectionHref(null, "brief", "unread")).toBe("/portal/debug/cognition/knowledge?kind=brief&status=unread");
   const pushState = vi.fn(),
     dispatchEvent = vi.fn(),
     preventDefault = vi.fn();

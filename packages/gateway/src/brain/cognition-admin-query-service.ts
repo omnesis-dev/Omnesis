@@ -320,6 +320,15 @@ export class CognitionAdminQueryService {
     return readBootstrapBacklog(io, opts);
   }
 
+  async knowledgeDiscoveryTimeline(
+    io: BootstrapTimelineReader,
+    now: () => number,
+  ): Promise<import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryTimeline> {
+    if (!io.knowledgeDiscoveryByMonth) throw new Error("Discovery timeline IO unavailable");
+    const months = await io.knowledgeDiscoveryByMonth();
+    return { mode: "knowledge", months, computedAt: now() };
+  }
+
   /** The corpus month by month, off the main loop. See `bootstrapBacklog`. */
   bootstrapTimeline(
     io: BootstrapTimelineReader,

@@ -20,6 +20,26 @@ function claim(markdown: string, id: string, parentId: string | null = null) {
   return { id, parentId, start, end };
 }
 describe("claim-aware Markdown", () => {
+  it("renders brief and typed annotation links with their shared decorative icons", () => {
+    const rendered = renderKnowledgeMarkdown(
+      "[Brief](brief:brief_invented) [Document note](annotation:anno_invented) [Person note](annotation:panno_invented)",
+      [],
+      {
+        "annotation:anno_invented": { kind: "doc_annotation" },
+        "annotation:panno_invented": { kind: "person_annotation" },
+      },
+    ).html;
+    expect(rendered).toContain('class="kn-link-icon kn-link-icon--brief"');
+    expect(rendered).toContain('class="kn-link-icon kn-link-icon--doc_annotation"');
+    expect(rendered).toContain('class="kn-link-icon kn-link-icon--person_annotation"');
+    expect(rendered).toContain('class="kn-link-icon-badge kn-link-icon-badge--file"');
+    expect(rendered).toContain('class="kn-link-icon-badge kn-link-icon-badge--user"');
+    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/brief_invented?kind=brief"');
+    expect(DOMPurify.sanitize).toHaveBeenLastCalledWith(
+      expect.not.stringContaining("<svg"),
+      expect.any(Object),
+    );
+  });
   it("preserves canonical portal query and fragment selectors while hydrating references", () => {
     const documentHref = "/portal/doc/letter%2Fone?evidence=paragraph#selection";
     const pageHref = "/portal/debug/cognition/knowledge/loop_fixture?kind=loop&field=status#detail";
@@ -111,6 +131,11 @@ describe("claim-aware Markdown", () => {
     expect(result.html).toContain('aria-label="Inspect claim 1"');
     expect(result.html).toContain('aria-label="Inspect claim 2"');
     expect([...result.targets.values()]).toEqual(["outer", "inner"]);
+    expect(result.html.match(/class="kn-claim-indicator"/g)).toHaveLength(2);
+    expect(result.html).not.toContain('class="kn-claim-span" tabindex');
+    expect(result.html).not.toContain('role="button"');
+    expect(result.html).toMatch(/blue pencils<button[^>]+class="kn-claim-indicator"/);
+    expect(result.html).toMatch(/<\/button><\/span>\.<button[^>]+class="kn-claim-indicator"/);
     expect(DOMPurify.sanitize).toHaveBeenLastCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -156,4 +181,17 @@ describe("claim-aware Markdown", () => {
     ).toEqual([]);
     expect(claimMarkupRanges("text", [{ id: "x", start: 100, end: 110 }])).toEqual([]);
   });
+});
+
+
+it.each([
+  ["Paragraph ends here.\n", /here\.<button[^>]*class="kn-claim-indicator"[^>]*>.*<\/button><\/p>/s],
+  ["- paper\n- pencils\n", /pencils<button[^>]*class="kn-claim-indicator"[^>]*>.*<\/button><\/li>/s],
+  ["| Item |\n| --- |\n| pencils |\n", /pencils<button[^>]*class="kn-claim-indicator"[^>]*>.*<\/button><\/td>/s],
+])("keeps a block claim indicator inside its last text line: %s", (body, pattern) => {
+  const markdown = `<claim id="block" refs="source:fixture">${body}</claim>`;
+  const result = renderKnowledgeMarkdown(markdown, [claim(markdown, "block")]);
+  expect(result.html).toMatch(pattern);
+  expect(result.html).toContain('<svg aria-hidden="true"');
+  expect(result.html).not.toMatch(/<button[^>]*>[^]*<button/);
 });

@@ -366,11 +366,12 @@ describe("Bootstrap panel — pause control", () => {
     // are afraid of.
     const { PauseControl } = await import("./cognition-bootstrap.js");
     const text = allText(PauseControl({ status: RUNNING, busy: false, error: null, onToggle: () => {} }));
-    expect(text).toContain("Work already done is kept");
+    expect(text).toContain("Pause new historical admissions");
+    expect(text).toContain("Already queued work and new evidence can still be processed");
     const off = allText(
       PauseControl({ status: { ...RUNNING, state: "off" }, busy: false, error: null, onToggle: () => {} }),
     );
-    expect(off).toContain("picks up exactly where it stopped");
+    expect(off).toContain("Existing progress is retained");
   });
 
   it("toggles toward the opposite of the lane's current state", async () => {

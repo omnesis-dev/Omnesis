@@ -7,24 +7,16 @@ import { navigate } from "../lib/router.js";
 const brain = (key, label) => ({ key: `cognition/${key}`, label, experimental: true });
 const GROUPS = [
   {
-    key: "knowledge",
-    label: "Knowledge",
+    key: "cognition",
+    label: "Cognition",
     items: [
       brain("knowledge", "Library"),
-      brain("briefs", "Briefs"),
       { key: "calendar", label: "Timeline" },
-    ],
-  },
-  {
-    key: "brain",
-    label: "Brain activity",
-    items: [
-      brain("overview", "Activity"),
       brain("runs", "Agent runs"),
       brain("maintenance", "Maintenance"),
       brain("bootstrap", "Discovery"),
-      brain("calibration", "Calibration"),
-      brain("memory", "Legacy memory"),
+      brain("calibration", "Confidence & feedback"),
+      brain("notes", "Behavioral notes"),
     ],
   },
   {
@@ -53,12 +45,12 @@ export function debugNavigation(experimental, tab, cognitionTab) {
     ...group,
     items: group.items.filter((item) => !item.experimental || experimental),
   })).filter((group) => group.items.length);
-  const requested = cognitionTab === "loops" ? "knowledge" : cognitionTab === "scheduled" ? "runs" : cognitionTab || "overview";
+  const requested = cognitionTab === "memory" ? "notes" : ["loops", "briefs"].includes(cognitionTab) ? "knowledge" : cognitionTab === "scheduled" ? "runs" : cognitionTab || "runs";
   const section = GROUPS.some((group) =>
     group.items.some((item) => item.key === `cognition/${requested}`),
   )
     ? requested
-    : "overview";
+    : "runs";
   const key = tab === "cognition" ? `cognition/${section}` : tab;
   const active =
     groups.find((group) => group.items.some((item) => item.key === key)) ??

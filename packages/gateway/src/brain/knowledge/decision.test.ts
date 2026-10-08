@@ -6,6 +6,38 @@ import { createLogger, type DecisionCapability } from "@omnesis/core";
 import { judgeKnowledge } from "./decision.js";
 
 describe("knowledge decision scores", () => {
+  it("versions only discovery's rubric and explicitly keeps uncertain evidence", async () => {
+    const record = vi.fn();
+    const decision: DecisionCapability = {
+      modelId: "scripted",
+      dispose() {},
+      async decide(request) {
+        const question = request.questions.discovery;
+        expect(question).toMatchObject({
+          type: "score",
+          instructions: expect.stringContaining(
+            "uncertainty must receive at least the middle level",
+          ),
+        });
+        return { model: "scripted", answers: { discovery: { type: "score", score: 1 } } };
+      },
+    };
+    expect(
+      await judgeKnowledge(
+        {
+          getDecision: () => decision,
+          record,
+          recordSpend: async () => {},
+          log: createLogger("test:knowledge-decision"),
+        },
+        "discovery",
+        { source: { content: "Uncertain meaning" } },
+      ),
+    ).toBe(0.5);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ rubricVersion: "knowledge-discovery-value-v3" }),
+    );
+  });
   it.each([
     [0, 0],
     [1, 0.5],

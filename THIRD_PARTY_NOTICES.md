@@ -165,7 +165,8 @@ travels with the upstream project at <https://github.com/rsms/inter>.
 
 Source packages, the web portal and the Chrome extension bundle selected SVG glyphs from [Lucide](https://lucide.dev),
 including the generic voicemail glyph, the Astroid glyph for agentic browser search,
-and the Infinity and Notepad Text glyphs for knowledge links. Lucide is
+and the Infinity, Notepad Text, Quote, Info, Sticky Note, User and File Text glyphs
+for knowledge links and claim inspection. Lucide is
 licensed under ISC:
 
 > Copyright (c) 2026 Lucide Icons and Contributors

@@ -32,7 +32,6 @@ import type {
   BootstrapBacklog,
   BootstrapTimelineReader,
   BootstrapTimeline,
-  BootstrapTimelineProbe,
   BootstrapBacklogReader,
   BootstrapSettingsView,
 } from "./bootstrap-status.js";
@@ -146,6 +145,14 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
         )
       : undefined;
 
+  const knowledgeTimelineProbe = io?.knowledgeDiscoveryByMonth
+    ? new CachedScanProbe(
+        () => query.knowledgeDiscoveryTimeline(io, now),
+        BOOTSTRAP_TIMELINE_TTL_MS,
+        now,
+      )
+    : undefined;
+
   mountCognitionListAdminRoutes(context, {
     clock: opts.clock,
     writeGate: opts.writeGate,
@@ -153,6 +160,7 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
     getBudgetSettings: opts.getBudgetSettings,
     backlogProbe,
     timelineProbe,
+    knowledgeTimelineProbe,
     startBootstrap: opts.startBootstrap,
   });
   mountCognitionLoopAdminRoutes(context);

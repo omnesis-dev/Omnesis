@@ -34,3 +34,39 @@ it("recognizes only local canonical navigation paths for private metadata hydrat
   expect(knowledgeLinkReference("/portal/doc/%zz")).toBeNull();
   expect(knowledgeIconHtml({ kind: "root" })).toContain("kn-link-icon--wiki");
 });
+
+it("uses the same decorative glyphs for brief and canonical annotation links", () => {
+  const brief = knowledgeIconHtml({ reference: "brief:brief_invented" });
+  expect(brief).toContain('<circle cx="12" cy="12" r="10"/>');
+  expect(brief).toContain('aria-hidden="true"');
+  const person = knowledgeIconHtml({ kind: "person_annotation" });
+  const document = knowledgeIconHtml({ kind: "doc_annotation" });
+  expect(person).toContain("kn-link-icon-badge--user");
+  expect(document).toContain("kn-link-icon-badge--file");
+  expect(person).not.toContain("kn-link-icon-badge--file");
+  expect(document).not.toContain("kn-link-icon-badge--user");
+  expect(knowledgeIconHtml({ reference: "annotation:unknown" })).toContain(
+    "kn-link-icon--annotation",
+  );
+  expect(knowledgeIconHtml({ reference: "annotation:unknown" })).not.toContain(
+    "kn-link-icon-badge",
+  );
+});
+
+it("hydrates exact annotation kinds without guessing ownership from an identifier", () => {
+  const metadata = { kind: "person_annotation", title: "Fictional practice notes" };
+  const reference = "annotation:panno_invented#field:claimText";
+  expect(knowledgeReferenceMetadata(reference, { "node:panno_invented": metadata })).toEqual(
+    metadata,
+  );
+  expect(knowledgeIconHtml({ reference, ...metadata })).toContain("kn-link-icon-badge--user");
+  expect(knowledgeLinkReference("/portal/debug/cognition/briefs/brief_invented")).toBe(
+    "brief:brief_invented",
+  );
+  expect(knowledgeLinkReference("/portal/debug/cognition/loops/loop_invented")).toBe(
+    "loop:loop_invented",
+  );
+  expect(knowledgeLinkReference("brief_invented")).toBe("brief:brief_invented");
+  expect(knowledgeLinkReference("anno_invented")).toBe("annotation:anno_invented");
+  expect(knowledgeLinkReference("https://example.org/portal/debug/cognition/briefs/private")).toBeNull();
+});

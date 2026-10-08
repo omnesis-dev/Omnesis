@@ -22,6 +22,7 @@
 import {
   renderCognitionRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,
+  renderRetrievalContext,
   renderTemporalRetrievalGuidance,
 } from "@omnesis/agent";
 import { hostTimeZone, normalizeTimeZone, utcOffsetLabel } from "@omnesis/core";
@@ -101,6 +102,8 @@ export interface SystemPromptInput {
    * leaves the machine is still decided by the privacy reviewer downstream.
    */
   operatorInstructions?: string;
+  /** Already privacy-filtered, wrapped root orientation from the gateway. */
+  knowledgeRootContext?: string;
 }
 
 /**
@@ -233,6 +236,7 @@ function buildSubagentSystemPrompt(input: SystemPromptInput): string {
     sourceTypes: input.sourceTypes,
     catalog: input.catalog,
     fetchBatchLimit: 16,
+    catalogMode: "context",
     includeTemporal: input.temporal === true,
     includeCognition: input.experimental === true,
     graphContext: input.graphContext === true,
@@ -257,8 +261,6 @@ You are an **Omnesis read-only sub-agent**. Omnesis indexes the user's private d
 
 You do not see the parent conversation. Do not ask follow-up questions, address the user, make plans for later, or delegate further. Investigate your assigned branch fully and return one concise, evidence-grounded finding for the parent to compare and synthesize.
 
-${callerZoneBlock}
-
 # Boundaries
 
 - Work only from the user's Omnesis corpus, analytics database, and derived cognitive substrate. There is no web search or general-purpose code execution.
@@ -279,7 +281,13 @@ ${graphGuidance(input.graphContext)}
 
 Call \`annotate_many\` once with every document whose facts, quotes, dates, names, or conclusions you rely on. These annotations are deliberate evidence references propagated to the parent; they grant no write capability. Do not annotate documents you merely inspected and discarded. Use exact quotes sparingly and include \`quoteAuthor\` for email or conversation quotes.
 
-Your final response is a compact finding, not a user-facing answer: lead with the conclusion, include the decisive evidence and caveats, and leave synthesis to the parent.${selfMemorySection}${operatorSection}`;
+Your final response is a compact finding, not a user-facing answer: lead with the conclusion, include the decisive evidence and caveats, and leave synthesis to the parent.
+
+${operatorSection}
+
+${renderRetrievalContext(input)}${selfMemorySection}${input.knowledgeRootContext ?? ""}
+
+${callerZoneBlock}`;
 }
 
 /**
@@ -318,6 +326,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     sourceTypes: input.sourceTypes,
     catalog: input.catalog,
     fetchBatchLimit: 16,
+    catalogMode: "context",
     includeTemporal: false,
     includeCognition: false,
     graphContext: input.graphContext === true,
@@ -401,8 +410,6 @@ You are **Omnesis** — the conversational interface over the user's personal in
 Omnesis indexes the user's digital life **locally on their machine**: email, calendar events, files, notes, messages, contacts, health data, fitness activities, browser history, bookmarks, and tasks. Every byte stays on the user's hardware; nothing is sent to a third party except the tokens of this conversation itself flowing to you.
 
 You are **not a general assistant**. You are the user's **second brain made queryable** — your unique value is that you can answer questions about the user's own life that no general-purpose assistant could, because you can read across the user's private corpus.
-
-${callerZoneBlock}
 
 # What you do well
 
@@ -592,8 +599,7 @@ Discretion governs *how* you handle what you find, never *whether* you retrieve 
 
 ${loopsSection}
 ${timeSection}
-${selfMemorySection}
-${input.memoryWrites ? renderMemoryWriteGuidance(input.selfPersonId) : ""}
+${input.memoryWrites ? MEMORY_WRITE_GUIDANCE : ""}
 ${watchSection}
 
 # A final note on grounding
@@ -605,7 +611,13 @@ You operate **read-only against documents** — you cannot send messages, create
 You exist because the user's life is too big, too cross-source, and too poorly-indexed in their head to navigate manually. Your job is to compress that complexity into one useful answer per turn — grounded in their own data, cited, and brief.`;
 
   const finished = input.citationSurface === false ? removeCitationSurfaceGuidance(prompt) : prompt;
-  return `${finished}${operatorSection}`;
+  return `${finished}
+
+${operatorSection}
+
+${renderRetrievalContext(input)}${selfMemorySection}${input.memoryWrites ? `\n\n${renderSelfIdentity(input.selfPersonId)}` : ""}${input.knowledgeRootContext ?? ""}
+
+${callerZoneBlock}`;
 }
 
 function removeCitationSurfaceGuidance(prompt: string): string {
@@ -673,9 +685,9 @@ For facts learned in this chat, first call conversation_memory_evidence({}). It 
 Preserve what the evidence says: a preference is not a restriction, a plan is not a completed action, and a user's report about someone else is a report. Record user testimony as such in claimText when attribution matters. Keep remembered facts concise and useful across conversations; avoid passing details and speculative deductions. An explicit “remember” request should be saved when grounded; volunteered durable preferences or context may also be remembered with a brief acknowledgment. Acknowledge saving, correction, or forgetting only after the corresponding tool succeeds. Retraction removes the annotation, not its source conversation; do not recreate forgotten memory unless the user asks to remember it again.
 `;
 
-function renderMemoryWriteGuidance(selfPersonId: string | null | undefined): string {
+function renderSelfIdentity(selfPersonId: string | null | undefined): string {
   const identity = selfPersonId
     ? `The user's self person ID is ${JSON.stringify(selfPersonId)}. Use it for facts about the user.`
     : "The user's self identity has not been established. Do not invent a person ID or attach their facts to another person; explain that their self identity needs to be set up before saving self-memory.";
-  return `${MEMORY_WRITE_GUIDANCE}\n${identity}`;
+  return identity;
 }

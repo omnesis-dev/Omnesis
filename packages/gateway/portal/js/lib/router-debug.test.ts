@@ -211,8 +211,9 @@ describe("Cognition sub-routes", () => {
     expect(route("/portal/debug/cognition")).toEqual({
       view: "debug",
       tab: "cognition",
-      cognitionTab: "overview",
+      cognitionTab: "runs",
       cognitionId: null,
+      redirectTo: "/portal/debug/cognition/runs",
     });
     expect(route("/portal/debug/cognition/runs/run-42")).toEqual({
       view: "debug",
@@ -260,4 +261,13 @@ test("retired loop routes preserve identity in the knowledge library", () => {
     redirectTo: "/portal/debug/cognition/knowledge/outcome%2Fone?kind=loop",
   });
   expect(route("/portal/debug/cognition/loops").redirectTo).toBe("/portal/debug/cognition/knowledge?kind=loop");
+});
+
+
+test("brief deep links preserve identity in the unified library", () => {
+  expect(route("/portal/debug/cognition/briefs/brief%2Ffixture")).toEqual({
+    view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: "brief/fixture",
+    redirectTo: "/portal/debug/cognition/knowledge/brief%2Ffixture?kind=brief",
+  });
+  expect(route("/portal/debug/cognition/briefs").redirectTo).toBe("/portal/debug/cognition/knowledge?kind=brief");
 });

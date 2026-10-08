@@ -3,7 +3,8 @@
 
 // Discovery status and historical-backfill controls. Knowledge mode reports
 // source revision admission and synthesis coverage; legacy mode retains its
-// document backlog/timeline. Start and Pause change historical admission only.
+// document backlog/timeline. Both show historical coverage; Start and Pause
+// change historical admission only.
 
 import { html } from "htm/preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
@@ -17,6 +18,7 @@ import {
   startCognitionBootstrap,
 } from "../api.js";
 import { TimelineHero } from "./cognition-timeline.js";
+import { KnowledgeHistoryTimeline } from "./knowledge-history-timeline.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { StatCard, fmtRel, fmtTs } from "./cognition.js";
 
@@ -638,6 +640,12 @@ export function KnowledgeInventoryMilestones({ inventory = [] }) {
 }
 
 export function KnowledgeBootstrapPanel({
+  timeline,
+  timelineLoading,
+  timelineError,
+  onRefreshTimeline,
+  timelinePhase,
+  onTimelinePhaseChange,
   status,
   budget,
   blockedGate,
@@ -650,6 +658,9 @@ export function KnowledgeBootstrapPanel({
 }) {
   const admission = status.admission;
   return html`<div>
+    <${KnowledgeHistoryTimeline} timeline=${timeline} loading=${timelineLoading}
+      error=${timelineError} onRefresh=${onRefreshTimeline}
+      phase=${timelinePhase} onPhaseChange=${onTimelinePhaseChange} />
     ${blockedGate &&
     html`<div class="cognition-gate-notice">
       <strong>Omnesis Brain is not running.</strong> These are stored milestones.
@@ -736,6 +747,7 @@ export function BootstrapTab() {
   const [pausing, setPausing] = useState(false);
   const [pauseError, setPauseError] = useState(null);
   const [timeline, setTimeline] = useState(null);
+  const [timelinePhase, setTimelinePhase] = useState("interpretation");
   const [timelineError, setTimelineError] = useState(null);
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [starting, setStarting] = useState(false);
@@ -800,7 +812,7 @@ export function BootstrapTab() {
       .finally(() => setTimelineLoading(false));
   }, []);
   useEffect(() => {
-    if (status && status.mode !== "knowledge") void loadTimeline();
+    if (status) void loadTimeline();
   }, [loadTimeline, status !== null, status?.mode]);
 
   const beginBackfill = useCallback(async () => {
@@ -899,6 +911,12 @@ export function BootstrapTab() {
 
   if (status.mode === "knowledge")
     return html`<${KnowledgeBootstrapPanel}
+      timeline=${timeline}
+      timelineLoading=${timelineLoading}
+      timelineError=${timelineError}
+      onRefreshTimeline=${loadTimeline}
+      timelinePhase=${timelinePhase}
+      onTimelinePhaseChange=${setTimelinePhase}
       status=${status}
       budget=${budget}
       blockedGate=${blockedGate}

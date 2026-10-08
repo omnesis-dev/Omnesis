@@ -328,7 +328,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   const libraryRequests: string[] = [];
   const trackLibraryRequests = (request: import("@playwright/test").Request) => {
     const path = new URL(request.url()).pathname;
-    if (path === "/admin/brain/knowledge" || path === "/admin/brain/knowledge/status")
+    if (path === "/admin/brain/knowledge/library" || path === "/admin/brain/knowledge/status")
       libraryRequests.push(request.url());
   };
   page.on("request", trackLibraryRequests);
@@ -402,9 +402,34 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await expect(page.locator(".kn-claim-span")).toHaveCount(0);
   await page.getByRole("button", { name: "Markdown", exact: true }).click();
   const nestedClaim = page.getByRole("button", { name: "Inspect claim 3", exact: true });
+  await page.locator(".kn-claim-reader").evaluate((element) => {
+    element.style.width = "180px";
+  });
+  for (const tail of await page.locator(".kn-claim-tail").all()) {
+    expect(
+      await tail.evaluate((element) => {
+        const text = document.createRange();
+        text.selectNodeContents(element.firstElementChild!);
+        const lastLine = [...text.getClientRects()].at(-1)!;
+        return [...element.querySelectorAll("button")].every(
+          (button) => Math.abs(button.getBoundingClientRect().top - lastLine.top) < 16,
+        );
+      }),
+    ).toBe(true);
+  }
+  await page.screenshot({ path: info.outputPath("claim-indicators-narrow.png"), fullPage: true });
+  await page.locator(".kn-claim-reader").evaluate((element) => {
+    element.style.width = "";
+  });
+
+  await expect(page.locator(".kn-claim-span--active")).toHaveCount(0);
+  await page.locator(".kn-prose").getByText("pencils", { exact: true }).hover();
+  await expect(page.getByRole("dialog", { name: "Claim details", exact: true })).toHaveCount(0);
+  await expect(page.locator(".kn-claim-span--active")).toHaveCount(0);
   await nestedClaim.hover();
   const preview = page.getByRole("dialog", { name: "Claim details", exact: true });
   await expect(preview).toContainText("Claim pencils");
+  await expect(page.locator(".kn-claim-span--active")).toHaveCount(1);
   await expect(preview).toContainText("Within claim");
   await expect(preview).toContainText("References from this claim (1)");
   await expect(preview).not.toContainText("source:");
@@ -416,6 +441,8 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     `/portal/doc/${encodeURIComponent(documentId!)}`,
   );
   await expect(previewSource.locator("img.kn-link-icon--source")).toBeVisible();
+  await previewSource.hover();
+  await expect(page.locator(".kn-claim-span--active")).toHaveCount(1);
   const previewConsumer = preview.getByRole("link", { name: "Current focus", exact: true });
   await expect(previewConsumer).toHaveAttribute(
     "href",
@@ -638,7 +665,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
 test("knowledge network failure offers a working retry", async ({ page }, info) => {
   await page.goto(url(`/portal/?token=${encodeURIComponent(token())}`));
   await expect(page.locator("nav.sidebar-nav")).toBeVisible();
-  await page.route("**/admin/brain/knowledge?*", (request) => request.abort());
+  await page.route("**/admin/brain/knowledge/library?*", (request) => request.abort());
   await page.goto(url(route));
   await expect(page.getByText("Knowledge could not be loaded", { exact: true })).toBeVisible();
   await page.screenshot({
@@ -646,7 +673,7 @@ test("knowledge network failure offers a working retry", async ({ page }, info) 
     fullPage: true,
     animations: "disabled",
   });
-  await page.unroute("**/admin/brain/knowledge?*");
+  await page.unroute("**/admin/brain/knowledge/library?*");
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByRole("searchbox", { name: "Search knowledge" })).toBeVisible();
   await expect(page.getByText("Knowledge could not be loaded", { exact: true })).toHaveCount(0);
@@ -659,9 +686,41 @@ test("brain navigation remains usable across its existing sections", async ({ pa
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(url(`/portal/?token=${encodeURIComponent(token())}`));
   await expect(page.locator("nav.sidebar-nav")).toBeVisible();
-  for (const section of ["overview", "runs", "briefs", "memory", "calibration", "bootstrap"]) {
+  for (const section of ["overview", "runs", "notes", "memory", "calibration", "bootstrap"]) {
     await page.goto(url(`/portal/debug/cognition/${section}`));
     await expect(page.locator(".cognition-content")).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Debug areas" })
+        .getByRole("link", { name: "Cognition", exact: true }),
+    ).toHaveCount(1);
+    await expect(
+      page
+        .getByRole("navigation", { name: "Debug areas" })
+        .getByRole("link", { name: "Knowledge", exact: true }),
+    ).toHaveCount(0);
+    if (section === "overview" || section === "runs") {
+      await expect(page).toHaveURL(/cognition\/runs$/);
+      await expect(page.getByRole("region", { name: "Agent health and spend" })).toBeVisible();
+      await expect(
+        page.getByText("Token breakdown · last 14 recorded days", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page
+          .getByRole("navigation", { name: "Cognition views" })
+          .getByRole("link", { name: "Activity", exact: true }),
+      ).toHaveCount(0);
+    }
+    if (section === "memory" || section === "notes") {
+      await expect(
+        page.getByRole("heading", { name: "Behavioral notes", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("link", { name: "Behavioral notes", exact: true }),
+      ).toHaveAttribute("aria-current", "page");
+      await expect(page.getByText("Consolidation store", { exact: true })).toHaveCount(0);
+    }
+
     await expect
       .poll(() => page.locator(".debug-workspace").evaluate((el) => getComputedStyle(el).width))
       .not.toBe("auto");
@@ -693,6 +752,12 @@ test("brain navigation remains usable across its existing sections", async ({ pa
     });
     await page.setViewportSize({ width: 1440, height: 1000 });
   }
+  await page.goto(url(`${route}?kind=loop&view=retired`));
+  await expect(page.getByRole("combobox", { name: "Loop status" })).toHaveValue("retired");
+  await expect(page.getByRole("navigation", { name: "Outcome views" })).toHaveCount(0);
+  await page.goto(url("/portal/debug/cognition/briefs"));
+  await expect(page).toHaveURL(/knowledge\?kind=brief$/);
+  await expect(page.getByRole("combobox", { name: "Brief status" })).toHaveValue("all");
   for (const section of [
     "data",
     "sql",
@@ -897,7 +962,7 @@ test("populated operational readers preserve mobile navigation", async ({ page }
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(
       page.getByRole("link", {
-        name: new RegExp(`Back to ${section === "loops" ? "library" : section}$`),
+        name: new RegExp(`Back to ${["loops", "briefs"].includes(section) ? "library" : section}$`),
       }),
     ).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -910,12 +975,12 @@ test("populated operational readers preserve mobile navigation", async ({ page }
     });
     await page
       .getByRole("link", {
-        name: new RegExp(`Back to ${section === "loops" ? "library" : section}$`),
+        name: new RegExp(`Back to ${["loops", "briefs"].includes(section) ? "library" : section}$`),
       })
       .click();
     await expect(page).toHaveURL(
-      section === "loops"
-        ? /cognition\/knowledge(?:\?kind=loop)?$/
+      ["loops", "briefs"].includes(section)
+        ? new RegExp(`/cognition/knowledge(?:\\?kind=${section === "briefs" ? "brief" : "loop"})?$`)
         : new RegExp(`/cognition/${section}$`),
     );
     if (section === "loops") {
