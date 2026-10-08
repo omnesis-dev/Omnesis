@@ -28,12 +28,28 @@ export const MAX_FIND_QUERY = 1024;
 const FIND_SEARCH_TIMEOUT_MS = 195_000;
 /** Suggestions per omnibox keystroke: Chrome displays at most six from an extension. */
 export const OMNIBOX_SUGGESTIONS = 6;
+/** Earlier searches kept so a Find page reached by Back shows its own results. */
+export const FIND_RUN_HISTORY = 5;
+const RUN_ID = /^[A-Za-z0-9-]{1,64}$/;
+export const isFindRunId = (value: unknown): value is string =>
+  typeof value === "string" && RUN_ID.test(value);
 export interface FindDecision {
   mode: "direct" | "agentic";
   status: "decided" | "not_configured" | "unavailable";
   reason: string;
   model?: string;
   requested?: boolean;
+}
+/** One search's outcome, addressed by the id its Find page carries in its URL. */
+interface FindRun {
+  id: string;
+  query: string;
+  mode?: FindMode;
+  results: FindResult[];
+  decision?: FindDecision;
+  agentText?: string;
+  complete: boolean;
+  error?: string;
 }
 interface FindState {
   pairing: string;
@@ -49,6 +65,7 @@ interface FindState {
   requestId?: string;
   query: string;
   mode?: FindMode;
+  runId?: string;
   resultsQuery: string;
   resultsMode?: FindMode;
   results: FindResult[];
@@ -57,6 +74,7 @@ interface FindState {
   complete: boolean;
   progressRevision?: number;
   error?: string;
+  runs: FindRun[];
 }
 export interface FindView {
   canonicalizers: UrlCanonicalizerSpec[];
@@ -65,6 +83,8 @@ export interface FindView {
   pendingApproval: boolean;
   query: string;
   mode?: FindMode;
+  /** The search these results belong to; absent when the requested search is no longer kept. */
+  runId?: string;
   resultsQuery: string;
   resultsMode?: FindMode;
   results: FindResult[];
@@ -89,8 +109,72 @@ function eraseRetrievedCache(state: FindState): void {
   state.results = [];
   state.resultsQuery = "";
   state.complete = true;
+  state.runs = [];
+  delete state.runId;
   delete state.agentText;
   delete state.decision;
+}
+const readMode = (value: unknown): FindMode | undefined =>
+  value === "direct" || value === "agentic" ? value : undefined;
+function readDecision(value: unknown): FindDecision | undefined {
+  const decision = value as Partial<FindDecision> | null | undefined;
+  return decision &&
+    (decision.mode === "direct" || decision.mode === "agentic") &&
+    typeof decision.reason === "string"
+    ? ({ ...decision, requested: decision.requested === true } as FindDecision)
+    : undefined;
+}
+function readResults(value: unknown, canonicalizers: UrlCanonicalizerSpec[]): FindResult[] {
+  if (!Array.isArray(value)) return [];
+  return dedupeFindResults(
+    (value as Partial<FindResult>[])
+      .filter(
+        (item): item is FindResult =>
+          !!item &&
+          typeof item.id === "string" &&
+          !!browserUrl(item.url) &&
+          typeof item.title === "string" &&
+          typeof item.snippet === "string" &&
+          typeof item.source === "string",
+      )
+      .slice(0, 200),
+    canonicalizers,
+  );
+}
+function readRuns(value: unknown, canonicalizers: UrlCanonicalizerSpec[]): FindRun[] {
+  if (!Array.isArray(value)) return [];
+  return (value as Partial<FindRun>[])
+    .filter((run) => !!run && isFindRunId(run.id) && typeof run.query === "string")
+    .slice(0, FIND_RUN_HISTORY)
+    .map((run) => {
+      const decision = readDecision(run.decision);
+      return {
+        id: run.id!,
+        query: run.query!.slice(0, MAX_FIND_QUERY),
+        mode: readMode(run.mode),
+        results: readResults(run.results, canonicalizers),
+        complete: run.complete !== false,
+        ...(decision ? { decision } : {}),
+        ...(typeof run.agentText === "string" ? { agentText: run.agentText.slice(0, 32000) } : {}),
+        ...(typeof run.error === "string" ? { error: run.error.slice(0, 2000) } : {}),
+      };
+    });
+}
+/** Moves the current search into the history so a new one can take its place. */
+function archiveCurrentRun(state: FindState): void {
+  if (!state.runId) return;
+  const run: FindRun = {
+    id: state.runId,
+    query: state.resultsQuery,
+    mode: state.resultsMode,
+    results: state.results,
+    complete: state.complete,
+    ...(state.decision ? { decision: state.decision } : {}),
+    ...(state.agentText !== undefined ? { agentText: state.agentText } : {}),
+    ...(state.error ? { error: state.error } : {}),
+  };
+  state.runs = [run, ...state.runs.filter((kept) => kept.id !== run.id)].slice(0, FIND_RUN_HISTORY);
+  delete state.runId;
 }
 const pairing = (config: ExtensionConfig): string => `${config.gatewayUrl}\0${config.deviceId}`;
 class FindHttpError extends Error {
@@ -136,8 +220,11 @@ export class FindService {
       resultsQuery: "",
       results: [],
       complete: true,
+      runs: [],
     };
     if (raw?.pairing !== empty.pairing) return { config, state: empty };
+    const canonicalizers = readCanonicalizers(raw.canonicalizers);
+    const decision = readDecision(raw.decision);
     return {
       config,
       state: {
@@ -146,12 +233,13 @@ export class FindService {
         automatic: raw.automatic === true,
         manualModes: raw.manualModes === true,
         experimental: raw.experimental === true,
-        canonicalizers: readCanonicalizers(raw.canonicalizers),
+        canonicalizers,
         sourceLabels: readSourceLabels(raw.sourceLabels),
         sourceAttributions: readSourceLabels(raw.sourceAttributions, 1024),
         sourceIcons: readSourceIcons(raw.sourceIcons),
         ...(typeof raw.token === "string" ? { token: raw.token } : {}),
         ...(typeof raw.requestId === "string" ? { requestId: raw.requestId } : {}),
+        ...(isFindRunId(raw.runId) ? { runId: raw.runId } : {}),
         query: parseFindQuery(
           typeof raw.query === "string" ? raw.query.slice(0, MAX_FIND_QUERY) : "",
         ).text,
@@ -166,31 +254,13 @@ export class FindService {
         resultsQuery: parseFindQuery(
           typeof raw.resultsQuery === "string" ? raw.resultsQuery.slice(0, MAX_FIND_QUERY) : "",
         ).text,
-        results: Array.isArray(raw.results)
-          ? dedupeFindResults(
-              raw.results
-                .filter(
-                  (item) =>
-                    item &&
-                    typeof item.id === "string" &&
-                    browserUrl(item.url) &&
-                    typeof item.title === "string" &&
-                    typeof item.snippet === "string" &&
-                    typeof item.source === "string",
-                )
-                .slice(0, 200),
-              readCanonicalizers(raw.canonicalizers),
-            )
-          : [],
+        results: readResults(raw.results, canonicalizers),
         complete: raw.complete !== false,
         progressRevision: typeof raw.progressRevision === "number" ? raw.progressRevision : 0,
-        ...(raw.decision &&
-        ["direct", "agentic"].includes(raw.decision.mode) &&
-        typeof raw.decision.reason === "string"
-          ? { decision: { ...raw.decision, requested: raw.decision.requested === true } }
-          : {}),
+        ...(decision ? { decision } : {}),
         ...(typeof raw.agentText === "string" ? { agentText: raw.agentText.slice(0, 32000) } : {}),
         ...(typeof raw.error === "string" ? { error: raw.error } : {}),
+        runs: readRuns(raw.runs, canonicalizers),
       },
     };
   }
@@ -366,8 +436,36 @@ export class FindService {
     }
     await this.persist(config, state);
   }
-  private view(state?: FindState): FindView {
+  /**
+   * The view of the current search, or of `runId` when a Find page asks for
+   * its own earlier search. An earlier search is finished and read-only; a
+   * forgotten one is reported without results and without a run id.
+   */
+  private view(state?: FindState, runId?: string): FindView {
     const enabled = !!state?.supported && !!state.token;
+    if (state && runId !== undefined && runId !== state.runId) {
+      const run = state.runs.find((kept) => kept.id === runId);
+      return {
+        canonicalizers: enabled ? state.canonicalizers : [],
+        supported: state.supported,
+        enabled,
+        pendingApproval: false,
+        query: state.query,
+        mode: state.mode,
+        ...(run ? { runId: run.id } : {}),
+        resultsQuery: run?.query ?? "",
+        resultsMode: run?.mode,
+        results: enabled && run ? run.results : [],
+        decision: enabled ? run?.decision : undefined,
+        agentText: enabled ? run?.agentText : undefined,
+        tools: [],
+        sourceLabels: enabled ? state.sourceLabels : {},
+        sourceIcons: enabled ? state.sourceIcons : {},
+        running: false,
+        interrupted: enabled && !!run && !run.complete,
+        error: run?.error ?? state.error,
+      };
+    }
     return {
       canonicalizers: enabled ? state!.canonicalizers : [],
       supported: state?.supported ?? false,
@@ -375,6 +473,7 @@ export class FindService {
       pendingApproval: false,
       query: state?.query ?? "",
       mode: state?.mode,
+      ...(state?.runId ? { runId: state.runId } : {}),
       resultsMode: state?.resultsMode,
       resultsQuery: state?.resultsQuery ?? "",
       results: enabled ? state!.results : [],
@@ -406,12 +505,12 @@ export class FindService {
       error: state?.error,
     };
   }
-  status(fresh = true): Promise<FindView> {
+  status(fresh = true, runId?: string): Promise<FindView> {
     return this.run(async () => {
       const loaded = await this.load();
       if (!loaded) return this.view();
       if (fresh) await this.refresh(loaded.config, loaded.state);
-      return this.view(loaded.state);
+      return this.view(loaded.state, runId);
     });
   }
   update(query: string, mode?: FindMode | null): Promise<FindView> {
@@ -503,7 +602,12 @@ export class FindService {
       if (this.suggestionAbort === controller) this.suggestionAbort = undefined;
     }
   }
-  async search(query: string, mode?: FindMode | null): Promise<FindView> {
+  /** Starts a search identified by `runId`, which its Find page keeps to come back to it. */
+  async search(
+    query: string,
+    mode?: FindMode | null,
+    runId: string = crypto.randomUUID(),
+  ): Promise<FindView> {
     this.suggestionAbort?.abort();
     query = query.slice(0, MAX_FIND_QUERY);
     const parsed = parseFindQuery(query);
@@ -514,7 +618,7 @@ export class FindService {
     this.searchAbort = controller;
     const progress = new FindProgress();
     this.active = { generation, query, tools: progress };
-    this.transcript = { query, id: crypto.randomUUID(), progress };
+    this.transcript = { query, id: runId, progress };
     try {
       const loaded = await this.run(async () => {
         const loaded = await this.load();
@@ -532,7 +636,7 @@ export class FindService {
       }
       if (generation !== this.searchGeneration || controller.signal.aborted) {
         if (this.active?.generation === generation) this.active = undefined;
-        return this.status(false);
+        return this.status(false, runId);
       }
       const { config, state } = loaded;
       if (!state.supported || !state.token) {
@@ -544,6 +648,9 @@ export class FindService {
       if (this.transcript?.query === query) this.transcript.mode = requestedMode;
       const authorizationToken = state.token;
       const limit = 30;
+      archiveCurrentRun(state);
+      state.runs = state.runs.filter((kept) => kept.id !== runId);
+      state.runId = runId;
       state.resultsQuery = query;
       state.resultsMode = requestedMode;
       state.results = [];
@@ -674,7 +781,7 @@ export class FindService {
             throw new Error("Search was interrupted. Results are kept; try again.");
         }
       } catch (error) {
-        if (generation !== this.searchGeneration) return this.status(false);
+        if (generation !== this.searchGeneration) return this.status(false, runId);
         if (error instanceof FindHttpError && [401, 403, 404, 410].includes(error.status)) {
           eraseRetrievedCache(state);
           delete state.token;
@@ -692,7 +799,7 @@ export class FindService {
         }
       }
       await publish();
-      return this.status(false);
+      return this.status(false, runId);
     } finally {
       if (this.active?.generation === generation) this.active = undefined;
       if (this.searchAbort === controller) this.searchAbort = undefined;

@@ -60,10 +60,19 @@ export function highlightFindText(
   element.appendChild(document.createTextNode(text.slice(offset)));
 }
 
+export interface FindPanelOptions {
+  initialQuery?: string;
+  initialMode?: FindMode | null;
+  /** The search this page showed before, which it shows again instead of searching. */
+  runId?: string;
+  /** Called as each search starts, so the page's URL can name it for Back and reload. */
+  onSearch?(search: { query: string; mode: FindMode | null; runId: string }): void;
+}
+
 export function initFindPanel(
   document: Document,
   api: PanelApi,
-  options: { initialQuery?: string; initialMode?: FindMode | null } = {},
+  options: FindPanelOptions = {},
 ): void {
   const element = <T extends HTMLElement>(id: string): T => {
     const value = document.getElementById(id);
@@ -86,6 +95,7 @@ export function initFindPanel(
   let mode: FindMode | null | undefined =
     options.initialQuery !== undefined ? (initial.mode ?? options.initialMode ?? null) : undefined;
   if (dirtyInput) input.value = initial.text;
+  let run = options.runId;
   let refreshGeneration = 0;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   const settings = element<HTMLButtonElement>("find-settings");
@@ -119,6 +129,7 @@ export function initFindPanel(
       const response = await api.runtime.sendMessage<{ ok?: boolean; reason?: string }>({
         type: "find-result",
         resultId: result.id,
+        ...(run !== undefined ? { runId: run } : {}),
         newCopy,
       });
       if (!response?.ok) throw new Error(response?.reason ?? "This result could not open");
@@ -188,7 +199,9 @@ export function initFindPanel(
             (!input.value.trim()
               ? "Find something you remember."
               : !currentResults
-                ? "Press Enter to search."
+                ? run !== undefined && next.runId !== run && !searching
+                  ? "This search is no longer saved in the browser. Press Enter to search again."
+                  : "Press Enter to search."
                 : !next.results.length
                   ? "No browser links found. Try a different query."
                   : `${next.results.length} ${next.results.length === 1 ? "result" : "results"} · ↑ ↓ to choose · Enter to open`));
@@ -298,6 +311,7 @@ export function initFindPanel(
     try {
       const next = await api.runtime.sendMessage<FindPanelView>({
         type: cached ? "find-view" : "find-status",
+        ...(run !== undefined ? { runId: run } : {}),
       });
       if (request === refreshGeneration) render(next);
     } catch (error) {
@@ -311,6 +325,8 @@ export function initFindPanel(
       query = parsed.text;
     if (forcedMode ?? parsed.mode) mode = forcedMode ?? parsed.mode;
     input.value = query;
+    run = crypto.randomUUID();
+    options.onSearch?.({ query, mode: mode ?? null, runId: run });
     searching = true;
     agentSearch.disabled = true;
     selected = 0;
@@ -318,7 +334,7 @@ export function initFindPanel(
     form.setAttribute("aria-busy", "true");
     try {
       const next = await api.runtime.sendMessage<FindPanelView & { ok?: boolean; reason?: string }>(
-        { type: "find-query", query, ...(mode !== undefined ? { mode } : {}) },
+        { type: "find-query", query, runId: run, ...(mode !== undefined ? { mode } : {}) },
       );
       if (request !== generation) return;
       if (next?.ok === false) throw new Error(next.reason ?? "Search failed");
@@ -420,6 +436,7 @@ export function initFindPanel(
   });
   void refresh().then(() => {
     if (
+      options.runId === undefined &&
       options.initialQuery?.trim() &&
       view?.enabled &&
       generation === 0 &&

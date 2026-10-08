@@ -6,6 +6,7 @@ import {
   FIND_STATE_KEY,
   MAX_FIND_QUERY,
   FindService,
+  isFindRunId,
   type FindView,
   type FindResult,
 } from "./find-service.js";
@@ -59,15 +60,16 @@ export function installFindBackground(): {
   const detached = (task: Promise<unknown>): void => {
     void task.catch(() => undefined);
   };
-  function refresh(fresh = true): Promise<FindView> {
-    return service.status(fresh);
+  function refresh(fresh = true, runId?: string): Promise<FindView> {
+    return service.status(fresh, runId);
   }
   async function viewWithTabs(
     fresh = false,
+    runId?: string,
   ): Promise<
     FindView & { openResults: string[]; tabsPermission: boolean; faviconPermission: boolean }
   > {
-    const view = await refresh(fresh);
+    const view = await refresh(fresh, runId);
     const tabs = view.enabled ? await chrome.tabs.query({}) : [];
     return {
       ...view,
@@ -93,13 +95,17 @@ export function installFindBackground(): {
       mode?: unknown;
       tabId?: unknown;
       resultId?: unknown;
+      runId?: unknown;
       toolCallId?: unknown;
       progressId?: unknown;
       newCopy?: unknown;
     };
+    if (msg.runId !== undefined && !isFindRunId(msg.runId)) return false;
+    // A Find page names the search it shows, so Back or reload returns to it.
+    const runId = msg.runId;
     let task: Promise<unknown>;
-    if (msg.type === "find-status") task = viewWithTabs(true);
-    else if (msg.type === "find-view") task = viewWithTabs();
+    if (msg.type === "find-status") task = viewWithTabs(true, runId);
+    else if (msg.type === "find-view") task = viewWithTabs(false, runId);
     else if (
       findPage &&
       (msg.type === "find-update" || msg.type === "find-query") &&
@@ -112,9 +118,9 @@ export function installFindBackground(): {
     )
       task = (
         msg.type === "find-query"
-          ? service.search(msg.query, msg.mode)
+          ? service.search(msg.query, msg.mode, runId)
           : service.update(msg.query, msg.mode)
-      ).then(() => viewWithTabs());
+      ).then(() => viewWithTabs(false, msg.type === "find-query" ? runId : undefined));
     else if (
       findPage &&
       msg.type === "find-progress-flush" &&
@@ -127,7 +133,7 @@ export function installFindBackground(): {
     else if (findPage && msg.type === "find-cancel")
       task = service.cancel().then(() => viewWithTabs());
     else if (findPage && msg.type === "find-result" && typeof msg.resultId === "string")
-      task = service.status().then(async (view) => {
+      task = service.status(true, runId).then(async (view) => {
         if (!view.enabled) throw new Error("Find access is no longer available");
         const result = view.results.find((result) => result.id === msg.resultId);
         if (!result) throw new Error("This result is no longer available. Search again.");
