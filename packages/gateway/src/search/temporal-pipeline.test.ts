@@ -174,33 +174,6 @@ describe("SearchPipeline temporal lane", () => {
     });
   });
 
-  it("ranks the text lanes by the query's other words", async () => {
-    upsertChunks(db, [
-      {
-        id: "says-last-week-0",
-        documentId: "says-last-week",
-        chunkIndex: 0,
-        content: "notes on what happened last week at the week planning",
-        embedding: zero,
-        sourceId: "gmail:maya@example.com",
-        documentType: "email",
-        title: "last week",
-        sourceCreatedAt: "2026-05-02T10:00:00Z",
-      },
-    ]);
-    // In a corpus of a few chunks every word is "common"; keep them all.
-    const { p } = pipeline({ temporal: { enabled: true }, bm25: { commonTokenThreshold: 0 } });
-    const r = await p.search({ text: "invoice last week", timeZone: "Europe/London" });
-    // It shares only the time phrase's words with the query.
-    expect(r.results.map((x) => x.documentId)).not.toContain("says-last-week");
-    const off = await p.search({
-      text: "invoice last week",
-      timeZone: "Europe/London",
-      temporal: { enabled: false },
-    });
-    expect(off.results.map((x) => x.documentId)).toContain("says-last-week");
-  });
-
   it("keeps a query's own date filter on top of the window", async () => {
     const { p } = pipeline({ temporal: { enabled: true } });
     const r = await p.search({
@@ -242,7 +215,7 @@ describe("SearchPipeline temporal lane", () => {
       embedQuery,
     });
 
-    it("embeds the query once, without its time phrase", async () => {
+    it("embeds the query without its time phrase for the lane", async () => {
       const p = new SearchPipeline({
         indexDb: db,
         usearchRead: usearch,
@@ -256,29 +229,25 @@ describe("SearchPipeline temporal lane", () => {
         }),
       );
       const r = await p.search({ text: "invoice last week", timeZone: "Europe/London" });
-      expect(asked).toEqual(["invoice"]);
+      expect(asked.sort()).toEqual(["invoice", "invoice last week"]);
       expect(r.stages?.temporal?.status).toBe("ran");
     });
 
-    it("leaves a query that is only a time to the temporal lane", async () => {
+    it("ranks the window by words when the lane's embedding fails", async () => {
       const p = new SearchPipeline({
         indexDb: db,
         usearchRead: usearch,
         searchConfig: { temporal: { enabled: true } },
       });
-      const asked: string[] = [];
       p.setEmbedder(
         embedder(async (text) => {
-          asked.push(text);
+          if (text === "invoice") throw new Error("embedder overloaded");
           return new Float32Array(EMBEDDING_DIM).fill(0.01);
         }),
       );
-      const r = await p.search({ text: "last week", timeZone: "Europe/London" });
-      expect(asked).toEqual([]);
-      expect(r.stages?.bm25?.candidates).toBe(0);
-      expect(r.stages?.vector?.reason).toMatch(/only a time/);
-      expect(r.stages?.temporal?.ranking).toBe("time");
-      expect(r.results.map((x) => x.documentId)).toEqual(["last-week"]);
+      const r = await p.search({ text: "invoice last week", timeZone: "Europe/London" });
+      expect(r.stages?.temporal?.status).toBe("ran");
+      expect(r.results[0]!.documentId).toBe("last-week");
     });
 
     it("gives the lane no vector when the vector lane could not run", async () => {

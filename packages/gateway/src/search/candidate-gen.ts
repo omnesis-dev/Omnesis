@@ -94,8 +94,6 @@ export interface CandidateGenRequest {
   embedderPresent: boolean;
   /** Query embedding at the current model's dim; null ⇒ vector is skipped. */
   queryVector: Float32Array | null;
-  /** Why `queryVector` is null when an embedder is attached; reported on the vector stage. */
-  vectorSkipReason?: string;
   /** ms the caller spent in `embedder.embedQuery` — folded into the vector report. */
   embedMs: number;
   /**
@@ -276,9 +274,8 @@ function runVector(
   timing: CandidateGenResult["timing"],
 ): { candidates: SearchCandidate[]; degraded: boolean } {
   if (req.queryVector === null) {
-    // The caller has no embedder attached (so it could not embed the query),
-    // or chose not to embed it and says why.
-    const reason = req.vectorSkipReason ?? SKIP_REASON_NO_EMBEDDER;
+    // The caller has no embedder attached (so it could not embed the query).
+    const reason = SKIP_REASON_NO_EMBEDDER;
     stageReports.vector = { status: "skipped", reason };
     log.debug("Vector: skipped (no embedder)");
     return { candidates: [], degraded: false };
