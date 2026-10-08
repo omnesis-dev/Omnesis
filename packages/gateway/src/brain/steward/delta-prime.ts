@@ -28,6 +28,7 @@
  * candidates the datum itself seeds (`open_loop_search`).
  */
 
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import { deadlineDueDay } from "../ranking.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { listRecentLiveAnnotations } from "../storage/annotations.js";
@@ -123,7 +124,7 @@ function recentDecisions(db: Db, fromMs: number, toMs: number, cap: number): Pri
   const loops = db
     .prepare<[number, number, number], { id: string; title: string; at: number }>(
       `SELECT id, title, last_update AS at FROM open_loops
-        WHERE last_update >= ? AND last_update <= ?
+        WHERE ${knowledgeOwnerReadPredicate(db, "open_loops.id")} AND last_update >= ? AND last_update <= ?
         ORDER BY last_update DESC LIMIT ?`,
     )
     .all(fromMs, toMs, cap)
@@ -131,7 +132,7 @@ function recentDecisions(db: Db, fromMs: number, toMs: number, cap: number): Pri
   const briefs = db
     .prepare<[number, number, number], { id: string; title: string; kind: string; at: number }>(
       `SELECT id, title, kind, created_at AS at FROM briefs
-        WHERE created_at >= ? AND created_at <= ?
+        WHERE ${knowledgeOwnerReadPredicate(db, "briefs.id")} AND created_at >= ? AND created_at <= ?
         ORDER BY created_at DESC LIMIT ?`,
     )
     .all(fromMs, toMs, cap)
@@ -179,7 +180,7 @@ export function buildSourceDeltaPrime(db: Db, input: SourceDeltaPrimeInput): str
          FROM open_loops o
          JOIN open_loop_docs old ON old.loop_id = o.id
          JOIN documents d ON d.id = old.doc_id
-        WHERE d.source_id = ?
+        WHERE ${knowledgeOwnerReadPredicate(db, "o.id")} AND d.source_id = ?
           AND o.state IN (${ACTIVE_LOOP_STATES.map(() => "?").join(", ")})
         GROUP BY o.id
         ORDER BY o.importance DESC, o.last_update DESC
@@ -218,7 +219,7 @@ export function buildDueSoonDeltaPrime(db: Db, input: DueSoonDeltaPrimeInput): s
     .prepare<string[], PrimeLoopRow>(
       `SELECT id, title, state, importance, deadline_json, last_update
          FROM open_loops
-        WHERE state IN (${ACTIVE_LOOP_STATES.map(() => "?").join(", ")})
+        WHERE ${knowledgeOwnerReadPredicate(db, "open_loops.id")} AND state IN (${ACTIVE_LOOP_STATES.map(() => "?").join(", ")})
         ORDER BY importance DESC, last_update DESC`,
     )
     .all(...ACTIVE_LOOP_STATES);
@@ -278,7 +279,7 @@ export function buildSynthesisDeltaPrime(db: Db, input: SynthesisDeltaPrimeInput
     .prepare<(string | number)[], PrimeLoopRow>(
       `SELECT id, title, state, importance, deadline_json, last_update
          FROM open_loops
-        WHERE state IN (${ACTIVE_LOOP_STATES.map(() => "?").join(", ")})
+        WHERE ${knowledgeOwnerReadPredicate(db, "open_loops.id")} AND state IN (${ACTIVE_LOOP_STATES.map(() => "?").join(", ")})
         ORDER BY importance DESC, last_update DESC
         LIMIT ?`,
     )

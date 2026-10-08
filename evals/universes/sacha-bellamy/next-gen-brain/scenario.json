@@ -1,0 +1,286 @@
+{
+  "version": 1,
+  "universe": "sacha-bellamy",
+  "epoch": "2027-01-11T08:00:00.000Z",
+  "documents": {
+    "party-plan": {
+      "title": "Winter lantern gathering: accepted plan",
+      "createdMinute": -60,
+      "content": "Sacha: I will help Nora set up the winter lantern gathering at 10:00 tomorrow. Guest arrival is 18:15 at Example Hall. I will collect the lantern crate before setup. Setup and collecting the crate are separate commitments.",
+      "externalId": "sb-next-gen-party-plan"
+    },
+    "party-supplies": {
+      "title": "Lantern crate reservation",
+      "createdMinute": -45,
+      "content": "Nora confirms that the reserved lantern crate is available at the hall desk tomorrow from 09:00. Sacha has accepted responsibility for collecting it. The reservation does not prove collection.",
+      "externalId": "sb-next-gen-party-supplies"
+    },
+    "camera-loan": {
+      "title": "Camera loan continuation",
+      "createdMinute": -30,
+      "content": "Priya confirms that the silver Lumina compact camera borrowed from Sacha is still with her. She promises to return it on Saturday. This is a separate matter from the winter lantern gathering.",
+      "externalId": "sb-next-gen-camera-loan"
+    },
+    "party-correction": {
+      "title": "Urgent correction to lantern gathering setup",
+      "createdMinute": 15,
+      "content": "Nora: the winter lantern gathering setup is now at 08:00 tomorrow, not 10:00. Guest arrival remains 18:15. Sacha: I accept the new setup time and will collect the crate today instead.",
+      "externalId": "sb-next-gen-party-correction"
+    },
+    "old-party-plan": {
+      "title": "Archived first proposal for winter lantern gathering",
+      "createdMinute": -43200,
+      "content": "An early proposal suggested setup at 11:00 and guest arrival at 19:00. This proposal was tentative and has no acceptance from Sacha. It predates the accepted plan and later organiser correction.",
+      "externalId": "sb-next-gen-old-party-plan"
+    },
+    "privacy-detail": {
+      "title": "Lantern gathering access instruction",
+      "createdMinute": 90,
+      "content": "The temporary access phrase for the side entrance is amber-paper-boat. This private access instruction belongs only to the winter lantern gathering.",
+      "externalId": "sb-next-gen-privacy-detail"
+    },
+    "camera-return": {
+      "title": "Camera return acknowledgement",
+      "createdMinute": 120,
+      "content": "Sacha: Priya returned my silver Lumina compact camera this afternoon, and I have it back. The loan is complete. This return does not settle any lantern gathering task.",
+      "externalId": "sb-next-gen-camera-return"
+    },
+    "collection-receipt": {
+      "title": "Lantern crate collected",
+      "createdMinute": 130,
+      "content": "Sacha confirms: I collected the reserved lantern crate from the hall desk today. The crate collection is complete. I still need to attend setup tomorrow at 08:00.",
+      "externalId": "sb-next-gen-collection-receipt"
+    },
+    "shared-update": {
+      "title": "Household coordination update",
+      "createdMinute": 135,
+      "content": "Sacha confirms that the lantern crate has been collected, setup tomorrow is still at 08:00, and the silver camera has been returned. These are separate outcomes recorded together, not one combined task.",
+      "externalId": "sb-next-gen-shared-update"
+    },
+    "unrelated": {
+      "title": "Reference note about paper sizes",
+      "createdMinute": 150,
+      "content": "An A5 sheet is half the area of an A4 sheet. This reference note establishes no task and has no connection to the gathering or camera loan.",
+      "externalId": "sb-next-gen-unrelated"
+    },
+    "conflicting-message": {
+      "title": "Unconfirmed setup message from a guest",
+      "createdMinute": 160,
+      "content": "A guest thinks setup might be at 09:00 tomorrow but says they have not checked with Nora. This conflicts with the organiser-confirmed 08:00 setup and is not an accepted change.",
+      "externalId": "sb-next-gen-conflicting-message"
+    },
+    "final-clarification": {
+      "title": "Organiser confirms final setup time",
+      "createdMinute": 170,
+      "content": "Nora confirms that setup remains at 08:00 tomorrow. The guest suggestion of 09:00 was mistaken. Sacha confirms the 08:00 commitment again.",
+      "externalId": "sb-next-gen-final-clarification"
+    }
+  },
+  "steps": [
+    {
+      "id": "recent-bootstrap",
+      "minute": 0,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "party-plan"
+        },
+        {
+          "kind": "upsert",
+          "document": "party-supplies"
+        },
+        {
+          "kind": "upsert",
+          "document": "camera-loan"
+        }
+      ],
+      "expectations": [
+        "Discover two coherent project/topic regions; gathering and camera loan are disjoint before root aggregation.",
+        "Create separate crate-collection and setup loops; shared project context is not a duplicate.",
+        "Create grounded project summaries and bounded root orientation; root must not merge scheduling components."
+      ]
+    },
+    {
+      "id": "unchanged-replay",
+      "minute": 5,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "party-plan"
+        }
+      ],
+      "expectations": [
+        "Identical content and timestamps produce no source revision change, duplicate loop, page or maintenance work."
+      ]
+    },
+    {
+      "id": "discovered-urgent-correction",
+      "minute": 15,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "party-correction"
+        }
+      ],
+      "expectations": [
+        "New evidence has no dependency edge yet: discovery finds gathering claims and loops.",
+        "Scripted urgency chooses immediate; repair accepted setup time and crate timing, leaving guest arrival unchanged.",
+        "Unchanged guest-arrival claim stops its propagation path."
+      ]
+    },
+    {
+      "id": "same-document-edit",
+      "minute": 30,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "party-supplies",
+          "content": "Nora confirms that the reserved lantern crate is available at the hall desk today from 16:00. Sacha has accepted responsibility for collecting it today. Collection is not yet confirmed.",
+          "updatedMinute": 30
+        }
+      ],
+      "expectations": [
+        "Existing document ID survives content edit; its content revision changes.",
+        "Deterministic invalidation marks affected support stale before model repair.",
+        "One-hour scripted tier can accumulate further source changes."
+      ]
+    },
+    {
+      "id": "late-historic-evidence",
+      "minute": 60,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "old-party-plan"
+        }
+      ],
+      "expectations": [
+        "Processing order must not overwrite newer accepted times with the late-arriving tentative proposal.",
+        "Historical context may be added without reopening resolved current claims."
+      ]
+    },
+    {
+      "id": "one-hour-boundary",
+      "minute": 90,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "privacy-detail"
+        }
+      ],
+      "expectations": [
+        "Advance due work without wall-clock sleeps; observe processing via engine markers/checkpoints.",
+        "Ground access claim in its exact source; do not invent citations."
+      ]
+    },
+    {
+      "id": "parallel-regions",
+      "minute": 120,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "camera-return"
+        }
+      ],
+      "expectations": [
+        "Scripted routine return evidence enters the loan region without dragging unrelated gathering work through root."
+      ]
+    },
+    {
+      "id": "shared-batch-frontier",
+      "minute": 135,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "collection-receipt"
+        },
+        {
+          "kind": "upsert",
+          "document": "shared-update"
+        }
+      ],
+      "expectations": [
+        "Overlapping evidence changes coalesce; shared-update touches both previously disjoint regions.",
+        "Distinct outcomes remain distinct despite a shared source.",
+        "Visit a shared downstream claim once per complete input revision set, reconsidering if later revisions arrive."
+      ]
+    },
+    {
+      "id": "privacy-delete",
+      "minute": 140,
+      "operations": [
+        {
+          "kind": "delete",
+          "document": "privacy-detail"
+        }
+      ],
+      "expectations": [
+        "Delete original access source through production privacy route and remove dependent access content immediately, including search/root projections.",
+        "Unrelated gathering time and camera-return claims remain valid."
+      ]
+    },
+    {
+      "id": "suppressed-resurrection",
+      "minute": 145,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "privacy-detail",
+          "expectAbsent": true
+        }
+      ],
+      "expectations": [
+        "Reingestion of a privacy-deleted external ID is suppressed; no resurrected claims, search content or wiki evidence."
+      ]
+    },
+    {
+      "id": "no-page-for-every-source",
+      "minute": 150,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "unrelated"
+        }
+      ],
+      "expectations": [
+        "Scripted discovery declines new wiki and loop creation; document remains searchable."
+      ]
+    },
+    {
+      "id": "conflicting-evidence",
+      "minute": 160,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "conflicting-message"
+        }
+      ],
+      "expectations": [
+        "Preserve accepted organiser time and record uncertainty; weaker contradictory evidence cannot silently replace it."
+      ]
+    },
+    {
+      "id": "resolve-conflict",
+      "minute": 170,
+      "operations": [
+        {
+          "kind": "upsert",
+          "document": "final-clarification"
+        }
+      ],
+      "expectations": [
+        "Resolve uncertainty using new evidence without duplicating the project wiki or setup loop."
+      ]
+    },
+    {
+      "id": "routine-boundary",
+      "minute": 540,
+      "operations": [],
+      "expectations": [
+        "All due six-hour work settles; no stranded actionable frontier nodes.",
+        "Root remains within hard budget and includes current accepted state only.",
+        "Repeated maintenance with identical inputs is a no-op; terminal collection/loan outcomes do not drift back open."
+      ]
+    }
+  ]
+}

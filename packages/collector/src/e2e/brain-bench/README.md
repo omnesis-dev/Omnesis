@@ -25,7 +25,15 @@ created a brief for that document.
 
 ```ts
 import "./synth-env.js";
-import { BrainBench, call, ref, compressCognitionCadences, email } from "./brain-bench/index.js";
+import {
+  BrainBench,
+  call,
+  ref,
+  compressCognitionCadences,
+  email,
+  sourceInterpretations,
+  preserveCurrentOwner,
+} from "./brain-bench/index.js";
 
 compressCognitionCadences(); // module scope — the spawned gateway inherits these
 
@@ -35,28 +43,32 @@ let bench: BrainBench;
 beforeAll(async () => {
   bench = await BrainBench.start({
     experimental: true,
+    brain: { knowledge: { soonDelay: "1s", routineDelay: "1s" } },
     behaviors: {
-      behaviors: [
-        {
-          flavour: "data.created",
-          docTitle: DOC.title,
-          plan: (ctx) => ({
-            calls: [
-              call("open_loop_search", { query: "deposit" }),
-              call("open_loop_create", {
-                title: "Send the deposit",
-                confidence: 0.9,
-                importance: 0.8,
-                docs: [ctx.subject],
-              }),
-              call("open_loop_ledger_append", {
-                id: ref("open_loop_create", "loop.id"),
-                note: "Tracked.",
-              }),
-            ],
-          }),
-        },
-      ],
+      dynamic: sourceInterpretations({
+        // Preserve current legacy context only; repairs need explicit decisions.
+        maintainNode: preserveCurrentOwner,
+        sources: [
+          {
+            docTitle: DOC.title,
+            plan: (ctx) => ({
+              calls: [
+                call("open_loop_search", { query: "deposit" }),
+                call("open_loop_create", {
+                  title: "Send the deposit",
+                  confidence: 0.9,
+                  importance: 0.8,
+                  docs: [ctx.subject],
+                }),
+                call("open_loop_ledger_append", {
+                  id: ref("open_loop_create", "loop.id"),
+                  note: "Tracked.",
+                }),
+              ],
+            }),
+          },
+        ],
+      }),
     },
   });
 }, 300_000);
@@ -70,6 +82,58 @@ test("…", async () => {
   expect(loops.items).toHaveLength(1);
 });
 ```
+
+### Evidence-backed maintenance
+
+Source ingestion is processed by `synthesis.knowledge` batches. New source
+interpretation tests use `behaviors.dynamic: sourceInterpretations({ sources,
+maintainNode })`. Each source decision matches the actual frontier document ID
+and/or title. Its context retains the real synthesis run ID, kind and flavour;
+`ctx.subject` is the offered source document ID. The helper executes real tools,
+then completes exactly the offered input fingerprint. It never aliases a synthesis
+batch into a per-document datum run. Matching decisions fetch the complete source
+through `fetch_many`. Temporal casualties arrive with the frontier; the helper
+reads further pages through `knowledge_temporal_context` before discovery can settle.
+Use `contentContains` to select distinct decisions for actual source revisions.
+Negative gate scenarios specify `expectedRefusals: [{ tool, code }]` on the exact
+source decision. The puppet continues only after those declared canonical-tool
+refusals; unexpected errors preserve unfinished work. Rejected `knowledge_save`
+or `knowledge_discovery_complete` calls always stop and never count as settlement.
+
+`maintainNode` is an explicit scripted repair policy for existing owners/pages. It
+must call `knowledge_save` with the offered fingerprint, current revision and
+input versions. `preserveCurrentOwner` preserves only current legacy context claims and an empty
+overview. It keeps context relations unverified and refuses stale or custom owner
+prose; those need a scenario-specific repair. Omitting node maintenance deliberately
+leaves it unfinished;
+a source creation plan cannot stand in for repairing an existing owner. Source
+revisions may be offered repeatedly, so decisions must inspect the offered content
+or use real owner lookup tools before choosing creation versus update.
+
+Use `obs.runsForSource(documentId)` to find actual runs with a successful
+`knowledge_discovery_complete` call. A batch can process several sources, and a
+source can participate in several batches. `obs.runForDoc` remains restricted to
+legacy datum runs. Assertions on datum dedupe keys, datum spend, created/updated
+flavours and prompt diffs need explicit migration to maintenance outcomes, coverage,
+input versions and canonical owner state.
+
+The anatomy example preserves this scenario's existing grounded owner text.
+Repair scenarios must supply their own factual update policy. For further source
+ingestion examples see `brain-smoke.e2e.test.ts`. To exercise short delay tiers with wall-clock tests,
+set the production `brain.knowledge.soonDelay` and `routineDelay` knobs explicitly;
+virtual-clock tests should advance the clock to their actual due times.
+
+`seedHistory` creates an explicit persisted corpus fixture for historical-admission
+regressions. Its transaction inserts real evidence and removes only that fixture's
+arrival journal, representing a corpus that predates incremental intake. It leaves
+coverage absent: operator consent, daily and lifetime admission bounds, model reads,
+and revision coverage still run through the real engine. Live-arrival cases use
+`push` or `pushAndSettle`. Historical counters count source-revision work items;
+they cannot imply corpus completion or assign shared batch tokens to individual sources.
+
+Old decision cassettes remain recovery fixtures for explicitly seeded persisted
+legacy datum rows. New source discovery requests use the current rubric; an old
+cassette miss proves fail-open behavior rather than silently substituting an old request.
 
 ### The behavior table
 
@@ -355,20 +419,25 @@ pass's enqueues already landed. `drainUntilQuiet` returns as soon as the QUEUE i
 which can be before an enqueuer has ticked at all, so "advance the clock, sleep, assert
 nothing new" proves nothing. Gate on the marker instead.
 
-`drainUntilQuiet` polls `/admin/brain/pulse` and extends its deadline whenever a run
-settles, so a stalled engine fails with the queue's contents rather than passing as quiet.
+`drainUntilQuiet` polls `/admin/brain/pulse` and the durable maintenance buffers.
+Run settlement or a change in maintenance phases, input generations, batch revisions
+or cascade cursors resets its stall timer, even when the pending total is unchanged.
+No-op timestamps do not reset it. The overall timeout remains fixed. A stalled engine fails with actual queue and buffer
+contents rather than passing unfinished work as quiet.
 Never replace it with a fixed sleep.
 
 ## Gotchas
 
 - **`compressCognitionCadences()` must run at module scope**, before the gateway boots —
-  the spawned process inherits the env.
+  the spawned process inherits the env. Maintenance and legacy ingestion both consume
+  these cadence overrides; a constructor override takes precedence.
 - **Bench tests ARE typechecked** — by `packages/collector/tsconfig.tests.json`, which the
   `npm run typecheck:tests` CI lane runs over what the package tsconfig excludes. `npm run
 typecheck` alone will not see them, so run `typecheck:tests` before pushing.
-- **The ambient universe must not wake the engine.** `loops-test-life` fixtures are dated
-  outside the recency window on purpose; assert `data` runs are zero after boot before
-  attributing any run to your own stimulus.
+- **Ambient arrivals are real interpretation work.** Settle the boot corpus before
+  asserting on a stimulus, and select its source revision with `runsForSource` rather
+  than counting all synthesis runs. Use the explicit `initialInventory` option when
+  the scenario needs a corpus that predates Brain activation.
 - **An unmatched run is silent by design** — the puppet finishes with a note. If a test
   sees no rows, check `bench.puppetCalls` for the flavour it actually got.
 - **The virtual clock only exists when `clock: "virtual"`**; `POST /admin/brain/clock`
@@ -381,8 +450,9 @@ typecheck` alone will not see them, so run `typecheck:tests` before pushing.
   queue reads quiet, which can be before a periodic enqueuer has ticked. Gate a clock
   advance on something the pass itself writes — the rhythm markers in
   `cognition_engine_state` are written LAST, so a marker moving proves the enqueues landed.
-- **Every new bench file needs path-scoped entries in `privacy/pii-allowlist.json`** for
-  its invented names (including the SPDX header name). Edit that JSON **textually** — a
+- **Scan new bench files for fixture identifiers.** Add exact path-scoped entries in
+  `privacy/pii-allowlist.json` only for invented names the scanner reports. A file's own
+  SPDX copyright header is exempt and needs no header-name entry. Edit that JSON **textually** — a
   parse/re-dump round-trip un-escapes em-dashes and churns ~40 unrelated lines. The scanner
   matches two-word windows, so `Cedar Grove Supplies` also trips as `Grove Supplies`.
 - One bench boots one gateway subprocess. Group tests that can share a boot into one

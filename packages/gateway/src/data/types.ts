@@ -108,6 +108,7 @@ export interface ListedDocumentRow {
 }
 
 export interface UpsertDocumentsOptions {
+  initialInventory?: { id: string; startedAt: string };
   /**
    * Conflict policy for shared documents emitted by independent replicas.
    * `source-updated-at` makes the source's canonical update timestamp the

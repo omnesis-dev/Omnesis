@@ -69,7 +69,7 @@ import type { Scheduler } from "../scheduler/scheduler.js";
 import type { PeriodicTask, TaskOutcome } from "../scheduler/types.js";
 import type { WriteGate } from "../write-gate.js";
 import type { CognitionRunActivity } from "./run-activity.js";
-import type { CognitionRunDriver } from "./run-driver.js";
+import type { CognitionRunDriver, CognitionRunOutcome } from "./run-driver.js";
 import type { WorthGate } from "./worth-gate/gate.js";
 import type { FsCognitionTranscriptStore } from "./transcripts.js";
 
@@ -389,7 +389,7 @@ export function createCognitionDrainerTasks(
       );
     }
     if (gated) return gated;
-    let outcome;
+    let outcome: CognitionRunOutcome;
     opts.activity?.start(run.id, clock());
     try {
       outcome = await opts.driver.execute(run, { signal });
@@ -414,6 +414,25 @@ export function createCognitionDrainerTasks(
     // profiles, and a model-assignment decision is made per workflow. Derived
     // from the CLAIMED payload, before settle wipes its transient fields.
     const mechanism = cognitiveWorkflowIdForRun(run.kind, run.payload);
+    if (outcome.deferredUntil !== undefined) {
+      await opts.writeGate.finalizeCognitionRun({
+        runId: run.id,
+        now,
+        day,
+        mechanism,
+        modelId: null,
+        usage: null,
+        claimedPayloadJson: run.payloadJson,
+        outcome: {
+          kind: "failed",
+          errorMessage: outcome.errorMessage ?? "Awaiting maintenance inputs",
+          terminal: false,
+          nextAttemptAt: outcome.continuation ? now : Math.max(now + 1000, outcome.deferredUntil),
+          refundAttempt: true,
+        },
+      });
+      return "retry";
+    }
     // A `data` run that folded in-flight re-enters its debounce window on
     // resurrect (not fires immediately); other kinds have no debounce and
     // re-fire ASAP. Read live so a config reload is picked up.

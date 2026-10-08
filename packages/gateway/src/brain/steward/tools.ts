@@ -32,6 +32,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { TEMPORAL_KINDS } from "@omnesis/core";
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import { getOpenLoop, listOpenLoopLedger, searchOpenLoopsLexical } from "../storage/open-loops.js";
 import { searchRetiredLoopsLexical } from "../storage/retired-loops.js";
 import { findActiveBriefsForLoops, getBrief, listBriefs } from "../storage/briefs.js";
@@ -72,7 +73,8 @@ import {
   type CognitionBriefLane,
 } from "../run-payloads.js";
 import { fetchSelfPersonId } from "../../domain/InteractionScoreService.js";
-import { OPEN_LOOP_DOCUMENT_TYPE } from "../open-loop-source/source-meta.js";
+import { OPEN_LOOP_DOCUMENT_TYPE, OPEN_LOOP_SOURCE_ID } from "../open-loop-source/source-meta.js";
+import { KNOWLEDGE_DOCUMENT_TYPE, KNOWLEDGE_SOURCE_ID } from "../knowledge/source-meta.js";
 import {
   expandCanonical,
   getTemporalAnnotationById,
@@ -397,28 +399,43 @@ function docExists(db: Db, id: string): boolean {
 interface EvidenceDoc {
   content: string;
   contentHash: string;
-  documentType: string | null;
+  generated: boolean;
 }
 function fetchEvidenceDoc(db: Db, id: string): EvidenceDoc | null {
+  const sourceColumn = db
+    .prepare<[], { name: string }>("PRAGMA table_info(documents)")
+    .all()
+    .some((column) => column.name === "source_id")
+    ? "source_id"
+    : "NULL";
   const row = db
     .prepare<
       [string],
-      { content: string | null; content_hash: string; document_type: string | null }
-    >("SELECT content, content_hash, json_extract(metadata, '$.documentType') AS document_type FROM documents WHERE id = ?")
+      {
+        content: string | null;
+        content_hash: string;
+        document_type: string | null;
+        source_id: string | null;
+      }
+    >(
+      `SELECT content, content_hash, json_extract(metadata, '$.documentType') AS document_type, ${sourceColumn} AS source_id FROM documents WHERE id = ?`,
+    )
     .get(id);
   return row === undefined
     ? null
     : {
         content: row.content ?? "",
         contentHash: row.content_hash,
-        documentType: row.document_type,
+        generated:
+          [OPEN_LOOP_DOCUMENT_TYPE, KNOWLEDGE_DOCUMENT_TYPE].includes(row.document_type ?? "") ||
+          [OPEN_LOOP_SOURCE_ID, KNOWLEDGE_SOURCE_ID].includes(row.source_id ?? ""),
       };
 }
 
 /** The evidence firewall's quote test, memoized on the doc's content hash so a
  *  run's repeated checks against one evidence doc normalize its body once. */
 function quoteInEvidence(doc: EvidenceDoc, quote: string): boolean {
-  return containsNormalizedForContent(doc.contentHash, doc.content, quote);
+  return !doc.generated && containsNormalizedForContent(doc.contentHash, doc.content, quote);
 }
 
 /** Grounding atoms beyond the primary pair — capped so a claim stays reviewable. */
@@ -442,7 +459,7 @@ const additionalEvidenceField = z
 /**
  * The per-item cheap-SQL teeth over an annotation's ADDITIONAL evidence
  * atoms — every item is checked before any verifier call: the document must
- * exist, must be a real source (never the agent's own derived open-loop
+ * exist, must be a real source (never a generated synthesis
  * mirror), and the quote must appear in it (`quoteInEvidence`). A refusal
  * names the failing item's index so the model can fix exactly that atom and
  * re-call. Returns null when every item passes.
@@ -460,11 +477,11 @@ function vetAdditionalEvidence(
         message: `additionalEvidence[${i}]: document ${item.docId} does not exist — cite a real document id`,
       };
     }
-    if (doc.documentType === OPEN_LOOP_DOCUMENT_TYPE) {
+    if (doc.generated) {
       return {
         kind: "error",
         code: "invalid_evidence",
-        message: `additionalEvidence[${i}]: ${item.docId} is a derived open-loop record, not a source document — ground the observation on the original source`,
+        message: `additionalEvidence[${i}]: ${item.docId} is a generated synthesis record, not a source document — ground the observation on the original source`,
       };
     }
     if (!quoteInEvidence(doc, item.quote)) {
@@ -749,6 +766,15 @@ async function vetAssertedClaims(
       });
       continue;
     }
+    if (evidence.generated) {
+      cheapFailures.push({
+        index: i,
+        claimText: c.claimText,
+        code: "invalid_evidence",
+        reason: "Ground claims in original source evidence, not a generated synthesis record",
+      });
+      continue;
+    }
     if (!quoteInEvidence(evidence, c.evidenceQuote)) {
       cheapFailures.push({
         index: i,
@@ -838,6 +864,12 @@ async function vetTemporalAnnotationEvidence(
 ): Promise<ToolResult | null> {
   const doc = fetchEvidenceDoc(deps.db, evidence.docId);
   if (doc === null) return notFound("evidence document", evidence.docId);
+  if (doc.generated)
+    return {
+      kind: "error",
+      code: "invalid_evidence",
+      message: "Ground entries in original source evidence, not a generated synthesis record",
+    };
   if (!quoteInEvidence(doc, evidence.quote)) {
     return {
       kind: "error",
@@ -973,7 +1005,7 @@ function briefSummariesForLoop(db: Db, loopId: string): BriefSummary[] {
     .prepare<[string], { id: string; kind: string; title: string; state: string }>(
       `SELECT b.id, b.kind, b.title, b.state
        FROM briefs b JOIN brief_related_loops brl ON brl.brief_id = b.id
-       WHERE brl.loop_id = ? ORDER BY b.created_at ASC`,
+       WHERE brl.loop_id = ? AND ${knowledgeOwnerReadPredicate(db, "b.id")} ORDER BY b.created_at ASC`,
     )
     .all(loopId)
     .map((r) => ({ id: r.id, kind: r.kind, title: r.title, state: r.state as BriefState }));
@@ -3184,14 +3216,14 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       const evidence = fetchEvidenceDoc(db, a.evidenceDocId);
       if (evidence === null) return notFound("evidence document", a.evidenceDocId);
       // Firewall 2: the evidence must be a real source document, never one of
-      // the agent's OWN derived open-loop mirror docs — grounding on your own
+      // generated synthesis mirror docs — grounding on your own
       // tracked state is exactly the self-reference the firewall forbids.
-      if (evidence.documentType === OPEN_LOOP_DOCUMENT_TYPE) {
+      if (evidence.generated) {
         return {
           kind: "error",
           code: "invalid_evidence",
           message:
-            "evidenceDocId is a derived open-loop record, not a source document — " +
+            "evidenceDocId is a generated synthesis record, not a source document — " +
             "ground the observation on the original source, not your own tracked state",
         };
       }
@@ -3495,14 +3527,14 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
 
   // ---- annotation_retract ----
   const annotationRetractSchema = z
-    .object({ id: z.string().min(1).describe("The annotation id to retract (hard delete).") })
+    .object({ id: z.string().min(1).describe("The annotation id whose belief is withdrawn.") })
     .strict();
   const annotationRetract: ToolHandle = {
     name: "annotation_retract",
     description:
-      "Retract (permanently delete) a durable observation you recorded earlier " +
+      "Withdraw a durable observation you recorded earlier " +
       "when it is wrong or no longer relevant — a mistaken read, a superseded " +
-      "conclusion. Hard delete: the derived text is removed outright.",
+      "conclusion. It leaves active memory; retained synthesis is marked withdrawn and dependents require repair. Privacy deletion is a separate source-removal action.",
     schema: annotationRetractSchema,
     mutates: true,
     summarize: (args) => (args as { id?: string })?.id,
@@ -3680,7 +3712,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
   // ---- annotate_person ----
   // Person-keyed sibling of annotate_durable. Same evidence firewall (real
   // evidence doc, verbatim quote, confidence ceiling, no self-grounding on a
-  // derived open-loop mirror), but the subject is a PERSON resolved to its
+  // generated synthesis mirror), but the subject is a PERSON resolved to its
   // canonical id — not a document.
   const annotatePersonSchema = z
     .object({
@@ -3756,13 +3788,13 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       // Firewall 2: the grounding atom must be a real source document.
       const evidence = fetchEvidenceDoc(db, a.evidenceDocId);
       if (evidence === null) return notFound("evidence document", a.evidenceDocId);
-      // Firewall 3: never ground on a derived open-loop mirror doc.
-      if (evidence.documentType === OPEN_LOOP_DOCUMENT_TYPE) {
+      // Firewall 3: never ground on a generated synthesis mirror doc.
+      if (evidence.generated) {
         return {
           kind: "error",
           code: "invalid_evidence",
           message:
-            "evidenceDocId is a derived open-loop record, not a source document — " +
+            "evidenceDocId is a generated synthesis record, not a source document — " +
             "ground the observation on the original source, not your own tracked state",
         };
       }
@@ -4053,7 +4085,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
   const personAnnotationRetract: ToolHandle = {
     name: "person_annotation_retract",
     description:
-      "Retract (permanently delete) a person annotation that turned out wrong " +
+      "Withdraw a person annotation that turned out wrong " +
       "or was superseded. Reserve for genuine mistakes; a claim that merely " +
       "weakened should be revised with lower confidence instead.",
     schema: personAnnotationRetractSchema,

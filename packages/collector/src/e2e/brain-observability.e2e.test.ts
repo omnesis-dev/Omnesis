@@ -30,6 +30,8 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
@@ -144,102 +146,107 @@ describe("Brain Bench — the operator surface", () => {
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: INVOICE_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_search", { query: "Cedar Grove invoice" }),
-                call("open_loop_create", {
-                  title: `Pay the Cedar Grove invoice (${INVOICE_MARKER})`,
-                  description: "Tracked from the invoice mail.",
-                  confidence: 0.9,
-                  importance: 0.8,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: "Balance of four hundred and eighty due by the end of the month.",
-                }),
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "payment-due",
-                  claimText: INVOICE_CLAIM,
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: INVOICE_QUOTE,
-                  confidence: 0.9,
-                  claimBasis: "quoted",
-                }),
-                call("brief_create", {
-                  kind: "loop",
-                  title: `Invoice CG-8821 is due (${INVOICE_MARKER})`,
-                  description: "The balance is payable at the end of the month.",
-                  citations: [ctx.subject],
-                  relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                  confidence: 0.9,
-                  urgency: 0.6,
-                  assertedClaims: [
-                    {
-                      claimText: INVOICE_CLAIM,
-                      evidenceDocId: ctx.subject,
-                      evidenceQuote: INVOICE_QUOTE,
-                      claimBasis: "quoted",
-                      confidence: 0.9,
-                    },
-                  ],
-                }),
-              ],
-              finalText: "Tracked the invoice balance and raised a card for it.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: ROOM_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_create", {
-                  title: `Confirm the rehearsal room (${ROOM_MARKER})`,
-                  description: "The hold lapses on Friday.",
-                  confidence: 0.8,
-                  importance: 0.5,
-                  docs: [ctx.subject],
-                }),
-                // Deferred, not resolved — the pulse must count it apart from
-                // the open ones without losing it from the total.
-                call("open_loop_update", {
-                  id: ref("open_loop_create", "loop.id"),
-                  state: "snoozed",
-                }),
-                call("brief_create", {
-                  kind: "info",
-                  title: `Rehearsal room held until Friday (${ROOM_MARKER})`,
-                  description: "Nothing to do until the hold lapses.",
-                  citations: [ctx.subject],
-                  confidence: 0.8,
-                  urgency: 0.3,
-                }),
-                // A run parked in the future: pending, but not due, so it
-                // separates `upcomingRuns` from `queuedRuns`.
-                call("schedule_agent_run", {
-                  when: FOLLOW_UP_AT,
-                  prompt: `Re-check the rehearsal room hold (${ROOM_MARKER}).`,
-                  loopId: ref("open_loop_create", "loop.id"),
-                }),
-              ],
-              finalText: "Deferred the room hold and set a day-of check.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: QUIET_DOC.title,
-            plan: {
-              calls: [],
-              finalText: "Routine depot hours; nothing worth tracking.",
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: INVOICE_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "Cedar Grove invoice" }),
+                  call("open_loop_create", {
+                    title: `Pay the Cedar Grove invoice (${INVOICE_MARKER})`,
+                    description: "Tracked from the invoice mail.",
+                    confidence: 0.9,
+                    importance: 0.8,
+                    docs: [ctx.subject],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: "Balance of four hundred and eighty due by the end of the month.",
+                  }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "payment-due",
+                    claimText: INVOICE_CLAIM,
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: INVOICE_QUOTE,
+                    confidence: 0.9,
+                    claimBasis: "quoted",
+                  }),
+                  call("brief_create", {
+                    kind: "loop",
+                    title: `Invoice CG-8821 is due (${INVOICE_MARKER})`,
+                    description: "The balance is payable at the end of the month.",
+                    citations: [ctx.subject],
+                    relatedLoopIds: [ref("open_loop_create", "loop.id")],
+                    confidence: 0.9,
+                    urgency: 0.6,
+                    assertedClaims: [
+                      {
+                        claimText: INVOICE_CLAIM,
+                        evidenceDocId: ctx.subject,
+                        evidenceQuote: INVOICE_QUOTE,
+                        claimBasis: "quoted",
+                        confidence: 0.9,
+                      },
+                    ],
+                  }),
+                ],
+                finalText: "Tracked the invoice balance and raised a card for it.",
+              }),
             },
-          },
+            {
+              docTitle: ROOM_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_create", {
+                    title: `Confirm the rehearsal room (${ROOM_MARKER})`,
+                    description: "The hold lapses on Friday.",
+                    confidence: 0.8,
+                    importance: 0.5,
+                    docs: [ctx.subject],
+                  }),
+                  // Deferred, not resolved — the pulse must count it apart from
+                  // the open ones without losing it from the total.
+                  call("open_loop_update", {
+                    id: ref("open_loop_create", "loop.id"),
+                    state: "snoozed",
+                  }),
+                  call("brief_create", {
+                    kind: "info",
+                    title: `Rehearsal room held until Friday (${ROOM_MARKER})`,
+                    description: "Nothing to do until the hold lapses.",
+                    citations: [ctx.subject],
+                    confidence: 0.8,
+                    urgency: 0.3,
+                  }),
+                  // A run parked in the future: pending, but not due, so it
+                  // separates `upcomingRuns` from `queuedRuns`.
+                  call("schedule_agent_run", {
+                    when: FOLLOW_UP_AT,
+                    prompt: `Re-check the rehearsal room hold (${ROOM_MARKER}).`,
+                    loopId: ref("open_loop_create", "loop.id"),
+                  }),
+                ],
+                finalText: "Deferred the room hold and set a day-of check.",
+              }),
+            },
+            {
+              docTitle: QUIET_DOC.title,
+              plan: {
+                calls: [],
+                finalText: "Routine depot hours; nothing worth tracking.",
+              },
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [
           {
             flavour: "feedback.dismissal",
             plan: {
@@ -267,9 +274,8 @@ describe("Brain Bench — the operator surface", () => {
       QUIET_DOC,
     ])) as [string, string, string];
 
-    const settled = await bench.obs.settledRuns("data");
-    expect(settled).toHaveLength(3);
-    expect(settled.every((r) => r.status === "completed")).toBe(true);
+    for (const id of [invoiceDocId, roomDocId, quietDocId])
+      expect((await bench.obs.interpretationForSource(id)).status).toBe("completed");
 
     // The room card is the one the operator throws away — it is the stimulus
     // for the feedback run, and it makes `unreadBriefs` differ from
@@ -357,15 +363,15 @@ describe("Brain Bench — the operator surface", () => {
     expect(page.items).toHaveLength(1);
     const decision = page.items[0]!;
 
-    const dataRuns = await bench.obs.settledRuns("data");
-    const invoiceRun = dataRuns.find((r) => r.dedupeKey === `data:doc:${invoiceDocId}`);
+    const invoiceRun = await bench.obs.interpretationForSource(invoiceDocId);
     expect(invoiceRun).toBeDefined();
     expect(decision.runId).toBe(invoiceRun!.id);
     expect(decision.attempt).toBe(1);
-    expect(decision.kind).toBe("data");
+    expect(decision.kind).toBe("synthesis");
     expect(decision.outcome).toBe("completed");
-    expect(decision.docId).toBe(invoiceDocId);
-    expect(decision.subject).toBe(`doc ${invoiceDocId} (created)`);
+    expect(decision.docId).toBeNull();
+    expect(decision.docIds).toContain(invoiceDocId);
+    expect(decision.subject).toMatch(/^knowledge maintenance batch /);
 
     // Mutating calls become actions, in order; reads are counted, not listed.
     expect(decision.actions.map((a) => a.tool)).toEqual([
@@ -378,14 +384,15 @@ describe("Brain Bench — the operator surface", () => {
     expect(decision.actions[0]!.detail).toContain(INVOICE_MARKER);
     // `open_loop_search` is research, not a decision.
     expect(decision.researchToolCalls).toBeGreaterThanOrEqual(1);
-    expect(decision.finalText).toContain("Tracked the invoice balance");
+    expect(decision.finalText).toContain("batch complete");
 
     // The run that decided to do nothing still has a decision, with no
     // actions — "did nothing" and "was never asked" must not look alike.
     const quiet = await bench.obs.decisions({ doc: quietDocId });
     expect(quiet.items).toHaveLength(1);
     expect(quiet.items[0]!.actions).toEqual([]);
-    expect(quiet.items[0]!.finalText).toContain("nothing worth tracking");
+    expect(quiet.items[0]!.docIds).toContain(quietDocId);
+    expect(quiet.items[0]!.finalText).toContain("batch complete");
 
     // The unfiltered view covers every settled run, including the feedback one.
     const all = await bench.obs.decisions();
@@ -415,7 +422,7 @@ describe("Brain Bench — the operator surface", () => {
 
     // The scripted plan's calls are in the invoice run's event stream, with a
     // result for each — the transcript is the record the decision view folds.
-    const invoiceRun = runs.find((r) => r.dedupeKey === `data:doc:${invoiceDocId}`)!;
+    const invoiceRun = await bench.obs.interpretationForSource(invoiceDocId);
     const invoiceRefs = await bench.obs.transcripts({ runId: invoiceRun.id });
     const { transcript } = await bench.obs.transcript(invoiceRefs.items.at(-1)!.fileName);
     const started = transcript.events
@@ -450,17 +457,19 @@ describe("Brain Bench — the operator surface", () => {
 
     // The workflow ids are the real vocabulary, not the queue kinds.
     const workflows = new Set(attributed.map((a) => a.workflow_id));
-    expect(workflows.has("datum-intake")).toBe(true);
+    expect(workflows.has("knowledge-maintenance")).toBe(true);
     expect(workflows.has("feedback-learning")).toBe(true);
     expect(workflows.has("unrecognized")).toBe(false);
     // A queue kind is not a workflow id — `data` must never leak through.
     expect(workflows.has("data")).toBe(false);
 
     const mechanism = await bench.obs.mechanismSpend();
-    const datum = mechanism.rows.filter((r) => r.mechanism === "datum-intake");
+    const datum = mechanism.rows.filter((r) => r.mechanism === "knowledge-maintenance");
     expect(datum.length).toBeGreaterThan(0);
     const datumRuns = datum.reduce((n, r) => n + r.runs, 0);
-    expect(datumRuns).toBe(attributed.filter((a) => a.workflow_id === "datum-intake").length);
+    expect(datumRuns).toBe(
+      attributed.filter((a) => a.workflow_id === "knowledge-maintenance").length,
+    );
     for (const row of mechanism.rows) {
       expect(row.promptTokens).toBeGreaterThan(0);
       expect(row.modelId.length).toBeGreaterThan(0);
@@ -499,20 +508,20 @@ describe("Brain Bench — the operator surface", () => {
       .get(invoiceDocId)!.source_id;
 
     const row = coverage.items.find(
-      (i) => i.sourceId === pushedSource && i.workflowId === "datum-intake",
+      (i) => i.sourceId === pushedSource && i.workflowId === "knowledge-maintenance",
     );
-    expect(row, "no datum-intake coverage row for the pushed source").toBeDefined();
+    expect(row, "no knowledge-maintenance coverage row for the pushed source").toBeDefined();
 
-    // Three documents arrived on that source and three datum runs settled
-    // completed, so all three count as processed and none as skipped.
-    const datumRunDocs = [invoiceDocId, roomDocId, quietDocId];
-    expect(row!.processed).toBe(datumRunDocs.length);
-    expect(row!.skipped).toBe(0);
-    // `eligible` is a backlog counter the bootstrap lane owns; the real-time
-    // lane never selects a backlog, which is what `live` means.
-    expect(row!.eligible).toBe(0);
-    expect(row!.status).toBe("live");
-    expect(row!.promptTokens).toBeGreaterThan(0);
+    const versions = bench.sql
+      .prepare<
+        [string],
+        { processed: number; skipped: number }
+      >("SELECT COALESCE(SUM(c.status='considered'),0) AS processed,COALESCE(SUM(c.status='gated'),0) AS skipped FROM knowledge_discovery_coverage c JOIN documents d ON d.id=c.subject_id WHERE d.source_id=? AND c.phase='organization'")
+      .get(pushedSource)!;
+    expect(row!.processed).toBe(versions.processed);
+    expect(row!.skipped).toBe(versions.skipped);
+    expect(row!.processed).toBeGreaterThanOrEqual(3);
+    expect(row!.costAttribution).toBe("shared-run-ledger");
 
     // Every row's status is the one its own counters imply — the surface must
     // not derive it independently of the store.
@@ -529,9 +538,7 @@ describe("Brain Bench — the operator surface", () => {
 
   test("`omnesis brain` renders the state the gateway holds", async () => {
     const loop = (await bench.obs.loopsMatching(INVOICE_MARKER))[0]!;
-    const invoiceRun = (await bench.obs.settledRuns("data")).find(
-      (r) => r.dedupeKey === `data:doc:${invoiceDocId}`,
-    )!;
+    const invoiceRun = await bench.obs.interpretationForSource(invoiceDocId);
 
     const loops = await runCli(bench, ["brain", "loops"]);
     expect(loops.exitCode, loops.stderr).toBe(0);
@@ -545,30 +552,37 @@ describe("Brain Bench — the operator surface", () => {
     expect(loopShow.stdout).toContain(INVOICE_DOC.title);
     expect(loopShow.stdout).toContain("Invoice CG-8821 is due");
 
-    const runs = await runCli(bench, ["brain", "runs", "--kind", "data"]);
+    const runs = await runCli(bench, ["brain", "runs", "--kind", "synthesis"]);
     expect(runs.exitCode, runs.stderr).toBe(0);
     expect(runs.stdout).toContain(invoiceRun.id.slice(0, 20));
     expect(runs.stdout).toContain("completed");
 
     const runShow = await runCli(bench, ["brain", "run", invoiceRun.id]);
     expect(runShow.exitCode, runShow.stderr).toBe(0);
-    expect(runShow.stdout).toContain(`data:doc:${invoiceDocId}`);
+    expect(runShow.stdout).toContain("synthesis");
     expect(runShow.stdout).toContain("attempt 1");
 
     const transcript = await runCli(bench, ["brain", "transcript", invoiceRun.id]);
     expect(transcript.exitCode, transcript.stderr).toBe(0);
     expect(transcript.stdout).toContain(`Loop agent run ${invoiceRun.id}`);
     expect(transcript.stdout).toContain("brief_create");
-    expect(transcript.stdout).toContain("Tracked the invoice balance");
+    expect(transcript.stdout).toContain(
+      "Balance of four hundred and eighty due by the end of the month.",
+    );
+    expect(transcript.stdout).toContain("The engine reports this batch complete.");
 
     const decisions = await runCli(bench, ["brain", "decisions", "--doc", invoiceDocId]);
     expect(decisions.exitCode, decisions.stderr).toBe(0);
-    expect(decisions.stdout).toContain(`doc ${invoiceDocId} (created)`);
+    const batch = bench.sql
+      .prepare<[string], { id: string }>("SELECT id FROM knowledge_batches WHERE run_id=?")
+      .get(invoiceRun.id);
+    expect(batch).toBeDefined();
+    expect(decisions.stdout).toContain(`knowledge maintenance batch ${batch!.id}`);
     expect(decisions.stdout).toContain("create loop");
 
     const spend = await runCli(bench, ["brain", "spend", "--by-mechanism"]);
     expect(spend.exitCode, spend.stderr).toBe(0);
-    expect(spend.stdout).toContain("Datum intake");
+    expect(spend.stdout).toContain("Knowledge maintenance");
 
     const dayTotals = await runCli(bench, ["brain", "spend"]);
     expect(dayTotals.exitCode, dayTotals.stderr).toBe(0);
@@ -653,60 +667,67 @@ describe("Brain Bench — the golden snapshot", () => {
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       syncSources: false,
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: GOLDEN_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("open_loop_create", {
-                  title: "Pay the hall booking balance",
-                  description: "Due fourteen days before the date.",
-                  confidence: 0.9,
-                  importance: 0.7,
-                  docs: [ctx.subject],
-                }),
-                call("open_loop_ledger_append", {
-                  id: ref("open_loop_create", "loop.id"),
-                  note: "Balance falls due fourteen days before the booking.",
-                }),
-                call("annotate_durable", {
-                  docId: ctx.subject,
-                  claimType: "payment-due",
-                  claimText: GOLDEN_CLAIM,
-                  evidenceDocId: ctx.subject,
-                  evidenceQuote: GOLDEN_QUOTE,
-                  confidence: 0.9,
-                  claimBasis: "quoted",
-                }),
-                call("brief_create", {
-                  kind: "loop",
-                  title: "Hall booking balance is coming due",
-                  description: "The final balance is due fourteen days before the date.",
-                  citations: [ctx.subject],
-                  relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                  confidence: 0.9,
-                  urgency: 0.5,
-                  assertedClaims: [
-                    {
-                      claimText: GOLDEN_CLAIM,
-                      evidenceDocId: ctx.subject,
-                      evidenceQuote: GOLDEN_QUOTE,
-                      claimBasis: "quoted",
-                      confidence: 0.9,
-                    },
-                  ],
-                }),
-              ],
-              finalText: "Tracked the hall balance and raised a card.",
-            }),
-          },
-        ],
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: GOLDEN_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_create", {
+                    title: "Pay the hall booking balance",
+                    description: "Due fourteen days before the date.",
+                    confidence: 0.9,
+                    importance: 0.7,
+                    docs: [ctx.subject],
+                  }),
+                  call("open_loop_ledger_append", {
+                    id: ref("open_loop_create", "loop.id"),
+                    note: "Balance falls due fourteen days before the booking.",
+                  }),
+                  call("annotate_durable", {
+                    docId: ctx.subject,
+                    claimType: "payment-due",
+                    claimText: GOLDEN_CLAIM,
+                    evidenceDocId: ctx.subject,
+                    evidenceQuote: GOLDEN_QUOTE,
+                    confidence: 0.9,
+                    claimBasis: "quoted",
+                  }),
+                  call("brief_create", {
+                    kind: "loop",
+                    title: "Hall booking balance is coming due",
+                    description: "The final balance is due fourteen days before the date.",
+                    citations: [ctx.subject],
+                    relatedLoopIds: [ref("open_loop_create", "loop.id")],
+                    confidence: 0.9,
+                    urgency: 0.5,
+                    assertedClaims: [
+                      {
+                        claimText: GOLDEN_CLAIM,
+                        evidenceDocId: ctx.subject,
+                        evidenceQuote: GOLDEN_QUOTE,
+                        claimBasis: "quoted",
+                        confidence: 0.9,
+                      },
+                    ],
+                  }),
+                ],
+                finalText: "Tracked the hall balance and raised a card.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [],
       },
     });
+    await bench.drainUntilQuiet();
     epoch = Date.now();
   }, 300_000);
 
@@ -714,8 +735,8 @@ describe("Brain Bench — the golden snapshot", () => {
     await bench?.destroy();
   }, 60_000);
 
-  test("one datum-intake arc leaves exactly the state the golden records", async () => {
-    await bench.pushAndSettle([GOLDEN_DOC]);
+  test("one source-interpretation arc leaves exactly the state the golden records", async () => {
+    const [docId] = await bench.pushAndSettle([GOLDEN_DOC]);
 
     // Creating a loop makes the decay engine owe it a revisit, and that sweep
     // is dirty-gated on the loop row rather than on a clock — so the moment
@@ -730,14 +751,18 @@ describe("Brain Bench — the golden snapshot", () => {
       60_000,
     );
 
-    const snapshot = snapshotBrainState(bench.sql, epoch);
+    const sourceRun = await bench.obs.interpretationForSource(docId!);
+    const decayRun = bench.sql
+      .prepare<[string], { id: string }>("SELECT id FROM cognition_runs WHERE dedupe_key=?")
+      .get(`decay:loop:${loopId}`)!;
+    const snapshot = snapshotBrainState(bench.sql, epoch, { runIds: [sourceRun.id, decayRun.id] });
 
     // Guard rails before the golden, so a diff is read as "the arc changed"
     // rather than "the golden is stale in some unnamed way".
     expect(snapshot.loops).toHaveLength(1);
     expect(snapshot.briefs).toHaveLength(1);
     expect(snapshot.docAnnotations).toHaveLength(1);
-    // The datum-intake run, plus the decay revisit it earned.
+    // The source-interpretation run, plus the decay revisit it earned.
     expect(snapshot.runs).toHaveLength(2);
 
     expect(snapshot).toMatchSnapshot();

@@ -113,3 +113,9 @@ describe("a legacy row recovered from its dedupe key", () => {
     expect(triggerLabel({ type: "unknown" })).toBe("-");
   });
 });
+
+test("knowledge maintenance identifies its batch in compact and detailed output", () => {
+  const trigger: RunTrigger = { type: "knowledge-maintenance", batchId: "batch_example" };
+  expect(triggerLabel(trigger)).toBe("knowledge maintenance batch_example");
+  expect(render(trigger)).toContain("maintenance batch: batch_example");
+});

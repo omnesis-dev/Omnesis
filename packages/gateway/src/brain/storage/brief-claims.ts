@@ -33,6 +33,7 @@
  */
 
 import { containsNormalized } from "../quote-match.js";
+import { isKnowledgeOwnerReadable } from "../knowledge/storage-fence.js";
 import type { AnnotationClaimBasis } from "./annotations.js";
 import type Database from "better-sqlite3";
 
@@ -211,6 +212,7 @@ export function invalidateBriefClaimsForBrief(db: Db, briefId: string, now: numb
 
 /** Live claims of one brief, in insert order — the detail-payload read. */
 export function listLiveBriefClaims(db: Db, briefId: string): BriefClaimRow[] {
+  if (!isKnowledgeOwnerReadable(db, briefId)) return [];
   return db
     .prepare<[string], BriefClaimDbRow>(
       `SELECT * FROM brief_claims

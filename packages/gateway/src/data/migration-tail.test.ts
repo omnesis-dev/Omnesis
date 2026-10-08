@@ -59,7 +59,7 @@ const TAIL_VERSIONS = Array.from(
  */
 const WOUND_BACK = [
   172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
-  191, 192,
+  191, 192, 193,
 ];
 
 let dir: string;
@@ -126,6 +126,23 @@ function undoVocabulary(db: Db): void {
     db.exec("ALTER TABLE voice_note_transcriptions DROP COLUMN allow_vocabulary");
 }
 
+function undoKnowledge(db: Db): void {
+  const fkWasOn =
+    db.prepare<[], { foreign_keys: number }>("PRAGMA foreign_keys").get()?.foreign_keys === 1;
+  db.exec("PRAGMA foreign_keys=OFF");
+  for (const type of ["trigger", "table"] as const) {
+    const rows = db
+      .prepare<
+        [string],
+        { name: string }
+      >("SELECT name FROM sqlite_master WHERE type=? AND (name GLOB 'knowledge_*' OR name GLOB 'mutable_list_knowledge_*')")
+      .all(type);
+    for (const { name } of rows)
+      db.exec(`DROP ${type.toUpperCase()} "${name.replaceAll('"', '""')}"`);
+  }
+  if (fkWasOn) db.exec("PRAGMA foreign_keys=ON");
+}
+
 /**
  * Undo what the tail added, so the database is shaped as an install that
  * stopped at {@link BEFORE_TAIL}.
@@ -136,6 +153,7 @@ function undoVocabulary(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  undoKnowledge(db);
   undoVocabulary(db);
   // `sources.account` is created by the head schema as well as by the
   // migration, so leaving it in place is not neutral: the migration reads the
@@ -306,6 +324,7 @@ describe("vocabulary migration after the released schema", () => {
   test("adds evidence to schema 191 while preserving retained hints and replay keys", () => {
     const old = upgrade();
     try {
+      undoKnowledge(old);
       undoVocabularyEvidence(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 191; PRAGMA user_version = 191");
       old.exec(`INSERT INTO transcription_vocabulary_terms VALUES
@@ -317,7 +336,9 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
       expect(
         db
           .prepare(
@@ -358,9 +379,10 @@ describe("vocabulary migration after the released schema", () => {
     }
   });
 
-  test("upgrades schema 188 without vocabulary tables to 192", () => {
+  test("upgrades schema 188 without vocabulary tables to the head schema", () => {
     const old = upgrade();
     try {
+      undoKnowledge(old);
       undoVocabulary(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 188");
       old.exec("PRAGMA user_version = 188");
@@ -369,7 +391,9 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
       expect(db.prepare("SELECT version FROM schema_migrations WHERE version = 189").get()).toEqual(
         { version: 189 },
       );
@@ -394,6 +418,7 @@ describe("vocabulary migration after the released schema", () => {
     try {
       undoVocabularyEvidence(old);
       old.exec("DROP TABLE transcription_vocabulary_state");
+      undoKnowledge(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 189");
       old.exec("PRAGMA user_version = 189");
       old.exec(`INSERT INTO transcription_vocabulary_terms VALUES
@@ -403,7 +428,9 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
       expect(
         db
           .prepare("SELECT algorithm_version,generation,phase FROM transcription_vocabulary_state")
@@ -421,6 +448,7 @@ describe("vocabulary migration after the released schema", () => {
     const old = upgrade();
     try {
       undoVocabularyEvidence(old);
+      undoKnowledge(old);
       old.exec("DELETE FROM schema_migrations WHERE version > 187");
       old.exec(
         "UPDATE schema_migrations SET description = 'materialize contextual transcription vocabulary' WHERE version = 187",
@@ -436,7 +464,9 @@ describe("vocabulary migration after the released schema", () => {
     }
     const db = upgrade();
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 192 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: LATEST_SCHEMA_VERSION,
+      });
       expect(
         db
           .prepare(
@@ -471,6 +501,9 @@ describe("an install several versions behind, upgrading", () => {
 
   test("the tail runs in order and lands on the head version", () => {
     seedOlderInstall((old) => {
+      expect(
+        old.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
+      ).toBeUndefined();
       expect(old.prepare("SELECT name FROM pragma_table_info('documents')").all()).not.toEqual(
         expect.arrayContaining([{ name: "vocabulary_processed_at" }]),
       );
@@ -490,6 +523,17 @@ describe("an install several versions behind, upgrading", () => {
         .all()
         .map((row) => row.version);
       expect(recorded).toEqual(TAIL_VERSIONS);
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
+      ).toEqual({ name: "knowledge_nodes" });
+      expect(db.prepare("SELECT name FROM pragma_table_info('knowledge_claims')").all()).toEqual(
+        expect.arrayContaining([
+          { name: "witness_refs_json" },
+          { name: "attribution" },
+          { name: "modality" },
+          { name: "epistemic_status" },
+        ]),
+      );
       expect(db.prepare("SELECT name FROM pragma_table_info('documents')").all()).toEqual(
         expect.arrayContaining([
           { name: "vocabulary_processed_at" },
@@ -504,6 +548,9 @@ describe("an install several versions behind, upgrading", () => {
           .get(),
       ).toEqual({ name: "allow_vocabulary", dflt_value: "0" });
       for (const name of [
+        "source_inventories",
+        "source_inventory_documents",
+        "knowledge_claim_outcomes",
         "transcription_vocabulary_terms",
         "transcription_vocabulary_document_terms",
         "idx_documents_vocabulary_pending",

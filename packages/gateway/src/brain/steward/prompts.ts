@@ -53,6 +53,7 @@ import {
   type TemporalItem,
 } from "@omnesis/core";
 import { SUBJECT_ATTRIBUTION_REQUIRES_EVIDENCE } from "@omnesis/agent";
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import {
   parseCognitionMayDayRunPayload,
   parseCognitionDataRunPayload,
@@ -1074,13 +1075,13 @@ function buildProvenanceRecheckPrompt(
           .prepare<
             [string],
             { title: string; state: string }
-          >("SELECT title, state FROM briefs WHERE id = ?")
+          >(`SELECT title, state FROM briefs WHERE id = ? AND ${knowledgeOwnerReadPredicate(deps.db, "briefs.id")}`)
           .get(id)
       : deps.db
           .prepare<
             [string],
             { title: string; state: string }
-          >("SELECT title, state FROM open_loops WHERE id = ?")
+          >(`SELECT title, state FROM open_loops WHERE id = ? AND ${knowledgeOwnerReadPredicate(deps.db, "open_loops.id")}`)
           .get(id);
   const dead = listConsumedPriorsForDependent(deps.db, kind, id).filter((p) => !p.live);
   if (!dependent) {
@@ -1145,7 +1146,7 @@ function buildFeedbackRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunProm
     .prepare<
       [string],
       { state: string; user_feedback: string | null; title: string }
-    >("SELECT state, user_feedback, title FROM briefs WHERE id = ?")
+    >(`SELECT state, user_feedback, title FROM briefs WHERE id = ? AND ${knowledgeOwnerReadPredicate(deps.db, "briefs.id")}`)
     .get(briefId);
 
   if (!row) {
@@ -1213,6 +1214,23 @@ function buildSynthesisRunPrompt(run: ClaimedCognitionRun, deps: CognitionRunPro
     return parts.join("\n");
   }
 
+  if (payload.focus === "knowledge-maintenance") {
+    return [
+      ...parts,
+      "Maintain the evidence-backed synthesis graph for this batch.",
+      "Call knowledge_next_frontier repeatedly until it returns done=true. An empty frontier with done=false is not completion.",
+      "A fetchRequired descriptor replaces oversized content, never a complete editable page. Fetch the node/source explicitly and resolve current reference versions; use knowledge_list for root orientation. If temporal.contextOmitted is true, retrieve knowledge_temporal_context before completing that source.",
+      "For each source, interpret its actual time and attribution, search existing synthesis before proposing any page, and call knowledge_discovery_complete for its exact offered fingerprint.",
+      "When candidate context is supplied, reconcile its proposed scope with existing pages and current evidence. Publish useful context, merge into a grounded existing wiki, or explicitly defer/dismiss with knowledge_candidate_decide. Reopen a deferred candidate as proposed before publication; candidate prose is orientation, not verified evidence.",
+      "Account for its temporal.invalidated entries: re-file only facts still supported by current evidence with temporal_annotation_add, or explain why they no longer hold. If hasMoreInvalidated is true, page knowledge_temporal_context before completing the source. Review ungrounded live time-index entries too; do not duplicate source-owned temporal projections.",
+      "For each synthesis node, read its dependencies at current versions and use knowledge_save with the offered inputFingerprint. Preserve stable claim IDs, uncertainty, canonical loop outcomes and historical context.",
+      "Each offered node lists pendingClaimIds. Pass reviewedClaimIds to knowledge_save for retained claims you actually reviewed; changing one claim does not settle untouched claims. If pendingClaimIdsOmitted is true, review the listed subset and request the next frontier for the remainder. Continue until the engine confirms completion.",
+      'All synthesis prose, including loop descriptions, annotations and brief text, needs claim spans. Store attribution, modality and disputed/unsupported status in structured claim state, separately from verification. Unsupported questions or context can use explicit refs="" and must not be presented as verified facts.',
+      "A wiki supplies context; a loop tracks an outcome. Not every source needs a wiki. Never reopen an old commitment merely because no completion appears in the available evidence.",
+      "The root wiki is a compact bounded summary refreshed separately. Page links are navigation unless their claim references establish an actual dependency.",
+      "Use existing canonical loop/annotation/brief tools for operational state. Do not report the batch complete yourself; the engine owns that decision.",
+    ].join("\n\n");
+  }
   if (payload.focus === "annotation-contradiction") {
     const store = payload.store ?? "doc";
     interface ContradictionLine {

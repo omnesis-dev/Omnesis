@@ -6044,7 +6044,6 @@
       "paths": [
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
-        "packages/collector/src/e2e/brain-bootstrap.e2e.test.ts",
         "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
         "packages/collector/src/e2e/brain-engine.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
@@ -6053,8 +6052,6 @@
         "packages/collector/src/e2e/brain-smoke.e2e.test.ts",
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
-        "packages/collector/src/e2e/brain-waker.e2e.test.ts",
-        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
@@ -6282,11 +6279,6 @@
         "packages/gateway/src/brain/steward/tools.test.ts"
       ],
       "reason": "invented loops-test-life fixture (Briefs epic, fully fictional)"
-    },
-    {
-      "value": "Cedar Row Supplies",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented vendor for the bootstrap bench (fully fictional)"
     },
     {
       "value": "Central Group",
@@ -7213,11 +7205,6 @@
       "reason": "reviewed existing fixture"
     },
     {
-      "value": "Fenwick Hall",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented venue for the bootstrap bench (fully fictional)"
-    },
-    {
       "value": "Ferndale Holdings",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
       "reason": "invented people-search ranking fixture"
@@ -7531,11 +7518,6 @@
       "reason": "reviewed existing fixture"
     },
     {
-      "value": "Harbourline Studios",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented vendor for the bootstrap bench (fully fictional)"
-    },
-    {
       "value": "Has Phone",
       "paths": ["packages/providers/apple/src/contacts.test.ts"],
       "reason": "reviewed existing fixture"
@@ -7643,7 +7625,6 @@
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-smoke.e2e.test.ts",
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
-        "packages/collector/src/e2e/brain-waker.e2e.test.ts",
         "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
         "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
@@ -8209,16 +8190,6 @@
       "value": "Kayak Storage Rack",
       "paths": ["packages/collector/src/e2e/search-quality.e2e.test.ts"],
       "reason": "reviewed: invented document title in the search-quality judged corpus, not corpus data"
-    },
-    {
-      "value": "Kestrel Instruments",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented vendor for the bootstrap bench (fully fictional)"
-    },
-    {
-      "value": "Kestrel Yard",
-      "paths": ["packages/collector/src/e2e/brain-bootstrap.e2e.test.ts"],
-      "reason": "invented venue for the bootstrap bench (fully fictional)"
     },
     {
       "value": "Kickoff Meeting",
@@ -10059,7 +10030,6 @@
         "packages/collector/src/e2e/brain-adjudication.e2e.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
         "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
-        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
         "packages/collector/src/e2e/brain-loops.e2e.test.ts",
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
@@ -10572,9 +10542,7 @@
         "packages/agent/src/tools/cite-record.test.ts",
         "packages/collector/src/e2e/brain-annotations.e2e.test.ts",
         "packages/collector/src/e2e/brain-briefs.e2e.test.ts",
-        "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
-        "packages/collector/src/e2e/brain-waker.e2e.test.ts",
         "packages/collector/src/e2e/briefs-cli.e2e.test.ts",
         "packages/collector/src/e2e/browser-capture.e2e.test.ts",
         "packages/collector/src/e2e/plaid.e2e.test.ts",
@@ -11624,11 +11592,6 @@
       "reason": "reviewed existing fixture"
     },
     {
-      "value": "Your Cedar Grove",
-      "paths": ["packages/collector/src/e2e/brain-rhythm.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
-    },
-    {
       "value": "Your Japan",
       "paths": [
         "evals/universes/japan-trip/agent-demos/japan-trip-spend.jsonl",
@@ -11678,7 +11641,6 @@
       "paths": [
         "packages/collector/src/e2e/brain-bench/bench.ts",
         "packages/collector/src/e2e/brain-bench/decision-server.ts",
-        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts"
       ],
       "reason": "invented worth-gate fixture"
@@ -11692,8 +11654,7 @@
       "value": "Stellar Outfitters",
       "paths": [
         "evals/universes/loops-test-life/decision-cassettes/worth-gate.jsonl",
-        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
-        "packages/collector/src/e2e/brain-decision-bootstrap.e2e.test.ts"
+        "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts"
       ],
       "reason": "invented worth-gate fixture"
     },
@@ -12077,6 +12038,45 @@
       "value": "Varell Orvenna",
       "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
       "reason": "Invented hyphenated-name fragment for Unicode typography extraction regression."
+    },
+    {
+      "value": "Example Hall",
+      "paths": ["evals/universes/sacha-bellamy/next-gen-brain/scenario.json"],
+      "reason": "Reviewed invented workshop fixture or generic example venue in these exact test/scenario paths; never personal corpus data."
+    },
+    {
+      "value": "Workshop Friday",
+      "paths": [
+        "packages/gateway/src/brain/knowledge/owner-adapters.test.ts",
+        "packages/gateway/src/brain/knowledge/projection.test.ts",
+        "packages/gateway/src/brain/knowledge/service.test.ts",
+        "packages/gateway/src/brain/knowledge/tools.test.ts",
+        "packages/gateway/src/data/migration-193.test.ts"
+      ],
+      "reason": "Reviewed invented workshop fixture or generic example venue in these exact test/scenario paths; never personal corpus data."
+    },
+    {
+      "value": "Workshop Saturday",
+      "paths": [
+        "packages/gateway/src/brain/knowledge/service.test.ts",
+        "packages/gateway/src/data/migration-193.test.ts"
+      ],
+      "reason": "Reviewed invented workshop fixture or generic example venue in these exact test/scenario paths; never personal corpus data."
+    },
+    {
+      "value": "Progressive Brain",
+      "paths": ["evals/universes/sacha-bellamy/next-gen-brain/README.md"],
+      "reason": "Public scenario title or test-model role phrase in the exact fictional scenario README; never personal corpus data."
+    },
+    {
+      "value": "Brain Bench",
+      "paths": ["evals/universes/sacha-bellamy/next-gen-brain/README.md"],
+      "reason": "Public scenario title or test-model role phrase in the exact fictional scenario README; never personal corpus data."
+    },
+    {
+      "value": "System One",
+      "paths": ["evals/universes/sacha-bellamy/next-gen-brain/README.md"],
+      "reason": "Public scenario title or test-model role phrase in the exact fictional scenario README; never personal corpus data."
     }
   ],
   "secretFixtures": [

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createKnowledgeTables } from "../brain/knowledge/schema.js";
+import { createKnowledgeDecisionTable } from "../brain/knowledge/decision-storage.js";
+import { installKnowledgeOwnerTriggers } from "../brain/knowledge/owner-triggers.js";
+import { createKnowledgeSourceTriggers } from "../brain/knowledge/source-triggers.js";
+import { createKnowledgeWorkTables } from "../brain/knowledge/work-schema.js";
 import { createNotificationQueueTables } from "../push/queue.js";
 import {
   createBriefsStorageTables,
@@ -23,6 +28,7 @@ import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
+import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
@@ -1438,6 +1444,11 @@ function runSchemaSetupInTxn(db: Db): void {
   // Briefs / Cognition Steward storage (experimental): open loops, briefs,
   // the agent run queue, spend tracking, agent notes.
   createBriefsStorageTables(db);
+  createSourceInventoryTables(db);
+  createKnowledgeTables(db);
+  createKnowledgeWorkTables(db);
+  createKnowledgeSourceTriggers(db);
+  createKnowledgeDecisionTable(db);
   // Brief-claims sidecar: per-brief atomic asserted claims, each bound to
   // its evidence document + quote. FK on briefs(id), so it follows the
   // briefs DDL above.
@@ -1446,6 +1457,7 @@ function runSchemaSetupInTxn(db: Db): void {
   createAnnotationStorageTables(db);
   // Durable person-annotation store — the person-keyed sibling.
   createPersonAnnotationStorageTables(db);
+  installKnowledgeOwnerTriggers(db);
   // Consumption provenance: which briefs/loops were built on which
   // annotation priors, so invalidating a prior can re-examine its dependents.
   createConsumptionEdgesTables(db);

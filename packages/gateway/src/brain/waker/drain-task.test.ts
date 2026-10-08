@@ -23,6 +23,7 @@ import {
   dataRunThreadDedupeKey,
 } from "../run-payloads.js";
 import { getCognitionRun, getPendingRunByDedupeKey } from "../storage/run-queue.js";
+import { advanceKnowledgeCascade } from "../knowledge/storage-invalidation.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { DERIVATION_STAGES, type DerivationStage } from "../../domain/DocumentDerivation.js";
 import { briefsWakerDrainTask, type BriefsWakerDrainBundle } from "./drain-task.js";
@@ -750,6 +751,10 @@ describe("briefs waker drain", () => {
       expect(dueAt()).toBe(barrierDeadline);
 
       db.prepare("DELETE FROM documents WHERE id = ?").run("doc-1");
+      // Restoration is legal once bounded privacy cleanup has completed. Keep
+      // the document absent for the readiness read, then recreate it precisely
+      // inside the write-gate seam so the writer must re-evaluate derivation.
+      expect(advanceKnowledgeCascade(db, 100, now).pending).toBe(false);
       const atomicPull = writeGate.pullForwardCognitionRuns;
       writeGate.pullForwardCognitionRuns = async (entries, stageIds) => {
         seedDatum("doc-1");

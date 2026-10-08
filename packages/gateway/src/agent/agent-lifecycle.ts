@@ -50,6 +50,7 @@ import { PrivacyReviewer } from "../privacy/reviewer.js";
 import { cognitionSpendDay } from "../brain/storage/spend.js";
 import { toCognitionRunUsage } from "../brain/run-driver.js";
 import { renderOperatorInstructionsSection } from "../instructions/render.js";
+import { renderKnowledgeRootContext } from "../brain/knowledge/root-context.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
 import {
   ConversationReadStateService,
@@ -144,6 +145,7 @@ export interface AgentServiceDeps {
    * a gateway assembled without a config directory (tests, embedded harnesses).
    */
   getOperatorInstructions?: () => string;
+  getKnowledgeRootMaxChars?: () => number;
 }
 
 /**
@@ -380,23 +382,25 @@ export function createAgentService(
     // telling their own agent how to behave, and it applies whoever asked —
     // what may actually leave the machine is still the privacy reviewer's call.
     const operatorInstructions = deps.getOperatorInstructions?.() ?? "";
-    return buildSystemPrompt({
-      audience: options.audience,
-      now: new Date(),
-      timeZone: context.timeZone,
-      catalog,
-      sourceTypes,
-      experimental,
-      selfMemory,
-      selfPersonId,
-      memoryWrites: options.memoryWrites === true && !restricted,
-      temporal: !restricted,
-      operatorInstructions,
-      citationSurface: options.citationSurface,
-      copyableValues: options.copyableValues === true,
-      // Source-restricted grants receive no graph context on their searches.
-      graphContext: !restricted && searchPipeline.agentSearchV2Enabled,
-    });
+    return (
+      buildSystemPrompt({
+        audience: options.audience,
+        now: new Date(),
+        timeZone: context.timeZone,
+        catalog,
+        sourceTypes,
+        experimental,
+        selfMemory,
+        selfPersonId,
+        memoryWrites: options.memoryWrites === true && !restricted,
+        temporal: !restricted,
+        operatorInstructions,
+        citationSurface: options.citationSurface,
+        copyableValues: options.copyableValues === true,
+        // Source-restricted grants receive no graph context on their searches.
+        graphContext: !restricted && searchPipeline.agentSearchV2Enabled,
+      }) + (restricted ? "" : renderKnowledgeRootContext(db, deps.getKnowledgeRootMaxChars?.()))
+    );
   };
   return new AgentService({
     backendFactory,
@@ -845,6 +849,8 @@ export class AgentLifecycle {
     return createAgentService(
       {
         db: this.deps.db,
+        getKnowledgeRootMaxChars: () =>
+          this.deps.configStore.get().brain?.knowledge?.rootMaxChars ?? 8000,
         searchPipeline: this.deps.searchPipeline,
         syncStatus: this.deps.syncStatus,
         analyticsDb: this.deps.analyticsDb,

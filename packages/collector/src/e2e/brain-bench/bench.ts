@@ -40,6 +40,8 @@ import {
   type JudgePolicy,
 } from "./verdict-servers.js";
 import { BrainObs } from "./obs.js";
+import { checkpointInitialInventory, type InitialInventoryReport } from "./history.js";
+import { readMaintenanceProgress } from "./maintenance-progress.js";
 import {
   startDecisionServer,
   type DecisionServer,
@@ -99,10 +101,10 @@ export interface BrainBenchOptions {
   extraInference?: SyntheticHarnessOptions["extraInference"];
   /**
    * Synthetic universe supplying the ambient corpus. Defaults to
-   * `loops-test-life` — the Cognition Steward's own test life, whose
-   * fixtures are all dated outside the waker's recency window, so boot
-   * enqueues zero data runs and every run a bench observes is one it
-   * deliberately caused.
+   * `loops-test-life` — the Cognition Steward's fictional ambient corpus.
+   * Its source arrivals also pass through maintenance discovery. Scenarios
+   * match their own evidence explicitly; use initialInventory for a corpus
+   * that was already present before cognition started.
    */
   universe?: string;
   /**
@@ -161,6 +163,8 @@ export interface BrainBenchOptions {
   apns?: boolean;
   /** Sync every universe source at boot so the ambient corpus lands. Defaults to true. */
   syncSources?: boolean;
+  /** Existing indexed context predating inventory-aware ingestion; no fabricated coverage. */
+  initialInventory?: "pre-existing";
 }
 
 /** A queue row seeded directly, for a state no enqueuer produces. */
@@ -205,6 +209,7 @@ export class BrainBench {
   private readonly judgeServer: VerdictServer | null;
   private readonly decisionServer: DecisionServer | null;
   private readonly virtualClock: boolean;
+  readonly initialInventory: InitialInventoryReport | null;
   private db: Database.Database | null = null;
 
   private constructor(init: {
@@ -214,6 +219,7 @@ export class BrainBench {
     judge: VerdictServer | null;
     decision: DecisionServer | null;
     virtualClock: boolean;
+    initialInventory: InitialInventoryReport | null;
   }) {
     this.harness = init.harness;
     this.puppetServer = init.puppet;
@@ -221,10 +227,13 @@ export class BrainBench {
     this.judgeServer = init.judge;
     this.decisionServer = init.decision;
     this.virtualClock = init.virtualClock;
+    this.initialInventory = init.initialInventory;
     this.obs = new BrainObs(init.harness);
   }
 
   static async start(opts: BrainBenchOptions): Promise<BrainBench> {
+    if (opts.initialInventory && (!opts.experimental || opts.syncSources === false))
+      throw new Error("Pre-existing inventory requires experimental cognition and source sync");
     if (opts.behaviors && opts.cassetteDir) {
       throw new Error("BrainBench: `behaviors` and `cassetteDir` are mutually exclusive");
     }
@@ -269,7 +278,7 @@ export class BrainBench {
     }
 
     const harness = new SyntheticE2EHarness({
-      gatewayMode: opts.experimental ? "experimental" : "stable",
+      gatewayMode: opts.experimental && !opts.initialInventory ? "experimental" : "stable",
       universe: opts.universe ?? "loops-test-life",
       ...(opts.embedder ? { embedderBackend: "fake" as const } : {}),
       ...(opts.apns ? { apnsBackend: "fake" as const } : {}),
@@ -302,16 +311,54 @@ export class BrainBench {
         },
       },
     });
-    await harness.start();
+    try {
+      await harness.start();
 
-    if (opts.syncSources !== false) {
-      for (const id of harness.getSourceIds()) {
-        await harness.triggerSyncAndWait(id, 60_000);
+      if (opts.syncSources !== false) {
+        for (const id of harness.getSourceIds()) {
+          await harness.triggerSyncAndWait(id, 60_000);
+        }
+        await harness.refreshSearchSnapshot();
       }
-      await harness.refreshSearchSnapshot();
-    }
 
-    return new BrainBench({ harness, puppet, entailment, judge, decision, virtualClock });
+      let initialInventory: InitialInventoryReport | null = null;
+      if (opts.initialInventory) {
+        await harness.restartGateway({
+          gatewayMode: "experimental",
+          whileStopped: () => {
+            const db = new Database(harness.getDbPath(), { fileMustExist: true });
+            try {
+              initialInventory = checkpointInitialInventory(db);
+            } finally {
+              db.close();
+            }
+          },
+        });
+      }
+      return new BrainBench({
+        harness,
+        puppet,
+        entailment,
+        judge,
+        decision,
+        virtualClock,
+        initialInventory,
+      });
+    } catch (error) {
+      // A rejected offline fixture boundary must not orphan its gateway or servers.
+      await new BrainBench({
+        harness,
+        puppet,
+        entailment,
+        judge,
+        decision,
+        virtualClock,
+        initialInventory: null,
+      })
+        .destroy()
+        .catch(() => {});
+      throw error;
+    }
   }
 
   // ── stimulus ──────────────────────────────────────────────────────────────
@@ -433,9 +480,9 @@ export class BrainBench {
   /**
    * Wait until the cognition queue is empty and nothing is executing.
    *
-   * Progress-based, not a fixed sleep: the deadline extends whenever a run
-   * settles, and the failure names the queue's actual contents — so a
-   * genuinely stalled engine fails loudly instead of passing as "quiet".
+   * A fixed overall deadline bounds the wait. Run settlement or a change in
+   * durable pending work resets the stall timer. Failures report actual queue
+   * and maintenance contents rather than treating unfinished work as quiet.
    */
   async drainUntilQuiet(
     opts: { timeoutMs?: number; stallMs?: number; includeUpcoming?: boolean } = {},
@@ -450,6 +497,7 @@ export class BrainBench {
     const includeUpcoming = opts.includeUpcoming ?? true;
     const hardDeadline = Date.now() + timeoutMs;
     let lastSettled = -1;
+    let lastMaintenanceSignature: string | null = null;
     let lastProgressAt = Date.now();
 
     for (;;) {
@@ -460,6 +508,13 @@ export class BrainBench {
         lastProgressAt = Date.now();
       }
       const debounced = includeUpcoming ? await this.debouncedRunCount() : 0;
+      const maintenanceProgress = await this.pendingKnowledgeProgress(includeUpcoming);
+      const maintenance = maintenanceProgress.pending;
+      // Durable intake and bounded cascades can advance before an agent run exists.
+      if (maintenanceProgress.signature !== lastMaintenanceSignature) {
+        lastMaintenanceSignature = maintenanceProgress.signature;
+        lastProgressAt = Date.now();
+      }
       // A pushed document sits in the waker's buffer, not the queue, until the
       // waker's next background tick — and a busy gateway (the boot sync's
       // derivation work, say) can hold that tick back past the confirmation
@@ -469,7 +524,8 @@ export class BrainBench {
         pulse.counts.queuedRuns === 0 &&
         pulse.counts.bufferedWakes === 0 &&
         pulse.runningRuns.length === 0 &&
-        debounced === 0;
+        debounced === 0 &&
+        maintenance === 0;
       if (idle) {
         // One more settle interval, so a run enqueued by the run that just
         // finished (feedback, notes compaction, scheduled follow-ups) is
@@ -477,11 +533,13 @@ export class BrainBench {
         await sleep(600);
         const confirm = await this.obs.pulse();
         const stillDebounced = includeUpcoming ? await this.debouncedRunCount() : 0;
+        const stillMaintenance = await this.pendingKnowledgeCount(includeUpcoming);
         if (
           confirm.counts.queuedRuns === 0 &&
           confirm.counts.bufferedWakes === 0 &&
           confirm.runningRuns.length === 0 &&
-          stillDebounced === 0
+          stillDebounced === 0 &&
+          stillMaintenance === 0
         ) {
           return;
         }
@@ -493,12 +551,48 @@ export class BrainBench {
         const detail = runs.items
           .map((r) => `${r.kind}/${r.status} attempts=${r.attempts} ${r.lastError ?? ""}`)
           .join("; ");
+        const buffers = this.sql
+          .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_work'")
+          .get()
+          ? JSON.stringify({
+              work: this.sql
+                .prepare(
+                  "SELECT subject_id,reason,status,tier,due_at,last_error FROM knowledge_work WHERE status IN ('pending','batched') LIMIT 20",
+                )
+                .all(),
+              changes: this.sql.prepare("SELECT * FROM knowledge_changes LIMIT 20").all(),
+              owners: this.sql.prepare("SELECT * FROM knowledge_owner_changes LIMIT 20").all(),
+              cascades: this.sql.prepare("SELECT * FROM knowledge_cascade_jobs LIMIT 20").all(),
+              cleanup: this.sql
+                .prepare("SELECT * FROM knowledge_projection_cleanup LIMIT 20")
+                .all(),
+            })
+          : "{}";
         throw new Error(
-          `brain queue did not drain (queued=${pulse.counts.queuedRuns}, bufferedWakes=${pulse.counts.bufferedWakes}, running=${pulse.runningRuns.length}, debounced=${debounced}, failed24h=${pulse.counts.failedRuns24h}): ${detail}`,
+          `brain queue did not drain (queued=${pulse.counts.queuedRuns}, bufferedWakes=${pulse.counts.bufferedWakes}, running=${pulse.runningRuns.length}, debounced=${debounced}, maintenance=${maintenance}, failed24h=${pulse.counts.failedRuns24h}): ${detail}; buffers=${buffers}`,
         );
       }
       await sleep(250);
     }
+  }
+
+  /** Engine buffers precede cognition-run enqueue and must participate in settle probes. */
+  private async pendingKnowledgeCount(includeUpcoming: boolean): Promise<number> {
+    return (await this.pendingKnowledgeProgress(includeUpcoming)).pending;
+  }
+
+  private async pendingKnowledgeProgress(includeUpcoming: boolean) {
+    const status = await this.obs.status();
+    if (!status.experimental || !status.briefs.active) return { pending: 0, signature: "inactive" };
+    if (
+      !this.sql
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_work'")
+        .get()
+    )
+      return { pending: 0, signature: "absent" };
+    const { now } = await this.clock.now();
+    const horizon = now + (includeUpcoming ? 15_000 : 0);
+    return readMaintenanceProgress(this.sql, horizon);
   }
 
   /**

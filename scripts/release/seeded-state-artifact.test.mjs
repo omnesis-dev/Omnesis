@@ -228,6 +228,59 @@ describe("seeded-state artifacts", () => {
     }
   });
 
+  it("preserves pending synthesis privacy fences but clears transaction guards", () => {
+    const paths = fixture();
+    rmSync(paths.sourcePath);
+    const source = new Database(paths.sourcePath);
+    runSchemaSetup(source);
+    source.exec(`
+      INSERT INTO knowledge_source_revisions VALUES ('deleted-source', 'old-hash', 1, 100);
+      INSERT INTO knowledge_node_tombstones VALUES ('deleted-wiki', 100);
+      INSERT INTO knowledge_cascade_jobs VALUES (1, 'privacy', 'source', 'deleted-source', 'old-hash', 100);
+      INSERT INTO knowledge_cascade_frontier VALUES (1, 'source', 'deleted-source', '', 0);
+      INSERT INTO knowledge_projection_cleanup VALUES ('mirror-document', 'deleted-wiki', 100);
+      INSERT INTO knowledge_owner_write_guard VALUES ('loop', 'loop-fixture');
+      INSERT INTO knowledge_owner_withdraw_guard VALUES ('annotation-fixture');
+      INSERT INTO knowledge_owner_retire_guard VALUES ('loop-fixture');
+    `);
+    const schemaVersion = source.pragma("user_version", { simple: true });
+    source.close();
+    const retained = [
+      "knowledge_source_revisions",
+      "knowledge_node_tombstones",
+      "knowledge_cascade_jobs",
+      "knowledge_cascade_frontier",
+      "knowledge_projection_cleanup",
+    ];
+    const cleared = [
+      "knowledge_owner_write_guard",
+      "knowledge_owner_withdraw_guard",
+      "knowledge_owner_retire_guard",
+    ];
+    createSeededStateArtifact(
+      {
+        ...spec(paths, [...retained, ...cleared]),
+        schemaVersion,
+        expected: {
+          rowCounts: {
+            "omnesis.db": Object.fromEntries([
+              ...retained.map((table) => [table, 1]),
+              ...cleared.map((table) => [table, 0]),
+            ]),
+          },
+        },
+      },
+      paths.artifact,
+    );
+    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    for (const table of retained)
+      expect(output.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get()).toBe(1);
+    for (const table of cleared)
+      expect(output.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get()).toBe(0);
+    expect(output.prepare("SELECT deleted FROM knowledge_source_revisions").pluck().get()).toBe(1);
+    output.close();
+  });
+
   it("retains operational schemas but resets reconciliation and cleanup work", () => {
     const root = mkdtempSync(join(tmpdir(), "omnesis-seeded-absence-"));
     temporaryDirectories.push(root);

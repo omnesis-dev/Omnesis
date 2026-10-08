@@ -45,6 +45,7 @@
  * procedures' coverage into one number.
  */
 
+import { KNOWLEDGE_COVERAGE_CTE } from "../knowledge/coverage-observability.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -59,8 +60,10 @@ export interface CognitionCoverageRow {
   eligible: number;
   processed: number;
   skipped: number;
-  promptTokens: number;
-  completionTokens: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  unit?: "documents" | "source-revisions";
+  costAttribution?: "workflow-ledger" | "shared-run-ledger";
   /** When a counter last moved (unix ms). */
   lastProgressAt: number;
   status: CognitionCoverageStatus;
@@ -173,6 +176,9 @@ export function listCognitionCoverage(
   db: Db,
   opts: ListCognitionCoverageOptions = {},
 ): CognitionCoverageRow[] {
+  const knowledge = !!db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_work'")
+    .get();
   const conditions: string[] = [];
   const params: Array<number | string> = [];
   if (opts.before) {
@@ -208,13 +214,15 @@ export function listCognitionCoverage(
         eligible: number;
         processed: number;
         skipped: number;
-        prompt_tokens: number;
-        completion_tokens: number;
+        prompt_tokens: number | null;
+        completion_tokens: number | null;
+        unit?: "documents" | "source-revisions";
+        cost_attribution?: "workflow-ledger" | "shared-run-ledger";
         last_progress_at: number;
         status: string;
       }
     >(
-      `SELECT * FROM cognition_coverage
+      `${knowledge ? KNOWLEDGE_COVERAGE_CTE : ""} SELECT * FROM ${knowledge ? "coverage_view" : "cognition_coverage"}
         ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""}
         ORDER BY last_progress_at DESC, source_id, workflow_id, workflow_version
         LIMIT ?`,
@@ -231,6 +239,9 @@ export function listCognitionCoverage(
       completionTokens: r.completion_tokens,
       lastProgressAt: r.last_progress_at,
       status: r.status as CognitionCoverageStatus,
+      ...(r.unit === "source-revisions"
+        ? { unit: r.unit, costAttribution: r.cost_attribution }
+        : {}),
     }));
 }
 

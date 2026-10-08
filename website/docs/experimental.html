@@ -163,9 +163,9 @@
         <p>
           Nothing here is visible unless the process was started with
           <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal browser notes, Find,
-          Brain, Watch and their controls; with it unset the gateway serves none of their routes,
-          schedules none of their work and creates none of their files. For a gateway you run in the
-          foreground:
+          Brain, Watch and their controls. With it unset, their experimental routes and autonomous
+          work are unavailable. Source indexing, grounded memory reads, evidence invalidation and
+          privacy cleanup remain active. For a gateway you run in the foreground:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -322,9 +322,9 @@
           Brain is a background agent. It reads your records as they arrive, and on a schedule,
           without anyone asking a question, and writes down what it learns in a form the rest of
           Omnesis can use: dated facts, unresolved commitments, cited context on documents and
-          people, and occasional cards worth your attention. It is the one part of Omnesis that
-          spends model tokens with nobody asking, so most of this section is about what it does with
-          them and how to bound it.
+          people, maintained project and topic wikis, and occasional cards worth your attention. It
+          is the one part of Omnesis that spends model tokens with nobody asking, so most of this
+          section is about what it does with them and how to bound it.
         </p>
         <figure class="diagram diagram-flat diagram-compact">
           <ol class="flow">
@@ -336,9 +336,7 @@
             </li>
             <li class="flow-step">
               <span class="flow-title">Run queue</span
-              ><span class="flow-desc"
-                >Debounced, deduplicated, one run at a time, inside the daily budget</span
-              >
+              ><span class="flow-desc">Versioned maintenance batches, inside the daily budget</span>
             </li>
             <li class="flow-step">
               <span class="flow-title">Agent run</span
@@ -352,20 +350,19 @@
             </li>
             <li class="flow-step">
               <span class="flow-title">Stores</span
-              ><span class="flow-desc">Time index, open loops, annotations, briefs</span>
+              ><span class="flow-desc">Time index, loops, annotations, wikis, briefs</span>
             </li>
           </ol>
           <figcaption>
-            Every piece of Brain work is a queued agent run; what it writes passes evidence checks
-            before it is stored.
+            Source changes invalidate evidence immediately. Model work runs in queued maintenance
+            batches, and synthesis writes pass reference and evidence checks.
           </figcaption>
         </figure>
 
         <h3 id="brain-what-it-writes">What it writes</h3>
         <p>
-          Brain writes four kinds of record, all into the gateway's own database. Each carries the
-          id of the run that wrote it, so any row can be traced back to the transcript that produced
-          it.
+          Brain stores maintained understanding in the gateway database. Claim references and
+          revision history connect generated context to the evidence used to produce it.
         </p>
         <div class="table-wrap">
           <table>
@@ -378,6 +375,14 @@
             </thead>
             <tbody>
               <tr>
+                <td>Wikis and root overview</td>
+                <td>
+                  Reusable context for projects and topics, with claim-level provenance. A compact
+                  root wiki provides current orientation and must fit its configured size limit.
+                </td>
+                <td>Debug → Knowledge → Library</td>
+              </tr>
+              <tr>
                 <td>Time index</td>
                 <td>
                   Temporal annotations: Brain's reading of what a date means and when it applies
@@ -385,7 +390,7 @@
                   documents it came from. The agent's time query returns them beside source dates
                   and date mentions.
                 </td>
-                <td>Debug → Calendar</td>
+                <td>Debug → Knowledge → Timeline</td>
               </tr>
               <tr>
                 <td>Open loops</td>
@@ -395,7 +400,7 @@
                   changed the loop. States: <code>open</code>, <code>snoozed</code>,
                   <code>done</code>, <code>dismissed</code>.
                 </td>
-                <td>Debug → Cognition → Loops; the mobile apps' Loops view</td>
+                <td>Debug → Knowledge → Loops; the mobile apps' Loops view</td>
               </tr>
               <tr>
                 <td>Annotations</td>
@@ -404,7 +409,7 @@
                   document and a confidence. The agent's <a href="/docs/agent#memory">memory</a>
                   reads the same notes.
                 </td>
-                <td>Debug → Cognition → Memory</td>
+                <td>The document or person page; Debug → Knowledge → Library</td>
               </tr>
               <tr>
                 <td>Briefs</td>
@@ -413,7 +418,7 @@
                   digest a day. Only the digest sends a push notification, at most once a day
                   (<code>brain.digest.push</code>).
                 </td>
-                <td>Debug → Cognition → Briefs; the mobile apps' Briefs view</td>
+                <td>Debug → Knowledge → Briefs; the mobile apps' Briefs view</td>
               </tr>
             </tbody>
           </table>
@@ -426,12 +431,12 @@
           rather than individual notes; stored records remain visible when the Brain is stopped.
         </p>
         <p>
-          It also keeps a short agent-notes file, which is injected into every run's prompt as
-          working memory (8 KiB by default, <code>brain.notesMaxBytes</code>), and it can decide
-          pending person-merge proposals that the deterministic matcher left open: merge (a
-          reversible rule that records the model's reason), distinct (the proposal is denied and not
-          proposed again), or unsure (left for you). Proposals that involve you are never decided by
-          Brain.
+          The compact root wiki supplies current orientation. Existing agent notes remain available
+          for working lessons (<code>brain.notesMaxBytes</code> bounds that notes file). Brain can
+          also decide pending person-merge proposals that the deterministic matcher left open: merge
+          (a reversible rule that records the model's reason), distinct (the proposal is denied and
+          not proposed again), or unsure (left for you). Proposals that involve you are never
+          decided by Brain.
         </p>
 
         <h3 id="brain-turning-on">Turning it on</h3>
@@ -439,11 +444,11 @@
           Brain runs only when two things are true: the gateway runs with
           <code>OMNESIS_EXPERIMENTAL=1</code>, and a model is assigned to the
           <code>background-agent</code> role and can actually be reached. Either alone does nothing.
-          The second step is the one that starts spending: assigning the model starts every producer
-          described below at once, from reacting to new records to the scheduled sweeps and the
-          morning digest. Read <a href="#brain-spend">Bounding the spend</a> before you assign it.
-          The one exception is the catch-up over your history, which waits until you start it
-          yourself (see <a href="#brain-how-it-runs">How it runs</a>).
+          The second step is the one that starts spending: assigning the model starts the enabled
+          producers, from reacting to new records to scheduled sweeps and the morning digest. Read
+          <a href="#brain-spend">Bounding the spend</a> before you assign it. The one exception is
+          the catch-up over your history, which waits until you start it yourself (see
+          <a href="#brain-how-it-runs">How it runs</a>).
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -502,14 +507,17 @@
               <tr>
                 <td><code>decision</code></td>
                 <td>
-                  Scores each email before its agent run and skips the ones the agent would get
-                  nothing from, and scores each new record a run saves. Served only by TypeSafe Jev
+                  Routes urgency, discovery, dependency repair and review, and checks whether new
+                  records belong in durable memory. Served only by TypeSafe Jev
                   (<code>typesafe/jev-1.13.0</code>); see
-                  <a href="#brain-worth-gate">Skipping mail it cannot use</a> and
+                  <a href="#brain-worth-gate">Routing maintenance</a> and
                   <a href="#brain-record-check">Checking what it writes</a>. The role itself is
                   stable; <a href="/docs/operating#models">Models</a> covers its setup.
                 </td>
-                <td>Every email Brain selects gets an agent run, and every record is saved.</td>
+                <td>
+                  Urgency and relevance checks take a conservative fallback; record verification
+                  remains separate.
+                </td>
               </tr>
             </tbody>
           </table>
@@ -520,42 +528,65 @@
           verdict, and every role shares the account's usage allowance.
           <code>GET /status</code> reports the gate as <code>brain</code>, with
           <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
-          <code>active</code>; the portal's Cognition page says which of the two conditions is
+          <code>active</code>; the portal's Brain activity page says which of the two conditions is
           missing.
         </p>
 
         <h3 id="brain-how-it-runs">How it runs</h3>
         <p>
-          Every piece of Brain work is a <em>run</em>: one agent session with read-only tools over
-          your corpus and write tools for the stores above. Runs wait in a durable queue and a
-          single drainer works through them. Runs that are not daily execute strictly one at a time,
-          so the queue, not the model, sets the pace.
+          Each Brain agent session is a <em>run</em>, with read-only tools over your corpus and
+          write tools for the stores above. Runs wait in a durable queue and a drainer works through
+          them. Maintenance batches retain their input versions and pending frontier across
+          interruptions; the engine controls admission and repair order.
         </p>
         <p>
-          What wakes a run depends on the record's own date, not on when it was synced. A document
-          dated within <code>brain.recencyWindow</code> (7 days) of now wakes the
-          <strong>live lane</strong>: a conversation waits for an hour of quiet
-          (<code>brain.conversationDebounce</code>) but never more than six
-          (<code>conversationMaxDefer</code>), an edited document waits 30 minutes
-          (<code>documentUpdateDebounce</code>) but never more than four hours
-          (<code>documentMaxDefer</code>), and each waits up to 30 minutes
-          (<code>derivationBarrier</code>) for people resolution, links and date extraction to
-          finish with it. A note told to Omnesis by voice and still being transcribed by the gateway
-          is held until its transcript lands or is given up on, for up to an hour
-          (<code>pendingContentBarrier</code>), so the Brain reads it once, in the gateway's words.
-          Older records never wake the live lane, so a large sync of history does not flood it.
+          New and changed sources enter a durable maintenance queue. Immediate rule-based
+          invalidation marks affected claims stale before model repair. The decision model selects
+          an immediate, hourly or six-hour maintenance tier; thresholds and delays are configurable
+          under <code>brain.knowledge</code>. Related changes can share a batch. Disjoint project
+          regions remain separate, while the root overview is refreshed as a shared aggregate.
         </p>
         <p>
-          History is the <strong>catch-up lane</strong> (the portal calls it Bootstrap). It walks
-          older documents that still carry a future date, most recent first, so Brain starts with
-          upcoming dates and open commitments rather than a blank slate. Its cost grows with the
-          size of your history rather than with how much arrives, so it does not start when you
-          assign the model: open <strong>Debug → Cognition → Bootstrap</strong>, which states how
-          many documents are waiting and roughly how many days they take at the configured pace, and
-          press <strong>Start reading history</strong>. Adding your main sources first gives better
-          results, because a message read before the reply that settled it can open a loop that
-          should never exist. Once started, the lane has the lowest queue priority, goes quiet when
-          nothing is left, and reopens on a new local day or when a source is added.
+          The synthesis agent receives successive dependency frontiers through tools. The engine
+          checks input versions and decides when work is complete. An unchanged claim stops its
+          propagation path. New evidence also gets a discovery pass to find existing context or
+          propose a useful page; a document does not automatically become a wiki. A late-arriving
+          old message is still considered, with its original time and attribution.
+        </p>
+        <p>
+          Historical organization is opt-in. Open
+          <strong>Debug → Brain activity → Discovery</strong> and press
+          <strong>Start reading history</strong>. The pass honors historical enablement, active
+          hours and admission caps, and reports separate interpretation, organization and conversion
+          coverage. Recent-first is the default; historical evidence need not contain a future date
+          to be useful. Upgrading preserves existing loops and annotations without promoting their
+          legacy attachments into verified claims. Initial collector imports expose partial coverage
+          as they arrive. Their recent window (<code>brain.knowledge.recentWindowDays</code>,
+          default 30 days) is admitted recent-first; older and undated inventory follows the
+          historical-review controls. Later arrivals and edits remain reactive, even when they
+          describe older events.
+        </p>
+        <p>
+          Synthesis uses Markdown with addressable claim spans. Normal reading hides the tags, while
+          editing and inspection retain provenance. Wiki and root writes require every nonblank text
+          span, including headings, to sit inside a claim tag. This structural coverage check is
+          separate from evidence verification. The entailment verifier checks tagged assertions
+          against their evidence; syntax alone cannot guarantee that every assertion is supported.
+          Unavailable verification leaves claims unverified. The root wiki is limited by
+          <code>brain.knowledge.rootMaxChars</code> (8000 characters by default).
+        </p>
+        <p>
+          Debug groups readable knowledge separately from Brain activity. Agent runs, maintenance
+          batches, discovery controls, and calibration live under <strong>Brain activity</strong>;
+          gateway diagnostics and database tools remain under <strong>System</strong> and
+          <strong>Data tools</strong>.
+        </p>
+        <p>
+          Open <strong>Debug → Knowledge → Library</strong> to browse the Brain’s library. Select a
+          page to read its overview, inspect supporting evidence, or follow its revision history.
+          Advanced details contain claim markup and internal metadata. Maintenance status
+          distinguishes pending work from completed work; a current page is not necessarily
+          verified.
         </p>
         <div class="table-wrap">
           <table>
@@ -567,12 +598,14 @@
             </thead>
             <tbody>
               <tr>
-                <td><code>data</code></td>
-                <td>A recent record arrived or changed (the live lane).</td>
+                <td><code>synthesis</code> — maintenance</td>
+                <td>
+                  A tier is due, discovery finds new context, or a synthesis review needs repair.
+                </td>
               </tr>
               <tr>
-                <td><code>bootstrap</code></td>
-                <td>The catch-up lane picked a historical document.</td>
+                <td>Historical organization</td>
+                <td>Opt-in source-revision work admitted into maintenance batches.</td>
               </tr>
               <tr>
                 <td><code>daily</code></td>
@@ -685,20 +718,17 @@
           </li>
         </ul>
 
-        <h3 id="brain-worth-gate">Skipping mail it cannot use</h3>
+        <h3 id="brain-worth-gate">Routing maintenance with the decision model</h3>
         <p>
-          Most mail gives Brain nothing to record: promotions, newsletters, notifications. Assigning
-          the <code>decision</code> role lets Brain ask a cheap typed-decision model, TypeSafe Jev,
-          whether an email is worth a full agent run before starting one. Jev reads the subject, the
-          sender and the first 2,000 characters of the body and answers with a score; below the
-          threshold, the run ends without an agent turn. An attachment is judged by the email that
-          contains it. Mail you sent to the assistant, and mail carrying a structured booking or due
-          date, is never skipped. An email is scored once for the same content: the answer is shared
-          with the <a href="/docs#documents-and-the-index">mention worth gate</a>, so mail either
-          one has scored is not sent again.
+          The <code>decision</code> role can select an urgency tier, decide whether new evidence
+          deserves interpretation, assess whether changed inputs could affect a dependent claim, and
+          prioritize proactive review. TypeSafe Jev supplies typed scores rather than prose. A low
+          relevance score can settle a work item without a synthesis turn; uncertainty or an
+          unavailable judgement keeps the conservative repair path. Existing invalidated time-index
+          entries still receive their evidence review.
         </p>
         <p>
-          The check sends each email it scores to TypeSafe, so it needs
+          These checks send the selected evidence context to TypeSafe, so they need
           <code>inference.allowRemoteInference: true</code> and a TypeSafe API key. Enter the key
           from <strong>Settings → Models → Decision model</strong>, or with
           <code>omnesis backend key set typesafe</code>, then assign the model:
@@ -713,16 +743,14 @@
           </div>
         </div>
         <p>
-          If Jev cannot be reached, or rejects the key, the email is processed as if the check were
-          off. Every judgement is kept with the run it was made for: the Runs tab marks a skipped
-          run <strong>gated</strong> and shows the exact request and answer, and the Bootstrap tab
-          counts skipped history separately from reviewed history. Jev's tokens appear on the
-          Overview tab as <strong>Decision model · worth gate</strong> and count toward the daily
-          token budget, not the daily run budget. The request and answer text is cleared after the
-          activity-retention window, and deleting an email deletes its judgements. The key can also
-          come from <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the
-          gateway's environment. To reach a private TypeSafe deployment instead of the public API,
-          set <code>inference.typesafe.url</code>.
+          If Jev cannot be reached or returns an invalid answer, the engine records an unavailable
+          judgement and follows its conservative fallback. The Brain diagnostics show decision
+          purposes, input fingerprints, normalized scores and model usage; the decision ledger does
+          not duplicate raw source prose. Decision tokens count toward the daily token budget, not
+          the daily agent-run budget. The key can also come from
+          <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the gateway's
+          environment. To reach a private TypeSafe deployment instead of the public API, set
+          <code>inference.typesafe.url</code>.
         </p>
         <h3 id="brain-record-check">Checking what it writes</h3>
         <p>
@@ -753,8 +781,8 @@
           completion, so the catch-up lane is where large bills come from. The Overview tab splits
           each day's tokens into fresh input, input re-read from the provider's cache (billed at a
           fraction, and a subset of input, not an addition) and output. On the catch-up lane the
-          cached share is usually high and output is around one percent, so if spend jumps while the
-          token total barely moves, look at the cached share first.
+          observed cache share depends on the backend, model and prompt prefix. Compare measured
+          fresh and cached input with your provider's pricing; no fixed output ratio is assumed.
         </p>
         <p>
           All limits are set with <code>omnesis config set &lt;path&gt; &lt;value&gt;</code> (or the
@@ -788,15 +816,15 @@
                 <td><code>brain.bootstrap.maxRunsPerDay</code></td>
                 <td>200</td>
                 <td>
-                  Catch-up runs enqueued per local day: the catch-up pace, and the first knob to
-                  turn down.
+                  Historical source-revision work admitted per local day. Several seeds may share
+                  one synthesis run; this is separate from the agent-run budget.
                 </td>
               </tr>
               <tr>
                 <td><code>brain.bootstrap.maxRuns</code></td>
                 <td>1,000,000</td>
                 <td>
-                  Lifetime catch-up runs for the install, never reset, not even by removing a
+                  Lifetime historical work admissions for the install, not reset by removing a
                   source. The lane parks when it is reached.
                 </td>
               </tr>
@@ -865,29 +893,24 @@
                 <td><code>brain.bootstrap.enabled</code> is false: the lane is paused.</td>
               </tr>
               <tr>
-                <td><code>holding</code></td>
-                <td>Within ten minutes of a gateway start, out of the way of post-restart work.</td>
-              </tr>
-              <tr>
                 <td><code>waiting</code></td>
                 <td>
-                  Outside <code>activeHours</code>, or the day's allowance is spent and nothing is
-                  queued.
+                  Outside <code>activeHours</code>, or the daily admission allowance is spent.
+                  Previously admitted work can still execute.
                 </td>
               </tr>
               <tr>
                 <td><code>running</code></td>
-                <td>Working through history at its configured pace.</td>
-              </tr>
-              <tr>
-                <td><code>drained</code></td>
-                <td>Nothing left; reopens on a new local day or when a source is added.</td>
+                <td>
+                  Historical admission is enabled within its bounds; an empty queue does not prove
+                  corpus completion.
+                </td>
               </tr>
               <tr>
                 <td><code>parked</code></td>
                 <td>
-                  Stopped at <code>maxRuns</code>. The one state to act on: raise the ceiling to
-                  resume.
+                  Historical admission reached <code>maxRuns</code> or the shared cognition budget.
+                  Raise the relevant ceiling or wait for a daily budget reset.
                 </td>
               </tr>
             </tbody>
@@ -945,13 +968,13 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
 
         <h3 id="brain-observing">Observing it</h3>
         <p>
-          The portal's <strong>Debug → Cognition</strong> page is the main view. Its tabs are
-          <strong>Overview</strong> (gate status, today's budget and spend by mechanism),
-          <strong>Loops</strong>, <strong>Runs</strong> (the queue, each run's transcript and
-          decisions), <strong>Briefs</strong>, <strong>Memory</strong> (annotations),
-          <strong>Calibration</strong> and <strong>Bootstrap</strong> (catch-up state, limits, pause
-          control and backend health). <strong>Debug → Background jobs</strong> shows when each
-          scheduled task last ran. The same data is available from the CLI:
+          The portal separates <strong>Knowledge</strong> (the library, loops, briefs, and timeline)
+          from <strong>Brain activity</strong>. Activity summarizes runs and spend; Agent runs shows
+          the queue, transcripts, and decisions; Maintenance follows repair batches; Discovery shows
+          coverage and historical admission controls; Calibration compares confidence with observed
+          outcomes. Legacy memory retains agent notes and retired-loop history.
+          <strong>System → Gateway jobs</strong> shows when each scheduled task last ran. The same
+          data is available from the CLI:
         </p>
         <div class="table-wrap">
           <table>
@@ -1019,9 +1042,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
           <li>
             <strong>Unassign the model.</strong>
             <code>omnesis model assign background-agent disabled</code> stops all new Brain work at
-            once. While experimental mode is on, the portal's Cognition page still shows what was
-            written and the apps still show stored briefs, with a setup notice that opens the model
-            picker; the apps' Loops view needs a running Brain.
+            once. While experimental mode is on, the portal's Brain activity page still shows what
+            was written and the apps still show stored briefs, with a setup notice that opens the
+            model picker; the apps' Loops view needs a running Brain.
           </li>
           <li>
             <strong>Turn experimental mode off.</strong> Restart the gateway without
@@ -1365,9 +1388,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
         </p>
         <p>
           Every compile is recorded as a run of kind <code>subscription_compile</code> on
-          <strong>Debug → Cognition → Runs</strong>, with the full transcript: what the compiler
-          looked up, what it wrote and each repair turn. An installed watch links to it from its
-          detail page. The transcript contains corpus text the compiler read.
+          <strong>Debug → Brain activity → Agent runs</strong>, with the full transcript: what the
+          compiler looked up, what it wrote and each repair turn. An installed watch links to it
+          from its detail page. The transcript contains corpus text the compiler read.
         </p>
         <p>
           <strong>An agent's request needs approval</strong> before it can wake anyone. Until then

@@ -14,6 +14,7 @@
  * registry) and passed in, so this function stays a pure `db` read.
  */
 
+import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -57,5 +58,7 @@ export function likeSearchDocuments(db: Db, args: LikeSearchArgs): LikeSearchRow
   sql += ` ORDER BY source_created_at DESC LIMIT ?`;
   params.push(args.limit);
 
-  return db.prepare(sql).all(...params) as LikeSearchRow[];
+  return (db.prepare(sql).all(...params) as LikeSearchRow[]).filter((row) =>
+    isKnowledgeDocumentReadable(db, row.id, row.source_id),
+  );
 }

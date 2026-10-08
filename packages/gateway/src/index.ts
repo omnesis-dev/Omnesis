@@ -2462,7 +2462,12 @@ const app = createServer(db, DB_PATH, {
   io: ioGate,
   getBootstrapSettings: () => {
     const b = resolveBrainSettings(configStore.get().brain);
-    return { ...b.bootstrap, recencyWindowMs: b.recencyWindowMs };
+    return {
+      ...b.bootstrap,
+      recencyWindowMs: b.recencyWindowMs,
+      knowledgeRecentWindowMs: b.knowledge.recentWindowMs,
+      knowledge: true,
+    };
   },
   getBudgetSettings: () => resolveBrainSettings(configStore.get().brain).budget,
   // Idempotent: an already-started lane keeps its original instant, so a
@@ -2474,6 +2479,7 @@ const app = createServer(db, DB_PATH, {
     if (existing !== null) return Number(existing) || nowMs;
     await writeGate.setCognitionEngineState(COGNITION_BOOTSTRAP_STARTED_AT_KEY, String(nowMs));
     scheduler.kickPeriodic("cognition.bootstrap");
+    scheduler.kickPeriodic("knowledge.maintenance");
     return nowMs;
   },
   probeBackend: (key: string) => inferenceRegistry.probeBackend(key),

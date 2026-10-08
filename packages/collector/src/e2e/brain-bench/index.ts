@@ -107,3 +107,12 @@ export { snapshotBrainState } from "./snapshot.js";
 export type { BrainSnapshot } from "./snapshot.js";
 
 export * from "./docs.js";
+
+export {
+  sourceInterpretations,
+  preserveCurrentOwner,
+  refreshCurrentOwner,
+} from "./source-interpretations.js";
+export type { SourceInterpretation } from "./source-interpretations.js";
+
+export { seedHistory, historicalAdmissions } from "./history.js";

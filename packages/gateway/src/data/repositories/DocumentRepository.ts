@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  recordSourceInventoryPage,
+  recordSourceInventoryDocument,
+} from "./SourceInventoryRepository.js";
+import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { randomUUID } from "node:crypto";
@@ -437,6 +442,7 @@ export function upsertDocuments(
     // carrying the first chunk's older timestamp.
     const now = new Date().toISOString();
     const acceptedDocuments: PreparedDocumentInput[] = [];
+    const inventorySources = new Set<string>();
     for (const doc of docs) {
       if (documentTemporalProjection && doc.sourceId !== documentTemporalProjection.sourceId) {
         throw new Error(
@@ -451,8 +457,20 @@ export function upsertDocuments(
           : doc.metadata.sourceUrl
             ? normalizeUrl(doc.metadata.sourceUrl, canonicalizers)
             : null;
+      const insertedId = randomUUID();
+      if (options.initialInventory && !inventorySources.has(doc.sourceId)) {
+        inventorySources.add(doc.sourceId);
+        recordSourceInventoryPage(
+          db,
+          doc.sourceId,
+          options.cursorRows?.[doc.sourceId] ?? "",
+          options.initialInventory,
+          false,
+          Date.now(),
+        );
+      }
       const stored = stmt.run({
-        id: randomUUID(),
+        id: insertedId,
         provider_id: doc.providerId,
         source_id: doc.sourceId,
         external_id: doc.externalId,
@@ -492,6 +510,16 @@ export function upsertDocuments(
           continue;
         }
       }
+      if (
+        options.initialInventory &&
+        db.prepare("SELECT 1 FROM documents WHERE id=?").get(insertedId)
+      )
+        recordSourceInventoryDocument(db, {
+          documentId: insertedId,
+          inventoryId: options.initialInventory.id,
+          revision: doc.contentHash,
+          now: Date.now(),
+        });
       acceptedDocumentCount += 1;
       acceptedDocuments.push(doc);
       if (documentTemporalProjection) {
@@ -1056,6 +1084,7 @@ export function deleteAllBySource(db: Db, sourceId: string): number {
   db.prepare("DELETE FROM document_absence_scopes WHERE source_id = ?").run(sourceId);
   db.prepare("DELETE FROM document_absence_observations WHERE source_id = ?").run(sourceId);
   clearClaimsForSource(db, sourceId);
+  db.prepare("DELETE FROM source_inventories WHERE source_id = ?").run(sourceId);
   db.prepare("DELETE FROM sync_state WHERE source_id = ?").run(sourceId);
   // Projection registration follows the source's sync state (no FK — see
   // document-storage.ts).
@@ -1154,6 +1183,10 @@ export function deleteAllByStream(
       sourceId,
       streamId,
     );
+    db.prepare("DELETE FROM source_inventories WHERE source_id = ? AND cursor_row = ?").run(
+      sourceId,
+      streamId,
+    );
     bumpWipeEpoch(db, sourceId, streamId);
     markSourceStatsDirty(db, sourceId);
     // The survivors decide the source's latest activity now (see deleteDocuments).
@@ -1229,6 +1262,7 @@ export function deleteAllByProvider(db: Db, providerId: string): number {
   // latest_* would keep pointing at a now-deleted doc. Recompute clears
   // it to NULL since every doc for the source is gone.
   for (const row of affectedSources) {
+    db.prepare("DELETE FROM source_inventories WHERE source_id = ?").run(row.source_id);
     db.prepare("DELETE FROM sync_state WHERE source_id = ?").run(row.source_id);
     db.prepare("DELETE FROM document_temporal_projection_sources WHERE source_id = ?").run(
       row.source_id,
@@ -1345,7 +1379,8 @@ export function getRecentDocuments(
        ORDER BY document.source_created_at DESC, document.id DESC
        LIMIT ?`,
     )
-    .all(...params);
+    .all(...params)
+    .filter((row) => isKnowledgeDocumentReadable(db, row.id, row.source_id));
 }
 
 export function listDocuments(
@@ -1550,6 +1585,7 @@ export function listDocumentsByIds(db: Db, ids: string[]): ListedDocumentRow[] {
       )
       .all(...chunk);
     for (const row of rows) {
+      if (!isKnowledgeDocumentReadable(db, row.id, row.source_id)) continue;
       out.push({
         id: row.id,
         sourceId: row.source_id,
@@ -1638,7 +1674,10 @@ export function getDocumentTitlesAndSources(
         { id: string; title: string; source_id: string }
       >(`SELECT id, title, source_id FROM documents WHERE id IN (${placeholders})`)
       .all(...chunk);
-    for (const row of rows) out.set(row.id, { title: row.title, sourceId: row.source_id });
+    for (const row of rows) {
+      if (isKnowledgeDocumentReadable(db, row.id, row.source_id))
+        out.set(row.id, { title: row.title, sourceId: row.source_id });
+    }
   }
   return out;
 }
@@ -2027,6 +2066,7 @@ export function applyReplicaOmissions(db: Db, a: ReplicaOmissionArgs): ReplicaVe
  * `POST /documents/with-cursor` HTTP route.
  */
 export interface UpsertWithCursorArgs {
+  initialInventory?: { id: string; startedAt: string };
   pendingPageId?: string;
   providerId: string;
   sourceId: string;
@@ -2279,6 +2319,7 @@ export function upsertWithCursor(
         db,
         a.documents,
         {
+          initialInventory: a.initialInventory,
           writeEpochs: a.wipeEpoch === undefined ? undefined : { [a.sourceId]: a.wipeEpoch },
           cursorRows: { [a.sourceId]: cursorRow },
           streams: { [a.sourceId]: streamId },
@@ -2411,6 +2452,15 @@ export function upsertWithCursor(
       a.wipeEpoch,
       cursorRow,
     );
+    if (a.initialInventory)
+      recordSourceInventoryPage(
+        db,
+        a.sourceId,
+        cursorRow,
+        a.initialInventory,
+        !a.hasMore,
+        Date.now(),
+      );
     if (a.pendingPageId !== undefined)
       db.prepare(
         "UPDATE pending_source_pages SET cursor_committed = 1 WHERE source_id = ? AND cursor_row = ? AND page_id = ?",
@@ -2573,6 +2623,7 @@ export function upsertWithCursorYieldable(
     {
       token,
       chunkSize,
+      initialInventory: args.initialInventory,
       writeEpochs: args.wipeEpoch === undefined ? undefined : { [args.sourceId]: args.wipeEpoch },
       cursorRows: { [args.sourceId]: args.cursorDeviceId ?? "" },
       streams: { [args.sourceId]: args.streamId ?? "" },

@@ -88,6 +88,13 @@ describe("steward run queue", () => {
     ).toBe(false);
     expect(getCognitionRun(db, "run-race")!.nextAttemptAt).toBe(3_000);
 
+    // An empty required-stage set is ready independently of document removal.
+    expect(pullForwardReadyCognitionRun(db, "run-race", "doc-race", 2_000, 2_000, 3_000, [])).toBe(
+      true,
+    );
+    expect(getCognitionRun(db, "run-race")!.nextAttemptAt).toBe(2_000);
+    db.prepare("UPDATE cognition_runs SET next_attempt_at = 3000 WHERE id = ?").run("run-race");
+
     db.prepare("DELETE FROM documents WHERE id = ?").run("doc-race");
     expect(
       pullForwardReadyCognitionRun(
@@ -101,15 +108,6 @@ describe("steward run queue", () => {
       ),
     ).toBe(true);
     expect(getCognitionRun(db, "run-race")!.nextAttemptAt).toBe(2_000);
-
-    db.prepare("UPDATE cognition_runs SET next_attempt_at = 3000 WHERE id = ?").run("run-race");
-    db.prepare(
-      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at)
-       VALUES ('doc-race', 'google', 'drive:maya@example.com', 'ext-race', 'Example', '', 'hash', '{}', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01')`,
-    ).run();
-    expect(pullForwardReadyCognitionRun(db, "run-race", "doc-race", 2_000, 2_000, 3_000, [])).toBe(
-      true,
-    );
   });
 
   describe("attribution is written when a run settles", () => {

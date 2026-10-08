@@ -19,6 +19,7 @@ import {
   cognitionAuthoredSqlExclusion,
   isCognitionAuthoredDocument,
 } from "./cognition-authored.js";
+import { KNOWLEDGE_DOCUMENT_TYPE, KNOWLEDGE_SOURCE_ID } from "./knowledge/source-meta.js";
 import { OPEN_LOOP_DOCUMENT_TYPE, OPEN_LOOP_SOURCE_ID } from "./open-loop-source/source-meta.js";
 
 describe("isCognitionAuthoredDocument", () => {
@@ -94,6 +95,11 @@ describe("registry", () => {
     // undefined (a circular import, a renamed constant), every gate would
     // degrade silently to "nothing is cognition-authored" and still pass.
     expect(COGNITION_AUTHORED_SOURCES).toEqual([
+      {
+        sourceId: "brain-knowledge",
+        exclusiveDocumentTypes: ["knowledge"],
+        hiddenFromSearch: false,
+      },
       { sourceId: "open-loops", exclusiveDocumentTypes: ["open-loop"], hiddenFromSearch: true },
       { sourceId: "omnesis-chat", exclusiveDocumentTypes: [], hiddenFromSearch: false },
     ]);
@@ -126,6 +132,12 @@ describe("retrieval is a subset of the reactive policy", () => {
     expect(isCognitionAuthoredDocument(OMNESIS_CHAT_SOURCE_ID)).toBe(true);
     expect(HIDDEN_SEARCH_SOURCES.map((s) => s.sourceId)).not.toContain(OMNESIS_CHAT_SOURCE_ID);
     expect(hiddenSourceIdsToExclude({})).not.toContain(OMNESIS_CHAT_SOURCE_ID);
+  });
+
+  test("synthesis projections are findable without becoming fresh evidence", () => {
+    expect(isCognitionAuthoredDocument(KNOWLEDGE_SOURCE_ID)).toBe(true);
+    expect(isCognitionAuthoredDocument("another-source", KNOWLEDGE_DOCUMENT_TYPE)).toBe(true);
+    expect(hiddenSourceIdsToExclude({})).not.toContain(KNOWLEDGE_SOURCE_ID);
   });
 
   test("the hidden list carries the mirror's bypass key", () => {

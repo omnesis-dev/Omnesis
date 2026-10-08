@@ -21,9 +21,13 @@
  */
 
 import "./synth-env.js";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { createLogger } from "@omnesis/core";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
@@ -171,157 +175,167 @@ describe("Brain Bench — briefs (no brief judge)", () => {
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       // A configured verifier, so brief claims are born `verified` and the
       // claim path's gate is exercised rather than skipped.
       entailment: "accept-all",
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: CLAIMS_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "info",
+                    title: `Invoice 4471 is due (${CLAIMS_MARKER})`,
+                    description: "Cedar Grove Supplies invoice 4471 is due, balance 1,280.",
+                    body: "Balance 1,280 on invoice 4471, due 14 November. Bank transfer only.",
+                    citations: [ctx.subject],
+                    confidence: 0.9,
+                    urgency: 0.6,
+                    assertedClaims: [
+                      {
+                        claimText: "Invoice 4471 is due on 14 November and its balance is 1,280.",
+                        evidenceDocId: ctx.subject,
+                        evidenceQuote: INVOICE_QUOTE,
+                        claimBasis: "quoted",
+                        confidence: 0.9,
+                      },
+                      {
+                        claimText: "Invoice 4471 cannot be settled with a card payment.",
+                        evidenceDocId: ctx.subject,
+                        evidenceQuote: PAYMENT_QUOTE,
+                        claimBasis: "inferred",
+                        confidence: 0.7,
+                      },
+                    ],
+                  }),
+                ],
+                finalText: "Raised the invoice card with its grounded claims.",
+              }),
+            },
+            {
+              docTitle: FAIL_OPEN_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "info",
+                    title: JUDGE_HOLD_TITLE,
+                    description: "The storage plan renews next month at the same rate.",
+                    citations: [ctx.subject],
+                    confidence: 0.6,
+                    urgency: 0.2,
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: HANDLED_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "loop",
+                    title: JUDGE_SHIP_TITLE,
+                    description: "The Riverside Estate balance is due before Friday.",
+                    citations: [ctx.subject],
+                    assertedClaims: [
+                      {
+                        claimText: "The Riverside Estate balance is due before Friday.",
+                        evidenceDocId: ctx.subject,
+                        evidenceQuote:
+                          "The remaining balance for the Riverside Estate booking is due before Friday.",
+                        claimBasis: "quoted",
+                        confidence: 0.9,
+                      },
+                    ],
+                    confidence: 0.9,
+                    urgency: 0.8,
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: IRRELEVANT_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "info",
+                    title: `Depot hours changed (${IRRELEVANT_MARKER})`,
+                    description: "Cedar Grove Supplies published new depot opening hours.",
+                    citations: [ctx.subject],
+                    confidence: 0.5,
+                    urgency: 0.2,
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DATED_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "info",
+                    title: `Load-in opens early for the rehearsal (${DATED_MARKER})`,
+                    description: "Load-in opens ninety minutes before the slot.",
+                    citations: [ctx.subject],
+                    confidence: 0.8,
+                    urgency: 0.5,
+                    nextShow: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+                    eventAt: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: READ_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "info",
+                    title: `Street permit window opens soon (${READ_MARKER})`,
+                    description:
+                      "The permit window opens next week and closes fourteen days later.",
+                    citations: [ctx.subject],
+                    confidence: 0.8,
+                    urgency: 0.6,
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: SUPERSEDE_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "info",
+                    title: `Provisional van hire quote (${SUPERSEDE_MARKER})`,
+                    description: "The first van hire quote was provisional.",
+                    citations: [ctx.subject],
+                    confidence: 0.6,
+                    urgency: 0.3,
+                  }),
+                  // Same run, so the replacement can reference the id the
+                  // first create actually minted.
+                  call("brief_create", {
+                    kind: "info",
+                    title: `Corrected van hire quote (${SUPERSEDE_MARKER})`,
+                    description: "The corrected van hire quote replaces the provisional one.",
+                    citations: [ctx.subject],
+                    confidence: 0.9,
+                    urgency: 0.4,
+                    supersedes: [ref("brief_create", "brief.id")],
+                  }),
+                ],
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: CLAIMS_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "info",
-                  title: `Invoice 4471 is due (${CLAIMS_MARKER})`,
-                  description: "Cedar Grove Supplies invoice 4471 is due, balance 1,280.",
-                  body: "Balance 1,280 on invoice 4471, due 14 November. Bank transfer only.",
-                  citations: [ctx.subject],
-                  confidence: 0.9,
-                  urgency: 0.6,
-                  assertedClaims: [
-                    {
-                      claimText: "Invoice 4471 is due on 14 November and its balance is 1,280.",
-                      evidenceDocId: ctx.subject,
-                      evidenceQuote: INVOICE_QUOTE,
-                      claimBasis: "quoted",
-                      confidence: 0.9,
-                    },
-                    {
-                      claimText: "Invoice 4471 cannot be settled with a card payment.",
-                      evidenceDocId: ctx.subject,
-                      evidenceQuote: PAYMENT_QUOTE,
-                      claimBasis: "inferred",
-                      confidence: 0.7,
-                    },
-                  ],
-                }),
-              ],
-              finalText: "Raised the invoice card with its grounded claims.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: FAIL_OPEN_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "info",
-                  title: JUDGE_HOLD_TITLE,
-                  description: "The storage plan renews next month at the same rate.",
-                  citations: [ctx.subject],
-                  confidence: 0.6,
-                  urgency: 0.2,
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: HANDLED_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "loop",
-                  title: JUDGE_SHIP_TITLE,
-                  description: "The Riverside Estate balance is due before Friday.",
-                  citations: [ctx.subject],
-                  confidence: 0.9,
-                  urgency: 0.8,
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: IRRELEVANT_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "info",
-                  title: `Depot hours changed (${IRRELEVANT_MARKER})`,
-                  description: "Cedar Grove Supplies published new depot opening hours.",
-                  citations: [ctx.subject],
-                  confidence: 0.5,
-                  urgency: 0.2,
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: DATED_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "info",
-                  title: `Load-in opens early for the rehearsal (${DATED_MARKER})`,
-                  description: "Load-in opens ninety minutes before the slot.",
-                  citations: [ctx.subject],
-                  confidence: 0.8,
-                  urgency: 0.5,
-                  nextShow: new Date(Date.now() + 2 * 86_400_000).toISOString(),
-                  eventAt: new Date(Date.now() + 3 * 86_400_000).toISOString(),
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: READ_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "info",
-                  title: `Street permit window opens soon (${READ_MARKER})`,
-                  description: "The permit window opens next week and closes fourteen days later.",
-                  citations: [ctx.subject],
-                  confidence: 0.8,
-                  urgency: 0.6,
-                }),
-              ],
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: SUPERSEDE_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "info",
-                  title: `Provisional van hire quote (${SUPERSEDE_MARKER})`,
-                  description: "The first van hire quote was provisional.",
-                  citations: [ctx.subject],
-                  confidence: 0.6,
-                  urgency: 0.3,
-                }),
-                // Same run, so the replacement can reference the id the
-                // first create actually minted.
-                call("brief_create", {
-                  kind: "info",
-                  title: `Corrected van hire quote (${SUPERSEDE_MARKER})`,
-                  description: "The corrected van hire quote replaces the provisional one.",
-                  citations: [ctx.subject],
-                  confidence: 0.9,
-                  urgency: 0.4,
-                  supersedes: [ref("brief_create", "brief.id")],
-                }),
-              ],
-            }),
-          },
-          // The two dismissal reactions. Keyed on the state the prompt
-          // reports, so each asserts the guidance branch it belongs to.
           {
             flavour: "feedback.dismissal",
             promptContains: "Its state is now: dismissed_already_handled.",
@@ -354,6 +368,41 @@ describe("Brain Bench — briefs (no brief judge)", () => {
   afterAll(async () => {
     await bench?.destroy();
   }, 60_000);
+
+  afterEach(async ({ task }) => {
+    if (task.result?.state !== "fail" || !bench) return;
+    const runs = await bench.obs.runs({ limit: 8 });
+    createLogger("collector:brain-bench").error(
+      `Brief maintenance failure: ${JSON.stringify({
+        clock: await bench.clock.now(),
+        work: bench.sql
+          .prepare("SELECT * FROM knowledge_work WHERE status IN ('pending','batched') LIMIT 10")
+          .all(),
+        batches: bench.sql
+          .prepare(
+            "SELECT id,run_id,status FROM knowledge_batches WHERE status NOT IN ('completed','abandoned') LIMIT 10",
+          )
+          .all(),
+        gateway: readFileSync(bench.harness.getGatewayLogPath(), "utf8")
+          .split("\n")
+          .filter((line) => /error|warn|constraint|knowledge/i.test(line))
+          .slice(-30),
+        nodes: bench.sql
+          .prepare("SELECT id,kind,validity,revision,fields_json FROM knowledge_nodes")
+          .all(),
+        frontier: bench.sql
+          .prepare(
+            "SELECT * FROM knowledge_frontier WHERE status IN ('pending','offered','deferred') LIMIT 10",
+          )
+          .all(),
+        tools: await Promise.all(
+          runs.items
+            .filter((run) => run.kind === "synthesis")
+            .map(async (run) => ({ id: run.id, tools: await bench.obs.executedTools(run.id) })),
+        ),
+      })}`,
+    );
+  });
 
   test("a brief's asserted claims persist with their evidence and are served live", async () => {
     const [docId] = await bench.pushAndSettle([CLAIMS_DOC]);
@@ -406,7 +455,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
   }, 120_000);
 
   test("dismissing a brief settles a feedback run whose lesson lands", async () => {
-    await bench.pushAndSettle([HANDLED_DOC, IRRELEVANT_DOC]);
+    const [handledDocId] = await bench.pushAndSettle([HANDLED_DOC, IRRELEVANT_DOC]);
     const handled = await briefWith(bench, HANDLED_MARKER);
     const irrelevant = await briefWith(bench, IRRELEVANT_MARKER);
 
@@ -459,6 +508,46 @@ describe("Brain Bench — briefs (no brief judge)", () => {
     expect(notes).toContain(IRRELEVANT_MARKER);
     expect(notes).toContain("already handled; stop resurfacing it");
     expect(notes).toContain("not worth a card");
+
+    const snapshot = bench.sql
+      .prepare<[string], { markdown: string }>("SELECT markdown FROM knowledge_nodes WHERE id=?")
+      .get(handled.id)!;
+    expect(snapshot).toBeDefined();
+    await bench.pushAndSettle([
+      {
+        ...HANDLED_DOC,
+        title: "Revised settled booking notice",
+        content: "The prior payment reminder has been withdrawn.",
+      },
+    ]);
+    expect((await bench.obs.brief(handled.id)).brief).toMatchObject({
+      state: "dismissed_already_handled",
+      description: handled.description,
+    });
+    expect(
+      bench.sql.prepare("SELECT markdown FROM knowledge_nodes WHERE id=?").get(handled.id),
+    ).toEqual(snapshot);
+    expect(
+      bench.sql
+        .prepare(
+          "SELECT COUNT(*) AS n FROM brief_claims WHERE brief_id=? AND invalidated_at IS NOT NULL",
+        )
+        .get(handled.id),
+    ).toEqual({ n: 1 });
+    expect(
+      bench.sql
+        .prepare(
+          "SELECT COUNT(*) AS n FROM knowledge_work WHERE subject_id=? AND status IN ('pending','batched')",
+        )
+        .get(handled.id),
+    ).toEqual({ n: 0 });
+    // Historical retention never overrides a privacy deletion.
+    await bench.deleteDoc(handledDocId!);
+    await bench.drainUntilQuiet();
+    expect(bench.sql.prepare("SELECT id FROM briefs WHERE id=?").get(handled.id)).toBeUndefined();
+    expect(
+      bench.sql.prepare("SELECT id FROM knowledge_nodes WHERE id=?").get(handled.id),
+    ).toBeUndefined();
   }, 180_000);
 
   test("a brief scheduled for later is stored but withheld from the product feed", async () => {
@@ -521,7 +610,7 @@ describe("Brain Bench — briefs (no brief judge)", () => {
     expect(corrected).toBeDefined();
 
     // The tool reported the supersede against the id the first create minted.
-    const run = await bench.obs.runForDoc(docId);
+    const run = await bench.obs.interpretationForSource(docId);
     const created = (await toolResultsOf(bench, run.id)).filter(
       (r) => r.resultType === "brief.created",
     );
@@ -550,69 +639,73 @@ describe("Brain Bench — briefs (brief judge assigned)", () => {
 
   beforeAll(async () => {
     bench = await BrainBench.start({
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       experimental: true,
       // One judge, two verdicts: the bar is per-candidate, so a single
       // bench covers both arms.
       judge: ({ prompt }) => (prompt.includes(JUDGE_HOLD_TITLE) ? "hold" : "ship"),
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: FAIL_OPEN_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "info",
-                  title: JUDGE_HOLD_TITLE,
-                  description: "The storage plan renews next month at the same rate.",
-                  citations: [ctx.subject],
-                  confidence: 0.6,
-                  urgency: 0.2,
-                }),
-                // Deliberately after the held create: the run must carry on
-                // past a HOLD, which is a verdict, not a failure.
-                call("notes_append", {
-                  text: `Lesson (${FAIL_OPEN_MARKER}): the renewal card did not clear the bar.`,
-                }),
-              ],
-              finalText: "The renewal did not clear the bar; noted instead.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: HANDLED_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "loop",
-                  title: JUDGE_SHIP_TITLE,
-                  description: "The Riverside Estate balance is due before Friday.",
-                  citations: [ctx.subject],
-                  confidence: 0.9,
-                  urgency: 0.8,
-                }),
-              ],
-              finalText: "Raised the balance card.",
-            }),
-          },
-          {
-            flavour: "data.created",
-            docTitle: JUDGE_OUTAGE_DOC.title,
-            plan: (ctx) => ({
-              calls: [
-                call("brief_create", {
-                  kind: "info",
-                  title: JUDGE_OUTAGE_TITLE,
-                  description: "The permit requirements are ready for review.",
-                  citations: [ctx.subject],
-                  confidence: 0.7,
-                  urgency: 0.4,
-                }),
-              ],
-              finalText: "Attempted the permit-review card.",
-            }),
-          },
-        ],
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: FAIL_OPEN_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "info",
+                    title: JUDGE_HOLD_TITLE,
+                    description: "The storage plan renews next month at the same rate.",
+                    citations: [ctx.subject],
+                    confidence: 0.6,
+                    urgency: 0.2,
+                  }),
+                  // Deliberately after the held create: the run must carry on
+                  // past a HOLD, which is a verdict, not a failure.
+                  call("notes_append", {
+                    text: `Lesson (${FAIL_OPEN_MARKER}): the renewal card did not clear the bar.`,
+                  }),
+                ],
+                finalText: "The renewal did not clear the bar; noted instead.",
+              }),
+            },
+            {
+              docTitle: HANDLED_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "loop",
+                    title: JUDGE_SHIP_TITLE,
+                    description: "The Riverside Estate balance is due before Friday.",
+                    citations: [ctx.subject],
+                    confidence: 0.9,
+                    urgency: 0.8,
+                  }),
+                ],
+                finalText: "Raised the balance card.",
+              }),
+            },
+            {
+              docTitle: JUDGE_OUTAGE_DOC.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("brief_create", {
+                    kind: "info",
+                    title: JUDGE_OUTAGE_TITLE,
+                    description: "The permit requirements are ready for review.",
+                    citations: [ctx.subject],
+                    confidence: 0.7,
+                    urgency: 0.4,
+                  }),
+                ],
+                finalText: "Attempted the permit-review card.",
+              }),
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [],
       },
     });
   }, 300_000);
@@ -624,7 +717,7 @@ describe("Brain Bench — briefs (brief judge assigned)", () => {
   test("a HELD candidate is never persisted, and the run completes anyway", async () => {
     const [docId] = await bench.pushAndSettle([FAIL_OPEN_DOC]);
 
-    const run = await bench.obs.runForDoc(docId!);
+    const run = await bench.obs.interpretationForSource(docId!);
     // A hold is a verdict, not an error: the run finished normally.
     expect(run.status).toBe("completed");
 
@@ -660,7 +753,7 @@ describe("Brain Bench — briefs (brief judge assigned)", () => {
     bench.refuseJudgeWith(503, "scripted review outage");
     try {
       const [docId] = await bench.pushAndSettle([JUDGE_OUTAGE_DOC]);
-      const run = await bench.obs.runForDoc(docId!);
+      const run = await bench.obs.interpretationForSource(docId!);
       expect(run.status).toBe("completed");
       expect(await briefsWith(bench, JUDGE_OUTAGE_MARKER)).toHaveLength(0);
 

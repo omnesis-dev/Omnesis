@@ -84,6 +84,37 @@ describe("CognitionRunDriver", () => {
     });
   }
 
+  test("settles a gated maintenance frontier before resolving any model backend", async () => {
+    let resolutions = 0;
+    const driver = makeDriver({
+      preflight: async () => "complete",
+      resolveBackend: () => {
+        resolutions++;
+        return null;
+      },
+    });
+    const outcome = await driver.execute(
+      claimed({ kind: "synthesis", payload: { focus: "knowledge-maintenance", batchId: "batch" } }),
+    );
+    expect(outcome).toMatchObject({ ok: true, modelId: null, usage: null });
+    expect(resolutions).toBe(0);
+  });
+
+  test("defers incomplete deterministic inputs without a model attempt", async () => {
+    const driver = makeDriver({
+      preflight: async () => "defer",
+      resolveBackend: () => {
+        throw new Error("must not resolve");
+      },
+    });
+    expect(await driver.execute(claimed())).toMatchObject({
+      ok: false,
+      deferredUntil: 20000,
+      modelId: null,
+      usage: null,
+    });
+  });
+
   test("a successful run harvests text + usage and persists a transcript", async () => {
     const driver = makeDriver({
       resolveBackend: () =>

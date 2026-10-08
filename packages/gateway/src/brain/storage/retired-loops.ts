@@ -17,6 +17,7 @@
  * tests control time.
  */
 
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import type Database from "better-sqlite3";
 import type { OpenLoopRow, RetiredLoopOutcome, RetiredLoopRow } from "./types.js";
 
@@ -96,6 +97,18 @@ export function retireLoop(
   outcome: RetiredLoopOutcome,
   now: number,
 ): void {
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_retired_loop_sources'",
+      )
+      .get()
+  ) {
+    const attach = db.prepare(
+      "INSERT OR IGNORE INTO knowledge_retired_loop_sources(loop_id,document_id) VALUES(?,?)",
+    );
+    for (const documentId of loop.docs) attach.run(loop.id, documentId);
+  }
   const titleNorm = normalizeLoopTitle(loop.title);
   const prior = db
     .prepare<[string, string], { retired_at: number; recurrence_count: number }>(
@@ -138,7 +151,7 @@ export function listRetiredLoops(
   db: Db,
   options: { limit?: number; beforeRetired?: { retiredAt: number; id: string } } = {},
 ): RetiredLoopRow[] {
-  const cursor = options.beforeRetired ? "WHERE (retired_at, id) < (?, ?)" : "";
+  const cursor = options.beforeRetired ? "AND (retired_at, id) < (?, ?)" : "";
   const params: Array<string | number> = [];
   if (options.beforeRetired) {
     params.push(options.beforeRetired.retiredAt, options.beforeRetired.id);
@@ -146,7 +159,7 @@ export function listRetiredLoops(
   params.push(options.limit ?? 100);
   return db
     .prepare<(string | number)[], RetiredLoopDbRow>(
-      `SELECT * FROM retired_loops INDEXED BY idx_retired_loops_page ${cursor}
+      `SELECT * FROM retired_loops INDEXED BY idx_retired_loops_page WHERE ${knowledgeOwnerReadPredicate(db, "retired_loops.id")} ${cursor}
        ORDER BY retired_at DESC, id DESC LIMIT ?`,
     )
     .all(...params)
@@ -183,7 +196,7 @@ export function searchRetiredLoopsLexical(
     .prepare<
       (string | number)[],
       RetiredLoopDbRow
-    >(`SELECT * FROM retired_loops WHERE ${clause} ORDER BY retired_at DESC LIMIT ?`)
+    >(`SELECT * FROM retired_loops WHERE (${clause}) AND ${knowledgeOwnerReadPredicate(db, "retired_loops.id")} ORDER BY retired_at DESC LIMIT ?`)
     .all(...params);
   return rows.map(rowToRetiredLoop);
 }

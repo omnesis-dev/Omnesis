@@ -156,6 +156,7 @@ describe("steward run drainer", () => {
   }
 
   interface BundleOpts {
+    preflight?: () => Promise<"complete" | "continue" | "defer" | "yield">;
     backend?: (input: TurnInput) => AgentEvent[] | Promise<AgentEvent[]>;
     resolveBackend?: () => ChatBackend | null;
     isEnabled?: () => boolean;
@@ -185,7 +186,13 @@ describe("steward run drainer", () => {
           for (const event of await script(input)) yield event;
         },
       }));
-    const driver = new CognitionRunDriver({ resolveBackend, transcripts, log, clock });
+    const driver = new CognitionRunDriver({
+      resolveBackend,
+      transcripts,
+      log,
+      clock,
+      preflight: opts.preflight,
+    });
     const bundle = createCognitionDrainerTasks(
       {
         db,
@@ -375,6 +382,66 @@ describe("steward run drainer", () => {
         .map((r) => r.mechanism)
         .sort(),
     ).toEqual(["daily-lookahead", "daily-source-review", "morning-digest"]);
+  });
+
+  test("preflight deferral preserves attempts and buys no model turn or spend", async () => {
+    let ready = false;
+    let backendResolutions = 0;
+    const { writeGate, drain } = makeBundle({
+      preflight: () => Promise.resolve(ready ? "complete" : "defer"),
+      resolveBackend: () => {
+        backendResolutions++;
+        return null;
+      },
+      maxAttempts: 1,
+    });
+    await writeGate.enqueueCognitionRun(
+      { id: "run_deferred", kind: "data", payload: { docId: "d", event: "created", datumAt: now } },
+      now,
+    );
+    await drain.run(undefined, taskCtx);
+    expect(getCognitionRun(db, "run_deferred")).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: now + 15_000,
+    });
+    expect(listCognitionSpend(db)).toEqual([]);
+    expect(getCognitionEngineState(db, PROVIDER_BREAKER_FAILURES_KEY)).toBeNull();
+    ready = true;
+    now += 15_000;
+    await drain.run(undefined, taskCtx);
+    expect(getCognitionRun(db, "run_deferred")?.status).toBe("completed");
+    expect(backendResolutions).toBe(0);
+    expect(listCognitionSpend(db)).toEqual([]);
+  });
+
+  test("deterministic maintenance progress yields without advancing virtual time or buying a model", async () => {
+    let passes = 0;
+    const { writeGate, drain } = makeBundle({
+      preflight: async () => (++passes === 1 ? "yield" : "complete"),
+      resolveBackend: () => {
+        throw new Error("No model needed for bounded bookkeeping");
+      },
+      maxAttempts: 1,
+    });
+    await writeGate.enqueueCognitionRun(
+      {
+        id: "run_progress",
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch" },
+      },
+      now,
+    );
+    await drain.run(undefined, taskCtx);
+    expect(getCognitionRun(db, "run_progress")).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: now,
+    });
+    await drain.run(undefined, taskCtx);
+    expect(getCognitionRun(db, "run_progress")?.status).toBe("completed");
+    expect(passes).toBe(2);
+    expect(listCognitionSpend(db)).toEqual([]);
   });
 
   test("an exhausted day budget parks the queue instead of failing its runs", async () => {

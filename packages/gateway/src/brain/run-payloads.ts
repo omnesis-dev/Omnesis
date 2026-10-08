@@ -467,7 +467,8 @@ export const cognitionSynthesisRunPayloadSchema = z.preprocess(
   },
   z
     .object({
-      focus: z.enum(["noticing", "collision", "annotation-contradiction"]),
+      focus: z.enum(["noticing", "collision", "annotation-contradiction", "knowledge-maintenance"]),
+      batchId: z.string().min(1).optional(),
       /** noticing: the local day the pass covers. */
       date: z.string().min(1).optional(),
       /** collision: the colliding loop ids to judge. */

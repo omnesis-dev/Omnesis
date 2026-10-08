@@ -1,3 +1,8 @@
+@import url("knowledge-connections.css");
+@import url("debug-operations.css");
+@import url("./debug-navigation.css");
+@import url("debug-shell.css");
+@import url("knowledge.css");
 @import url("../js/shared/agent-ui/styles.css");
 
 /* Omnesis Portal — Dark Theme Design System */
@@ -18688,3 +18693,10 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
 
 /* Inline twin of the conversation waiting indicator. */
 .privacy-progress-dots { display: inline-flex; vertical-align: middle; padding: 0 4px; }
+
+/* Read-only synthesis inspector; preserve generated text without executing markup. */
+.knowledge-prose { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.knowledge-claim { border-left: 2px solid var(--border-light); padding-left: 12px; margin: 16px 0; }
+.knowledge-inspector > details { margin: 12px 0; }
+.knowledge-inspector .cognition-row { display: block; }
+.knowledge-inspector .cognition-row[aria-current="page"] { background: var(--bg-secondary); }

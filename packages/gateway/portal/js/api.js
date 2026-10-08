@@ -697,6 +697,14 @@ export const openBriefThread = (id) =>
 export const getCognitionBrief = (id) =>
   request("GET", `/admin/brain/briefs/${encodeURIComponent(id)}`);
 export const getCognitionNotes = () => request("GET", "/admin/brain/notes");
+export const getKnowledgeNodes = (query) => request("GET", "/admin/brain/knowledge", { query });
+export const getKnowledgeNode = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}`, { query: { editing: "1" } });
+export const getKnowledgeConnections = (id, query = {}) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/connections`, { query });
+export const getKnowledgeHistory = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/history`);
+export const getKnowledgeStatus = () => request("GET", "/admin/brain/knowledge/status");
+export const getKnowledgeBatches = () => request("GET", "/admin/brain/knowledge/batches");
+export const getKnowledgeBatch = (id) => request("GET", `/admin/brain/knowledge/batches/${encodeURIComponent(id)}`);
+
 
 // --- Sweeps (the one WRITING surface under /admin/brain) ---
 // The gateway ships a set of sweeps and the operator layers their own files

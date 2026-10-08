@@ -77,6 +77,10 @@ function defaultCognitionSystemPrompt(): string {
 /** What one executed attempt produced. */
 export interface CognitionRunOutcome {
   ok: boolean;
+  /** No model attempt was bought; requeue readiness work without spending retry budget. */
+  deferredUntil?: number;
+  /** Progress already committed; yield without advancing semantic time. */
+  continuation?: boolean;
   /** Present when `ok` is false. */
   errorMessage?: string;
   /**
@@ -107,6 +111,8 @@ export interface CognitionRunDriverDeps {
    * removed mid-flight) fails the attempt softly — the queue retries.
    */
   resolveBackend: () => ChatBackend | null;
+  /** Deterministic/System One maintenance preflight, before model/backend resolution. */
+  preflight?: (run: ClaimedCognitionRun) => Promise<"complete" | "continue" | "defer" | "yield">;
   transcripts: FsCognitionTranscriptStore;
   log: Logger;
   /**
@@ -176,6 +182,40 @@ export class CognitionRunDriver {
     run: ClaimedCognitionRun,
     opts: { signal?: AbortSignal } = {},
   ): Promise<CognitionRunOutcome> {
+    if (this.deps.preflight) {
+      try {
+        const verdict = await this.deps.preflight(run);
+        if (verdict !== "continue")
+          return {
+            ok: verdict === "complete",
+            modelId: null,
+            usage: null,
+            finalText: "",
+            citations: [],
+            openedDocIds: [],
+            ...(verdict === "defer" || verdict === "yield"
+              ? {
+                  deferredUntil: this.clock() + (verdict === "yield" ? 0 : 15000),
+                  ...(verdict === "yield" ? { continuation: true } : {}),
+                  errorMessage:
+                    verdict === "yield"
+                      ? "Maintenance advanced; continuing bounded work"
+                      : "Maintenance is waiting for current inputs",
+                }
+              : {}),
+          };
+      } catch (error) {
+        return {
+          ok: false,
+          modelId: null,
+          usage: null,
+          finalText: "",
+          citations: [],
+          openedDocIds: [],
+          errorMessage: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
     // Deliberately kind-blind: every run kind — including `verification` —
     // resolves the same background-agent backend. Verification runs are agent
     // runs (they re-ground with tools), not entailment-verifier completions;

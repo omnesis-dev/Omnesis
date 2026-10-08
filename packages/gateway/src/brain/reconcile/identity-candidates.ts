@@ -28,6 +28,7 @@
  * `dismissed`) loop is a deliberate past verdict and must never resurface.
  */
 
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import { expandOneHop, ONE_HOP_DEFAULT_FANOUT } from "../../domain/DocumentGraphService.js";
 import { getOpenLoop } from "../storage/open-loops.js";
 import type Database from "better-sqlite3";
@@ -210,7 +211,7 @@ export function searchOpenLoopsByIdentity(
       .prepare<string[], { id: string; date: string | null }>(
         `SELECT id, json_extract(deadline_json, '$.date') AS date
            FROM open_loops
-          WHERE state IN (${inClause(CANDIDATE_STATES.length)})
+          WHERE ${knowledgeOwnerReadPredicate(db, "open_loops.id")} AND state IN (${inClause(CANDIDATE_STATES.length)})
             AND json_extract(deadline_json, '$.date') IS NOT NULL`,
       )
       .all(...CANDIDATE_STATES);

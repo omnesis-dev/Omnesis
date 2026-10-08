@@ -602,3 +602,52 @@ describe("cacheHitPercent", () => {
     expect(panel.cacheHitPercent({})).toBeNull();
   });
 });
+
+describe("knowledge bootstrap milestones", () => {
+  it("labels admission units and does not render legacy completion or ETA claims", async () => {
+    const { KnowledgeBootstrapPanel } = await import("./cognition-bootstrap.js");
+    const nodes = expandToHostNodes(
+      KnowledgeBootstrapPanel({
+        status: {
+          mode: "knowledge",
+          state: "running",
+          reason: "Historical discovery enabled.",
+          settings: { enabled: true },
+          admission: { today: 2, total: 5, pending: 1, batched: 2, completed: 2 },
+          revisionCoverage: [{ phase: "interpretation", status: "gated", count: 3 }],
+          conversion: [],
+        },
+      }),
+    );
+    const text = nodes.map((node) => node.text).join(" ").replace(/\s+/g, " ");
+    expect(text).toContain("source revisions admitted");
+    expect(text).toContain("Gated means deliberately skipped");
+    expect(text).toContain("empty queue does not establish");
+    expect(text).not.toContain("Days to completion");
+    expect(text).not.toContain("NaN");
+  });
+});
+
+
+describe("initial inventory milestones", () => {
+  it("keeps completed imports separate from unfinished synthesis phases", async () => {
+    const { KnowledgeInventoryMilestones } = await import("./cognition-bootstrap.js");
+    const common = {
+      sourceId: "source-fictional", inventoryId: "import-fictional", importState: "complete",
+      window: "recent", observed: 10, considered: 0, gated: 0, deferred: 0, failed: 0,
+      unconsidered: 10, pending: 2, earliestSourceDate: "2025-01-01", latestSourceDate: "2025-01-10",
+    };
+    const nodes = expandToHostNodes(KnowledgeInventoryMilestones({ inventory: [
+      { ...common, phase: "interpretation", considered: 7, gated: 1, unconsidered: 2 },
+      { ...common, phase: "organization" },
+    ] }));
+    const text = nodes.map((node) => node.text).join(" ").replace(/\s+/g, " ");
+    expect(text).toContain("not that synthesis is complete");
+    expect(text).toContain("recent / interpretation");
+    expect(text).toContain("recent / organization");
+    expect(text).toContain("source-fictional");
+    expect(text).toContain("Unconsidered");
+    expect(text).toContain("Gateway receipt");
+    expect(text).not.toContain("NaN");
+  });
+});

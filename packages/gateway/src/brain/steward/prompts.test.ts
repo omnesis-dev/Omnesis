@@ -7,6 +7,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
+import { parseCognitionRunEnvelope, type TemporalItem, type TemporalKind } from "@omnesis/core";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { createOpenLoop, updateOpenLoop, appendOpenLoopLedger } from "../storage/open-loops.js";
 import { retireLoop } from "../storage/retired-loops.js";
@@ -38,7 +39,6 @@ import {
   cognitionRunCarriesBriefRules,
 } from "./prompts.js";
 import type Database from "better-sqlite3";
-import type { TemporalItem, TemporalKind } from "@omnesis/core";
 import type { ClaimedCognitionRun } from "../storage/types.js";
 
 type Db = Database.Database;
@@ -1161,6 +1161,27 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(prompt).toContain("fewer than two of the flagged temporal annotations are still live");
     expect(prompt).toContain("Do nothing");
+  });
+
+  test("knowledge maintenance retains the run identity and standing context", () => {
+    const prompt = buildCognitionRunPrompt(
+      claimed({
+        kind: "synthesis",
+        attempts: 2,
+        payload: { focus: "knowledge-maintenance", batchId: "batch_1" },
+      }),
+      deps(),
+    );
+    expect(parseCognitionRunEnvelope(prompt)).toEqual({
+      runId: "run_7",
+      kind: "synthesis",
+      attempt: 2,
+    });
+    expect(prompt).toContain("knowledge_next_frontier");
+    expect(prompt).toContain("reviewedClaimIds");
+    expect(prompt).toContain("pendingClaimIdsOmitted");
+    expect(prompt).toContain("does not settle untouched claims");
+    expect(prompt).toContain("Your notes file is currently empty.");
   });
 
   test("a malformed synthesis payload degrades to a no-op finish", () => {

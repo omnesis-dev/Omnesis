@@ -27,6 +27,7 @@ import type { CognitiveWorkflowId } from "./workflows.js";
  * no per-workflow grant, while a new artifact is an explicit decision.
  */
 export const COGNITIVE_ARTIFACTS = [
+  "knowledge",
   "loop",
   "brief",
   "note",
@@ -45,17 +46,35 @@ export type CognitiveArtifact = (typeof COGNITIVE_ARTIFACTS)[number];
  * be denied to every workflow, which a test pins.
  */
 const ARTIFACT_TOOLS: Readonly<Record<CognitiveArtifact, readonly string[]>> = {
-  loop: ["open_loop_create", "open_loop_update", "open_loop_ledger_append", "open_loop_delete"],
-  brief: ["brief_create", "brief_update", "brief_delete"],
+  knowledge: [
+    "knowledge_link",
+    "knowledge_evidence",
+    "knowledge_save",
+    "knowledge_propose_page",
+    "knowledge_candidate_decide",
+    "knowledge_next_frontier",
+    "knowledge_discovery_complete",
+    "knowledge_temporal_context",
+  ],
+  loop: [
+    "loop_synthesis_save",
+    "open_loop_create",
+    "open_loop_update",
+    "open_loop_ledger_append",
+    "open_loop_delete",
+  ],
+  brief: ["brief_synthesis_save", "brief_create", "brief_update", "brief_delete"],
   note: ["notes_append", "notes_rewrite", "notes_edit"],
   "scheduled-run": ["schedule_agent_run"],
   "doc-annotation": [
+    "doc_annotation_synthesis_save",
     "annotate_durable",
     "annotation_revise",
     "annotation_retract",
     "annotation_supersede",
   ],
   "person-annotation": [
+    "person_annotation_synthesis_save",
     "annotate_person",
     "person_annotation_revise",
     "person_annotation_retract",

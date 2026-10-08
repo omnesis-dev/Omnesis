@@ -24,13 +24,16 @@
  *  - **The reactive plane** ({@link isCognitionAuthoredDocument}) drops EVERY
  *    entry, unconditionally, with no bypass. This is the whole point of the
  *    registry.
+ *    Explicit evidence lifecycle is separate: changing a cited transcript
+ *    repairs its existing dependents without opening source discovery, and
+ *    deleting it purges derived content and historical provenance.
  *  - **Retrieval** (`search/hidden-sources.ts`) hides only entries that opt in
  *    via {@link CognitionAuthoredSource.hiddenFromSearch} — and even then lets
  *    a caller that explicitly names the source or one of its document types
- *    through, which is the bypass `open_loop_search` rides on. A mirror opts
- *    in, because the tables are the truth and the document is an index
- *    artifact. A transcript does not: the operator should find their own
- *    conversations.
+ *    through, which is the bypass `open_loop_search` rides on. The loop mirror
+ *    opts in. Synthesis projections stay searchable, with canonical revision
+ *    and privacy fences at read boundaries. Transcripts also stay searchable
+ *    so the operator can find their own conversations.
  *
  * So "findable" and "reactable" are independent axes. Everything here is
  * unreactable; only some of it is unfindable.
@@ -41,7 +44,7 @@
  * assumed:
  *
  *  - The daily enqueuer (`documentType IN ('transaction','activity') OR
- *    metadata.rollingAggregate`) admits neither registered source.
+ *    metadata.rollingAggregate`) admits none of these registered sources.
  *  - Near-dup eligibility DOES enumerate `conversation`, so an agent
  *    transcript flows into near-dup detection. That plane costs no cognition
  *    run and produces graph edges rather than derived state, so it is
@@ -55,6 +58,7 @@
  */
 
 import { OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
+import { KNOWLEDGE_SOURCE_ID, KNOWLEDGE_DOCUMENT_TYPE } from "./knowledge/source-meta.js";
 import { OPEN_LOOP_DOCUMENT_TYPE, OPEN_LOOP_SOURCE_ID } from "./open-loop-source/source-meta.js";
 
 /** One cognition-authored source and the policies that apply to it. */
@@ -75,8 +79,7 @@ export interface CognitionAuthoredSource {
   readonly exclusiveDocumentTypes: readonly string[];
   /**
    * Whether unscoped search and document listings hide this source. True for a
-   * mirror of internal state, false for an artifact the operator authored half
-   * of and should be able to find.
+   * loop mirror; false for searchable synthesis and agent transcripts.
    */
   readonly hiddenFromSearch: boolean;
 }
@@ -84,6 +87,11 @@ export interface CognitionAuthoredSource {
 // Frozen rather than merely `readonly`: two policies read this array, and a
 // mutation would silently retune both.
 export const COGNITION_AUTHORED_SOURCES: readonly CognitionAuthoredSource[] = Object.freeze([
+  Object.freeze({
+    sourceId: KNOWLEDGE_SOURCE_ID,
+    exclusiveDocumentTypes: Object.freeze([KNOWLEDGE_DOCUMENT_TYPE]),
+    hiddenFromSearch: false,
+  }),
   Object.freeze({
     sourceId: OPEN_LOOP_SOURCE_ID,
     exclusiveDocumentTypes: Object.freeze([OPEN_LOOP_DOCUMENT_TYPE]),
