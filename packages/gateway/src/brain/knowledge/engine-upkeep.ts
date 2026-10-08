@@ -2,6 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
+import {
+  captureDecisionPayloadSubjects,
+  decisionPayloadErasureGeneration,
+} from "../decision-payload.js";
 import { listOrganizationAdmissions } from "./organization.js";
 import { getKnowledgeNode } from "./storage.js";
 import { knowledgeReviewSignals, decideKnowledgeReview } from "./review-policy.js";
@@ -140,8 +144,9 @@ export class KnowledgeUpkeep {
   async reviews(): Promise<void> {
     const cfg = this.deps.getSettings().knowledge,
       now = this.deps.clock();
+    // Incremental claim verification must not postpone a wiki's whole-page editorial review.
     const last =
-      "MAX(COALESCE(json_extract(n.metadata_json,'$.lastVerifiedAt'),n.created_at),COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),n.created_at))";
+      "CASE WHEN n.kind='wiki' THEN COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),n.created_at) ELSE MAX(COALESCE(json_extract(n.metadata_json,'$.lastVerifiedAt'),n.created_at),COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),n.created_at)) END";
     const maximum = `${last}+${cfg.maxReviewIntervalMs}`;
     // A completed but unverified review is still an attempt. Bound retries without
     // moving lastVerifiedAt or pretending its claims became current.
@@ -183,11 +188,20 @@ export class KnowledgeUpkeep {
     for (const row of rows) {
       if (cognitionBudgetVerdict(this.deps.db, this.deps.getSettings().budget, now).exhausted)
         return;
+      const payloadGeneration = decisionPayloadErasureGeneration(this.deps.db);
       const node = getKnowledgeNode(this.deps.db, row.id);
       if (!node) continue;
       if (isHistoricalKnowledgeBrief(this.deps.db, node, now)) continue;
       const signals = knowledgeReviewSignals(this.deps.db, node, now);
-      const score = await judgeKnowledge(this.deps.decisions, "review", signals);
+      const score = await judgeKnowledge(this.deps.decisions, "review", signals, {
+        nodeId: node.id,
+        payloadCapture:
+          captureDecisionPayloadSubjects(
+            this.deps.db,
+            { nodeIds: [node.id], nodeRevisions: { [node.id]: node.revision } },
+            payloadGeneration,
+          ) ?? undefined,
+      });
       const schedule = decideKnowledgeReview(signals, score, cfg);
       await this.deps.writeGate["knowledge.scheduleReview"](
         {

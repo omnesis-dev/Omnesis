@@ -588,6 +588,16 @@
           soon tier; ordinary page edits use the routine tier.
         </p>
         <p>
+          Before publishing a wiki, the agent checks existing pages and candidates and explains why
+          the proposed topic needs its own page. Publication requires claim support from at least
+          two current, readable documents with distinct content; merely listing documents on a
+          candidate does not satisfy this check. A single-document summary belongs in an annotation
+          or an unpublished candidate. Existing pages remain editable after source loss. These
+          safeguards encourage topic synthesis but do not guarantee its quality or a mathematical
+          relationship between document and page counts. Incremental verification does not reset a
+          wiki's whole-page review clock.
+        </p>
+        <p>
           Wiki updates preserve existing claims unless the agent explicitly records their removal
           and its reason. Empty wiki replacements are refused. This protects against accidentally
           dropping sections; it does not establish that retained or rewritten claims are complete.
@@ -617,26 +627,31 @@
         <p>
           Debug groups the library, agent runs, maintenance batches, discovery controls, and
           confidence and feedback diagnostics under <strong>Cognition</strong>. Agent runs includes
-          current execution health, full transcripts and tool calls, and token spending; gateway
-          diagnostics and database tools remain under <strong>System</strong> and
-          <strong>Data tools</strong>.
+          current execution health, full transcripts and tool calls, and token spending. Its
+          <strong>Running</strong> filter shows the live count and active runs. Gateway diagnostics
+          and database tools remain under <strong>System</strong> and <strong>Data tools</strong>.
+          Maintenance supports reason, tier and status filters; each batch shows its tier and all
+          recorded reasons. Filters apply before paging through the history.
         </p>
         <p>
           Open <strong>Debug → Cognition → Library</strong> to browse the Brain’s library. Selecting
-          an entry keeps the library’s filters and loaded results in place. In Overview, switch
-          between rendered Markdown and Raw to inspect the original claim tags. Hover over or focus
-          the quote indicator at the end of a claim to preview its verification, assessment,
-          supporting references, and which pages use the claim or whole page as support. The claim
-          is underlined while its preview is open; hovering over the text itself does not open a
-          preview. Claim links open the referenced passage in Overview. Connections shows the page’s
-          incoming and outgoing references, including context and organization links. Source
-          documents appear once as an icon and linked title. History shows each saved version’s
-          changes from its predecessor in a collapsed diff; expand a version to inspect its
-          additions and removals. Advanced contains identifiers, metadata, and exact claim mappings.
-          Maintenance status distinguishes pending work from completed work; a current page is not
-          necessarily verified. Maintenance separates inputs waiting to be grouped, inputs assigned
-          to batches, and recent batch history. Historical deferred records are excluded from the
-          waiting count. Select a batch to inspect its checks and open the agent transcript.
+          an entry keeps the library’s filters and loaded results in place. On desktop, the list and
+          reading pane scroll independently. More entries load as you approach the end of the list;
+          Refresh includes newly added or updated entries. Person notes identify their subject and
+          link to the current person profile. In Overview, switch between rendered Markdown and Raw
+          to inspect the original claim tags. Hover over or focus the quote indicator at the end of
+          a claim to preview its verification, assessment, supporting references, and which pages
+          use the claim or whole page as support. The claim is underlined while its preview is open;
+          hovering over the text itself does not open a preview. Claim links open the referenced
+          passage in Overview. Connections shows the page’s incoming and outgoing references,
+          including context and organization links. Source documents appear once as an icon and
+          linked title. History shows each saved version’s changes from its predecessor in a
+          collapsed diff; expand a version to inspect its additions and removals. Advanced contains
+          identifiers, metadata, and exact claim mappings. Maintenance status distinguishes pending
+          work from completed work; a current page is not necessarily verified. Maintenance
+          separates inputs waiting to be grouped, inputs assigned to batches, and recent batch
+          history. Historical deferred records are excluded from the waiting count. Select a batch
+          to inspect its checks and open the agent transcript.
         </p>
         <p>
           Loops live in the same Library. Choose <strong>Loops</strong> in the type filter to browse
@@ -807,10 +822,15 @@
         </div>
         <p>
           If Jev cannot be reached or returns an invalid answer, the engine records an unavailable
-          judgement and follows its conservative fallback. The Brain diagnostics show decision
-          purposes, input fingerprints, normalized scores and model usage; the decision ledger does
-          not duplicate raw source prose. Decision tokens count toward the daily token budget, not
-          the daily agent-run budget. The key can also come from
+          judgement and follows its conservative fallback. Inspect decisions beside the maintenance
+          work or agent run they explain by expanding Decision details. Urgency checks show the
+          captured policy, score and applied schedule. Exact requests and model results are loaded
+          on demand; older redacted records and unavailable inputs are labelled explicitly. Advanced
+          history keeps retained decisions accessible after their work or transcript is gone. Input
+          copies follow decision-history retention and deletion of contributing sources. The Brain
+          diagnostics show decision purposes, input fingerprints, normalized scores and model usage.
+          Metadata is retained separately from the bounded input snapshots. Decision tokens count
+          toward the daily token budget, not the daily agent-run budget. The key can also come from
           <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the gateway's
           environment. To reach a private TypeSafe deployment instead of the public API, set
           <code>inference.typesafe.url</code>.

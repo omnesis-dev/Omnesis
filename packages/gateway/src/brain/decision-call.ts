@@ -45,36 +45,52 @@ export async function askScore(
 ): Promise<ScoreJudgement> {
   const requestJson = canonicalJson({ model: decision.modelId, ...request });
   const started = performance.now();
+  let modelId = decision.modelId;
+  let responseJson: string | null = null;
+  let inputTokens: number | null = null;
   try {
     const timeout = AbortSignal.timeout(opts.timeoutMs ?? DECISION_TIMEOUT_MS);
     const result = await decision.decide(request, {
       signal: opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout,
     });
+    modelId = result.model;
+    responseJson = JSON.stringify({ model: result.model, answers: result.answers });
+    inputTokens = result.inputTokens ?? null;
+    // A returned but unusable answer still consumed inference and belongs in
+    // the audit. Retain its captured result and account for spend before validation.
+    if (result.inputTokens) await opts.recordSpend(result.model, result.inputTokens);
     const answer = result.answers[questionId];
-    if (!answer || answer.type !== "score") {
+    if (!answer || answer.type !== "score" || !Number.isFinite(answer.score)) {
       throw new Error(`decision reply has no score for "${questionId}"`);
     }
-    if (result.inputTokens) await opts.recordSpend(result.model, result.inputTokens);
+    const question = request.questions[questionId];
+    if (
+      question?.type !== "score" ||
+      answer.score < 0 ||
+      answer.score > question.criteria.length - 1
+    ) {
+      throw new Error(`decision reply has an out-of-range score for "${questionId}"`);
+    }
     return {
-      modelId: result.model,
+      modelId,
       requestJson,
-      responseJson: JSON.stringify({ model: result.model, answers: result.answers }),
+      responseJson,
       score: answer.score,
       error: null,
       latencyMs: Math.round(performance.now() - started),
-      inputTokens: result.inputTokens ?? null,
+      inputTokens,
     };
   } catch (err) {
     const error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
     opts.log.warn(`decision model unavailable (${error})`);
     return {
-      modelId: decision.modelId,
+      modelId,
       requestJson,
-      responseJson: null,
+      responseJson,
       score: null,
       error,
       latencyMs: Math.round(performance.now() - started),
-      inputTokens: null,
+      inputTokens,
     };
   }
 }

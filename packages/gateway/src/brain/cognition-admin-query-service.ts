@@ -11,11 +11,15 @@
 
 import { parseSourceKey, type CognitionDocumentRef } from "@omnesis/core";
 import { getDocumentTitlesAndSources } from "../db.js";
+import { NotFoundError } from "../http/errors.js";
 import { mutableListRevision, type MutableListRevisionScope } from "../data/list-revisions.js";
 import {
   listTemporalAnnotations,
   temporalAnnotationStats,
 } from "../enrichment/temporal-annotations/storage.js";
+import { readDecisionPayload } from "./decision-payload.js";
+import { areDecisionSourcesReadable, readRetainedDecisionInput } from "./decision-read-privacy.js";
+import { listKnowledgeDecisionsForRun } from "./knowledge/decision-query.js";
 import { readKnowledgeBootstrapStatus } from "./knowledge/bootstrap-status.js";
 import { summarizeCognitionTranscript } from "./decision-view.js";
 import { artifactProvenance } from "./artifact-provenance.js";
@@ -356,7 +360,51 @@ export class CognitionAdminQueryService {
 
   /** Every decision-model judgement made for one run, oldest first. */
   decisionsForRun(runId: string): CognitionDecisionRecord[] {
-    return listDecisionsForRun(this.db, runId);
+    return this.db.transaction(() =>
+      listDecisionsForRun(this.db, runId).map((decision) =>
+        areDecisionSourcesReadable(this.db, decision)
+          ? decision
+          : { ...decision, requestJson: null, responseJson: null, error: null },
+      ),
+    )();
+  }
+
+  decisionInput(id: string) {
+    return this.db.transaction(() => {
+      const decision = this.db
+        .prepare<
+          [string],
+          { documentId: string; subjectDocumentId: string }
+        >("SELECT document_id AS documentId,subject_document_id AS subjectDocumentId FROM cognition_decisions WHERE id=?")
+        .get(id);
+      if (!decision) throw new NotFoundError("Decision not found");
+      const readable = areDecisionSourcesReadable(this.db, decision);
+      const input = readable
+        ? readDecisionPayload(this.db, id)
+        : { availability: "unavailable" as const, request: null, response: null, error: null };
+      return {
+        input,
+        ...(readable && input.availability === "unavailable"
+          ? { retained: readRetainedDecisionInput(this.db, id) }
+          : {}),
+      };
+    })();
+  }
+
+  decisionSubjectRefs(decisions: readonly CognitionDecisionRecord[]): CognitionAdminDocumentRef[] {
+    return this.db.transaction(() =>
+      this.documentRefs([
+        ...new Set(
+          decisions
+            .filter((decision) => areDecisionSourcesReadable(this.db, decision))
+            .map((decision) => decision.subjectDocumentId),
+        ),
+      ]),
+    )();
+  }
+
+  knowledgeDecisionsForRun(runId: string) {
+    return listKnowledgeDecisionsForRun(this.db, runId);
   }
 
   documentRefs(docIds: readonly string[]): CognitionAdminDocumentRef[] {

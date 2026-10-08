@@ -272,7 +272,11 @@ export function getOrganizationCohort(
   return { ...row, sourceVersions: Object.fromEntries(members.map((m) => [m.id, m.revision])) };
 }
 
-export function completeOrganizationCohort(
+export type OrganizationCompletionResult =
+  | { accepted: true }
+  | { accepted: false; reason: "snapshot" | "target" | "grounding" | "budget" };
+
+export function completeOrganizationCohortResult(
   db: Database.Database,
   input: {
     id: string;
@@ -285,8 +289,8 @@ export function completeOrganizationCohort(
     retryAt: number;
   },
   now: number,
-): boolean {
-  return db.transaction(() => {
+): OrganizationCompletionResult {
+  return db.transaction((): OrganizationCompletionResult => {
     const cohort = getOrganizationCohort(db, input.id);
     if (
       !cohort ||
@@ -301,13 +305,9 @@ export function completeOrganizationCohort(
         ((input.targetIds?.length ?? 0) > 0 ||
           Object.keys(input.targetVersions ?? {}).length > 0)) ||
       !isOrganizationCohortCurrent(db, cohort) ||
-      (input.outcome === "organized" && !input.targetIds?.length) ||
-      !(input.targetIds ?? []).every((id) => {
-        const node = getKnowledgeNode(db, id);
-        return node?.kind === "wiki" && node.canonicalFields.withdrawn !== true;
-      })
+      (input.outcome === "organized" && !input.targetIds?.length)
     )
-      return false;
+      return { accepted: false, reason: "snapshot" };
     if (input.outcome === "organized") {
       const targetIds = input.targetIds!;
       const versions = input.targetVersions ?? {};
@@ -315,7 +315,7 @@ export function completeOrganizationCohort(
         Object.keys(versions).length !== targetIds.length ||
         new Set(targetIds).size !== targetIds.length
       )
-        return false;
+        return { accepted: false, reason: "target" };
       const groundingBudget = { remaining: 8192 };
       for (const id of targetIds) {
         const node = getKnowledgeNode(db, id);
@@ -323,15 +323,20 @@ export function completeOrganizationCohort(
         if (
           !node ||
           node.kind !== "wiki" ||
+          node.canonicalFields.withdrawn === true ||
           node.revision !== versions[id] ||
           fence.hidden ||
           fence.stale
         )
-          return false;
+          return { accepted: false, reason: "target" };
         try {
           assertCandidateGrounded(db, id, Object.keys(cohort.sourceVersions), groundingBudget);
         } catch (error) {
-          if (error instanceof KnowledgeStorageError) return false;
+          if (error instanceof KnowledgeStorageError)
+            return {
+              accepted: false,
+              reason: groundingBudget.remaining < 0 ? "budget" : "grounding",
+            };
           throw error;
         }
       }
@@ -354,8 +359,17 @@ export function completeOrganizationCohort(
       now,
       input.id,
     );
-    return true;
+    return { accepted: true };
   })();
+}
+
+/** Compatibility facade for callers that only need acceptance, not recovery detail. */
+export function completeOrganizationCohort(
+  db: Database.Database,
+  input: Parameters<typeof completeOrganizationCohortResult>[1],
+  now: number,
+): boolean {
+  return completeOrganizationCohortResult(db, input, now).accepted;
 }
 
 export function getOrganizationCohortForBatch(

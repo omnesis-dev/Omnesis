@@ -23,6 +23,7 @@ import { createServer } from "../server.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { insertTemporalAnnotation } from "../enrichment/temporal-annotations/storage.js";
+import { recordKnowledgeDecision } from "./knowledge/decision-storage.js";
 import { recordRunAttribution } from "./storage/run-attribution.js";
 import { createMutableClock } from "./virtual-clock.js";
 import { createBrief } from "./storage/briefs.js";
@@ -182,6 +183,7 @@ const ALL_ROUTES: Array<{ method: "GET" | "POST"; path: string }> = [
   { method: "GET", path: "/admin/brain/transcripts" },
   { method: "GET", path: "/admin/brain/transcripts/1000-run_1-a1.json" },
   { method: "GET", path: "/admin/brain/decisions" },
+  { method: "GET", path: "/admin/brain/decisions/decision_fixture" },
   { method: "GET", path: "/admin/brain/spend" },
   { method: "GET", path: "/admin/brain/budget" },
   { method: "GET", path: "/admin/brain/coverage" },
@@ -286,6 +288,7 @@ describe("inert-when-off + scopes", () => {
       }
       if (
         route.path === "/admin/brain/briefs/brf_1" ||
+        route.path === "/admin/brain/decisions/decision_fixture" ||
         route.path === "/admin/brain/transcripts/1000-run_1-a1.json"
       ) {
         // Genuinely-missing resources still 404 — the gate is not what refuses them.
@@ -790,7 +793,205 @@ describe("GET /admin/brain/runs", () => {
   });
 });
 
+describe("GET /admin/brain/knowledge/batches", () => {
+  test("filters maintenance before pagination and exposes exact mixed reasons on list and detail", async () => {
+    const batch = (id: string, at: number, reasons: string[]) => {
+      db.prepare(
+        "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES(?,?,?,'routine','completed',?,?)",
+      ).run(id, `run_${id}`, `hash_${id}`, at, at);
+      reasons.forEach((reason, index) =>
+        db
+          .prepare(
+            "INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,batch_id) VALUES(?,?,'source',?,'v1',1,'routine',1,1,1,'completed',?)",
+          )
+          .run(`work_${id}_${index}`, `source_${id}`, reason, id),
+      );
+    };
+    batch("new_evidence", 100, ["change"]);
+    batch("older_mixed", 90, ["root", "review"]);
+    batch("oldest_root", 80, ["root"]);
+    const firstResponse = await get(
+      "/admin/brain/knowledge/batches?reason=root&tier=routine&status=history&limit=1",
+    );
+    expect(firstResponse.status).toBe(200);
+    const first = (await firstResponse.json()) as {
+      items: Array<{ id: string; reasons: string[] }>;
+      nextCursor: string;
+      hasMore: boolean;
+    };
+    expect(first.items).toMatchObject([{ id: "older_mixed", reasons: ["review", "root"] }]);
+    expect(first.hasMore).toBe(true);
+    const next = (await (
+      await get(
+        `/admin/brain/knowledge/batches?reason=root&tier=routine&status=history&limit=1&cursor=${encodeURIComponent(first.nextCursor)}`,
+      )
+    ).json()) as { items: Array<{ id: string }> };
+    expect(next.items.map((item) => item.id)).toEqual(["oldest_root"]);
+    const detail = (await (await get("/admin/brain/knowledge/batches/older_mixed")).json()) as {
+      reasons: string[];
+    };
+    expect(detail.reasons).toEqual(["review", "root"]);
+    expect((await get("/admin/brain/knowledge/batches?reason=guessed-topic")).status).toBe(400);
+    expect((await get("/admin/brain/knowledge/batches?status=all")).status).toBe(200);
+  });
+});
+
+describe("GET /admin/brain/knowledge/decisions/:id", () => {
+  test("serves historical input as unavailable only to admin and never reconstructs it", async () => {
+    recordKnowledgeDecision(
+      db,
+      {
+        id: "historical_urgency",
+        purpose: "urgency",
+        inputFingerprint: "old",
+        score: 0.5,
+        modelId: "scripted",
+        latencyMs: 1,
+        inputTokens: 3,
+        rubricVersion: "knowledge-decisions-v2",
+      },
+      1,
+    );
+    const response = await get("/admin/brain/knowledge/decisions/historical_urgency");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      purpose: "urgency",
+      input: { availability: "unavailable", request: null, response: null },
+    });
+    expect(
+      (await get("/admin/brain/knowledge/decisions/historical_urgency", READ_TOKEN)).status,
+    ).toBe(403);
+    expect((await get("/admin/brain/knowledge/decisions/missing")).status).toBe(404);
+  });
+});
+
 describe("GET /admin/brain/runs/:id", () => {
+  test("legacy decision input is admin-only and marks uncaptured history unavailable", async () => {
+    seedDocument("doc_fixture");
+    seedCompletedRun("run_fixture", "doc_fixture");
+    db.prepare(
+      `INSERT INTO cognition_decisions(id,run_id,document_id,subject_document_id,purpose,lane,rubric_version,requested_model_id,threshold,verdict,created_at)
+      VALUES('decision_fixture','run_fixture','doc_fixture','doc_fixture','record-check','interactive','fixture','scripted',1,'pass',1)`,
+    ).run();
+    const response = await get("/admin/brain/decisions/decision_fixture");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      input: { availability: "unavailable", request: null, response: null },
+    });
+    expect((await get("/admin/brain/decisions/decision_fixture", READ_TOKEN)).status).toBe(403);
+    expect((await get("/admin/brain/decisions/missing")).status).toBe(404);
+  });
+  test.each(["purge", "tombstone", "removed"] as const)(
+    "redacts legacy decision text and subject title during %s",
+    async (hidden) => {
+      seedDocument("decision_private_source", {
+        title: "Private fixture title",
+        sourceId: "notes:fixture",
+      });
+      seedCompletedRun("decision_private_run", "decision_private_source");
+      db.prepare(
+        `INSERT INTO cognition_decisions(id,run_id,document_id,subject_document_id,purpose,lane,rubric_version,requested_model_id,threshold,verdict,created_at,request_json,response_json,error)
+      VALUES('private_decision','decision_private_run','decision_private_source','decision_private_source','worth-gate','data','fixture','scripted',1,'pass',1,?,?,?)`,
+      ).run(
+        JSON.stringify({ state: { content: "Private fixture request" } }),
+        JSON.stringify({ answer: "Private fixture response" }),
+        "Private fixture error",
+      );
+      if (hidden === "purge")
+        db.prepare(
+          "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','source','decision_private_source','1',1)",
+        ).run();
+      else if (hidden === "tombstone")
+        db.prepare(
+          "INSERT OR REPLACE INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('decision_private_source','hash',1,1)",
+        ).run();
+      else db.prepare("INSERT INTO removed_sources(id,removed_at) VALUES('notes:fixture',1)").run();
+      const response = await get("/admin/brain/runs/decision_private_run");
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        decisions: [
+          { id: "private_decision", request: null, response: null, error: null, subjectDoc: null },
+        ],
+      });
+      expect(JSON.stringify(body.decisions)).not.toContain("Private fixture");
+      expect(await (await get("/admin/brain/decisions/private_decision")).json()).toMatchObject({
+        input: { availability: "unavailable", request: null, response: null },
+      });
+      expect(
+        db
+          .prepare("SELECT request_json FROM cognition_decisions WHERE id='private_decision'")
+          .get(),
+      ).toMatchObject({ request_json: expect.stringContaining("Private fixture request") });
+    },
+  );
+  test("retained legacy input remains inspectable without a run and labels redaction", async () => {
+    seedDocument("retained_source", { sourceId: "notes:fixture" });
+    db.prepare(
+      `INSERT INTO cognition_decisions(id,run_id,document_id,subject_document_id,purpose,lane,rubric_version,requested_model_id,threshold,verdict,created_at,request_json,response_json)
+      VALUES('retained_decision','pruned_run','retained_source','retained_source','record-check','data','fixture','scripted',1,'skip',1,?,?)`,
+    ).run(
+      JSON.stringify({ state: { document_context: { redacted: true, replayable: false } } }),
+      JSON.stringify({ score: 0.1 }),
+    );
+    const response = await get("/admin/brain/decisions/retained_decision");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      input: { availability: "unavailable" },
+      retained: {
+        requestFidelity: "redacted",
+        responseFidelity: "score-only",
+        response: { score: 0.1 },
+      },
+    });
+    db.prepare(
+      "UPDATE cognition_decisions SET request_json=?,response_json=? WHERE id='retained_decision'",
+    ).run('"' + "x".repeat(131073) + '"', "invalid-json");
+    expect(await (await get("/admin/brain/decisions/retained_decision")).json()).not.toHaveProperty(
+      "retained",
+    );
+  });
+  test("exposes normalized synthesis admission judgements separately from record decisions", async () => {
+    enqueueCognitionRun(
+      db,
+      { id: "run_admission", kind: "synthesis", payload: { focus: "knowledge-maintenance" } },
+      1000,
+    );
+    recordKnowledgeDecision(
+      db,
+      {
+        id: "decision_admission",
+        purpose: "discovery",
+        inputFingerprint: "invented",
+        score: 0.37,
+        threshold: 0.25,
+        runId: "run_admission",
+        batchId: "batch_admission",
+        modelId: "scripted",
+        latencyMs: 4,
+        inputTokens: 12,
+        rubricVersion: "knowledge-discovery-value-v3",
+      },
+      1100,
+    );
+    const body = (await (await get("/admin/brain/runs/run_admission")).json()) as {
+      decisions: unknown[];
+      knowledgeDecisions: Array<Record<string, unknown>>;
+    };
+    expect(body.decisions).toEqual([]);
+    expect(body.knowledgeDecisions).toMatchObject([
+      {
+        kind: "knowledge",
+        purpose: "discovery",
+        scoreScale: "normalized-0-1",
+        score: 0.37,
+        threshold: 0.25,
+        recommendation: "inspect",
+        association: "recorded",
+      },
+    ]);
+  });
+
   test("returns the run row plus its transcript refs", async () => {
     seedCompletedRun("run_1", "doc_a");
     seedTranscript({ runId: "run_1", finishedAt: 3000 });
@@ -2257,4 +2458,35 @@ test("Library exposes canonical owner pages and validates status filters", async
   });
   expect((await get("/admin/brain/knowledge/library?kind=wiki&status=retired")).status).toBe(400);
   expect((await get("/admin/brain/knowledge/library/retired-loop%3Amissing")).status).toBe(404);
+});
+
+test("pending work details require exact groups and admin scope, with no invented associated decision", async () => {
+  seedDocument("pending-cabinet", { sourceId: "fictional:manuals", title: "Cabinet inventory" });
+  db.prepare(
+    "INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,last_error) VALUES('pending-work','pending-cabinet','source','change','v1',1,'soon',2,1,1,'pending','pending_content')",
+  ).run();
+  const path =
+    "/admin/brain/knowledge/pending-work?reason=change&tier=soon&readiness=pending_content";
+  expect(await (await get(path)).json()).toMatchObject({
+    items: [
+      {
+        id: "pending-work",
+        nodeId: "source:pending-cabinet",
+        readiness: "pending_content",
+        subjectRef: { title: "Cabinet inventory" },
+        decisions: { items: [], truncated: false },
+      },
+    ],
+    hasMore: false,
+    nextCursor: null,
+  });
+  expect((await get(path, READ_TOKEN)).status).toBe(403);
+  expect((await app.request(path)).status).toBe(401);
+  expect((await get("/admin/brain/knowledge/pending-work?reason=change")).status).toBe(400);
+  expect((await get("/admin/brain/knowledge/pending-work?reason=unknown&tier=soon")).status).toBe(
+    400,
+  );
+  expect(
+    await (await get("/admin/brain/knowledge/pending-work?reason=change&tier=soon")).json(),
+  ).toMatchObject({ items: [] });
 });

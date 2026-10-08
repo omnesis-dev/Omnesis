@@ -17,6 +17,11 @@ import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { recordDecisionSpend } from "../decision-call.js";
+import {
+  captureDecisionPayloadSubjects,
+  decisionPayloadErasureGeneration,
+  readDecisionPayload,
+} from "../decision-payload.js";
 import { pruneActivityRetentionBatch } from "../../activity-retention/store.js";
 import { listDecisionsForRun } from "../storage/decisions.js";
 import { cognitionSpendDay, getCognitionSpendDayTotal } from "../storage/spend.js";
@@ -238,7 +243,114 @@ describe("record check", () => {
       ]);
     });
 
-    test("sends bounded source context to the value check but persists only its redacted summary", async () => {
+    test("retains exact value-check inputs separately and erases them when any supporting source is deleted", async () => {
+      const subject = insertDoc("audit-subject", BOOKING);
+      const other = insertDoc("audit-support", "The reserved room includes a keyboard.");
+      const payloadCapture = captureDecisionPayloadSubjects(
+        db,
+        { sourceIds: [subject, other] },
+        decisionPayloadErasureGeneration(db),
+      );
+      expect(payloadCapture).not.toBeNull();
+      const context = documentRecordContext(subject, BOOKING, [
+        { docId: other, quote: "The reserved room includes a keyboard." },
+      ]);
+      const decision = new ScriptedDecision();
+      const bound = check(decision, "enforce").check.forRun(
+        run("bootstrap", { docId: subject, datumAt: NOW }),
+      )!;
+      await bound({
+        recordId: "audited-note",
+        documentId: subject,
+        record: { type: "doc-fact", kind: "context", text: BOOKING },
+        documentContext: context,
+        payloadCapture: payloadCapture!,
+      });
+      const row = listDecisionsForRun(db, "run_1")[0]!;
+      expect(JSON.parse(row.requestJson!).state.document_context.redacted).toBe(true);
+      expect(readDecisionPayload(db, row.id)).toMatchObject({
+        availability: "available",
+        request: { state: { document_context: context }, questions: decision.calls[0]!.questions },
+        response: { model: "jev-1.13.0", answers: { belongs: { type: "score", score: 2.5 } } },
+      });
+      db.prepare("DELETE FROM documents WHERE id=?").run(other);
+      expect(readDecisionPayload(db, row.id).availability).toBe("unavailable");
+      expect(listDecisionsForRun(db, "run_1")).toHaveLength(1);
+    });
+
+    test("keeps malformed document responses only in the erased exact payload", async () => {
+      const subject = insertDoc("malformed-subject", BOOKING);
+      const marker = "A fictional second source contains a violet stage plan.";
+      const other = insertDoc("malformed-support", marker);
+      const payloadCapture = captureDecisionPayloadSubjects(
+        db,
+        { sourceIds: [subject, other] },
+        decisionPayloadErasureGeneration(db),
+      )!;
+      const decision: DecisionCapability = {
+        modelId: "scripted",
+        decide: async () => ({
+          model: "scripted",
+          answers: { [marker]: { type: "score", score: 1 } },
+          inputTokens: 7,
+        }),
+        dispose() {},
+      };
+      const bound = check(decision, "enforce").check.forRun(
+        run("bootstrap", { docId: subject, datumAt: NOW }),
+      )!;
+      await bound({
+        recordId: "malformed-note",
+        documentId: subject,
+        record: { type: "doc-fact", kind: "context", text: BOOKING },
+        documentContext: documentRecordContext(subject, BOOKING, [{ docId: other, quote: marker }]),
+        payloadCapture,
+      });
+      const row = listDecisionsForRun(db, "run_1")[0]!;
+      expect(row).toMatchObject({
+        verdict: "unavailable",
+        responseJson: null,
+        error: "Document annotation value check unavailable",
+        inputTokens: 7,
+      });
+      expect(JSON.stringify(row)).not.toContain(marker);
+      expect(JSON.stringify(readDecisionPayload(db, row.id).response)).toContain(marker);
+      db.prepare("DELETE FROM documents WHERE id=?").run(other);
+      expect(readDecisionPayload(db, row.id).availability).toBe("unavailable");
+      expect(JSON.stringify(listDecisionsForRun(db, "run_1"))).not.toContain(marker);
+    });
+
+    test("does not restore supporting-source text when a value-check verdict returns after deletion", async () => {
+      const subject = insertDoc("audit-late-subject", BOOKING);
+      const other = insertDoc("audit-late-support", "A keyboard is included.");
+      const payloadCapture = captureDecisionPayloadSubjects(
+        db,
+        { sourceIds: [subject, other] },
+        decisionPayloadErasureGeneration(db),
+      );
+      expect(payloadCapture).not.toBeNull();
+      const decision = new HeldDecision();
+      const bound = check(decision, "enforce").check.forRun(
+        run("bootstrap", { docId: subject, datumAt: NOW }),
+      )!;
+      const pending = bound({
+        recordId: "late-note",
+        documentId: subject,
+        record: { type: "doc-fact", kind: "context", text: BOOKING },
+        documentContext: documentRecordContext(subject, BOOKING, [
+          { docId: other, quote: "A keyboard is included." },
+        ]),
+        payloadCapture: payloadCapture!,
+      });
+      db.prepare("DELETE FROM documents WHERE id=?").run(other);
+      decision.answer();
+      await pending;
+      const row = listDecisionsForRun(db, "run_1")[0]!;
+      expect(row.requestJson).not.toContain("A keyboard is included.");
+      expect(readDecisionPayload(db, row.id).availability).toBe("unavailable");
+    });
+
+    test("sends bounded source context to the value check but persists only its redacted summary without a trusted capture", async () => {
       const doc = insertDoc("context-redaction", BOOKING);
       const decision = new ScriptedDecision({ [BOOKING]: 2.1 });
       const bound = check(decision, "enforce").check.forRun(
@@ -256,6 +368,12 @@ describe("record check", () => {
         }),
       ).resolves.toEqual({ save: true });
       expect(decision.calls[0]!.questions).toEqual(DOCUMENT_RECORD_VALUE_QUESTIONS);
+      const valueInstructions = decision.calls[0]!.questions.belongs!.instructions;
+      expect(valueInstructions).toContain("retain materially useful outcomes");
+      expect(valueInstructions).toContain("need not preserve every detail or add a second source");
+      expect(valueInstructions).toContain("wording overlap alone does not disqualify it");
+      expect(valueInstructions).toContain("restating a short message is not enough");
+      expect(valueInstructions).toContain("footer boilerplate");
       expect(decision.calls[0]!.state).toMatchObject({ document_context: context });
       const request = listDecisionsForRun(db, "run_1")[0]!.requestJson!;
       expect(request).not.toContain("Subject-only private marker");
@@ -309,7 +427,7 @@ describe("record check", () => {
         ]);
         expect(listDecisionsForRun(db, "run_1")).toMatchObject([
           {
-            rubricVersion: "record-value-v3",
+            rubricVersion: "record-value-v4",
             verdict: "pass",
             score: RECORD_BELONGS_THRESHOLD,
             enforced: true,
@@ -580,6 +698,12 @@ describe("record check", () => {
           { source: 1, is_subject: false, quote: BOOKING },
         ],
       });
+      expect(captured[0]!.payloadCapture?.subjects).toEqual(
+        expect.arrayContaining([
+          { kind: "source", id: subject },
+          { kind: "source", id: other },
+        ]),
+      );
     });
 
     test("changed other-source support after asynchronous subject validation cannot enter the value check", async () => {

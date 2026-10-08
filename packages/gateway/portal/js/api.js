@@ -702,7 +702,10 @@ export const getKnowledgeNode = (id) => request("GET", `/admin/brain/knowledge/$
 export const getKnowledgeConnections = (id, query = {}) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/connections`, { query });
 export const getKnowledgeHistory = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/history`);
 export const getKnowledgeStatus = () => request("GET", "/admin/brain/knowledge/status");
-export const getKnowledgeBatches = () => request("GET", "/admin/brain/knowledge/batches");
+export const getCognitionDecisionInput = (id) => request("GET", `/admin/brain/decisions/${encodeURIComponent(id)}`);
+export const getKnowledgeDecisionAudit = (query = {}) => request("GET", "/admin/brain/knowledge/decisions", { query });
+export const getKnowledgeDecision = (id) => request("GET", `/admin/brain/knowledge/decisions/${encodeURIComponent(id)}`);
+export const getKnowledgeBatches = (query = {}) => request("GET", "/admin/brain/knowledge/batches", { query });
 export const getKnowledgeBatch = (id) => request("GET", `/admin/brain/knowledge/batches/${encodeURIComponent(id)}`);
 
 
@@ -1647,3 +1650,7 @@ export const approveBrowserFindAuthorization = (id) => request("POST", `/admin/b
 
 export const getKnowledgeLibrary = (query = {}) => request("GET", "/admin/brain/knowledge/library", { query });
 export const getKnowledgeLibraryRetirement = (id) => request("GET", `/admin/brain/knowledge/library/${encodeURIComponent(id)}`);
+
+export const getKnowledgeNodeDecisions = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/decisions`);
+
+export const getKnowledgePendingWork = (query = {}) => request("GET", "/admin/brain/knowledge/pending-work", { query });

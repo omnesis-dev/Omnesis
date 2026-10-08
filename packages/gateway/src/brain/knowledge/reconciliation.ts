@@ -5,7 +5,7 @@ import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeOwnerKind } from "./owner-adapters.js";
 import type Database from "better-sqlite3";
 
-export type KnowledgeCollection = KnowledgeOwnerKind | "wiki" | "temporal";
+export type KnowledgeCollection = KnowledgeOwnerKind | "wiki" | "wiki_scope" | "temporal";
 export interface KnowledgeReconciliationReceipt {
   collection: KnowledgeCollection;
   revision: number;
@@ -46,6 +46,7 @@ export function installKnowledgeReconciliationTriggers(db: Database.Database): v
     "doc_annotation",
     "person_annotation",
     "wiki",
+    "wiki_scope",
     "temporal",
   ])
     db.prepare(
@@ -70,6 +71,24 @@ export function installKnowledgeReconciliationTriggers(db: Database.Database): v
         END`);
     }
   }
+  for (const table of ["knowledge_nodes", "knowledge_candidates"]) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))
+      continue;
+    for (const operation of ["INSERT", "DELETE", "UPDATE"]) {
+      const row = operation === "DELETE" ? "OLD" : "NEW";
+      const filter =
+        table === "knowledge_nodes"
+          ? operation === "UPDATE"
+            ? "(OLD.kind='wiki' OR NEW.kind='wiki') AND (OLD.kind IS NOT NEW.kind OR OLD.title IS NOT NEW.title)"
+            : `${row}.kind='wiki'`
+          : operation === "UPDATE"
+            ? "OLD.identity_key IS NOT NEW.identity_key OR OLD.title IS NOT NEW.title OR OLD.scope IS NOT NEW.scope OR OLD.status IS NOT NEW.status OR OLD.node_id IS NOT NEW.node_id"
+            : "1";
+      db.exec(
+        `CREATE TRIGGER IF NOT EXISTS knowledge_scope_${table}_${operation.toLowerCase()} AFTER ${operation} ON ${table} WHEN ${filter} BEGIN UPDATE knowledge_reconciliation_revisions SET revision=revision+1 WHERE collection='wiki_scope'; END`,
+      );
+    }
+  }
 }
 
 export function readKnowledgeCollectionRevision(
@@ -88,6 +107,8 @@ export function readKnowledgeCollectionRevision(
 }
 
 const COLLECTION_REPAIR: Record<KnowledgeCollection, string> = {
+  wiki_scope:
+    'Repeat knowledge_list({kind:"wiki"}) without afterId and knowledge_candidates({}) without status or afterId before publishing a distinct scope.',
   wiki: 'For proposal/publication, call knowledge_list({kind:"wiki"}) without afterId and knowledge_candidates({}) without status or afterId; page candidates until the intended candidate is returned. For an existing wiki revision, call knowledge_fetch({id:targetId,editing:true}). For a candidate decision, read that candidate through knowledge_candidates again.',
   loop: "Repeat open_loop_search for the intended subject; read the target through open_loop_fetch before revising it.",
   brief:

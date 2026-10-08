@@ -184,3 +184,26 @@ describe("fmtRel", () => {
     expect(cognition.fmtRel(null, NOW)).toBe("—");
   });
 });
+
+
+describe("live running filter", () => {
+  test("places a live count immediately after All and updates it with the active snapshot", () => {
+    expect(cognition.runViewFilterOptions(3)).toEqual([
+      { value: "all", label: "All" },
+      { value: "running", label: "Running (3)" },
+      { value: "upcoming", label: "Upcoming" },
+      { value: "completed", label: "Completed" },
+      { value: "failed", label: "Failed" },
+    ]);
+    expect(cognition.runViewFilterOptions(0)[1].label).toBe("Running (0)");
+  });
+  test("uses the complete active set and applies the same kind filter to rows and count", () => {
+    const active = [run({ id: "active-a", kind: "synthesis", running: true }), run({ id: "active-b", kind: "sweep", running: true })];
+    expect(cognition.runningRunsForKind(active, "all")).toEqual(active);
+    const selected = cognition.runningRunsForKind(active, "sweep");
+    expect(selected.map((entry: { id: string }) => entry.id)).toEqual(["active-b"]);
+    expect(cognition.runViewFilterOptions(selected.length)[1].label).toBe("Running (1)");
+    expect(cognition.runningRunsForKind([], "sweep")).toEqual([]);
+    expect(cognition.runFilterChangePath("active-a", "all", "running")).toBe("/portal/debug/cognition/runs");
+  });
+});

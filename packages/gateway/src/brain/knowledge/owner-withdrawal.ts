@@ -24,7 +24,14 @@ export function withdrawKnowledgeOwner(
     return kind === "doc_annotation" ? deleteDocAnnotation(db, id) : deletePersonAnnotation(db, id);
   return db.transaction(() => {
     const table = kind === "doc_annotation" ? "doc_annotations" : "person_annotations";
-    if (!db.prepare(`SELECT 1 FROM ${table} WHERE id=?`).get(id)) return false;
+    const subjectColumn = kind === "doc_annotation" ? "doc_id" : "person_id";
+    const owner = db
+      .prepare<
+        [string],
+        { subjectId: string }
+      >(`SELECT ${subjectColumn} AS subjectId FROM ${table} WHERE id=?`)
+      .get(id);
+    if (!owner) return false;
     try {
       convertKnowledgeOwner(db, kind, id, now);
     } catch (error) {
@@ -39,7 +46,14 @@ export function withdrawKnowledgeOwner(
     db.prepare("DELETE FROM knowledge_owner_changes WHERE owner_id=?").run(id);
     const node = readKnowledgeNodeRow(db, id);
     if (node) {
-      const fields = { ...JSON.parse(node.fields_json), withdrawn: true, withdrawnAt: now };
+      // Capture the current canonical subject before removing its owner; a
+      // mirror may still describe an older person association.
+      const fields = {
+        ...JSON.parse(node.fields_json),
+        subjectId: owner.subjectId,
+        withdrawn: true,
+        withdrawnAt: now,
+      };
       const metadata = {
         ...JSON.parse(node.metadata_json),
         activity: "historical",
@@ -63,7 +77,7 @@ export function withdrawKnowledgeOwner(
         {
           changedClaimIds: [],
           changedRefs: [],
-          changedFieldKeys: ["withdrawn", "withdrawnAt"],
+          changedFieldKeys: ["subjectId", "withdrawn", "withdrawnAt"],
           titleChanged: false,
           validityChanged: true,
         },

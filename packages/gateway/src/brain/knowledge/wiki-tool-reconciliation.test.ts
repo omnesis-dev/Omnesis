@@ -28,14 +28,15 @@ const node = {
   id: "workshop",
   kind: "wiki" as const,
   title: "Workshop",
-  markdown: '<claim id="date" refs="source:evidence">Workshop on Friday.</claim>',
+  markdown:
+    '<claim id="date" refs="source:evidence">Workshop on Friday.</claim><claim id="materials" refs="source:materials">The materials allocation is approved.</claim>',
   expectedRevision: 0,
-  inputVersions: { "source:evidence": "v1" },
+  inputVersions: { "source:evidence": "v1", "source:materials": "v2" },
 };
 beforeEach(() => {
   db = new Database(":memory:");
   db.exec(
-    "CREATE TABLE documents(id TEXT PRIMARY KEY,content TEXT,content_hash TEXT); INSERT INTO documents VALUES('evidence','Workshop on Friday.','v1')",
+    "CREATE TABLE documents(id TEXT PRIMARY KEY,content TEXT,content_hash TEXT); INSERT INTO documents VALUES('evidence','Workshop on Friday.','v1'),('materials','The materials allocation is approved.','v2')",
   );
   createBriefsStorageTables(db);
   createKnowledgeTables(db);
@@ -138,7 +139,14 @@ it("carries exact own-write receipts through proposal, publication, and revision
   if (proposed.kind !== "structured") throw new Error("Expected candidate result");
   expect(proposed.data).not.toHaveProperty("reconciliationReceipt");
   const candidate = proposed.data as { id: string };
-  const published = await call(entries, "knowledge_save", { node, candidateId: candidate.id });
+  const published = await call(entries, "knowledge_save", {
+    node,
+    candidateId: candidate.id,
+    creationAssessment: {
+      reason: "The workshop reference synthesizes timing and approved materials allocation.",
+      relatedPageIds: [],
+    },
+  });
   expect(published).toMatchObject({ kind: "structured", data: { node: { revision: 1 } } });
   if (published.kind !== "structured") throw new Error("Expected wiki result");
   expect(published.data).not.toHaveProperty("reconciliationReceipt");
@@ -183,7 +191,16 @@ it("does not adopt an intervening writer's generation while awaiting its own pro
   const proposed = await call(entries, "knowledge_propose_page", proposal);
   if (proposed.kind !== "structured") throw new Error("Expected candidate result");
   const candidate = proposed.data as { id: string };
-  expect(await call(entries, "knowledge_save", { node, candidateId: candidate.id })).toMatchObject({
+  expect(
+    await call(entries, "knowledge_save", {
+      node,
+      candidateId: candidate.id,
+      creationAssessment: {
+        reason: "The workshop reference synthesizes timing and approved materials allocation.",
+        relatedPageIds: [],
+      },
+    }),
+  ).toMatchObject({
     kind: "error",
     code: "revision_conflict",
   });
@@ -268,13 +285,31 @@ it("requires the publication candidate itself to have been returned by a read", 
   const entries = tools("run");
   await call(entries, "knowledge_list", { kind: "wiki" });
   await call(entries, "knowledge_candidates", { limit: 1 });
-  expect(await call(entries, "knowledge_save", { node, candidateId: "z-unseen" })).toMatchObject({
+  expect(
+    await call(entries, "knowledge_save", {
+      node,
+      candidateId: "z-unseen",
+      creationAssessment: {
+        reason: "The workshop reference synthesizes timing and approved materials allocation.",
+        relatedPageIds: [],
+      },
+    }),
+  ).toMatchObject({
     kind: "error",
     code: "revision_conflict",
   });
   expect(getKnowledgeNode(db, node.id)).toBeNull();
   await call(entries, "knowledge_candidates", { afterId: "a-observed" });
-  expect(await call(entries, "knowledge_save", { node, candidateId: "z-unseen" })).toMatchObject({
+  expect(
+    await call(entries, "knowledge_save", {
+      node,
+      candidateId: "z-unseen",
+      creationAssessment: {
+        reason: "The workshop reference synthesizes timing and approved materials allocation.",
+        relatedPageIds: [],
+      },
+    }),
+  ).toMatchObject({
     kind: "structured",
   });
 });
@@ -319,7 +354,7 @@ it("allows disjoint existing wiki repairs after both actual reads despite interv
       node: { ...other, expectedRevision: 1, title: "Materials revised" },
     }),
   ]);
-  expect(entered).toBe(2);
+  expect(entered).toBe(4);
   for (const result of results)
     expect(result).toMatchObject({ kind: "structured", data: { node: { revision: 2 } } });
   // An exact own-write response remains a read; an unrelated write does not erase it.
@@ -355,5 +390,29 @@ it("still refuses a same-wiki mutation during asynchronous verification", async 
     await call(entries, "knowledge_save", {
       node: { ...node, expectedRevision: 2 },
     }),
+  ).toMatchObject({ kind: "error", code: "revision_conflict" });
+});
+
+it("candidate settlement cannot refresh stale exclusive creation inventory", async () => {
+  db.exec(
+    "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('exclusive','exclusive','exclusive','routine','running',1,1)",
+  );
+  const entries = buildKnowledgeTools(service, {
+    runId: "exclusive",
+    batchId: "exclusive",
+    parallel: false,
+  });
+  proposeKnowledgeCandidate(db, { ...proposal, id: "observed" }, 1);
+  await reconcile(entries);
+  proposeKnowledgeCandidate(db, { ...proposal, id: "new-scope", identityKey: "new-scope" }, 2);
+  expect(
+    await call(entries, "knowledge_candidate_decide", {
+      id: "observed",
+      expectedRevision: 1,
+      status: "deferred",
+    }),
+  ).toMatchObject({ kind: "structured" });
+  expect(
+    await call(entries, "knowledge_propose_page", { ...proposal, identityKey: "different-scope" }),
   ).toMatchObject({ kind: "error", code: "revision_conflict" });
 });

@@ -3,6 +3,10 @@
 
 import { randomUUID } from "node:crypto";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
+import {
+  captureDecisionPayloadSubjects,
+  decisionPayloadErasureGeneration,
+} from "../decision-payload.js";
 import { knowledgeOrganizationVersion } from "./organization-context.js";
 import { isHistoricalKnowledgeBrief } from "./owner-maintenance.js";
 import { pendingMaintenanceClaimIds } from "./claim-maintenance.js";
@@ -431,6 +435,7 @@ export class KnowledgeEngine {
             continue;
         }
         if (item.status !== "offered") {
+          const payloadGeneration = decisionPayloadErasureGeneration(this.deps.db);
           const source = item.nodeId.startsWith("source:")
             ? this.source(item.nodeId.slice(7))
             : null;
@@ -466,6 +471,15 @@ export class KnowledgeEngine {
                 (candidate) => candidate.contentTruncated || candidate.orientationIncomplete,
               ) ||
               JSON.stringify(rootOrientation).length > Math.min(cfg.maxFrontierChars, 24000));
+          const changedInputs =
+            source ||
+            isReview ||
+            isDiscoveryTarget ||
+            isInitialRoot ||
+            rootContextUnavailable ||
+            node?.validity === "stale"
+              ? []
+              : this.batchSources(batchId);
           const score =
             isReview ||
             isDiscoveryTarget ||
@@ -492,9 +506,34 @@ export class KnowledgeEngine {
                     : {
                         inputVersions: item.inputVersions,
                         node,
-                        changedInputs: this.batchSources(batchId),
+                        changedInputs,
                         ...(rootOrientation ? { orientation: rootOrientation } : {}),
                       },
+                  {
+                    runId,
+                    batchId,
+                    nodeId: item.nodeId,
+                    threshold: 0.25,
+                    payloadCapture:
+                      captureDecisionPayloadSubjects(
+                        this.deps.db,
+                        {
+                          sourceIds: source ? [source.id] : changedInputs.map((input) => input.id),
+                          nodeIds: source
+                            ? []
+                            : [item.nodeId, ...(rootOrientation ?? []).map((input) => input.id)],
+                          nodeRevisions: node
+                            ? Object.fromEntries(
+                                [node, ...(rootOrientation ?? [])].map((input) => [
+                                  input.id,
+                                  input.revision,
+                                ]),
+                              )
+                            : undefined,
+                        },
+                        payloadGeneration,
+                      ) ?? undefined,
+                  },
                 );
           if (
             !isReview &&

@@ -1,17 +1,19 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  * Copyright (c) 2026 Adrien Conrath */
 .km-page { container-type: inline-size; }
-.km-queue { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); padding: 22px 24px; margin-bottom: 32px; }
+.km-queue { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); padding: 16px 20px; margin-bottom: 24px; }
 .km-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .km-section-heading h2 { margin: 0; font-size: 18px; letter-spacing: -.02em; }
 .km-section-heading p { color: var(--text-secondary); font-size: 13px; margin: 8px 0 0; line-height: 1.5; }
 .km-count { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 6px; background: var(--bg-tertiary); font-size: 14px; }
-.km-work-list { list-style: none; margin: 20px 0 0; padding: 0; }
-.km-work-list li { display: flex; justify-content: space-between; gap: 16px; padding: 14px 0; border-top: 1px solid var(--border); }
-.km-work-list strong { font-size: 14px; }
-.km-work-meta, .km-work-schedule time { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 5px; }
-.km-work-schedule { text-align: right; font-size: 13px; }
-.km-queue-followup { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 16px; font-size: 13px; color: var(--text-secondary); }
+.km-work-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
+.km-work-table th { text-align: left; color: var(--text-secondary); font-weight: 500; padding: 0 0 7px; }
+.km-work-table td { border-top: 1px solid var(--border); padding: 9px 0; vertical-align: middle; }
+.km-work-table td:first-child { padding-right: 12px; }
+.km-work-table .km-input-count { text-align: right; font-variant-numeric: tabular-nums; padding-right: 24px; width: 64px; }
+.km-readiness { color: var(--text-secondary); }
+.km-readiness time { display: block; margin-top: 3px; font-size: 11px; line-height: 1.4; }
+.km-queue-followup { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
 .km-clear { margin: 18px 0 0; font-size: 14px; color: var(--text-secondary); }
 .km-filter { margin: 18px 0; }
 .km-workspace { display: grid; grid-template-columns: minmax(260px, 32%) minmax(0, 1fr); gap: 24px; align-items: start; }
@@ -53,7 +55,34 @@
   .km-back { display: inline-block; color: var(--text-secondary); font-size: 13px; margin: 0 0 16px; }
   .km-batch-list { max-height: none; }
   .km-queue, .km-detail-header, .km-detail-body { padding: 18px; }
-  .km-work-list li { flex-direction: column; gap: 8px; }
-  .km-work-schedule { text-align: left; }
   .km-node-list li { flex-direction: column; gap: 5px; }
 }
+
+.km-pills { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.km-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.km-filter select { max-width: 100%; }
+.km-batch-row .km-pills { margin: 6px 0; }
+
+@container (max-width: 480px) {
+  .km-work-table .km-input-count { width: auto; padding-right: 12px; }
+  .km-work-table td:first-child { width: 44%; }
+  .km-filter .debug-operations-kind { min-width: 0; flex: 1 1 130px; }
+  .km-work-table .km-badge { white-space: normal; }
+}
+
+.km-decision-audit { margin-bottom: 24px; border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+.km-decision-audit > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.km-decision-audit[open] > summary { margin-bottom: 16px; }
+.km-decision-audit .debug-operations-kind { max-width: 260px; }
+
+.km-context-check { padding: 7px 0; border-bottom: 1px solid var(--border); }
+.km-input-decisions { flex-basis: 100%; min-width: 0; }
+.km-node-list li { flex-wrap: wrap; }
+.km-node-list li > a { flex: 1; }
+.km-node-list li > .km-input-decisions { order: 3; }
+.km-work-table .cognition-decision-details { margin-top: 6px; }
+.km-advanced { margin-top: 20px; color: var(--text-muted); }
+.km-advanced > summary { cursor: pointer; }
+
+.km-work-table .km-work-explanation > td { padding-top: 0; width: auto; border-top: 0; }
+.km-work-explanation .cognition-decision { white-space: normal; }

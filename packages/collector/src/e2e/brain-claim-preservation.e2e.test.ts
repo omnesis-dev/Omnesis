@@ -13,6 +13,10 @@ import {
   ref,
   structuredData,
 } from "./brain-bench/index.js";
+import {
+  complementaryEvidence,
+  waitForComplementaryEvidence,
+} from "./brain-bench/complementary-evidence.js";
 import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
 import type { PuppetKnowledgeItem } from "./brain-bench/knowledge-puppet.js";
 
@@ -22,14 +26,16 @@ afterEach(async () => {
   await bench?.destroy();
 }, 60_000);
 const pageId = "workshop-storage-reference";
-const markup = (sourceId: string, both: boolean) =>
+const markup = (sourceId: string, both: boolean, toolSourceId = sourceId) =>
   `<claim id="labels" refs="source:${sourceId}">Blue labels identify the first cabinet.</claim>` +
   (both
-    ? `<claim id="tools" refs="source:${sourceId}">Tools belong in the second cabinet.</claim>`
+    ? `<claim id="tools" refs="source:${toolSourceId}">Tools belong in the second cabinet.</claim>`
     : "");
 
 it("refuses destructive replacements and unavailable navigation, then accepts deliberate narrow removal", async () => {
   let sourceId = "";
+  let supportId = "";
+  let supportRevision = "";
   const edit = (item: PuppetKnowledgeItem, markdown: string) => ({
     inputFingerprint: item.inputFingerprint,
     reviewedClaimIds: ["labels", "tools"],
@@ -39,12 +45,20 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
       title: "Workshop storage reference",
       expectedRevision: item.node!.revision,
       markdown,
-      inputVersions: { [`source:${sourceId}`]: item.inputVersions[`source:${sourceId}`] },
+      inputVersions: {
+        [`source:${sourceId}`]: item.inputVersions[`source:${sourceId}`],
+        [`source:${supportId}`]: supportRevision,
+      },
     },
   });
   const maintain = knowledgePuppet({
     plan(item, ctx, steps) {
       if (item.source) {
+        if (item.source.title === "Tool storage allocation") return { calls: [] };
+        const support = complementaryEvidence("Tool storage allocation", steps);
+        if (!support.evidence) return { calls: support.calls };
+        supportId = support.evidence.id;
+        supportRevision = support.evidence.revision;
         sourceId = item.source.id;
         return {
           calls: [
@@ -54,24 +68,35 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
               identityKey: "workshop-storage-reference",
               title: "Workshop storage reference",
               scope: "Reference locations for workshop materials",
-              evidenceVersions: { [sourceId]: item.source.contentHash },
+              evidenceVersions: {
+                [sourceId]: item.source.contentHash,
+                [supportId]: supportRevision,
+              },
             }),
             call("knowledge_save", {
               candidateId: ref("knowledge_propose_page", "id"),
+              creationAssessment: {
+                reason:
+                  "A distinct reference combines label identification and separate equipment allocation.",
+                relatedPageIds: [],
+              },
               node: {
                 id: pageId,
                 kind: "wiki",
                 title: "Workshop storage reference",
                 expectedRevision: 0,
-                markdown: markup(sourceId, true),
-                inputVersions: { [`source:${sourceId}`]: item.source.contentHash },
+                markdown: markup(sourceId, true, supportId),
+                inputVersions: {
+                  [`source:${sourceId}`]: item.source.contentHash,
+                  [`source:${supportId}`]: supportRevision,
+                },
               },
             }),
           ],
         };
       }
       if (item.id === pageId) {
-        const args = edit(item, markup(sourceId, false));
+        const args = edit(item, markup(sourceId, false, supportId));
         return {
           calls: [
             call("knowledge_list", { kind: "wiki" }),
@@ -94,10 +119,12 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
       }
       return preserveCurrentOwner(item, ctx, steps);
     },
-    targets: (item) => (item.source ? [pageId] : []),
+    targets: (item) =>
+      item.source && item.source.title !== "Tool storage allocation" ? [pageId] : [],
   });
   bench = await BrainBench.start({
     experimental: true,
+    embedder: true,
     syncSources: false,
     entailment: "accept-all",
     judge: "hold-all",
@@ -150,7 +177,7 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
                 ? ""
                 : refused.length === 1
                   ? '<claim id="review" refs="">Existing context remains current.</claim>'
-                  : markup(sourceId, true).replace(
+                  : markup(sourceId, true, supportId).replace(
                       "Blue labels identify the first cabinet.",
                       "Blue labels identify the first cabinet. [Related reference](wiki:wiki_missing_reference)",
                     ),
@@ -165,9 +192,18 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
   });
   await bench.push(
     email({
+      externalId: "tool-storage-allocation",
+      title: "Tool storage allocation",
+      content: "Tools belong in the second cabinet.",
+    }),
+  );
+  await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
+  await waitForComplementaryEvidence(bench, "Tool storage allocation");
+  await bench.push(
+    email({
       externalId: "storage-reference",
       title: "Workshop storage instructions",
-      content: "Blue labels identify the first cabinet. Tools belong in the second cabinet.",
+      content: "Blue labels identify the first cabinet.",
     }),
   );
   const id = await bench.docId("storage-reference");
@@ -231,6 +267,8 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
     maxRevisionConflictRetries: 4,
     plan(item, ctx, steps) {
       if (item.source) {
+        if (["Workshop participation", "Equipment calibration"].includes(item.source.title))
+          return { calls: [] };
         const id = titles.get(item.source.title);
         if (!id) hierarchyRequested = true;
       }
@@ -254,6 +292,11 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
             }),
           ],
         };
+      const support = complementaryEvidence(
+        id === parentId ? "Workshop participation" : "Equipment calibration",
+        steps,
+      );
+      if (!support.evidence) return { calls: support.calls };
       return {
         calls: [
           call("knowledge_list", { kind: "wiki" }),
@@ -262,17 +305,28 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
             identityKey: id,
             title: item.source.title,
             scope: item.source.content,
-            evidenceVersions: { [item.source.id]: item.source.contentHash },
+            evidenceVersions: {
+              [item.source.id]: item.source.contentHash,
+              [support.evidence.id]: support.evidence.revision,
+            },
           }),
           call("knowledge_save", {
             candidateId: ref("knowledge_propose_page", "id"),
+            creationAssessment: {
+              reason:
+                "A distinct reusable scope combines the subject record and its separate operational requirements.",
+              relatedPageIds: [],
+            },
             node: {
               id,
               kind: "wiki",
               title: item.source.title,
               expectedRevision: 0,
-              markdown: `<claim id="summary" refs="source:${item.source.id}">${item.source.content}</claim>`,
-              inputVersions: { [`source:${item.source.id}`]: item.source.contentHash },
+              markdown: `<claim id="summary" refs="source:${item.source.id}">${item.source.content}</claim><claim id="requirements" refs="${support.evidence.ref}">${support.evidence.text}</claim>`,
+              inputVersions: {
+                [`source:${item.source.id}`]: item.source.contentHash,
+                [support.evidence.ref]: support.evidence.revision,
+              },
             },
           }),
         ],
@@ -323,6 +377,7 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
   };
   bench = await BrainBench.start({
     experimental: true,
+    embedder: true,
     syncSources: false,
     entailment: "accept-all",
     judge: "hold-all",
@@ -418,6 +473,23 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
         { count: number }
       >("SELECT count(*) AS count FROM knowledge_work WHERE subject_id=? AND reason='review' AND tier='soon' AND status='completed'")
       .get(id)!.count;
+  await bench.push(
+    email({
+      externalId: "workshop-participation",
+      title: "Workshop participation",
+      content: "Workshop participants must register before joining a repair session.",
+    }),
+  );
+  await bench.push(
+    email({
+      externalId: "equipment-calibration",
+      title: "Equipment calibration",
+      content: "The soldering stations require a calibration check before use.",
+    }),
+  );
+  await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
+  await waitForComplementaryEvidence(bench, "Workshop participation");
+  await waitForComplementaryEvidence(bench, "Equipment calibration");
   for (const [externalId, title, content, id] of [
     [
       "program-placement",

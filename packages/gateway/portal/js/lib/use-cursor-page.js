@@ -55,6 +55,7 @@ export function useCursorPage({
   mergeMeta = (_previous, next) => next,
   itemKey = (item) => item?.id,
   merge = "append",
+  staleCursorBehavior = "reload",
 }) {
   const [state, setState] = useState({
     items: [],
@@ -94,6 +95,7 @@ export function useCursorPage({
     mergeMeta,
     itemKey,
     merge,
+    staleCursorBehavior,
   };
 
   const requestPage = useCallback(
@@ -171,7 +173,7 @@ export function useCursorPage({
         });
       } catch (error) {
         if (generation !== generationRef.current || owner !== ownerRef.current) return;
-        if (!reset && error?.code === "STALE_PAGE_CURSOR") {
+        if (!reset && error?.code === "STALE_PAGE_CURSOR" && options.staleCursorBehavior !== "preserve") {
           // Mutable-order keysets intentionally reject an old cursor after a
           // relevant row changes. Restart transparently so a long-lived view
           // converges instead of leaving a permanent pagination error.

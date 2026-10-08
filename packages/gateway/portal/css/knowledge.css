@@ -94,57 +94,6 @@
   opacity: 0.55;
   cursor: wait;
 }
-.kn-maintenance {
-  margin-bottom: 24px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-light);
-  border-radius: 10px;
-  font-size: 12px;
-}
-.kn-maintenance summary {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 12px 15px;
-  cursor: pointer;
-  list-style: none;
-}
-.kn-maintenance summary::-webkit-details-marker {
-  display: none;
-}
-.kn-maintenance summary:after {
-  content: "⌄";
-  margin-left: 3px;
-  color: var(--text-secondary);
-}
-.kn-maintenance summary > span:last-of-type {
-  margin-left: auto;
-  color: var(--text-secondary);
-}
-.kn-maintenance summary strong {
-  font-weight: 500;
-}
-.kn-status-dot {
-  width: 7px;
-  height: 7px;
-  background: var(--text-secondary);
-  border-radius: 50%;
-  flex: none;
-}
-.kn-status-dot.is-busy {
-  background: var(--accent);
-}
-.kn-maintenance-body {
-  padding: 2px 22px 16px;
-  border-top: 1px solid var(--border-light);
-  color: var(--text-secondary);
-  line-height: 1.8;
-}
-.kn-maintenance-body h3 {
-  font-size: 12px;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
 .kn-workspace {
   display: grid;
   grid-template-columns: minmax(225px, 29%) minmax(0, 1fr);
@@ -210,6 +159,7 @@
 }
 .kn-card-list {
   display: grid;
+  align-content: start;
   gap: 9px;
 }
 .kn-card {
@@ -224,6 +174,17 @@
   transition:
     border-color 0.15s,
     background 0.15s;
+}
+.kn-card-link {
+  display: block;
+  color: inherit;
+  text-decoration: none !important;
+}
+.kn-subject-context {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 .kn-card:hover {
   border-color: var(--text-secondary);
@@ -270,10 +231,6 @@
   justify-content: space-between;
   color: var(--text-secondary);
   font-size: 12px;
-}
-.kn-load-more {
-  margin-top: 14px;
-  width: 100%;
 }
 .kn-reading-pane {
   min-width: 0;
@@ -696,9 +653,6 @@
   .kn-filters {
     flex-direction: column;
   }
-  .kn-maintenance summary > span:last-of-type {
-    display: none;
-  }
 }
 @container (max-width:570px) {
   .kn-header {
@@ -759,13 +713,6 @@
   .kn-tabs {
     padding: 0 19px;
     gap: 19px;
-  }
-  .kn-maintenance {
-    margin-bottom: 18px;
-  }
-  .kn-maintenance summary {
-    font-size: 12px;
-    padding: 11px 12px;
   }
   .kn-home-intro > p:last-child {
     font-size: 12px;
@@ -959,3 +906,16 @@
 .kn-claim-popover-refs li + li {
   margin-top: 6px;
 }
+
+/* Desktop Library panes share the available viewport without moving the page on selection. */
+@container (min-width: 571px) {
+  .kn-library-page .kn-workspace { height: var(--kn-workspace-height, calc(100dvh - 300px)); min-height: 0; align-items: stretch; }
+  .kn-library-page .kn-library { display: flex; flex-direction: column; min-height: 0; }
+  .kn-library-page .kn-library-tools { flex: 0 0 auto; }
+  .kn-library-page .kn-card-list { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding-right: 5px; }
+  .kn-library-page .kn-reading-pane { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+}
+
+.kn-page-boundary { min-height: 2px; padding-bottom: 2px; color: var(--text-secondary); font-size: 12px; }
+
+.kn-review-context { font-size: 12px; color: var(--text-muted); margin-top: 8px; }

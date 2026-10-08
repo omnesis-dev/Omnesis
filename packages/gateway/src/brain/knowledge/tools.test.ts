@@ -239,57 +239,80 @@ it("rejects missing and blank maintenance fingerprints before consulting the eng
   expect(saveNode).toHaveBeenCalledOnce();
 });
 
-it("allows new maintenance wikis and nonmaintenance revisions without a frontier fingerprint", async () => {
-  createKnowledgeWorkTables(db);
-  db.exec(
-    "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('batch','run','fingerprint','routine','running',1,1)",
-  );
-  proposeKnowledgeCandidate(
-    db,
-    {
-      id: "candidate",
-      identityKey: "workshop",
+it.each([false, true])(
+  "requires observed creation context and permits independent repairs (parallel=%s)",
+  async (parallel) => {
+    createKnowledgeWorkTables(db);
+    db.exec(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('batch','run','fingerprint','routine','running',1,1)",
+    );
+    proposeKnowledgeCandidate(
+      db,
+      {
+        id: "candidate",
+        identityKey: "workshop",
+        title: "Workshop",
+        scope: "Planning",
+        evidenceVersions: { evidence: "v1" },
+      },
+      1,
+    );
+    const log = createLogger("knowledge-tools-test");
+    const engine = new KnowledgeEngine({
+      db,
+      service,
+      writeGate: directKnowledgeGate(db),
+      getSettings: () => resolveBrainSettings(),
+      clock: () => 10,
+      log,
+      decisions: { getDecision: () => null, log, recordSpend: async () => {} },
+    });
+    db.exec("INSERT INTO documents VALUES('materials','Workshop materials allocated.','v2')");
+    const node = {
+      id: "workshop",
+      kind: "wiki",
       title: "Workshop",
-      scope: "Planning",
-      evidenceVersions: { evidence: "v1" },
-    },
-    1,
-  );
-  const log = createLogger("knowledge-tools-test");
-  const engine = new KnowledgeEngine({
-    db,
-    service,
-    writeGate: directKnowledgeGate(db),
-    getSettings: () => resolveBrainSettings(),
-    clock: () => 10,
-    log,
-    decisions: { getDecision: () => null, log, recordSpend: async () => {} },
-  });
-  const node = {
-    id: "workshop",
-    kind: "wiki",
-    title: "Workshop",
-    markdown: '<claim id="date" refs="source:evidence">Workshop Friday.</claim>',
-    expectedRevision: 0,
-    inputVersions: { "source:evidence": "v1" },
-  };
-  const maintenanceSave = buildKnowledgeTools(service, {
-    runId: "run",
-    batchId: "batch",
-    engine,
-  }).find((entry) => entry.name === "knowledge_save")!;
-  expect(await maintenanceSave.invoke({ node, candidateId: "candidate" }, context)).toMatchObject({
-    kind: "structured",
-  });
-  expect(getKnowledgeNode(db, node.id)?.revision).toBe(1);
-  const save = buildKnowledgeTools(service, { runId: "run" }).find(
-    (entry) => entry.name === "knowledge_save",
-  )!;
-  expect(await save.invoke({ node: { ...node, expectedRevision: 1 } }, context)).toMatchObject({
-    kind: "structured",
-  });
-  expect(getKnowledgeNode(db, node.id)?.revision).toBe(2);
-});
+      markdown:
+        '<claim id="date" refs="source:evidence">Workshop Friday.</claim><claim id="materials" refs="source:materials">Workshop materials allocated.</claim>',
+      expectedRevision: 0,
+      inputVersions: { "source:evidence": "v1", "source:materials": "v2" },
+    };
+    const maintenanceTools = buildKnowledgeTools(service, {
+      runId: "run",
+      batchId: "batch",
+      engine,
+      parallel,
+    });
+    const maintenanceSave = maintenanceTools.find((entry) => entry.name === "knowledge_save")!;
+    const args = {
+      node,
+      candidateId: "candidate",
+      creationAssessment: {
+        reason: "Distinct workshop planning scope after inspecting related pages.",
+        relatedPageIds: [],
+      },
+    };
+    expect(await maintenanceSave.invoke(args, context)).toMatchObject({
+      kind: "error",
+      code: "revision_conflict",
+    });
+    await maintenanceTools
+      .find((t) => t.name === "knowledge_list")!
+      .invoke({ kind: "wiki" }, context);
+    await maintenanceTools.find((t) => t.name === "knowledge_candidates")!.invoke({}, context);
+    expect(await maintenanceSave.invoke(args, context)).toMatchObject({
+      kind: "structured",
+    });
+    expect(getKnowledgeNode(db, node.id)?.revision).toBe(1);
+    const save = buildKnowledgeTools(service, { runId: "run" }).find(
+      (entry) => entry.name === "knowledge_save",
+    )!;
+    expect(await save.invoke({ node: { ...node, expectedRevision: 1 } }, context)).toMatchObject({
+      kind: "structured",
+    });
+    expect(getKnowledgeNode(db, node.id)?.revision).toBe(2);
+  },
+);
 
 it("rejects mutations from abandoned maintenance tools and at the queued writer boundary", async () => {
   createKnowledgeWorkTables(db);

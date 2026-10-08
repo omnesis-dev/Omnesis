@@ -20,6 +20,8 @@ import { createBriefsStorageTables } from "../storage/schema.js";
 import { OMNESIS_CHAT_SOURCE_ID } from "../../sources/omnesis-chat/ids.js";
 import { convertKnowledgeOwner } from "./owner-adapters.js";
 import { createKnowledgeSourceTriggers } from "./source-triggers.js";
+import { createKnowledgeDecisionTable, recordKnowledgeDecision } from "./decision-storage.js";
+import { readKnowledgeDecisionAudit } from "./decision-query.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { directKnowledgeGate } from "./writer.js";
@@ -796,9 +798,12 @@ describe("knowledge coordinator", () => {
   });
 
   it("sends source discovery its complete evidence once without sibling bodies or opaque versions", async () => {
+    createKnowledgeDecisionTable(db);
     source("focused", "opaque-v1", "Unique meaningful content to inspect.");
     source("sibling", "opaque-v2", "Unrelated sibling content.");
     await engine.tick();
+    const record = vi.fn();
+    engine.deps.decisions.record = record;
     const before = decisionStates.length;
     const batch = batchFor("focused");
     await engine.next(batch.id, batch.runId);
@@ -813,6 +818,21 @@ describe("knowledge coordinator", () => {
         sourceUpdatedAt: new Date(now).toISOString(),
       },
     });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purpose: "discovery",
+        runId: batch.runId,
+        batchId: batch.id,
+        nodeId: "source:focused",
+        threshold: 0.25,
+        payloadCapture: expect.objectContaining({ subjects: [{ kind: "source", id: "focused" }] }),
+        payload: expect.objectContaining({
+          requestJson: expect.any(String),
+          responseJson: expect.any(String),
+          error: null,
+        }),
+      }),
+    );
     const serialized = JSON.stringify(state);
     expect(serialized.split("Unique meaningful content to inspect.")).toHaveLength(2);
     expect(serialized).not.toContain("Unrelated sibling content");
@@ -1214,6 +1234,7 @@ describe("knowledge coordinator", () => {
   });
 
   it("supplies readable synthesis context to a populated root impact decision", async () => {
+    createKnowledgeDecisionTable(db);
     saveKnowledgeNode(
       db,
       {
@@ -1232,7 +1253,30 @@ describe("knowledge coordinator", () => {
     now += settings.knowledge.routineDelayMs;
     await engine.tick();
     const batch = batchFor("root-existing");
+    const record = vi.fn();
+    engine.deps.decisions.record = record;
     await engine.next(batch.id, batch.runId);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purpose: "impact",
+        runId: batch.runId,
+        batchId: batch.id,
+        nodeId: "root-existing",
+        threshold: 0.25,
+        payloadCapture: expect.objectContaining({
+          subjects: expect.arrayContaining([
+            { kind: "node", id: "root-existing" },
+            { kind: "node", id: "project" },
+            { kind: "source", id: "input" },
+          ]),
+        }),
+        payload: expect.objectContaining({
+          requestJson: expect.any(String),
+          responseJson: expect.any(String),
+          error: null,
+        }),
+      }),
+    );
     expect(decisionStates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1779,6 +1823,9 @@ describe("knowledge coordinator", () => {
   });
 
   it("reviews an approaching checkpoint despite a distant model-proposed review date", async () => {
+    createKnowledgeDecisionTable(db);
+    const record = vi.fn();
+    engine.deps.decisions.record = record;
     saveKnowledgeNode(
       db,
       {
@@ -1795,6 +1842,18 @@ describe("knowledge coordinator", () => {
     score = 0.1;
     await engine.tick();
     expect(batchFor("checkpoint")).toBeDefined();
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purpose: "review",
+        nodeId: "checkpoint",
+        payloadCapture: expect.objectContaining({ subjects: [{ kind: "node", id: "checkpoint" }] }),
+        payload: expect.objectContaining({
+          requestJson: expect.any(String),
+          responseJson: expect.any(String),
+          error: null,
+        }),
+      }),
+    );
   });
 
   it("records unchanged verified reviews separately from entailment and consumes their deadline", async () => {
@@ -2655,3 +2714,87 @@ it("refreshes changed parent topology and retains a successor review when a link
   expect(getKnowledgeNode(db, "parent")?.revision).toBe(2);
   expect(getKnowledgeNode(db, "parent")?.markdown).toContain('refs="source:input"');
 });
+
+it.each([
+  { available: true, coalesce: false },
+  { available: false, coalesce: false },
+  { available: true, coalesce: true },
+])(
+  "records source urgency through engine intake ($available, coalesce=$coalesce)",
+  async ({ available, coalesce }) => {
+    createKnowledgeDecisionTable(db);
+    source("urgency-source", "v1", "The reserved workshop starts tomorrow.");
+    if (coalesce)
+      await writeGate["knowledge.enqueue"](
+        {
+          id: "earlier-work",
+          subjectId: "urgency-source",
+          subjectKind: "source",
+          reason: "change",
+          inputRevision: "v1",
+          tier: "immediate",
+          dueAt: now - 1,
+        },
+        now - 1,
+      );
+    const decision: DecisionCapability = {
+      modelId: "scripted",
+      dispose() {},
+      async decide(request) {
+        return {
+          model: "scripted",
+          answers: Object.fromEntries(
+            Object.keys(request.questions).map((key) => [
+              key,
+              { type: "score" as const, score: 1 },
+            ]),
+          ),
+        };
+      },
+    };
+    engine = new KnowledgeEngine({
+      db,
+      writeGate,
+      service,
+      getSettings: () => settings,
+      clock: () => now,
+      log,
+      idGen: () => String(++serial),
+      decisions: {
+        getDecision: () => (available ? decision : null),
+        log,
+        recordSpend: async () => {},
+        record: async (entry) =>
+          recordKnowledgeDecision(db, { ...entry, id: entry.id ?? `audit_${++serial}` }, now),
+      },
+    });
+    await engine.tick();
+    const row = db
+      .prepare<
+        [],
+        { id: string; workId: string }
+      >("SELECT id,work_id AS workId FROM knowledge_decisions WHERE purpose='urgency'")
+      .get()!;
+    expect(row.workId).toBeTruthy();
+    expect(readKnowledgeDecisionAudit(db, row.id)).toMatchObject({
+      score: available ? 0.5 : null,
+      scheduling: {
+        status: "scheduled",
+        applied: { tier: coalesce ? "immediate" : "soon" },
+        fallbackSoon: !available,
+      },
+      input: available
+        ? {
+            availability: "available",
+            request: {
+              state: {
+                documentId: "urgency-source",
+                content: "The reserved workshop starts tomorrow.",
+              },
+            },
+          }
+        : { availability: "unavailable", request: null, response: null },
+    });
+    if (coalesce) expect(row.workId).toBe("earlier-work");
+  },
+);

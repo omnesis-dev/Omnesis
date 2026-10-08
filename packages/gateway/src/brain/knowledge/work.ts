@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { cognitionSpendDay } from "../storage/spend.js";
+import { associateKnowledgeUrgency } from "./decision-debug.js";
 import { snapshotClaimMaintenance, settleClaimMaintenance } from "./claim-maintenance.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { recordKnowledgeCoverage, type KnowledgeCoverageInput } from "./discovery.js";
@@ -21,6 +22,7 @@ export interface EnqueueKnowledgeWork {
   inputRevision: string;
   tier: MaintenanceTier;
   dueAt: number;
+  urgencyDecision?: { id: string; anchorAt: number };
   readinessReason?: "pending_content" | "derivation";
 }
 export interface KnowledgeWork extends EnqueueKnowledgeWork {
@@ -83,6 +85,10 @@ export function enqueueKnowledgeWork(
 ): KnowledgeWork {
   return db.transaction(() => {
     assertCurrentWorkRevision(db, input);
+    const finish = (work: KnowledgeWork): KnowledgeWork => {
+      associateKnowledgeUrgency(db, input, work);
+      return work;
+    };
     if (retryOf) {
       const previous = getKnowledgeWork(db, retryOf);
       if (
@@ -119,7 +125,7 @@ export function enqueueKnowledgeWork(
         input.readinessReason ?? null,
         pending.id,
       );
-      return getKnowledgeWork(db, pending.id)!;
+      return finish(getKnowledgeWork(db, pending.id)!);
     }
     const sameId = getKnowledgeWork(db, input.id);
     if (sameId) {
@@ -134,7 +140,7 @@ export function enqueueKnowledgeWork(
           "Work identity was reused for different inputs",
         );
       }
-      return sameId;
+      return finish(sameId);
     }
     db.prepare(
       `INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,last_error)
@@ -161,7 +167,7 @@ export function enqueueKnowledgeWork(
         "INSERT INTO knowledge_historical_admissions(day,count) VALUES(?,1) ON CONFLICT(day) DO UPDATE SET count=count+1",
       ).run(cognitionSpendDay(now));
     }
-    return getKnowledgeWork(db, input.id)!;
+    return finish(getKnowledgeWork(db, input.id)!);
   })();
 }
 

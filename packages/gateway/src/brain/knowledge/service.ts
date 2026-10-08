@@ -215,9 +215,14 @@ export class KnowledgeService {
     };
   }
 
+  /** Internal grounded seeding/repair seam; model-created wikis must use candidate publication. */
   async save(
     input: KnowledgeProposal,
-    publication?: { candidateId: string; expectedCandidateRevision: number },
+    publication?: {
+      candidateId: string;
+      expectedCandidateRevision: number;
+      creationReceipt?: import("./wiki-publication.js").WikiPublicationReceipt;
+    },
     runFence?: KnowledgeRunFence,
   ): Promise<import("./types.js").KnowledgeSaveResult> {
     if (publication && (input.kind !== "wiki" || input.expectedRevision !== 0))

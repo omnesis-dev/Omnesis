@@ -17,6 +17,7 @@ import {
 import { advanceKnowledgeCascade, getKnowledgeNode } from "./storage.js";
 import { KnowledgeService } from "./service.js";
 import { directKnowledgeGate } from "./writer.js";
+import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 
 let directory: string;
 let path: string;
@@ -28,7 +29,8 @@ beforeEach(() => {
   runSchemaSetup(db);
   db.prepare(
     `INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,source_created_at,source_updated_at,ingested_at,updated_at)
-    VALUES('evidence','fixture','fixture-notes','plan','Planning note','The workshop is planned.','v1','2020-01-01','2020-01-01','2020-01-01','2020-01-01')`,
+    VALUES('evidence','fixture','fixture-notes','plan','Planning note','The workshop is planned.','v1','2020-01-01','2020-01-01','2020-01-01','2020-01-01'),
+    ('materials','fixture','fixture-notes','materials','Materials arrangement','The workshop supplies clay.','materials-v1','2020-01-02','2020-01-02','2020-01-02','2020-01-02')`,
   ).run();
 });
 afterEach(() => {
@@ -47,9 +49,21 @@ const page = (id: string) => ({
   kind: "wiki" as const,
   title: "Workshop",
   expectedRevision: 0,
-  markdown: '<claim id="plan" refs="source:evidence">The workshop is planned.</claim>',
-  inputVersions: { "source:evidence": "v1" },
+  markdown:
+    '<claim id="plan" refs="source:evidence source:materials">The workshop is planned and supplies clay.</claim>',
+  inputVersions: { "source:evidence": "v1", "source:materials": "materials-v1" },
 });
+function creationReceipt(candidateId: string) {
+  return {
+    candidateId,
+    inventoryRevision: readKnowledgeCollectionRevision(db, "wiki_scope"),
+    assessment: {
+      reason: "Workshop planning and supplied materials establish a distinct reference scope.",
+      relatedPageIds: [],
+    },
+    relatedPageRevisions: {},
+  };
+}
 function service(verifier: EntailCapability) {
   return new KnowledgeService({
     db,
@@ -92,10 +106,12 @@ it("concurrent callers converge on one page while equal titles in different scop
   const publications = Promise.allSettled([
     brain.save(page("page-a"), {
       candidateId: first.id,
+      creationReceipt: creationReceipt(first.id),
       expectedCandidateRevision: first.revision,
     }),
     brain.save(page("page-b"), {
       candidateId: second.id,
+      creationReceipt: creationReceipt(second.id),
       expectedCandidateRevision: second.revision,
     }),
   ]);
@@ -116,6 +132,7 @@ it("concurrent callers converge on one page while equal titles in different scop
     db,
     {
       candidateId: distinct.id,
+      creationReceipt: creationReceipt(distinct.id),
       expectedCandidateRevision: distinct.revision,
       node: page("distinct-page"),
     },
@@ -143,6 +160,7 @@ it("resumes publication after closing and reopening the candidate database witho
     db,
     {
       candidateId: recovered.id,
+      creationReceipt: creationReceipt(recovered.id),
       expectedCandidateRevision: recovered.revision,
       node: page("resumed-page"),
     },
@@ -165,6 +183,7 @@ it("refuses a previously proposed candidate after evidence deletion and purges r
     db,
     {
       candidateId: prior.id,
+      creationReceipt: creationReceipt(prior.id),
       expectedCandidateRevision: prior.revision,
       node: page("retained-page"),
     },
@@ -178,6 +197,7 @@ it("refuses a previously proposed candidate after evidence deletion and purges r
       db,
       {
         candidateId: pending.id,
+        creationReceipt: creationReceipt(pending.id),
         expectedCandidateRevision: pending.revision,
         node: page("resurrection"),
       },

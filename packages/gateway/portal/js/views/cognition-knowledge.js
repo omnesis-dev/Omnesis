@@ -2,6 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
+import { useCursorPage } from "../lib/use-cursor-page.js";
+import { KnowledgeInfiniteScroll } from "./knowledge-infinite-scroll.js";
+import { annotationLifecycle } from "./knowledge-annotation-state.js";
 import { useEffect, useState, useRef } from "preact/hooks";
 import {
   getKnowledgeLibrary,
@@ -9,19 +12,17 @@ import {
   getKnowledgeNodes,
   getKnowledgeNode,
   getKnowledgeHistory,
-  getKnowledgeStatus,
   getDocumentSummariesBulk,
 } from "../api.js";
 import {
   KnowledgeDetail,
-  KnowledgeStatus,
   KnowledgeBadge,
   knowledgePath,
   knowledgeKinds,
   kindLabel,
   dateLabel,
 } from "./knowledge-reader.js";
-export { KnowledgeDetail, KnowledgeStatus, knowledgeReferenceHref } from "./knowledge-reader.js";
+export { KnowledgeDetail, knowledgeReferenceHref } from "./knowledge-reader.js";
 
 import { KnowledgeIcon } from "../lib/knowledge-link-icons.js";
 import { extractKnowledgeReferences } from "./knowledge-claim-markdown.js";
@@ -33,6 +34,7 @@ import {
   sortLibraryLoops,
 } from "./knowledge-loop-library.js";
 
+import { KnowledgeSubjectContext } from "./knowledge-subject-context.js";
 import { BriefDetail, libraryStatusOptions, libraryStateLabel, RetirementMetadata, RetiredLoopDetail } from "./knowledge-canonical-library.js";
 
 const preview = (text) =>
@@ -65,9 +67,12 @@ export function navigateKnowledgeSelection(event) {
   navigate(event.currentTarget.getAttribute("href"));
 }
 
-function PageCard({ node, selectedId, kind, status }) {
-  return html`<a
-    class=${`kn-card ${selectedId === node.id ? "is-selected" : ""}`}
+export function PageCard({ node, selectedId, kind, status }) {
+  const lifecycle = annotationLifecycle(node);
+  const annotationNote = ["person_annotation", "doc_annotation"].includes(node.kind);
+  const cardClass = `kn-card ${selectedId === node.id ? "is-selected" : ""}`;
+  const card = html`<a
+    class=${annotationNote ? "kn-card-link" : cardClass}
     href=${knowledgeSelectionHref(node.id, kind || (["loop", "brief"].includes(node.kind) ? node.kind : ""), status)}
     onClick=${navigateKnowledgeSelection}
     aria-current=${selectedId === node.id ? "page" : undefined}
@@ -76,6 +81,7 @@ function PageCard({ node, selectedId, kind, status }) {
       html`<span class="kn-needs-review">Needs review</span>`}
     </div>
     <h3><${KnowledgeIcon} kind=${node.kind} />${node.title}</h3>
+    ${lifecycle.length > 0 && html`<div class="kn-loop-card-meta">${lifecycle.map((label) => html`<span class="kn-badge">${label}</span>`)}</div>`}
     ${["loop", "brief"].includes(node.kind) && html`<div class="kn-loop-card-meta"><span class="kn-badge">${libraryStateLabel(node)}</span>${node.kind === "brief" && html`<span>${node.canonicalFields?.briefKind ?? ""}</span>`}<${RetirementMetadata} node=${node} /></div>`}
     ${node.kind === "loop" &&
     html`<div class="kn-loop-card-meta">
@@ -89,9 +95,23 @@ ${node.canonicalFields?.deadline &&
       >${node.kind === "brief" ? `Created ${dateLabel(node.canonicalFields?.createdAt)}` : `Updated ${dateLabel(node.updatedAt)}`} <span aria-hidden="true">↗</span></span
     ></a
   >`;
+  return annotationNote ? html`<article class=${cardClass}>${card}<${KnowledgeSubjectContext} node=${node} /></article>` : card;
 }
 export function KnowledgeTab({ selectedId, developer = false }) {
-  const generation = useRef(0);
+  const listRef = useRef(null);
+  const workspaceRef = useRef(null);
+  const readerRef = useRef(null);
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return undefined;
+    const resize = () => workspace.style.setProperty("--kn-workspace-height", `${Math.max(240, window.innerHeight - workspace.getBoundingClientRect().top - 20)}px`);
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(workspace.parentElement);
+    window.addEventListener("resize", resize);
+    return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
+  }, []);
+  useEffect(() => { if (readerRef.current) readerRef.current.scrollTop = 0; }, [selectedId]);
   const routeSearch = window.location.search;
   const requestedKind = new URLSearchParams(routeSearch).get("kind");
   const routeKind = /\/cognition\/loops(?:\/|$)/.test(window.location.pathname)
@@ -105,21 +125,25 @@ export function KnowledgeTab({ selectedId, developer = false }) {
   const requestedStatus = new URLSearchParams(routeSearch).get("status") ?? (new URLSearchParams(routeSearch).get("view") === "retired" ? "retired" : "all");
   const [loopState, setLoopState] = useState(requestedStatus),
     [loopSort, setLoopSort] = useState("updated");
-  const [page, setPage] = useState({ items: [], more: false }),
-    [root, setRoot] = useState(null);
-  const [status, setStatus] = useState(null);
+  const [root, setRoot] = useState(null);
   const [detail, setDetail] = useState(null),
     [detailError, setDetailError] = useState("");
   const [references, setReferences] = useState({});
   const [detailMissing, setDetailMissing] = useState(false);
   const [canonicalLoopId, setCanonicalLoopId] = useState(null);
   const [selectedClaim, setSelectedClaim] = useState(null);
-  const [error, setError] = useState(""),
-    [loading, setLoading] = useState(true),
-    [refresh, setRefresh] = useState(0),
+  const [refresh, setRefresh] = useState(0),
     [activeTab, setActiveTab] = useState("overview");
-  const [maintenanceError, setMaintenanceError] = useState(false);
   const [rootState, setRootState] = useState("loading");
+  const page = useCursorPage({
+    resetKey: JSON.stringify([kind, loopState, refresh]),
+    pageSize: 30,
+    staleCursorBehavior: "preserve",
+    loadPage: ({ limit, cursor }) => getKnowledgeLibrary({ kind: kind || undefined, limit, cursor, consistency: "live",
+      ...(["loop", "brief"].includes(kind) && loopState !== "all" ? { status: loopState } : {}) }),
+  });
+  const loading = page.loading;
+  const error = page.error?.message ?? "";
   useEffect(() => {
     setKind(routeKind);
     setLoopState(requestedStatus);
@@ -164,44 +188,10 @@ export function KnowledgeTab({ selectedId, developer = false }) {
   }
   useEffect(() => {
     let alive = true;
-    generation.current++;
-    setLoading(true);
-    setError("");
-    setPage({ items: [], more: false });
-    getKnowledgeLibrary({ kind: kind || undefined, limit: 30,
-      ...(["loop", "brief"].includes(kind) && loopState !== "all" ? { status: loopState } : {}) })
-      .then((nodes) => {
-        if (alive)
-          setPage({
-            items: nodes.items,
-            cursor: nodes.pageInfo?.nextCursor,
-            more: !!nodes.pageInfo?.nextCursor,
-          });
-      })
-      .catch((failure) => {
-        if (alive) setError(failure.message);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-      generation.current++;
-    };
-  }, [kind, loopState, refresh]);
-  useEffect(() => {
-    let alive = true;
-    setMaintenanceError(false);
     setRootState("loading");
-    Promise.allSettled([getKnowledgeNodes({ kind: "root", limit: 1 }), getKnowledgeStatus()]).then(
-      ([overview, state]) => {
-        if (!alive) return;
-        setRootState(overview.status === "fulfilled" ? "ready" : "error");
-        setRoot(overview.status === "fulfilled" ? (overview.value.items[0] ?? null) : null);
-        setStatus(state.status === "fulfilled" ? state.value : null);
-        setMaintenanceError(state.status !== "fulfilled");
-      },
-    );
+    getKnowledgeNodes({ kind: "root", limit: 1 }).then((overview) => {
+      if (alive) { setRootState("ready"); setRoot(overview.items[0] ?? null); }
+    }, () => { if (alive) { setRootState("error"); setRoot(null); } });
     return () => {
       alive = false;
     };
@@ -282,25 +272,6 @@ export function KnowledgeTab({ selectedId, developer = false }) {
       alive = false;
     };
   }, [selectedId, refresh]);
-  async function more() {
-    const current = generation.current;
-    setError("");
-    setLoading(true);
-    try {
-      const data = await getKnowledgeLibrary({ kind: kind || undefined, limit: 30, cursor: page.cursor,
-        ...(["loop", "brief"].includes(kind) && loopState !== "all" ? { status: loopState } : {}) });
-      if (current === generation.current)
-        setPage((value) => ({
-          items: [...value.items, ...data.items],
-          cursor: data.pageInfo?.nextCursor,
-          more: !!data.pageInfo?.nextCursor,
-        }));
-    } catch (failure) {
-      if (current === generation.current) setError(failure.message);
-    } finally {
-      if (current === generation.current) setLoading(false);
-    }
-  }
   const filtered = (kind === "loop" ? sortLibraryLoops(page.items, loopSort) : page.items).filter(
     (node) =>
       (["loop", "brief"].includes(kind) || !validity || node.validity === validity) &&
@@ -309,7 +280,7 @@ export function KnowledgeTab({ selectedId, developer = false }) {
           .toLocaleLowerCase()
           .includes(query.toLocaleLowerCase())),
   );
-  return html`<div class=${`knowledge-library ${selectedId ? "has-selection" : ""}`}>
+  return html`<div class=${`knowledge-library kn-library-page ${selectedId ? "has-selection" : ""}`}>
     <header class="kn-header">
       <div>
         <p class="kn-eyebrow">BRAIN / KNOWLEDGE</p>
@@ -318,25 +289,22 @@ export function KnowledgeTab({ selectedId, developer = false }) {
       </div>
       <button
         class="kn-button kn-refresh"
+        title="Refresh to include newly added or updated entries"
         disabled=${loading}
         onClick=${() => setRefresh((value) => value + 1)}
       >
         ↻ Refresh
       </button>
     </header>
-    <${KnowledgeStatus} status=${status} compact=${true} />${maintenanceError &&
-    html`<p class="kn-caption" role="status">
-      Maintenance status is unavailable. Refresh to try again.
-    </p>`}
-    <div class="kn-workspace">
+    <div class="kn-workspace" ref=${workspaceRef}>
       <aside class="kn-library" aria-label="Knowledge library">
         <div class="kn-library-tools">
           <label class="kn-search"
             ><span aria-hidden="true">⌕</span
             ><input
               type="search"
-              aria-label="Search knowledge"
-              placeholder="Find a page or idea…"
+              aria-label="Search loaded knowledge"
+              placeholder="Search loaded pages…"
               value=${query}
               onInput=${(event) => setQuery(event.target.value)}
           /></label>
@@ -400,7 +368,7 @@ export function KnowledgeTab({ selectedId, developer = false }) {
           <p>${error}</p>
           <button class="kn-button" onClick=${() => setRefresh((value) => value + 1)}>Retry</button>
         </div>`}
-        <nav class="kn-card-list" aria-label="Knowledge pages">
+        <nav class="kn-card-list" aria-label="Knowledge pages" ref=${listRef}>
           ${filtered.map(
             (node) =>
               html`<${PageCard}
@@ -423,7 +391,7 @@ export function KnowledgeTab({ selectedId, developer = false }) {
             </h3>
             <p>
               ${query || validity || kind
-                ? "Try another search or filter. You can load more pages below."
+                ? "Search and evidence filters cover loaded pages. Clear them to browse more knowledge."
                 : "As the Brain learns from your sources, its pages and notes will appear here."}
             </p>
             ${(query || validity || kind) &&
@@ -446,13 +414,10 @@ export function KnowledgeTab({ selectedId, developer = false }) {
               Clear filters
             </button>`}
           </div>`}
+          <${KnowledgeInfiniteScroll} page=${page} listRef=${listRef} resetKey=${JSON.stringify([kind, loopState, query, validity, refresh])} />
         </nav>
-        ${page.more &&
-        html`<button class="kn-button kn-load-more" disabled=${loading} onClick=${more}>
-          Load more pages
-        </button>`}
       </aside>
-      <main class="kn-reading-pane">
+      <main class="kn-reading-pane" ref=${readerRef}>
         ${selectedId
           ? html`<a
                 class="kn-back"

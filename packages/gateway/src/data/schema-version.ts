@@ -10,4 +10,4 @@
  * entrypoint before installing a seeded-state artifact. Keep the constant
  * here rather than loading the complete migration graph at container boot.
  */
-export const LATEST_SCHEMA_VERSION = 193;
+export const LATEST_SCHEMA_VERSION = 196;

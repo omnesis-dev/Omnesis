@@ -39,6 +39,7 @@ import {
   type RecordType,
 } from "./rubric.js";
 import type { DocumentRecordContext } from "./document-context.js";
+import type { DecisionPayloadCapture } from "../decision-payload.js";
 import type { DecisionCapability, Logger } from "@omnesis/core";
 import type { RecordCheckMode } from "../config.js";
 import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
@@ -59,6 +60,8 @@ export interface RecordCheckInput {
   documentId: string;
   /** Source-vetted bounded context, required to judge doc-fact added value. */
   documentContext?: DocumentRecordContext;
+  /** Trusted privacy ancestry captured before reading the model's supporting context. */
+  payloadCapture?: DecisionPayloadCapture;
 }
 
 type RecordCheckOutcome =
@@ -192,6 +195,16 @@ export class RecordCheck {
       contentHash: null,
       requestedModelId: decision.modelId,
       modelId: judgement.modelId,
+      ...(input.payloadCapture && (input.record.type !== "doc-fact" || input.documentContext)
+        ? {
+            payloadCapture: input.payloadCapture,
+            payload: {
+              requestJson: judgement.requestJson,
+              responseJson: judgement.responseJson,
+              error: judgement.error,
+            },
+          }
+        : {}),
       // Extra-source text has no decision-ledger deletion reference. Retain
       // only an explicitly redacted context summary, not those new contents.
       requestJson:
@@ -217,13 +230,15 @@ export class RecordCheck {
             })
           : judgement.requestJson,
       responseJson:
-        input.record.type === "doc-fact" && judgement.score !== null
-          ? JSON.stringify({
-              model: decision.modelId,
-              answers: {
-                [RECORD_BELONGS_QUESTION_ID]: { type: "score", score: judgement.score },
-              },
-            })
+        input.record.type === "doc-fact"
+          ? judgement.score === null
+            ? null
+            : JSON.stringify({
+                model: decision.modelId,
+                answers: {
+                  [RECORD_BELONGS_QUESTION_ID]: { type: "score", score: judgement.score },
+                },
+              })
           : judgement.responseJson,
       score: judgement.score,
       threshold: RECORD_BELONGS_THRESHOLD,

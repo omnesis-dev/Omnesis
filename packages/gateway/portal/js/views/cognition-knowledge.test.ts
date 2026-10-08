@@ -11,12 +11,13 @@ vi.mock("./knowledge-claim-markdown.js", async (importOriginal) => ({
 import { renderKnowledgeMarkdown } from "./knowledge-claim-markdown.js";
 import {
   KnowledgeDetail,
-  KnowledgeStatus,
+  PageCard,
   knowledgeReferenceHref,
   knowledgeSelectionHref,
   navigateKnowledgeSelection,
 } from "./cognition-knowledge.js";
 import { resolveSection } from "./cognition.js";
+import { NodeReviewDetails } from "./knowledge-decision-context.js";
 import { KnowledgeContent, KnowledgeProse } from "./knowledge-reader.js";
 function hosts(value, out = []) {
   if (value == null || typeof value === "boolean") return out;
@@ -26,7 +27,7 @@ function hosts(value, out = []) {
   }
   if (typeof value !== "object") return out;
   // Hook-driven content is exercised by the browser suite, not invoked outside Preact.
-  if (value.type === KnowledgeContent) {
+  if ((value.type === KnowledgeContent || value.type === NodeReviewDetails)) {
     out.push(value);
     return out;
   }
@@ -39,7 +40,7 @@ function text(value) {
   if (value == null || typeof value === "boolean") return "";
   if (Array.isArray(value)) return value.map(text).join("");
   if (typeof value !== "object") return String(value);
-  if (value.type === KnowledgeContent) return "";
+  if ((value.type === KnowledgeContent || value.type === NodeReviewDetails)) return "";
   if (typeof value.type === "function") return text(value.type(value.props));
   return text(value.props?.children);
 }
@@ -71,6 +72,81 @@ const node = {
   canonicalFields: {},
   metadata: {},
 };
+it("shows canonical person context in cards and details without nesting profile links", () => {
+  const personNote = {
+    ...node,
+    id: "annotation_fixture",
+    kind: "person_annotation",
+    subjectRef: { kind: "person", id: "person/fixture", name: "Maya Reeves" },
+  };
+  const card = PageCard({ node: personNote, selectedId: personNote.id });
+  expect(card.type).toBe("article");
+  expect(card.props.class).toContain("is-selected");
+  for (const tree of [card, KnowledgeDetail({ node: personNote })]) {
+    expect(text(tree)).toContain("About Maya Reeves");
+    const profile = hosts(tree).find((element) => element.type === "a" &&
+      element.props.href === "/portal/people/person%2Ffixture");
+    expect(profile).toBeDefined();
+    for (const anchor of hosts(tree).filter((element) => element.type === "a")) {
+      expect(hosts(anchor.props.children).some((element) => element.type === "a")).toBe(false);
+    }
+  }
+});
+it("does not infer a person from stale fields or prose when the canonical subject is unavailable", () => {
+  const personNote = {
+    ...node,
+    kind: "person_annotation",
+    canonicalFields: { subjectId: "stale-person" },
+    subjectRef: null,
+  };
+  const tree = PageCard({ node: personNote });
+  expect(text(tree)).toContain("Person unavailable");
+  expect(hosts(tree).some((element) => element.props?.href?.startsWith("/portal/people/"))).toBe(false);
+  const hostile = PageCard({ node: { ...personNote,
+    subjectRef: { kind: "person", id: "fixture", name: "<script>unsafe</script>" } } });
+  expect(text(hostile)).toContain("<script>unsafe</script>");
+  expect(hosts(hostile).some((element) => element.type === "script" ||
+    element.props?.dangerouslySetInnerHTML?.__html?.includes("<script>unsafe</script>"))).toBe(false);
+  expect(text(PageCard({ node }))).not.toContain("Person unavailable");
+});
+it("shows document annotation context from the canonical subject with a source icon and document link", () => {
+  const note = { ...node, kind: "doc_annotation", subjectRef: {
+    kind: "source", id: "document/fixture", title: "Workshop equipment checklist", sourceId: "notes",
+  } };
+  for (const tree of [PageCard({ node: note }), KnowledgeDetail({ node: note })]) {
+    expect(text(tree)).toContain("About Workshop equipment checklist");
+    const link = hosts(tree).find((element) => element.type === "a" && element.props.href === "/portal/doc/document%2Ffixture");
+    expect(link).toBeDefined();
+    expect(hosts(link).some((element) => element.props?.class?.includes("kn-link-icon-wrap"))).toBe(true);
+    expect(hosts(link.props.children).some((element) => element.type === "a")).toBe(false);
+  }
+  expect(text(PageCard({ node: { ...note, subjectRef: null } }))).toContain("Document unavailable");
+  const untitled = PageCard({ node: { ...note, subjectRef: { ...note.subjectRef, title: "" } } });
+  expect(text(untitled)).toContain("Untitled document");
+  expect(hosts(untitled).some((element) => element.props?.href === "/portal/doc/document%2Ffixture")).toBe(true);
+  const unnamed = PageCard({ node: { ...node, kind: "person_annotation", subjectRef: { kind: "person", id: "person-fixture", name: "" } } });
+  expect(text(unnamed)).toContain("Unnamed person");
+  expect(hosts(unnamed).some((element) => element.props?.href === "/portal/people/person-fixture")).toBe(true);
+});
+it("labels superseded and invalidated annotations without presenting their mirror as current verification", () => {
+  for (const kind of ["person_annotation", "doc_annotation"]) {
+    const historical = { ...node, kind, validity: "current", canonicalFields: { supersededBy: "replacement-fixture", invalidatedAt: 123 } };
+    for (const tree of [PageCard({ node: historical }), KnowledgeDetail({ node: historical })]) {
+      expect(text(tree)).toContain("Superseded");
+      expect(text(tree)).not.toContain("Invalidated");
+      expect(text(tree)).not.toContain("Up to date with linked evidence");
+      expect(text(tree)).not.toContain("claims verified");
+    }
+    expect(text(KnowledgeDetail({ node: { ...historical, canonicalFields: { invalidatedAt: 123 } } }))).toContain("Invalidated");
+    const withdrawn = KnowledgeDetail({ node: { ...historical, canonicalFields: { withdrawn: true } } });
+    expect(text(withdrawn)).toContain("Withdrawn");
+    expect(text(withdrawn)).not.toContain("Up to date with linked evidence");
+    expect(text(withdrawn)).not.toContain("claims verified");
+    const active = KnowledgeDetail({ node: { ...historical, canonicalFields: { supersededBy: null, invalidatedAt: null } } });
+    expect(text(active)).toContain("Up to date with linked evidence");
+    expect(text(active)).not.toContain("Superseded");
+  }
+});
 it("preserves experimental routes and rejects unsafe reference protocols", () => {
   expect(resolveSection("knowledge")).toBe("knowledge");
   expect(knowledgeReferenceHref("source:document/one#evidence:passage")).toBe(
@@ -143,7 +219,7 @@ it("keeps claim mappings and revisions in Advanced without duplicating raw Markd
     elements.some((element) => element.type === "script" || element.props?.dangerouslySetInnerHTML),
   ).toBe(false);
   expect(text(elements)).toContain("meaning 2");
-  expect(text(elements)).toContain("Not scheduled");
+  expect(text(elements)).toContain("Review timing: Automatic");
 });
 it("does not label a failed or loading history as an empty history", () => {
   expect(text(KnowledgeDetail({ node, activeTab: "history", historyLoading: true }))).not.toContain(
@@ -154,54 +230,6 @@ it("does not label a failed or loading history as an empty history", () => {
   );
   expect(text(KnowledgeDetail({ node, activeTab: "history" }))).toContain("No previous versions");
 });
-it("describes queued and held maintenance honestly without inventing active progress", () => {
-  const tree = KnowledgeStatus({
-    status: {
-      cascades: { pending: 7 },
-      work: [
-        {
-          count: 2,
-          status: "pending",
-          tier: "routine",
-          reason: "source_changed",
-          readiness: "pending_content",
-          nextDueAt: 100,
-        },
-      ],
-      coverage: [{ phase: "recent", status: "covered", count: 4 }],
-    },
-  });
-  expect(text(tree)).toContain("Updates awaiting maintenance");
-  expect(text(tree)).not.toContain("is being maintained");
-  expect(text(tree)).toContain("Waiting for source content");
-  expect(text(tree)).toContain("7 pending cascade steps");
-  expect(text(tree)).toContain("2 waiting");
-  expect(text(tree)).not.toContain("4 subjects");
-  expect(
-    hosts(tree).some((element) => element.props?.href === "/portal/debug/cognition/bootstrap"),
-  ).toBe(true);
-});
-
-it("keeps library maintenance compact and links the dedicated queue view", () => {
-  const tree = KnowledgeStatus({
-    compact: true,
-    status: {
-      work: [
-        { status: "pending", count: 3 },
-        { status: "deferred", count: 7 },
-        { status: "completed", count: 29 },
-      ],
-      cascades: { pending: 2 },
-    },
-  });
-  expect(text(tree)).toContain("3 waiting · 0 assigned");
-  expect(text(tree)).not.toContain("Work queue");
-  expect(hosts(tree).some((element) => element.type === "details")).toBe(false);
-  expect(
-    hosts(tree).some((element) => element.props?.href === "/portal/debug/cognition/maintenance"),
-  ).toBe(true);
-});
-
 afterEach(() => vi.unstubAllGlobals());
 it("selects library entries without leaving the document or changing the library filter", () => {
   expect(knowledgeSelectionHref("outcome/one")).toBe(
@@ -242,4 +270,16 @@ it("leaves modified, middle-button and already handled library clicks to the bro
     navigateKnowledgeSelection({ ...event, preventDefault });
     expect(preventDefault).not.toHaveBeenCalled();
   }
+});
+
+it("does not mistake an implicit automatic review policy for an unscheduled wiki", () => {
+  const automatic = text(KnowledgeDetail({ node: { ...node, kind: "wiki", metadata: { nextReviewAt: null } } }));
+  expect(automatic).toContain("Review timing: Automatic");
+  expect(automatic).not.toContain("Not scheduled");
+  const explicit = text(KnowledgeDetail({ node: { ...node, kind: "wiki", metadata: { nextReviewAt: 1700000000000 } } }));
+  expect(explicit).toContain("Next review:");
+  expect(explicit).not.toContain("Review timing: Automatic");
+  const historical = text(KnowledgeDetail({ node: { ...node, kind: "brief", metadata: {} }, activeTab: "advanced" }));
+  expect(historical).toContain("No explicit review date");
+  expect(historical).not.toContain("Review timing: Automatic");
 });

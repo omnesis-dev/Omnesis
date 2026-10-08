@@ -29,10 +29,14 @@ export function knowledgeReviewSignals(db: Database.Database, node: KnowledgeNod
       { total: number; uncertain: number }
     >("SELECT COUNT(*) AS total,COALESCE(SUM(verification!='verified' OR epistemic_status!='asserted'),0) AS uncertain FROM knowledge_claims WHERE node_id=?")
     .get(node.id)!;
-  const last = Math.max(
-    node.metadata.lastVerifiedAt ?? node.createdAt,
-    node.metadata.lastReviewedAt ?? node.createdAt,
-  );
+  // Evidence verification may cover an incremental edit, not the wiki's full scope.
+  const last =
+    node.kind === "wiki"
+      ? (node.metadata.lastReviewedAt ?? node.createdAt)
+      : Math.max(
+          node.metadata.lastVerifiedAt ?? node.createdAt,
+          node.metadata.lastReviewedAt ?? node.createdAt,
+        );
   const checkpointAt = [node.metadata.checkpointAt, deadlineAt].filter(
     (value): value is number =>
       typeof value === "number" && value > (node.metadata.lastReviewedAt ?? 0),

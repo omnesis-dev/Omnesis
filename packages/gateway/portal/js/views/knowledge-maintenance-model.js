@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-export function summarizeMaintenance(status) {
-  const work = status?.work ?? [];
+export function summarizeMaintenance(status, { reason = "", tier = "" } = {}) {
+  const work = (status?.work ?? []).filter((row) => (!reason || row.reason === reason) && (!tier || row.tier === tier));
   const waitingGroups = work.filter((row) => row.status === "pending");
   const assignedGroups = work.filter((row) => row.status === "batched");
   const dueDates = waitingGroups.map((row) => row.nextDueAt).filter(Number.isFinite);
   return {
     waiting: waitingGroups.reduce((sum, row) => sum + row.count, 0),
     assigned: assignedGroups.reduce((sum, row) => sum + row.count, 0),
-    cascades: status?.cascades?.pending ?? 0,
+    cascades: reason || tier ? 0 : status?.cascades?.pending ?? 0,
     waitingGroups,
     assignedGroups,
     nextDueAt: dueDates.length ? Math.min(...dueDates) : null,

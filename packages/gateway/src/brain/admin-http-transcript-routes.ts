@@ -26,6 +26,11 @@ function transcriptCursor(
 export function mountCognitionTranscriptAdminRoutes(ctx: CognitionAdminRouteContext): void {
   const { app, query, requireVisible } = ctx;
 
+  app.get("/admin/brain/decisions/:id", scope.admin(), (c) => {
+    requireVisible();
+    return c.json(query.decisionInput(c.req.param("id")));
+  });
+
   app.get("/admin/brain/transcripts", scope.admin(), async (c) => {
     requireVisible();
     const runId = c.req.query("runId") || null;

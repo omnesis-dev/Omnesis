@@ -7,24 +7,37 @@ import { BrainBench, call, compressCognitionCadences, email } from "./brain-benc
 import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
 import { structuredData } from "./brain-bench/puppet-plan.js";
 
+import {
+  complementaryEvidence,
+  waitForComplementaryEvidence,
+} from "./brain-bench/complementary-evidence.js";
+
 compressCognitionCadences();
 const document = email({
   externalId: "claim-scope-workshop",
   title: "Fictional workshop plan",
   content: "The workshop is on Friday. Bring a notebook.",
 });
+const supplies = email({
+  externalId: "claim-scope-materials",
+  title: "Workshop materials instructions",
+  content: "The workshop supplies pencils.",
+});
 const pageId = "claim-scope-project";
 let bench: BrainBench;
 let sourceId = "",
   sourceRevision = "",
+  suppliesId = "",
+  suppliesRevision = "",
   revised = false;
 const offers: Array<{ pending: string[]; markdown: string }> = [];
 const markup = (day: string) =>
-  `<claim id="date" refs="source:${sourceId}">The workshop is on ${day}.</claim>\n<claim id="supplies" refs="source:${sourceId}">Bring a notebook.</claim>`;
+  `<claim id="date" refs="source:${sourceId}">The workshop is on ${day}.</claim>\n<claim id="supplies" refs="source:${sourceId}">Bring a notebook.</claim>\n<claim id="materials" refs="source:${suppliesId}">The workshop supplies pencils.</claim>`;
 
 beforeAll(async () => {
   bench = await BrainBench.start({
     experimental: true,
+    embedder: true,
     syncSources: false,
     entailment: "accept-all",
     judge: "hold-all",
@@ -37,10 +50,16 @@ beforeAll(async () => {
       dynamic: knowledgePuppet({
         plan(item, _ctx, steps) {
           if (item.source) {
+            if (item.source.title === supplies.title) return { calls: [] };
+            const support = complementaryEvidence(supplies.title, steps);
+            if (!support.evidence) return { calls: support.calls };
+            suppliesId = support.evidence.id;
+            suppliesRevision = support.evidence.revision;
             sourceId = item.source.id;
             sourceRevision = item.source.contentHash;
             revised = item.source.content.includes("Saturday");
             const calls = [
+              ...support.calls,
               call("knowledge_list", { kind: "wiki" }),
               call("knowledge_candidates", {}),
               call("knowledge_fetch", { id: pageId, editing: true }),
@@ -54,7 +73,7 @@ beforeAll(async () => {
                 identityKey: "claim-scope-project",
                 title: "Workshop context",
                 scope: "Workshop date and supplies",
-                evidenceVersions: { [sourceId]: sourceRevision },
+                evidenceVersions: { [sourceId]: sourceRevision, [suppliesId]: suppliesRevision },
               }),
             );
             const candidateStep = [...steps]
@@ -65,13 +84,21 @@ beforeAll(async () => {
               calls.push(
                 call("knowledge_save", {
                   candidateId: candidate.id,
+                  creationAssessment: {
+                    reason:
+                      "The event schedule and separate materials instructions establish one workshop reference scope absent from the inspected library.",
+                    relatedPageIds: [],
+                  },
                   node: {
                     id: pageId,
                     kind: "wiki",
                     title: "Workshop context",
                     markdown: markup("Friday"),
                     expectedRevision: 0,
-                    inputVersions: { [`source:${sourceId}`]: sourceRevision },
+                    inputVersions: {
+                      [`source:${sourceId}`]: sourceRevision,
+                      [`source:${suppliesId}`]: suppliesRevision,
+                    },
                   },
                 }),
               );
@@ -112,7 +139,10 @@ beforeAll(async () => {
                   title: node.title,
                   markdown: markup(revised ? "Saturday" : "Friday"),
                   expectedRevision: node.revision,
-                  inputVersions: { [`source:${sourceId}`]: sourceRevision },
+                  inputVersions: {
+                    [`source:${sourceId}`]: sourceRevision,
+                    [`source:${suppliesId}`]: suppliesRevision,
+                  },
                 },
               }),
             ],
@@ -127,16 +157,26 @@ afterAll(async () => {
 }, 60_000);
 
 it("keeps an untouched assertion pending until its own explicit review", async () => {
+  await bench.pushAndSettle([supplies]);
+  await waitForComplementaryEvidence(bench, supplies.title);
   await bench.pushAndSettle([document]);
   offers.length = 0;
   await bench.update(document, "The workshop is on Saturday. Bring a notebook.");
   await bench.drainUntilQuiet({ includeUpcoming: true });
-  expect(offers).toEqual(
-    expect.arrayContaining([
-      { pending: ["date", "supplies"], markdown: markup("Friday") },
-      { pending: ["supplies"], markdown: markup("Saturday") },
-    ]),
+  // A concurrent whole-page review may also offer the stable materials claim.
+  // The dependency repair must still clear only the changed date assertion.
+  const initialOffer = offers.findIndex(
+    (offer) =>
+      offer.markdown === markup("Friday") &&
+      offer.pending.includes("date") &&
+      offer.pending.includes("supplies"),
   );
+  expect(initialOffer).toBeGreaterThanOrEqual(0);
+  const partialOffer = offers
+    .slice(initialOffer + 1)
+    .find((offer) => offer.markdown === markup("Saturday") && offer.pending.includes("supplies"));
+  expect(partialOffer).toBeDefined();
+  expect(partialOffer!.pending).not.toContain("date");
   const records = bench.sql
     .prepare<
       { nodeId: string },
@@ -170,7 +210,7 @@ it("keeps an untouched assertion pending until its own explicit review", async (
     `/admin/brain/knowledge/${pageId}`,
   );
   expect(page).toMatchObject({
-    plainText: "The workshop is on Saturday.\nBring a notebook.",
+    plainText: "The workshop is on Saturday.\nBring a notebook.\nThe workshop supplies pencils.",
     validity: "current",
   });
 }, 180_000);

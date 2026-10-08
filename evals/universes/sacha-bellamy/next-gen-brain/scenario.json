@@ -74,6 +74,18 @@
       "createdMinute": 170,
       "content": "Nora confirms that setup remains at 08:00 tomorrow. The guest suggestion of 09:00 was mistaken. Sacha confirms the 08:00 commitment again.",
       "externalId": "sb-next-gen-final-clarification"
+    },
+    "camera-custody": {
+      "title": "Camera custody record",
+      "createdMinute": -90,
+      "content": "The silver camera is on loan to Priya for a photography workshop. Its padded case must remain with it until return.",
+      "externalId": "sb-next-gen-camera-custody"
+    },
+    "access-hours": {
+      "title": "Gathering entrance hours",
+      "createdMinute": 80,
+      "content": "The side entrance for the winter lantern gathering closes at 22:00; guests arriving later must use the main entrance.",
+      "externalId": "sb-next-gen-access-hours"
     }
   },
   "steps": [
@@ -81,6 +93,10 @@
       "id": "recent-bootstrap",
       "minute": 0,
       "operations": [
+        {
+          "kind": "upsert",
+          "document": "camera-custody"
+        },
         {
           "kind": "upsert",
           "document": "party-plan"
@@ -165,6 +181,10 @@
       "operations": [
         {
           "kind": "upsert",
+          "document": "access-hours"
+        },
+        {
+          "kind": "upsert",
           "document": "privacy-detail"
         }
       ],
@@ -223,6 +243,10 @@
       "id": "suppressed-resurrection",
       "minute": 145,
       "operations": [
+        {
+          "kind": "upsert",
+          "document": "access-hours"
+        },
         {
           "kind": "upsert",
           "document": "privacy-detail",

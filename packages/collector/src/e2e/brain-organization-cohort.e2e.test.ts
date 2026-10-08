@@ -103,6 +103,11 @@ beforeAll(async () => {
                 ? [
                     call("knowledge_save", {
                       candidateId,
+                      creationAssessment: {
+                        reason:
+                          "Location and supplied materials jointly define the workshop arrangement; the inspected library has no existing page for this scope.",
+                        relatedPageIds: [],
+                      },
                       node: {
                         id: wikiId,
                         kind: "wiki",

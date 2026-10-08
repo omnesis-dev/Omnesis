@@ -13,7 +13,9 @@ source grants do not receive this context overlay.
 
 A document annotation should add context established across sources or substantially
 compress a long substantive document. Restating a short source, its title, or its
-boilerplate does not earn another record. Person annotations and time-index entries
+boilerplate does not earn another record. Useful compression can preserve material
+outcomes while omitting routine detail; neither a second source nor every detail is
+required. Person annotations and time-index entries
 serve separate retrieval needs. The record check evaluates document added value
 using bounded source context; its ledger retains redacted context metadata rather
 than additional copies of supporting source text. The check runs after drafting,
@@ -353,7 +355,22 @@ Repeat reviews and a lone new revision paired with prior context use
 `routineDelay` with a one-minute minimum. Only already-considered evidence is
 eligible; this does not admit additional history. Owners and existing wikis are
 retrieved as context. A settled decision or arrangement can justify a wiki even
-when it creates no loop or brief. Cohort membership creates no dependency edges.
+when it creates no loop or brief. Enrich an existing reusable topic or project
+before creating a separate page. New wiki publication requires actual current
+claim-support paths to at least two source documents with distinct content
+hashes; declared candidate evidence, context references and identical copies
+do not satisfy that floor. Single-document compression belongs in a useful
+document annotation or an unpublished candidate. The source floor applies to
+publication, not existing-page repairs or the compact root, and does not prove
+coherent synthesis by itself. Cohort membership creates no dependency edges.
+
+Creation requires actual library and candidate reads in every maintenance mode,
+a distinct-scope assessment, and current full reads of considered related pages.
+A narrow inventory generation fences concurrent wiki additions, deletions,
+title changes and candidate scope/identity/status changes. Unrelated ordinary
+claim edits do not invalidate creation; selected counterpart revisions still do.
+Bounded retrieval and explicit judgment are not proof that differently worded
+duplicates are absent or that every scope change can be inferred from prose.
 
 After the source and page frontier is settled, the agent records a version-fenced
 organization outcome: actual wiki targets, a no-page decision, or a
@@ -510,20 +527,42 @@ on.
 - **`omnesis brain decisions`** — source-associated maintenance and other agent
   decisions, with their actual batch transcripts.
 
-The Debug workspace separates Knowledge (Library, Briefs, Timeline),
-Brain activity (Activity, Agent runs, Maintenance, Discovery, Calibration,
-Legacy memory), System diagnostics, and Data tools. Existing deep links stay
-valid. Maintenance owns the repair queue and batch frontier; Discovery owns
-bootstrap coverage and history controls. Loops live in the Knowledge library,
-with canonical state and outcome details beside their synthesis.
-Briefs retain their delivery inspector and link to synthesis when available.
-Legacy memory keeps agent notes and the retired-loop recurrence ledger distinct
-from the root overview.
+The Debug workspace groups the brain under Cognition: Library, Agent runs,
+Maintenance and Discovery. Existing deep links stay valid. Library includes
+wikis, loops, briefs and annotations, with status filters and canonical details.
+Person and document notes identify their subject and link to its current profile
+or source document, including historical notes.
+Maintenance filters batches by recorded reason, tier and status, with cursor paging
+and reason/tier pills. A batch can contain several reasons. Discovery owns bootstrap
+coverage and history controls. Agent runs combines current execution, scheduled
+work and completed transcripts, with a Running filter and live count.
+
+Run details expose recorded Jev judgements, including synthesis discovery and
+impact gates: model, rubric, normalized score, threshold, input tokens and latency.
+A score recommendation is distinct from the engine's final action: protected work
+can still proceed. Older verdicts are associated only when retained source
+versions and execution intervals establish a unique match; incomplete or bounded
+audit results are labelled, and missing metadata never proves a gate was bypassed.
+Decision inspection belongs with the work it explains: pending maintenance,
+batch inputs and agent runs expose contextual checks in collapsed Decision details sections.
+Advanced history keeps retained judgements accessible when their original work
+or transcript no longer exists. Exact bounded requests and captured model results
+are loaded on demand for urgency, discovery, impact, review and record checks;
+legacy worth checks retain their existing request and response. For urgency,
+the captured policy explains the proposed tier and the applied schedule records
+any earlier coalesced work retained by the engine. Historical inputs are never
+reconstructed: retained redacted or score-only records are labelled as such.
+Sensitive snapshots follow decision activity retention and privacy erasure for
+all contributing sources, while verdict metadata can remain. Missing, oversized
+or erased snapshots and unavailable models are labelled explicitly.
 
 The experimental Knowledge library reads the same canonical data used by
-agent tools. Browse or filter the library, then open a page’s Overview,
+agent tools. The desktop list and reader scroll independently; the list loads
+more entries near its end. Live browsing preserves loaded entries while the
+brain writes; Refresh brings newly added or moved entries back into view.
+Browse or filter the library, then open a page’s Overview,
 Connections, History, or Advanced view. Overview switches between rendered
-Markdown and raw claim markup. Hovering or focusing a claim previews its
+Markdown and raw claim markup. Hovering or focusing the indicator at the end of a claim previews its
 verification and incoming and outgoing references; the reference links navigate
 to the relevant page or passage. Connections shows flat incoming and outgoing
 reference lists, combining evidence and organizational links with bounded

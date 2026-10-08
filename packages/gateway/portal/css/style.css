@@ -11693,52 +11693,6 @@ div.source-activity-popover-link:hover {
   margin-bottom: 16px;
 }
 
-/* "Running now" strip. */
-.cognition-running-strip {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-.cognition-running-strip-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid rgba(63, 185, 80, 0.35);
-  background: rgba(63, 185, 80, 0.07);
-  border-radius: 8px;
-  padding: 9px 14px;
-  text-decoration: none;
-  color: inherit;
-  min-width: 0;
-}
-.cognition-running-strip-row:hover {
-  text-decoration: none;
-  background: rgba(63, 185, 80, 0.12);
-}
-.cognition-running-strip-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--success);
-  flex-shrink: 0;
-}
-.cognition-running-strip-trigger {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cognition-running-strip-time {
-  font-size: 11px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
 /* Transcript viewer. */
 .cognition-transcript-toolbar {
   display: flex;

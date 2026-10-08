@@ -205,11 +205,21 @@ describe("record check: a scripted decision model on source interpretation", () 
       },
     });
     expect(JSON.stringify(decisions[2]!.request)).not.toContain(QUOTE);
+    // The run metadata keeps its redacted view; exact model inputs are loaded
+    // separately through the same admin inspector used by the portal.
+    const inspection = await bench.harness.gatewayJson<{
+      input: { availability: string; request: unknown; response: unknown };
+    }>(`/admin/brain/decisions/${encodeURIComponent(decisions[2]!.id)}`);
+    expect(inspection.input).toMatchObject({
+      availability: "available",
+      request: { state: docCheck.request.state, questions: docCheck.request.questions },
+      response: { answers: { belongs: { type: "score", score: 0.1 } } },
+    });
     for (const d of decisions) {
       expect(d).toMatchObject({
         lane: "synthesis",
         documentId: docId,
-        rubricVersion: "record-value-v3",
+        rubricVersion: "record-value-v4",
       });
     }
     // Discovery decisions belong to the knowledge ledger, independently of record checks.

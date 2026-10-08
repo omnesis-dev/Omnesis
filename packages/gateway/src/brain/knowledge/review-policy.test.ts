@@ -224,3 +224,62 @@ it.each(["dismissed_acknowledged", "dismissed_snoozed", "retired", "expired"])(
     expect(getKnowledgeNode(db, "brief")?.markdown).toBe(node.markdown);
   },
 );
+
+it("does not let repeated fresh wiki verification postpone its whole-page review backstop", async () => {
+  const created = now - cfg.maxReviewIntervalMs * 2;
+  const node = page("edited-wiki", created);
+  for (const verifiedAt of [now - 1000, now - 1, now]) {
+    db.prepare("UPDATE knowledge_nodes SET metadata_json=? WHERE id=?").run(
+      JSON.stringify({ lastVerifiedAt: verifiedAt, nextReviewAt: null }),
+      node.id,
+    );
+    const signals = knowledgeReviewSignals(db, getKnowledgeNode(db, node.id)!, now);
+    expect(signals.lastMeaningfulReviewAt).toBe(created);
+    expect(decideKnowledgeReview(signals, 0, cfg)).toMatchObject({
+      decision: "now",
+      reason: "fairness_or_checkpoint",
+    });
+  }
+  // Exercise the SQL nomination too: stale nextReviewAt is deliberately absent.
+  await upkeep(0).reviews();
+  expect(db.prepare("SELECT subject_id,reason FROM knowledge_work").all()).toEqual([
+    { subject_id: node.id, reason: "review" },
+  ]);
+});
+
+it("advances the wiki clock only for a completed whole review and preserves loop verification timing", async () => {
+  const created = now - cfg.maxReviewIntervalMs * 2;
+  const node = page("reviewed-wiki", created);
+  db.prepare("UPDATE knowledge_nodes SET metadata_json=? WHERE id=?").run(
+    JSON.stringify({ lastVerifiedAt: now, lastReviewedAt: now - 10, nextReviewAt: null }),
+    node.id,
+  );
+  const wikiSignals = knowledgeReviewSignals(db, getKnowledgeNode(db, node.id)!, now);
+  expect(wikiSignals.lastMeaningfulReviewAt).toBe(now - 10);
+  expect(decideKnowledgeReview(wikiSignals, 0, cfg).nextReviewAt).toBe(
+    now - 10 + cfg.maxReviewIntervalMs,
+  );
+  createOpenLoop(
+    db,
+    {
+      id: "verified-loop",
+      createdByRun: "run",
+      title: "Inspect workshop equipment",
+      state: "open",
+      importance: 0.1,
+      confidence: 0.8,
+    },
+    created,
+  );
+  convertKnowledgeOwner(db, "loop", "verified-loop", created);
+  db.prepare("UPDATE knowledge_nodes SET metadata_json=? WHERE id='verified-loop'").run(
+    JSON.stringify({ lastVerifiedAt: now - 1, lastReviewedAt: created, nextReviewAt: null }),
+  );
+  const loopSignals = knowledgeReviewSignals(db, getKnowledgeNode(db, "verified-loop")!, now);
+  expect(loopSignals.lastMeaningfulReviewAt).toBe(now - 1);
+  expect(decideKnowledgeReview(loopSignals, 0, cfg).nextReviewAt).toBe(
+    now - 1 + cfg.maxReviewIntervalMs,
+  );
+  await upkeep(0).reviews();
+  expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_work").get()).toEqual({ n: 0 });
+});

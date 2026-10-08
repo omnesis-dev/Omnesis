@@ -42,7 +42,7 @@ export function createFetchManyTool(deps: FetchDocumentToolDeps): ToolHandle {
       "Returns one document (or error) per entry in order. Only fetch the hits " +
       "likely to answer the question, not every candidate." +
       (deps.port.supportsKnowledgeAliases
-        ? " documentId also accepts wiki:<pageId> links from maintained context. knowledgeContext separates claim provenance from navigation; follow returned documentIds, and use search when a page is unavailable."
+        ? " documentId also accepts wiki:<pageId> links from maintained context. Copy a wiki:<pageId> alias only from an actual wiki link. knowledgeContext separates claim provenance from navigation; its returned documentIds are opaque corpus IDs: copy them exactly, without adding wiki: or any other prefix. Use search when a page is unavailable."
         : ""),
     schema,
     summarize(args: unknown): string | undefined {

@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
+import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
+
 import { judgeKnowledge } from "./decision.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import { listKnowledgePlanningWork, type KnowledgeFrontierInput } from "./work.js";
@@ -72,6 +74,9 @@ export class KnowledgeBatchPlanner {
           .exhausted
       )
         break;
+      const erasureGeneration = this.context.deps.decisions.record
+        ? knowledgeDecisionErasureGeneration(this.context.deps.db)
+        : 0;
       const source = this.context.deps.db
         .prepare<
           [string],
@@ -79,14 +84,44 @@ export class KnowledgeBatchPlanner {
         >("SELECT title,content,content_hash AS contentHash FROM documents WHERE id=?")
         .get(item.subjectId);
       if (!source || source.contentHash !== item.inputRevision) continue;
-      const score = await judgeKnowledge(this.context.deps.decisions, "urgency", {
-        documentId: item.subjectId,
-        title: source.title,
-        content: source.content.slice(0, 24000),
-      });
+      const decisionId = this.context.deps.decisions.record ? this.context.id("kd") : undefined;
+      const score = await judgeKnowledge(
+        this.context.deps.decisions,
+        "urgency",
+        {
+          documentId: item.subjectId,
+          title: source.title,
+          content: source.content.slice(0, 24000),
+        },
+        {
+          nodeId: `source:${item.subjectId}`,
+          ...(decisionId
+            ? {
+                id: decisionId,
+                urgencyCapture: {
+                  sourceId: item.subjectId,
+                  inputRevision: item.inputRevision,
+                  erasureGeneration,
+                  policy: {
+                    immediateThreshold: cfg.immediateThreshold,
+                    soonThreshold: cfg.soonThreshold,
+                    soonDelayMs: cfg.soonDelayMs,
+                    routineDelayMs: cfg.routineDelayMs,
+                  },
+                },
+              }
+            : {}),
+        },
+      );
       try {
         await this.context.deps.writeGate["knowledge.enqueue"](
-          { ...item, ...scheduleKnowledgeChange(score, item.createdAt, cfg) },
+          {
+            ...item,
+            ...scheduleKnowledgeChange(score, item.createdAt, cfg),
+            ...(decisionId
+              ? { urgencyDecision: { id: decisionId, anchorAt: item.createdAt } }
+              : {}),
+          },
           now,
         );
       } catch (error) {

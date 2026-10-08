@@ -3,12 +3,15 @@
 
 import { BadRequestError, NotFoundError, StalePageCursorError } from "../../http/errors.js";
 import { decodePageCursor, encodePageCursor } from "../../http/pagination-cursor.js";
+import { readKnowledgeSubjectRef } from "./subject-ref.js";
 import { knowledgeNodeFence, knowledgeOwnerReadPredicate } from "./storage-fence.js";
 import type { KnowledgeNodeKind } from "./types.js";
 import type Database from "better-sqlite3";
 
 export interface KnowledgeLibraryOptions {
   kind?: KnowledgeNodeKind;
+  /** Live browsing tolerates intervening edits; refresh reveals items moved above the cursor. */
+  consistency?: "strict" | "live";
   status?: string;
   cursor?: string;
   limit?: number;
@@ -65,13 +68,21 @@ export function readKnowledgeLibrary(db: Database.Database, options: KnowledgeLi
   return db.transaction(() => {
     const limit = Math.max(1, Math.min(100, options.limit ?? 30));
     const filter = statusPredicate(options.kind, options.status);
-    const revision = db
-      .prepare<
-        [],
-        { revision: string }
-      >("SELECT COALESCE(group_concat(collection||':'||revision,','),'') || ':changes:' || COALESCE((SELECT seq FROM sqlite_sequence WHERE name='knowledge_changes'),0) AS revision FROM (SELECT collection,revision FROM knowledge_reconciliation_revisions ORDER BY collection)")
-      .get()!.revision;
-    const scope = JSON.stringify({ kind: options.kind ?? null, status: options.status ?? null });
+    const consistency = options.consistency ?? "strict";
+    const revision =
+      consistency === "live"
+        ? ""
+        : db
+            .prepare<
+              [],
+              { revision: string }
+            >("SELECT COALESCE(group_concat(collection||':'||revision,','),'') || ':changes:' || COALESCE((SELECT seq FROM sqlite_sequence WHERE name='knowledge_changes'),0) AS revision FROM (SELECT collection,revision FROM knowledge_reconciliation_revisions ORDER BY collection)")
+            .get()!.revision;
+    const scope = JSON.stringify({
+      kind: options.kind ?? null,
+      status: options.status ?? null,
+      consistency,
+    });
     const cursor = decodePageCursor(options.cursor, "knowledge-library", (payload) => {
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
       const c = payload as Record<string, unknown>;
@@ -86,7 +97,8 @@ export function readKnowledgeLibrary(db: Database.Database, options: KnowledgeLi
         return null;
       return { id: c.id, at: c.at, type: c.type, revision: c.revision };
     });
-    if (cursor && cursor.revision !== revision) throw new StalePageCursorError();
+    if (consistency === "strict" && cursor && cursor.revision !== revision)
+      throw new StalePageCursorError();
     const rows = db
       .prepare<
         Record<string, string | number | null>,
@@ -105,7 +117,7 @@ export function readKnowledgeLibrary(db: Database.Database, options: KnowledgeLi
       "SELECT validity FROM knowledge_nodes WHERE id=? AND kind=?",
     );
     const items = rows.slice(0, limit).map((row) => {
-      const value = item(row);
+      const value = { ...item(row), subjectRef: readKnowledgeSubjectRef(db, row.id, row.kind) };
       // Canonical cards retain their synthesis freshness without manufacturing
       // a freshness verdict for owners that have never had a mirror.
       if (row.libraryType === "loop" || row.libraryType === "brief")
@@ -117,6 +129,7 @@ export function readKnowledgeLibrary(db: Database.Database, options: KnowledgeLi
     return {
       items,
       pageInfo: {
+        consistency,
         hasMore,
         limit,
         nextCursor:

@@ -15,6 +15,7 @@ import {
   settleKnowledgeCandidate,
   KNOWLEDGE_DISCOVERY_POLICY,
 } from "./discovery.js";
+import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 import { KNOWLEDGE_SOURCE_ID } from "./source-meta.js";
 let db: Database.Database;
 beforeEach(() => {
@@ -37,6 +38,9 @@ function source(id: string, date: string, sourceId = "fictional-source") {
   );
 }
 function candidate() {
+  db.prepare(
+    "INSERT OR IGNORE INTO documents VALUES('allocation','fictional-source','Workshop allocation','The equipment allocation is approved.','v2','2026-01-02','2026-01-02')",
+  ).run();
   return proposeKnowledgeCandidate(
     db,
     {
@@ -53,9 +57,10 @@ const node = {
   id: "wiki-workshop",
   kind: "wiki" as const,
   title: "Workshop",
-  markdown: '<claim id="plan" refs="source:evidence">The workshop is planned.</claim>',
+  markdown:
+    '<claim id="plan" refs="source:evidence">The workshop is planned.</claim><claim id="allocation" refs="source:allocation">The equipment allocation is approved.</claim>',
   expectedRevision: 0,
-  inputVersions: { "source:evidence": "v1" },
+  inputVersions: { "source:evidence": "v1", "source:allocation": "v2" },
 };
 describe("progressive knowledge discovery", () => {
   it("hides candidate prose immediately when its source is withdrawn", () => {
@@ -106,6 +111,15 @@ describe("progressive knowledge discovery", () => {
         db,
         {
           candidateId: "candidate-workshop",
+          creationReceipt: {
+            inventoryRevision: readKnowledgeCollectionRevision(db, "wiki_scope"),
+            candidateId: "candidate-workshop",
+            assessment: {
+              reason: "Distinct workshop planning scope after inspecting existing pages.",
+              relatedPageIds: [],
+            },
+            relatedPageRevisions: {},
+          },
           expectedCandidateRevision: 1,
           node: {
             ...node,
@@ -133,7 +147,20 @@ describe("progressive knowledge discovery", () => {
     );
     publishKnowledgeCandidate(
       db,
-      { candidateId: reopened.id, expectedCandidateRevision: reopened.revision, node },
+      {
+        candidateId: reopened.id,
+        expectedCandidateRevision: reopened.revision,
+        node,
+        creationReceipt: {
+          inventoryRevision: readKnowledgeCollectionRevision(db, "wiki_scope"),
+          candidateId: reopened.id,
+          assessment: {
+            reason: "Distinct workshop planning scope after inspecting existing pages.",
+            relatedPageIds: [],
+          },
+          relatedPageRevisions: {},
+        },
+      },
       101,
     );
     const published = getKnowledgeCandidate(db, reopened.id)!;
@@ -209,6 +236,15 @@ describe("progressive knowledge discovery", () => {
         db,
         {
           candidateId: "candidate-workshop",
+          creationReceipt: {
+            inventoryRevision: readKnowledgeCollectionRevision(db, "wiki_scope"),
+            candidateId: "candidate-workshop",
+            assessment: {
+              reason: "Distinct workshop planning scope after inspecting existing pages.",
+              relatedPageIds: [],
+            },
+            relatedPageRevisions: {},
+          },
           expectedCandidateRevision: 1,
           node: {
             ...node,
@@ -223,7 +259,20 @@ describe("progressive knowledge discovery", () => {
     expect(getKnowledgeCandidate(db, "candidate-workshop")?.status).toBe("proposed");
     publishKnowledgeCandidate(
       db,
-      { candidateId: "candidate-workshop", expectedCandidateRevision: 1, node },
+      {
+        candidateId: "candidate-workshop",
+        expectedCandidateRevision: 1,
+        node,
+        creationReceipt: {
+          inventoryRevision: readKnowledgeCollectionRevision(db, "wiki_scope"),
+          candidateId: "candidate-workshop",
+          assessment: {
+            reason: "Distinct workshop planning scope after inspecting existing pages.",
+            relatedPageIds: [],
+          },
+          relatedPageRevisions: {},
+        },
+      },
       3,
     );
     expect(getKnowledgeCandidate(db, "candidate-workshop")?.nodeId).toBe(node.id);
@@ -245,6 +294,15 @@ describe("progressive knowledge discovery", () => {
         db,
         {
           candidateId: "candidate-workshop",
+          creationReceipt: {
+            inventoryRevision: readKnowledgeCollectionRevision(db, "wiki_scope"),
+            candidateId: "candidate-workshop",
+            assessment: {
+              reason: "Distinct workshop planning scope after inspecting existing pages.",
+              relatedPageIds: [],
+            },
+            relatedPageRevisions: {},
+          },
           expectedCandidateRevision: 1,
           node: { ...node, id: "orphan" },
         },

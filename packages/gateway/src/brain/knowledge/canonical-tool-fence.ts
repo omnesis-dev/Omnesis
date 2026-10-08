@@ -211,7 +211,11 @@ export function buildMaintenanceCanonicalTools(
               for (const owner of fence.owners)
                 owners.set(key(owner.kind, owner.id), owner.version);
               for (const receipt of fence.collections ?? [])
-                if (receipt.collection !== "wiki" && receipt.collection !== "temporal")
+                if (
+                  receipt.collection !== "wiki" &&
+                  receipt.collection !== "wiki_scope" &&
+                  receipt.collection !== "temporal"
+                )
                   collections.set(receipt.collection, receipt);
             }
           }

@@ -35,6 +35,10 @@ import { TEMPORAL_KINDS } from "@omnesis/core";
 import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
 import { documentRecordContext } from "../record-check/document-context.js";
+import {
+  captureDecisionPayloadSubjects,
+  decisionPayloadErasureGeneration,
+} from "../decision-payload.js";
 import { getOpenLoop, listOpenLoopLedger, searchOpenLoopsLexical } from "../storage/open-loops.js";
 import { searchRetiredLoopsLexical } from "../storage/retired-loops.js";
 import { findActiveBriefsForLoops, getBrief, listBriefs } from "../storage/briefs.js";
@@ -643,10 +647,22 @@ async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-/**
- * Ask the run's record check about a new record. Returns the tool result that
- * replaces the write when the check drops it, or null to save it.
- */
+/** Capture privacy ancestry before evidence reads or asynchronous verification. */
+function captureRecordCheckPayload(
+  deps: Pick<CognitionToolDeps, "db" | "checkRecord">,
+  sourceIds: readonly string[],
+) {
+  if (!deps.checkRecord || !(deps.checkRecord.needsDocumentContext?.() ?? true)) return undefined;
+  return (
+    captureDecisionPayloadSubjects(
+      deps.db,
+      { sourceIds },
+      decisionPayloadErasureGeneration(deps.db),
+    ) ?? undefined
+  );
+}
+
+/** Ask the record check; return its refusal instead of writing a dropped record. */
 async function recordCheckRefusal(
   deps: Pick<CognitionToolDeps, "checkRecord">,
   input: RecordCheckInput,
@@ -2716,6 +2732,9 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       const parsed = temporalAnnotationAddSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
+      const payloadCapture = a.evidence
+        ? captureRecordCheckPayload(deps, [...(a.documentIds ?? []), a.evidence.docId])
+        : undefined;
       // Document-derived entries MUST ground themselves: without a quote the
       // content-change invalidator has nothing to re-check, so the entry can
       // neither survive source edits deliberately nor be retired honestly.
@@ -2860,6 +2879,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
             recordId: id,
             record: { type: "timeline", kind: a.kind ?? null, text: a.sentence },
             documentId: a.evidence.docId,
+            ...(payloadCapture ? { payloadCapture } : {}),
           },
           ctx.abortSignal,
         );
@@ -3247,6 +3267,11 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       const parsed = annotateDurableSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
+      const payloadCapture = captureRecordCheckPayload(deps, [
+        a.docId,
+        a.evidenceDocId,
+        ...(a.additionalEvidence ?? []).map((atom) => atom.docId),
+      ]);
       // Firewall 1: both the subject and the grounding atom must be real docs
       // (grounding on a document, never another annotation — no compounding).
       if (!docExists(db, a.docId)) return notFound("document", a.docId);
@@ -3387,6 +3412,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
             recordId: id,
             record: { type: "doc-fact", kind: a.claimType, text: a.claimText },
             documentId: a.docId,
+            ...(payloadCapture ? { payloadCapture } : {}),
             ...(documentContext ? { documentContext } : {}),
           },
           ctx.abortSignal,
@@ -3850,6 +3876,10 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       const parsed = annotatePersonSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const a = parsed.data;
+      const payloadCapture = captureRecordCheckPayload(deps, [
+        a.evidenceDocId,
+        ...(a.additionalEvidence ?? []).map((atom) => atom.docId),
+      ]);
       // Firewall 1 (person side): the subject must resolve to a known person
       // (walks merge chains / resolves an email through aliases). Unknown → 404.
       const personId = resolveLoopPersonRef(db, a.personId);
@@ -3955,6 +3985,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
             recordId: id,
             record: { type: "person-fact", kind: a.claimType, text: a.claimText },
             documentId: a.evidenceDocId,
+            ...(payloadCapture ? { payloadCapture } : {}),
           },
           ctx.abortSignal,
         );

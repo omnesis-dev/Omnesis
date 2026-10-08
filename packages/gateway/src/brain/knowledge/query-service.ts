@@ -3,6 +3,24 @@
 
 import { NotFoundError } from "../../http/errors.js";
 import {
+  readPendingKnowledgeWork,
+  type PendingKnowledgeWorkOptions,
+} from "./pending-work-query.js";
+import { readKnowledgeSubjectRef } from "./subject-ref.js";
+import {
+  readKnowledgeBatch,
+  readKnowledgeBatches,
+  type KnowledgeBatchListOptions,
+} from "./batch-query.js";
+import {
+  listKnowledgeDecisionAudit,
+  listKnowledgeDecisionAuditPage,
+  type KnowledgeDecisionAuditOptions,
+  listKnowledgeDecisionsForBatch,
+  listKnowledgeDecisionsForNode,
+  readKnowledgeDecisionAudit,
+} from "./decision-query.js";
+import {
   readKnowledgeLibrary,
   readKnowledgeLibraryRetirement,
   type KnowledgeLibraryOptions,
@@ -35,16 +53,20 @@ export class KnowledgeQueryService {
     return readKnowledgeLibraryRetirement(this.db, id);
   }
   fetch(id: string, editing = false) {
-    const node = getKnowledgeNode(this.db, id);
-    if (!node) throw new NotFoundError("Knowledge node not found");
-    return {
-      ...node,
-      markdown: editing ? node.markdown : node.plainText,
-      claims: getKnowledgeClaims(this.db, id),
-      dependencies: getKnowledgeDependencies(this.db, id),
-      links: listKnowledgeLinks(this.db, id),
-    };
+    return this.db.transaction(() => {
+      const node = getKnowledgeNode(this.db, id);
+      if (!node) throw new NotFoundError("Knowledge node not found");
+      return {
+        ...node,
+        subjectRef: readKnowledgeSubjectRef(this.db, id, node.kind),
+        markdown: editing ? node.markdown : node.plainText,
+        claims: getKnowledgeClaims(this.db, id),
+        dependencies: getKnowledgeDependencies(this.db, id),
+        links: listKnowledgeLinks(this.db, id),
+      };
+    })();
   }
+
   connections(id: string, options: { cursor?: string; limit?: number } = {}) {
     return readKnowledgeConnections(this.db, id, options);
   }
@@ -52,6 +74,9 @@ export class KnowledgeQueryService {
     this.fetch(id);
     // The portal displays thirty revisions and compares the oldest with this extra predecessor.
     return listKnowledgeNodeRevisions(this.db, id, { beforeRevision, limit: 31 });
+  }
+  pendingWork(options: PendingKnowledgeWorkOptions) {
+    return readPendingKnowledgeWork(this.db, options);
   }
   status() {
     return {
@@ -75,25 +100,31 @@ export class KnowledgeQueryService {
         .get(),
     };
   }
+  nodeDecisions(id: string) {
+    return listKnowledgeDecisionsForNode(this.db, id);
+  }
+  decision(id: string) {
+    return readKnowledgeDecisionAudit(this.db, id);
+  }
   decisions(limit = 100) {
-    return this.db
-      .prepare(
-        "SELECT id,purpose,input_fingerprint AS inputFingerprint,score,model_id AS modelId,latency_ms AS latencyMs,input_tokens AS inputTokens,rubric_version AS rubricVersion,created_at AS createdAt FROM knowledge_decisions ORDER BY created_at DESC,id LIMIT ?",
-      )
-      .all(limit);
+    return listKnowledgeDecisionAudit(this.db, limit);
+  }
+  decisionsPage(options: KnowledgeDecisionAuditOptions = {}) {
+    return listKnowledgeDecisionAuditPage(this.db, options);
   }
   batches(limit = 30) {
-    return this.db
-      .prepare(
-        "SELECT id,run_id AS runId,tier,status,revision,created_at AS createdAt,updated_at AS updatedAt,finished_at AS finishedAt FROM knowledge_batches ORDER BY created_at DESC,id LIMIT ?",
-      )
-      .all(limit);
+    return readKnowledgeBatches(this.db, { limit }).items;
+  }
+  batchesPage(options: KnowledgeBatchListOptions = {}) {
+    return readKnowledgeBatches(this.db, options);
   }
   batch(id: string) {
-    const row = this.db
-      .prepare("SELECT id,run_id AS runId,tier,status,revision FROM knowledge_batches WHERE id=?")
-      .get(id);
+    const row = readKnowledgeBatch(this.db, id);
     if (!row) throw new NotFoundError("Knowledge batch not found");
-    return { ...row, frontier: listKnowledgeFrontier(this.db, id) };
+    return {
+      ...row,
+      frontier: listKnowledgeFrontier(this.db, id),
+      decisions: listKnowledgeDecisionsForBatch(this.db, id),
+    };
   }
 }

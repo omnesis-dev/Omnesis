@@ -3,6 +3,7 @@
 
 /** Scripted judgements for the fictional progressive universe; all writes use real tools. */
 import { z } from "zod";
+import { complementaryEvidence } from "./complementary-evidence.js";
 import { call, structuredData, type PuppetPlan, type ToolStep } from "./puppet-plan.js";
 import { type KnowledgePuppetPolicy, type PuppetKnowledgeItem } from "./knowledge-puppet.js";
 import { nextGenLoopCalls, nextGenOwnerPlan } from "./next-gen-loops.js";
@@ -32,6 +33,7 @@ const titles: Record<Topic, string> = {
   access: "Temporary gathering access",
 };
 function topics(title: string): Topic[] {
+  if (["Camera custody record", "Gathering entrance hours"].includes(title)) return [];
   if (/access instruction/.test(title)) return ["access"];
   if (/Household coordination/.test(title)) return ["gathering", "camera"];
   if (/Camera|camera/.test(title)) return ["camera"];
@@ -57,9 +59,16 @@ function summarize(topic: Topic, texts: string[]): string {
   const content = texts.join("\n");
   if (topic === "access") return texts.join("\n");
   if (topic === "camera")
-    return /returned|return is complete|loan is complete/i.test(content)
-      ? "The silver camera has been returned; the loan is complete."
-      : "The silver camera is on loan and is due to be returned on Saturday.";
+    return [
+      /returned|return is complete|loan is complete/i.test(content)
+        ? "The silver camera has been returned; the loan is complete."
+        : "The silver camera is on loan and is due to be returned on Saturday.",
+      /padded case must remain/.test(content)
+        ? "The loan instructions require its padded case to remain with it until return."
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
   const corrected = /08:00/.test(content);
   const collected = /I collected|has been collected|collection is complete/.test(content);
   return [
@@ -67,6 +76,9 @@ function summarize(topic: Topic, texts: string[]): string {
       ? `Gathering setup is ${corrected ? "08:00" : "10:00"} tomorrow.`
       : "",
     /18:15/.test(content) ? "Guest arrival is 18:15." : "",
+    /available at the hall desk tomorrow from 09:00/.test(content)
+      ? "The original crate reservation offered collection at the hall desk from 09:00."
+      : "",
     collected
       ? "The lantern crate has been collected."
       : "Collecting the lantern crate remains a separate commitment.",
@@ -113,12 +125,26 @@ function sourcePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Pupp
     calls.push(call("knowledge_fetch", { id, editing: true }));
     const existing = result(steps, "knowledge_fetch", (step) => step.args?.id === id);
     if (existing !== null) continue;
+    const supportTitle =
+      topic === "camera"
+        ? "Camera custody record"
+        : topic === "access"
+          ? "Gathering entrance hours"
+          : source.title === "Winter lantern gathering: accepted plan"
+            ? "Lantern crate reservation"
+            : "Winter lantern gathering: accepted plan";
+    const support = complementaryEvidence(supportTitle, steps);
+    calls.push(...support.calls);
+    if (!support.evidence) continue;
     calls.push(
       call("knowledge_propose_page", {
         identityKey: `progressive-demo:${topic}`,
         title: titles[topic],
         scope: `Reusable context for ${titles[topic]}`,
-        evidenceVersions: { [source.id]: source.contentHash },
+        evidenceVersions: {
+          [source.id]: source.contentHash,
+          [support.evidence.id]: support.evidence.revision,
+        },
       }),
     );
     calls.push(
@@ -144,13 +170,23 @@ function sourcePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Pupp
     calls.push(
       call("knowledge_save", {
         candidateId: candidate.data.id,
+        creationAssessment: {
+          reason: `The inspected library has no page for this distinct ${titles[topic]} scope; complementary records establish its arrangement and constraints.`,
+          relatedPageIds: [],
+        },
         node: {
           id,
           kind: "wiki",
           title: titles[topic],
           expectedRevision: 0,
-          markdown: summaryMarkup(topic, [{ text: source.content, ref: evidence.data.ref }]),
-          inputVersions: { [evidence.data.ref]: source.contentHash },
+          markdown: summaryMarkup(topic, [
+            { text: source.content, ref: evidence.data.ref },
+            { text: support.evidence.text, ref: support.evidence.ref },
+          ]),
+          inputVersions: {
+            [evidence.data.ref]: source.contentHash,
+            [support.evidence.ref]: support.evidence.revision,
+          },
           metadata: { importance: topic === "access" ? 0.1 : 0.8 },
         },
       }),

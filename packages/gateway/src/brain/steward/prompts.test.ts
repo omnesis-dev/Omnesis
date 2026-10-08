@@ -1235,6 +1235,9 @@ describe("Cognition Steward run prompts", () => {
       "adds multi-source contextual synthesis or substantially compresses a long source",
     );
     expect(system).toContain("even when the source is personally meaningful");
+    expect(system).toContain("retain materially useful outcomes from a long substantive source");
+    expect(system).toContain("need not preserve every detail or add a second source");
+    expect(system).toContain("wording overlap alone does not disqualify it");
     expect(system).toContain(
       "one document, while its contextual synthesis may draw on several evidence documents",
     );
@@ -1247,6 +1250,11 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(maintenance).toContain("Document annotations need additive value");
     expect(maintenance).toContain("reread their actual subject and supporting sources");
+    expect(maintenance).toContain(
+      "retain materially useful outcomes from a long substantive source",
+    );
+    expect(maintenance).toContain("neither every detail nor a second source is required");
+    expect(maintenance).toContain("wording overlap alone is not a reason to retire it");
     expect(maintenance).toContain(
       "retire redundant annotations through canonical annotation tools",
     );
@@ -1438,6 +1446,16 @@ describe("Cognition Steward run prompts", () => {
       expect(prompt).toContain("links to the most relevant existing wiki subpages");
       expect(prompt).toContain("Navigation links are not evidence");
       expect(prompt).toContain("Evidence arrival order is not event order");
+      expect(prompt).toContain("rather than appending each notification as a separate summary");
+      expect(prompt).toContain("Consolidate repeated assertions about the same matter");
+      expect(prompt).toContain("distinct dates, scope or outcomes");
+      expect(prompt).toContain("explicitly account for removed claim IDs");
+      expect(prompt).toContain("observation date, measured category, units");
+      expect(prompt).toContain("distinguish a subtotal from an overall total");
+      expect(prompt).toContain("state the uncertainty rather than inventing it");
+      expect(prompt).toContain("does not make the page body navigable");
+      expect(prompt).toContain("inline links to relevant read counterparts");
+      expect(prompt).toContain("leave unauthorized counterpart edits for their review");
       expect(prompt).toContain("Assess placement in the existing library");
       expect(prompt).toContain("Standalone pages are valid");
       expect(prompt).toContain("from child to parent with part_of");

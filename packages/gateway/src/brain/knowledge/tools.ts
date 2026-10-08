@@ -12,6 +12,7 @@ import { WikiToolReconciliation } from "./wiki-tool-reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { fitKnowledgeFrontierItem } from "./engine-frontier.js";
 import { ORGANIZATION_REASON_CODES } from "./organization-cohorts.js";
+import { WikiPublicationReads } from "./wiki-publication.js";
 import { getKnowledgeCandidate, listKnowledgeCandidates } from "./discovery.js";
 import { KnowledgeStorageError } from "./types.js";
 import { listKnowledgeLinks } from "./links.js";
@@ -150,6 +151,7 @@ export function buildKnowledgeTools(
   },
 ): ToolHandle[] {
   const dependencyReceipts = new KnowledgeDependencyReceipts();
+  const publicationReads = new WikiPublicationReads(service.deps.db);
   const runFence = context.batchId ? { batchId: context.batchId, runId: context.runId } : undefined;
   const placementReads = runFence
     ? new WikiToolReconciliation(service.deps.db, runFence)
@@ -186,17 +188,26 @@ export function buildKnowledgeTools(
         .strict(),
       false,
       (input) =>
-        reconciliation
-          ? reconciliation.read(
-              () => listKnowledgeCandidates(service.deps.db, input),
-              (result) => [
-                ...(input.status === undefined && input.afterId === undefined
-                  ? ["candidates"]
-                  : []),
-                ...result.items.map((candidate) => `candidate:${candidate.id}`),
-              ],
-            )
-          : listKnowledgeCandidates(service.deps.db, input),
+        publicationReads.snapshot(
+          () =>
+            reconciliation
+              ? reconciliation.read(
+                  () => listKnowledgeCandidates(service.deps.db, input),
+                  (result) => [
+                    ...(input.status === undefined && input.afterId === undefined
+                      ? ["candidates"]
+                      : []),
+                    ...result.items.map((candidate) => `candidate:${candidate.id}`),
+                  ],
+                )
+              : listKnowledgeCandidates(service.deps.db, input),
+          (result) => {
+            publicationReads.candidatesRead(
+              result.items.map((candidate) => candidate.id),
+              input.status === undefined && input.afterId === undefined,
+            );
+          },
+        ),
     ),
     tool(
       "knowledge_candidate_decide",
@@ -269,7 +280,9 @@ export function buildKnowledgeTools(
           if (snapshot) dependencyReceipts.rememberEditing(snapshot);
           return snapshot?.node ?? null;
         };
-        return placementReads ? placementReads.readNode(read) : read();
+        const result = placementReads ? placementReads.readNode(read) : read();
+        publicationReads.nodeRead(result);
+        return result;
       },
     ),
     tool(
@@ -286,18 +299,27 @@ export function buildKnowledgeTools(
         .strict(),
       false,
       (input) =>
-        placementReads
-          ? placementReads.read(
-              () => service.list(input),
-              (nodes) => [
-                ...((input.kind === undefined || input.kind === "wiki") &&
-                input.afterId === undefined
-                  ? ["pages"]
-                  : []),
-                ...nodes.filter((node) => node.kind === "wiki").map((node) => `node:${node.id}`),
-              ],
-            )
-          : service.list(input),
+        publicationReads.snapshot(
+          () =>
+            placementReads
+              ? placementReads.read(
+                  () => service.list(input),
+                  (nodes) => [
+                    ...((input.kind === undefined || input.kind === "wiki") &&
+                    input.afterId === undefined
+                      ? ["pages"]
+                      : []),
+                    ...nodes
+                      .filter((node) => node.kind === "wiki")
+                      .map((node) => `node:${node.id}`),
+                  ],
+                )
+              : service.list(input),
+          () => {
+            if ((input.kind === undefined || input.kind === "wiki") && input.afterId === undefined)
+              publicationReads.library();
+          },
+        ),
     ),
     tool(
       "knowledge_reference",
@@ -363,12 +385,14 @@ export function buildKnowledgeTools(
         .strict(),
       true,
       async (input) => {
-        const fence = reconciliation?.fence(["pages", "candidates"]) ?? runFence;
+        const expectedInventoryRevision = publicationReads.assertInspected();
+        const fence = runFence;
         const result = await service.deps.writeGate["knowledge.proposeCandidate"](
-          { id: `candidate_${randomUUID()}`, ...input },
+          { id: `candidate_${randomUUID()}`, ...input, expectedInventoryRevision },
           service.deps.clock(),
           fence,
         );
+        publicationReads.acceptProposal(result.id, result.creationInventoryRevision);
         return reconciliation && fence
           ? reconciliation.accept(result, fence, [`candidate:${result.id}`])
           : result;
@@ -376,7 +400,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_save",
-      `Replace the full synthesis page, preserving existing claim spans and stable IDs by default. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. For brief nodes, preserve the ## Description and ## Body sections in markdown. New wikis require a reconciled candidate. Root is the compact overview itself and must fit its hard budget. Preserve the supplied canonical node.ownerId when revising an owned node; never infer or fabricate it. node.inputVersions is optional here: an actual knowledge_fetch(editing:true) lets unchanged claim trees retain their stored dependency versions; new or edited uses need knowledge_reference reads in this run or explicit exact versions. This never marks untouched claims reviewed. In maintenance, existing pages must match an offered frontier and include its exact inputFingerprint at the top level beside node. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      `Replace the full synthesis page, preserving existing claim spans and stable IDs by default. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. For brief nodes, preserve the ## Description and ## Body sections in markdown. New wikis require a reconciled candidate, top-level creationAssessment after library/candidate and relevant page reads, and claim support from at least two distinct current documents. Prefer enriching existing reusable scopes; one-document material belongs in a useful annotation or an unpublished candidate. Root is the compact overview itself and must fit its hard budget. Preserve the supplied canonical node.ownerId when revising an owned node; never infer or fabricate it. node.inputVersions is optional here: an actual knowledge_fetch(editing:true) lets unchanged claim trees retain their stored dependency versions; new or edited uses need knowledge_reference reads in this run or explicit exact versions. This never marks untouched claims reviewed. In maintenance, existing pages must match an offered frontier and include its exact inputFingerprint at the top level beside node. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
       z
         .object({
           node: proposal.extend({
@@ -387,6 +411,16 @@ export function buildKnowledgeTools(
               ),
           }),
           candidateId: id.optional(),
+          creationAssessment: z
+            .object({
+              reason: z.string().trim().min(1).max(1000),
+              relatedPageIds: z.array(id).max(16),
+            })
+            .strict()
+            .optional()
+            .describe(
+              "Required for a NEW wiki only: explain its distinct reusable scope and why enriching considered existing pages is insufficient. Read wiki library and candidates first, and knowledge_fetch each relatedPageIds entry. An empty list is an explicit judgment after retrieval, not proof no related page exists. New wikis need actual claim supports from at least two distinct current source documents; context or declared evidence padding does not count.",
+            ),
           inputFingerprint: z
             .string()
             .optional()
@@ -449,14 +483,8 @@ export function buildKnowledgeTools(
             "Root changes require an exclusive root maintenance run",
           );
         let fence =
-          node.kind === "wiki" && reconciliation
-            ? node.expectedRevision === 0
-              ? reconciliation.fence([
-                  "pages",
-                  "candidates",
-                  ...(input.candidateId ? [`candidate:${input.candidateId}`] : []),
-                ])
-              : reconciliation.nodeFence(node.id, node.expectedRevision)
+          node.kind === "wiki" && reconciliation && node.expectedRevision > 0
+            ? reconciliation.nodeFence(node.id, node.expectedRevision)
             : runFence;
         if (
           input.placementAssessment &&
@@ -502,7 +530,14 @@ export function buildKnowledgeTools(
             : await service.save(
                 node,
                 candidate
-                  ? { candidateId: candidate.id, expectedCandidateRevision: candidate.revision }
+                  ? {
+                      candidateId: candidate.id,
+                      expectedCandidateRevision: candidate.revision,
+                      creationReceipt: publicationReads.receipt(
+                        candidate.id,
+                        input.creationAssessment,
+                      ),
+                    }
                   : undefined,
                 fence,
               );

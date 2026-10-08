@@ -39,6 +39,7 @@ import { CalibrationTab } from "./cognition-calibration.js";
 import { KnowledgeMaintenanceTab } from "./cognition-maintenance.js";
 import { KnowledgeTab } from "./cognition-knowledge.js";
 import { BootstrapTab } from "./cognition-bootstrap.js";
+import { DecisionInputInspection, ContextualDecisions } from "./cognition-knowledge-decisions.js";
 
 // Developer mode for this page, mirrored from `CognitionView`'s `developer`
 // prop so the per-item ⚑ annotate buttons in the detail panes and rows don't
@@ -527,10 +528,8 @@ function BrainInactiveBanner() {
 
 // ── The pulse — one shared poll of the agent's live state ────────────
 //
-// The rail badges, the Overview cards, and the Runs "executing now" strip
-// all read the same picture: the pending queue, the loops, the briefs.
-// One poller owns that picture so the page fires three GETs per tick
-// total, not three per consumer.
+// Run health and the Running filter share one live snapshot. The complete
+// active set comes from the drainer, independently of historical list pagination.
 
 const PULSE_MS = 15_000;
 
@@ -658,35 +657,7 @@ function TriggerDetail({ trigger }) {
   }
 }
 
-// The pulsing "executing right now" strip, pinned above the Runs list and
-// on the Overview whenever the drainer has a run in flight.
-function RunningNowStrip({ running }) {
-  if (running.length === 0) return null;
-  return html`
-    <div class="cognition-running-strip">
-      ${running.map((r) => {
-        const href = cognitionPath("runs", r.id);
-        return html`
-          <a
-            key=${r.id}
-            class="cognition-running-strip-row"
-            href=${href}
-            onClick=${(e) => { e.preventDefault(); navigate(href); }}
-          >
-            <span class="cognition-live-dot" aria-hidden="true"></span>
-            <span class="cognition-running-strip-label">Running now</span>
-            <span class="cognition-running-strip-trigger">${triggerSummary(r.trigger)}</span>
-            <span class="cognition-running-strip-time" title=${fmtTs(r.lastAttemptAt)}>
-              started ${fmtRel(r.lastAttemptAt)}
-            </span>
-          </a>
-        `;
-      })}
-    </div>
-  `;
-}
-
-// ── Overview ─────────────────────────────────────────────────────────
+// ── Agent health and spend ───────────────────────────────────────────
 
 export function StatCard({ label, value, sub, tone }) {
   return html`
@@ -891,12 +862,18 @@ export function LoopDetail({ id, embedded = false, synthesisText = null }) {
 
 // ── Runs (the whole queue: running / queued / scheduled / history) ───
 
-const RUN_VIEW_FILTERS = [
+export const runViewFilterOptions = (runningCount) => [
   { value: "all", label: "All" },
+  { value: "running", label: `Running (${runningCount})` },
   { value: "upcoming", label: "Upcoming" },
   { value: "completed", label: "Completed" },
   { value: "failed", label: "Failed" },
 ];
+/** Pulse rows are the complete live set, not a filtered historical page. */
+export function runningRunsForKind(running, kind) {
+  return kind === "all" ? running : running.filter((run) => run.kind === kind);
+}
+
 const ALL_RUN_KINDS_FILTER = { value: "all", label: "All kinds" };
 
 /**
@@ -996,6 +973,7 @@ function RunsTab({ selectedId, pulse }) {
   if (kind !== "all") query.kind = kind;
   const page = useCursorPage({
     resetKey: `${view}:${kind}`,
+    enabled: view !== "running",
     pageSize: 50,
     loadPage: ({ limit, cursor }) => getCognitionRuns({ ...query, limit, cursor }),
   });
@@ -1003,19 +981,22 @@ function RunsTab({ selectedId, pulse }) {
   const nowMs = Date.now();
   // Preserve the endpoint's cursor order. Re-sorting only the loaded subset
   // would move rows above the viewport whenever a later page arrived.
-  const runs = page.items;
+  const liveRuns = runningRunsForKind(pulse.running, kind);
+  const runs = view === "running" ? liveRuns : page.items;
+  const listLoading = view === "running" ? !pulse.ready && pulse.loading : page.loading;
+  const listError = view === "running" ? pulse.error : page.error;
 
   const list = html`
     <div>
-      ${runs.length === 0 && !page.loading && !page.error
+      ${runs.length === 0 && !listLoading && !listError
         ? html`<div class="debug-empty" style="padding:16px;">No runs match these filters.</div>`
         : runs.map(
             (r) => html`<${RunListRow} key=${r.id} run=${r} selectedId=${selectedId} nowMs=${nowMs} />`,
           )}
       <${LoadMore}
-        hasMore=${page.hasMore}
-        loading=${page.loadingMore}
-        error=${page.loadMoreError}
+        hasMore=${view !== "running" && page.hasMore}
+        loading=${view !== "running" && page.loadingMore}
+        error=${view !== "running" && page.loadMoreError}
         onLoadMore=${page.loadMore}
         label="Load more runs"
       />
@@ -1027,7 +1008,7 @@ function RunsTab({ selectedId, pulse }) {
       <${RunHealthSummary} pulse=${pulse} />
       <div class="cognition-filters">
         <${Segmented}
-          options=${RUN_VIEW_FILTERS}
+          options=${runViewFilterOptions(liveRuns.length)}
           value=${view}
           onChange=${(nextView) => applyRunFilterChange(selectedId, view, nextView, setView)}
         />
@@ -1039,10 +1020,13 @@ function RunsTab({ selectedId, pulse }) {
         </label>
       </div>
       <${RunKindDescription} definition=${selectedKind} />
-      <${RunningNowStrip} running=${pulse.running} />
-      <${LoadState} loading=${page.loading || kindsLoading} error=${page.error || kindError} />
-      <p class="debug-operations-count">${runs.length} loaded runs</p>
-      ${selectedId && html`<a class="debug-operations-back" href=${cognitionPath("runs")}>← Back to runs</a>`}
+      <${LoadState} loading=${listLoading || kindsLoading} error=${listError || kindError} />
+      <p class="debug-operations-count">${runs.length} ${view === "running" ? "running" : "loaded"} ${runs.length === 1 ? "run" : "runs"}</p>
+      ${selectedId && html`<a class="debug-operations-back" href=${cognitionPath("runs")} onClick=${(event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        navigate(cognitionPath("runs"));
+      }}>← Back to runs</a>`}
       <${MasterDetail}
         list=${list}
         detail=${selectedId ? html`<${RunDetail} id=${selectedId} />` : runs.length ? html`<${EmptyDetail} noun="run" />` : null}
@@ -1099,12 +1083,11 @@ function RunDetail({ id }) {
         `
         : html`<div class="debug-empty" style="margin-bottom:12px;">The run row was pruned (retention window) — its transcript survives below.</div>`}
 
-      <details class="debug-operations-advanced"><summary>Advanced</summary>
-        <${Field} label="Run ID"><span class="cognition-mono">${id}</span></${Field}>
+      <${Field} label="Run ID"><span class="cognition-mono">${id}</span></${Field}>
         ${run && html`<${Field} label="Attempts">${run.attempts}</${Field}>
           <${Field} label="Dedupe key">${run.dedupeKey ? html`<code>${run.dedupeKey}</code>` : "—"}</${Field}>`}
-      </details>
-      <${DecisionSection} decisions=${decisions} />
+      ${decisions.length > 0 && html`<details class="cognition-decision-details"><summary>Admission and record checks (${decisions.length})</summary><${DecisionSection} decisions=${decisions} /></details>`}
+      <${ContextualDecisions} title="Synthesis checks" decisions=${data.knowledgeDecisions} audit=${data.knowledgeDecisionAudit} />
 
       <h3 class="cognition-section">Transcript${transcripts.length > 1 ? "s" : ""} (${transcripts.length})</h3>
       <${TranscriptSlot} id=${id} transcripts=${transcripts} gated=${status === "gated"} />
@@ -1140,36 +1123,36 @@ const UNAVAILABLE_COLOR = "#fdba74";
 function decisionVerdict(d) {
   if (d.purpose === "record-check") {
     if (d.verdict === "pass") {
-      return { label: "keep", color: "#86efac", sentence: "Belongs in life memory — the record was kept." };
+      return { label: "allowed", color: "#86efac", sentence: "Gate allowed this record." };
     }
     if (d.verdict === "skip") {
       return d.enforced
-        ? { label: "dropped", color: "#d2a8ff", sentence: "Judged not to belong in life memory — the record was not saved." }
+        ? { label: "blocked", color: "#d2a8ff", sentence: "Gate blocked this save attempt." }
         : {
-            label: "would drop",
+            label: "would reject",
             color: "#d2a8ff",
-            sentence: "Judged not to belong in life memory. The check is only observing, so the record was saved anyway.",
+            sentence: "Shadow check: would reject; did not block saving.",
           };
     }
     if (d.verdict === "unavailable") {
       return {
         label: "unavailable",
         color: UNAVAILABLE_COLOR,
-        sentence: "The decision model could not answer, so the record was saved unjudged.",
+        sentence: "Allowed without a verdict; no usable decision score was recorded.",
       };
     }
   } else if (d.purpose === "worth-gate") {
     if (d.verdict === "pass") {
-      return { label: "pass", color: "#86efac", sentence: "Worth a run — the agent turn went ahead." };
+      return { label: "pass", color: "#86efac", sentence: "Admitted for agent review." };
     }
     if (d.verdict === "skip") {
-      return { label: "skip", color: "#d2a8ff", sentence: "Not worth a run — the run settled with no agent turn." };
+      return { label: "skip", color: "#d2a8ff", sentence: "Gate declined admission for this attempt." };
     }
     if (d.verdict === "unavailable") {
       return {
         label: "unavailable",
         color: UNAVAILABLE_COLOR,
-        sentence: "The decision model could not answer, so the run went ahead unjudged.",
+        sentence: "Admitted for agent review without a verdict.",
       };
     }
   }
@@ -1199,7 +1182,7 @@ function decisionText(value) {
   return typeof value === "string" ? value : html`<code>${JSON.stringify(value)}</code>`;
 }
 
-/** The exact state and questions sent to the decision model. */
+/** Stored state and questions; privacy-redacted source context is labeled by the caller. */
 function DecisionRequest({ request }) {
   const state = request.state;
   const stateFields = state && typeof state === "object" && !Array.isArray(state) ? Object.entries(state) : null;
@@ -1280,6 +1263,7 @@ export function DecisionCard({ decision: d }) {
   const verdict = decisionVerdict(d);
   const subject = d.subjectDoc ?? d.subjectDocumentId;
   const recordText = d.request?.state?.record;
+  const contextRedacted = d.request?.state?.document_context?.redacted === true;
   return html`
     <div class="cognition-decision">
       <div class="cognition-decision-head">
@@ -1314,15 +1298,20 @@ export function DecisionCard({ decision: d }) {
       <${Field} label="Latency">${typeof d.latencyMs === "number" ? `${d.latencyMs} ms` : "—"}</${Field}>
       <${Field} label="Input tokens">${typeof d.inputTokens === "number" ? d.inputTokens.toLocaleString() : "—"}</${Field}>
       <${Field} label="Decided">${fmtTs(d.createdAt)}</${Field}>
+      ${!d.request && !d.reusedFrom && html`<p class="cognition-dim">No model request is retained for this judgement.</p>`}
+      ${!d.response && !d.reusedFrom && html`<p class="cognition-dim">No model answer is retained for this judgement.</p>`}
+      ${d.inputInspection === true && html`<${DecisionInputInspection} id=${d.id} legacy=${true} />`}
       ${d.request
         ? html`<details class="cognition-decision-details">
-            <summary>Request sent</summary>
+            <summary>Recorded request</summary>
+            ${contextRedacted && html`<p class="cognition-dim">Source context was redacted from this retained request; it is not an exact replay of the model input.</p>`}
             <${DecisionRequest} request=${d.request} />
           </details>`
         : null}
       ${d.response
         ? html`<details class="cognition-decision-details">
-            <summary>Answer</summary>
+            <summary>Recorded answer</summary>
+            ${contextRedacted && html`<p class="cognition-dim">Only the resulting score was retained; this is not the complete model answer.</p>`}
             <${DecisionAnswer} response=${d.response} request=${d.request} />
           </details>`
         : null}

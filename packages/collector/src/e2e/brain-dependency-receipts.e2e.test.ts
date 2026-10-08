@@ -14,6 +14,11 @@ import {
 } from "./brain-bench/index.js";
 import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
 
+import {
+  complementaryEvidence,
+  waitForComplementaryEvidence,
+} from "./brain-bench/complementary-evidence.js";
+
 compressCognitionCadences();
 let bench: BrainBench | undefined;
 afterAll(async () => {
@@ -23,31 +28,49 @@ const pageId = "archive-cabinet-reference";
 
 it("inherits unchanged dependency versions from a real editing read, reads new evidence, and refuses explicit stale overrides", async () => {
   let sourceId = "";
+  let supportMarkup = "";
   const original = () =>
-    `<claim id="shelves" refs="source:${sourceId}">The cabinet has three shelves.</claim>`;
+    `<claim id="shelves" refs="source:${sourceId}">The cabinet has three shelves.</claim>` +
+    supportMarkup;
   const maintain = knowledgePuppet({
     plan(item, ctx, steps) {
       if (item.source) {
+        if (item.source.title === "Archive cabinet storage rules") return { calls: [] };
+        const support = complementaryEvidence("Archive cabinet storage rules", steps);
+        if (!support.evidence) return { calls: support.calls };
+        supportMarkup = `<claim id="storage" refs="${support.evidence.ref}">${support.evidence.text}</claim>`;
         sourceId = item.source.id;
         return {
           calls: [
+            ...support.calls,
             call("knowledge_list", { kind: "wiki" }),
             call("knowledge_candidates", {}),
             call("knowledge_propose_page", {
               identityKey: pageId,
               title: "Archive cabinet reference",
               scope: "Cabinet labels and shelf organization",
-              evidenceVersions: { [sourceId]: item.source.contentHash },
+              evidenceVersions: {
+                [sourceId]: item.source.contentHash,
+                [support.evidence.id]: support.evidence.revision,
+              },
             }),
             call("knowledge_save", {
               candidateId: ref("knowledge_propose_page", "id"),
+              creationAssessment: {
+                reason:
+                  "The cabinet layout and storage restrictions form one reference topic not present in the inspected library.",
+                relatedPageIds: [],
+              },
               node: {
                 id: pageId,
                 kind: "wiki",
                 title: "Archive cabinet reference",
                 markdown: original(),
                 expectedRevision: 0,
-                inputVersions: { [`source:${sourceId}`]: item.source.contentHash },
+                inputVersions: {
+                  [`source:${sourceId}`]: item.source.contentHash,
+                  [support.evidence.ref]: support.evidence.revision,
+                },
               },
             }),
           ],
@@ -94,6 +117,7 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
   });
   bench = await BrainBench.start({
     experimental: true,
+    embedder: true,
     syncSources: false,
     entailment: "accept-all",
     judge: "hold-all",
@@ -144,6 +168,14 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
       },
     },
   });
+  await bench.pushAndSettle([
+    email({
+      externalId: "archive-cabinet-storage",
+      title: "Archive cabinet storage rules",
+      content: "Store only dry folders in the cabinet; liquids belong in the utility cupboard.",
+    }),
+  ]);
+  await waitForComplementaryEvidence(bench, "Archive cabinet storage rules");
   await bench.push(
     email({
       externalId: "archive-cabinet-note",

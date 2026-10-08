@@ -6,7 +6,8 @@ import { createKnowledgeBatch, enqueueKnowledgeWork, type KnowledgeFrontierInput
 import { abandonKnowledgeBatch } from "./work-lifecycle.js";
 import {
   createOrganizationCohort,
-  completeOrganizationCohort,
+  type completeOrganizationCohort,
+  completeOrganizationCohortResult,
   abandonOrganizationCohort,
   type OrganizationCohortSelection,
 } from "./organization-cohorts.js";
@@ -111,11 +112,28 @@ export function completeOrganizationBatch(
         "claim_invalid",
         "Complete the offered source and synthesis work before recording the joint organization outcome",
       );
-    if (!completeOrganizationCohort(db, input, now))
+    const result = completeOrganizationCohortResult(db, input, now);
+    if (!result.accepted) {
+      if (result.reason === "grounding")
+        throw new KnowledgeStorageError(
+          "claim_invalid",
+          "Organization targets lack actual claim supports from this cohort's sources. A valid page update grounded only in other retrieved evidence does not establish this cohort's organized outcome. Use no_page with insufficient_shared_context or insufficient_evidence when no further synthesis is warranted, or deferred with awaiting_more_evidence when relevant context is missing. Do not pad support references or guess targetVersions.",
+        );
+      if (result.reason === "budget")
+        throw new KnowledgeStorageError(
+          "claim_invalid",
+          "Organization grounding exceeds the bounded support traversal budget. Narrow the target set or defer for missing context; changing targetVersions or padding references does not repair this limitation.",
+        );
+      if (result.reason === "target")
+        throw new KnowledgeStorageError(
+          "revision_conflict",
+          "An organization target is unavailable, stale, or has a different revision. Fetch the target and current frontier, then use the returned current target revision; do not guess targetVersions.",
+        );
       throw new KnowledgeStorageError(
         "revision_conflict",
-        "Organization snapshot or target changed; fetch the current frontier before retrying",
+        "Organization cohort snapshot or completion arguments changed; fetch the current frontier and reconcile its identity, sources and outcome before retrying",
       );
+    }
     return true;
   })();
 }

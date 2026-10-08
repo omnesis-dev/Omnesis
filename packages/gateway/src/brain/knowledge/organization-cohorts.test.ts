@@ -3,6 +3,7 @@
 
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { completeOrganizationBatch } from "./organization-writer.js";
 import { purgeKnowledgeBySource, advanceKnowledgeCascade } from "./storage-invalidation.js";
 import { createKnowledgeTables, saveKnowledgeNode } from "./storage.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
@@ -15,6 +16,7 @@ import {
   selectOrganizationCohort,
   createOrganizationCohort,
   completeOrganizationCohort,
+  completeOrganizationCohortResult,
   getOrganizationCohortForBatch,
   abandonOrganizationCohort,
   isOrganizationCohortCurrent,
@@ -403,4 +405,110 @@ describe("bounded joint organization cohorts", () => {
     expect(select(499)).toBeNull();
     expect(select(500)).not.toBeNull();
   });
+});
+
+it("reports missing cohort grounding separately from current target or source revisions", () => {
+  evidence("cohort-a");
+  evidence("cohort-b");
+  const cohort = admit();
+  evidence("outside-context");
+  const page = saveKnowledgeNode(
+    db,
+    {
+      id: "archive-index",
+      kind: "wiki",
+      title: "Archive cabinet reference",
+      expectedRevision: 0,
+      markdown:
+        '<claim id="location" refs="source:outside-context">The archive cabinet is on the upper floor.</claim>',
+      inputVersions: { "source:outside-context": "v1" },
+    },
+    101,
+  );
+  const input = {
+    id: cohort.id,
+    batchId: cohort.batchId,
+    inputFingerprint: cohort.inputFingerprint,
+    outcome: "organized" as const,
+    reasonCode: "existing_context_updated" as const,
+    targetIds: [page.node.id],
+    targetVersions: { [page.node.id]: page.node.revision },
+    retryAt: 1000,
+  };
+  expect(completeOrganizationCohortResult(db, input, 110)).toEqual({
+    accepted: false,
+    reason: "grounding",
+  });
+  expect(getOrganizationCohortForBatch(db, cohort.batchId)?.status).toBe("pending");
+  expect(
+    completeOrganizationCohortResult(db, { ...input, targetVersions: { [page.node.id]: 99 } }, 110),
+  ).toEqual({ accepted: false, reason: "target" });
+  db.prepare("UPDATE documents SET content_hash='v2' WHERE id='cohort-a'").run();
+  expect(completeOrganizationCohortResult(db, input, 110)).toEqual({
+    accepted: false,
+    reason: "snapshot",
+  });
+});
+
+it("gives a grounded refusal actionable no-page recovery without weakening the writer fence", () => {
+  evidence("cohort-a");
+  evidence("cohort-b");
+  const cohort = admit();
+  evidence("outside-context");
+  saveKnowledgeNode(
+    db,
+    {
+      id: "archive-index",
+      kind: "wiki",
+      title: "Archive cabinet reference",
+      expectedRevision: 0,
+      markdown:
+        '<claim id="location" refs="source:outside-context">The archive cabinet is on the upper floor.</claim>',
+      inputVersions: { "source:outside-context": "v1" },
+    },
+    101,
+  );
+  const input = {
+    id: cohort.id,
+    batchId: cohort.batchId,
+    runId: "run-cohort",
+    inputFingerprint: cohort.inputFingerprint,
+    outcome: "organized" as const,
+    reasonCode: "existing_context_updated" as const,
+    targetIds: ["archive-index"],
+    targetVersions: { "archive-index": 1 },
+    retryAt: 1000,
+  };
+  let refusal: unknown;
+  try {
+    completeOrganizationBatch(db, input, 110);
+  } catch (error) {
+    refusal = error;
+  }
+  expect(refusal).toMatchObject({
+    code: "claim_invalid",
+    message: expect.stringContaining("lack actual claim supports"),
+  });
+  expect((refusal as Error).message).toContain(
+    "Do not pad support references or guess targetVersions",
+  );
+  expect(
+    completeOrganizationBatch(
+      db,
+      {
+        ...input,
+        outcome: "no_page",
+        reasonCode: "insufficient_shared_context",
+        targetIds: [],
+        targetVersions: {},
+      },
+      110,
+    ),
+  ).toBe(true);
+  expect(getOrganizationCohortForBatch(db, cohort.batchId)?.status).toBe("completed");
+  expect(
+    db
+      .prepare("SELECT COUNT(*) AS count FROM knowledge_organization_targets WHERE cohort_id=?")
+      .get(cohort.id),
+  ).toEqual({ count: 0 });
 });

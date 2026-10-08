@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { cognitionAuthoredSqlExclusion } from "../cognition-authored.js";
 import { enqueueKnowledgeWork } from "./work.js";
 import {
+  assertKnowledgeReconciliation,
   readKnowledgeCollectionRevision,
   type KnowledgeReconciliationReceipt,
 } from "./reconciliation.js";
@@ -16,6 +17,11 @@ import { saveKnowledgeNode, getKnowledgeNode } from "./storage.js";
 import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import { parseClaimReference } from "./references.js";
 
+import {
+  assertWikiPublicationReceipt,
+  assertWikiSourceDiversity,
+  type WikiPublicationReceipt,
+} from "./wiki-publication.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery-policy.js";
 import type Database from "better-sqlite3";
 import type { SaveKnowledgeNodeInput } from "./types.js";
@@ -133,6 +139,8 @@ export function listKnowledgeDiscoveryBacklog(
 
 export interface KnowledgeCandidateInput {
   id: string;
+  /** Trusted creation-inventory snapshot, supplied by the tool runtime only. */
+  expectedInventoryRevision?: number;
   identityKey: string;
   title: string;
   scope: string;
@@ -149,6 +157,7 @@ export interface KnowledgeCandidate {
   nodeId: string | null;
 }
 export type KnowledgeCandidateWriteResult = KnowledgeCandidate & {
+  creationInventoryRevision: number;
   /** Exact post-write generation, internal to the trusted maintenance runtime. */
   reconciliationReceipt?: KnowledgeReconciliationReceipt;
 };
@@ -159,6 +168,7 @@ function candidateWriteResult(
 ): KnowledgeCandidateWriteResult {
   return {
     ...candidate,
+    creationInventoryRevision: readKnowledgeCollectionRevision(db, "wiki_scope"),
     ...(fence?.reconciliation
       ? {
           reconciliationReceipt: {
@@ -234,6 +244,11 @@ export function proposeKnowledgeCandidate(
     );
   return db.transaction(() => {
     assertKnowledgeRunFence(db, runFence);
+    if (input.expectedInventoryRevision !== undefined)
+      assertKnowledgeReconciliation(db, {
+        collection: "wiki_scope",
+        revision: input.expectedInventoryRevision,
+      });
     for (const id of ids) {
       const row = db
         .prepare<
@@ -358,7 +373,12 @@ export function assertCandidateGrounded(
 /** Publication and identity ownership commit together: a racing proposal cannot leave an orphan wiki. */
 export function publishKnowledgeCandidate(
   db: Database.Database,
-  input: { candidateId: string; expectedCandidateRevision: number; node: SaveKnowledgeNodeInput },
+  input: {
+    candidateId: string;
+    expectedCandidateRevision: number;
+    node: SaveKnowledgeNodeInput;
+    creationReceipt?: WikiPublicationReceipt;
+  },
   now: number,
 ): ReturnType<typeof saveKnowledgeNode> {
   return db.transaction(() => {
@@ -381,7 +401,10 @@ export function publishKnowledgeCandidate(
         "claim_invalid",
         "A new page must contain grounded claim spans",
       );
+    assertWikiPublicationReceipt(db, candidate.id, input.creationReceipt);
     const result = saveKnowledgeNode(db, input.node, now);
+    assertCandidateGrounded(db, result.node.id, candidate.evidenceIds);
+    assertWikiSourceDiversity(db, result.node.id);
     // Publication must not depend on the creating turn remembering integration targets.
     // Review chooses placement; a standalone page remains a valid outcome.
     enqueueKnowledgeWork(

@@ -8,6 +8,11 @@ import { BrainBench, call, compressCognitionCadences, email } from "./brain-benc
 import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
 import { structuredData, type ToolStep } from "./brain-bench/puppet-plan.js";
 
+import {
+  complementaryEvidence,
+  waitForComplementaryEvidence,
+} from "./brain-bench/complementary-evidence.js";
+
 compressCognitionCadences();
 const archived = email({
   externalId: "historic-equipment",
@@ -33,6 +38,23 @@ const olderPromise = email({
   content: "I will collect the training console. This is the earlier promise.",
   at: Date.parse("1998-02-01T09:00:00Z"),
 });
+const equipment = email({
+  externalId: "console-storage-reference",
+  title: "Training console storage instructions",
+  content: "Keep the training console in its padded case during transport and storage.",
+  at: Date.parse("1999-04-02T10:00:00Z"),
+});
+const project = email({
+  externalId: "console-project-scope",
+  title: "Training console project scope",
+  content: "The training console is allocated to the workshop demonstration project.",
+});
+const supportFor = (page: string) => (page === "historic-instructions" ? equipment : project);
+const supportMarkup = (page: string) => {
+  const document = supportFor(page);
+  const source = evidence.get(document.title)!;
+  return `<claim id="scope" refs="source:${source.id}">${document.content}</claim>`;
+};
 const loopTitle = "Collect the training console";
 let bench: BrainBench;
 const evidence = new Map<string, { id: string; revision: string }>();
@@ -45,13 +67,17 @@ function last(steps: readonly ToolStep[], name: string, key: string, value: stri
 function content(page: string) {
   if (page === "historic-instructions") {
     const source = evidence.get(archived.title)!;
-    return `<claim id="procedure" refs="source:${source.id}">${archived.content}</claim>`;
+    return (
+      `<claim id="procedure" refs="source:${source.id}">${archived.content}</claim>` +
+      supportMarkup(page)
+    );
   }
   const cancelled = evidence.get(cancellation.title);
   const current = cancelled ?? evidence.get(promise.title)!;
   const old = evidence.get(olderPromise.title);
   return (
     `<claim id="status" refs="source:${current.id}">${cancelled ? cancellation.content : promise.content}</claim>` +
+    supportMarkup(page) +
     (old
       ? `\n<claim id="earlier" refs="source:${old.id}">An earlier promise preceded the cancellation.</claim>`
       : "")
@@ -66,6 +92,7 @@ function versions() {
 beforeAll(async () => {
   bench = await BrainBench.start({
     experimental: true,
+    embedder: true,
     syncSources: false,
     entailment: "accept-all",
     judge: "hold-all",
@@ -82,11 +109,21 @@ beforeAll(async () => {
             : [],
         plan(item, _ctx, steps) {
           if (item.source) {
+            if ([equipment.title, project.title].includes(item.source.title)) return { calls: [] };
+            const page =
+              item.source.title === archived.title ? "historic-instructions" : "console-project";
+            const support = complementaryEvidence(supportFor(page).title, steps);
+            if (!support.evidence) return { calls: support.calls };
+            evidence.set(supportFor(page).title, {
+              id: support.evidence.id,
+              revision: support.evidence.revision,
+            });
             evidence.set(item.source.title, {
               id: item.source.id,
               revision: item.source.contentHash,
             });
             const calls = [
+              ...support.calls,
               call("knowledge_list", { kind: "wiki" }),
               call("knowledge_candidates", {}),
             ];
@@ -119,8 +156,6 @@ beforeAll(async () => {
                   }),
                 );
             }
-            const page =
-              item.source.title === archived.title ? "historic-instructions" : "console-project";
             calls.push(call("knowledge_fetch", { id: page, editing: true }));
             if (last(steps, "knowledge_fetch", "id", page) !== null) return { calls };
             calls.push(
@@ -128,7 +163,10 @@ beforeAll(async () => {
                 identityKey: page,
                 title: page,
                 scope: "Durable invented equipment context",
-                evidenceVersions: { [item.source.id]: item.source.contentHash },
+                evidenceVersions: {
+                  [item.source.id]: item.source.contentHash,
+                  [support.evidence.id]: support.evidence.revision,
+                },
               }),
             );
             const candidate = z
@@ -138,6 +176,11 @@ beforeAll(async () => {
               calls.push(
                 call("knowledge_save", {
                   candidateId: candidate.data.id,
+                  creationAssessment: {
+                    reason:
+                      "This page combines complementary equipment evidence within a distinct procedural or project scope; existing pages do not cover that scope.",
+                    relatedPageIds: [],
+                  },
                   node: {
                     id: page,
                     kind: "wiki",
@@ -194,6 +237,9 @@ afterAll(async () => {
 }, 60_000);
 
 it("publishes useful old evidence without manufacturing a future timestamp", async () => {
+  await bench.pushAndSettle([equipment, project]);
+  await waitForComplementaryEvidence(bench, equipment.title);
+  await waitForComplementaryEvidence(bench, project.title);
   const [id] = await bench.pushAndSettle([archived]);
   const stored = bench.sql
     .prepare<
@@ -205,7 +251,11 @@ it("publishes useful old evidence without manufacturing a future timestamp", asy
   const page = await bench.harness.gatewayJson<{ plainText: string; validity: string }>(
     "/admin/brain/knowledge/historic-instructions",
   );
-  expect(page).toMatchObject({ plainText: archived.content, validity: "current" });
+  expect(page).toMatchObject({
+    plainText: expect.stringContaining(archived.content),
+    validity: "current",
+  });
+  expect(page.plainText).toContain(equipment.content);
   expect(
     bench.sql
       .prepare(

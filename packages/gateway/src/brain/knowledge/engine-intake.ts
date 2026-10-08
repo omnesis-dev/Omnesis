@@ -8,6 +8,7 @@ import {
 import { listTemporalAnnotationsAwaitingRefile } from "../../enrichment/temporal-annotations/storage.js";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
 import { bootstrapWindowOpen } from "../bootstrap-window.js";
+import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
 import { getKnowledgeDependencies, getKnowledgeNode, listKnowledgeChanges } from "./storage.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import { historicalKnowledgeAdmissions } from "./work.js";
@@ -40,6 +41,9 @@ export class KnowledgeIntake {
       )
         return;
       if (change.kind === "source_changed") {
+        const erasureGeneration = this.context.deps.decisions.record
+          ? knowledgeDecisionErasureGeneration(this.context.deps.db)
+          : 0;
         const source = this.context.source(change.entityId);
         if (source) {
           // Explicit initial inventory has its own recent-first admission. The
@@ -76,12 +80,39 @@ export class KnowledgeIntake {
             source.id,
             this.context.deps.clock(),
           );
+          const decisionId =
+            readiness.ready && this.context.deps.decisions.record
+              ? this.context.id("kd")
+              : undefined;
           const score = readiness.ready
-            ? await judgeKnowledge(this.context.deps.decisions, "urgency", {
-                documentId: source.id,
-                title: source.title,
-                content: source.content.slice(0, 24000),
-              })
+            ? await judgeKnowledge(
+                this.context.deps.decisions,
+                "urgency",
+                {
+                  documentId: source.id,
+                  title: source.title,
+                  content: source.content.slice(0, 24000),
+                },
+                {
+                  nodeId: `source:${source.id}`,
+                  ...(decisionId
+                    ? {
+                        id: decisionId,
+                        urgencyCapture: {
+                          sourceId: source.id,
+                          inputRevision: source.contentHash,
+                          erasureGeneration,
+                          policy: {
+                            immediateThreshold: cfg.immediateThreshold,
+                            soonThreshold: cfg.soonThreshold,
+                            soonDelayMs: cfg.soonDelayMs,
+                            routineDelayMs: cfg.routineDelayMs,
+                          },
+                        },
+                      }
+                    : {}),
+                },
+              )
             : null;
           const now = this.context.deps.clock();
           await this.context.deps.writeGate["knowledge.enqueue"](
@@ -91,6 +122,7 @@ export class KnowledgeIntake {
               subjectKind: "source",
               reason: "change",
               inputRevision: source.contentHash,
+              ...(decisionId ? { urgencyDecision: { id: decisionId, anchorAt: now } } : {}),
               ...(readiness.ready
                 ? scheduleKnowledgeChange(score, now, cfg)
                 : { tier: "routine" as const, dueAt: now + cfg.routineDelayMs }),

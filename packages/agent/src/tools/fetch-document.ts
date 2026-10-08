@@ -3,7 +3,7 @@
 
 /**
  * `fetch_document` — pull the full body of a document the agent already
- * surfaced via `search_documents`.
+ * surfaced via context or another retrieval tool.
  *
  * The agent uses this when a snippet isn't enough — usually one or two times
  * per turn, on the most relevant hits. The returned `document` payload is
@@ -23,8 +23,8 @@ export const fetchDocumentArgsSchema = z.object({
     .string()
     .min(1)
     .describe(
-      "Document ID returned by a prior search_documents call (the `documentId` " +
-        "field on a result item), or an alias explicitly supported by this tool description.",
+      "Opaque documentId supplied in authorized context or returned by a retrieval tool. " +
+        "Copy it exactly; do not add a prefix. An alias is allowed only when explicitly supported by this tool description.",
     ),
   includeNeighbors: z
     .boolean()
@@ -51,7 +51,7 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
       "this when a search snippet is insufficient — don't fetch every " +
       "candidate, only the ones likely to answer the question." +
       (deps.port.supportsKnowledgeAliases
-        ? " Also accepts wiki:<pageId> links from maintained context. A knowledgeContext overlay separates claim provenance from navigation; follow its documentIds with fetch tools. Missing or stale projections are unavailable, so use search instead."
+        ? " Also accepts wiki:<pageId> links from maintained context. Copy a wiki:<pageId> alias only from an actual wiki link. A knowledgeContext overlay separates claim provenance from navigation; its returned documentIds are opaque corpus IDs: copy them exactly into fetch tools, without adding wiki: or any other prefix. Missing or stale projections are unavailable, so use search instead."
         : ""),
     schema: fetchDocumentArgsSchema,
     summarize(args: unknown): string | undefined {

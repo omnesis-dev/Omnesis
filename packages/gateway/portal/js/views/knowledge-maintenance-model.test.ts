@@ -36,3 +36,19 @@ it("labels batch lifecycle without implying every batch is queued or actively ru
   expect(batchStatusLabel("completed")).toBe("Completed");
   expect(batchStatusLabel("abandoned")).toBe("Stopped");
 });
+
+it("combines reason and tier over all pending groups without counting unrelated cascade work", () => {
+  const status = { work: [
+    { status: "pending", reason: "review", tier: "soon", count: 3 },
+    { status: "pending", reason: "review", tier: "routine", count: 5 },
+    { status: "pending", reason: "change", tier: "soon", count: 7 },
+    { status: "batched", reason: "review", tier: "soon", count: 2 },
+  ], cascades: { pending: 9 } };
+  expect(summarizeMaintenance(status, { reason: "review" }).waiting).toBe(8);
+  expect(summarizeMaintenance(status, { tier: "soon" }).waiting).toBe(10);
+  const both = summarizeMaintenance(status, { reason: "review", tier: "soon" });
+  expect(both.waiting).toBe(3);
+  expect(both.assigned).toBe(2);
+  expect(both.cascades).toBe(0);
+  expect(summarizeMaintenance(status).cascades).toBe(9);
+});

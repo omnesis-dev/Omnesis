@@ -3,7 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import { zodToJsonSchema } from "../zod-to-json-schema.js";
 import { createFetchDocumentTool } from "./fetch-document.js";
+import { createFetchManyTool } from "./fetch-many.js";
 import type { DocRef } from "@omnesis/core";
 
 import type { DocumentPort, DocumentPortResult } from "./types.js";
@@ -15,6 +17,54 @@ function port(
 ): DocumentPort {
   return { fetch: (id, opts) => impl(id, opts) };
 }
+
+describe("opaque fetch pointers", () => {
+  it.each([createFetchDocumentTool, createFetchManyTool])(
+    "explains corpus IDs separately from aliases only on supporting ports",
+    (create) => {
+      const ordinary = create({ port: port(async () => null) });
+      expect(ordinary.description).not.toContain("wiki:<pageId>");
+      const supported = create({
+        port: { ...port(async () => null), supportsKnowledgeAliases: true },
+      });
+      expect(supported.description).toContain("alias only from an actual wiki link");
+      expect(supported.description).toContain("returned documentIds are opaque corpus IDs");
+      expect(supported.description).toContain("without adding wiki: or any other prefix");
+      const schema = JSON.stringify(zodToJsonSchema(supported.schema));
+      expect(schema).toContain("Copy it exactly; do not add a prefix");
+    },
+  );
+
+  it("forwards returned corpus pointers exactly and does not guess a repair for prefixed IDs", async () => {
+    const seen: string[] = [];
+    const documentPort = {
+      supportsKnowledgeAliases: true,
+      fetch: async (id: string) => {
+        seen.push(id);
+        return id === "projection-detail"
+          ? {
+              ref: { documentId: id, sourceType: "knowledge", sourceId: "knowledge:fixture" },
+              document: { id },
+            }
+          : null;
+      },
+    };
+    const single = createFetchDocumentTool({ port: documentPort });
+    expect((await single.invoke({ documentId: "projection-detail" }, ctx)).kind).toBe("document");
+    const batch = createFetchManyTool({ port: documentPort });
+    const result = await batch.invoke(
+      {
+        documents: [{ documentId: "projection-detail" }, { documentId: "wiki:projection-detail" }],
+      },
+      ctx,
+    );
+    expect(result.kind).toBe("document.batch");
+    if (result.kind === "document.batch") {
+      expect(result.items.map((item) => item.kind)).toEqual(["document", "error"]);
+    }
+    expect(seen).toEqual(["projection-detail", "projection-detail", "wiki:projection-detail"]);
+  });
+});
 
 describe("fetch_document tool", () => {
   it("returns a document tool-result and forwards includeNeighbors", async () => {

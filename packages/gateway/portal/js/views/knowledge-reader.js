@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { NodeReviewDetails } from "./knowledge-decision-context.js";
 import { html } from "htm/preact";
+import { annotationLifecycle } from "./knowledge-annotation-state.js";
+import { KnowledgeSubjectContext } from "./knowledge-subject-context.js";
 import { useState } from "preact/hooks";
 import { Segmented } from "../components/segmented.js";
 import { KnowledgeClaimReader } from "./knowledge-claim-reader.js";
@@ -10,11 +13,6 @@ import {
   renderKnowledgeMarkdown,
   internalKnowledgeHref,
 } from "./knowledge-claim-markdown.js";
-import {
-  summarizeMaintenance,
-  maintenanceReasonLabel,
-  maintenanceTierLabel,
-} from "./knowledge-maintenance-model.js";
 import { KnowledgeConnections } from "./knowledge-connections.js";
 import { knowledgeHistoryComparisons, KnowledgeHistoryRevision } from "./knowledge-history.js";
 
@@ -112,6 +110,7 @@ export function KnowledgeDetail({
   selectedClaim = null,
   onClaim = () => {},
 }) {
+  const lifecycle = annotationLifecycle(node);
   const claims = node.claims ?? [],
     verified = claims.filter((claim) => claim.verification === "verified").length;
   const selectedField =
@@ -125,12 +124,14 @@ export function KnowledgeDetail({
   return html`<article class="kn-reader">
     <header class="kn-reader-header">
       <div class="kn-eyebrow">
-        ${kindLabel(node.kind)} <${KnowledgeBadge} value=${node.validity} />
+        ${kindLabel(node.kind)} ${lifecycle.length ? lifecycle.map((label) => html`<span class="kn-badge">${label}</span>`) : html`<${KnowledgeBadge} value=${node.validity} />`}
       </div>
       ${!hideTitle && html`<h2>${node.title}</h2>`}
+      <${KnowledgeSubjectContext} node=${node} />
       ${headerContent}
+      ${["wiki", "root", "loop"].includes(node.kind) && html`<div class="kn-review-context"><span>${node.metadata?.nextReviewAt == null ? "Review timing: Automatic" : `Next review: ${new Date(node.metadata.nextReviewAt).toLocaleString()}`}</span><${NodeReviewDetails} node=${node} /></div>`}
       <p class="kn-caption">
-        ${`Updated ${dateLabel(node.updatedAt)}`}${claims.length
+        ${`Updated ${dateLabel(node.updatedAt)}`}${claims.length && !lifecycle.length
           ? ` · ${verified} of ${claims.length} claims verified`
           : ""}
       </p>
@@ -217,12 +218,12 @@ ${JSON.stringify(
           <dd>${node.id}</dd>
           <dt>Revision</dt>
           <dd>Edit ${node.revision} · meaning ${node.meaningRevision}</dd>
-          <dt>Next review</dt>
+          ${!["wiki", "root", "loop"].includes(node.kind) && html`<dt>Next review</dt>
           <dd>
             ${node.metadata?.nextReviewAt == null
-              ? "Not scheduled"
+              ? "No explicit review date"
               : new Date(node.metadata.nextReviewAt).toLocaleString()}
-          </dd>
+          </dd>`}
         </dl>
         <section>
           <h4>Canonical fields and review metadata</h4>
@@ -238,60 +239,4 @@ ${JSON.stringify({ claims, dependencies: node.dependencies ?? [] }, null, 2)}</p
         </section>`}
     </div>
   </article>`;
-}
-export function KnowledgeStatus({ status, compact = false }) {
-  if (!status) return null;
-  const { waiting, assigned, cascades, waitingGroups, assignedGroups } = summarizeMaintenance(status);
-  const work = [...waitingGroups, ...assignedGroups];
-  const outstanding = waiting || assigned || cascades;
-  const counts = [
-    `${waiting} waiting`,
-    `${assigned} assigned`,
-    ...(cascades ? [`${cascades} pending cascade step${cascades === 1 ? "" : "s"}`] : []),
-  ].join(" · ");
-  if (compact)
-    return html`<div class="kn-maintenance">
-      <div class="kn-maintenance-body">
-        <strong
-          >${outstanding ? "Updates awaiting maintenance" : "No updates waiting"}</strong
-        >
-        · ${counts} · <a href="/portal/debug/cognition/maintenance">View maintenance</a>
-      </div>
-    </div>`;
-  return html`<details class="kn-maintenance">
-    <summary>
-      <span class=${`kn-status-dot ${outstanding ? "is-busy" : ""}`}></span
-      ><strong
-        >${outstanding ? "Updates awaiting maintenance" : "No updates waiting"}</strong
-      ><span
-        >${counts}</span
-      >
-    </summary>
-    <div class="kn-maintenance-body">
-      <h3>Work queue</h3>
-      ${work.length
-        ? html`<ul>
-            ${work.map(
-              (row) =>
-                html`<li>
-                  ${row.count} ${row.status === "pending" ? "waiting" : "assigned"} · ${maintenanceTierLabel(row.tier)} ·
-                  ${maintenanceReasonLabel(row.reason)}${row.readiness === "pending_content"
-                    ? " · Waiting for source content"
-                    : row.readiness === "derivation"
-                      ? " · Waiting for document processing"
-                      : ""}${row.nextDueAt != null &&
-                  row.status === "pending"
-                    ? ` · Next ${new Date(row.nextDueAt).toLocaleString()}`
-                    : ""}
-                </li>`,
-            )}
-          </ul>`
-        : html`<p>No scheduled work.</p>`}
-      <p>
-        <a href="/portal/debug/cognition/bootstrap"
-          >View discovery coverage and historical backfill</a
-        >
-      </p>
-    </div>
-  </details>`;
 }

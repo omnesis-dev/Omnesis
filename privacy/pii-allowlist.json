@@ -11984,6 +11984,29 @@
       "value": "System One",
       "paths": ["evals/universes/sacha-bellamy/next-gen-brain/README.md"],
       "reason": "Public scenario title or test-model role phrase in the exact fictional scenario README; never personal corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "packages/gateway/portal/js/views/cognition-knowledge.test.ts",
+        "packages/gateway/src/brain/knowledge/library.test.ts"
+      ],
+      "reason": "Invented person fixture for canonical subject links and merged identity display; no corpus provenance."
+    },
+    {
+      "value": "About Maya Reeves",
+      "paths": ["packages/gateway/portal/js/views/cognition-knowledge.test.ts"],
+      "reason": "UI assertion combining the About label with an invented person fixture."
+    },
+    {
+      "value": "About Workshop",
+      "paths": ["packages/gateway/portal/js/views/cognition-knowledge.test.ts"],
+      "reason": "Static UI assertion for an invented workshop document title, not a person."
+    },
+    {
+      "value": "Score Unavailable",
+      "paths": ["packages/gateway/portal/js/views/cognition-knowledge-decisions.test.ts"],
+      "reason": "Static decision-inspector UI label assertion, not a person."
     }
   ],
   "secretFixtures": [

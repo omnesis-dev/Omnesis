@@ -404,6 +404,28 @@ describe("useCursorPage mounted request ownership", () => {
     expect(page?.items).toEqual([{ id: "new-first" }]);
     expect(page?.loadMoreError).toBeNull();
   });
+  test("preserves loaded Library items on stale cursors until an explicit refresh", async () => {
+    const stale = Object.assign(new Error("changed"), { code: "STALE_PAGE_CURSOR" });
+    const initial = deferred<unknown>();
+    const loadPage = vi.fn()
+      .mockReturnValueOnce(initial.promise)
+      .mockRejectedValueOnce(stale)
+      .mockResolvedValueOnce({ items: [{ id: "refreshed" }], nextCursor: null });
+    let page: ReturnType<typeof useCursorPage> | undefined;
+    const Harness = () => { page = useCursorPage({ resetKey: "library", loadPage, staleCursorBehavior: "preserve" }); return null; };
+    await act(async () => { render(h(Harness, {}), host); });
+    await act(async () => {
+      initial.resolve({ items: [{ id: "retained" }], nextCursor: "page-2" });
+      await initial.promise;
+    });
+    await act(async () => { await page?.loadMore(); });
+    expect(loadPage).toHaveBeenCalledTimes(2);
+    expect(page?.items).toEqual([{ id: "retained" }]);
+    expect(page?.loadMoreError).toBe(stale);
+    await act(async () => { await page?.reload(); });
+    expect(page?.items).toEqual([{ id: "refreshed" }]);
+    expect(page?.loadMoreError).toBeNull();
+  });
 });
 
 function deferred<T>(): {
