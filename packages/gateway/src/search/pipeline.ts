@@ -500,35 +500,25 @@ export class SearchPipeline {
       text: w.text,
     }));
 
+    // When the query names a time, the text lanes rank its other words: the
+    // time phrase is the temporal lane's to read, and left in it would match
+    // every document that merely says "next week". A query that is nothing
+    // but a time leaves the text lanes nothing to rank, and the lane alone
+    // orders its window.
+    const textLaneText = temporalIntent ? temporalIntent.strippedText : effectiveText;
+    const timeOnly = temporalIntent !== null && textLaneText === "";
+
     let queryVector: Float32Array | null = null;
-    let laneVector: Float32Array | null = null;
     let embedMs = 0;
     const embedding = async () => {
-      if (mode !== "hybrid" || !this.embedder) return;
+      if (mode !== "hybrid" || !this.embedder || timeOnly) return;
       // Embed on this thread, only when an embedder is attached; otherwise
       // `queryVector` stays null and the core records the vector-skip reason.
       // An embed throw propagates (the search fails rather than silently
       // degrading) — only the usearch dimension mismatch degrades to BM25,
-      // inside the core. The temporal lane ranks its window by the query's
-      // words without the time phrase, which embeddings would otherwise blur;
-      // that embedding is best effort, like the rest of the lane.
-      const embedder = this.embedder;
+      // inside the core.
       const embedStart = Date.now();
-      const laneText = temporalIntent?.strippedText ?? "";
-      const laneEmbedding =
-        laneText && laneText !== effectiveText
-          ? embedder.embedQuery(laneText).catch((err: unknown) => {
-              log.warn(
-                `Temporal lane: query not embedded (${err instanceof Error ? err.message : String(err)})`,
-              );
-              return null;
-            })
-          : Promise.resolve(null);
-      [queryVector, laneVector] = await Promise.all([
-        embedder.embedQuery(effectiveText),
-        laneEmbedding,
-      ]);
-      if (laneText && laneText === effectiveText) laneVector = queryVector;
+      queryVector = await this.embedder.embedQuery(textLaneText);
       embedMs = Date.now() - embedStart;
     };
     const eventStart = Date.now();
@@ -552,17 +542,23 @@ export class SearchPipeline {
             windows: temporalWindows.map(({ start, endExclusive }) => ({ start, endExclusive })),
             eventDocumentIds,
             text: temporalIntent.strippedText,
-            vector: laneVector,
+            vector: queryVector,
             weight: temporalConfig.weight,
           }
         : undefined;
 
     const cg = await this.candidateGen({
       mode,
-      bm25Text: effectiveText,
+      bm25Text: textLaneText,
       prefixLastToken: options?.prefixLastToken,
       embedderPresent: !!this.embedder,
       queryVector,
+      ...(timeOnly && this.embedder
+        ? {
+            vectorSkipReason:
+              "The query names only a time; the temporal lane orders the documents in its window.",
+          }
+        : {}),
       embedMs,
       // The query-model / active-generation compare that closes the
       // same-dimension embedder-swap hole is wired through the core (see

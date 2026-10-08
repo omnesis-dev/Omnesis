@@ -33,14 +33,27 @@ export function buildSearchDocumentsArgsSchema() {
       .describe(
         "Search query in the gateway's search syntax. Supports operators like " +
           "from:NAME, to:NAME, source:TYPE, after:DATE, before:DATE, and plain " +
-          "free text. The pipeline handles tokenization, BM25, and vectors.",
+          "free text. after:/before: filter by when a document was written, not by " +
+          "the date it is about. The pipeline handles tokenization, BM25, and vectors.",
       ),
     filters: z
       .object({
         sourceIds: z.array(z.string()).optional(),
         documentTypes: z.array(z.string()).optional(),
-        dateFrom: z.string().optional(),
-        dateTo: z.string().optional(),
+        dateFrom: z
+          .string()
+          .describe(
+            "Keep documents written, sent or recorded on or after this date (YYYY-MM-DD). " +
+              "It is the document's own date, not the date it is about.",
+          )
+          .optional(),
+        dateTo: z
+          .string()
+          .describe(
+            "Keep documents written, sent or recorded on or before this date (YYYY-MM-DD). " +
+              "It is the document's own date, not the date it is about.",
+          )
+          .optional(),
       })
       .optional(),
     limit: z.number().int().min(1).max(50).optional(),
