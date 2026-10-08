@@ -24,12 +24,15 @@ export interface FusionOptions {
    * 0.02 (preserves prior behaviour); 0 disables.
    */
   nearTopRankBonus?: number;
+  /** Weight for the temporal list (see {@link rrfFuse}); 0 when absent. */
+  temporalWeight?: number;
 }
 
 interface FusedCandidate {
   candidate: SearchCandidate;
   bm25Rank?: number;
   vectorRank?: number;
+  temporalRank?: number;
   /** Raw RRF score (no bonus). */
   rrfScore: number;
   /** Top-rank bonus applied to this candidate (0 below rank 4). */
@@ -68,11 +71,18 @@ function candidateToResult(
 /**
  * Fuse BM25 and vector search results using Reciprocal Rank Fusion.
  * Deduplicates by document (keeps best chunk per document).
+ *
+ * The optional temporal list ranks documents, not chunks: the text lanes may
+ * have picked any chunk of a document the temporal lane also ranks, so its
+ * contribution goes to every chunk entry of that document (the one that
+ * survives the dedup carries it), and a document only the temporal lane found
+ * enters through the chunk that lane chose.
  */
 export function rrfFuse(
   bm25Results: SearchCandidate[],
   vectorResults: SearchCandidate[],
   options: FusionOptions,
+  temporalResults: SearchCandidate[] = [],
 ): SearchResultItem[] {
   const { k, bm25Weight, vectorWeight, limit } = options;
   const topBonus = options.topRankBonus ?? 0.05;
@@ -115,6 +125,35 @@ export function rrfFuse(
     }
   }
 
+  // Add temporal results at document level.
+  if (temporalResults.length > 0) {
+    const temporalWeight = options.temporalWeight ?? 0;
+    const entriesByDoc = new Map<string, FusedCandidate[]>();
+    for (const entry of candidateMap.values()) {
+      const entries = entriesByDoc.get(entry.candidate.documentId);
+      if (entries) entries.push(entry);
+      else entriesByDoc.set(entry.candidate.documentId, [entry]);
+    }
+    for (const candidate of temporalResults) {
+      const rank = candidate.rank ?? 1;
+      const score = temporalWeight / (k + rank);
+      const entries = entriesByDoc.get(candidate.documentId);
+      if (entries) {
+        for (const entry of entries) {
+          entry.temporalRank = rank;
+          entry.rrfScore += score;
+        }
+      } else {
+        candidateMap.set(getKey(candidate), {
+          candidate,
+          temporalRank: rank,
+          rrfScore: score,
+          rankBonus: 0,
+        });
+      }
+    }
+  }
+
   // Sort by RRF score descending
   const fused = [...candidateMap.values()];
   fused.sort((a, b) => b.rrfScore - a.rrfScore);
@@ -136,7 +175,7 @@ export function rrfFuse(
   const seen = new Set<string>();
   const results: SearchResultItem[] = [];
 
-  for (const { candidate, bm25Rank, vectorRank, rrfScore, rankBonus } of fused) {
+  for (const { candidate, bm25Rank, vectorRank, temporalRank, rrfScore, rankBonus } of fused) {
     if (seen.has(candidate.documentId)) continue;
     seen.add(candidate.documentId);
 
@@ -147,6 +186,7 @@ export function rrfFuse(
       rrfScore,
       finalScore,
     };
+    if (temporalRank !== undefined) breakdown.temporalRank = temporalRank;
     if (rankBonus !== 0) breakdown.rankBonus = rankBonus;
 
     results.push(candidateToResult(candidate, finalScore, breakdown));

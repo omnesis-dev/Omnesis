@@ -11,6 +11,7 @@
  * pipeline knobs without forcing a schema bump.
  */
 import { z } from "zod";
+import { normalizeTimeZone } from "@omnesis/core";
 import { nonEmptyString } from "./common.js";
 
 // POST /search
@@ -23,6 +24,20 @@ export const searchBody = z
     includeBoundRow: z.boolean().optional(),
     // Add bounded graph facts without changing the ordinary search ranking.
     includeGraphContext: z.boolean().optional(),
+    // IANA zone the query's own dates ("last week", "tomorrow") are read in.
+    timeZone: z
+      .string()
+      .refine((zone) => normalizeTimeZone(zone) !== undefined, "Expected an IANA time zone name")
+      .optional(),
+    // Per-request temporal-lane override, e.g. to compare results with and without it.
+    temporal: z
+      .object({
+        enabled: z.boolean().optional(),
+        weight: z.number().min(0).max(10).optional(),
+        referenceTime: z.string().datetime({ offset: true }).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .passthrough();
 export type SearchBody = z.infer<typeof searchBody>;

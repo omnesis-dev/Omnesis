@@ -116,7 +116,7 @@ These rules are the canonical Omnesis retrieval policy. Apply them before answer
 Use free text plus operators when the request implies them:
 
 - \`from:NAME\`, \`to:NAME\`, and \`with:NAME\` narrow people roles.
-- \`after:DATE\` and \`before:DATE\` narrow time. Relative dates are resolved by the search parser against the gateway's clock in UTC, not the user's local day; prefer absolute \`YYYY-MM-DD\` boundaries when a day boundary matters.
+- \`after:DATE\` and \`before:DATE\` narrow by when a document was written, sent or recorded, not by the date it is about: an email sent in August about a meeting next week falls outside \`after:\` today. Relative dates are resolved by the search parser against the gateway's clock in UTC, not the user's local day; prefer absolute \`YYYY-MM-DD\` boundaries when a day boundary matters.
 - \`source:TYPE\` narrows a configured source.${renderSourceTypes(sourceTypes, input.catalogMode === "runtime" || input.catalogMode === "discovery")}
 - \`type:TYPE\` narrows a document type. Common values include ${KNOWN_DOCUMENT_TYPES.map((type) => `\`${type}\``).join(", ")}; providers may advertise additional source-specific values, so do not treat this example list as exhaustive.
 

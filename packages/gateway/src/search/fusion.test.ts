@@ -27,6 +27,63 @@ function makeCandidate(
   };
 }
 
+describe("rrfFuse with a temporal list", () => {
+  const OPTS = {
+    k: 60,
+    bm25Weight: 1,
+    vectorWeight: 1,
+    limit: 10,
+    topRankBonus: 0,
+    nearTopRankBonus: 0,
+  };
+
+  test("credits the document whichever chunk the text lanes picked", () => {
+    // BM25 matched chunk 7 of "a"; the temporal lane chose chunk 1 of it.
+    const bm25 = [
+      makeCandidate("b", 1, { chunkRowid: 20 }),
+      makeCandidate("a", 2, { chunkRowid: 7 }),
+    ];
+    const temporal = [makeCandidate("a", 1, { chunkRowid: 1 })];
+
+    const results = rrfFuse(bm25, [], { ...OPTS, temporalWeight: 1 }, temporal);
+
+    expect(results.map((r) => r.documentId)).toEqual(["a", "b"]);
+    expect(results[0]!.chunkRowid).toBe(7);
+    expect(results[0]!.scoreBreakdown).toMatchObject({ bm25Rank: 2, temporalRank: 1 });
+    expect(results[0]!.scoreBreakdown!.rrfScore).toBeCloseTo(1 / 62 + 1 / 61);
+  });
+
+  test("adds a document only the temporal lane found through its own chunk", () => {
+    const bm25 = [makeCandidate("a", 1)];
+    const temporal = [makeCandidate("t", 1, { chunkRowid: 99 })];
+
+    const results = rrfFuse(bm25, [], { ...OPTS, temporalWeight: 1 }, temporal);
+
+    expect(results.map((r) => r.documentId).sort()).toEqual(["a", "t"]);
+    const t = results.find((r) => r.documentId === "t")!;
+    expect(t.chunkRowid).toBe(99);
+    expect(t.scoreBreakdown).toMatchObject({ temporalRank: 1 });
+    expect(t.scoreBreakdown!.bm25Rank).toBeUndefined();
+  });
+
+  test("scales the temporal contribution by its weight", () => {
+    const bm25 = [makeCandidate("a", 1), makeCandidate("b", 2)];
+    const temporal = [makeCandidate("b", 1)];
+
+    const light = rrfFuse(bm25, [], { ...OPTS, temporalWeight: 0.01 }, temporal);
+    expect(light[0]!.documentId).toBe("a");
+    const heavy = rrfFuse(bm25, [], { ...OPTS, temporalWeight: 2 }, temporal);
+    expect(heavy[0]!.documentId).toBe("b");
+  });
+
+  test("leaves two-lane fusion unchanged without a temporal list", () => {
+    const bm25 = [makeCandidate("a", 1), makeCandidate("b", 2)];
+    const vector = [makeCandidate("b", 1)];
+    expect(rrfFuse(bm25, vector, OPTS, [])).toEqual(rrfFuse(bm25, vector, OPTS));
+    expect(rrfFuse(bm25, vector, OPTS)[0]!.scoreBreakdown!.temporalRank).toBeUndefined();
+  });
+});
+
 describe("rrfFuse", () => {
   test("combines BM25 and vector results", () => {
     const bm25 = [makeCandidate("a", 1), makeCandidate("b", 2), makeCandidate("c", 3)];

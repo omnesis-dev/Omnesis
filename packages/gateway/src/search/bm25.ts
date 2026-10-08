@@ -419,6 +419,20 @@ function rankWithFts(db: Db, ftsQuery: string, filter: MetadataFilter, limit: nu
   return filterFirst(db, ftsQuery, filter, undefined, limit);
 }
 
+/**
+ * The ranked rowids as candidates — visible chunks that pass `filters`, best
+ * first, ranked from 1, at most `limit`. For lanes that rank chunk rowids
+ * themselves and need the same metadata join the BM25 lane uses.
+ */
+export function joinRankedCandidates(
+  db: Db,
+  ranked: readonly RankedChunk[],
+  filters: SearchFilters,
+  limit: number,
+): SearchCandidate[] {
+  return joinRanked(db, ranked, buildMetadataFilter(filters, "c"), limit).map(toCandidate);
+}
+
 /** The ranked rowids' `chunks` rows that are visible and pass `filter`, best first, at most `limit`. */
 function joinRanked(
   db: Db,

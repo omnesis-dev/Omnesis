@@ -49,6 +49,8 @@ export interface SearchPortInput {
    * is enforcement, not advice, and no tool argument exposes it to the model.
    */
   currentConversationId?: string;
+  /** The asker's IANA zone, so the query's own dates ("last week") read in their calendar. */
+  timeZone?: string;
 }
 
 export interface SearchPortFilters {

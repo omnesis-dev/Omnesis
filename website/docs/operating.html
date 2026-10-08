@@ -450,7 +450,10 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           weighed against each other. <code>search.boosts.typeBoosts</code> multiplies the score of
           a whole document type (above <code>1</code> promotes it, below demotes it).
           <code>search.defaultFilters</code> adds filters to every query; list filters combine with
-          the query's own, and a date range in the query wins. The defaults suit most corpora.
+          the query's own, and a date range in the query wins. <code>search.temporal</code> controls
+          the lane that reads time phrases in a query (see
+          <a href="/docs/search#time-in-queries">Search → Time in queries</a>). The defaults suit
+          most corpora.
         </p>
         <p>
           <code>dataRetention.maxAge</code> limits how old ingested source data may be;

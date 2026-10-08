@@ -109,6 +109,40 @@ export interface SearchQuery {
    * are down-weighted so they don't crowd out the real documents.
    */
   cognitiveProjection?: boolean;
+  /**
+   * IANA time zone the query's dates are read in ("last week", "tomorrow").
+   * Defaults to the gateway host's zone.
+   */
+  timeZone?: string;
+  /** Per-request override of `SearchConfig.temporal` (e.g. to compare with and without the lane). */
+  temporal?: SearchTemporalConfig & {
+    /**
+     * ISO instant the query's relative dates ("today", "last week") are read
+     * against, for re-asking a query as of when it was first asked. Defaults
+     * to now.
+     */
+    referenceTime?: string;
+  };
+}
+
+/**
+ * Temporal-lane configuration. Loaded from `search.temporal` in
+ * `omnesis.json` (see `search-config.ts` for defaults).
+ */
+export interface SearchTemporalConfig {
+  /** Read time phrases in the query and fuse the temporal lane beside BM25 and vector. */
+  enabled?: boolean;
+  /** RRF weight of the temporal lane's list. */
+  weight?: number;
+}
+
+/** The time a query named, as the temporal lane read it. */
+export interface SearchTemporalIntent {
+  /** Half-open windows, ISO instants. */
+  windows: Array<{ start: string; endExclusive: string; text: string }>;
+  /** The query's words with the temporal phrases removed. */
+  strippedText: string;
+  timeZone: string;
 }
 
 /**
@@ -162,6 +196,8 @@ export interface SearchResultItem {
 export interface ScoreBreakdown {
   bm25Rank?: number;
   vectorRank?: number;
+  /** Rank in the temporal lane's document list, when the query named a time. */
+  temporalRank?: number;
   /** RRF score BEFORE the top-rank bonus is applied (raw fused value). */
   rrfScore?: number;
   /**
@@ -206,6 +242,7 @@ export interface SearchStageReport {
   rrfK?: number;
   bm25Weight?: number;
   vectorWeight?: number;
+  temporalWeight?: number;
   /** Number of fused rows after the stage. */
   resultCount?: number;
   /** Effective KNN k after applying over-fetch (vector stage only). */
@@ -218,6 +255,12 @@ export interface SearchStageReport {
   engine?: string;
   /** Tokens dropped from BM25 MATCH for exceeding the common-token threshold. */
   droppedTokens?: string[];
+  /** Temporal lane: documents the time index placed inside the windows. */
+  eventDocuments?: number;
+  /** Temporal lane: ms the pipeline spent reading those documents from the time index. */
+  eventMs?: number;
+  /** Temporal lane: how the window was ranked — by its words, or by time alone. */
+  ranking?: "relevance" | "time";
 }
 
 /**
@@ -295,6 +338,8 @@ export interface SearchResponse {
     original: string;
     parsedFilters?: SearchFilters;
     effectiveText?: string;
+    /** The time the query named, when the temporal lane read one. */
+    temporal?: SearchTemporalIntent;
   };
   timing: {
     totalMs: number;
@@ -302,6 +347,8 @@ export interface SearchResponse {
     vectorMs?: number;
     bm25Candidates?: number;
     vectorCandidates?: number;
+    temporalMs?: number;
+    temporalCandidates?: number;
   };
   /**
    * Structured report for each stage that could have run. On the hybrid
@@ -315,6 +362,8 @@ export interface SearchResponse {
     bm25?: SearchStageReport;
     vector?: SearchStageReport;
     fusion?: SearchStageReport;
+    // The temporal lane; present only when the query named a time and the lane is enabled.
+    temporal?: SearchStageReport;
     boost?: SearchStageReport;
     // Post-fusion per-source diversity / MMR. On by default; present whenever
     // the stage runs (a mechanism is configured — MMR by default), omitted

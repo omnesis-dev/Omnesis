@@ -207,6 +207,25 @@ const searchDefaultFilters = z
   })
   .strict();
 
+const searchTemporal = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe(
+        'Read time phrases in a query ("last week", "in March", "15 juin") and add a temporal lane — documents created in, or about, the named window, ranked by the query\'s other words — to the fusion beside BM25 and vector. Default true.',
+      )
+      .optional(),
+    weight: z
+      .number()
+      .min(0)
+      .max(10)
+      .describe(
+        "RRF weight of the temporal lane's list, relative to bm25Weight and vectorWeight. Default 1.",
+      )
+      .optional(),
+  })
+  .strict();
+
 const searchVector = z
   .object({
     /** Over-fetch multiplier for HNSW post-filter. Default 10. */
@@ -521,6 +540,7 @@ const search = z
       )
       .optional(),
     vector: searchVector.describe("Vector-stage tunables.").optional(),
+    temporal: searchTemporal.describe("Temporal-lane tunables.").optional(),
     bm25: searchBm25.describe("BM25-stage tunables.").optional(),
     snapshot: searchSnapshot.describe("Search-snapshot maintenance.").optional(),
     readHandle: searchReadHandle.describe("Read-only index.db connection tunables.").optional(),

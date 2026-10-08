@@ -10,6 +10,7 @@ export function ScoreDetails({ breakdown }) {
     <div class="score-details">
       ${breakdown.bm25Rank != null && html`<span>BM25: #${breakdown.bm25Rank}</span>`}
       ${breakdown.vectorRank != null && html`<span>Vec: #${breakdown.vectorRank}</span>`}
+      ${breakdown.temporalRank != null && html`<span>Time: #${breakdown.temporalRank}</span>`}
       ${breakdown.rrfScore != null && html`<span>RRF: ${breakdown.rrfScore.toFixed(4)}</span>`}
       ${breakdown.rankBonus != null && html`<span>Rank bonus: +${breakdown.rankBonus.toFixed(3)}</span>`}
       ${breakdown.typeBoost != null && html`<span>Type: ${breakdown.typeBoost.toFixed(3)}x</span>`}

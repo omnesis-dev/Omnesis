@@ -15,6 +15,7 @@ import type {
   SearchFilters,
   SearchParams,
   SearchSourcePriorsConfig,
+  SearchTemporalConfig,
   SearchVectorConfig,
 } from "./types.js";
 
@@ -165,6 +166,23 @@ export function resolveVectorConfig(config?: SearchConfig): Required<SearchVecto
   };
 }
 
+/** Whether the temporal lane runs by default. */
+export const DEFAULT_TEMPORAL_ENABLED = true;
+/** Default RRF weight of the temporal lane's list. */
+export const DEFAULT_TEMPORAL_WEIGHT = 1.0;
+
+/** Merge user-supplied temporal-lane config (then a per-request override) onto the defaults. */
+export function resolveTemporalConfig(
+  config?: SearchConfig,
+  override?: SearchTemporalConfig,
+): Required<SearchTemporalConfig> {
+  const user = { ...config?.temporal, ...override };
+  return {
+    enabled: user.enabled ?? DEFAULT_TEMPORAL_ENABLED,
+    weight: user.weight ?? DEFAULT_TEMPORAL_WEIGHT,
+  };
+}
+
 export interface SearchConfig {
   /** Default-on grouping and graph provenance for unrestricted agent searches. */
   v2?: Partial<SearchV2Config>;
@@ -176,6 +194,8 @@ export interface SearchConfig {
   defaultFilters?: SearchFilters;
   /** Vector-stage knobs. */
   vector?: SearchVectorConfig;
+  /** Temporal-lane knobs. */
+  temporal?: SearchTemporalConfig;
   bm25?: { commonTokenThreshold?: number; memoryIndex?: boolean };
   /**
    * Snapshot isolation for the search-handle index.db connection.

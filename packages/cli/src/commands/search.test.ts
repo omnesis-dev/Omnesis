@@ -13,6 +13,7 @@ import { gw, EXIT_AUTH, EXIT_GATEWAY_ERROR, EXIT_USER_ERROR } from "../utils.js"
 import { searchCommand } from "./search.js";
 import { renderAgentSearch, type AgentSearchResult } from "./search-agent-context.js";
 
+const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const run = searchCommand.run as (context: { args: Record<string, unknown> }) => Promise<void>;
 const fx = { images: false, hyperlinks: false, meta: {} };
 const agent: AgentSearchResult = {
@@ -76,9 +77,10 @@ describe("search agent context requests", () => {
     expect(args.verbose).toBe(true);
     vi.mocked(gw).mockResolvedValue(Response.json(legacy));
     await run({ args: { query: "agreement", limit: "10" } });
+    // Ordinary search carries this machine's zone for the query's own dates.
     expect(gw).toHaveBeenCalledExactlyOnceWith("/search", {
       method: "POST",
-      body: JSON.stringify({ text: "agreement", limit: 10 }),
+      body: JSON.stringify({ text: "agreement", limit: 10, timeZone: localZone }),
     });
     expect(JSON.parse(vi.mocked(console.log).mock.calls[0]![0] as string)).toEqual(legacy);
     expect(console.error).not.toHaveBeenCalled();
@@ -107,6 +109,9 @@ describe("search agent context requests", () => {
         "/admin/search/agent-context",
         "/search",
       ]);
+      expect(JSON.parse(vi.mocked(gw).mock.calls[1]![1]!.body as string)).toMatchObject({
+        timeZone: localZone,
+      });
       expect(console.error).toHaveBeenCalledExactlyOnceWith(
         expect.stringContaining("ordinary search"),
       );

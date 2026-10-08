@@ -75,6 +75,10 @@ function StageRow({ branch, label, report, modelId }) {
   // Vector stage carries an `embedMs` + `sqlMs` split — surface it
   // inline as `(embed=Xms, sql=Yms)` so users can tell whether a
   // slow vector stage was embedder contention or HNSW search + JOIN.
+  // The temporal lane says how many documents the time index placed in its
+  // windows and whether it ranked them by the query's words or by time.
+  if (report.eventDocuments != null) parts.push(`${report.eventDocuments} about the window`);
+  if (report.ranking === "time") parts.push("listed by time");
   if (report.embedMs != null || report.sqlMs != null) {
     const sub = [];
     if (report.embedMs != null) sub.push(`embed=${report.embedMs}ms`);
@@ -98,6 +102,7 @@ function FusionRow({ branch, report }) {
     const weights = [];
     if (report.bm25Weight != null) weights.push(`bm25=${report.bm25Weight}`);
     if (report.vectorWeight != null) weights.push(`vector=${report.vectorWeight}`);
+    if (report.temporalWeight != null) weights.push(`time=${report.temporalWeight}`);
     const params = [];
     if (report.rrfK != null) params.push(`k=${report.rrfK}`);
     if (weights.length) params.push(weights.join(", "));
@@ -114,6 +119,20 @@ function FusionRow({ branch, report }) {
       <span class="pipeline-val">${summary}</span>
     </div>
   `;
+}
+
+/** A day as `YYYY-MM-DD` in the browser's zone. */
+function localDay(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** "last week → 2026-09-28 – 2026-10-04": a read time phrase and the days it covers. */
+export function formatTemporalWindow(w) {
+  const first = localDay(Date.parse(w.start));
+  const last = localDay(Date.parse(w.endExclusive) - 1);
+  return `${w.text} → ${first === last ? first : `${first} – ${last}`}`;
 }
 
 export function PipelineDebug({ response }) {
@@ -133,13 +152,16 @@ export function PipelineDebug({ response }) {
   const vectorStage = stages?.vector ?? (timing.vectorMs != null
     ? { status: "ran", durationMs: timing.vectorMs, candidates: timing.vectorCandidates }
     : null);
+  const temporalStage = stages?.temporal;
   const fusionStage = stages?.fusion;
+  const windows = query.temporal?.windows ?? [];
 
-  // Pick the last-visible stage in order [bm25, vector, fusion] so we
+  // Pick the last-visible stage in order [bm25, vector, temporal, fusion] so we
   // draw "└─" instead of "├─" on the terminal row for a clean tree.
   const visibleStages = [
     bm25Stage ? "bm25" : null,
     vectorStage ? "vector" : null,
+    temporalStage ? "temporal" : null,
     fusionStage ? "fusion" : null,
   ].filter(Boolean);
   const lastStage = visibleStages[visibleStages.length - 1];
@@ -164,6 +186,13 @@ export function PipelineDebug({ response }) {
               <span class="pipeline-val">"${query.effectiveText}"</span>
             </div>
           `}
+          ${windows.length > 0 && html`
+            <div class="pipeline-row">
+              <span class="pipeline-branch">├─</span>
+              <span class="pipeline-key">Time:</span>
+              <span class="pipeline-val">${windows.map(formatTemporalWindow).join("; ")}</span>
+            </div>
+          `}
           <div class="pipeline-row">
             <span class="pipeline-branch">└─</span>
             <span class="pipeline-key">Filters:</span>
@@ -180,6 +209,7 @@ export function PipelineDebug({ response }) {
         <div class="pipeline-tree">
           <${StageRow} branch=${branch("bm25")} label="BM25" report=${bm25Stage} />
           <${StageRow} branch=${branch("vector")} label="Vector" report=${vectorStage} modelId=${embeddingModel} />
+          <${StageRow} branch=${branch("temporal")} label="Time window" report=${temporalStage} />
           <${FusionRow} branch=${branch("fusion")} report=${fusionStage} />
           ${visibleStages.length === 0 && html`
             <div class="pipeline-row">
