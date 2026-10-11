@@ -34,6 +34,7 @@ import {
   sourceValidateParamBody,
   sourceMemberBody,
   sourceMemberConfigBody,
+  sourceLegacyRowsBody,
   sourceResyncBody,
 } from "../../schemas/index.js";
 import { normalizeIcon } from "../../../icon-normalizer.js";
@@ -65,6 +66,8 @@ import type { AppEnv, RouteApp } from "../types.js";
  *   DELETE /admin/sources/:id
  *   POST   /admin/sources/:id/sync
  *   POST   /admin/sources/:id/resync
+ *   GET    /admin/sources/:id/legacy-rows
+ *   POST   /admin/sources/:id/legacy-rows
  *   GET    /admin/sources/:id/debug
  *   GET    /admin/sync/status
  *   GET    /admin/sync/status/:id
@@ -625,6 +628,29 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
       const { deviceId } = c.req.valid("json");
       const result = await sourceService.resync(id, deviceId);
       return c.json({ ok: true, ...result });
+    },
+  );
+
+  // ── Legacy rows no account has claimed ──
+  // A table several accounts of one source type share can hold rows written
+  // before it recorded which account wrote them. Syncing never waits on them
+  // and the gateway never deletes them on its own; the operator settles them
+  // here, as the source's own rows or as rows to drop.
+  app.get("/admin/sources/:id/legacy-rows", scope.admin(), async (c) => {
+    const id = SourceId(c.req.param("id"));
+    assertMutableSource(id);
+    return c.json({ tables: await sourceService.unattributedLegacyRows(id) });
+  });
+  app.post(
+    "/admin/sources/:id/legacy-rows",
+    scope.admin(),
+    validateJson(sourceLegacyRowsBody),
+    async (c) => {
+      const id = SourceId(c.req.param("id"));
+      assertMutableSource(id);
+      const { action } = c.req.valid("json");
+      const tables = await sourceService.settleLegacyRows(id, action);
+      return c.json({ ok: true, action, tables });
     },
   );
 

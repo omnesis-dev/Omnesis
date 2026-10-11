@@ -98,6 +98,8 @@ describe("admin mutations on the internal source", () => {
       { configOverride: {} },
     ],
     ["GET", `/admin/sources/${OMNESIS_NOTES_SOURCE_ID}/debug`, undefined],
+    ["GET", `/admin/sources/${OMNESIS_NOTES_SOURCE_ID}/legacy-rows`, undefined],
+    ["POST", `/admin/sources/${OMNESIS_NOTES_SOURCE_ID}/legacy-rows`, { action: "drop" }],
     ["POST", `/admin/sources/${OMNESIS_NOTES_SOURCE_ID}/import-history`, { values: {} }],
     ["GET", `/admin/sources/${OMNESIS_NOTES_SOURCE_ID}`, undefined],
     ["GET", `/admin/sync/status/${OMNESIS_NOTES_SOURCE_ID}`, undefined],

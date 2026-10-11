@@ -166,6 +166,24 @@ function canonicalDuckType(type: string): string {
   return t;
 }
 
+/** What an operator can do with legacy rows no relation will ever attribute. */
+export type LegacyOwnershipAction = "claim" | "drop";
+
+/** One table's share of a legacy-ownership report or settlement. */
+export interface LegacyOwnershipTable {
+  tableName: string;
+  /** Rows reported, or rows the settlement changed. */
+  rows: number;
+  /** Rows still unattributed when the call returned; a settlement is re-run until this is 0. */
+  remaining: number;
+}
+
+/** Rows one settlement transaction may take; each batch is its own write. */
+const LEGACY_SETTLE_BATCH = 1000;
+
+/** Batches one settlement call runs before returning what remains, so a request stays bounded. */
+const LEGACY_SETTLE_BATCHES_PER_CALL = 20;
+
 export class AnalyticsTableManager {
   private readonly ownership: AnalyticsAccountOwnership;
   constructor(
@@ -737,9 +755,10 @@ export class AnalyticsTableManager {
 
           let deleted = 0;
           if (deletedKeys.length > 0) {
-            await this.ownership.assertResolved(
+            await this.ownership.assertRepairSettled(
               p.conn,
               schema,
+              sourceId,
               joinScopes(
                 `${rowKeyExpr(keyColumns)} IN (${deletedKeys.map((key) => `'${escapeStr(key)}'`).join(", ")})`,
                 streamScope,
@@ -1298,7 +1317,7 @@ export class AnalyticsTableManager {
         const streamScope = streamKeyed
           ? `${quoteIdent(STREAM_COLUMN)} = '${escapeStr(streamId)}'`
           : undefined;
-        await this.ownership.assertResolved(conn, schema, streamScope);
+        await this.ownership.assertRepairSettled(conn, schema, sourceId, streamScope);
         const sourceScope = joinScopes(
           await this.sourceScopePredicate(conn, sourceId, tableName, schema),
           streamScope,
@@ -1458,9 +1477,10 @@ export class AnalyticsTableManager {
         streamKeyed && row.streamId !== ""
           ? [...schema.primaryKey, STREAM_COLUMN]
           : schema.primaryKey;
-      await this.ownership.assertResolved(
+      await this.ownership.assertRepairSettled(
         conn,
         schema,
+        row.sourceId,
         joinScopes(
           `${rowKeyExpr(analyticsDeleteKey(schema))} = '${escapeStr(row.keyValue)}'`,
           streamKeyed ? `${quoteIdent(STREAM_COLUMN)} = '${escapeStr(row.streamId)}'` : undefined,
@@ -1615,9 +1635,10 @@ export class AnalyticsTableManager {
             const schema = await this.readPersistedSchema(p.conn, entry.tableName);
             if (!schema) throw new RowKeyError("Cannot remove analytics data without its schema");
             await this.ownership.repair(p.conn, schema, sourceId);
-            await this.ownership.assertResolved(
+            await this.ownership.assertRepairSettled(
               p.conn,
               schema,
+              sourceId,
               `${quoteIdent(STREAM_COLUMN)} = '${escapeStr(streamId)}'`,
             );
           }
@@ -1688,6 +1709,132 @@ export class AnalyticsTableManager {
   }
 
   /**
+   * The rows, per table the source writes, that no account has claimed and
+   * nothing will attribute: written before the table recorded its writer, and
+   * without an owned parent row to inherit from. A table whose attribution is
+   * settled is left out.
+   */
+  async unattributedLegacyRows(sourceId: string): Promise<LegacyOwnershipTable[]> {
+    return this.pool.withConn(async ({ conn }) => {
+      const report: LegacyOwnershipTable[] = [];
+      for (const entry of await this.catalog.readEntriesForSource(conn, sourceId)) {
+        if (!(await this.physicalTableExists(conn, entry.tableName))) continue;
+        const schema = await this.readPersistedSchema(conn, entry.tableName);
+        if (!schema?.sharedDiscriminatorColumn) continue;
+        const rows = await this.ownership.countUnattributed(conn, schema, sourceId);
+        if (rows > 0) report.push({ tableName: entry.tableName, rows, remaining: rows });
+      }
+      return report;
+    });
+  }
+
+  /**
+   * Settle the legacy rows nothing attributes, on the operator's word: `claim`
+   * labels them as this source's account and re-homes their temporal
+   * projections, `drop` deletes them with those projections. Each batch is its
+   * own write transaction, so a long settlement never holds the writer, and a
+   * call runs a bounded number of batches before reporting what remains; the
+   * caller repeats it until nothing does.
+   */
+  async settleLegacyRows(
+    sourceId: string,
+    action: LegacyOwnershipAction,
+  ): Promise<LegacyOwnershipTable[]> {
+    const settled: LegacyOwnershipTable[] = [];
+    for (const { tableName } of await this.unattributedLegacyRows(sourceId)) {
+      let rows = 0;
+      for (let batches = 0; batches < LEGACY_SETTLE_BATCHES_PER_CALL; batches++) {
+        const batch = await this.pool.serializeWrite(() =>
+          this.pool.withConn(async ({ conn }) => {
+            await conn.run("BEGIN TRANSACTION");
+            try {
+              const schema = await this.readPersistedSchema(conn, tableName);
+              const touched = schema?.sharedDiscriminatorColumn
+                ? await this.settleBatch(conn, schema, sourceId, action)
+                : 0;
+              await conn.run("COMMIT");
+              return touched;
+            } catch (error) {
+              try {
+                await conn.run("ROLLBACK");
+              } catch {
+                // Preserve the original error; a failed rollback is secondary.
+              }
+              throw error;
+            }
+          }),
+        );
+        rows += batch;
+        if (batch === 0) break;
+      }
+      const remaining = await this.pool.withConn(async ({ conn }) => {
+        const schema = await this.readPersistedSchema(conn, tableName);
+        return schema ? this.ownership.countUnattributed(conn, schema, sourceId) : 0;
+      });
+      settled.push({ tableName, rows, remaining });
+      log.info(
+        `Settled ${rows} unattributed legacy rows in ${tableName} for ${sourceId} (${action}); ${remaining} remain`,
+      );
+    }
+    return settled;
+  }
+
+  /**
+   * Claim or drop one batch of a table's unattributed legacy rows; returns how
+   * many rows changed. The rows are named by their text key first, so the
+   * projections and the rows the batch touches are exactly the same set. A
+   * legacy row's projection was recorded by whichever account wrote it, so a
+   * claim moves the projection to the claimant and a drop finds it by table
+   * and key alone.
+   */
+  private async settleBatch(
+    conn: DuckDBConnection,
+    schema: AnalyticsTableSchema,
+    sourceId: string,
+    action: LegacyOwnershipAction,
+  ): Promise<number> {
+    const streamKeyed = await this.catalog.isStreamKeyed(conn, schema.tableName);
+    const keys = streamKeyed ? [...schema.primaryKey, STREAM_COLUMN] : schema.primaryKey;
+    const keyOf = rowKeyExpr(keys);
+    const unattributed = await this.ownership.unattributedScope(conn, schema, sourceId);
+    const victims = await conn.runAndReadAll(
+      `SELECT ${keyOf} FROM ${quoteIdent(schema.tableName)} c WHERE ${unattributed} LIMIT ${LEGACY_SETTLE_BATCH}`,
+    );
+    const named = (victims.getRows() as unknown[][]).map((row) => String(row[0]));
+    if (named.length === 0) return 0;
+    const namedScope = `${keyOf} IN (${named.map((key) => `'${escapeStr(key)}'`).join(", ")})`;
+    if (schema.temporalProjection) {
+      // A projection's key names the stream unless it is the empty one (see
+      // ingestPage): the same rule selects the keys to move or retract.
+      const streams = streamKeyed
+        ? [
+            { key: schema.primaryKey, where: `${quoteIdent(STREAM_COLUMN)} = ''` },
+            { key: keys, where: `${quoteIdent(STREAM_COLUMN)} <> ''` },
+          ]
+        : [{ key: schema.primaryKey, where: "TRUE" }];
+      for (const { key, where } of streams) {
+        const recordKeys = await this.selectRecordKeysWhere(
+          conn,
+          schema.tableName,
+          key,
+          `${namedScope} AND ${where}`,
+        );
+        if (action === "claim")
+          await this.temporalProjections.rehomeKeys(conn, schema.tableName, recordKeys, sourceId);
+        else await this.temporalProjections.deleteKeysForTable(conn, schema.tableName, recordKeys);
+      }
+    }
+    const nullOwner = `${quoteIdent(schema.sharedDiscriminatorColumn!)} IS NULL`;
+    const touched =
+      action === "claim"
+        ? await this.ownership.attributeNamed(conn, schema, sourceId, keyOf, named)
+        : await this.deleteRecordsOnConnection(conn, schema.tableName, named, keyOf, nullOwner);
+    await this.ownership.settlePending(conn, schema);
+    if (action === "drop") await this.updateCatalogStatsOnConnection(conn, schema.tableName);
+    return touched;
+  }
+
+  /**
    * Commit one bounded repair per table before any source/stream teardown.
    * A refusal leaves config and all destructive planes untouched; repeated
    * admissions can finish large repairs without rolling progress back.
@@ -1706,9 +1853,10 @@ export class AnalyticsTableManager {
           schemas.push(schema);
         }
         for (const schema of schemas) {
-          await this.ownership.assertResolved(
+          await this.ownership.assertRepairSettled(
             conn,
             schema,
+            sourceId,
             streamId === undefined
               ? undefined
               : `${quoteIdent(STREAM_COLUMN)} = '${escapeStr(streamId)}'`,
@@ -1909,10 +2057,12 @@ export class AnalyticsTableManager {
           }
           const schema = await this.readPersistedSchema(p.conn, entry.tableName);
           if (!schema) throw new RowKeyError("Cannot remove analytics data without its schema");
+          // A table this source owns outright is dropped whole below; only a
+          // shared table's account-scoped delete needs attribution settled.
+          if (entry.sourceId === sourceId) continue;
           await this.ownership.repair(p.conn, schema, sourceId);
-          await this.ownership.assertResolved(p.conn, schema);
-          if (entry.sourceId !== sourceId)
-            await this.sourceScopePredicate(p.conn, sourceId, entry.tableName, schema);
+          await this.ownership.assertRepairSettled(p.conn, schema, sourceId);
+          await this.sourceScopePredicate(p.conn, sourceId, entry.tableName, schema);
         }
         await this.temporalProjections.deleteForSource(p.conn, sourceId);
         await this.watchOutbox.deleteSource(p.conn, sourceId);

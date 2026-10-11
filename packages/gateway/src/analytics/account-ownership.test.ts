@@ -107,28 +107,33 @@ describe("legacy analytics account ownership", () => {
       ).rows,
     ).toEqual([[false]]);
   });
-  test("orphans preserve all removal effects and recover after their parent arrives", async () => {
+  test("an orphan never holds up removal; it stays, and its parent's arrival still attributes it", async () => {
     await seed();
     await db.insertRecords(child.tableName, [{ id: "orphan", parent_id: "later" }], ["id"]);
     await db.ensureTable(parent, "fixture-source:first");
     await db.ensureTable(child, "fixture-source:first");
-    await expect(db.deleteAnalyticsForSource("fixture-source:first")).rejects.toThrow(
-      /unresolved account ownership/,
-    );
+    await db.prepareSourceRemoval("fixture-source:first");
+    await db.deleteAnalyticsForSource("fixture-source:first");
+    // The shared table scopes the removal to the account; the orphan is nobody's.
     expect(await rows()).toEqual([
-      ["c1", "first"],
       ["c2", "second"],
       ["orphan", null],
     ]);
-    expect((await db.executeQuery("SELECT COUNT(*) FROM ownership_parents")).rows).toEqual([[2]]);
+    expect((await db.executeQuery("SELECT COUNT(*) FROM ownership_parents")).rows).toEqual([[1]]);
+    expect(await db.unattributedLegacyRows("fixture-source:second")).toEqual([
+      { tableName: child.tableName, rows: 1, remaining: 1 },
+    ]);
     await db.ingestPage({
       tableName: parent.tableName,
-      sourceId: "fixture-source:first",
+      sourceId: "fixture-source:second",
       records: [{ id: "later" }],
     });
-    await db.ensureTable(child, "fixture-source:first");
-    await db.deleteAnalyticsForSource("fixture-source:first");
-    expect(await rows()).toEqual([["c2", "second"]]);
+    await db.ensureTable(child, "fixture-source:second");
+    expect(await rows()).toEqual([
+      ["c2", "second"],
+      ["orphan", "second"],
+    ]);
+    expect(await db.unattributedLegacyRows("fixture-source:second")).toEqual([]);
   });
   test("bounded repair commits progress beyond an orphan before destructive retries", async () => {
     await seed();
@@ -153,7 +158,7 @@ describe("legacy analytics account ownership", () => {
         records: [],
         deletedIds: ["later", "p1"],
       }),
-    ).rejects.toThrow(/unresolved account ownership/);
+    ).rejects.toThrow(/still being attributed/);
     expect(await unresolved()).toBe(1004); // page repair rolled back, prerequisite did not
     await db.ensureTable(child, "fixture-source:first");
     expect(await unresolved()).toBe(4);
@@ -255,13 +260,13 @@ describe("legacy analytics account ownership", () => {
         sourceId: "fixture-source:first",
         records: [{ id: unresolved, parent_id: "p2" }],
       }),
-    ).rejects.toThrow(/unresolved account ownership|different source account/);
+    ).rejects.toThrow(/still being attributed|different source account/);
     expect(
       (await db.executeQuery("SELECT COUNT(*) FROM ownership_children WHERE owner = 'first'")).rows,
     ).toEqual([[1]]);
   });
 
-  test("orphan ownership blocks snapshots and old absence marks without deleting the orphan", async () => {
+  test("an orphan passes snapshots, old absence marks and removal untouched", async () => {
     await db.ensureTable(oldParent, "fixture-source");
     await db.ensureTable(oldChild, "fixture-source:first");
     await db.insertRecords(child.tableName, [{ id: "orphan", parent_id: "later" }], ["id"]);
@@ -277,19 +282,17 @@ describe("legacy analytics account ownership", () => {
     await db.ensureTable(oldChild, "fixture-source:second");
     await db.ensureTable(parent, "fixture-source:first");
     await db.ensureTable(child, "fixture-source:first");
-    await expect(db.deleteAbsentRecords(due)).rejects.toThrow(/unresolved account ownership/);
-    await expect(
-      db.ingestPage({
-        tableName: child.tableName,
-        sourceId: "fixture-source:first",
-        records: [],
-        presentIds: [],
-        absencePolicy: { minObservations: 1, minAgeMs: 0, maxMarksPerSnapshot: 100 },
-      }),
-    ).rejects.toThrow(/unresolved account ownership/);
-    await expect(db.prepareSourceRemoval("fixture-source:first")).rejects.toThrow(
-      /unresolved account ownership/,
-    );
+    // The absence was marked while the table had no account column; the
+    // sweep's account scope now excludes a row nobody owns.
+    expect(await db.deleteAbsentRecords(due)).toEqual({ deleted: 0, disputed: 0 });
+    await db.ingestPage({
+      tableName: child.tableName,
+      sourceId: "fixture-source:first",
+      records: [],
+      presentIds: [],
+      absencePolicy: { minObservations: 1, minAgeMs: 0, maxMarksPerSnapshot: 100 },
+    });
+    await db.prepareSourceRemoval("fixture-source:first");
     expect(await rows()).toEqual([["orphan", null]]);
   });
 
@@ -443,7 +446,7 @@ describe("legacy analytics account ownership", () => {
   );
 
   test.each([false, true])(
-    "missing physical parent allows known-owned cleanup but protects orphans: %s",
+    "missing physical parent allows known-owned cleanup and leaves an orphan in place: %s",
     async (orphan) => {
       await seed();
       if (orphan)
@@ -458,23 +461,16 @@ describe("legacy analytics account ownership", () => {
       raw.closeSync();
       db = new AnalyticsDb(join(directory, "analytics.db"));
       await db.open();
-      if (orphan) {
-        await expect(db.prepareSourceRemoval("fixture-source:first")).rejects.toThrow(
-          /unresolved account ownership/,
-        );
-        await expect(db.deleteAnalyticsForSource("fixture-source:first")).rejects.toThrow(
-          /unresolved account ownership/,
-        );
-        expect(await rows()).toEqual([
-          ["c1", "first"],
-          ["c2", "second"],
-          ["orphan", null],
-        ]);
-      } else {
-        await db.prepareSourceRemoval("fixture-source:first");
-        await db.deleteAnalyticsForSource("fixture-source:first");
-        expect(await rows()).toEqual([["c2", "second"]]);
-      }
+      await db.prepareSourceRemoval("fixture-source:first");
+      await db.deleteAnalyticsForSource("fixture-source:first");
+      expect(await rows()).toEqual(
+        orphan
+          ? [
+              ["c2", "second"],
+              ["orphan", null],
+            ]
+          : [["c2", "second"]],
+      );
     },
   );
 
@@ -538,4 +534,332 @@ describe("legacy analytics account ownership", () => {
       ).toEqual([[keyDrift === "persisted" ? "group_key" : "id", null]]);
     },
   );
+
+  /**
+   * The shape of a provider-owned table several accounts write with no parent
+   * relation: nothing but an incoming record, the catalog's exclusive owner or
+   * the operator can ever attribute its legacy rows.
+   */
+  const events: AnalyticsTableSchema = {
+    tableName: "ownership_events",
+    displayName: "Events",
+    description: "Invented calendar rows",
+    columns: [
+      { name: "id", type: "VARCHAR", description: "Key" },
+      { name: "account", type: "VARCHAR", description: "Owner", nullable: true },
+      { name: "title", type: "VARCHAR", description: "Title", nullable: true },
+      { name: "start_time", type: "TIMESTAMPTZ", description: "Start" },
+      { name: "end_time", type: "TIMESTAMPTZ", description: "End", nullable: true },
+    ],
+    primaryKey: ["id"],
+    semanticTimeColumn: "start_time",
+    record: { titleColumns: ["title"], keyColumns: ["start_time", "end_time"] },
+    sharedDiscriminatorColumn: "account",
+    temporalProjection: {
+      slot: "calendar",
+      start: "$semanticTime",
+      end: "end_time",
+      label: "title",
+      kind: "appointment",
+      modality: "scheduled",
+    },
+  };
+  const oldEvents: AnalyticsTableSchema = {
+    ...events,
+    columns: events.columns.filter((column) => column.name !== "account"),
+    sharedDiscriminatorColumn: undefined,
+  };
+  const event = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    title: `Meeting ${id}`,
+    start_time: "2026-03-01T10:00:00Z",
+    end_time: "2026-03-01T11:00:00Z",
+    ...extra,
+  });
+  const eventRows = async () =>
+    (await db.executeQuery("SELECT id, account FROM ownership_events ORDER BY id")).rows;
+  const pendingFlag = async () =>
+    (
+      await db.executeQuery(
+        "SELECT ownership_backfill_pending FROM _analytics_catalog WHERE table_name = 'ownership_events'",
+      )
+    ).rows[0]![0];
+  const projections = async () =>
+    (
+      await db.executeQuery(
+        "SELECT COUNT(*) FROM _temporal_projections WHERE table_name = 'ownership_events'",
+      )
+    ).rows[0]![0];
+  /** Legacy rows written while two accounts shared the table without an account column. */
+  async function seedSharedEvents(legacy: Record<string, unknown>[]) {
+    await db.ingestPage({
+      tableName: events.tableName,
+      schema: oldEvents,
+      sourceId: "fixture-source:first",
+      records: [],
+    });
+    await db.ingestPage({
+      tableName: events.tableName,
+      schema: oldEvents,
+      sourceId: "fixture-source:second",
+      records: legacy,
+    });
+    await db.ensureTable(events, "fixture-source:first");
+    await db.ensureTable(events, "fixture-source:second");
+  }
+
+  test("a tombstone for a legacy row nothing attributes commits its page and leaves the row", async () => {
+    await seedSharedEvents([event("e1"), event("e2")]);
+    const page = await db.ingestPage({
+      tableName: events.tableName,
+      sourceId: "fixture-source:first",
+      records: [event("e3")],
+      deletedIds: ["e1"],
+    });
+    expect(page.deleted).toBe(0);
+    expect(await eventRows()).toEqual([
+      ["e1", null],
+      ["e2", null],
+      ["e3", "first"],
+    ]);
+    expect(await pendingFlag()).toBe(true);
+    expect(await db.unattributedLegacyRows("fixture-source:first")).toEqual([
+      { tableName: events.tableName, rows: 2, remaining: 2 },
+    ]);
+    // A snapshot cannot delete it either, and an account re-emitting the key adopts it.
+    await db.ingestPage({
+      tableName: events.tableName,
+      sourceId: "fixture-source:first",
+      records: [event("e1")],
+      presentIds: ["e1", "e3"],
+      absencePolicy: { minObservations: 1, minAgeMs: 0, maxMarksPerSnapshot: 100 },
+    });
+    expect(await eventRows()).toEqual([
+      ["e1", "first"],
+      ["e2", null],
+      ["e3", "first"],
+    ]);
+    expect(await db.unattributedLegacyRows("fixture-source:second")).toEqual([
+      { tableName: events.tableName, rows: 1, remaining: 1 },
+    ]);
+  });
+
+  test("a single-account history attributes its legacy rows itself; two accounts do not", async () => {
+    // The account column exists but was never stamped, and the catalog still
+    // records the one account that has ever claimed the table.
+    await db.ingestPage({
+      tableName: events.tableName,
+      schema: events,
+      sourceId: "fixture-source:first",
+      records: [],
+    });
+    await db.close();
+    const raw = await DuckDBInstance.create(join(directory, "analytics.db"));
+    const conn = await raw.connect();
+    for (let i = 0; i < 1200; i += 400) {
+      await conn.run(
+        `INSERT INTO ownership_events (id, title, start_time) VALUES ${Array.from(
+          { length: 400 },
+          (_, j) =>
+            `('e${String(i + j).padStart(4, "0")}', 'Meeting', TIMESTAMPTZ '2026-03-01 10:00:00+00')`,
+        ).join(", ")}`,
+      );
+    }
+    await conn.run("UPDATE _analytics_catalog SET ownership_backfill_pending = true");
+    conn.closeSync();
+    raw.closeSync();
+    db = new AnalyticsDb(join(directory, "analytics.db"));
+    await db.open();
+    await db.ensureTable(events, "fixture-source:first");
+    const unattributed = async () =>
+      (await db.executeQuery("SELECT COUNT(*) FROM ownership_events WHERE account IS NULL"))
+        .rows[0]![0];
+    // One bounded batch per admission; the pending flag clears with the last row.
+    expect(await unattributed()).toBe(200);
+    expect(await pendingFlag()).toBe(true);
+    await db.ingestPage({
+      tableName: events.tableName,
+      sourceId: "fixture-source:first",
+      records: [],
+      deletedIds: ["e0000"],
+    });
+    expect(await unattributed()).toBe(0);
+    expect(await eventRows()).toHaveLength(1199);
+    expect(await pendingFlag()).toBe(false);
+
+    await db.close();
+    db = new AnalyticsDb(join(directory, "analytics.db"));
+    await db.open();
+    await db.deleteAnalyticsForSource("fixture-source:first");
+    await seedSharedEvents([event("e1")]);
+    await db.ingestPage({
+      tableName: events.tableName,
+      sourceId: "fixture-source:first",
+      records: [event("e2")],
+    });
+    expect(await eventRows()).toEqual([
+      ["e1", null],
+      ["e2", "first"],
+    ]);
+    expect(await pendingFlag()).toBe(true);
+  });
+
+  test("a source holding unattributed legacy rows can still be removed", async () => {
+    await seedSharedEvents([event("e1")]);
+    await db.ingestPage({
+      tableName: events.tableName,
+      sourceId: "fixture-source:first",
+      records: [event("e2")],
+    });
+    await db.ingestPage({
+      tableName: events.tableName,
+      sourceId: "fixture-source:second",
+      records: [event("e3")],
+    });
+    await db.prepareSourceRemoval("fixture-source:first");
+    await db.deleteAnalyticsForSource("fixture-source:first");
+    expect(await eventRows()).toEqual([
+      ["e1", null],
+      ["e3", "second"],
+    ]);
+    expect(await db.unattributedLegacyRows("fixture-source:second")).toEqual([
+      { tableName: events.tableName, rows: 1, remaining: 1 },
+    ]);
+  });
+
+  test.each(["claim", "drop"] as const)(
+    "the operator settles the rows nothing attributes by %s, in bounded batches",
+    async (action) => {
+      await seedSharedEvents(
+        Array.from({ length: 1100 }, (_, i) => event(`legacy-${String(i).padStart(4, "0")}`)),
+      );
+      await db.ingestPage({
+        tableName: events.tableName,
+        sourceId: "fixture-source:first",
+        records: [event("mine")],
+      });
+      await db.ingestPage({
+        tableName: events.tableName,
+        sourceId: "fixture-source:second",
+        records: [event("theirs")],
+      });
+      expect(await projections()).toBe(1102);
+      expect(await db.settleLegacyRows("fixture-source:first", action)).toEqual([
+        { tableName: events.tableName, rows: 1100, remaining: 0 },
+      ]);
+      const counts = (
+        await db.executeQuery(
+          "SELECT account, COUNT(*) FROM ownership_events GROUP BY account ORDER BY account",
+        )
+      ).rows;
+      expect(counts).toEqual(
+        action === "claim"
+          ? [
+              ["first", 1101],
+              ["second", 1],
+            ]
+          : [
+              ["first", 1],
+              ["second", 1],
+            ],
+      );
+      expect(await projections()).toBe(action === "claim" ? 1102 : 2);
+      expect(await pendingFlag()).toBe(false);
+      expect(await db.unattributedLegacyRows("fixture-source:first")).toEqual([]);
+      expect(await db.settleLegacyRows("fixture-source:first", action)).toEqual([]);
+      if (action === "claim") {
+        // The claimed rows' projections now belong to the claimant, which can
+        // retract them like any row of its own.
+        expect(
+          (
+            await db.executeQuery(
+              "SELECT COUNT(*) FROM _temporal_projections WHERE table_name = 'ownership_events' AND source_id = 'fixture-source:first'",
+            )
+          ).rows,
+        ).toEqual([[1101]]);
+        await db.ingestPage({
+          tableName: events.tableName,
+          sourceId: "fixture-source:first",
+          records: [],
+          deletedIds: ["legacy-0000"],
+        });
+        expect(await projections()).toBe(1101);
+      }
+    },
+  );
+
+  test("a claim re-homes a projection without duplicating one the claimant already holds", async () => {
+    await seedSharedEvents([event("shared")]);
+    // The claimant re-emitted the row before the claim, so its own projection
+    // already stands beside the legacy one; the row then lost its owner again.
+    await db.ingestPage({
+      tableName: events.tableName,
+      sourceId: "fixture-source:first",
+      records: [event("shared"), event("mine")],
+    });
+    await db.close();
+    const raw = await DuckDBInstance.create(join(directory, "analytics.db"));
+    const conn = await raw.connect();
+    await conn.run(
+      "INSERT INTO _temporal_projections SELECT replace(id, 'tp_', 'tp_legacy_'), 'fixture-source:second', table_name, record_key, slot, bound_document_external_id, start_ms, end_exclusive_ms, start_canonical, end_canonical, precision, all_day, time_zone, label, kind, modality, status, source_updated_at, correlation_keys, projected_at FROM _temporal_projections WHERE record_key = 'shared'",
+    );
+    await conn.run("UPDATE ownership_events SET account = NULL WHERE id = 'shared'");
+    await conn.run("UPDATE _analytics_catalog SET ownership_backfill_pending = true");
+    conn.closeSync();
+    raw.closeSync();
+    db = new AnalyticsDb(join(directory, "analytics.db"));
+    await db.open();
+    expect(await projections()).toBe(3);
+    expect(await db.settleLegacyRows("fixture-source:first", "claim")).toEqual([
+      { tableName: events.tableName, rows: 1, remaining: 0 },
+    ]);
+    expect(
+      (
+        await db.executeQuery(
+          "SELECT source_id, COUNT(*) FROM _temporal_projections WHERE table_name = 'ownership_events' GROUP BY source_id",
+        )
+      ).rows,
+    ).toEqual([["fixture-source:first", 2]]);
+  });
+
+  test("the operator cannot claim or drop a row a parent repair will attribute", async () => {
+    await seed();
+    await db.insertRecords(
+      child.tableName,
+      [
+        { id: "orphan", parent_id: "nobody" },
+        ...Array.from({ length: 1200 }, (_, i) => ({ id: `owned-${i}`, parent_id: "p2" })),
+      ],
+      ["id"],
+    );
+    await db.ensureTable(parent, "fixture-source:first");
+    await db.ensureTable(child, "fixture-source:first");
+    // One bounded repair has run; the second account's remaining children are
+    // still NULL but are not the first account's to settle.
+    expect(await db.unattributedLegacyRows("fixture-source:first")).toEqual([
+      { tableName: child.tableName, rows: 1, remaining: 1 },
+    ]);
+    expect(await db.settleLegacyRows("fixture-source:first", "claim")).toEqual([
+      { tableName: child.tableName, rows: 1, remaining: 0 },
+    ]);
+    // The orphan is the claimant's; every row still owned by nobody has the
+    // sibling's parent and waits for the repair, which never touches the claim.
+    expect(
+      (
+        await db.executeQuery(
+          "SELECT owner, COUNT(*), COUNT(DISTINCT parent_id) FROM ownership_children WHERE owner = 'first' OR owner IS NULL GROUP BY owner ORDER BY owner NULLS LAST",
+        )
+      ).rows,
+    ).toEqual([
+      ["first", 2, 2],
+      [null, 202, 1],
+    ]);
+    expect(
+      (
+        await db.executeQuery(
+          "SELECT COUNT(*) FROM ownership_children WHERE owner IS NULL AND parent_id <> 'p2'",
+        )
+      ).rows,
+    ).toEqual([[0]]);
+  });
 });

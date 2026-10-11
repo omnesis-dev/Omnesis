@@ -1118,8 +1118,10 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>omnesis sources debug &lt;id&gt;</code> shows a source's sync position and counts,
           <code>omnesis sources reauth &lt;provider&gt;:&lt;account&gt;</code> signs an account in
           again, and <code>omnesis sources resync &lt;id&gt;</code> rebuilds a source's data from
-          the start; use resync only when that is needed. Pages captured by the browser extension
-          cannot be resynced, because nothing holds their past copies to fetch again. See
+          the start; use resync only when that is needed.
+          <code>omnesis sources legacy-rows &lt;id&gt;</code> lists, claims or drops the rows of a
+          shared analytics table that no account has claimed. Pages captured by the browser
+          extension cannot be resynced, because nothing holds their past copies to fetch again. See
           <a href="/docs/sources#managing-sources">Managing sources</a> for every source action.
         </p>
         <p>
