@@ -16,7 +16,7 @@ function tick(attributed: number, tables = attributed > 0 ? 1 : 0): OwnershipRep
 }
 
 function harness(ticks: (OwnershipRepairTick | Error)[]) {
-  const seen: string[] = [];
+  const seen: (string | null)[] = [];
   const repairPendingOwnership = vi.fn((): Promise<OwnershipRepairTick> => {
     seen.push(getActivePriority());
     const next = ticks.shift();
