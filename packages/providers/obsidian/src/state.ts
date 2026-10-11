@@ -52,7 +52,7 @@ export const obsidianStateSpec: SourceStateSpec<ObsidianSyncCursor> = {
    *
    * The host stores a returned value unwrapped when this rejects it, which
    * would leave a mid-cycle cursor classified as legacy and re-migrated on the
-   * next page — re-queueing the whole re-key each time. The two optional
+   * next page — re-queueing the whole re-key each time. The optional
    * fields below are exactly the ones a partial page carries, so they are
    * spelled out rather than left to a "settled shape" check.
    */
@@ -63,12 +63,10 @@ export const obsidianStateSpec: SourceStateSpec<ObsidianSyncCursor> = {
     if (value.cycleQueueTotal !== undefined && typeof value.cycleQueueTotal !== "number") {
       return null;
     }
-    const pending = value.pendingMigrationDeletes;
-    if (
-      pending !== undefined &&
-      !(Array.isArray(pending) && pending.every((id) => typeof id === "string"))
-    ) {
-      return null;
+    for (const ids of [value.pendingMigrationDeletes, value.supersededStableIds]) {
+      if (ids !== undefined && !(Array.isArray(ids) && ids.every((id) => typeof id === "string"))) {
+        return null;
+      }
     }
     return value as unknown as ObsidianSyncCursor;
   },

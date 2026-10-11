@@ -55,7 +55,6 @@ interface FileEntry {
   size: number;
   inode: number;
   device: number;
-  links: number;
 }
 
 // The cursor type is pinned on `create`'s return rather than as a type
@@ -177,13 +176,15 @@ export default defineSource({
 
     /**
      * Walk a directory recursively, following symlinked subdirectories
-     * with cycle detection. `Dirent.isDirectory()` returns false for
-     * symlinks even when the link target is a directory, so the legacy
-     * `entry.isDirectory()` check silently dropped every symlinked folder
-     * (and every Markdown file inside it) from the index. Resolving the
-     * symlink via `statSync` + remembering each `realpath` we've walked
-     * keeps the walk correct without infinite-looping on a cyclic vault
-     * layout.
+     * with cycle detection. `Dirent.isDirectory()` is false for a symlink
+     * to a directory, so symlinks are resolved with `statSync` and each
+     * walked `realpath` is remembered, which keeps symlinked folders in the
+     * walk without looping on a cyclic layout.
+     *
+     * A symlink to a file is skipped wherever it points, as hard links are.
+     * One inside the vault is a second path to a note the walk reaches at
+     * its real path, and a second path would be a second document under the
+     * note's identity (inode or frontmatter id), a page the gateway refuses.
      *
      * A nested directory going unreadable mid-walk (a permission change on
      * one subfolder, a submount dropping) is recorded rather than ignored.
@@ -227,7 +228,7 @@ export default defineSource({
         // For symlinks, fall through to the resolved-target stat; for
         // regular entries the `Dirent` flags are authoritative.
         let isDir = entry.isDirectory();
-        let isFile = entry.isFile();
+        const isFile = entry.isFile();
         if (entry.isSymbolicLink()) {
           try {
             const resolvedTarget = realpathSync(fullPath);
@@ -235,9 +236,11 @@ export default defineSource({
               log.debug(`Skipping symlink outside vault: ${relPath}`);
               continue;
             }
-            const target = statSync(resolvedTarget);
-            isDir = target.isDirectory();
-            isFile = target.isFile();
+            isDir = statSync(resolvedTarget).isDirectory();
+            if (!isDir) {
+              log.debug(`Skipping file symlink inside the vault: ${relPath}`);
+              continue;
+            }
           } catch (err) {
             log.debug(
               `Skipping unresolvable symlink ${relPath}: ${err instanceof Error ? err.message : String(err)}`,
@@ -290,13 +293,12 @@ export default defineSource({
               mtime: stat.mtimeMs,
               ctime: stat.ctimeMs,
               size: stat.size,
-              // `ino` is 0 on Windows for some volumes; we still include
-              // it because the rename-detector tries it last and a 0
-              // collision among many notes is harmless (the prior pass
-              // would already have matched on `(size, contentHash)`).
+              // `ino` is 0 on Windows for some volumes. Identity resolution
+              // treats a taken `inode:<n>` as unavailable, so notes sharing
+              // that 0 fall back to a path-derived identity instead of
+              // colliding.
               inode: stat.ino,
               device: stat.dev,
-              links: stat.nlink,
             });
           } catch {
             // A note that will not stat is missing from the walk for the same
@@ -387,35 +389,58 @@ export default defineSource({
      *   3. A previous entry with the same inode that disappeared this
      *      cycle (rename + edit case where the content hash differs).
      *   4. `inode:<n>` for newly-discovered notes.
+     *   5. `path:<relativePath>` when even that inode is taken: a volume
+     *      reporting every inode as 0, or a frontmatter id spelled like one.
+     *
+     * A candidate another note present in this walk already holds is passed
+     * over, whatever step produced it: two live notes under one externalId
+     * is a page the gateway refuses, and a refused page blocks the whole
+     * vault. A duplicated note repeating its original's frontmatter id is
+     * the usual way this happens; it is tracked by its inode instead, as a
+     * note of its own. A note that moved holds its own identity before any
+     * note is read (see `heldStableIds` in `sync`), so a duplicate read first
+     * cannot take it.
      */
     function resolveStableId(
       frontmatter: Record<string, unknown> | null,
       contentHash: string,
-      inode: number,
-      size: number,
+      file: FileEntry,
       disappearedByHash: Map<string, ObsidianFileState[]>,
       disappearedByInode: Map<number, ObsidianFileState>,
-    ): { stableId: string; matchedPath?: string } {
+      heldStableIds: Map<string, string>,
+    ): string {
+      const available = (stableId: string): boolean => {
+        const holder = heldStableIds.get(stableId);
+        return holder === undefined || holder === file.relativePath;
+      };
+
       const fmId = frontmatterStableId(frontmatter);
-      if (fmId) return { stableId: fmId };
+      if (fmId) {
+        const holder = heldStableIds.get(fmId);
+        if (holder === undefined || holder === file.relativePath) return fmId;
+        log.warn(
+          `Frontmatter id "${fmId}" in ${file.relativePath} already identifies ${holder}; tracking ${file.relativePath} by its inode instead`,
+        );
+      }
 
       const candidates = disappearedByHash.get(contentHash);
       if (candidates) {
-        const idx = candidates.findIndex((c) => c.size === size);
+        const idx = candidates.findIndex((c) => c.size === file.size && available(c.stableId));
         if (idx !== -1) {
           const matched = candidates.splice(idx, 1)[0]!;
           if (candidates.length === 0) disappearedByHash.delete(contentHash);
-          return { stableId: matched.stableId };
+          return matched.stableId;
         }
       }
 
-      const inodeMatch = inode > 0 ? disappearedByInode.get(inode) : undefined;
-      if (inodeMatch) {
-        disappearedByInode.delete(inode);
-        return { stableId: inodeMatch.stableId };
+      const inodeMatch = file.inode > 0 ? disappearedByInode.get(file.inode) : undefined;
+      if (inodeMatch && available(inodeMatch.stableId)) {
+        disappearedByInode.delete(file.inode);
+        return inodeMatch.stableId;
       }
 
-      return { stableId: `inode:${inode}` };
+      const inodeId = `inode:${file.inode}`;
+      return available(inodeId) ? inodeId : `path:${file.relativePath}`;
     }
 
     return {
@@ -528,20 +553,56 @@ export default defineSource({
         // don't emit them as deletions on the final page.
         const claimedStableIds = new Set<string>();
 
+        // Identities held by live notes, by the path holding each: notes
+        // present in this walk, and notes retained under an unreadable gap,
+        // which are still indexed. Entries carried across pages for paths that
+        // disappeared this cycle hold nothing: they are rename evidence.
+        const heldStableIds = new Map<string, string>();
+        for (const [path, state] of Object.entries(newFileMap)) {
+          if (currentPaths.has(path) || unreadablePath(path)) {
+            heldStableIds.set(state.stableId, path);
+          }
+        }
+        // A disappeared note whose inode now sits at a new path moved there,
+        // and its identity is held for that path before any note is read.
+        // Otherwise a copy of it with the same frontmatter id, read first or
+        // on an earlier page, would take the identity and leave the moved note
+        // a stranger to its own history. Only the inode distinguishes a move
+        // from a copy; matching content does not.
+        const newPathByInode = new Map<number, string>();
+        for (const file of allFiles) {
+          if (file.inode > 0 && !previousFileMap[file.relativePath]) {
+            newPathByInode.set(file.inode, file.relativePath);
+          }
+        }
+        for (const state of disappearedByInode.values()) {
+          const movedTo = newPathByInode.get(state.inode);
+          if (movedTo) heldStableIds.set(state.stableId, movedTo);
+        }
+
+        // Identities a note at a tracked path stopped using this cycle. The
+        // document under each is settled on the final page like a disappeared
+        // path's: deleted unless another live note holds it by then.
+        const supersededStableIds: string[] = cursor?.supersededStableIds ?? [];
+
         for (const file of batch) {
           try {
             const { note, contentHash } = readNote(file);
 
-            const { stableId } = resolveStableId(
+            const stableId = resolveStableId(
               note.frontmatter,
               contentHash,
-              file.inode,
-              file.size,
+              file,
               disappearedByHash,
               disappearedByInode,
+              heldStableIds,
             );
+            heldStableIds.set(stableId, file.relativePath);
 
             const prevAtThisPath = previousFileMap[file.relativePath];
+            if (prevAtThisPath && prevAtThisPath.stableId !== stableId) {
+              supersededStableIds.push(prevAtThisPath.stableId);
+            }
 
             // Mark this stableId as claimed so genuine deletions at the
             // end of the cycle don't include it. We also have to walk
@@ -606,16 +667,17 @@ export default defineSource({
           );
         }
         if (!hasMore) {
-          for (const path of disappearedPaths) {
-            const prevState = previousFileMap[path]!;
-            if (claimedStableIds.has(prevState.stableId)) continue;
+          const candidates = new Set([
+            ...disappearedPaths.map((path) => previousFileMap[path]!.stableId),
+            ...supersededStableIds,
+          ]);
+          for (const stableId of candidates) {
+            if (claimedStableIds.has(stableId)) continue;
             // Also skip if the same stableId is still tracked at another
             // current path in newFileMap (rename detected on an earlier page).
-            const stillTracked = Object.values(newFileMap).some(
-              (s) => s.stableId === prevState.stableId,
-            );
+            const stillTracked = Object.values(newFileMap).some((s) => s.stableId === stableId);
             if (stillTracked) continue;
-            realDeletions.push(prevState.stableId);
+            realDeletions.push(stableId);
           }
         }
 
@@ -632,6 +694,8 @@ export default defineSource({
           version: OBSIDIAN_STATE_VERSION,
           fileMap: newFileMap,
           cycleQueueTotal: hasMore ? cycleTotal : undefined,
+          supersededStableIds:
+            hasMore && supersededStableIds.length > 0 ? supersededStableIds : undefined,
           // Carried while the cycle continues, and also when the walk was
           // incomplete: the deletes were withheld rather than issued, so they
           // have to survive until a clean walk can pair each tombstone with

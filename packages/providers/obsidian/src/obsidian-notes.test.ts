@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -21,7 +22,7 @@ import {
   type SourceInstance,
   type StateOutcome,
 } from "@omnesis/source-sdk";
-import { SourceId, ProviderId, SyncError } from "@omnesis/types";
+import { SourceId, ProviderId, SyncError, type DocumentInput } from "@omnesis/types";
 import { obsidianStateSpec } from "./state.js";
 import definition from "./index.js";
 
@@ -45,6 +46,9 @@ function writeNote(vaultPath: string, relativePath: string, content: string, mti
     utimesSync(fullPath, mtime, mtime);
   }
 }
+
+const byPath = (docs: DocumentInput[], relativePath: string): DocumentInput =>
+  docs.find((d) => d.metadata.extra?.relativePath === relativePath)!;
 
 describe("ObsidianNotesSource", () => {
   let tmpDir: string;
@@ -570,6 +574,175 @@ describe("ObsidianNotesSource", () => {
     expect(r2.documents[0]!.externalId).toBe("0123abcd-uuid");
     expect(r2.documents[0]!.metadata.extra!.relativePath).toBe("subfolder/elsewhere.md");
     expect(r2.deletedExternalIds).not.toContain("0123abcd-uuid");
+  });
+
+  test("a symlink to a note inside the vault is skipped and the note syncs once", async () => {
+    writeNote(vaultPath, "canonical.md", "# Shared instructions");
+    writeNote(vaultPath, "other.md", "# Another note");
+    symlinkSync("canonical.md", join(vaultPath, "alias.md"));
+
+    const result = await instance.sync(null);
+
+    expect(result.documents.map((d) => d.metadata.extra!.relativePath).sort()).toEqual([
+      "canonical.md",
+      "other.md",
+    ]);
+    expect(new Set(result.documents.map((d) => d.externalId)).size).toBe(2);
+  });
+
+  test("stable identity: a note repeating another's frontmatter id is tracked by inode", async () => {
+    const past = new Date(Date.now() - 60_000);
+    writeNote(vaultPath, "original.md", "---\nid: shared-id\n---\n# Original", past);
+    writeNote(vaultPath, "copy.md", "---\nid: shared-id\n---\n# Original");
+
+    const r1 = await instance.sync(null);
+    expect(r1.documents).toHaveLength(2);
+    expect(byPath(r1.documents, "original.md").externalId).toBe("shared-id");
+    const copyId = byPath(r1.documents, "copy.md").externalId;
+    expect(copyId).toMatch(/^inode:\d+$/);
+
+    // The copy is read again on its own; the id stays with the original.
+    const future = new Date(Date.now() + 10_000);
+    writeFileSync(join(vaultPath, "copy.md"), "---\nid: shared-id\n---\n# Edited copy");
+    utimesSync(join(vaultPath, "copy.md"), future, future);
+    const r2 = await instance.sync(r1.cursor);
+    expect(r2.documents.map((d) => d.externalId)).toEqual([copyId]);
+    expect(r2.deletedExternalIds).toEqual([]);
+
+    // Removing the copy deletes the copy, not the original.
+    rmSync(join(vaultPath, "copy.md"));
+    const r3 = await instance.sync(r2.cursor);
+    expect(r3.documents).toEqual([]);
+    expect(r3.deletedExternalIds).toEqual([copyId]);
+  });
+
+  test("stable identity: a duplicate appearing later never takes the original's id", async () => {
+    writeNote(vaultPath, "original.md", "---\nid: shared-id\n---\n# Original");
+    const r1 = await instance.sync(null);
+    expect(r1.documents[0]!.externalId).toBe("shared-id");
+
+    writeNote(vaultPath, "copy.md", "---\nid: shared-id\n---\n# Original");
+    const r2 = await instance.sync(r1.cursor);
+    expect(r2.documents).toHaveLength(1);
+    expect(byPath(r2.documents, "copy.md").externalId).toMatch(/^inode:\d+$/);
+    expect(r2.deletedExternalIds).toEqual([]);
+  });
+
+  test("stable identity: a moved note keeps its id from a duplicate read before it", async () => {
+    writeNote(
+      vaultPath,
+      "original.md",
+      "---\nid: shared-id\n---\n# Original",
+      new Date(Date.now() - 100_000),
+    );
+    const r1 = await instance.sync(null);
+
+    // The duplicate is older by mtime, so it is read before the moved note.
+    // Its content matches too; only the inode tells the move from the copy.
+    renameSync(join(vaultPath, "original.md"), join(vaultPath, "moved.md"));
+    writeNote(
+      vaultPath,
+      "copy.md",
+      "---\nid: shared-id\n---\n# Original",
+      new Date(Date.now() - 200_000),
+    );
+
+    const r2 = await instance.sync(r1.cursor);
+    expect(r2.documents).toHaveLength(2);
+    expect(byPath(r2.documents, "moved.md").externalId).toBe("shared-id");
+    expect(byPath(r2.documents, "copy.md").externalId).toMatch(/^inode:\d+$/);
+    expect(r2.deletedExternalIds).toEqual([]);
+  });
+
+  test("stable identity: a note that takes a freed id deletes the document under its old one", async () => {
+    writeNote(
+      vaultPath,
+      "original.md",
+      "---\nid: shared-id\n---\n# Original",
+      new Date(Date.now() - 60_000),
+    );
+    writeNote(vaultPath, "copy.md", "---\nid: shared-id\n---\n# Original");
+    const r1 = await instance.sync(null);
+    const copyId = byPath(r1.documents, "copy.md").externalId;
+    expect(copyId).toMatch(/^inode:\d+$/);
+
+    rmSync(join(vaultPath, "original.md"));
+    const r2 = await instance.sync(r1.cursor);
+    expect(r2.documents).toEqual([]);
+    expect(r2.deletedExternalIds).toEqual(["shared-id"]);
+
+    // Read again with the id free, the copy becomes shared-id, and the
+    // gateway is left with one document for it rather than two.
+    const future = new Date(Date.now() + 10_000);
+    writeFileSync(join(vaultPath, "copy.md"), "---\nid: shared-id\n---\n# Edited copy");
+    utimesSync(join(vaultPath, "copy.md"), future, future);
+    const r3 = await instance.sync(r2.cursor);
+    expect(r3.documents.map((d) => d.externalId)).toEqual(["shared-id"]);
+    expect(r3.deletedExternalIds).toEqual([copyId]);
+  });
+
+  test("stable identity: a frontmatter id shaped like another note's inode leaves that note a path identity", async () => {
+    writeNote(vaultPath, "plain.md", "# No frontmatter");
+    const plainInode = statSync(join(vaultPath, "plain.md")).ino;
+    writeNote(
+      vaultPath,
+      "squatter.md",
+      `---\nid: inode:${plainInode}\n---\n# Claims the inode`,
+      new Date(Date.now() - 60_000),
+    );
+
+    const r1 = await instance.sync(null);
+    expect(byPath(r1.documents, "squatter.md").externalId).toBe(`inode:${plainInode}`);
+    expect(byPath(r1.documents, "plain.md").externalId).toBe("path:plain.md");
+  });
+
+  test.skipIf(!canDenyReads)(
+    "stable identity: a note retained under an unreadable folder keeps its id from a duplicate",
+    async () => {
+      writeNote(vaultPath, "folder/original.md", "---\nid: shared-id\n---\n# Original");
+      const r1 = await instance.sync(null);
+      expect(r1.documents[0]!.externalId).toBe("shared-id");
+
+      chmodSync(join(vaultPath, "folder"), 0o000);
+      writeNote(vaultPath, "copy.md", "---\nid: shared-id\n---\n# Original");
+      let r2;
+      try {
+        r2 = await instance.sync(r1.cursor);
+      } finally {
+        chmodSync(join(vaultPath, "folder"), 0o755);
+      }
+      expect(r2.documents.map((d) => d.externalId)).toEqual([expect.stringMatching(/^inode:\d+$/)]);
+      expect(r2.deletedExternalIds).toEqual([]);
+
+      // The folder reads again: nothing moved, nothing to re-emit or delete.
+      const r3 = await instance.sync(r2.cursor);
+      expect(r3.documents).toEqual([]);
+      expect(r3.deletedExternalIds).toEqual([]);
+    },
+  );
+
+  test("stable identity: a duplicate on a later page never takes an id a note on an earlier page holds", async () => {
+    // 200 notes with their own ids fill the first page; the copy carries the
+    // newest mtime so it is read on the second page, against a file map that
+    // came back through the cursor.
+    for (let n = 0; n < 200; n++) {
+      writeNote(
+        vaultPath,
+        `note-${n}.md`,
+        `---\nid: note-${n}\n---\n# Fictional note ${n}`,
+        new Date(Date.now() - 100_000),
+      );
+    }
+    writeNote(vaultPath, "copy.md", "---\nid: note-7\n---\n# Fictional note 7");
+
+    const page = await instance.sync(null);
+    expect(page.hasMore).toBe(true);
+    expect(byPath(page.documents, "note-7.md").externalId).toBe("note-7");
+    const final = await instance.sync(page.cursor);
+    expect(final.hasMore).toBe(false);
+    expect(final.documents.map((d) => d.metadata.extra?.relativePath)).toEqual(["copy.md"]);
+    expect(final.documents[0]!.externalId).toMatch(/^inode:\d+$/);
+    expect(final.deletedExternalIds).toEqual([]);
   });
 
   test.skipIf(!canDenyReads)(

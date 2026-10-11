@@ -48,6 +48,12 @@ export interface ObsidianSyncCursor {
    */
   cycleQueueTotal?: number;
   /**
+   * Identities that notes at tracked paths stopped using earlier in the
+   * current cycle, carried to the final page where their documents are
+   * deleted unless another live note holds them. Cleared when the cycle ends.
+   */
+  supersededStableIds?: string[];
+  /**
    * One-time migration deletions (old path-shaped externalIds) carried
    * through subsequent pages of the migration cycle so the gateway sees
    * the full set on the final page (`hasMore: false`).
@@ -71,7 +77,8 @@ export interface ParsedNote {
   mtime: number;
   /**
    * Stable identity for the note, computed once at sync-time:
-   *   1. `frontmatter.id` if the user (or a UUID/Templater plugin) set one,
+   *   1. `frontmatter.id` if the user (or a UUID/Templater plugin) set one
+   *      and no other live note holds it (a note that moved holds its own),
    *   2. otherwise a previously-tracked stableId carried over via
    *      rename-detection (matching `(size, contentHash)` of a just-
    *      disappeared path),
