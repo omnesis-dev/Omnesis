@@ -704,6 +704,183 @@ describe("legacy analytics account ownership", () => {
     expect(await pendingFlag()).toBe(true);
   });
 
+  test("the background repair finishes a single-account history no sync revisits", async () => {
+    await db.ingestPage({
+      tableName: events.tableName,
+      schema: events,
+      sourceId: "fixture-source:first",
+      records: [],
+    });
+    await db.close();
+    const raw = await DuckDBInstance.create(join(directory, "analytics.db"));
+    const conn = await raw.connect();
+    for (let i = 0; i < 2200; i += 440) {
+      await conn.run(
+        `INSERT INTO ownership_events (id, title, start_time) VALUES ${Array.from(
+          { length: 440 },
+          (_, j) =>
+            `('e${String(i + j).padStart(4, "0")}', 'Meeting', TIMESTAMPTZ '2026-03-01 10:00:00+00')`,
+        ).join(", ")}`,
+      );
+    }
+    await conn.run("UPDATE _analytics_catalog SET ownership_backfill_pending = true");
+    conn.closeSync();
+    raw.closeSync();
+    db = new AnalyticsDb(join(directory, "analytics.db"));
+    await db.open();
+    const unattributed = async () =>
+      (await db.executeQuery("SELECT COUNT(*) FROM ownership_events WHERE account IS NULL"))
+        .rows[0]![0];
+    // No page arrives; each pass labels one bounded batch and reports whether
+    // the table is still pending, until the last pass finds nothing to do.
+    expect(await db.repairPendingOwnership()).toEqual({
+      tables: 1,
+      attributed: 1000,
+      pending: 1,
+      skipped: 0,
+    });
+    expect(await unattributed()).toBe(1200);
+    expect(await db.repairPendingOwnership()).toEqual({
+      tables: 1,
+      attributed: 1000,
+      pending: 1,
+      skipped: 0,
+    });
+    expect(await db.repairPendingOwnership()).toEqual({
+      tables: 1,
+      attributed: 200,
+      pending: 0,
+      skipped: 0,
+    });
+    expect(await unattributed()).toBe(0);
+    expect(await pendingFlag()).toBe(false);
+    expect(await db.repairPendingOwnership()).toEqual({
+      tables: 0,
+      attributed: 0,
+      pending: 0,
+      skipped: 0,
+    });
+    expect(await db.unattributedLegacyRows("fixture-source:first")).toEqual([]);
+  });
+
+  test("the background repair labels by parent and leaves a shared history without one alone", async () => {
+    // Children whose parents are owned are labelled from them; the shared
+    // events table has no proof, so its rows stay and the table stays pending.
+    await seed();
+    await db.ensureTable(parent, "fixture-source:first");
+    await db.ensureTable(child, "fixture-source:first");
+    await db.insertRecords(child.tableName, [{ id: "orphan", parent_id: "nobody" }], ["id"]);
+    await seedSharedEvents([event("e1")]);
+    await db.ingestPage({
+      tableName: events.tableName,
+      sourceId: "fixture-source:second",
+      records: [event("e2")],
+    });
+    await db.close();
+    const raw = await DuckDBInstance.create(join(directory, "analytics.db"));
+    const conn = await raw.connect();
+    await conn.run("UPDATE ownership_children SET owner = NULL");
+    await conn.run("UPDATE ownership_events SET account = NULL WHERE id = 'e1'");
+    await conn.run(
+      "UPDATE _analytics_catalog SET ownership_backfill_pending = true WHERE table_name IN ('ownership_children', 'ownership_events')",
+    );
+    conn.closeSync();
+    raw.closeSync();
+    db = new AnalyticsDb(join(directory, "analytics.db"));
+    await db.open();
+    // The orphan keeps the children table pending; the second pass has
+    // nothing left to label, which is what lets the job back off.
+    expect(await db.repairPendingOwnership()).toEqual({
+      tables: 2,
+      attributed: 2,
+      pending: 2,
+      skipped: 0,
+    });
+    expect(await db.repairPendingOwnership()).toEqual({
+      tables: 2,
+      attributed: 0,
+      pending: 2,
+      skipped: 0,
+    });
+    expect(await rows()).toEqual([
+      ["c1", "first"],
+      ["c2", "second"],
+      ["orphan", null],
+    ]);
+    expect(await eventRows()).toEqual([
+      ["e1", null],
+      ["e2", "second"],
+    ]);
+  });
+
+  test("the background repair takes no write for a table without an account column or without a physical table", async () => {
+    // A table that never declared an account column carries the catalog's
+    // default pending flag; a shared table whose physical table is gone has
+    // nothing to label. Neither reaches the writer or counts as work.
+    await db.ensureTable(oldParent, "fixture-source");
+    await db.ingestPage({
+      tableName: events.tableName,
+      schema: events,
+      sourceId: "fixture-source:first",
+      records: [event("e1")],
+    });
+    await db.close();
+    const raw = await DuckDBInstance.create(join(directory, "analytics.db"));
+    const conn = await raw.connect();
+    await conn.run("UPDATE _analytics_catalog SET ownership_backfill_pending = true");
+    await conn.run("DROP TABLE ownership_events");
+    conn.closeSync();
+    raw.closeSync();
+    db = new AnalyticsDb(join(directory, "analytics.db"));
+    await db.open();
+    expect(await db.repairPendingOwnership()).toEqual({
+      tables: 0,
+      attributed: 0,
+      pending: 0,
+      skipped: 0,
+    });
+  });
+
+  test("a table whose batch fails is skipped and the others are still repaired", async () => {
+    // The children table lost its physical primary key, which a repair refuses
+    // to work without; the shared events table behind it still gets its batch.
+    await seed();
+    await db.ensureTable(parent, "fixture-source:first");
+    await db.ensureTable(child, "fixture-source:first");
+    await db.ingestPage({
+      tableName: events.tableName,
+      schema: events,
+      sourceId: "fixture-source:first",
+      records: [event("e1")],
+    });
+    await db.close();
+    const raw = await DuckDBInstance.create(join(directory, "analytics.db"));
+    const conn = await raw.connect();
+    await conn.run("CREATE TABLE unkeyed AS SELECT * FROM ownership_children");
+    await conn.run("DROP TABLE ownership_children");
+    await conn.run("ALTER TABLE unkeyed RENAME TO ownership_children");
+    await conn.run("UPDATE ownership_children SET owner = NULL");
+    await conn.run("UPDATE ownership_events SET account = NULL");
+    await conn.run(
+      "UPDATE _analytics_catalog SET ownership_backfill_pending = true WHERE table_name IN ('ownership_children', 'ownership_events')",
+    );
+    conn.closeSync();
+    raw.closeSync();
+    db = new AnalyticsDb(join(directory, "analytics.db"));
+    await db.open();
+    expect(await db.repairPendingOwnership()).toEqual({
+      tables: 2,
+      attributed: 1,
+      pending: 1,
+      skipped: 1,
+    });
+    expect(await eventRows()).toEqual([["e1", "first"]]);
+    expect(await rows()).toEqual([
+      ["c1", null],
+      ["c2", null],
+    ]);
+  });
+
   test("a source holding unattributed legacy rows can still be removed", async () => {
     await seedSharedEvents([event("e1")]);
     await db.ingestPage({

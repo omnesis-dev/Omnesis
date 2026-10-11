@@ -140,11 +140,15 @@ export class AnalyticsAccountOwnership {
   }
   constructor(private readonly catalog: AnalyticsCatalogStore) {}
 
+  /**
+   * One bounded repair batch for a table whose ownership is still pending.
+   * Returns how many rows it labelled; a full batch means more may remain.
+   */
   async repair(
     conn: DuckDBConnection,
     schema: AnalyticsTableSchema,
     sourceId: string,
-  ): Promise<void> {
+  ): Promise<number> {
     return this.apply(conn, schema, sourceId, false);
   }
 
@@ -153,7 +157,7 @@ export class AnalyticsAccountOwnership {
     schema: AnalyticsTableSchema,
     sourceId: string,
   ): Promise<void> {
-    return this.apply(conn, schema, sourceId, true);
+    await this.apply(conn, schema, sourceId, true);
   }
 
   private async apply(
@@ -161,9 +165,9 @@ export class AnalyticsAccountOwnership {
     schema: AnalyticsTableSchema,
     sourceId: string,
     validateOnly: boolean,
-  ): Promise<void> {
+  ): Promise<number> {
     const discriminator = schema.sharedDiscriminatorColumn;
-    if (!discriminator) return;
+    if (!discriminator) return 0;
     if (!schema.columns.some((column) => column.name === discriminator))
       throw new RowKeyError("Unknown analytics account discriminator");
     const streamKeyed = await this.catalog.isStreamKeyed(conn, schema.tableName);
@@ -171,10 +175,11 @@ export class AnalyticsAccountOwnership {
       await assertPhysicalPrimaryKey(conn, schema.tableName, schema.primaryKey, streamKeyed);
     // Validate even after repair completed: declarations are an authority boundary.
     const parent = await this.resolveParentJoin(conn, schema, sourceId, streamKeyed);
-    if (validateOnly || !(await this.pending(conn, schema.tableName))) return;
+    if (validateOnly || !(await this.pending(conn, schema.tableName))) return 0;
     const keys = [...schema.primaryKey, ...(streamKeyed ? [STREAM_COLUMN] : [])];
+    let attributed = 0;
     if (await this.isExclusiveOwner(conn, schema.tableName, sourceId)) {
-      await this.attributeBatch(
+      attributed = await this.attributeBatch(
         conn,
         schema,
         sourceId,
@@ -184,15 +189,18 @@ export class AnalyticsAccountOwnership {
       );
     } else if (parent) {
       // LIMIT matched rows, not the first NULL rows: an orphan must not starve
-      // later attributable rows. Each admission commits at most one batch.
-      await conn.run(`UPDATE ${quoteIdent(schema.tableName)} AS target SET ${quoteIdent(discriminator)} = matched.__owner
+      // later attributable rows. Each caller commits at most one batch.
+      const updated =
+        await conn.runAndReadAll(`UPDATE ${quoteIdent(schema.tableName)} AS target SET ${quoteIdent(discriminator)} = matched.__owner
         FROM (SELECT ${keys.map((key) => `c.${quoteIdent(key)}`).join(", ")}, ${parent.parentOwner} AS __owner
           FROM ${quoteIdent(schema.tableName)} c JOIN ${quoteIdent(parent.table)} p ON ${parent.join}
           WHERE c.${quoteIdent(discriminator)} IS NULL AND ${parent.parentOwner} IS NOT NULL LIMIT ${OWNERSHIP_REPAIR_BATCH}) matched
         WHERE ${keys.map((key) => `target.${quoteIdent(key)} = matched.${quoteIdent(key)}`).join(" AND ")}
           AND target.${quoteIdent(discriminator)} IS NULL`);
+      attributed = Number((updated.getRows() as unknown[][])[0]?.[0] ?? 0);
     }
     await this.settlePending(conn, schema);
+    return attributed;
   }
 
   /**

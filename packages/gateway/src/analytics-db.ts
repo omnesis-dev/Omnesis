@@ -37,6 +37,7 @@ import {
   type AnalyticsReplicaHooks,
   type LegacyOwnershipAction,
   type LegacyOwnershipTable,
+  type OwnershipRepairTick,
 } from "./analytics/table-manager.js";
 import {
   AnalyticsTemporalProjectionStore,
@@ -288,6 +289,11 @@ export class AnalyticsDb {
     return this.tables.unattributedLegacyRows(sourceId);
   }
 
+  /** One bounded attribution batch per pending table; see `AnalyticsTableManager.repairPendingOwnership`. */
+  repairPendingOwnership(): Promise<OwnershipRepairTick> {
+    return this.tables.repairPendingOwnership();
+  }
+
   /** Claim those rows for the source's account, or drop them; see `AnalyticsTableManager.settleLegacyRows`. */
   settleLegacyRows(
     sourceId: string,
@@ -513,4 +519,8 @@ export class AnalyticsDb {
 
 export { InvalidAnalyticsRecentCursorError } from "./analytics/query-runner.js";
 export type { AnalyticsRecentCursor } from "./analytics/query-runner.js";
-export type { LegacyOwnershipAction, LegacyOwnershipTable } from "./analytics/table-manager.js";
+export type {
+  LegacyOwnershipAction,
+  LegacyOwnershipTable,
+  OwnershipRepairTick,
+} from "./analytics/table-manager.js";

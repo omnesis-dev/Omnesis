@@ -70,6 +70,7 @@ import { FsCognitionTranscriptStore, cognitionTranscriptsDir } from "./brain/tra
 import { drainTranscriptEvictions } from "./brain/transcript-eviction.js";
 import { createActivityRetentionTask } from "./activity-retention/task.js";
 import { createAbsenceSweepTask } from "./absence/task.js";
+import { createOwnershipRepairTask } from "./analytics/ownership-repair-task.js";
 import { directIndexWriteGate } from "./indexer/index-write-gate.js";
 import { purgeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { resolveRelaySettings } from "./push/relay-settings.js";
@@ -3104,6 +3105,15 @@ configStore.onChange((_before, _after, changedPaths) => {
   }
 });
 
+// Legacy analytics rows whose account is provable are labelled here, one
+// bounded batch per table per tick, so a history no sync page revisits is
+// still attributed in full rather than only as far as traffic carries it.
+const ownershipRepairBundle = createOwnershipRepairTask(
+  { analyticsDb, log: log.child("analytics") },
+  scheduler,
+);
+scheduler.schedule(ownershipRepairBundle.task);
+
 // Recover inference backends that were unreachable at boot (or during a
 // transient network blip) without a restart or a manual /probe. The
 // per-backend exponential backoff lives in InferenceRegistry.reprobeUnavailable.
@@ -3229,6 +3239,7 @@ backgroundJobs.registerAll([
   pushWakeRetryBundle.job,
   activityRetentionBundle.job,
   absenceSweepBundle.job,
+  ownershipRepairBundle.job,
   ...backendReprobeBundle.jobs,
   ...subscriptionDeliveriesBundle.jobs,
   sourcePermissionReminderJob,

@@ -169,6 +169,18 @@ function canonicalDuckType(type: string): string {
 /** What an operator can do with legacy rows no relation will ever attribute. */
 export type LegacyOwnershipAction = "claim" | "drop";
 
+/** What one pass of the background ownership repair did; see `AnalyticsTableManager.repairPendingOwnership`. */
+export interface OwnershipRepairTick {
+  /** Shared tables whose attribution was still pending when the pass began. */
+  tables: number;
+  /** Legacy rows the pass labelled with their account. */
+  attributed: number;
+  /** Tables still pending after the pass: more batches to run, rows nothing can attribute, or a skipped batch. */
+  pending: number;
+  /** Tables whose batch failed and was skipped; the next pass tries them again. */
+  skipped: number;
+}
+
 /** One table's share of a legacy-ownership report or settlement. */
 export interface LegacyOwnershipTable {
   tableName: string;
@@ -1726,6 +1738,79 @@ export class AnalyticsTableManager {
       }
       return report;
     });
+  }
+
+  /**
+   * One bounded batch of attribution for every shared table whose ownership
+   * is still pending, under the owner the catalog records for it — the proofs
+   * are the same ones an admission applies (`AnalyticsAccountOwnership.repair`).
+   * The candidates are read on a reader, and only a table that declares an
+   * account column and still exists physically takes a write; each such batch
+   * is its own write transaction, so the pass never holds the writer for longer
+   * than one batch. A table whose batch fails is skipped and left for the next
+   * pass, so one malformed table cannot starve the others. The background job
+   * that drives this stays on its active cadence while a pass still labels
+   * rows, so a history no sync revisits is still attributed in full.
+   */
+  async repairPendingOwnership(): Promise<OwnershipRepairTick> {
+    const candidates = await this.pool.withConn(async ({ conn }) => {
+      const reader = await conn.runAndReadAll(
+        "SELECT table_name, source_id, schema_json FROM _analytics_catalog WHERE ownership_backfill_pending",
+      );
+      const shared: { tableName: string; owner: string }[] = [];
+      for (const row of reader.getRows() as unknown[][]) {
+        const tableName = String(row[0]);
+        const schema = parseSchemaJson(String(row[2]), tableName);
+        if (!schema?.sharedDiscriminatorColumn) continue;
+        if (!(await this.physicalTableExists(conn, tableName))) continue;
+        shared.push({ tableName, owner: String(row[1]) });
+      }
+      return shared;
+    });
+    let attributed = 0;
+    let pending = 0;
+    let skipped = 0;
+    for (const { tableName, owner } of candidates) {
+      try {
+        const outcome = await this.pool.serializeWrite(() =>
+          this.pool.withConn(async (p) => {
+            await p.conn.run("BEGIN TRANSACTION");
+            try {
+              const schema = await this.readPersistedSchema(p.conn, tableName);
+              const labelled = schema ? await this.ownership.repair(p.conn, schema, owner) : 0;
+              const stillPending =
+                (
+                  await p.conn.runAndReadAll(
+                    `SELECT ownership_backfill_pending FROM _analytics_catalog WHERE table_name = '${escapeStr(tableName)}'`,
+                  )
+                ).getRows()[0]?.[0] === true;
+              await p.conn.run("COMMIT");
+              return { labelled, stillPending };
+            } catch (error) {
+              try {
+                await p.conn.run("ROLLBACK");
+              } catch {
+                /* Preserve the repair error. */
+              }
+              throw error;
+            }
+          }),
+        );
+        attributed += outcome.labelled;
+        if (outcome.stillPending) pending += 1;
+      } catch (error) {
+        skipped += 1;
+        pending += 1;
+        log.warn(
+          `Ownership repair skipped ${tableName}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (attributed > 0)
+      log.debug(
+        `Ownership repair labelled ${attributed} legacy analytics row(s) across ${candidates.length} table(s); ${pending} still pending`,
+      );
+    return { tables: candidates.length, attributed, pending, skipped };
   }
 
   /**
