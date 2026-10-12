@@ -104,14 +104,16 @@ export function mountCognitionRunAdminRoutes(ctx: CognitionAdminRouteContext): v
         ? { ...dto, trigger: { ...dto.trigger, doc: query.documentRefs([dto.trigger.docId])[0] } }
         : dto;
     const decisions = query.decisionsForRun(id);
-    const subjectRefs = new Map(
-      query
-        .documentRefs([...new Set(decisions.map((d) => d.subjectDocumentId))])
-        .map((ref) => [ref.id, ref]),
-    );
+    const knowledgeDecisionAudit = query.knowledgeDecisionsForRun(id);
+    const subjectRefs = new Map(query.decisionSubjectRefs(decisions).map((ref) => [ref.id, ref]));
     return c.json({
       run: enriched ? { ...enriched, gateVerdict: decisions.at(-1)?.verdict ?? null } : enriched,
       decisions: decisions.map((d) => decisionDto(d, subjectRefs.get(d.subjectDocumentId))),
+      knowledgeDecisions: knowledgeDecisionAudit.items,
+      knowledgeDecisionAudit: {
+        truncated: knowledgeDecisionAudit.truncated,
+        legacyIncomplete: knowledgeDecisionAudit.legacyIncomplete,
+      },
       transcripts: refs.map(transcriptRefDto),
       rebuilding: !transcriptPage.indexComplete,
       ...(!transcriptPage.indexComplete ? { retryAfterMs: 100 } : {}),

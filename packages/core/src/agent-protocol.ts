@@ -177,7 +177,7 @@ export type DocLoopRef = z.infer<typeof docLoopRefSchema>;
 /**
  * A compact, hint-shaped view of a durable annotation the Cognition Steward recorded
  * ABOUT a document — a prior to reground against, never a hard fact. Attached
- * inline to fetch results in experimental mode; the verbatim evidence quote is
+ * inline to search/fetch results; the verbatim evidence quote is
  * deliberately omitted from the wire shape (it lives in the source document).
  */
 export const docAnnotationHintSchema = z.object({
@@ -187,6 +187,8 @@ export const docAnnotationHintSchema = z.object({
   claim: z.string(),
   /** Recorded confidence (0-1), always below certainty. */
   confidence: z.number(),
+  /** Recorded proof state; absence means unknown, never verified. */
+  verificationState: z.enum(["unverified", "verified", "failed"]).optional(),
   /**
    * The document the claim is grounded in — the "reground before asserting"
    * pointer. Optional for wire compatibility with hints recorded before the
@@ -244,6 +246,8 @@ export const loopDetailSchema = loopSummarySchema.extend({
   involved: z.array(z.string()).optional(),
   /** Source document ids the loop rests on. */
   docIds: z.array(z.string()).optional(),
+  /** Optional bounded synthesis provenance; legacy loop results omit it. */
+  knowledgeContext: z.record(z.string(), z.unknown()).optional(),
   /** Recent ledger entries, oldest → newest. */
   ledger: z.array(z.object({ at: z.number(), note: z.string() })).optional(),
   /**
@@ -566,11 +570,19 @@ export type EventTrail = z.infer<typeof eventTrailSchema>;
 
 // ─── Tool-result discriminated union ───────────────────────────────────────
 
+const retrievalCoverageSchema = z.object({
+  status: z.enum(["catching_up", "scanned", "unknown"]),
+  corpusBoundary: z.string().nullable(),
+  publishedThrough: z.string().nullable(),
+  notice: z.string(),
+});
+
 const searchResultsResult = z.object({
   kind: z.literal("search.results"),
   query: z.string(),
   durationMs: z.number().nonnegative(),
   candidates: z.number().nonnegative().optional(),
+  coverage: retrievalCoverageSchema.optional(),
   results: z.array(docRefSchema),
 });
 
@@ -1347,8 +1359,8 @@ const loopsSearchedResult = z.object({
 
 /**
  * Result of a successful interactive `fetch_loop` call (experimental) — one
- * loop's full read-only detail. `loop` is omitted when the id matched nothing
- * (a clean no-match, not an error).
+ * loop's full read-only detail. Legacy transcripts may omit `loop` for a
+ * no-match; current tools return a `loop_not_found` error instead.
  */
 const loopFetchedResult = z.object({
   kind: z.literal("loop.fetched"),

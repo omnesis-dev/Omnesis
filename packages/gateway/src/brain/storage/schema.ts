@@ -219,6 +219,12 @@ export function createBriefsStorageTables(db: Db): void {
       usage_json TEXT
     )
   `);
+  // Only the three most recent synthesis admissions are retained; no corpus IDs.
+  db.exec(`CREATE TABLE IF NOT EXISTS cognition_synthesis_admissions (
+    sequence INTEGER PRIMARY KEY,
+    joint_work INTEGER NOT NULL,
+    policy_repair INTEGER NOT NULL
+  )`);
   // `cycle_anchor_at` is the MUTABLE per-cycle anchor for the max-defer
   // ceiling: a continuously-folded `data` run's `next_attempt_at` is
   // clamped to `cycle_anchor_at + maxDefer`, so a forever-hot conversation/
@@ -238,6 +244,12 @@ export function createBriefsStorageTables(db: Db): void {
     "CREATE INDEX IF NOT EXISTS idx_cognition_runs_scheduled_page ON cognition_runs(next_attempt_at ASC, id ASC)",
   );
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cognition_runs_synthesis_fairness
+      ON cognition_runs(last_attempt_at DESC,
+        CASE WHEN json_extract(payload_json,'$.focus')='knowledge-maintenance'
+          AND json_extract(payload_json,'$.schedulingClass')='initial-root' THEN 1 ELSE 0 END DESC,
+        id DESC)
+      WHERE kind='synthesis' AND last_attempt_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_cognition_runs_status_enqueued_page
       ON cognition_runs(status, enqueued_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_cognition_runs_kind_enqueued_page

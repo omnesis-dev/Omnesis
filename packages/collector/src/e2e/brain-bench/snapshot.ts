@@ -23,6 +23,7 @@
  * should catch.
  */
 
+import { KNOWLEDGE_SOURCE_ID } from "@omnesis/gateway/src/brain/knowledge/source-meta.js";
 import type Database from "better-sqlite3";
 
 /** Renames minted ids to stable ordinals, so a snapshot is comparable across runs. */
@@ -31,16 +32,16 @@ class IdCanonicalizer {
   private readonly counters = new Map<string, number>();
 
   /**
-   * `loop_a1b2` → `loop#1`. Ids with no readable prefix — documents and runs
-   * are bare UUIDs — take the `kind` the caller names, so the two do not
-   * share one counter: they would otherwise renumber each other, and adding
-   * a document to an arc would rewrite every run reference in the golden.
+   * `loop_a1b2` → `loop#1`. An explicit semantic kind takes precedence over
+   * a generated ID prefix: bare UUIDs and `cog_` run IDs both become `run#N`.
+   * Separate document and run counters keep adding evidence from renumbering
+   * every run reference in the golden.
    */
   canon(id: string | null | undefined, kind?: string): string | null {
     if (id === null || id === undefined) return null;
     const existing = this.seen.get(id);
     if (existing) return existing;
-    const prefix = /^([a-z]+)_/.exec(id)?.[1] ?? kind ?? "id";
+    const prefix = kind ?? /^([a-z]+)_/.exec(id)?.[1] ?? "id";
     const n = (this.counters.get(prefix) ?? 0) + 1;
     this.counters.set(prefix, n);
     const label = `${prefix}#${n}`;
@@ -84,7 +85,11 @@ export interface BrainSnapshot {
  * Serialize the cognitive state. `epoch` anchors relative timestamps —
  * pass the instant the bench started so `T+0` means "at boot".
  */
-export function snapshotBrainState(db: Database.Database, epoch: number): BrainSnapshot {
+export function snapshotBrainState(
+  db: Database.Database,
+  epoch: number,
+  options: { runIds?: readonly string[] } = {},
+): BrainSnapshot {
   const c = new IdCanonicalizer();
   const all = <T>(sql: string, ...params: unknown[]): T[] =>
     db.prepare(sql).all(...(params as never[])) as T[];
@@ -106,12 +111,15 @@ export function snapshotBrainState(db: Database.Database, epoch: number): BrainS
   // loop's mirror document carries the loop id as its external id, and loops
   // were canonicalized above.
   const docs = all<{ id: string; source_id: string; external_id: string }>(
-    "SELECT id, source_id, external_id FROM documents",
+    "SELECT id, source_id, external_id FROM documents WHERE source_id != ?",
+    KNOWLEDGE_SOURCE_ID,
   )
     .map((r) => ({ ...r, sortKey: `${r.source_id}\u0000${c.scrub(r.external_id) ?? ""}` }))
     .sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
   for (const r of docs) c.canon(r.id, "doc");
-  for (const r of all<IdRow>("SELECT id FROM cognition_runs ORDER BY enqueued_at, id"))
+  for (const r of all<IdRow>("SELECT id FROM cognition_runs ORDER BY enqueued_at, id").filter(
+    (row) => !options.runIds || options.runIds.includes(row.id),
+  ))
     c.canon(r.id, "run");
 
   interface LoopRow {
@@ -312,14 +320,20 @@ export function snapshotBrainState(db: Database.Database, epoch: number): BrainS
     recurrenceCount: r.recurrence_count,
   }));
 
-  const runs = all<{ kind: string; status: string; dedupe_key: string | null; attempts: number }>(
-    "SELECT kind, status, dedupe_key, attempts FROM cognition_runs ORDER BY enqueued_at, id",
-  ).map((r) => ({
-    kind: r.kind,
-    status: r.status,
-    attempts: r.attempts,
-    dedupeKey: c.scrub(r.dedupe_key),
-  }));
+  const runs = all<{
+    id: string;
+    kind: string;
+    status: string;
+    dedupe_key: string | null;
+    attempts: number;
+  }>("SELECT id, kind, status, dedupe_key, attempts FROM cognition_runs ORDER BY enqueued_at, id")
+    .filter((row) => !options.runIds || options.runIds.includes(row.id))
+    .map((r) => ({
+      kind: r.kind,
+      status: r.status,
+      attempts: r.attempts,
+      dedupeKey: c.scrub(r.dedupe_key),
+    }));
 
   const notes = (
     db.prepare("SELECT content FROM cognition_notes WHERE id = 1").get() as

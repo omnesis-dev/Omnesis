@@ -1,0 +1,193 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ * Copyright (c) 2026 Adrien Conrath */
+.debug-operations {
+  container-type: inline-size;
+  min-width: 0;
+}
+.debug-operations .cognition-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.debug-operations .segmented {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.debug-operations .segmented button {
+  min-height: 40px;
+  padding: 9px 15px;
+}
+.debug-operations-kind {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  min-width: 170px;
+  max-width: 100%;
+}
+.debug-operations-kind select {
+  min-height: 40px;
+  padding: 8px 32px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  width: 100%;
+}
+.debug-operations-count {
+  margin: 16px 0 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.debug-operations .cognition-master-detail {
+  display: grid;
+  grid-template-columns: minmax(240px, 31%) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.debug-operations .cognition-list {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+.debug-operations .cognition-detail {
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+}
+.debug-operations .cognition-detail:empty {
+  display: none;
+}
+.debug-operations .cognition-master-detail:has(> .cognition-detail:empty) {
+  grid-template-columns: 1fr;
+}
+.debug-operations .cognition-row {
+  padding: 17px 18px;
+  overflow-wrap: anywhere;
+}
+.debug-operations .cognition-row:first-child {
+  border-radius: 11px 11px 0 0;
+}
+.debug-operations .cognition-row:last-child {
+  border-bottom: 0;
+}
+.debug-operations .cognition-row.selected {
+  box-shadow: inset 3px 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-secondary));
+}
+.debug-operations .cognition-row-title {
+  font-size: 14px;
+  line-height: 1.5;
+  margin-top: 8px;
+}
+.debug-operations .cognition-row-time,
+.debug-operations .cognition-row-kind {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.debug-operations .cognition-detail-body {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  background: var(--bg-secondary);
+  overflow-wrap: anywhere;
+}
+.debug-operations .cognition-detail-title {
+  font-size: 24px;
+  line-height: 1.25;
+  letter-spacing: -0.5px;
+}
+.debug-operations .cognition-section {
+  margin-top: 26px;
+}
+.debug-operations .debug-empty {
+  color: var(--text-secondary);
+  line-height: 1.7;
+  font-size: 14px;
+  padding: 24px !important;
+}
+.debug-operations .cognition-detail-empty {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+.debug-operations :is(a, button, select, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.debug-operations .segmented button:focus-visible {
+  outline-offset: -3px;
+}
+.debug-operations-back {
+  display: none;
+}
+@container (max-width: 720px) {
+  .debug-operations .cognition-master-detail {
+    grid-template-columns: 1fr;
+  }
+  .debug-operations.has-selection .cognition-list {
+    display: none;
+  }
+  .debug-operations.has-selection .debug-operations-back {
+    display: inline-flex;
+    margin: 0 0 16px;
+    padding: 8px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+  .debug-operations .cognition-detail-empty {
+    display: none;
+  }
+  .debug-operations .cognition-detail-body {
+    padding: 20px 16px;
+  }
+  .debug-operations .cognition-filters {
+    align-items: stretch;
+    gap: 12px;
+  }
+  .debug-operations-kind {
+    flex: 1 1 100%;
+  }
+}
+@container (max-width: 560px) {
+  .debug-operations .cognition-field {
+    grid-template-columns: 1fr;
+    gap: 5px;
+    padding: 12px 0;
+  }
+  .debug-operations .cognition-field-label {
+    font-size: 12px;
+  }
+  .debug-operations .cognition-field-value {
+    font-size: 14px;
+  }
+}
+.debug-operations .cognition-inline-row {
+  align-items: start;
+}
+.debug-operations .cognition-inline-row .debug-pill {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.debug-operations-advanced {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.debug-operations-advanced > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.cognition-gate-action {
+  display: inline-block;
+  margin-left: 8px;
+  white-space: nowrap;
+}

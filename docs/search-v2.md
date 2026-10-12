@@ -240,3 +240,23 @@ recorded search payloads. The end-to-end suite verifies real ingestion, graph
 resolution, context reduction, source restrictions and flag-off/public-search
 compatibility, real CLI rendering, JSON output and disabled-route fallback. Unit tests exercise adversarial extraction, paths, budgets and
 cross-version wire decoding.
+
+## Bounded exact vector candidates
+
+The shared search pipeline uses exact cosine scoring when the complete indexed
+scope fits its normal candidate-work budget. This avoids approximate graph
+recall changing a small source's ranking when an unrelated source is updated.
+Both search workers and the inline fallback use the same read transaction and
+report `vector.engine: exact`; larger scopes continue to use HNSW.
+
+The first inventory query uses one indexed document, source, type or date scope
+and stops at the requested over-fetch budget plus one row, capped by the normal
+default budget (500 rows). Remaining visibility and metadata filters are applied
+only after that inventory fits. Sparse secondary filters do not trigger a larger
+scan: the request uses HNSW instead. Embedding payloads are loaded only after
+length checks, with a total ceiling of 500 × 768 × 4 bytes; actual query dimensions
+are checked dynamically. Exact cosine requests every bounded eligible vector
+before deterministic distance/row-ID ordering and truncation. Source deletion,
+hidden-source exclusions, vector tag-AND semantics and embedding-generation
+checks still apply. This does not promise stable approximate recall on larger
+corpora, nor make missing search results proof of absence.

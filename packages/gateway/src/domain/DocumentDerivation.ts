@@ -176,20 +176,25 @@ export function derivationStageLabels(ids: readonly DerivationStageId[]): string
  * stage's queueing latency at its head, which is what an operator watches
  * against a derivation SLA. Null when the stage has no backlog.
  *
- * Measured from `ingested_at` (when the row landed) rather than the source
- * timestamp, so a history backfill of old mail doesn't read as a stalled
- * pipeline.
+ * Measured from the local `updated_at` document-generation clock, not its
+ * original ingestion or source event date. Rewriting an old derived document
+ * starts fresh work; completing a derivation does not move this clock.
  */
 export function oldestPendingDerivationMs(
   db: Db,
   stage: DerivationStage,
   now: number,
 ): number | null {
+  // updated_at is the local document-write clock (not source_updated_at).
+  // A content/metadata rewrite can invalidate an already-derived old document;
+  // its current input generation has not been waiting since initial ingestion.
+  // Derivation stamps themselves do not advance this clock. This observation
+  // does not change the cognition readiness barrier or its bounded wait.
   const row = db
     .prepare<
       [],
       { oldest: string | null }
-    >(`SELECT MIN(ingested_at) AS oldest FROM documents WHERE ${stage.column} IS NULL`)
+    >(`SELECT MIN(updated_at) AS oldest FROM documents WHERE ${stage.column} IS NULL`)
     .get();
   if (!row?.oldest) return null;
   const parsed = Date.parse(row.oldest);

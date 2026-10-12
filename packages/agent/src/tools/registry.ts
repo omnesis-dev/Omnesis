@@ -12,6 +12,7 @@
  * the gateway and the CLI. Tests can compose handles directly.
  */
 
+import { CitationReads } from "./citation-reads.js";
 import { createAnnotateManyTool } from "./annotate-many.js";
 import { createCiteRecordTool } from "./cite-record.js";
 import { createSpawnSubagentTool } from "./spawn-subagent.js";
@@ -39,6 +40,8 @@ import type { ToolHandle } from "../backend.js";
 import type { ToolPorts } from "./types.js";
 
 export interface BuiltinToolsOptions {
+  /** Optional shared evidence-exposure ledger for a host finalization policy. */
+  citationReads?: CitationReads;
   ports: ToolPorts;
   /** Default limit for search_documents (default: 8). */
   defaultSearchLimit?: number;
@@ -84,10 +87,11 @@ export function buildBuiltinTools(opts: BuiltinToolsOptions): ToolHandle[] {
       defaultLimit: opts.defaultSearchLimit,
     }),
   );
-  tools.push(createFetchManyTool({ port: opts.ports.document }));
+  const citationReads = opts.citationReads ?? new CitationReads();
+  tools.push(createFetchManyTool({ port: opts.ports.document, citationReads }));
   // `annotate_many` shares the document port with `fetch_many` — each child
   // loads the doc body to obtain the canonical ref for the citation card.
-  tools.push(createAnnotateManyTool({ port: opts.ports.document }));
+  tools.push(createAnnotateManyTool({ port: opts.ports.document, citationReads }));
   tools.push(createPlanTool({ store: opts.planStore ?? new PlanStore() }));
   if (opts.ports.trail) {
     tools.push(createTraceConnectionsTool({ port: opts.ports.trail }));

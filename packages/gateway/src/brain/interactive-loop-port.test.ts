@@ -101,24 +101,34 @@ describe("interactive loop-read port", () => {
     expect(loop!.deadline).toBe(JSON.stringify({ date: "2026-07-15" }));
   });
 
-  test("fetch returns null for a terminal or missing loop", async () => {
-    createOpenLoop(
-      db,
-      {
-        id: "olp_d",
-        createdByRun: "r",
-        title: "a dismissed thing",
-        description: "gone",
-        confidence: 0.8,
-        importance: 0.5,
-      },
-      NOW,
-    );
-    updateOpenLoop(db, "olp_d", { state: "dismissed" }, NOW);
-    const port = createGatewayLoopReadPort(db);
-    expect(await port.fetch("olp_d")).toBeNull();
-    expect(await port.fetch("olp_missing")).toBeNull();
-  });
+  test.each(["done", "dismissed"] as const)(
+    "fetch preserves %s state and history while list/search remain active-only",
+    async (state) => {
+      createOpenLoop(
+        db,
+        {
+          id: "olp_terminal",
+          createdByRun: "r",
+          title: "Observatory visit",
+          description: "Arrange access.",
+          confidence: 0.8,
+          importance: 0.5,
+        },
+        NOW,
+      );
+      appendOpenLoopLedger(db, "olp_terminal", { runId: "r", note: "Recorded the outcome." }, NOW);
+      updateOpenLoop(db, "olp_terminal", { state }, NOW);
+      const port = createGatewayLoopReadPort(db);
+      expect(await port.fetch("olp_terminal")).toMatchObject({
+        loopId: "olp_terminal",
+        state,
+        ledger: [{ note: "Recorded the outcome." }],
+      });
+      expect((await port.list(100)).loops).toEqual([]);
+      expect((await port.search({ query: "Observatory" })).loops).toEqual([]);
+      expect(await port.fetch("olp_missing")).toBeNull();
+    },
+  );
 
   test("fetch attaches relatedLoops — active loops sharing a brief", async () => {
     const mk = (id: string): void => {

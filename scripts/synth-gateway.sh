@@ -253,7 +253,7 @@ start() {
     exit 1
   fi
 
-  TOKEN="$(cat "${TOKEN_FILE}")"
+  TOKEN="$(read_instance_token "${CONFIG_DIR}")"
   echo "Gateway up (pid $(cat "${GATEWAY_PID}"))."
 
   if [[ "${REAL_SOURCES}" == "1" ]]; then
@@ -290,20 +290,20 @@ start() {
   elif [[ "${REAL_SOURCES}" == "1" ]]; then
     echo ""
     echo "✓ Gateway ready (real sources — none added yet): $(portal_login_url)"
-    echo "  Token:   $(cat "${TOKEN_FILE}")"
+    echo "  Token:   $(read_instance_token "${CONFIG_DIR}")"
     echo "  Add real sources via the portal '+Add source' flow."
     return 0
   else
     echo ""
     echo "✓ Synth gateway ready (no sources added): $(portal_login_url)"
-    echo "  Token:   $(cat "${TOKEN_FILE}")"
+    echo "  Token:   $(read_instance_token "${CONFIG_DIR}")"
     echo "  Add sources via portal '+Add source', or run: scripts/synth-gateway.sh seed"
     return 0
   fi
 
   echo ""
   echo "✓ Synth gateway ready: $(portal_login_url)"
-  echo "  Token:   $(cat "${TOKEN_FILE}")"
+  echo "  Token:   $(read_instance_token "${CONFIG_DIR}")"
   echo "  Pair UI: scripts/synth-gateway.sh pair"
 }
 
@@ -315,7 +315,7 @@ seed_sources() {
     exit 1
   fi
 
-  TOKEN="$(cat "${TOKEN_FILE}")"
+  TOKEN="$(read_instance_token "${CONFIG_DIR}")"
   # The collector registers as a device asynchronously after boot; under load
   # (e.g. a concurrent app build during demo recording) that can take longer
   # than the initial settle wait. Poll /admin/devices until a collector device
@@ -405,7 +405,7 @@ seed_privacy() {
   if [[ -z "${requests}" ]]; then
     return 0
   fi
-  TOKEN="$(cat "${TOKEN_FILE}")"
+  TOKEN="$(read_instance_token "${CONFIG_DIR}")"
   echo "Driving privacy exchanges from $(basename "$(dirname "${requests}")")/privacy-requests.json…"
   REQUESTS="${requests}" GATEWAY_URL="${URL}" ADMIN_TOKEN="${TOKEN}" python3 - <<'PY'
 import json, os, ssl, urllib.error, urllib.request
@@ -493,13 +493,13 @@ stop() {
 }
 
 refresh_snapshot() {
-  TOKEN="$(cat "${TOKEN_FILE}")"
+  TOKEN="$(read_instance_token "${CONFIG_DIR}")"
   curl -sk -X POST -H "Authorization: Bearer ${TOKEN}" \
     "${URL}/admin/search-snapshot/refresh" | python3 -m json.tool
 }
 
 pair() {
-  TOKEN="$(cat "${TOKEN_FILE}")"
+  TOKEN="$(read_instance_token "${CONFIG_DIR}")"
   curl -sk -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
     "${URL}/admin/devices/pair" \
     -d '{"name":"portal-browser","kind":"portal","scopes":["read","admin"],"ttlMs":600000}' \

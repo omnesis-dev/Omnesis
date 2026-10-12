@@ -1,0 +1,261 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { createKnowledgePendingReadIndexes } from "./pending-work-query.js";
+import { createKnowledgeBatchReadIndexes } from "./batch-query.js";
+import { installKnowledgeReconciliationTriggers } from "./reconciliation.js";
+import type Database from "better-sqlite3";
+
+/** Work records retain identities and revisions, never copies of source or generated prose. */
+export function createKnowledgeWorkTables(db: Database.Database): void {
+  const admissionsExist = !!db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_historical_admissions'",
+    )
+    .get();
+  const operationalExists = !!db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_operational_arcs'")
+    .get();
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS knowledge_nodes_kind_id ON knowledge_nodes(kind,id);
+    CREATE TABLE IF NOT EXISTS knowledge_operational_arcs (
+      input_id TEXT NOT NULL,
+      node_id TEXT NOT NULL REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
+      PRIMARY KEY(input_id,node_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_operational_node ON knowledge_operational_arcs(node_id);
+    CREATE TRIGGER IF NOT EXISTS knowledge_operational_insert AFTER INSERT ON knowledge_nodes
+    WHEN NEW.kind='loop' BEGIN
+      INSERT OR IGNORE INTO knowledge_operational_arcs(input_id,node_id)
+      SELECT value,NEW.id FROM json_each(NEW.fields_json,'$.blockedBy') WHERE type='text';
+    END;
+    CREATE TRIGGER IF NOT EXISTS knowledge_operational_update AFTER UPDATE OF fields_json,kind ON knowledge_nodes BEGIN
+      DELETE FROM knowledge_operational_arcs WHERE node_id=NEW.id;
+      INSERT OR IGNORE INTO knowledge_operational_arcs(input_id,node_id)
+      SELECT value,NEW.id FROM json_each(NEW.fields_json,'$.blockedBy') WHERE NEW.kind='loop' AND type='text';
+    END;
+    CREATE TABLE IF NOT EXISTS knowledge_work (
+      id TEXT PRIMARY KEY,
+      subject_id TEXT NOT NULL,
+      subject_kind TEXT NOT NULL CHECK(subject_kind IN ('source','node')),
+      reason TEXT NOT NULL CHECK(reason IN ('change','discovery','review','root','upgrade')),
+      input_revision TEXT NOT NULL,
+      input_changed_at INTEGER NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 1,
+      tier TEXT NOT NULL CHECK(tier IN ('immediate','soon','routine')),
+      due_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','batched','completed','deferred')),
+      batch_id TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS knowledge_work_pending
+      ON knowledge_work(subject_kind,subject_id,reason) WHERE status='pending';
+    CREATE INDEX IF NOT EXISTS knowledge_work_subject ON knowledge_work(subject_kind,subject_id,input_revision);
+    CREATE INDEX IF NOT EXISTS knowledge_work_historical ON knowledge_work(status,due_at,created_at,id) WHERE reason IN ('discovery','upgrade');
+    CREATE INDEX IF NOT EXISTS knowledge_work_due ON knowledge_work(status,due_at,id);
+    CREATE TABLE IF NOT EXISTS knowledge_historical_admissions (
+      day TEXT PRIMARY KEY,
+      count INTEGER NOT NULL CHECK(count>=0)
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_batches (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL UNIQUE,
+      creation_fingerprint TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','running','completed','deferred','abandoned')),
+      revision INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      finished_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_batch_regions (
+      batch_id TEXT NOT NULL REFERENCES knowledge_batches(id) ON DELETE CASCADE,
+      node_id TEXT NOT NULL,
+      PRIMARY KEY(batch_id,node_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_region_owners ON knowledge_batch_regions(node_id,batch_id);
+    CREATE TABLE IF NOT EXISTS knowledge_frontier (
+      batch_id TEXT NOT NULL REFERENCES knowledge_batches(id) ON DELETE CASCADE,
+      node_id TEXT NOT NULL,
+      input_fingerprint TEXT NOT NULL,
+      input_versions_json TEXT NOT NULL,
+      depth INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','offered','skipped','unchanged','changed','deferred')),
+      result_revision INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(batch_id,node_id,input_fingerprint)
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_claim_outcomes (
+      batch_id TEXT NOT NULL, node_id TEXT NOT NULL, input_fingerprint TEXT NOT NULL,
+      claim_id TEXT NOT NULL, input_claim_revision INTEGER NOT NULL,
+      result_claim_revision INTEGER,
+      status TEXT NOT NULL CHECK(status IN ('pending','skipped','unchanged','changed','deferred')),
+      PRIMARY KEY(batch_id,node_id,input_fingerprint,claim_id),
+      FOREIGN KEY(batch_id,node_id,input_fingerprint) REFERENCES knowledge_frontier(batch_id,node_id,input_fingerprint) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_frontier_pending ON knowledge_frontier(batch_id,status,depth);
+    CREATE TABLE IF NOT EXISTS knowledge_discovery_targets (
+      source_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      source_revision TEXT NOT NULL,
+      node_id TEXT NOT NULL REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY(source_id,source_revision,node_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_discovery_target_nodes ON knowledge_discovery_targets(node_id,source_id);
+    CREATE TABLE IF NOT EXISTS knowledge_discovery_coverage (
+      subject_id TEXT NOT NULL,
+      input_revision TEXT NOT NULL,
+      phase TEXT NOT NULL CHECK(phase IN ('interpretation','organization','conversion')),
+      policy_version TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('considered','gated','deferred','failed')),
+      reviewed_at INTEGER NOT NULL,
+      reconsider_at INTEGER,
+      PRIMARY KEY(subject_id,input_revision,phase,policy_version)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_coverage_organization
+      ON knowledge_discovery_coverage(phase,policy_version,status,reviewed_at,subject_id);
+    CREATE TABLE IF NOT EXISTS knowledge_organization_cohorts (
+      id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL UNIQUE REFERENCES knowledge_batches(id) ON DELETE CASCADE,
+      input_fingerprint TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','completed','deferred','abandoned')),
+      outcome_json TEXT,
+      retry_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_organization_created ON knowledge_organization_cohorts(created_at);
+    CREATE TABLE IF NOT EXISTS knowledge_organization_members (
+      cohort_id TEXT NOT NULL REFERENCES knowledge_organization_cohorts(id) ON DELETE CASCADE,
+      source_id TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      PRIMARY KEY(cohort_id,source_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_organization_member_version
+      ON knowledge_organization_members(source_id,content_hash,cohort_id);
+    CREATE TABLE IF NOT EXISTS knowledge_organization_targets (
+      cohort_id TEXT NOT NULL REFERENCES knowledge_organization_cohorts(id) ON DELETE CASCADE,
+      node_id TEXT NOT NULL,
+      PRIMARY KEY(cohort_id,node_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_organization_target_node
+      ON knowledge_organization_targets(node_id,cohort_id);
+    CREATE TABLE IF NOT EXISTS knowledge_candidates (
+      id TEXT PRIMARY KEY,
+      identity_key TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL CHECK(status IN ('proposed','deferred','published','merged','dismissed')),
+      node_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      reconsider_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_candidate_sources (
+      document_id TEXT NOT NULL,
+      candidate_id TEXT NOT NULL REFERENCES knowledge_candidates(id) ON DELETE CASCADE,
+      PRIMARY KEY(document_id,candidate_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_candidate_source_owner ON knowledge_candidate_sources(candidate_id);
+    CREATE TRIGGER IF NOT EXISTS knowledge_candidate_sources_insert AFTER INSERT ON knowledge_candidates BEGIN
+      INSERT INTO knowledge_candidate_sources(document_id,candidate_id)
+        SELECT value,NEW.id FROM json_each(NEW.evidence_ids_json) WHERE type='text'
+        ON CONFLICT(document_id,candidate_id) DO NOTHING;
+    END;
+    CREATE TRIGGER IF NOT EXISTS knowledge_candidate_sources_update AFTER UPDATE OF evidence_ids_json ON knowledge_candidates BEGIN
+      DELETE FROM knowledge_candidate_sources WHERE candidate_id=NEW.id;
+      INSERT INTO knowledge_candidate_sources(document_id,candidate_id)
+        SELECT value,NEW.id FROM json_each(NEW.evidence_ids_json) WHERE type='text'
+        ON CONFLICT(document_id,candidate_id) DO NOTHING;
+    END;
+    CREATE TABLE IF NOT EXISTS knowledge_links (
+      from_id TEXT NOT NULL REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
+      to_id TEXT NOT NULL REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK(kind IN ('related_to','belongs_to_project','part_of','supersedes','duplicate_of')),
+      PRIMARY KEY(from_id,to_id,kind)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_links_to ON knowledge_links(to_id);
+    CREATE TABLE IF NOT EXISTS knowledge_checkpoints (
+      id TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  if (!operationalExists)
+    db.exec(`
+    INSERT OR IGNORE INTO knowledge_operational_arcs(input_id,node_id)
+      SELECT j.value,n.id FROM knowledge_nodes n,json_each(n.fields_json,'$.blockedBy') j
+      WHERE n.kind='loop' AND j.type='text';
+  `);
+  if (!admissionsExist)
+    db.exec(`INSERT INTO knowledge_historical_admissions(day,count)
+    SELECT date(created_at/1000,'unixepoch','localtime'),COUNT(*) FROM knowledge_work
+    WHERE subject_kind='source' AND reason IN ('discovery','upgrade')
+    GROUP BY date(created_at/1000,'unixepoch','localtime')`);
+  const coverageColumns = db
+    .prepare<[], { name: string }>("PRAGMA table_info(knowledge_discovery_coverage)")
+    .all();
+  if (!coverageColumns.some((column) => column.name === "retrieval_boundary"))
+    db.exec("ALTER TABLE knowledge_discovery_coverage ADD COLUMN retrieval_boundary TEXT");
+  if (!coverageColumns.some((column) => column.name === "retrieval_reconsidered"))
+    db.exec(
+      "ALTER TABLE knowledge_discovery_coverage ADD COLUMN retrieval_reconsidered INTEGER NOT NULL DEFAULT 0",
+    );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS knowledge_coverage_retrieval_pending ON knowledge_discovery_coverage(retrieval_boundary,subject_id) WHERE retrieval_boundary IS NOT NULL AND retrieval_reconsidered=0",
+  );
+  db.transaction(() => {
+    const columns = db
+      .prepare<[], { name: string }>("PRAGMA table_info(knowledge_organization_cohorts)")
+      .all();
+    if (!columns.some((column) => column.name === "retrieval_boundary")) {
+      db.exec(`ALTER TABLE knowledge_organization_cohorts ADD COLUMN retrieval_boundary TEXT;
+        ALTER TABLE knowledge_organization_cohorts ADD COLUMN retrieval_reconsidered INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE knowledge_organization_cohorts ADD COLUMN retrieval_reconsider_at INTEGER;`);
+      if (db.prepare("SELECT 1 FROM knowledge_organization_cohorts LIMIT 1").get())
+        db.exec(`UPDATE knowledge_organization_cohorts SET retrieval_boundary=(
+          SELECT MAX(v.retrieval_boundary) FROM knowledge_organization_members m
+          JOIN documents d ON d.id=m.source_id AND d.content_hash=m.content_hash
+          JOIN knowledge_discovery_coverage v ON v.subject_id=m.source_id AND v.input_revision=m.content_hash
+            AND v.phase='organization' AND v.policy_version=knowledge_organization_cohorts.policy_version
+          WHERE m.cohort_id=knowledge_organization_cohorts.id AND v.status='considered'
+            AND v.retrieval_reconsidered=0
+        ) WHERE status IN ('completed','deferred');`);
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS knowledge_organization_retrieval_pending
+      ON knowledge_organization_cohorts(retrieval_boundary,id)
+      WHERE retrieval_boundary IS NOT NULL AND retrieval_reconsidered=0;
+      CREATE INDEX IF NOT EXISTS knowledge_organization_retrieval_due
+      ON knowledge_organization_cohorts(retrieval_reconsider_at,id)
+      WHERE retrieval_reconsider_at IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS knowledge_organization_retrieval_identity
+      ON knowledge_organization_cohorts(input_fingerprint,policy_version,retrieval_reconsidered);`);
+  })();
+  db.transaction(() => {
+    const columns = db
+      .prepare<[], { name: string }>("PRAGMA table_info(knowledge_candidates)")
+      .all();
+    if (!columns.some((column) => column.name === "decision_generation")) {
+      db.exec(`ALTER TABLE knowledge_candidates ADD COLUMN decision_generation INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE knowledge_candidates ADD COLUMN decision_pending INTEGER NOT NULL DEFAULT 1;
+        UPDATE knowledge_candidates SET decision_pending=CASE WHEN status='proposed' THEN 1 ELSE 0 END;`);
+    }
+    db.exec(`CREATE TABLE IF NOT EXISTS knowledge_candidate_decision_work (
+      candidate_id TEXT NOT NULL REFERENCES knowledge_candidates(id) ON DELETE CASCADE,
+      generation INTEGER NOT NULL,
+      work_id TEXT NOT NULL REFERENCES knowledge_work(id) ON DELETE CASCADE,
+      PRIMARY KEY(candidate_id,generation,work_id)
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_candidate_decision_work_owner ON knowledge_candidate_decision_work(work_id);`);
+  })();
+  createKnowledgeBatchReadIndexes(db);
+  createKnowledgePendingReadIndexes(db);
+  installKnowledgeReconciliationTriggers(db);
+}

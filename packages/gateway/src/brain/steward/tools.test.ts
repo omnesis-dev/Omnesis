@@ -13,11 +13,13 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { z } from "zod";
 import { createLogger, TEMPORAL_KINDS } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
+import { insertBriefClaimSet } from "../storage/brief-claims.js";
 import { getBrief, listShowableBriefs } from "../storage/briefs.js";
 import { readCognitionNotes } from "../storage/notes.js";
 import {
@@ -171,6 +173,198 @@ describe("Cognition Steward tools", () => {
   afterEach(() => {
     db.close();
     cleanupDb(path);
+  });
+
+  test("loop title schema describes the tracked stage without requiring an imperative", () => {
+    const schema = z.toJSONSchema(findTool(tools, "open_loop_create").schema);
+    expect(schema.properties?.title).toMatchObject({
+      type: "string",
+      minLength: 1,
+      maxLength: 200,
+      description: expect.stringContaining(
+        "supported action stage, responsible actor and conditions",
+      ),
+    });
+    expect(schema.properties?.title?.description).toContain("waiting or uncertain status");
+    expect(schema.properties?.title?.description).not.toContain("imperative");
+  });
+
+  test("verifies complete brief scope and effective partial updates against original dated evidence", async () => {
+    upsertDocuments(db, [
+      sourceDoc("exhibit", "Exhibit A opens on 4 July. Exhibit B is still being planned."),
+    ]);
+    const docId = docIdByExternal(db, "exhibit")!;
+    const inputs: Array<{ claim: string; evidence: string; context?: string }> = [];
+    tools = buildTools({
+      getEntailmentVerifier: () =>
+        Promise.resolve({
+          dispose() {},
+          verify: (input) => {
+            inputs.push(input);
+            return Promise.resolve({
+              label: input.claim.includes("Exhibit B opens")
+                ? ("neutral" as const)
+                : ("entailment" as const),
+              confidence: 1,
+            });
+          },
+        }),
+    });
+    const created = structured(
+      await findTool(tools, "brief_create").invoke(
+        {
+          kind: "info",
+          title: "Exhibit plans",
+          body: "Consider visiting Exhibit A, which opens on 4 July.",
+          citations: [docId],
+          confidence: 0.9,
+          urgency: 0.3,
+        },
+        CTX,
+      ),
+    );
+    const id = (created.data.brief as { id: string }).id;
+    expect(inputs).toHaveLength(1);
+    expect(JSON.parse(inputs[0]!.context!)).toMatchObject({ asOf: new Date(nowMs).toISOString() });
+    expect(JSON.parse(inputs[0]!.evidence).sources[0]).toMatchObject({
+      id: docId,
+      truncated: false,
+    });
+    const refused = await findTool(tools, "brief_update").invoke(
+      { id, title: "Exhibit B opens on 4 July" },
+      CTX,
+    );
+    expect(refused).toMatchObject({ kind: "error", code: "evidence_does_not_entail_claim" });
+    expect(JSON.parse(inputs[1]!.claim)).toMatchObject({
+      title: "Exhibit B opens on 4 July",
+      body: "Consider visiting Exhibit A, which opens on 4 July.",
+    });
+    expect(getBrief(db, id)?.title).toBe("Exhibit plans");
+  });
+
+  test("withdraws an unsupported brief without verifying or accepting replacement prose", async () => {
+    upsertDocuments(db, [sourceDoc("exhibit", "Exhibit A is still being planned.")]);
+    const created = structured(
+      await findTool(tools, "brief_create").invoke(
+        {
+          kind: "info",
+          title: "Unsupported opening",
+          body: "Exhibit A opened yesterday.",
+          citations: [docIdByExternal(db, "exhibit")!],
+          confidence: 0.9,
+          urgency: 0.3,
+        },
+        CTX,
+      ),
+    );
+    const id = (created.data.brief as { id: string }).id;
+    let calls = 0;
+    tools = buildTools({
+      getEntailmentVerifier: async () => ({
+        dispose() {},
+        verify: async () => {
+          calls++;
+          return { label: "neutral" as const };
+        },
+      }),
+    });
+    const edit = await findTool(tools, "brief_update").invoke(
+      { id, body: "Exhibit A opens today." },
+      CTX,
+    );
+    expect(edit).toMatchObject({ kind: "error", code: "evidence_does_not_entail_claim" });
+    expect(calls).toBe(1);
+    const mixed = await findTool(tools, "brief_delete").invoke(
+      { id, body: "Different prose" },
+      CTX,
+    );
+    expect(mixed.kind).toBe("error");
+    const removed = structured(await findTool(tools, "brief_delete").invoke({ id }, CTX));
+    expect(removed.resultType).toBe("brief.retired");
+    expect(calls).toBe(1);
+    expect(getBrief(db, id)).toMatchObject({
+      state: "retired",
+      body: "Exhibit A opened yesterday.",
+    });
+  });
+
+  test.each(["source", "metadata", "owner", "claims", "outage"])(
+    "holds final brief verification safely when %s changes",
+    async (change) => {
+      upsertDocuments(db, [sourceDoc("exhibit", "Exhibit A opens on 4 July.")]);
+      const docId = docIdByExternal(db, "exhibit")!;
+      const created = structured(
+        await findTool(tools, "brief_create").invoke(
+          {
+            kind: "info",
+            title: "Exhibit plans",
+            citations: [docId],
+            confidence: 0.9,
+            urgency: 0.3,
+          },
+          CTX,
+        ),
+      );
+      const id = (created.data.brief as { id: string }).id;
+      tools = buildTools({
+        getEntailmentVerifier: () =>
+          Promise.resolve({
+            dispose() {},
+            verify: () => {
+              if (change === "outage") return Promise.reject(new Error("offline"));
+              if (change === "source")
+                db.prepare("UPDATE documents SET content_hash='changed' WHERE id=?").run(docId);
+              else if (change === "metadata")
+                db.prepare("UPDATE documents SET source_created_at='2026-07-05' WHERE id=?").run(
+                  docId,
+                );
+              else if (change === "claims")
+                insertBriefClaimSet(
+                  db,
+                  id,
+                  [
+                    {
+                      id: "concurrent",
+                      claimText: "Original claim",
+                      evidenceDocId: docId,
+                      evidenceQuote: "Exhibit A opens on 4 July.",
+                      claimBasis: "quoted",
+                      confidence: 0.9,
+                      verificationState: null,
+                    },
+                  ],
+                  nowMs,
+                );
+              else db.prepare("UPDATE briefs SET title='Other writer' WHERE id=?").run(id);
+              return Promise.resolve({ label: "entailment" as const, confidence: 1 });
+            },
+          }),
+      });
+      const result = await findTool(tools, "brief_update").invoke(
+        { id, body: "Consider a visit." },
+        CTX,
+      );
+      expect(result).toMatchObject(
+        change === "outage"
+          ? { kind: "structured", resultType: "brief.held_for_verification" }
+          : { kind: "error", code: "revision_conflict" },
+      );
+      expect(getBrief(db, id)?.body).toBeNull();
+    },
+  );
+
+  test("mutation contracts distinguish current obligations and display claims from historical evidence", () => {
+    const loop = findTool(tools, "open_loop_create");
+    expect(loop.description).toContain("currently actionable outcome for the user");
+    expect(loop.description).toContain("historical status or unsuccessful attempt alone");
+    expect(loop.description).toContain("proves neither resolution nor non-resolution");
+    for (const name of ["brief_create", "brief_update"]) {
+      const description = findTool(tools, name).description;
+      expect(description).toContain("Audit title, description, and body");
+      expect(description).toContain("implied current-status and negative claims");
+      expect(description).toContain("assertedClaims");
+      expect(description).toContain("displayed prose");
+    }
   });
 
   async function createLoop(extra: Record<string, unknown> = {}): Promise<string> {

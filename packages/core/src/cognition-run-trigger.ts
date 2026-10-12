@@ -69,6 +69,7 @@ export type RunTrigger =
   // The provenance-recheck flavour of a feedback run: a prior the dependent
   // was built on died, so the run re-examines that brief/loop.
   | { type: "provenance-recheck"; dependentKind: "brief" | "loop"; dependentId: string }
+  | { type: "knowledge-maintenance"; batchId: string | null }
   | { type: "synthesis-noticing"; date: string | null }
   | {
       type: "synthesis-collision";

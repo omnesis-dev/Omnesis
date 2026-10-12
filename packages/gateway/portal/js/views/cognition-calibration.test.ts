@@ -15,8 +15,8 @@ import * as calibration from "./cognition-calibration.js";
 describe("familyDisplayName", () => {
   test("labels the known families and passes unknown ones through (data-driven)", () => {
     expect(calibration.familyDisplayName("brief")).toBe("Briefs");
-    expect(calibration.familyDisplayName("doc-annotation")).toBe("Doc annotations");
-    expect(calibration.familyDisplayName("person-annotation")).toBe("Person annotations");
+    expect(calibration.familyDisplayName("doc-annotation")).toBe("Document notes");
+    expect(calibration.familyDisplayName("person-annotation")).toBe("People notes");
     // A family the gateway grows later must still render, not vanish.
     expect(calibration.familyDisplayName("open-loop")).toBe("open-loop");
   });
@@ -52,9 +52,9 @@ describe("bin formatting", () => {
 
 describe("formatClassCounts", () => {
   test("renders biggest-first, and an empty string for no classes", () => {
-    expect(
-      calibration.formatClassCounts({ verified: 2, superseded: 5, unlabeled: 1 }),
-    ).toBe("superseded 5 · verified 2 · unlabeled 1");
+    expect(calibration.formatClassCounts({ verified: 2, superseded: 5, unlabeled: 1 })).toBe(
+      "superseded 5 · verified 2 · unlabeled 1",
+    );
     expect(calibration.formatClassCounts({})).toBe("");
     expect(calibration.formatClassCounts(undefined)).toBe("");
   });

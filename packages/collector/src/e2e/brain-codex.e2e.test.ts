@@ -28,7 +28,10 @@ describe("Codex inference through the Brain engine", () => {
     vi.stubEnv("OMNESIS_CODEX_INFERENCE_POOL_SIZE", "1");
     bench = await BrainBench.start({
       experimental: true,
-      brain: { judge: { enabled: true } },
+      brain: {
+        judge: { enabled: true },
+        knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+      },
       extraInference: {
         allowRemoteInference: true,
         assignments: {
@@ -48,17 +51,45 @@ describe("Codex inference through the Brain engine", () => {
   }, 60_000);
 
   test("persists accepted briefs and holds rejected ones while the Codex parent waits for Codex gates", async () => {
-    const [docId] = await bench.pushAndSettle([
-      email({
-        externalId: "codex-gates-fixture",
-        title: "Fictional registration reminder",
-        content: "The fictional workshop registration closes on Friday.",
-      }),
-    ]);
-    const run = await bench.obs.runForDoc(docId!);
+    const [docId] = await bench
+      .pushAndSettle([
+        email({
+          externalId: "codex-gates-fixture",
+          title: "Fictional registration reminder",
+          content: "The fictional workshop registration closes on Friday.",
+        }),
+      ])
+      .catch(async (error: unknown) => {
+        const runs = await bench.obs.runs({ kind: "synthesis", limit: 10 });
+        const diagnostics = await Promise.all(
+          runs.items.map(async (run) => ({
+            id: run.id,
+            tools: (await bench.obs.executedTools(run.id)).slice(-12),
+          })),
+        );
+        throw new Error(`${String(error)}; final tools=${JSON.stringify(diagnostics)}`, {
+          cause: error,
+        });
+      });
+    const run = await bench.obs.interpretationForSource(docId!);
     const calls = await bench.obs.executedTools(run.id);
     const briefs = await bench.obs.briefsMatching("codex-bench-");
-    expect(briefs.map((brief) => brief.title)).toEqual(["codex-bench-accepted"]);
+    expect(
+      briefs.map((brief) => brief.title),
+      JSON.stringify(calls.map((call) => ({ tool: call.tool, result: call.result }))),
+    ).toEqual(["codex-bench-accepted"]);
+    expect(
+      calls
+        .filter((call) => call.tool === "brief_list" || call.tool === "brief_create")
+        .map((call) => call.tool),
+    ).toEqual([
+      "brief_list",
+      "brief_create",
+      "brief_list",
+      "brief_create",
+      "brief_list",
+      "brief_create",
+    ]);
     expect(
       calls
         .filter((call) => call.tool === "brief_create")
@@ -71,16 +102,25 @@ describe("Codex inference through the Brain engine", () => {
         (line) =>
           JSON.parse(line) as {
             event: string;
+            processId: number;
             model: string;
             threadId: string;
+            runId: string | null;
           },
       );
     const parentStart = events.findIndex(
-      (event) => event.event === "start" && event.model === "fixture-parent",
+      (event) =>
+        event.event === "start" && event.model === "fixture-parent" && event.runId === run.id,
     );
     const parentEnd = events.findIndex(
       (event, index) =>
-        index > parentStart && event.event === "complete" && event.model === "fixture-parent",
+        index > parentStart &&
+        event.event === "complete" &&
+        // Thread IDs are local to each app-server process; nested gates can
+        // independently create the same ID as their waiting parent.
+        event.processId === events[parentStart]?.processId &&
+        event.model === "fixture-parent" &&
+        event.threadId === events[parentStart]?.threadId,
     );
     expect(parentStart).toBeGreaterThanOrEqual(0);
     expect(parentEnd).toBeGreaterThan(parentStart);

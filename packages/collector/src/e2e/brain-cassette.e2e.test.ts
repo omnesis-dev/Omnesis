@@ -24,7 +24,13 @@
 import "./synth-env.js";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { BrainBench, compressCognitionCadences, email } from "./brain-bench/index.js";
+import {
+  BrainBench,
+  compressCognitionCadences,
+  email,
+  seedHistory,
+  waitFor,
+} from "./brain-bench/index.js";
 
 compressCognitionCadences();
 
@@ -52,7 +58,12 @@ describe("Brain cassettes (background-agent replay)", () => {
   let bench: BrainBench;
 
   beforeAll(async () => {
-    bench = await BrainBench.start({ experimental: true, cassetteDir: CASSETTE_DIR });
+    bench = await BrainBench.start({
+      experimental: true,
+      cassetteDir: CASSETTE_DIR,
+      syncSources: false,
+      brain: { bootstrap: { enabled: false } },
+    });
   }, 300_000);
 
   afterAll(async () => {
@@ -67,8 +78,29 @@ describe("Brain cassettes (background-agent replay)", () => {
     expect(status.briefs.active).toBe(true);
   }, 60_000);
 
-  test("a cassette drives a real datum run and its writes land", async () => {
-    const [docId] = await bench.pushAndSettle([DEPOSIT]);
+  test("a cassette recovers a persisted legacy datum run and its writes land", async () => {
+    // New source arrivals use maintenance. A pre-upgrade queued datum still
+    // executes through the real driver and retains cassette capture semantics.
+    const now = (await bench.clock.now()).now;
+    const docId = seedHistory(bench, {
+      id: DEPOSIT.externalId,
+      sourceId: bench.harness.getSourceIds()[0]!,
+      title: DEPOSIT.title,
+      content: DEPOSIT.content,
+      at: now,
+    });
+    const runId = bench.seedRun({
+      id: "cassette-recovered-datum",
+      kind: "data",
+      payload: { docId, event: "created", datumAt: now },
+      enqueuedAt: now,
+    });
+    await waitFor(
+      "persisted cassette run completes",
+      async () =>
+        (await bench.obs.settledRuns("data")).some((run) => run.id === runId) ? true : null,
+      60_000,
+    );
 
     const runs = await bench.obs.settledRuns("data");
     expect(runs).toHaveLength(1);
@@ -117,7 +149,17 @@ describe("Brain cassettes (background-agent replay)", () => {
     const { transcript } = await bench.obs.transcript(refs.items.at(-1)!.fileName);
 
     const toolResults = transcript.events.filter((e) => e.type === "agent.tool.result");
-    expect(toolResults.length).toBeGreaterThanOrEqual(4);
+    expect(toolResults.length).toBeGreaterThanOrEqual(7);
+    const calls = await bench.obs.executedTools(runs[0]!.id);
+    expect(calls.map((call) => call.tool)).toEqual([
+      "fetch_many",
+      "open_loop_search",
+      "open_loop_create",
+      "open_loop_fetch",
+      "open_loop_ledger_append",
+      "brief_list",
+      "brief_create",
+    ]);
     // A live call's result is the real tool's, so the created loop's id is
     // in the transcript — the recording could not have supplied it.
     const loopId = (await bench.obs.loops()).items[0]!.id;

@@ -163,9 +163,9 @@
         <p>
           Nothing here is visible unless the process was started with
           <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal browser notes, Find,
-          Brain, Watch and their controls; with it unset the gateway serves none of their routes,
-          schedules none of their work and creates none of their files. For a gateway you run in the
-          foreground:
+          Brain, Watch and their controls. With it unset, their experimental routes and autonomous
+          work are unavailable. Source indexing, grounded memory reads, evidence invalidation and
+          privacy cleanup remain active. For a gateway you run in the foreground:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -323,9 +323,21 @@
           Brain is a background agent. It reads your records as they arrive, and on a schedule,
           without anyone asking a question, and writes down what it learns in a form the rest of
           Omnesis can use: dated facts, unresolved commitments, cited context on documents and
-          people, and occasional cards worth your attention. It is the one part of Omnesis that
-          spends model tokens with nobody asking, so most of this section is about what it does with
-          them and how to bound it.
+          people, maintained project and topic wikis, and occasional cards worth your attention. It
+          is the one part of Omnesis that spends model tokens with nobody asking, so most of this
+          section is about what it does with them and how to bound it.
+        </p>
+        <p>
+          While the experimental Brain is active, the main agent checks candidate replies against
+          actually read source, wiki and loop evidence before showing their prose. Mixed turns using
+          analytics, person lookups or subagent findings retain existing answer behavior. Temporal
+          queries are navigation: mixed source/wiki/loop answers still need support from actually
+          read evidence; temporal-only answers retain existing behavior; this is not a universal
+          factuality guard. Tools still show progress. A bounded, tool-free repair may follow an
+          unsupported draft; missing verification or changed evidence produces an uncertainty
+          response. Current wiki support retains its claim context, and external Answer privacy
+          review remains separate. This adds latency and can withhold a correct answer when the
+          available evidence is incomplete.
         </p>
         <figure class="diagram diagram-flat diagram-compact">
           <ol class="flow">
@@ -337,9 +349,7 @@
             </li>
             <li class="flow-step">
               <span class="flow-title">Run queue</span
-              ><span class="flow-desc"
-                >Debounced, deduplicated, one run at a time, inside the daily budget</span
-              >
+              ><span class="flow-desc">Versioned maintenance batches, inside the daily budget</span>
             </li>
             <li class="flow-step">
               <span class="flow-title">Agent run</span
@@ -353,20 +363,19 @@
             </li>
             <li class="flow-step">
               <span class="flow-title">Stores</span
-              ><span class="flow-desc">Time index, open loops, annotations, briefs</span>
+              ><span class="flow-desc">Time index, loops, annotations, wikis, briefs</span>
             </li>
           </ol>
           <figcaption>
-            Every piece of Brain work is a queued agent run; what it writes passes evidence checks
-            before it is stored.
+            Source changes invalidate evidence immediately. Model work runs in queued maintenance
+            batches, and synthesis writes pass reference and evidence checks.
           </figcaption>
         </figure>
 
         <h3 id="brain-what-it-writes">What it writes</h3>
         <p>
-          Brain writes four kinds of record, all into the gateway's own database. Each carries the
-          id of the run that wrote it, so any row can be traced back to the transcript that produced
-          it.
+          Brain stores maintained understanding in the gateway database. Claim references and
+          revision history connect generated context to the evidence used to produce it.
         </p>
         <div class="table-wrap">
           <table>
@@ -379,6 +388,14 @@
             </thead>
             <tbody>
               <tr>
+                <td>Wikis and root overview</td>
+                <td>
+                  Reusable context for projects and topics, with claim-level provenance. A compact
+                  root wiki provides current orientation and must fit its configured size limit.
+                </td>
+                <td>Debug → Cognition → Library</td>
+              </tr>
+              <tr>
                 <td>Time index</td>
                 <td>
                   Temporal annotations: Brain's reading of what a date means and when it applies
@@ -386,7 +403,7 @@
                   documents it came from. The agent's time query returns them beside source dates
                   and date mentions.
                 </td>
-                <td>Debug → Calendar</td>
+                <td>Debug → Knowledge → Timeline</td>
               </tr>
               <tr>
                 <td>Open loops</td>
@@ -396,7 +413,7 @@
                   changed the loop. States: <code>open</code>, <code>snoozed</code>,
                   <code>done</code>, <code>dismissed</code>.
                 </td>
-                <td>Debug → Cognition → Loops; the mobile apps' Loops view</td>
+                <td>Debug → Knowledge → Loops; the mobile apps' Loops view</td>
               </tr>
               <tr>
                 <td>Annotations</td>
@@ -405,16 +422,17 @@
                   document and a confidence. The agent's <a href="/docs/agent#memory">memory</a>
                   reads the same notes.
                 </td>
-                <td>Debug → Cognition → Memory</td>
+                <td>The document or person page; Debug → Cognition → Library</td>
               </tr>
               <tr>
                 <td>Briefs</td>
                 <td>
-                  Cited cards for things that merit attention now, including one composed morning
-                  digest a day. Only the digest sends a push notification, at most once a day
+                  Cited cards for things that merit attention now, including a morning digest when
+                  there is information to compose. An empty digest input skips model inference and
+                  creates no card. Only the digest sends a push notification, at most once a day
                   (<code>brain.digest.push</code>).
                 </td>
-                <td>Debug → Cognition → Briefs; the mobile apps' Briefs view</td>
+                <td>Debug → Knowledge → Briefs; the mobile apps' Briefs view</td>
               </tr>
             </tbody>
           </table>
@@ -427,12 +445,16 @@
           rather than individual notes; stored records remain visible when the Brain is stopped.
         </p>
         <p>
-          It also keeps a short agent-notes file, which is injected into every run's prompt as
-          working memory (8 KiB by default, <code>brain.notesMaxBytes</code>), and it can decide
-          pending person-merge proposals that the deterministic matcher left open: merge (a
-          reversible rule that records the model's reason), distinct (the proposal is denied and not
-          proposed again), or unsure (left for you). Proposals that involve you are never decided by
-          Brain.
+          The agent reuses a complete tracked-outcome inventory within a turn and opens only
+          relevant details. It can request a larger listing after truncation or refresh the
+          inventory when new information warrants checking for changes. The compact root wiki
+          supplies current orientation. The agent can open maintained pages by their node ID or
+          existing wiki link through the same authorized read. Existing agent notes remain available
+          for working lessons (<code>brain.notesMaxBytes</code> bounds that notes file). Brain can
+          also decide pending person-merge proposals that the deterministic matcher left open: merge
+          (a reversible rule that records the model's reason), distinct (the proposal is denied and
+          not proposed again), or unsure (left for you). Proposals that involve you are never
+          decided by Brain.
         </p>
 
         <h3 id="brain-turning-on">Turning it on</h3>
@@ -440,11 +462,11 @@
           Brain runs only when two things are true: the gateway runs with
           <code>OMNESIS_EXPERIMENTAL=1</code>, and a model is assigned to the
           <code>background-agent</code> role and can actually be reached. Either alone does nothing.
-          The second step is the one that starts spending: assigning the model starts every producer
-          described below at once, from reacting to new records to the scheduled sweeps and the
-          morning digest. Read <a href="#brain-spend">Bounding the spend</a> before you assign it.
-          The one exception is the catch-up over your history, which waits until you start it
-          yourself (see <a href="#brain-how-it-runs">How it runs</a>).
+          The second step is the one that starts spending: assigning the model starts the enabled
+          producers, from reacting to new records to scheduled sweeps and the morning digest. Read
+          <a href="#brain-spend">Bounding the spend</a> before you assign it. The one exception is
+          the catch-up over your history, which waits until you start it yourself (see
+          <a href="#brain-how-it-runs">How it runs</a>).
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -504,14 +526,17 @@
               <tr>
                 <td><code>decision</code></td>
                 <td>
-                  Scores each email before its agent run and skips the ones the agent would get
-                  nothing from, and scores each new record a run saves. Served only by TypeSafe Jev
+                  Routes urgency, discovery, dependency repair and review, and checks whether new
+                  records belong in durable memory. Served only by TypeSafe Jev
                   (<code>typesafe/jev-1.13.0</code>); see
-                  <a href="#brain-worth-gate">Skipping mail it cannot use</a> and
+                  <a href="#brain-worth-gate">Routing maintenance</a> and
                   <a href="#brain-record-check">Checking what it writes</a>. The role itself is
                   stable; <a href="/docs/operating#models">Models</a> covers its setup.
                 </td>
-                <td>Every email Brain selects gets an agent run, and every record is saved.</td>
+                <td>
+                  Urgency and relevance checks take a conservative fallback; record verification
+                  remains separate.
+                </td>
               </tr>
             </tbody>
           </table>
@@ -523,42 +548,168 @@
           account's usage allowance.
           <code>GET /status</code> reports the gate as <code>brain</code>, with
           <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
-          <code>active</code>; the portal's Cognition page says which of the two conditions is
+          <code>active</code>; the portal's Brain activity page says which of the two conditions is
           missing.
         </p>
 
         <h3 id="brain-how-it-runs">How it runs</h3>
         <p>
-          Every piece of Brain work is a <em>run</em>: one agent session with read-only tools over
-          your corpus and write tools for the stores above. Runs wait in a durable queue and a
-          single drainer works through them. Runs that are not daily execute strictly one at a time,
-          so the queue, not the model, sets the pace.
+          Each Brain agent session is a <em>run</em>, with read-only tools over your corpus and
+          write tools for the stores above. Runs wait in a durable queue and a drainer works through
+          them. Maintenance batches retain their input versions and pending frontier across
+          interruptions; the engine controls admission and repair order.
         </p>
         <p>
-          What wakes a run depends on the record's own date, not on when it was synced. A document
-          dated within <code>brain.recencyWindow</code> (7 days) of now wakes the
-          <strong>live lane</strong>: a conversation waits for an hour of quiet
-          (<code>brain.conversationDebounce</code>) but never more than six
-          (<code>conversationMaxDefer</code>), an edited document waits 30 minutes
-          (<code>documentUpdateDebounce</code>) but never more than four hours
-          (<code>documentMaxDefer</code>), and each waits up to 30 minutes
-          (<code>derivationBarrier</code>) for people resolution, links and date extraction to
-          finish with it. A note told to Omnesis by voice and still being transcribed by the gateway
-          is held until its transcript lands or is given up on, for up to an hour
-          (<code>pendingContentBarrier</code>), so the Brain reads it once, in the gateway's words.
-          Older records never wake the live lane, so a large sync of history does not flood it.
+          New and changed sources enter a durable maintenance queue. Immediate rule-based
+          invalidation marks affected claims stale before model repair. Changes to a source's title
+          or dates also invalidate its dependent claims, even when the body is unchanged. The
+          decision model selects an immediate, hourly or six-hour maintenance tier; thresholds and
+          delays are configurable under <code>brain.knowledge</code>. Related changes can share a
+          batch. Disjoint project regions remain separate, while the root overview is refreshed as a
+          shared aggregate.
         </p>
         <p>
-          History is the <strong>catch-up lane</strong> (the portal calls it Bootstrap). It walks
-          older documents that still carry a future date, most recent first, so Brain starts with
-          upcoming dates and open commitments rather than a blank slate. Its cost grows with the
-          size of your history rather than with how much arrives, so it does not start when you
-          assign the model: open <strong>Debug → Cognition → Bootstrap</strong>, which states how
-          many documents are waiting and roughly how many days they take at the configured pace, and
-          press <strong>Start reading history</strong>. Adding your main sources first gives better
-          results, because a message read before the reply that settled it can open a loop that
-          should never exist. Once started, the lane has the lowest queue priority, goes quiet when
-          nothing is left, and reopens on a new local day or when a source is added.
+          The synthesis agent receives successive dependency frontiers through tools. The engine
+          checks input versions and decides when work is complete. An unchanged claim stops its
+          propagation path. New evidence also gets a discovery pass to find existing context or
+          propose a useful page; a document does not automatically become a wiki. A late-arriving
+          old message is still considered, with its original time and attribution. Proposed pages
+          receive a bounded curation review; publication still requires useful, grounded content,
+          and explicit deferrals retain their reconsideration date.
+        </p>
+        <p>
+          Bounded organization passes also consider already-interpreted sources together. They can
+          maintain a useful wiki about a settled decision or arrangement without creating a new
+          task. The agent records the grounded page targets, a no-page decision, or a deferral with
+          a bounded reason code; unchanged inputs are not reconsidered on every tick. These passes
+          share the Brain's budget and do not expand historical access. If a joint decision relied
+          on incomplete search, index publication makes that group eligible for one catch-up review
+          without waiting for its ordinary repeat interval. This can enrich an existing page or
+          confirm that no page is needed.
+        </p>
+        <p>
+          A source excerpt does not count as a complete read. Before recording considered coverage,
+          the agent must receive the full current source content. Discovery settles after both
+          interpretation and organization are considered; conversion is separate. Sources admitted
+          together need not share one topic: organization can investigate useful subsets and related
+          existing pages.
+        </p>
+        <p>
+          Historical organization is opt-in. Open
+          <strong>Debug → Brain activity → Discovery</strong> and press
+          <strong>Start reading history</strong>. The pass honors historical enablement, active
+          hours and admission caps, and reports separate interpretation, organization and conversion
+          coverage. Recent-first is the default; historical evidence need not contain a future date
+          to be useful. Upgrading preserves existing loops and annotations without promoting their
+          legacy attachments into verified claims. Initial collector imports expose partial coverage
+          as they arrive. Their recent window (<code>brain.knowledge.recentWindowDays</code>,
+          default 30 days) is admitted recent-first and is eligible immediately at routine priority,
+          so importing history does not give it urgency over already-due reviews. Existing queued
+          work keeps its assigned priority. Older and undated inventory follows the
+          historical-review controls. Later arrivals and edits remain reactive, even when they
+          describe older events.
+        </p>
+        <p>
+          Wikis use descriptive titles, sections for supported topics, and links to related pages
+          and tracked outcomes. The compact root overview links to relevant detail pages. Structure
+          grows with the available evidence; there is no page quota. Navigation links do not imply
+          evidential support. A root summary that uses a wiki as supporting detail must also link to
+          that page; this does not require linking every page in the library. Publishing a new wiki
+          schedules the root overview at the configured soon tier; ordinary page edits use the
+          routine tier. When wiki navigation is missing, a bounded selection of historical link
+          identities can help the agent find currently readable pages to reconsider. Old links and
+          facts are not restored automatically.
+        </p>
+        <p>
+          Before publishing a wiki, the agent checks existing pages and candidates and explains why
+          the proposed topic needs its own page. Publication requires claim support from at least
+          two current, readable documents with distinct content; merely listing documents on a
+          candidate does not satisfy this check. A single-document summary belongs in an annotation
+          or an unpublished candidate. Existing pages remain editable after source loss. These
+          safeguards encourage topic synthesis but do not guarantee its quality or a mathematical
+          relationship between document and page counts. Incremental verification does not reset a
+          wiki's whole-page review clock. When a bounded investigation cannot support a useful
+          improvement, the agent can retain the exact existing page after reviewing its claims and
+          defer editorial curation to a later routine review. This does not certify completed
+          curation or bypass evidence checks; new evidence can still trigger maintenance.
+        </p>
+        <p>
+          Wiki updates preserve existing claims unless the agent explicitly records their removal
+          and its reason. Empty wiki replacements are refused. This protects against accidentally
+          dropping sections; it does not establish that retained or rewritten claims are complete.
+          New internal links to synthesis pages are checked for available targets before saving;
+          unchanged older links are not retroactively validated. Independent page repairs can run
+          without conflicting solely because another wiki changed. Wikis should synthesize durable
+          context, while the time index retains individual events. Newly published pages receive a
+          placement review; adding or removing a parent relationship schedules review of the
+          affected pages. Whole-page reviews record whether placement is connected, standalone, or
+          deferred for follow-up; the outcome appears beside that version in History. Standalone
+          pages remain valid, and organizational links do not count as factual evidence.
+        </p>
+        <p>
+          Synthesis uses Markdown with addressable claim spans. Normal reading hides the tags, while
+          editing and inspection retain provenance. Wiki and root writes require every nonblank text
+          span, including headings, to sit inside a claim tag. This structural coverage check is
+          separate from evidence verification. The entailment verifier checks tagged assertions
+          against their evidence, including the subject and scope implied by a wiki's title, section
+          headings and enclosing claims. Moving unchanged text to a different scope requires fresh
+          verification; syntax alone cannot guarantee that every assertion is supported. Unavailable
+          verification leaves claims unverified. Contextual checks select exact authorized source
+          segments rather than copying quotations; source qualifications and interpretation limits
+          still apply. A proof-policy upgrade requires bounded re-verification before older proofs
+          can support new assertions. The root wiki is limited by
+          <code>brain.knowledge.rootMaxChars</code> (8000 characters by default).
+        </p>
+        <p>
+          The answering agent can retrieve maintained pages through its document tools. Page reads
+          separate claim evidence pointers from navigation links and mark truncated lists. Root
+          edits explicitly acknowledge removal of readable wiki navigation; this prevents silent
+          loss during factual repair without requiring every page to appear in the root. Synthesis
+          helps orient an answer; decisive claims still require supporting source evidence.
+        </p>
+        <p>
+          Debug groups the library, agent runs, maintenance batches, discovery controls, and
+          confidence and feedback diagnostics under <strong>Cognition</strong>. Agent runs includes
+          current execution health, full transcripts and tool calls, and token spending. Each
+          transcript shows its own reported attempt usage; missing usage is unknown, and an attempt
+          is not a total across retries. Its <strong>Running</strong> filter shows the live count
+          and active runs. Gateway diagnostics and database tools remain under
+          <strong>System</strong> and <strong>Data tools</strong>. Maintenance supports reason, tier
+          and status filters; each batch shows its tier and all recorded reasons. Filters apply
+          before paging through the history.
+        </p>
+        <p>
+          Open <strong>Debug → Cognition → Library</strong> to browse the Brain’s library. Selecting
+          an entry keeps the library’s filters and loaded results in place. On desktop, the list and
+          reading pane scroll independently. More entries load as you approach the end of the list;
+          Refresh includes newly added or updated entries. Person notes identify their subject and
+          link to the current person profile. In Overview, switch between rendered Markdown and Raw
+          to inspect the original claim tags. Hover over or focus the quote indicator at the end of
+          a claim to preview its verification, assessment, supporting references, and which pages
+          use the claim or whole page as support. The claim is underlined while its preview is open;
+          hovering over the text itself does not open a preview. Claim links open the referenced
+          passage in Overview. Connections shows the page’s incoming and outgoing references,
+          including context and organization links. Source documents appear once as an icon and
+          linked title. History shows each saved version’s changes from its predecessor in a
+          collapsed diff; expand a version to inspect its additions and removals. Advanced contains
+          identifiers, metadata, and exact claim mappings. Maintenance status distinguishes pending
+          work from completed work; a current page is not necessarily verified. Maintenance
+          separates inputs waiting to be grouped, inputs assigned to batches, and recent batch
+          history. Historical deferred records are excluded from the waiting count. Select a batch
+          to inspect its checks and open the agent transcript.
+        </p>
+        <p>
+          Loops live in the same Library. Choose <strong>Loops</strong> in the type filter to browse
+          active or resolved outcomes, and sort loaded results by deadline, importance, or recent
+          update. Each outcome shows its canonical status and synthesis in one view.
+          <strong>Outcome details and activity</strong> shows people, evidence, related briefs,
+          scheduled checks, and the activity ledger without expanding a section. Advanced fields are
+          also shown without disclosure controls. Outcomes remain readable before synthesis is
+          available. Status filters and pills distinguish active, resolved, and retired outcomes in
+          the same list; outcome details retain recurrence information. Briefs also live in the
+          Library, with their status filters, feedback actions, and full metadata. Older loop and
+          brief links open the corresponding Library entry. Behavioral notes has the brain’s
+          operating lessons; these are distinct from the root wiki’s account of your life.
         </p>
         <div class="table-wrap">
           <table>
@@ -570,12 +721,14 @@
             </thead>
             <tbody>
               <tr>
-                <td><code>data</code></td>
-                <td>A recent record arrived or changed (the live lane).</td>
+                <td><code>synthesis</code> — maintenance</td>
+                <td>
+                  A tier is due, discovery finds new context, or a synthesis review needs repair.
+                </td>
               </tr>
               <tr>
-                <td><code>bootstrap</code></td>
-                <td>The catch-up lane picked a historical document.</td>
+                <td>Historical organization</td>
+                <td>Opt-in source-revision work admitted into maintenance batches.</td>
               </tr>
               <tr>
                 <td><code>daily</code></td>
@@ -668,7 +821,18 @@
             and tells the agent to weaken the claim. It checks annotations, dated facts that quote
             evidence, and the claims inside a brief. If the verifier errors or takes longer than 45
             seconds, an annotation is stored marked unverified for the daily re-check, but a brief
-            with an unverified claim is held.
+            with an unverified claim is held. Autonomous document and person notes use structured
+            assessments of individually identified factual assertions, preserving their surrounding
+            conditions and attribution. A negative assertion refuses the note; positive verification
+            requires complete coverage and exact authorized quotes. This uses one bounded verifier
+            call; malformed output or the existing timeout leaves the note unverified. These model
+            judgments can still be wrong. Wiki and root claims also check their placement context
+            with separate assessments and source-exact positive witnesses. MiniCheck does not
+            support contextual checks; these report unavailable rather than treating a literal-only
+            result as contextual proof. Source-derived briefs also check their complete displayed
+            text, including implied associations and time anchors, against original evidence. An
+            unavailable contextual check holds the brief write. Verification is a model judgment,
+            not a guarantee of correctness.
           </li>
           <li>
             <strong>Brief judge.</strong> Every candidate brief must pass four questions: does it
@@ -688,20 +852,17 @@
           </li>
         </ul>
 
-        <h3 id="brain-worth-gate">Skipping mail it cannot use</h3>
+        <h3 id="brain-worth-gate">Routing maintenance with the decision model</h3>
         <p>
-          Most mail gives Brain nothing to record: promotions, newsletters, notifications. Assigning
-          the <code>decision</code> role lets Brain ask a cheap typed-decision model, TypeSafe Jev,
-          whether an email is worth a full agent run before starting one. Jev reads the subject, the
-          sender and the first 2,000 characters of the body and answers with a score; below the
-          threshold, the run ends without an agent turn. An attachment is judged by the email that
-          contains it. Mail you sent to the assistant, and mail carrying a structured booking or due
-          date, is never skipped. An email is scored once for the same content: the answer is shared
-          with the <a href="/docs#documents-and-the-index">mention worth gate</a>, so mail either
-          one has scored is not sent again.
+          The <code>decision</code> role can select an urgency tier, decide whether new evidence
+          deserves interpretation, assess whether changed inputs could affect a dependent claim, and
+          prioritize proactive review. TypeSafe Jev supplies typed scores rather than prose. A low
+          relevance score can settle a work item without a synthesis turn; uncertainty or an
+          unavailable judgement keeps the conservative repair path. Existing invalidated time-index
+          entries still receive their evidence review.
         </p>
         <p>
-          The check sends each email it scores to TypeSafe, so it needs
+          These checks send the selected evidence context to TypeSafe, so they need
           <code>inference.allowRemoteInference: true</code> and a TypeSafe API key. Enter the key
           from <strong>Settings → Models → Decision model</strong>, or with
           <code>omnesis backend key set typesafe</code>, then assign the model:
@@ -716,33 +877,113 @@
           </div>
         </div>
         <p>
-          If Jev cannot be reached, or rejects the key, the email is processed as if the check were
-          off. Every judgement is kept with the run it was made for: the Runs tab marks a skipped
-          run <strong>gated</strong> and shows the exact request and answer, and the Bootstrap tab
-          counts skipped history separately from reviewed history. Jev's tokens appear on the
-          Overview tab as <strong>Decision model · worth gate</strong> and count toward the daily
-          token budget, not the daily run budget. The request and answer text is cleared after the
-          activity-retention window, and deleting an email deletes its judgements. The key can also
-          come from <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the
-          gateway's environment. To reach a private TypeSafe deployment instead of the public API,
-          set <code>inference.typesafe.url</code>.
+          Discovery checks complete sources within a 128 KiB application input budget, including the
+          decision rubric. It does not truncate a document to decide it is irrelevant. Larger or
+          empty inputs and missing decision models are admitted for inspection; Decision details
+          identifies these engine bypasses separately from model judgments. This budget does not
+          advertise a provider context limit.
+        </p>
+        <p>
+          If Jev cannot be reached or returns an invalid answer, the engine records an unavailable
+          judgement and follows its conservative fallback. Inspect decisions beside the maintenance
+          work or agent run they explain by expanding Decision details. Urgency checks show the
+          captured policy, score and applied schedule. Exact requests and model results are loaded
+          on demand; older redacted records and unavailable inputs are labelled explicitly. Advanced
+          history keeps retained decisions accessible after their work or transcript is gone. Input
+          copies follow decision-history retention and deletion of contributing sources. The Brain
+          diagnostics show decision purposes, input fingerprints, normalized scores and model usage.
+          Metadata is retained separately from the bounded input snapshots. Decision tokens count
+          toward the daily token budget, not the daily agent-run budget. The key can also come from
+          <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the gateway's
+          environment. To reach a private TypeSafe deployment instead of the public API, set
+          <code>inference.typesafe.url</code>.
+        </p>
+        <p>
+          When parallel maintenance discovers a shared target, the Brain coordinates its updates
+          before running write checks. A conflicting run returns its work to the planner and stops
+          its turn; the evidence remains queued for a combined or later pass.
         </p>
         <h3 id="brain-record-check">Checking what it writes</h3>
         <p>
-          The same decision model also checks what Brain writes. When a live or catch-up run saves a
-          new dated entry or annotation drawn from a document, Jev reads that one sentence and
-          scores whether it belongs in your life memory; promotional dates, product news and
-          descriptions of what a document is score low. The agent still reads and searches as much
-          as it wants; only the record it settles on is scored.
+          Outcome deadlines receive a separate support score in the same decision request: a
+          relevant forecast or event date cannot become an action due date without evidence.
+          Unsupported deadlines can be cleared while retaining the useful outcome; approximate
+          action deadlines keep their source qualifications. The audit shows each score and the
+          limiting requirement.
+        </p>
+        <p>
+          New wiki publications and changed wiki prose are checked for actual synthesis value:
+          several citations, a document inventory or copied boilerplate are insufficient by
+          themselves. Concise integrated accounts can qualify. Root orientation and unchanged prose
+          proof refreshes skip this value check. It uses the existing default threshold and
+          record-check mode; missing or oversized context is recorded as unavailable and fails open,
+          not as a quality approval.
+        </p>
+        <p>
+          The same decision model also checks annotations, tracked outcomes, wiki drafts and dated
+          entries written during live, historical, or maintenance runs. For document annotations it
+          reads bounded source context and supporting excerpts: the annotation should add meaningful
+          cross-source context or substantially compress a long substantive document. Restating a
+          short source or shortening boilerplate is insufficient. New document notes pass this value
+          check before entailment verification, so an enforced refusal avoids that verifier call.
+          Caller cancellation still prevents the write. Person annotations need useful context about
+          the person, such as a role, relationship, preference or standing responsibility; one
+          explicit source can suffice. A one-off message or event summary merely involving someone
+          is insufficient. Describing a source that mentions someone is not a person fact unless the
+          assertion itself adds useful context about them. Historical scope and source attribution
+          are allowed. Person and document notes require meaningful value (at least 1.5 on the
+          decision model’s 0–3 scale), rather than marginal usefulness. Profiles are curated as a
+          whole, with defaults of 20 active facts and 4000 characters per person. An independent
+          score in the same request checks that the final profile distills distinct person-level
+          meaning rather than listing supporting documents or repeating retained facts. Necessary
+          historical qualifications stay; additional corroboration belongs in evidence rather than
+          growing the profile prose. Configure these limits through
+          <code>brain.annotations.personProfile</code>; the agent consolidates overlapping facts
+          instead of appending a note for each source. Time-index entries are judged for personal
+          relevance; an automated notice can still contain a meaningful fact. This check happens
+          after the agent’s research and drafting, so it does not avoid the initial synthesis turn.
           <code>brain.annotations.recordCheck</code> sets what happens: <code>shadow</code> (the
           default) saves every record at once and scores it afterwards, <code>enforce</code> scores
           it first, drops a low-scored record and tells the agent not to retry it, and
           <code>off</code> asks nothing. If Jev does not answer within 15 seconds, the record is
-          saved. Corrections to an existing record, entries Brain writes for its own scheduling,
-          anything you hand to the assistant, and memory you ask for directly are never checked.
-          Each verdict is shown on the run it was made for, with the record and the document it came
-          from, and its tokens appear as <strong>Decision model · record check</strong>. Verdicts
-          are deleted after the activity-retention window.
+          saved. Missing or unsafe source context also leaves a document annotation unjudged rather
+          than guessing its added value. Person-profile replacements and revisions are checked
+          against the useful context they would replace. Scheduled person-note reviews also reassess
+          whether to retain each fact in the current compact profile; an enforced refusal requires
+          correction, consolidation or retraction before the review completes. Autonomous
+          person-note withdrawal uses the same profile-utility standard in a separate preservation
+          check: truth alone does not make routine or incidental details useful profile context. A
+          retention refusal never authorizes deletion by itself; useful supported meaning must
+          remain in the profile or be replaced atomically. In <code>enforce</code>, an unavailable
+          withdrawal assessment leaves the old fact pending instead of deleting it. Irrelevant,
+          unsupported and redundant facts may still be removed. Ordinary evidence refreshes do not
+          repeat this editorial check. Tracked outcome creation and substantive changes are checked
+          for supported responsibility, event identity and current status; autonomous outcome
+          assertions require original evidence. Pure scheduling and dismissal, anything you hand to
+          the assistant, and memory you ask for directly are not checked. Each verdict is shown on
+          the run it was made for, with the record and the document it came from, and its tokens
+          appear as <strong>Decision model · record check</strong>. Verdicts are deleted after the
+          activity-retention window.
+        </p>
+
+        <p>
+          Discovery includes a month-by-month coverage chart. Switch between
+          <strong>Read evidence</strong> and <strong>Connect context</strong> to inspect the two
+          discovery stages. Reviewed, gated, deferred, failed, and pending sources remain distinct.
+          Counts describe current imported document versions, not history outside your sync range; a
+          connection review does not necessarily produce a wiki page.
+        </p>
+        <p>
+          During backfill, imported documents can become readable before search catches up.
+          Discovery treats incomplete search as uncertainty and records a bounded catch-up review
+          for after index publication advances. This review does not consume historical admission
+          again. A completed index scan still does not prove that every document is searchable.
+        </p>
+        <p>
+          Once started, historical bootstrap fills its available batch fairly across sources.
+          Admitted history is ready immediately; the routine maintenance delay applies to live
+          changes. Independent maintenance uses four workers by default. Daily admission, backlog,
+          active-hour and spend limits still bound catch-up work.
         </p>
 
         <h3 id="brain-spend">Bounding the spend</h3>
@@ -756,8 +997,11 @@
           completion, so the catch-up lane is where large bills come from. The Overview tab splits
           each day's tokens into fresh input, input re-read from the provider's cache (billed at a
           fraction, and a subset of input, not an addition) and output. On the catch-up lane the
-          cached share is usually high and output is around one percent, so if spend jumps while the
-          token total barely moves, look at the cached share first.
+          observed cache share depends on the backend, model and prompt prefix. Compare measured
+          fresh and cached input with your provider's pricing; no fixed output ratio is assumed.
+          Cache totals include only usage reported by the provider. A zero aggregate does not
+          establish that every input token was fresh; missing historical cache details cannot be
+          reconstructed.
         </p>
         <p>
           All limits are set with <code>omnesis config set &lt;path&gt; &lt;value&gt;</code> (or the
@@ -791,15 +1035,15 @@
                 <td><code>brain.bootstrap.maxRunsPerDay</code></td>
                 <td>200</td>
                 <td>
-                  Catch-up runs enqueued per local day: the catch-up pace, and the first knob to
-                  turn down.
+                  Historical source-revision work admitted per local day. Several seeds may share
+                  one synthesis run; this is separate from the agent-run budget.
                 </td>
               </tr>
               <tr>
                 <td><code>brain.bootstrap.maxRuns</code></td>
                 <td>1,000,000</td>
                 <td>
-                  Lifetime catch-up runs for the install, never reset, not even by removing a
+                  Lifetime historical work admissions for the install, not reset by removing a
                   source. The lane parks when it is reached.
                 </td>
               </tr>
@@ -820,6 +1064,11 @@
             </tbody>
           </table>
         </div>
+        <p>
+          Brain maintenance reserves bounded capacity for outdated-proof repairs alongside root and
+          organization work, while retaining capacity for ordinary discovery. This does not bypass
+          budgets or retry delays.
+        </p>
         <p>
           The daily ceilings count interactive agent spend as well, because a budget that chat could
           exhaust alongside would not bound anything. The catch-up window gates when the lane
@@ -868,29 +1117,24 @@
                 <td><code>brain.bootstrap.enabled</code> is false: the lane is paused.</td>
               </tr>
               <tr>
-                <td><code>holding</code></td>
-                <td>Within ten minutes of a gateway start, out of the way of post-restart work.</td>
-              </tr>
-              <tr>
                 <td><code>waiting</code></td>
                 <td>
-                  Outside <code>activeHours</code>, or the day's allowance is spent and nothing is
-                  queued.
+                  Outside <code>activeHours</code>, or the daily admission allowance is spent.
+                  Previously admitted work can still execute.
                 </td>
               </tr>
               <tr>
                 <td><code>running</code></td>
-                <td>Working through history at its configured pace.</td>
-              </tr>
-              <tr>
-                <td><code>drained</code></td>
-                <td>Nothing left; reopens on a new local day or when a source is added.</td>
+                <td>
+                  Historical admission is enabled within its bounds; an empty queue does not prove
+                  corpus completion.
+                </td>
               </tr>
               <tr>
                 <td><code>parked</code></td>
                 <td>
-                  Stopped at <code>maxRuns</code>. The one state to act on: raise the ceiling to
-                  resume.
+                  Historical admission reached <code>maxRuns</code> or the shared cognition budget.
+                  Raise the relevant ceiling or wait for a daily budget reset.
                 </td>
               </tr>
             </tbody>
@@ -948,13 +1192,13 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
 
         <h3 id="brain-observing">Observing it</h3>
         <p>
-          The portal's <strong>Debug → Cognition</strong> page is the main view. Its tabs are
-          <strong>Overview</strong> (gate status, today's budget and spend by mechanism),
-          <strong>Loops</strong>, <strong>Runs</strong> (the queue, each run's transcript and
-          decisions), <strong>Briefs</strong>, <strong>Memory</strong> (annotations),
-          <strong>Calibration</strong> and <strong>Bootstrap</strong> (catch-up state, limits, pause
-          control and backend health). <strong>Debug → Background jobs</strong> shows when each
-          scheduled task last ran. The same data is available from the CLI:
+          The portal separates <strong>Knowledge</strong> (the library, loops, briefs, and timeline)
+          from <strong>Brain activity</strong>. Activity summarizes runs and spend; Agent runs shows
+          the queue, transcripts, and decisions; Maintenance follows repair batches; Discovery shows
+          coverage and historical admission controls; Calibration compares confidence with observed
+          outcomes. Legacy memory retains agent notes and retired-loop history.
+          <strong>System → Gateway jobs</strong> shows when each scheduled task last ran. The same
+          data is available from the CLI:
         </p>
         <div class="table-wrap">
           <table>
@@ -1022,9 +1266,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
           <li>
             <strong>Unassign the model.</strong>
             <code>omnesis model assign background-agent disabled</code> stops all new Brain work at
-            once. While experimental mode is on, the portal's Cognition page still shows what was
-            written and the apps still show stored briefs, with a setup notice that opens the model
-            picker; the apps' Loops view needs a running Brain.
+            once. While experimental mode is on, the portal's Brain activity page still shows what
+            was written and the apps still show stored briefs, with a setup notice that opens the
+            model picker; the apps' Loops view needs a running Brain.
           </li>
           <li>
             <strong>Turn experimental mode off.</strong> Restart the gateway without
@@ -1046,6 +1290,15 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
           inform an answer through <a href="/docs/connect#answer">Answer</a>, which passes your
           privacy review as usual. A Direct grant exposes them only when it is unrestricted. Briefs
           are exposed to neither.
+        </p>
+        <p>
+          Loop lists normally help the agent choose records to read. For counts or recorded
+          rankings, it can request a dated tracking snapshot instead. These answers describe
+          accessible stored records at the stated observation time, not every real-world obligation;
+          discovery and maintenance may still be incomplete. If snapshot support changes while
+          answering, the agent may discard it and rewrite once using independently read evidence.
+          The rewrite cannot rely on the discarded inventory's counts or rankings; privacy and
+          source changes still hold release.
         </p>
         <p>
           What Brain writes stays in the gateway's database with the rest of your data and is part
@@ -1115,8 +1368,12 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
               </tr>
               <tr>
                 <td><code>workerConcurrency</code></td>
-                <td>1</td>
-                <td>Queue workers. Runs that are not daily stay one at a time regardless.</td>
+                <td>4</td>
+                <td>
+                  Concurrent independent maintenance workers (1–32). Root updates and legacy runs
+                  execute one at a time. Codex also has a separate background runtime capacity under
+                  <code>inference.codex.backgroundPoolSize</code>, defaulting to 4.
+                </td>
               </tr>
               <tr>
                 <td><code>dailyRunHour</code></td>
@@ -1368,9 +1625,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
         </p>
         <p>
           Every compile is recorded as a run of kind <code>subscription_compile</code> on
-          <strong>Debug → Cognition → Runs</strong>, with the full transcript: what the compiler
-          looked up, what it wrote and each repair turn. An installed watch links to it from its
-          detail page. The transcript contains corpus text the compiler read.
+          <strong>Debug → Brain activity → Agent runs</strong>, with the full transcript: what the
+          compiler looked up, what it wrote and each repair turn. An installed watch links to it
+          from its detail page. The transcript contains corpus text the compiler read.
         </p>
         <p>
           <strong>An agent's request needs approval</strong> before it can wake anyone. Until then
@@ -2092,6 +2349,49 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
             ><span class="pager-title">Building sources</span></a
           >
         </nav>
+        <p>
+          Searchable assistant conversations remain historical context, not independent evidence for
+          their claims. Brain verification uses authenticated, complete attributed utterances;
+          current original sources must be read separately. Long or partially read utterances may
+          remain readable without providing factual support.
+        </p>
+        <p>
+          A stale maintained page may still expose individually current, qualified claims. Direct
+          reads can handle a freshness-only mirror delay at the same revision. Other prose remains
+          orientation only; privacy restrictions and changed read snapshots still prevent use.
+        </p>
+        <p>
+          Maintenance can reuse the exact frontier receipt observed by a complete editing read
+          instead of transcribing its fingerprint. Explicit mismatches and stale source, owner or
+          privacy state remain refused.
+        </p>
+        <p>
+          Synthesis saves report bounded stored claim verification states. A successful save or
+          completed review can still leave claims unverified. Whole synthesis references provide
+          orientation; factual support requires qualified claims or original evidence.
+        </p>
+        <p>
+          Loop claim verification checks each assertion in its bounded final outcome context.
+          Surrounding prose is interpretation, not additional evidence. Older literal-only proofs
+          are rechecked gradually, including retained completed outcomes without reopening them.
+          Operational loop updates remain separate from claim verification; a stored description is
+          not a guarantee of factual accuracy.
+        </p>
+        <p>
+          Exact loop reads can reuse current context-verified assertions with their conditions,
+          attribution and time bounds. Surrounding prose and tracked open state do not prove
+          additional facts, present-world obligations or completion.
+        </p>
+        <p>
+          Evidence-backed timeline entries pass their configured record-value check before paid
+          evidence verification. An enforced value refusal avoids that verification call;
+          cancellation stops the write, and source freshness and privacy checks still apply.
+        </p>
+        <p>
+          The experimental Brain admits at most two independent remote verification checks at a
+          time; native verification remains serial. Backend pool limits and existing verification
+          deadlines still apply.
+        </p>
       </main>
     </div>
 

@@ -144,6 +144,15 @@ describe("runs list — the worth gate", () => {
 });
 
 describe("run detail — the Decision model section", () => {
+  it("labels historical redacted record inputs and score-only answers without claiming exact capture", () => {
+    const text = flatText(cognition.DecisionCard({ decision: decision({ purpose: "record-check", request: { ...REQUEST, state: { record: "Workshop note", document_context: { redacted: true, replayable: false } } } }) }));
+    expect(text).toContain("Recorded request");
+    expect(text).toContain("Source context was redacted");
+    expect(text).toContain("Only the resulting score was retained");
+    const missing = flatText(cognition.DecisionCard({ decision: decision({ request: null, response: null }) }));
+    expect(missing).toContain("No model request is retained");
+    expect(missing).toContain("No model answer is retained");
+  });
   it("is absent when no decision was made", () => {
     expect(expandToHostNodes(cognition.DecisionSection({ decisions: [] }))).toHaveLength(0);
   });
@@ -153,7 +162,7 @@ describe("run detail — the Decision model section", () => {
     expect(text).toContain("Decision model");
     expect(text).toContain("skip");
     expect(text).toContain("score 0.21 < threshold 1.08");
-    expect(text).toContain("Not worth a run");
+    expect(text).toContain("Gate declined admission for this attempt");
     expect(text).toContain("jev-1.13.0");
     expect(text).toContain("412 ms");
     expect(text).toContain("356");
@@ -164,7 +173,7 @@ describe("run detail — the Decision model section", () => {
   it("carries the exact request — state and the four criteria levels — and the answer's probabilities", () => {
     const nodes = expandToHostNodes(cognition.DecisionCard({ decision: decision() }));
     const summaries = nodes.filter((n) => n.tag === "summary").map((n) => n.text);
-    expect(summaries).toEqual(["Request sent", "Answer"]);
+    expect(summaries).toEqual(["Recorded request", "Recorded answer"]);
     const text = nodes.map((n) => n.text).join(" ");
     expect(text).toContain("news@example.com");
     expect(text).toContain("Ten new templates this week.");
@@ -195,6 +204,8 @@ describe("run detail — the Decision model section", () => {
     );
     expect(text).toContain("pass");
     expect(text).toContain("score 2.40 ≥ threshold 1.08");
+    expect(text).toContain("Admitted for agent review");
+    expect(text).not.toContain("turn went ahead");
     expect(text).toContain("the document that contains it");
     expect(text).toContain("Venue booking for the Q4 review");
     expect(text).toContain("inherits its email's judgement");
@@ -218,9 +229,9 @@ describe("run detail — the Decision model section", () => {
     );
     const text = nodes.map((n) => n.text).join(" ");
     expect(text).toContain("unavailable");
-    expect(text).toContain("went ahead unjudged");
+    expect(text).toContain("Admitted for agent review without a verdict");
     expect(nodes.find((n) => n.class.includes("debug-error")).text).toContain("TypeSafe returned HTTP 503");
-    expect(nodes.filter((n) => n.tag === "summary").map((n) => n.text)).toEqual(["Request sent"]);
+    expect(nodes.filter((n) => n.tag === "summary").map((n) => n.text)).toEqual(["Recorded request"]);
   });
 
   it("never reads a decision of an unknown purpose as a worth-gate verdict", () => {
@@ -264,14 +275,14 @@ describe("run detail — the Decision model section", () => {
       expect(text).not.toContain("the document that contains it");
     });
 
-    it("says an observing skip saved the record anyway, and an enforced one did not", () => {
+    it("distinguishes a shadow rejection from a blocked save attempt", () => {
       const observing = flatText(cognition.DecisionCard({ decision: recordCheck() }));
-      expect(observing).toContain("would drop");
-      expect(observing).toContain("saved anyway");
+      expect(observing).toContain("would reject");
+      expect(observing).toContain("did not block saving");
       const enforced = flatText(cognition.DecisionCard({ decision: recordCheck({ enforced: true }) }));
-      expect(enforced).toContain("dropped");
-      expect(enforced).toContain("the record was not saved");
-      expect(enforced).not.toContain("saved anyway");
+      expect(enforced).toContain("blocked");
+      expect(enforced).toContain("Gate blocked this save attempt");
+      expect(enforced).not.toContain("did not block saving");
     });
 
     it("still names the record id and its document once retention cleared the request", () => {
@@ -281,13 +292,13 @@ describe("run detail — the Decision model section", () => {
       expect(text).not.toContain("undefined");
     });
 
-    it("reads a pass as kept and an outage as saved unjudged", () => {
+    it("reports admission without asserting the later writer saved a record", () => {
       expect(flatText(cognition.DecisionCard({ decision: recordCheck({ verdict: "pass", score: 2.6 }) }))).toContain(
-        "the record was kept",
+        "Gate allowed this record",
       );
       expect(
         flatText(cognition.DecisionCard({ decision: recordCheck({ verdict: "unavailable", score: null, response: null }) })),
-      ).toContain("the record was saved unjudged");
+      ).toContain("Allowed without a verdict");
     });
   });
 

@@ -36,6 +36,10 @@
  * identical edge set (no duplicate/destroyed edges) — the idempotence oracle.
  */
 
+import {
+  sealConversationEvidence,
+  type ConversationEvidenceProjection,
+} from "./evidence-projection.js";
 import { analyticsRowKey } from "@omnesis/core";
 import { markLinkStatsDirty } from "../../data/DirtyMarks.js";
 import type { LinkType } from "@omnesis/core";
@@ -135,6 +139,7 @@ export function upsertConversationCitations(
   db: Db,
   sourceDocId: string,
   citations: ReadonlyArray<ConversationCitationInput>,
+  evidenceProjection?: ConversationEvidenceProjection,
 ): UpsertConversationCitationsResult {
   const now = new Date().toISOString();
   const deleteStmt = db.prepare(
@@ -149,6 +154,7 @@ export function upsertConversationCitations(
   `);
 
   const txn = db.transaction(() => {
+    if (evidenceProjection) sealConversationEvidence(db, sourceDocId, evidenceProjection);
     const deleted = deleteStmt.run(sourceDocId, CONVERSATION_CITATION_LINK_TYPE);
     const removed = Number(deleted.changes ?? 0);
     let inserted = 0;

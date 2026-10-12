@@ -757,6 +757,27 @@ describe("agent graph search evidence", () => {
     ).toEqual([]);
   });
 
+  test.each(["brain-knowledge", "open-loops"])(
+    "drops missing generated %s index hits, including long IDs",
+    (source) => {
+      const ordinary = doc("ordinary-stale");
+      db.prepare("DELETE FROM documents WHERE id=?").run(ordinary.documentId);
+      for (const documentId of ["missing-projection", "generated-".repeat(40)]) {
+        expect(search([{ ...ordinary, documentId, sourceId: source }])).toEqual([]);
+      }
+      // A real deletion has a durable tombstone; only an unknown ordinary
+      // index hit retains the legacy missing-row fallback.
+      expect(search([ordinary])).toEqual([]);
+      expect(search([{ ...ordinary, documentId: "unknown-ordinary-stale" }])).toHaveLength(1);
+    },
+  );
+
+  test("checks authoritative privacy before optional long-ID graph fallback", () => {
+    const hit = doc("long-projection-".repeat(24));
+    db.prepare("UPDATE documents SET source_id='brain-knowledge' WHERE id=?").run(hit.documentId);
+    expect(search([hit])).toEqual([]);
+  });
+
   test("uses partition device stream instead of source primary and preserves bounded path", () => {
     for (const [id, name] of [
       ["primary", "Fictional desktop"],

@@ -355,7 +355,8 @@ describe("Indexer", () => {
       { ...makeDoc("d2", "fail B"), updatedAt: "2026-03-10T02:00:00Z" },
     ];
 
-    await indexer.indexUpdated();
+    const result = await indexer.indexUpdated();
+    expect(result.scannedThrough).toBe("2026-03-10T02:00:00Z");
 
     // Watermark should NOT advance since no docs succeeded
     const wm = getWatermark(db, "last_updated_at");
@@ -536,6 +537,7 @@ describe("Indexer", () => {
     stopIndexer.stop();
 
     const result = await runPromise;
+    expect(result.scannedThrough).toBeUndefined();
     // Should have stopped well before all 500 docs.
     expect(result.indexed).toBeLessThan(500);
     // No exception was thrown.
@@ -753,6 +755,39 @@ describe("Indexer", () => {
   });
 
   describe("pagination + pipelining across multiple pages", () => {
+    test("publishes only committed page batches and retries an interrupted publication without skipping pending documents", async () => {
+      source.documents = [
+        makeDoc("a", "First invented inventory."),
+        makeDoc("b", "Second invented inventory."),
+        makeDoc("c", "Third invented inventory."),
+      ];
+      const snapshots: number[] = [];
+      let fail = true;
+      const paged = new Indexer(db, source, new DocumentChunker(), embedder, {
+        pageSize: 1,
+        betweenPageSleepMs: 0,
+        onPageCommitted: () => {
+          snapshots.push(getIndexedDocumentCount(db));
+          expect(getWatermark(db, "last_updated_at")).toBeNull();
+          if (fail) {
+            fail = false;
+            throw new Error("scripted publication failure");
+          }
+        },
+      });
+      await expect(paged.indexUpdated()).rejects.toThrow("scripted publication failure");
+      expect(snapshots).toEqual([1]);
+      expect(getIndexedDocument(db, "b")).toBeNull();
+      expect(getIndexedDocument(db, "c")).toBeNull();
+      await expect(paged.indexUpdated()).resolves.toMatchObject({
+        indexed: 2,
+        errors: 0,
+        scannedThrough: source.documents[0]!.updatedAt,
+      });
+      expect(snapshots).toEqual([1, 2, 3]);
+      expect(getIndexedDocumentCount(db)).toBe(3);
+    });
+
     test("indexUpdated paginates across >1 page, advancing afterId in page order", async () => {
       // 7 docs with strictly-increasing updatedAt so the watermark assertion
       // is unambiguous. pageSize 2 → 4 lightweight pages (2,2,2,1).

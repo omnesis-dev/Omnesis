@@ -699,6 +699,17 @@ export const openBriefThread = (id) =>
 export const getCognitionBrief = (id) =>
   request("GET", `/admin/brain/briefs/${encodeURIComponent(id)}`);
 export const getCognitionNotes = () => request("GET", "/admin/brain/notes");
+export const getKnowledgeNodes = (query) => request("GET", "/admin/brain/knowledge", { query });
+export const getKnowledgeNode = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}`, { query: { editing: "1" } });
+export const getKnowledgeConnections = (id, query = {}) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/connections`, { query });
+export const getKnowledgeHistory = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/history`);
+export const getKnowledgeStatus = () => request("GET", "/admin/brain/knowledge/status");
+export const getCognitionDecisionInput = (id) => request("GET", `/admin/brain/decisions/${encodeURIComponent(id)}`);
+export const getKnowledgeDecisionAudit = (query = {}) => request("GET", "/admin/brain/knowledge/decisions", { query });
+export const getKnowledgeDecision = (id) => request("GET", `/admin/brain/knowledge/decisions/${encodeURIComponent(id)}`);
+export const getKnowledgeBatches = (query = {}) => request("GET", "/admin/brain/knowledge/batches", { query });
+export const getKnowledgeBatch = (id) => request("GET", `/admin/brain/knowledge/batches/${encodeURIComponent(id)}`);
+
 
 // --- Sweeps (the one WRITING surface under /admin/brain) ---
 // The gateway ships a set of sweeps and the operator layers their own files
@@ -1641,3 +1652,10 @@ export const approveBrowserNotesAuthorization = (id) => request("POST", `/admin/
 
 export const getBrowserFindAuthorization = (id) => request("GET", `/admin/browser-find/authorizations/${encodeURIComponent(id)}`);
 export const approveBrowserFindAuthorization = (id) => request("POST", `/admin/browser-find/authorizations/${encodeURIComponent(id)}/approve`);
+
+export const getKnowledgeLibrary = (query = {}) => request("GET", "/admin/brain/knowledge/library", { query });
+export const getKnowledgeLibraryRetirement = (id) => request("GET", `/admin/brain/knowledge/library/${encodeURIComponent(id)}`);
+
+export const getKnowledgeNodeDecisions = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}/decisions`);
+
+export const getKnowledgePendingWork = (query = {}) => request("GET", "/admin/brain/knowledge/pending-work", { query });

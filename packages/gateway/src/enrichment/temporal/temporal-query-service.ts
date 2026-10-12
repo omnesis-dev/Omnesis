@@ -14,6 +14,7 @@ import { TEMPORAL_STATUSES } from "@omnesis/types";
 import { countPendingDateExtraction } from "../dates/storage.js";
 import { projectionRevision } from "../temporal-projections/derive.js";
 import { MENTION_ORIGIN_RANK, readMentionPage } from "./temporal-mentions.js";
+import { annotationMatchesScope, normalizedAnnotationBounds } from "./annotation-scope.js";
 import { resolveTemporalRange } from "./temporal-range.js";
 import type Database from "better-sqlite3";
 import type {
@@ -275,54 +276,6 @@ function normalizedProjectionBounds(
     );
     return stored;
   }
-}
-
-function normalizedAnnotationBounds(
-  row: {
-    precision: string;
-    canonical: string | null;
-    startMs: number;
-    endExclusiveMs: number;
-  },
-  timeZone: string,
-): { startMs: number; endExclusiveMs: number; allDay: boolean } {
-  const fallback = {
-    startMs: row.startMs,
-    endExclusiveMs: row.endExclusiveMs,
-    allDay: row.precision !== "instant",
-  };
-  if (!row.canonical || row.precision === "instant") return fallback;
-
-  const resolve = (value: string) => {
-    try {
-      return resolveTemporalRange({ from: value.trim(), timeZone });
-    } catch {
-      return null;
-    }
-  };
-  if (row.precision === "day" || row.precision === "month" || row.precision === "year") {
-    const period = resolve(row.canonical);
-    return period
-      ? {
-          startMs: period.fromMs,
-          endExclusiveMs: period.toExclusiveMs,
-          allDay: true,
-        }
-      : fallback;
-  }
-  if (row.precision === "range") {
-    const tokens = row.canonical.split(" .. ");
-    if (tokens.length !== 2) return fallback;
-    const first = resolve(tokens[0]);
-    const second = resolve(tokens[1]);
-    if (!first || !second) return fallback;
-    return {
-      startMs: Math.min(first.fromMs, second.fromMs),
-      endExclusiveMs: Math.max(first.toExclusiveMs, second.toExclusiveMs),
-      allDay: !tokens.every((token) => token.includes("T")),
-    };
-  }
-  return fallback;
 }
 
 const overlaps = intervalOverlapsWindow;
@@ -786,6 +739,7 @@ export class TemporalQueryService {
     const rows = this.db
       .prepare(
         `SELECT e.*,
+           (SELECT json_group_array(doc.source_id) FROM temporal_annotation_documents ad JOIN documents doc ON doc.id=ad.document_id WHERE ad.annotation_id=e.id) AS source_ids,
            (SELECT json_group_array(d.document_id)
               FROM temporal_annotation_documents d WHERE d.annotation_id = e.id) AS document_ids,
            (SELECT json_group_array(p.person_id)
@@ -825,7 +779,25 @@ export class TemporalQueryService {
         },
         input.timeZone,
       );
-      if (!overlaps(bounds, range)) return [];
+      if (
+        !annotationMatchesScope(
+          {
+            id,
+            intervalStartMs: storedStartMs,
+            intervalEndMs: inclusiveEnd,
+            precision: storedPrecision,
+            canonical: row.canonical == null ? null : String(row.canonical),
+            kind: row.kind == null ? null : String(row.kind),
+            documentIds: parseIds(row.document_ids),
+            sourceIds: parseIds(row.source_ids),
+            personIds: parseIds(row.person_ids),
+            loopIds: parseIds(row.loop_ids),
+            projectionIds: parseIds(row.projection_ids),
+          },
+          { ...input, ...range },
+        )
+      )
+        return [];
       const precision: TemporalPrecision =
         storedPrecision === "year" ||
         storedPrecision === "month" ||

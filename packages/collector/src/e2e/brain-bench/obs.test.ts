@@ -6,6 +6,24 @@ import { BrainObs } from "./obs.js";
 import type { SyntheticE2EHarness } from "../synth-harness.js";
 
 describe("BrainObs runs", () => {
+  test("finds actual successful maintenance runs without a per-document datum alias", async () => {
+    const obs = new BrainObs({} as SyntheticE2EHarness);
+    vi.spyOn(obs, "runs").mockResolvedValue({
+      items: [{ id: "batch" }, { id: "refused" }],
+    } as Awaited<ReturnType<BrainObs["runs"]>>);
+    vi.spyOn(obs, "executedTools").mockImplementation(async (id) => [
+      {
+        tool: "knowledge_discovery_complete",
+        args: { id: "source:document" },
+        result:
+          id === "batch"
+            ? { kind: "structured", data: {} }
+            : { kind: "error", code: "revision_conflict" },
+      },
+    ]);
+    expect((await obs.runsForSource("document")).map((run) => run.id)).toEqual(["batch"]);
+    expect(await obs.runsForSource("other")).toEqual([]);
+  });
   test("restarts a first-page read when the run list changes during the query", async () => {
     const stale = Object.assign(new Error("stale page"), {
       status: 409,

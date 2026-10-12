@@ -21,6 +21,11 @@
  */
 
 import { recordWorthAnswers } from "../../worth/answers.js";
+import {
+  recordDecisionPayload,
+  type DecisionPayloadCapture,
+  type DecisionPayload,
+} from "../decision-payload.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -34,6 +39,9 @@ export type DecisionVerdict = "pass" | "skip" | "unavailable";
 export type DecisionPurpose = "worth-gate" | "record-check";
 
 export interface CognitionDecisionRecord {
+  /** Optional exact input snapshot, stored separately under its full privacy ancestry. */
+  payloadCapture?: DecisionPayloadCapture;
+  payload?: DecisionPayload;
   id: string;
   runId: string;
   documentId: string;
@@ -172,7 +180,9 @@ function fromRow(row: DecisionRow): CognitionDecisionRecord {
  */
 export function insertCognitionDecision(db: Db, record: CognitionDecisionRecord): void {
   db.transaction(() => {
-    insertDecisionRow(db, record);
+    const inserted = insertDecisionRow(db, record);
+    if (inserted && record.payloadCapture && record.payload)
+      recordDecisionPayload(db, record.id, record.payloadCapture, record.payload, record.createdAt);
     if (
       record.purpose === "worth-gate" &&
       record.score !== null &&
@@ -195,38 +205,42 @@ export function insertCognitionDecision(db: Db, record: CognitionDecisionRecord)
   })();
 }
 
-function insertDecisionRow(db: Db, record: CognitionDecisionRecord): void {
-  db.prepare(
-    `INSERT INTO cognition_decisions (
+function insertDecisionRow(db: Db, record: CognitionDecisionRecord): boolean {
+  return (
+    db
+      .prepare(
+        `INSERT INTO cognition_decisions (
        id, run_id, document_id, subject_document_id, purpose, lane, rubric_version,
        content_hash, requested_model_id, model_id, request_json, response_json, score,
        threshold, verdict, error, reused_from, record_id, enforced, latency_ms, input_tokens,
        created_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO NOTHING`,
-  ).run(
-    record.id,
-    record.runId,
-    record.documentId,
-    record.subjectDocumentId,
-    record.purpose,
-    record.lane,
-    record.rubricVersion,
-    record.contentHash,
-    record.requestedModelId,
-    record.modelId,
-    record.requestJson,
-    record.responseJson,
-    record.score,
-    record.threshold,
-    record.verdict,
-    record.error,
-    record.reusedFrom,
-    record.recordId,
-    record.enforced ? 1 : 0,
-    record.latencyMs,
-    record.inputTokens,
-    record.createdAt,
+      )
+      .run(
+        record.id,
+        record.runId,
+        record.documentId,
+        record.subjectDocumentId,
+        record.purpose,
+        record.lane,
+        record.rubricVersion,
+        record.contentHash,
+        record.requestedModelId,
+        record.modelId,
+        record.requestJson,
+        record.responseJson,
+        record.score,
+        record.threshold,
+        record.verdict,
+        record.error,
+        record.reusedFrom,
+        record.recordId,
+        record.enforced ? 1 : 0,
+        record.latencyMs,
+        record.inputTokens,
+        record.createdAt,
+      ).changes > 0
   );
 }
 

@@ -11,7 +11,7 @@ import {
   transcriptRefDto,
   type CognitionAdminRouteContext,
 } from "./admin-http-shared.js";
-import { summarizeCognitionTranscript, type CognitionRunDecision } from "./decision-view.js";
+import { type CognitionRunDecision } from "./decision-view.js";
 import type { CognitionTranscriptRef } from "./transcripts.js";
 
 function transcriptCursor(
@@ -25,6 +25,11 @@ function transcriptCursor(
 
 export function mountCognitionTranscriptAdminRoutes(ctx: CognitionAdminRouteContext): void {
   const { app, query, requireVisible } = ctx;
+
+  app.get("/admin/brain/decisions/:id", scope.admin(), (c) => {
+    requireVisible();
+    return c.json(query.decisionInput(c.req.param("id")));
+  });
 
   app.get("/admin/brain/transcripts", scope.admin(), async (c) => {
     requireVisible();
@@ -87,12 +92,12 @@ export function mountCognitionTranscriptAdminRoutes(ctx: CognitionAdminRouteCont
       scanBoundary = ref;
       let decision: CognitionRunDecision;
       try {
-        decision = summarizeCognitionTranscript(await query.loadTranscript(ref.fileName));
+        decision = query.transcriptDecision(await query.loadTranscript(ref.fileName));
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
         throw err;
       }
-      if (doc && decision.docId !== doc) continue;
+      if (doc && decision.docId !== doc && !decision.docIds?.includes(doc)) continue;
       matches.push({ decision, ref });
       if (matches.length >= limit + 1) break;
     }

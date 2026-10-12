@@ -197,6 +197,12 @@
           tools, and reports its evidence; the agent then compares and merges what they found.
         </p>
         <p>
+          Recording a document citation requires the agent to fetch its current contents during the
+          turn. Any supplied quote must match the read body exactly. For a partial read, a quote
+          from the returned passage is required. This checks which source was read, not whether
+          every conclusion is correct.
+        </p>
+        <p>
           For a deliberate, fully orchestrated research pass, type <code>/</code> in the composer
           and choose <strong>Deep Research</strong>. Omnesis plans the question, runs focused
           readers in parallel, verifies their cited evidence, and writes one report. Neither needs

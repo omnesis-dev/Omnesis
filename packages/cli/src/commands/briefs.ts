@@ -341,6 +341,8 @@ export function triggerLabel(t: RunTrigger): string {
       return `brief ${t.briefId}`;
     case "provenance-recheck":
       return `re-check ${t.dependentKind} ${t.dependentId}`;
+    case "knowledge-maintenance":
+      return `knowledge maintenance${t.batchId ? ` ${t.batchId}` : ""}`;
     case "synthesis-noticing":
       return `noticing ${t.date ?? "?"}`;
     case "synthesis-collision":
@@ -452,6 +454,9 @@ export function renderRunTrigger(t: RunTrigger): string[] {
       break;
     case "provenance-recheck":
       out.push(`    re-check:   ${t.dependentKind} ${t.dependentId} (a consumed prior died)`);
+      break;
+    case "knowledge-maintenance":
+      out.push(`    maintenance batch: ${t.batchId ?? "-"}`);
       break;
     case "synthesis-noticing":
       out.push(`    noticing:   ${t.date ?? "-"}`);

@@ -58,6 +58,10 @@
  */
 
 import { containsNormalized } from "../quote-match.js";
+import {
+  isKnowledgeOwnerReadable,
+  knowledgeOwnerReadPredicate,
+} from "../knowledge/storage-fence.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -373,6 +377,7 @@ export function listAnnotationEvidenceRows(
   table: string,
   annotationId: string,
 ): AnnotationEvidenceRow[] {
+  if (!isKnowledgeOwnerReadable(db, annotationId)) return [];
   return db
     .prepare<
       [string],
@@ -588,7 +593,10 @@ export function supersedeDocAnnotationBy(
 /** Single annotation by id — the read the revise firewall re-check needs. */
 export function getDocAnnotation(db: Db, id: string): DocAnnotationRow | null {
   const row = db
-    .prepare<[string], DocAnnotationDbRow>("SELECT * FROM doc_annotations WHERE id = ?")
+    .prepare<
+      [string],
+      DocAnnotationDbRow
+    >(`SELECT * FROM doc_annotations WHERE id = ? AND ${knowledgeOwnerReadPredicate(db, "doc_annotations.id")}`)
     .get(id);
   return row ? rowToAnnotation(row) : null;
 }
@@ -610,7 +618,7 @@ export function listRecentLiveAnnotations(
   const rows = db
     .prepare<[number, number], DocAnnotationDbRow>(
       `SELECT * FROM doc_annotations
-        WHERE invalidated_at IS NULL AND created_at >= ?
+        WHERE ${knowledgeOwnerReadPredicate(db, "doc_annotations.id")} AND invalidated_at IS NULL AND created_at >= ?
           AND (verification_state IS NULL OR verification_state = 'verified')
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = doc_annotations.doc_id)
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = doc_annotations.evidence_doc_id)
@@ -643,7 +651,7 @@ export function listLiveAnnotationsForDoc(
   const rows = db
     .prepare<(string | number)[], DocAnnotationDbRow>(
       `SELECT * FROM doc_annotations
-        WHERE doc_id = ? AND invalidated_at IS NULL
+        WHERE ${knowledgeOwnerReadPredicate(db, "doc_annotations.id")} AND doc_id = ? AND invalidated_at IS NULL
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = doc_annotations.evidence_doc_id)
           ${cursor}
         ORDER BY created_at DESC, id DESC LIMIT ?`,
@@ -670,7 +678,7 @@ export function listLiveSameClaimTypeAnnotationsForDoc(
   const rows = db
     .prepare<unknown[], DocAnnotationDbRow>(
       `SELECT * FROM doc_annotations
-        WHERE doc_id = ? AND claim_type = ? COLLATE NOCASE AND invalidated_at IS NULL
+        WHERE ${knowledgeOwnerReadPredicate(db, "doc_annotations.id")} AND doc_id = ? AND claim_type = ? COLLATE NOCASE AND invalidated_at IS NULL
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = doc_annotations.evidence_doc_id)
           ${opts.excludeId !== undefined ? "AND id != ?" : ""}
         ORDER BY created_at DESC LIMIT ?`,

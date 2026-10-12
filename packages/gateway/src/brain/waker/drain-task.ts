@@ -39,6 +39,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { cadenceEnvInt as envInt } from "../cadence-env.js";
 import { QueueTracker } from "../../background-jobs/trackers.js";
 import { periodicJob } from "../../background-jobs/scheduler-job.js";
 import {
@@ -80,12 +81,6 @@ const DEFAULT_INTERVAL_MS = 1_000;
 /** Idle cadence. */
 const DEFAULT_IDLE_MS = 15_000;
 const DEFAULT_START_DELAY_MS = 2_000;
-
-/** Cadence env override (test harnesses drive the drain faster than prod). */
-function envInt(name: string): number | undefined {
-  const raw = process.env[name];
-  return raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : undefined;
-}
 
 /**
  * How many deferred `data` runs one readiness pass reconsiders. The set is

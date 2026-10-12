@@ -376,6 +376,31 @@ describe("search worker — real thread parity", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
+  test("bounded exact vector candidates match across worker and inline fallback", async () => {
+    const req = noEmbedderRequest();
+    req.embedderPresent = true;
+    req.queryVector = new Float32Array(EMBEDDING_DIM).fill(0.1);
+    const registry = new UsearchReadRegistry(inProcDb, configDir);
+    try {
+      const local = runCandidateGen({ indexDb: inProcDb, usearchRead: registry }, req);
+      const remote = await pool.candidateGen(req);
+      expect(local.stageReports.vector).toMatchObject({
+        status: "ran",
+        engine: "exact",
+        candidates: 3,
+      });
+      expect(remote.stageReports.vector).toMatchObject({
+        status: "ran",
+        engine: "exact",
+        candidates: 3,
+      });
+      expect(remote.results).toEqual(local.results);
+      expect({ ...remote.contentHashByDoc }).toEqual({ ...local.contentHashByDoc });
+    } finally {
+      registry.close();
+    }
+  });
+
   test("worker candidate-gen == in-process candidate-gen (byte-identical pool + hashes)", async () => {
     const req = noEmbedderRequest();
 

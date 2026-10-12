@@ -16,6 +16,7 @@ import {
   deleteChunksByDocument,
   enqueueSourceIndexPurge,
   getIndexedDocumentCount,
+  getWatermark,
   getIndexEmbedModel,
   listPendingSourceIndexPurges,
   scrubPendingSourceIndexPurges,
@@ -332,6 +333,52 @@ async function waitForPartialBackfill(proxy: IndexerWorkerProxy): Promise<void> 
 }
 
 describe("indexer worker boot persistence", () => {
+  test("publishes completed pages while a later page is still embedding without advancing the scan watermark", async () => {
+    const paths = createFixture([
+      makeDocument("page-first", "An invented workshop inventory contains paper and markers."),
+      makeDocument("page-second", "An invented workshop inventory contains brushes and canvas."),
+    ]);
+    const gateway = createDatabase(paths.gatewayDbPath);
+    const rows = gateway
+      .prepare<[], { content: string }>("SELECT content FROM documents ORDER BY id")
+      .all();
+    gateway.close();
+    const fakeEmbedder = await startFakeEmbedder([rows[1]!.content]);
+    const proxy = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, fakeEmbedder.url),
+      indexerPageSize: 1,
+    });
+    try {
+      await proxy.whenReady();
+      await fakeEmbedder.holds[0]!.started;
+      const indexDb = openIndexDb(paths.indexDbPath, { readonly: true });
+      const reader = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
+      try {
+        expect(getIndexedDocumentCount(indexDb)).toBe(1);
+        expect(reader.size()).toBe(1);
+        expect(getUsearchSavedSeq(indexDb)).toBe(getVectorWriteSeq(indexDb));
+        expect(getWatermark(indexDb, "last_updated_at")).toBeNull();
+        expect(getWatermark(indexDb, "published_scan_boundary")).toBeNull();
+      } finally {
+        reader.close();
+        indexDb.close();
+      }
+      fakeEmbedder.holds[0]!.release();
+      await waitForCycleRuns(proxy, 1);
+      const complete = openIndexDb(paths.indexDbPath, { readonly: true });
+      try {
+        expect(getIndexedDocumentCount(complete)).toBe(2);
+        expect(getWatermark(complete, "published_scan_boundary")).toBeTruthy();
+      } finally {
+        complete.close();
+      }
+    } finally {
+      fakeEmbedder.holds[0]!.release();
+      await proxy.dispose();
+      await closeServer(fakeEmbedder.server);
+    }
+  });
+
   test("publishes vectors indexed by the boot-only cycle before shutdown", async () => {
     const paths = createFixture([
       makeDocument(

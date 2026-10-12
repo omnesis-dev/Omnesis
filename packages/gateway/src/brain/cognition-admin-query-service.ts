@@ -11,11 +11,17 @@
 
 import { parseSourceKey, type CognitionDocumentRef } from "@omnesis/core";
 import { getDocumentTitlesAndSources } from "../db.js";
+import { NotFoundError } from "../http/errors.js";
 import { mutableListRevision, type MutableListRevisionScope } from "../data/list-revisions.js";
 import {
   listTemporalAnnotations,
   temporalAnnotationStats,
 } from "../enrichment/temporal-annotations/storage.js";
+import { readDecisionPayload } from "./decision-payload.js";
+import { areDecisionSourcesReadable, readRetainedDecisionInput } from "./decision-read-privacy.js";
+import { listKnowledgeDecisionsForRun } from "./knowledge/decision-query.js";
+import { readKnowledgeBootstrapStatus } from "./knowledge/bootstrap-status.js";
+import { summarizeCognitionTranscript } from "./decision-view.js";
 import { artifactProvenance } from "./artifact-provenance.js";
 import { displayPersonRefs } from "./person-refs.js";
 import { countBootstrapProcessed } from "./storage/bootstrap.js";
@@ -294,6 +300,14 @@ export class CognitionAdminQueryService {
    * The retrospective lane's live state. `startedAt` is this process's start,
    * which is what the lane's boot hold is measured against.
    */
+  knowledgeBootstrapStatus(
+    settings: BootstrapSettingsView,
+    now: number,
+    budget?: CognitionBudgetSettings,
+  ) {
+    return readKnowledgeBootstrapStatus(this.db, settings, now, budget);
+  }
+
   bootstrapStatus(settings: BootstrapSettingsView, now: number): BootstrapStatus {
     return readBootstrapStatus(this.db, settings, { now, startedAt: this.startedAt });
   }
@@ -308,6 +322,15 @@ export class CognitionAdminQueryService {
     opts: { now: () => number; recencyWindowMs: number },
   ): Promise<BootstrapBacklog> {
     return readBootstrapBacklog(io, opts);
+  }
+
+  async knowledgeDiscoveryTimeline(
+    io: BootstrapTimelineReader,
+    now: () => number,
+  ): Promise<import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryTimeline> {
+    if (!io.knowledgeDiscoveryByMonth) throw new Error("Discovery timeline IO unavailable");
+    const months = await io.knowledgeDiscoveryByMonth();
+    return { mode: "knowledge", months, computedAt: now() };
   }
 
   /** The corpus month by month, off the main loop. See `bootstrapBacklog`. */
@@ -337,7 +360,51 @@ export class CognitionAdminQueryService {
 
   /** Every decision-model judgement made for one run, oldest first. */
   decisionsForRun(runId: string): CognitionDecisionRecord[] {
-    return listDecisionsForRun(this.db, runId);
+    return this.db.transaction(() =>
+      listDecisionsForRun(this.db, runId).map((decision) =>
+        areDecisionSourcesReadable(this.db, decision)
+          ? decision
+          : { ...decision, requestJson: null, responseJson: null, error: null },
+      ),
+    )();
+  }
+
+  decisionInput(id: string) {
+    return this.db.transaction(() => {
+      const decision = this.db
+        .prepare<
+          [string],
+          { documentId: string; subjectDocumentId: string }
+        >("SELECT document_id AS documentId,subject_document_id AS subjectDocumentId FROM cognition_decisions WHERE id=?")
+        .get(id);
+      if (!decision) throw new NotFoundError("Decision not found");
+      const readable = areDecisionSourcesReadable(this.db, decision);
+      const input = readable
+        ? readDecisionPayload(this.db, id)
+        : { availability: "unavailable" as const, request: null, response: null, error: null };
+      return {
+        input,
+        ...(readable && input.availability === "unavailable"
+          ? { retained: readRetainedDecisionInput(this.db, id) }
+          : {}),
+      };
+    })();
+  }
+
+  decisionSubjectRefs(decisions: readonly CognitionDecisionRecord[]): CognitionAdminDocumentRef[] {
+    return this.db.transaction(() =>
+      this.documentRefs([
+        ...new Set(
+          decisions
+            .filter((decision) => areDecisionSourcesReadable(this.db, decision))
+            .map((decision) => decision.subjectDocumentId),
+        ),
+      ]),
+    )();
+  }
+
+  knowledgeDecisionsForRun(runId: string) {
+    return listKnowledgeDecisionsForRun(this.db, runId);
   }
 
   documentRefs(docIds: readonly string[]): CognitionAdminDocumentRef[] {
@@ -388,6 +455,25 @@ export class CognitionAdminQueryService {
       this.transcripts?.listForRunWithStatus(runId) ??
       Promise.resolve({ items: [], indexComplete: true })
     );
+  }
+
+  transcriptDecision(transcript: CognitionRunTranscript) {
+    const decision = summarizeCognitionTranscript(transcript);
+    if (
+      decision.kind !== "synthesis" ||
+      !this.db
+        .prepare("SELECT 1 FROM sqlite_master WHERE name='knowledge_batches' AND type='table'")
+        .get()
+    )
+      return decision;
+    const docs = this.db
+      .prepare<[string], { id: string }>(
+        `SELECT DISTINCT w.subject_id AS id FROM knowledge_batches b
+      JOIN knowledge_work w ON w.batch_id=b.id JOIN documents d ON d.id=w.subject_id
+      WHERE b.run_id=? AND w.subject_kind='source' ORDER BY w.subject_id`,
+      )
+      .all(decision.runId);
+    return { ...decision, docIds: docs.map((doc) => doc.id) };
   }
 
   loadTranscript(fileName: string): Promise<CognitionRunTranscript> {

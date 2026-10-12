@@ -12,7 +12,10 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 
 vi.mock("unpdf", () => ({ extractTextItems: vi.fn() }));
 vi.mock("./pdf-text-joiner.js", () => ({
-  joinPageTextItems: vi.fn((p: { text?: string }) => p?.text ?? ""),
+  renderPdfPageText: vi.fn((p: Array<{ str: string }>) => ({
+    text: p.map((i) => i.str).join(""),
+    truncated: false,
+  })),
 }));
 
 import { extractTextItems } from "unpdf";
@@ -23,7 +26,10 @@ import type { OcrFn } from "@omnesis/core";
 const mockedExtract = vi.mocked(extractTextItems);
 const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]); // "%PDF"
 const pages = (...texts: string[]) =>
-  ({ totalPages: texts.length, items: texts.map((t) => ({ text: t })) }) as never;
+  ({
+    totalPages: texts.length,
+    items: texts.map((t) => [{ str: t, x: 0, y: 700, width: t.length * 6, fontSize: 12 }]),
+  }) as never;
 
 beforeEach(() => mockedExtract.mockReset());
 

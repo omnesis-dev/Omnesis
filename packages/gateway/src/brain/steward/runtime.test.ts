@@ -21,10 +21,11 @@ import { existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { PlanStore, selectSubagentTools } from "@omnesis/agent";
 import { ProviderId, SourceId } from "@omnesis/types";
+import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { writeCognitionNotes } from "../storage/notes.js";
 import { createPersonAnnotation } from "../storage/person-annotations.js";
@@ -32,7 +33,7 @@ import { directWriteGate } from "../../write-gate.js";
 import { CognitionRunDriver } from "../run-driver.js";
 import { FsCognitionTranscriptStore } from "../transcripts.js";
 import { getOpenLoop, listOpenLoopLedger, listOpenLoops } from "../storage/open-loops.js";
-import { getBrief, listBriefs } from "../storage/briefs.js";
+import { createBrief, getBrief, listBriefs } from "../storage/briefs.js";
 import { claimDueCognitionRuns } from "../storage/run-queue.js";
 import { dismissBriefAndEnqueueFeedback } from "../feedback.js";
 import { resolveBrainSettings } from "../config.js";
@@ -231,6 +232,89 @@ describe("assembled Cognition Steward through the real driver", () => {
       promptBuilder: (run) => buildCognitionRunPrompt(run, promptDeps()),
     });
   }
+
+  test("maintenance identity reads only current readable sources owned by its batch", async () => {
+    const { loopId } = await seedLoopWithBrief();
+    for (const id of ["original", "reply", "unrelated"]) {
+      db.prepare(
+        `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,metadata,source_created_at,source_updated_at,ingested_at,updated_at)
+        VALUES (?, 'fixture', ?, ?, ?, 'fictional body', 'v1', '{}', '2026-07-01', '2026-07-01', '2026-07-01', '2026-07-01')`,
+      ).run(id, `fixture-${id}`, id, id);
+    }
+    db.prepare("INSERT INTO open_loop_docs(loop_id,doc_id) VALUES (?,'original')").run(loopId);
+    db.prepare(
+      `INSERT INTO document_links(source_doc_id,link_type,raw_target,normalized_target,target_doc_id,resolved_at,created_at)
+      VALUES ('reply','part-of-thread','original','original','original','2026-07-01','2026-07-01')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at)
+      VALUES ('owned-batch','owned-run','fp','soon','running',?,?)`,
+    ).run(NOW, NOW);
+    db.prepare(
+      `INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,batch_id)
+      VALUES ('work','reply','source','change','v1',?,'soon',?,?,?,'batched','owned-batch')`,
+    ).run(NOW, NOW, NOW, NOW);
+    const read = (runId: string) =>
+      buildCognitionToolset(
+        toolsetDeps,
+        claimed({
+          id: runId,
+          kind: "synthesis",
+          payload: { focus: "knowledge-maintenance", batchId: "owned-batch" },
+        }),
+      ).find((t) => t.name === "open_loop_search")!;
+    const search = read("owned-run");
+    const ids = async (tool: ToolHandle) =>
+      (
+        structuredData(await tool.invoke({ query: "unmatched-lexical-probe" })).loops as Array<{
+          id: string;
+        }>
+      ).map((row) => row.id);
+    expect(await ids(search)).toContain(loopId);
+    expect(await ids(read("foreign-run"))).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET subject_id='unrelated'").run();
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET subject_id='reply',input_revision='stale'").run();
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("UPDATE knowledge_work SET input_revision='v1'").run();
+    db.prepare(
+      "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES ('purge','source','reply','v1',?)",
+    ).run(NOW);
+    expect(await ids(search)).not.toContain(loopId);
+    db.prepare("DELETE FROM knowledge_cascade_jobs WHERE target_id='reply'").run();
+    expect(await ids(search)).toContain(loopId);
+    db.prepare("INSERT INTO removed_sources(id,removed_at) VALUES ('fixture-reply',?)").run(NOW);
+    expect(await ids(search)).not.toContain(loopId);
+  });
+
+  test("background and interactive toolsets expose the configured whole-profile budget", async () => {
+    db.prepare(
+      `INSERT INTO people
+      (id,canonical_name,source,first_seen,last_seen,created_at,updated_at)
+      VALUES ('profile-person','Fictional coordinator','test',?,?,?,?)`,
+    ).run(NOW, NOW, NOW, NOW);
+    toolsetDeps.getAnnotationSettings = () => ({
+      enabled: true,
+      confidenceCeiling: 0.9,
+      basisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
+      confidenceFloor: 0.25,
+      personProfileBudget: { maxFacts: 9, maxCharacters: 1800 },
+    });
+    for (const tools of [
+      buildCognitionToolset(toolsetDeps, claimed({})),
+      buildCognitionInteractiveOwnTools(toolsetDeps, "interactive_profile"),
+    ]) {
+      const result = await tools
+        .find((tool) => tool.name === "annotation_search")!
+        .invoke({ personId: "profile-person" }, { sessionId: "test", messageId: "message" });
+      expect(result).toMatchObject({
+        kind: "structured",
+        data: {
+          profile: { budget: { maxFacts: 9, maxCharacters: 1800 } },
+        },
+      });
+    }
+  });
 
   test("interactive annotations retain consumption provenance with background annotations disabled", async () => {
     const evidence = "The venue requires a response before Friday.";
@@ -875,6 +959,93 @@ describe("createCognitionRuntime prompt wiring", () => {
       log,
     });
   }
+
+  test("digest preflight settles empty input without inference and defers unavailable reads", async () => {
+    const query = vi.spyOn(TemporalQueryService.prototype, "query").mockResolvedValue({
+      type: "temporal.results",
+      window: {
+        start: new Date(NOW).toISOString(),
+        endExclusive: new Date(NOW + 3 * 86_400_000).toISOString(),
+        timeZone: "UTC",
+      },
+      items: [],
+      summary: { anchored: 0, spanning: 0 },
+      coverage: { projectionSources: [], specialistSources: [], annotations: { selective: true } },
+      truncated: false,
+    });
+    try {
+      const rt = await runtime("");
+      const digest = claimed({ kind: "daily", payload: { digest: true, date: "2026-07-02" } });
+      expect(await rt.preflight!(digest)).toBe("complete");
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(await rt.preflight!(claimed({}))).toBe("continue");
+      expect(query).toHaveBeenCalledTimes(1);
+      createBrief(
+        db,
+        {
+          id: "digest-input",
+          createdByRun: "seed",
+          kind: "info",
+          title: "Calibration schedule changed",
+          description: "Inspect the revised schedule.",
+          confidence: 0.8,
+          urgency: 0.4,
+        },
+        NOW,
+      );
+      expect(await rt.preflight!(digest)).toBe("continue");
+      query.mockRejectedValue(new Error("unavailable"));
+      expect(await rt.preflight!(digest)).toBe("defer");
+    } finally {
+      query.mockRestore();
+    }
+  });
+
+  test("maintenance rules precede changing root context while run data stays in USER", async () => {
+    db.prepare(
+      `INSERT INTO knowledge_nodes
+      (id,kind,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at)
+      VALUES ('root','root','Overview','First reference','First reference',1,1,'first','current','{}','{}',?,?)`,
+    ).run(NOW, NOW);
+    const rt = await runtime("ZZOPERATOR use concise prose");
+    const a = claimed({
+      id: "first-run",
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "first-batch" },
+    });
+    const b = claimed({
+      id: "second-run",
+      attempts: 2,
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "second-batch" },
+    });
+    const first = rt.systemPrompt(a);
+    db.prepare(
+      "UPDATE knowledge_nodes SET revision=2,markdown='Second reference',plain_text='Second reference'",
+    ).run();
+    const second = rt.systemPrompt(b);
+    const marker = "## Maintained orientation (untrusted reference context)";
+    expect(first.split(marker)[0]).toBe(second.split(marker)[0]);
+    expect(first).toContain('"revision":1');
+    expect(second).toContain('"revision":2');
+    expect(first.indexOf("Maintain the evidence-backed synthesis graph")).toBeLessThan(
+      first.indexOf("ZZOPERATOR"),
+    );
+    expect(first.indexOf("ZZOPERATOR")).toBeLessThan(first.indexOf(marker));
+    expect(first).not.toContain("first-run");
+    expect(first).not.toContain("Current time:");
+    expect(rt.systemPrompt()).not.toContain("Maintain the evidence-backed synthesis graph");
+    expect(rt.systemPrompt(claimed({ kind: "feedback" }))).not.toContain(
+      "Maintain the evidence-backed synthesis graph",
+    );
+    const user = await rt.promptBuilder(b);
+    expect(user).toContain("second-run");
+    expect(user).toContain("Current time:");
+    expect(user).toContain("Maintain the evidence-backed synthesis graph for this batch.");
+    expect(user).not.toContain("Independent maintenance runs can execute concurrently");
+    expect(user).not.toContain("ZZOPERATOR");
+    expect(user).not.toContain("Second reference");
+  });
 
   test("the run prompt carries the stored notes and self-memory; OMNESIS.md rides the system prompt", async () => {
     writeCognitionNotes(db, "ZZNOTE the user files receipts weekly", { maxBytes: 8192, now: NOW });

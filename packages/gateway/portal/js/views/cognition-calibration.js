@@ -4,10 +4,10 @@
 // Calibration — the measurement-only reliability panel on the Cognition
 // debug page. Renders, per confidence-carrying artifact family (briefs,
 // doc annotations, person annotations), the 10-bin reliability table the
-// gateway computes from ground-truth signals it already collects, plus the
+// gateway computes from recorded outcome signals, plus the
 // family's ECE and label-class counts. Strictly read-only: nothing here (or
 // anywhere) mutates a confidence or recalibrates from these numbers — the
-// operator is accumulating a v1 baseline first.
+// report provides an operator diagnostic, not an automatic learning rule.
 //
 // Self-contained module (own loader, own formatting) so its host,
 // cognition.js, carries only an import and a mount line.
@@ -22,8 +22,8 @@ import { getCognitionCalibration } from "../api.js";
 export function familyDisplayName(family) {
   const names = {
     brief: "Briefs",
-    "doc-annotation": "Doc annotations",
-    "person-annotation": "Person annotations",
+    "doc-annotation": "Document notes",
+    "person-annotation": "People notes",
   };
   return names[family] ?? family;
 }
@@ -59,7 +59,7 @@ export function formatClassCounts(classCounts) {
 
 // ── Panel ────────────────────────────────────────────────────────────
 
-function FamilyCard({ family }) {
+export function FamilyCard({ family }) {
   const bins = occupiedBins(family);
   return html`
     <section>
@@ -74,30 +74,32 @@ function FamilyCard({ family }) {
       ${bins.length === 0
         ? html`<div class="debug-empty">No labeled data yet.</div>`
         : html`
-            <table class="debug-table">
-              <thead>
-                <tr>
-                  <th>Confidence</th>
-                  <th class="num">n</th>
-                  <th class="num">Mean stated</th>
-                  <th class="num">Empirical</th>
-                  <th class="num">Gap</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${bins.map(
-                  (b) => html`
-                    <tr key=${b.lo}>
-                      <td>${formatBinRange(b)}</td>
-                      <td class="num">${b.n}</td>
-                      <td class="num">${fmt2(b.meanConfidence)}</td>
-                      <td class="num">${fmt2(b.empiricalCorrectness)}</td>
-                      <td class="num">${formatGap(b.gap)}</td>
-                    </tr>
-                  `,
-                )}
-              </tbody>
-            </table>
+            <div class="portal-table-wrap" style="overflow-x:auto;">
+              <table class="debug-table">
+                <thead>
+                  <tr>
+                    <th>Confidence</th>
+                    <th class="num">Samples</th>
+                    <th class="num">Mean stated</th>
+                    <th class="num">Observed outcome</th>
+                    <th class="num">Gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${bins.map(
+                    (b) => html`
+                      <tr key=${b.lo}>
+                        <td>${formatBinRange(b)}</td>
+                        <td class="num">${b.n}</td>
+                        <td class="num">${fmt2(b.meanConfidence)}</td>
+                        <td class="num">${fmt2(b.empiricalCorrectness)}</td>
+                        <td class="num">${formatGap(b.gap)}</td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
           `}
     </section>
   `;
@@ -107,9 +109,12 @@ export function CalibrationTab() {
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     getCognitionCalibration()
       .then((r) => {
         if (!cancelled) {
@@ -126,22 +131,38 @@ export function CalibrationTab() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refresh]);
 
-  if (error) return html`<div class="debug-error">⚠️ ${error}</div>`;
-  if (loading) return html`<div class="debug-loading">Loading…</div>`;
+  if (error)
+    return html`<div class="debug-error" role="alert">
+      Confidence and feedback could not be loaded. ${error}<button
+        class="btn-secondary"
+        onClick=${() => setRefresh((value) => value + 1)}
+      >
+        Retry
+      </button>
+    </div>`;
+  if (loading) return html`<div class="debug-loading">Loading confidence and feedback…</div>`;
 
   const families = report?.families ?? [];
   return html`
     <div>
       <p class="debug-sub" style="margin: 0 0 16px;">
-        Reliability of stated confidence against the ground-truth signals the
-        system already collects (dismissals, verification stamps,
-        supersessions, developer annotations). Measurement only — nothing
-        recalibrates from these numbers.
+        This read-only report compares how confident the brain was with later verification and
+        feedback on briefs and annotations. It does not train the brain or change its decisions.
+        Verification and feedback are signals, not independent proof of correctness; wiki claims
+        are not included.
       </p>
+      <p class="debug-sub">
+        ECE (expected calibration error) measures the average mismatch between confidence and
+        outcomes; lower means closer agreement. Gap is observed outcome minus stated confidence.
+        Small samples provide limited evidence.
+      </p>
+      <button class="btn-secondary" onClick=${() => setRefresh((value) => value + 1)}>
+        Refresh measurements
+      </button>
       ${families.length === 0
-        ? html`<div class="debug-empty">No calibration data.</div>`
+        ? html`<div class="debug-empty">No confidence or feedback data yet.</div>`
         : families.map((f) => html`<${FamilyCard} key=${f.family} family=${f} />`)}
     </div>
   `;

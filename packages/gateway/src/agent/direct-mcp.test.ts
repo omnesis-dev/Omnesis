@@ -482,6 +482,21 @@ describe("DirectMcpService", () => {
 });
 
 describe("sanitizeDirectToolResult", () => {
+  it("preserves actionable missing-loop guidance without forwarding raw details", () => {
+    expect(
+      sanitizeDirectToolResult({
+        kind: "error",
+        code: "loop_not_found",
+        message: "private dependency detail",
+      }),
+    ).toEqual({
+      kind: "error",
+      code: "loop_not_found",
+      message:
+        "No accessible loop was found for that ID. Copy an exact loopId from list_loops or search_loops before retrying; do not reconstruct or guess IDs.",
+    });
+  });
+
   it("preserves stable error codes but removes dependency and path details", () => {
     expect(
       sanitizeDirectToolResult({

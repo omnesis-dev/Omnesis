@@ -651,7 +651,10 @@ test.describe("Portal", () => {
 
     await expect(page.locator(".sql-editor .cm-content")).toBeVisible({ timeout: 10000 });
     await expect(page).toHaveURL(/\/portal\/debug\/sql$/);
-    await expect(page.locator("button.config-tab.active")).toHaveText("SQL");
+    await expect(page.getByRole("link", { name: "SQL", exact: true })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   test("/portal/data keeps its query string through the rewrite", async ({ page }) => {

@@ -267,6 +267,7 @@ export interface DecisionDto {
   failureCode: string | null;
   subject: string | null;
   docId: string | null;
+  docIds?: string[];
   /** Mutating calls in order. Empty means the run decided to do nothing. */
   actions: DecisionAction[];
   researchToolCalls: number;
@@ -423,10 +424,11 @@ export class BrainObs {
    * `puppetCalls` records only what the puppet EMITTED; the answers live in the
    * transcript's event stream.
    */
-  async executedTools(runId: string): Promise<ExecutedTool[]> {
+  async executedTools(runId: string, attempt?: number): Promise<ExecutedTool[]> {
     const refs = await this.transcripts({ runId });
     const steps: ExecutedTool[] = [];
     for (const entry of refs.items) {
+      if (attempt !== undefined && entry.attempt !== attempt) continue;
       const { transcript } = await this.transcript(entry.fileName);
       const indexByCallId = new Map<string, number>();
       for (const event of transcript.events) {
@@ -448,11 +450,38 @@ export class BrainObs {
     return steps;
   }
 
-  /** The settled `data` run a pushed document drove. */
+  /** A legacy datum run only. Maintenance tests use runsForSource instead. */
   async runForDoc(docId: string): Promise<RunDto> {
     const page = await this.runs({ kind: "data", limit: 200 });
     const run = page.items.find((r) => r.dedupeKey === `data:doc:${docId}`);
     if (!run) throw new Error(`no data run for document ${docId}`);
+    return run;
+  }
+
+  /** Real synthesis runs that processed this source; one batch may contain several sources. */
+  async runsForSource(docId: string): Promise<RunDto[]> {
+    const page = await this.runs({ kind: "synthesis", limit: 200 });
+    const matches: RunDto[] = [];
+    for (const run of page.items) {
+      const steps = await this.executedTools(run.id);
+      if (
+        steps.some(
+          (step) =>
+            step.tool === "knowledge_discovery_complete" &&
+            step.args.id === `source:${docId}` &&
+            step.result?.kind === "structured",
+        )
+      )
+        matches.push(run);
+    }
+    return matches;
+  }
+
+  /** Latest successful interpretation run, retaining its actual shared-batch identity. */
+  async interpretationForSource(docId: string): Promise<RunDto> {
+    const runs = await this.runsForSource(docId);
+    const run = runs[0];
+    if (!run) throw new Error(`no successful maintenance interpretation for source ${docId}`);
     return run;
   }
 
@@ -616,10 +645,30 @@ export class BrainObs {
    * has stopped claiming against.
    */
   async bootstrapStatus(): Promise<{
+    mode?: "knowledge";
+    liveDiscoveryIndependent?: boolean;
+    corpusCompletion?: "not-measured";
+    admission?: {
+      total: number;
+      today: number;
+      pending: number;
+      batched: number;
+      completed: number;
+      deferred: number;
+      remainingLifetime: number;
+      remainingToday: number;
+      backlogRoom: number;
+      windowOpen: boolean;
+      windowOpensAt: number | null;
+    };
     state: string;
     reason: string;
-    runs: { pending: number; completed: number; failed: number };
-    providerOutage: { openUntil: string; consecutiveFailures: number; lastError: string } | null;
+    runs?: { pending: number; completed: number; failed: number };
+    providerOutage: {
+      openUntil: string | number;
+      consecutiveFailures: number;
+      lastError: string;
+    } | null;
   }> {
     return this.h.gatewayJson("/admin/brain/bootstrap");
   }
@@ -687,11 +736,13 @@ export class BrainObs {
       sourceId: string;
       workflowId: string;
       workflowVersion?: number;
+      unit?: string;
+      costAttribution?: string;
       eligible: number;
       processed: number;
       skipped: number;
-      promptTokens: number;
-      completionTokens: number;
+      promptTokens: number | null;
+      completionTokens: number | null;
       lastProgressAt: string | null;
       status: string;
     }>;

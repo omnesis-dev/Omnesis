@@ -20,6 +20,7 @@ export { ephemeralResultArrived } from "../../shared/agent-ui/lifecycle.js";
 
 import { useState, useRef, useEffect } from "preact/hooks";
 import { sourceIcon, sourceLabel } from "../../lib/format.js";
+import { KnowledgeIcon } from "../../lib/knowledge-link-icons.js";
 import { navigate } from "../../lib/router.js";
 import { AssistantMarkdown } from "./assistant-markdown.js";
 import { DocChip } from "../doc-chip.js";
@@ -461,7 +462,7 @@ function personHref(canonicalId) {
 // Loop detail lives on the debug cognition surface — the same target the
 // cognition view's own cross-entity links use.
 function loopHref(loopId) {
-  return `/portal/debug/cognition/loops/${encodeURIComponent(loopId)}`;
+  return `/portal/debug/cognition/knowledge/${encodeURIComponent(loopId)}?kind=loop`;
 }
 
 // In-SPA navigation for transcript links. Modifier/middle clicks fall
@@ -557,7 +558,7 @@ function entitySeedDisplay(args, data) {
     };
   }
   if (seedKind === "loop") {
-    return { text: label, icon: LOOP_GLYPH, href: seedId ? loopHref(seedId) : null };
+    return { text: label, icon: html`<${KnowledgeIcon} kind="loop" />`, href: seedId ? loopHref(seedId) : null };
   }
   if (seedKind === "person") {
     return { text: label, icon: PEOPLE_GLYPH, href: seedId ? personHref(seedId) : null };
@@ -1305,7 +1306,7 @@ function renderToolResult(result) {
 function loopRow(loop) {
   const inner = html`
     <span class="agent-loop-state agent-loop-state-${loop.state}">${loop.state}</span>
-    <span class="agent-loop-title">${loop.title || "Untitled loop"}</span>`;
+    <span class="agent-loop-title"><${KnowledgeIcon} kind="loop" />${loop.title || "Untitled loop"}</span>`;
   return loop?.loopId
     ? html`<a
         class="agent-loop-row agent-ephemeral-result-link"
@@ -1321,7 +1322,7 @@ function loopRow(loop) {
 function loopHeaderExtra(loop) {
   const opened = html`
     <span class="agent-loop-state agent-loop-state-${loop.state}">${loop.state}</span>
-    <span>${loop.title || "Untitled loop"}</span>`;
+    <span><${KnowledgeIcon} kind="loop" />${loop.title || "Untitled loop"}</span>`;
   const id = loop.loopId ?? loop.id;
   return id
     ? html`<a

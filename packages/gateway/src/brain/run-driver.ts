@@ -77,6 +77,12 @@ function defaultCognitionSystemPrompt(): string {
 /** What one executed attempt produced. */
 export interface CognitionRunOutcome {
   ok: boolean;
+  /** No model attempt was bought; requeue readiness work without spending retry budget. */
+  deferredUntil?: number;
+  /** Progress already committed; yield without advancing semantic time. */
+  continuation?: boolean;
+  /** Backend enforced a tool cap, including tool-level Codex refusals. */
+  toolLimitReached?: boolean;
   /** Present when `ok` is false. */
   errorMessage?: string;
   /**
@@ -107,6 +113,10 @@ export interface CognitionRunDriverDeps {
    * removed mid-flight) fails the attempt softly — the queue retries.
    */
   resolveBackend: () => ChatBackend | null;
+  /** Deterministic/System One maintenance preflight, before model/backend resolution. */
+  preflight?: (run: ClaimedCognitionRun) => Promise<"complete" | "continue" | "defer" | "yield">;
+  /** Confirms a tool-requested handoff was durably recorded for this run. */
+  isRunHandedOff?: (run: ClaimedCognitionRun) => boolean;
   transcripts: FsCognitionTranscriptStore;
   log: Logger;
   /**
@@ -117,8 +127,8 @@ export interface CognitionRunDriverDeps {
   buildTools?: (run: ClaimedCognitionRun, context: CognitionRunExecutionContext) => ToolHandle[];
   /** Seam for the per-kind run prompts. Default: the generic envelope. */
   promptBuilder?: CognitionPromptBuilder;
-  /** Seam for the Cognition Steward system prompt — static across runs for the same settings. */
-  systemPrompt?: () => string;
+  /** Trusted workflow instructions precede any changing reference context. */
+  systemPrompt?: (run?: ClaimedCognitionRun) => string;
   /**
    * Post-turn completion barrier. A successful model turn is not allowed to
    * settle its queue row until this confirms every required side effect is
@@ -139,7 +149,7 @@ export class CognitionRunDriver {
     context: CognitionRunExecutionContext,
   ) => ToolHandle[];
   private readonly promptBuilder: CognitionPromptBuilder;
-  private readonly systemPrompt: () => string;
+  private readonly systemPrompt: (run?: ClaimedCognitionRun) => string;
   private readonly clock: Clock;
   /** Per-model-call prompt-cache accounting, at debug level. */
   private readonly cacheLog: Logger;
@@ -176,6 +186,40 @@ export class CognitionRunDriver {
     run: ClaimedCognitionRun,
     opts: { signal?: AbortSignal } = {},
   ): Promise<CognitionRunOutcome> {
+    if (this.deps.preflight) {
+      try {
+        const verdict = await this.deps.preflight(run);
+        if (verdict !== "continue")
+          return {
+            ok: verdict === "complete",
+            modelId: null,
+            usage: null,
+            finalText: "",
+            citations: [],
+            openedDocIds: [],
+            ...(verdict === "defer" || verdict === "yield"
+              ? {
+                  deferredUntil: this.clock() + (verdict === "yield" ? 0 : 15000),
+                  ...(verdict === "yield" ? { continuation: true } : {}),
+                  errorMessage:
+                    verdict === "yield"
+                      ? "Maintenance advanced; continuing bounded work"
+                      : "Maintenance is waiting for current inputs",
+                }
+              : {}),
+          };
+      } catch (error) {
+        return {
+          ok: false,
+          modelId: null,
+          usage: null,
+          finalText: "",
+          citations: [],
+          openedDocIds: [],
+          errorMessage: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
     // Deliberately kind-blind: every run kind — including `verification` —
     // resolves the same background-agent backend. Verification runs are agent
     // runs (they re-ground with tools), not entailment-verifier completions;
@@ -217,10 +261,10 @@ export class CognitionRunDriver {
       sessionId: `loop-agent-run-${run.id}-a${run.attempts}`,
       backend,
       tools: this.buildTools(run, { modelId: backend.model }),
-      systemPrompt: this.systemPrompt(),
+      systemPrompt: this.systemPrompt(run),
       // Stable per workflow, never per run: every run of one workflow shares
-      // the system prompt, the tool schemas and its static rules, and a
-      // provider that routes by this key keeps that prefix warm for them all.
+      // trusted instruction prefix and permission-scoped tool schemas.
+      // Changing reference context follows those instructions.
       promptCacheKey: cognitionPromptCacheKey(run),
     });
 
@@ -228,6 +272,9 @@ export class CognitionRunDriver {
     const citations = new Map<string, DocRef>();
     const usage: AgentUsage = {};
     let sawUsage = false;
+    let liveUsage: AgentUsage | undefined;
+    let toolLimitReached = false;
+    let handedOff = false;
     let pendingText = "";
     let finalText = "";
     const openedDocIds = new Set<string>();
@@ -260,6 +307,29 @@ export class CognitionRunDriver {
           }
           break;
         }
+        case "agent.tool.result":
+          if (
+            event.payload.result.kind === "error" &&
+            event.payload.result.code === "maintenance_handoff" &&
+            this.deps.isRunHandedOff?.(run)
+          ) {
+            handedOff = true;
+            session.cancel();
+          }
+          if (
+            event.payload.result.kind === "error" &&
+            event.payload.result.code === "tool_iteration_cap"
+          ) {
+            toolLimitReached = true;
+            // A background run cannot make progress through further refused
+            // calls. Stop inference; durable continuation is owned by the drainer.
+            session.cancel();
+          }
+          break;
+        case "agent.usage.update":
+          // This protocol event is cumulative for the turn, never a delta.
+          liveUsage = { ...event.payload.usage };
+          break;
         case "agent.message.end": {
           finalText = pendingText.trim() || finalText;
           const u = event.payload.usage;
@@ -302,6 +372,39 @@ export class CognitionRunDriver {
       unsubscribe();
     }
 
+    if (toolLimitReached) {
+      // AgentSession suppresses provider events after authoritative cancellation.
+      // Preserve the latest already-observed cumulative spend, without adding it
+      // to intermediate message totals. Unreported post-cancel spend is unknown.
+      if (liveUsage) {
+        for (const key of [
+          "inputTokens",
+          "outputTokens",
+          "cacheReadTokens",
+          "cacheCreationTokens",
+        ] as const)
+          delete usage[key];
+        Object.assign(usage, liveUsage);
+        sawUsage = true;
+      }
+      ok = false;
+      failure = {
+        code: "tool_iteration_cap",
+        message: "Background run reached its tool-call budget",
+        retryable: false,
+        backend: backend.name,
+        model: backend.model,
+      };
+      errorMessage = failure.message;
+    }
+
+    // Only a trusted durable handoff turns this system cancellation into success.
+    // Ordinary aborts and failed tools retain their existing failure semantics.
+    if (handedOff && this.deps.isRunHandedOff?.(run)) {
+      ok = true;
+      failure = undefined;
+      errorMessage = undefined;
+    }
     if (ok && this.deps.validateRun) {
       try {
         const validationError = await this.deps.validateRun(run, { modelId: backend.model });
@@ -351,6 +454,7 @@ export class CognitionRunDriver {
       ok,
       ...(errorMessage !== undefined ? { errorMessage } : {}),
       ...(failure !== undefined ? { failure } : {}),
+      ...(toolLimitReached ? { toolLimitReached: true } : {}),
       ...(context !== undefined ? { context } : {}),
       modelId: backend.model,
       usage: runUsage,

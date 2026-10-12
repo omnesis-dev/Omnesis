@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createLogger } from "@omnesis/core";
 import {
@@ -33,6 +33,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "codex-pool-"));
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -40,11 +41,12 @@ afterEach(() => {
  *  so we can hold N turns "in flight" and observe how the pool spreads them. */
 class FakeRuntime implements PoolMemberRuntime {
   turns = 0;
+  events: AgentEvent[] = [];
   private releases: Array<() => void> = [];
   async *runTurn(): AsyncIterable<AgentEvent> {
     this.turns += 1;
     await new Promise<void>((resolve) => this.releases.push(resolve));
-    yield* [] as AgentEvent[]; // completes with no events once released
+    yield* this.events;
   }
   releaseOne(): void {
     this.releases.shift()?.();
@@ -109,25 +111,68 @@ describe("CodexRuntimePool routing", () => {
     expect(pool.describe().inFlight).toEqual([0, 0, 0]);
   });
 
-  it("queues the (N+1)th turn onto a member instead of rejecting", async () => {
+  it("assigns queued turns to the next idle member without waiting for a slow sibling", async () => {
     const fakes: FakeRuntime[] = [];
     const pool = makePool(2, fakes);
-
-    const runs = [0, 1, 2].map(async () => {
-      for await (const _ of pool.runTurn(turnOpts())) void _;
+    const runs = [0, 1, 2, 3].map(async () => {
+      for await (const event of pool.runTurn(turnOpts())) void event;
     });
     await tick();
+    expect(pool.describe()).toEqual({ size: 2, inFlight: [1, 1], queued: 2 });
+    expect(fakes.map((f) => f.turns)).toEqual([1, 1]);
 
-    // Two members, three turns: the pool never rejects; the extra turn piles on
-    // the least-busy member, so total in-flight is 3 across 2 members.
-    expect(pool.describe().inFlight.reduce((a, b) => a + b, 0)).toBe(3);
-    expect(Math.max(...pool.describe().inFlight)).toBe(2);
-
-    for (const f of fakes) {
-      f.releaseOne();
-      f.releaseOne();
-    }
+    fakes[1].releaseOne();
+    await tick();
+    expect(fakes.map((f) => f.turns)).toEqual([1, 2]);
+    expect(pool.describe().queued).toBe(1);
+    fakes[1].releaseOne();
+    await tick();
+    expect(fakes.map((f) => f.turns)).toEqual([1, 3]);
+    expect(pool.describe().queued).toBe(0);
+    fakes[0].releaseOne();
+    fakes[1].releaseOne();
     await Promise.all(runs);
+    expect(pool.describe().inFlight).toEqual([0, 0]);
+  });
+
+  it("cancels a FIFO waiter without consuming a member or blocking its successor", async () => {
+    const fakes: FakeRuntime[] = [];
+    const pool = makePool(1, fakes);
+    const consume = async (signal?: AbortSignal): Promise<void> => {
+      for await (const event of pool.runTurn({ ...turnOpts(), signal })) void event;
+    };
+    const running = consume();
+    const controller = new AbortController();
+    const canceled = consume(controller.signal);
+    const successor = consume();
+    await tick();
+    const rejected = expect(canceled).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    expect(pool.describe().queued).toBe(1);
+    fakes[0].releaseOne();
+    await tick();
+    expect(fakes[0].turns).toBe(2);
+    fakes[0].releaseOne();
+    await Promise.all([running, successor]);
+  });
+
+  it("rejects every queued waiter on disposal", async () => {
+    const fakes: FakeRuntime[] = [];
+    const pool = makePool(1, fakes);
+    const consume = async (): Promise<void> => {
+      for await (const event of pool.runTurn(turnOpts())) void event;
+    };
+    const running = consume();
+    const waiting = [consume(), consume()];
+    const rejected = waiting.map((promise) => expect(promise).rejects.toThrow("disposed"));
+    await tick();
+    await pool.dispose();
+    await Promise.all(rejected);
+    expect(pool.describe().queued).toBe(0);
+    expect(fakes[0].turns).toBe(1);
+    fakes[0].releaseOne();
+    await running;
   });
 });
 
@@ -281,3 +326,117 @@ function turnOpts() {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
+
+it("logs bounded content-free timing for a contended lease without changing FIFO", async () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const info = vi.spyOn(log, "info").mockImplementation(() => {});
+  vi.spyOn(log, "debug").mockImplementation(() => {});
+  const fakes: FakeRuntime[] = [];
+  const pool = makePool(1, fakes);
+  const consume = async () => {
+    for await (const event of pool.runTurn(turnOpts())) void event;
+  };
+  const first = consume();
+  await tick();
+  now = 10;
+  const second = consume();
+  await tick();
+  now = 40;
+  fakes[0]!.releaseOne();
+  await first;
+  await tick();
+  expect(info.mock.calls[0]![0]).toMatch(
+    /request=[a-f0-9-]+ status=leased member=0 waitMs=30 granted=true$/,
+  );
+  fakes[0]!.events = [
+    {
+      type: "agent.text.delta",
+      payload: {
+        sessionId: "secret-session",
+        messageId: "secret-message",
+        delta: "private response",
+      },
+    },
+  ];
+  now = 65;
+  fakes[0]!.releaseOne();
+  await second;
+  expect(info.mock.calls[1]![0]).toMatch(/status=completed member=0 waitMs=30 leaseMs=25$/);
+  expect(info.mock.calls[1]![0].split(" ")[3]).toBe(info.mock.calls[0]![0].split(" ")[3]);
+  expect(JSON.stringify(info.mock.calls)).not.toMatch(/secret|private|gpt-x/);
+  expect(pool.describe()).toEqual({ size: 1, inFlight: [0], queued: 0 });
+});
+
+it.each(["abort", "dispose"])(
+  "reports %s of an ungranted waiter without claiming a lease",
+  async (mode) => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const info = vi.spyOn(log, "info").mockImplementation(() => {});
+    vi.spyOn(log, "debug").mockImplementation(() => {});
+    const fakes: FakeRuntime[] = [];
+    const pool = makePool(1, fakes);
+    const consume = async (signal?: AbortSignal) => {
+      for await (const event of pool.runTurn({ ...turnOpts(), signal })) void event;
+    };
+    const first = consume();
+    await tick();
+    const controller = new AbortController();
+    now = 5;
+    const waiter = consume(controller.signal);
+    const failure = expect(waiter).rejects.toThrow();
+    now = 25;
+    if (mode === "abort") controller.abort();
+    else await pool.dispose();
+    await failure;
+    expect(info.mock.calls).toHaveLength(1);
+    expect(info.mock.calls[0]![0]).toContain(
+      `status=${mode === "abort" ? "aborted" : "disposed"} waitMs=20 granted=false`,
+    );
+    expect(fakes[0]!.turns).toBe(1);
+    fakes[0]!.releaseOne();
+    await first;
+    expect(pool.describe().queued).toBe(0);
+  },
+);
+
+it("releases a contended member even when the timing logger throws", async () => {
+  vi.spyOn(log, "info").mockImplementation(() => {
+    throw new Error("sink failure");
+  });
+  vi.spyOn(log, "debug").mockImplementation(() => {
+    throw new Error("sink failure");
+  });
+  const fakes: FakeRuntime[] = [];
+  const pool = makePool(1, fakes);
+  const consume = async () => {
+    for await (const event of pool.runTurn(turnOpts())) void event;
+  };
+  const first = consume();
+  const second = consume();
+  await tick();
+  fakes[0]!.releaseOne();
+  await first;
+  await tick();
+  fakes[0]!.releaseOne();
+  await second;
+  expect(fakes[0]!.turns).toBe(2);
+  expect(pool.describe()).toEqual({ size: 1, inFlight: [0], queued: 0 });
+});
+
+it("preserves delegated consumer return and releases its lease", async () => {
+  vi.spyOn(log, "debug").mockImplementation(() => {});
+  const fakes: FakeRuntime[] = [];
+  const pool = makePool(1, fakes);
+  fakes[0]!.events = [
+    { type: "agent.text.delta", payload: { sessionId: "s", messageId: "m", delta: "fixture" } },
+  ];
+  const iterator = pool.runTurn(turnOpts())[Symbol.asyncIterator]();
+  const next = iterator.next();
+  await tick();
+  fakes[0]!.releaseOne();
+  expect((await next).done).toBe(false);
+  await iterator.return?.();
+  expect(pool.describe()).toEqual({ size: 1, inFlight: [0], queued: 0 });
+});

@@ -151,32 +151,40 @@ describe("assemblePersonLookup — golden equality with the person port", () => 
     });
   });
 
-  test("stable lookup includes grounded memory while hiding experimental connections", () => {
-    seedRichFixture();
-    createPersonAnnotation(
-      db,
-      {
-        id: "memory_stable",
-        personId: "p-maya",
-        claimType: "role",
-        claimText: "runs the reading group",
-        evidenceDocId: "doc-e-1",
-        evidenceQuote: "body",
-        confidence: 0.8,
-        createdByRun: "interactive_session",
-        claimBasis: "quoted",
-      },
-      3000,
-    );
-    const result = assemblePersonLookup(db, "Maya", 5, { experimental: false }).find(
-      (person) => person.canonicalId === "p-maya",
-    );
-    expect(result?.annotations).toEqual([
-      expect.objectContaining({ claim: "runs the reading group", evidenceDocId: "doc-e-1" }),
-    ]);
-    expect(result?.openLoops).toBeUndefined();
-    expect(result?.temporalAnnotations).toBeUndefined();
-  });
+  test.each([null, "verified", "unverified", "failed"] as const)(
+    "stable lookup includes memory proof state %s while hiding experimental connections",
+    (verificationState) => {
+      seedRichFixture();
+      createPersonAnnotation(
+        db,
+        {
+          id: "memory_stable",
+          personId: "p-maya",
+          claimType: "role",
+          claimText: "runs the reading group",
+          evidenceDocId: "doc-e-1",
+          evidenceQuote: "body",
+          confidence: 0.8,
+          createdByRun: "interactive_session",
+          claimBasis: "quoted",
+          verificationState,
+        },
+        3000,
+      );
+      const result = assemblePersonLookup(db, "Maya", 5, { experimental: false }).find(
+        (person) => person.canonicalId === "p-maya",
+      );
+      expect(result?.annotations).toEqual([
+        expect.objectContaining({
+          claim: "runs the reading group",
+          evidenceDocId: "doc-e-1",
+          verificationState: verificationState ?? "unverified",
+        }),
+      ]);
+      expect(result?.openLoops).toBeUndefined();
+      expect(result?.temporalAnnotations).toBeUndefined();
+    },
+  );
 
   test("experimental ON adds fields OFF omits (the overlays are gated)", () => {
     seedRichFixture();

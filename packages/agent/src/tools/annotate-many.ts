@@ -38,7 +38,10 @@ export function createAnnotateManyTool(deps: AnnotateToolDeps): ToolHandle {
       "round-trip. Put each citation in `annotations` (documentId + optional " +
       "quote/note). Returns one recorded citation or actionable error per item, " +
       "in order. Correct any invalid documentId and retry it before answering; " +
-      "only validated documents become Timeline entries and Citations-drawer cards.",
+      "only validated documents become Timeline entries and Citations-drawer cards." +
+      (deps.port.requiresCitationRead
+        ? " Cite only current documents explicitly fetched this turn. Batch unread IDs with fetch_many first; a fetched wiki can be cited directly without opening every source. Partial body reads require an exact quote from the observed span. A citation records observation, not semantic verification."
+        : ""),
     schema,
     summarize(args: unknown): string | undefined {
       const a = (args as { annotations?: unknown[] } | null)?.annotations;

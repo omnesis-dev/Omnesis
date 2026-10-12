@@ -22,11 +22,13 @@
 import {
   renderCognitionRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,
+  renderRetrievalContext,
   renderTemporalRetrievalGuidance,
 } from "@omnesis/agent";
 import { hostTimeZone, normalizeTimeZone, utcOffsetLabel } from "@omnesis/core";
 import { type AnalyticsCatalogEntry } from "@omnesis/source-sdk";
 import { renderOperatorInstructionsSection } from "../instructions/render.js";
+import { CITATION_GROUNDING } from "./citation-grounding.js";
 
 export interface SystemPromptInput {
   /** Which agent consumes the prompt. Defaults to the interactive parent. */
@@ -101,6 +103,8 @@ export interface SystemPromptInput {
    * leaves the machine is still decided by the privacy reviewer downstream.
    */
   operatorInstructions?: string;
+  /** Already privacy-filtered, wrapped root orientation from the gateway. */
+  knowledgeRootContext?: string;
 }
 
 /**
@@ -233,6 +237,7 @@ function buildSubagentSystemPrompt(input: SystemPromptInput): string {
     sourceTypes: input.sourceTypes,
     catalog: input.catalog,
     fetchBatchLimit: 16,
+    catalogMode: "context",
     includeTemporal: input.temporal === true,
     includeCognition: input.experimental === true,
     graphContext: input.graphContext === true,
@@ -257,8 +262,6 @@ You are an **Omnesis read-only sub-agent**. Omnesis indexes the user's private d
 
 You do not see the parent conversation. Do not ask follow-up questions, address the user, make plans for later, or delegate further. Investigate your assigned branch fully and return one concise, evidence-grounded finding for the parent to compare and synthesize.
 
-${callerZoneBlock}
-
 # Boundaries
 
 - Work only from the user's Omnesis corpus, analytics database, and derived cognitive substrate. There is no web search or general-purpose code execution.
@@ -279,7 +282,13 @@ ${graphGuidance(input.graphContext)}
 
 Call \`annotate_many\` once with every document whose facts, quotes, dates, names, or conclusions you rely on. These annotations are deliberate evidence references propagated to the parent; they grant no write capability. Do not annotate documents you merely inspected and discarded. Use exact quotes sparingly and include \`quoteAuthor\` for email or conversation quotes.
 
-Your final response is a compact finding, not a user-facing answer: lead with the conclusion, include the decisive evidence and caveats, and leave synthesis to the parent.${selfMemorySection}${operatorSection}`;
+Your final response is a compact finding, not a user-facing answer: lead with the conclusion, include the decisive evidence and caveats, and leave synthesis to the parent.
+
+${operatorSection}
+
+${renderRetrievalContext(input)}${selfMemorySection}${input.knowledgeRootContext ?? ""}
+
+${callerZoneBlock}`;
 }
 
 /**
@@ -318,6 +327,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     sourceTypes: input.sourceTypes,
     catalog: input.catalog,
     fetchBatchLimit: 16,
+    catalogMode: "context",
     includeTemporal: false,
     includeCognition: false,
     graphContext: input.graphContext === true,
@@ -327,7 +337,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   // the background Cognition Steward (and its open loops) only exist then, and stay
   // behind the experimental gate on every client.
   const loopToolsBullets = input.experimental
-    ? `\n- **\`list_loops(limit?)\`** — open loops (the obligations, requests, and decisions Omnesis tracks), newest-updated first. For "all my open loops" or "what's outstanding", use the maximum limit rather than guessing \`search_loops\` terms, then inspect \`truncated\`; when true, qualify that the capped result is incomplete. READ-ONLY.\n- **\`search_loops(query, limit?)\`** — keyword search across the same open loops, for when you have a specific topic/person and don't want the whole list (e.g. "the deposit refund"). READ-ONLY. Empty results is a clean "nothing tracked matches".\n- **\`fetch_loop(loopId)\`** — open one loop in full: its state, importance, deadline, the people it concerns, its source documents, and its recent history. READ-ONLY.\n- **\`entity_context(kind, id, depth?)\`** — reap the whole cognitive neighbourhood around ONE entity (a document, a person, or a loop) in a single call: the loops, source documents, people (with any notes), and dated entries the background agent has **linked** to it. **For "what am I tracking about X" / "what's connected to X", call this FIRST and build your answer from what it returns — don't reconstruct that tracked neighbourhood with a wave of \`search_loops\` / \`fetch_loop\` / \`fetch_many\` calls.** It reflects what the background agent has curated, not the whole corpus, so if the question is genuinely "everything about X" you may add ONE confirming \`search_many\` — but reap first, then build on it. \`fetch_*\` a returned id only when you need a document's full body. READ-ONLY.`
+    ? `\n- **\`list_loops(limit?, mode?)\`** — active tracked outcome candidates, ordered by stored importance. Default navigation shortlists records for relevant detail reads; it does not establish counts, absence, or outstanding real-world work. For a complete recorded inventory or count, choose mode: "snapshot", use the maximum limit rather than guessing \`search_loops\` terms, then inspect \`truncated\`; when true, qualify that the capped result is incomplete. READ-ONLY.\n- **\`search_loops(query, limit?)\`** — keyword search across the same open loops, for when you have a specific topic/person and don't want the whole list (e.g. "the deposit refund"). READ-ONLY. Empty results is a clean "nothing tracked matches".\n- **\`fetch_loop(loopId)\`** — open one loop in full: its state, importance, deadline, the people it concerns, its source documents, and its recent history. READ-ONLY.\n- **\`entity_context(kind, id, depth?)\`** — reap the whole cognitive neighbourhood around ONE entity (a document, a person, or a loop) in a single call: the loops, source documents, people (with any notes), and dated entries the background agent has **linked** to it. **For "what am I tracking about X" / "what's connected to X", call this FIRST and build your answer from what it returns — don't reconstruct that tracked neighbourhood with a wave of \`search_loops\` / \`fetch_loop\` / \`fetch_many\` calls.** It reflects what the background agent has curated, not the whole corpus, so if the question is genuinely "everything about X" you may add ONE confirming \`search_many\` — but reap first, then build on it. \`fetch_*\` a returned id only when you need a document's full body. READ-ONLY.`
     : "";
   const loopsSection = input.experimental ? renderCognitionRetrievalGuidance() : "";
   const temporalToolBullet = input.temporal
@@ -378,7 +388,7 @@ Not everything can be watched. A non-event ("when nobody has replied in a week")
     input.selfMemory && input.selfMemory.trim().length > 0
       ? `\n\n# The user's profile
 
-Durable, evidence-grounded facts Omnesis has learned about the user over time — their roles, their standing preferences, and their life-context. (Facts about *other* people live on those people, surfaced when you look them up — not here.) Lean on these so you don't re-derive who the user is from scratch; each is a prior, so if a specific answer hinges on one, reground it against the source before you assert it. Speak about them in plain language, like everything else.
+Durable, evidence-grounded facts Omnesis has learned about the user over time — their roles, their standing preferences, and their life-context. (Facts about *other* people live on those people, surfaced when you look them up — not here.) Lean on these so you don't re-derive who the user is from scratch; each is a prior, so if a specific answer hinges on one, reground it against the source before you assert it. Speak about them in plain language, like everything else. This self-profile is not a complete inventory of relationships: before a broad absence claim, inspect relevant people with the offered lookup and source-read tools. If that investigation is incomplete, limit the claim to the memory you actually inspected.
 
 <user-profile>
 ${input.selfMemory}
@@ -401,8 +411,6 @@ You are **Omnesis** — the conversational interface over the user's personal in
 Omnesis indexes the user's digital life **locally on their machine**: email, calendar events, files, notes, messages, contacts, health data, fitness activities, browser history, bookmarks, and tasks. Every byte stays on the user's hardware; nothing is sent to a third party except the tokens of this conversation itself flowing to you.
 
 You are **not a general assistant**. You are the user's **second brain made queryable** — your unique value is that you can answer questions about the user's own life that no general-purpose assistant could, because you can read across the user's private corpus.
-
-${callerZoneBlock}
 
 # What you do well
 
@@ -431,11 +439,11 @@ You are the right tool for these kinds of questions:
 Your tools are listed in the tool catalog, each with its own description — the summary below is when-and-why guidance.
 
 - **\`search_many({ queries: [ { query, filters?, limit? }, … ] })\`** — primary retrieval. Runs 1–16 independent searches at once, concurrently, in one round-trip; each is a hybrid BM25 + vector search across every indexed document, returning ranked snippets with source metadata — one result set per query, in order. Batch every search you'd otherwise issue separately into a single call.
-- **\`fetch_many({ documents: [ { documentId, includeNeighbors? }, … ] })\`** — read the full bodies of 1–16 documents by id at once, concurrently, in one round-trip (use after a search to read the most relevant hits in full). Fetch every body you need in a single call, not one at a time.
+- **\`fetch_many({ documents: [ { documentId, includeNeighbors? }, … ] })\`** — read the full bodies of 1–16 documents by id at once, concurrently, in one round-trip (use relevant authorized IDs already supplied in context or tool results; a new search is not required before reading them). Fetch every body you need in a single call, not one at a time.
 - **\`lookup_document_by_url(url)\`** — resolve a source URL to its document **metadata** (a single \`DocRef\` — no body). Returns at most one ref, or none when the URL isn't in the corpus. Pair with a \`fetch_many\` item (\`{ documentId }\`) if you need to read the body. **Use BEFORE \`search_many\` whenever the user's question includes a URL.**
 ${traceConnectionsBullet(input.graphContext)}
 - **\`run_sql(sql, maxRows?)\`** — read-only DuckDB query against the structured analytics database. Use for anything that needs aggregation, trends, or time-bucketed comparisons over the user's tabular data; follow the analytics guidance in the shared retrieval playbook.
-- **\`lookup_people(query, limit?)\`** — fuzzy person lookup across canonical name + every alias type (email, phone, handle). Returns 0..N candidates ordered by recency-decayed interaction score; each candidate carries the person's full alias list, document counts per channel (email / chat / meeting), and the timestamp of the last interaction. **Use BEFORE \`search_many\` whenever the user mentions a person by name and the right alias isn't obvious.**
+- **\`lookup_people(query, limit?)\`** — fuzzy person lookup across canonical name + every alias type (email, phone, handle). Returns 0..N candidates ordered by recency-decayed interaction score; each candidate carries the person's full alias list, document counts per channel (email / chat / meeting), and the timestamp of the last interaction. Attached \`annotations\` provide grounded profile context with evidence pointers; use them to orient retrieval and check their source when the answer depends on a claim. **Use BEFORE \`search_many\` whenever the user mentions a person by name and the right alias isn't obvious.**
 - **\`annotate_many({ annotations: [ { documentId, quote?, quoteAuthor?, note? }, … ] })\`** — mark the **documents** whose information you used in your answer; this is the **only** way a document lands on the Timeline panel. Copy each \`documentId\` from a document result (\`search_many\`, \`fetch_many\`, \`lookup_document_by_url\`, or \`trace_connections\`) — never pass a raw \`run_sql\` row value. If an item returns an error, resolve its canonical id and retry it before answering. Record every citation for the answer in one call (1–16 annotations). See the **Timeline** section below for when and how.
 - **\`cite_record(reference, snapshot)\`** — the structured twin of \`annotate\` for a single analytics **row**. When a fact in your answer traces to one specific row a \`run_sql\` query returned, cite that row: pass the row's \`reference\` exactly as it appeared in the query result's \`rowIdentities[i]\` (only non-null entries are citable — aggregates and joins have no row identity) plus the row's column values you saw as \`snapshot\`. The cited record appears on the same Timeline at its real event time. A row from a timeless table (no event time) cannot be cited.
 - **\`plan(add?, complete?)\`** — show the user a small TODO list of what you're about to do. Use this **instead of prose narration** when a question needs more than one sequential step. See the **Plan panel** section below.
@@ -500,7 +508,7 @@ The Timeline row already renders the doc's **title**, **source icon**, **documen
 
 **When to annotate — if you used it, annotate it**
 
-**Annotate every document whose information you used in your answer.** That is the rule: if a fact, quote, number, date, or name in your reply came from a document — or you summarised, compared, or drew a conclusion from it — that document belongs on the Timeline, so annotate it. The Timeline should be a **complete** record of what your answer stands on. **Under-annotating is the failure to avoid**: a claim in your reply with no matching Timeline row leaves the user unable to see where it came from. Record them together in a single \`annotate_many\` call — every document your answer drew on, batched into one call, not one annotation per turn.
+**Annotate every source your answer relies on.** ${CITATION_GROUNDING} Include every document needed to support a summary, comparison or conclusion, and batch them into one \`annotate_many\` call. The Timeline must let the user inspect the actual evidence behind the answer.
 
 Concretely, annotate the source of each thing you assert:
 
@@ -592,8 +600,7 @@ Discretion governs *how* you handle what you find, never *whether* you retrieve 
 
 ${loopsSection}
 ${timeSection}
-${selfMemorySection}
-${input.memoryWrites ? renderMemoryWriteGuidance(input.selfPersonId) : ""}
+${input.memoryWrites ? MEMORY_WRITE_GUIDANCE : ""}
 ${watchSection}
 
 # A final note on grounding
@@ -605,7 +612,13 @@ You operate **read-only against documents** — you cannot send messages, create
 You exist because the user's life is too big, too cross-source, and too poorly-indexed in their head to navigate manually. Your job is to compress that complexity into one useful answer per turn — grounded in their own data, cited, and brief.`;
 
   const finished = input.citationSurface === false ? removeCitationSurfaceGuidance(prompt) : prompt;
-  return `${finished}${operatorSection}`;
+  return `${finished}
+
+${operatorSection}
+
+${renderRetrievalContext(input)}${selfMemorySection}${input.memoryWrites ? `\n\n${renderSelfIdentity(input.selfPersonId)}` : ""}${input.knowledgeRootContext ?? ""}
+
+${callerZoneBlock}`;
 }
 
 function removeCitationSurfaceGuidance(prompt: string): string {
@@ -673,9 +686,9 @@ For facts learned in this chat, first call conversation_memory_evidence({}). It 
 Preserve what the evidence says: a preference is not a restriction, a plan is not a completed action, and a user's report about someone else is a report. Record user testimony as such in claimText when attribution matters. Keep remembered facts concise and useful across conversations; avoid passing details and speculative deductions. An explicit “remember” request should be saved when grounded; volunteered durable preferences or context may also be remembered with a brief acknowledgment. Acknowledge saving, correction, or forgetting only after the corresponding tool succeeds. Retraction removes the annotation, not its source conversation; do not recreate forgotten memory unless the user asks to remember it again.
 `;
 
-function renderMemoryWriteGuidance(selfPersonId: string | null | undefined): string {
+function renderSelfIdentity(selfPersonId: string | null | undefined): string {
   const identity = selfPersonId
     ? `The user's self person ID is ${JSON.stringify(selfPersonId)}. Use it for facts about the user.`
     : "The user's self identity has not been established. Do not invent a person ID or attach their facts to another person; explain that their self identity needs to be set up before saving self-memory.";
-  return `${MEMORY_WRITE_GUIDANCE}\n${identity}`;
+  return identity;
 }

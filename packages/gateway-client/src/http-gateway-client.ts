@@ -19,6 +19,7 @@ import type {
   AccountDescriptor,
   GatewayClient,
   SourceWatermark,
+  InitialSourceInventory,
   SyncCursor,
   SyncState,
   SourceStats,
@@ -694,8 +695,14 @@ export class HttpGatewayClient implements GatewayClient {
       cursor: data.cursor,
       lastSyncedAt: data.lastSyncedAt,
       hasMeta: data.hasMeta,
+      initialInventory: data.initialInventory,
       wipeEpoch: data.wipeEpoch,
     };
+  }
+
+  async getInitialSourceInventory(sourceId: SourceId): Promise<InitialSourceInventory | undefined> {
+    const data = await this.request(`/sync-state/${encodeURIComponent(sourceId)}`);
+    return data.initialInventory;
   }
 
   async setSyncState(sourceId: SourceId, cursor: SyncCursor, meta?: SourceSyncMeta): Promise<void> {
@@ -922,6 +929,7 @@ export class HttpGatewayClient implements GatewayClient {
   }
 
   async upsertWithCursor(args: {
+    initialInventory?: InitialSourceInventory;
     pendingPageId?: string;
     providerId: ProviderId;
     sourceId: SourceId;

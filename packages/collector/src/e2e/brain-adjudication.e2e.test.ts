@@ -29,6 +29,8 @@ import "./synth-env.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   call,
   compressCognitionCadences,
   email,
@@ -67,9 +69,9 @@ async function runByDedupeKey(bench: BrainBench, kind: string, dedupeKey: string
   return run;
 }
 
-/** The settled data run a pushed document caused. */
+/** The settled source interpretation a pushed document caused. */
 async function dataRunFor(bench: BrainBench, docId: string): Promise<string> {
-  const run = await bench.obs.runForDoc(docId);
+  const run = await bench.obs.interpretationForSource(docId);
   expect(run.status).toBe("completed");
   return run.id;
 }
@@ -303,8 +305,25 @@ describe("merge adjudication", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      brain: { mergeAdjudication: { enabled: true } },
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+        mergeAdjudication: { enabled: true },
+      },
       behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              // The reverse authority direction: a lane that was never granted
+              // the merge verdict reaching for it.
+              docTitle: DOC_DATA_RUN.title,
+              expectedRefusals: [{ tool: "merge_adjudicate", code: "unknown_tool" }],
+              plan: {
+                calls: [call("merge_adjudicate", { verdict: "distinct", reason: DISTINCT_REASON })],
+              },
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
         behaviors: [
           {
             flavour: "merge_adjudication",
@@ -365,15 +384,6 @@ describe("merge adjudication", () => {
             subject: CAND.reguard,
             plan: {
               calls: [call("merge_adjudicate", { verdict: "merge", reason: MERGE_REASON })],
-            },
-          },
-          {
-            // The reverse authority direction: a lane that was never granted
-            // the merge verdict reaching for it.
-            flavour: "data.created",
-            docTitle: DOC_DATA_RUN.title,
-            plan: {
-              calls: [call("merge_adjudicate", { verdict: "distinct", reason: DISTINCT_REASON })],
             },
           },
         ],
@@ -769,27 +779,47 @@ describe("agent notes and their background compaction", () => {
   beforeAll(async () => {
     bench = await BrainBench.start({
       experimental: true,
-      brain: { notesMaxBytes: NOTES_CAP },
+      brain: {
+        knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+        notesMaxBytes: NOTES_CAP,
+      },
       behaviors: {
-        behaviors: [
-          {
-            flavour: "data.created",
-            docTitle: DOC_NOTE_UNDER.title,
-            plan: { calls: [call("notes_append", { text: FIRST_NOTE })] },
-          },
-          {
-            // Two over-cap appends inside ONE run: the second proves the
-            // compaction enqueue is a singleton, which a second run could not
-            // show (the first compaction would already have drained).
-            flavour: "data.created",
-            docTitle: DOC_NOTE_OVER.title,
-            plan: {
-              calls: [
-                call("notes_append", { text: OVER_CAP_NOTE }),
-                call("notes_append", { text: SECOND_OVER_CAP_NOTE }),
-              ],
+        dynamic: sourceInterpretations({
+          sources: [
+            {
+              docTitle: DOC_NOTE_UNDER.title,
+              plan: { calls: [call("notes_append", { text: FIRST_NOTE })] },
             },
-          },
+            {
+              // Two over-cap appends inside ONE run: the second proves the
+              // compaction enqueue is a singleton, which a second run could not
+              // show (the first compaction would already have drained).
+              docTitle: DOC_NOTE_OVER.title,
+              plan: {
+                calls: [
+                  call("notes_append", { text: OVER_CAP_NOTE }),
+                  call("notes_append", { text: SECOND_OVER_CAP_NOTE }),
+                ],
+              },
+            },
+            {
+              docTitle: DOC_NOTE_EDIT.title,
+              expectedRefusals: [
+                { tool: "notes_edit", code: "notes_edit_not_found" },
+                { tool: "notes_edit", code: "notes_edit_ambiguous" },
+              ],
+              plan: {
+                calls: [
+                  call("notes_edit", { oldText: EDIT_OLD, newText: EDIT_NEW }),
+                  call("notes_edit", { oldText: EDIT_MISSING, newText: "" }),
+                  call("notes_edit", { oldText: EDIT_AMBIGUOUS, newText: "@example.org" }),
+                ],
+              },
+            },
+          ],
+          maintainNode: preserveCurrentOwner,
+        }),
+        behaviors: [
           {
             flavour: "notes_compaction",
             plan: {
@@ -804,17 +834,6 @@ describe("agent notes and their background compaction", () => {
                   urgency: 0.2,
                 }),
                 call("notes_rewrite", { text: COMPACTED_NOTES }),
-              ],
-            },
-          },
-          {
-            flavour: "data.created",
-            docTitle: DOC_NOTE_EDIT.title,
-            plan: {
-              calls: [
-                call("notes_edit", { oldText: EDIT_OLD, newText: EDIT_NEW }),
-                call("notes_edit", { oldText: EDIT_MISSING, newText: "" }),
-                call("notes_edit", { oldText: EDIT_AMBIGUOUS, newText: "@example.org" }),
               ],
             },
           },

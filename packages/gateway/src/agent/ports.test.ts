@@ -185,6 +185,24 @@ describe("createGatewayDocumentPort.fetch", () => {
     }
   });
 
+  test("citation snapshots change on metadata ABA without changing the source body", async () => {
+    insertDocument({
+      id: "doc-receipt",
+      sourceId: "files:test",
+      title: "Prism log",
+      content: "The prism glows.",
+    });
+    const port = createGatewayDocumentPort(db);
+    const before = await port.fetch("doc-receipt");
+    expect(port.requiresCitationRead).toBe(true);
+    expect(before?.readSnapshot?.documentId).toBe("doc-receipt");
+    db.prepare("UPDATE documents SET title='Other heading' WHERE id='doc-receipt'").run();
+    db.prepare("UPDATE documents SET title='Prism log' WHERE id='doc-receipt'").run();
+    const after = await port.fetch("doc-receipt");
+    expect(after?.document).toEqual(before?.document);
+    expect(after?.readSnapshot?.version).not.toBe(before?.readSnapshot?.version);
+  });
+
   test("emits mimeType from metadata.extra so renderers pick the file-type icon", async () => {
     insertDocument({
       id: "doc-pdf",
@@ -932,4 +950,43 @@ describe("createGatewaySearchPort — the agent's own conversation", () => {
     const out = await port.search({ query: "anything" });
     expect(out.results.map((r) => r.documentId)).toEqual(["doc-self"]);
   });
+});
+
+test("restricted search never reads or exposes global retrieval coverage", async () => {
+  const retrievalCoverage = vi.fn(() => ({
+    status: "unknown" as const,
+    corpusBoundary: "GLOBAL_ACTIVITY_CANARY",
+    publishedThrough: null,
+    notice: "private",
+  }));
+  const search = vi.fn(async () => ({
+    query: { original: "workshop" },
+    timing: { totalMs: 1 },
+    results: [],
+  }));
+  const port = createGatewaySearchPort(
+    { search, retrievalCoverage } as unknown as SearchPipeline,
+    undefined,
+    db,
+    restrictedAuthorization("allowlist", ["mail:alpha"]),
+  );
+  const result = await port.search({ query: "workshop" });
+  expect(retrievalCoverage).not.toHaveBeenCalled();
+  expect(result).not.toHaveProperty("coverage");
+});
+
+test("search coverage is captured before asynchronous retrieval changes publication state", async () => {
+  const coverage = {
+    status: "catching_up" as const,
+    corpusBoundary: "2027-01-04T10:00:00.000Z",
+    publishedThrough: null,
+    notice: "Do not infer absence.",
+  };
+  const retrievalCoverage = vi.fn(() => ({ ...coverage }));
+  const search = vi.fn(async () => {
+    expect(retrievalCoverage).toHaveBeenCalledTimes(1);
+    return { query: { original: "workshop" }, timing: { totalMs: 1 }, results: [] };
+  });
+  const port = createGatewaySearchPort({ search, retrievalCoverage } as unknown as SearchPipeline);
+  expect(await port.search({ query: "workshop" })).toMatchObject({ coverage });
 });

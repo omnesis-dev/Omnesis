@@ -2,9 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { computeContentHash, type SearchProvenance } from "@omnesis/core";
 import { createDatabase } from "../db.js";
+import { saveKnowledgeNode, purgeKnowledgeBySource } from "../brain/knowledge/storage.js";
+import { buildKnowledgeDocumentInput } from "../brain/knowledge/mirror.js";
 import { createGatewaySearchPort } from "../agent/ports.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 import { OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
@@ -46,6 +48,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   closeTempDb(index);
   closeTempDb(gateway);
 });
@@ -122,6 +125,140 @@ describe("agent search v2 enrollment and compatibility", () => {
     const family = enriched.results.find((hit) => ["a", "b"].includes(hit.documentId))!;
     expect(family.provenance!.copies.map((copy) => copy.documentId).sort()).toEqual(["a", "b"]);
     expect(family.provenance!.modelContext).toBeDefined();
+  });
+
+  test.each(["plain", "outside-graph-budget"])(
+    "fences a generated identity even when its indexed source is ordinary: %s",
+    async (mode) => {
+      const p = pipeline({ v2: { topN: 1 } });
+      const query = { text: "equipment", limit: 10 };
+      const before = await p.search(query);
+      const moved = before.results.at(-1)!;
+      // Simulate delayed index metadata after the corpus identity changed.
+      gateway
+        .prepare(
+          "UPDATE documents SET source_id='brain-knowledge',external_id='missing-owner' WHERE id=?",
+        )
+        .run(moved.documentId);
+      const after = await p.search(
+        query,
+        undefined,
+        mode === "plain" ? undefined : { graphContext: true },
+      );
+      expect(after.results.map((hit) => hit.documentId)).toEqual(
+        before.results
+          .filter((hit) => hit.documentId !== moved.documentId)
+          .map((hit) => hit.documentId),
+      );
+      expect(JSON.stringify(after)).not.toContain(`"documentId":"${moved.documentId}"`);
+    },
+  );
+
+  test.each(["ref-count", "bound-row"])(
+    "rechecks generated snippets and graph copies after %s enrichment",
+    async (boundary) => {
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+      const source = gateway
+        .prepare<
+          [string],
+          { content_hash: string }
+        >("SELECT content_hash FROM documents WHERE id=?")
+        .get("a")!;
+      const node = saveKnowledgeNode(
+        gateway,
+        {
+          id: "derived-node",
+          kind: "wiki",
+          title: "Equipment synthesis",
+          markdown: `<claim id="summary" refs="source:a">${BODY}</claim>`,
+          expectedRevision: 0,
+          inputVersions: { "source:a": source.content_hash },
+        },
+        1,
+      ).node;
+      const projection = buildKnowledgeDocumentInput(node);
+      addFile("derived", projection.title, projection.content);
+      gateway
+        .prepare(
+          "UPDATE documents SET source_id=?,external_id=?,content=?,content_hash=?,metadata=? WHERE id='derived'",
+        )
+        .run(
+          projection.sourceId,
+          projection.externalId,
+          projection.content,
+          projection.contentHash,
+          JSON.stringify(projection.metadata),
+        );
+      upsertChunks(index, [
+        {
+          id: "chunk-derived",
+          documentId: "derived",
+          chunkIndex: 0,
+          content: projection.content,
+          embedding: new Float32Array(EMBEDDING_DIM),
+          sourceId: projection.sourceId,
+          documentType: "knowledge",
+          title: projection.title,
+          sourceCreatedAt: NOW,
+        },
+      ]);
+      setIndexedDocument(index, "derived", projection.contentHash, 1);
+      const p = pipeline({ v2: { topN: 10 } });
+      const query = { text: "equipment", limit: 10, cognitiveProjection: true };
+      const before = await p.search(query, undefined, { graphContext: true });
+      expect(before.results.some((hit) => hit.documentId === "derived")).toBe(true);
+      expect(
+        before.results
+          .find((hit) => hit.documentId === "b")
+          ?.provenance?.copies.some((copy) => copy.documentId === "a"),
+      ).toBe(true);
+      let crossed = false;
+      const purge = () => {
+        crossed = true;
+        purgeKnowledgeBySource(gateway, "a", 2);
+      };
+      if (boundary === "ref-count")
+        p.setLinkRefSource({
+          getInboundRefCounts: () => {
+            purge();
+            return new Map();
+          },
+        });
+      else
+        p.setBoundRowResolver({
+          getBoundDocumentBindings: async () => {
+            purge();
+            return new Map();
+          },
+          getRowsByKeys: async () => new Map(),
+        });
+      const after = await p.search(
+        { ...query, includeBoundRow: boundary === "bound-row" },
+        undefined,
+        { graphContext: true },
+      );
+      expect(crossed).toBe(true);
+      expect(after.results.map((hit) => hit.documentId).sort()).toEqual(["b", "c"]);
+      expect(JSON.stringify(after.results)).not.toContain('"documentId":"a"');
+      expect(JSON.stringify(after.results)).not.toContain('"documentId":"derived"');
+      expect(
+        after.results
+          .find((hit) => hit.documentId === "b")
+          ?.provenance?.copies.map((copy) => copy.documentId),
+      ).toEqual(["b"]);
+    },
+  );
+
+  test("client graph enrichment preserves an intentional current visibility exclusion", async () => {
+    const p = pipeline({ v2: { topN: 10 } });
+    const result = await p.search({ text: "equipment", limit: 10 }, undefined, {
+      graphContext: true,
+      excludeDocumentIds: () => ["a"],
+    });
+    expect(result.results.map((hit) => hit.documentId).sort()).toEqual(["b", "c"]);
+    expect(JSON.stringify(result.results.map((hit) => hit.provenance?.copies))).not.toContain(
+      '"documentId":"a"',
+    );
   });
 
   test.each([false, true])(

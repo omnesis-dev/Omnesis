@@ -11,6 +11,7 @@ import {
   defaultCognitionPrompt,
   type CognitionRunDriverDeps,
 } from "./run-driver.js";
+import { knowledgeFrontierPreflight } from "./knowledge/engine-frontier.js";
 import { FsCognitionTranscriptStore } from "./transcripts.js";
 import type { ChatBackend, TurnInput } from "@omnesis/agent";
 import type { ClaimedCognitionRun } from "./storage/types.js";
@@ -84,6 +85,99 @@ describe("CognitionRunDriver", () => {
     });
   }
 
+  test.each([true, false])(
+    "resolves an organization-only turn only when completion is ready (%s)",
+    async (readyToComplete) => {
+      let resolutions = 0;
+      const prompts: string[] = [];
+      const driver = makeDriver({
+        preflight: async () =>
+          knowledgeFrontierPreflight({
+            done: false,
+            items: [],
+            organization: {
+              id: "cohort",
+              inputFingerprint: "inputs",
+              sourceIds: ["a", "b"],
+              readyToComplete,
+            },
+          }),
+        resolveBackend: () => {
+          resolutions++;
+          return scriptedBackend(happyScript("Joint outcome recorded."), prompts);
+        },
+      });
+      const outcome = await driver.execute(
+        claimed({
+          kind: "synthesis",
+          payload: { focus: "knowledge-maintenance", batchId: "batch" },
+        }),
+      );
+      expect(resolutions).toBe(readyToComplete ? 1 : 0);
+      expect(prompts).toHaveLength(readyToComplete ? 1 : 0);
+      expect(outcome.ok).toBe(readyToComplete);
+      if (!readyToComplete)
+        expect(outcome).toMatchObject({ modelId: null, usage: null, deferredUntil: 20000 });
+    },
+  );
+
+  test("keeps completed and bounded-progress frontiers unpaid", () => {
+    expect(
+      knowledgeFrontierPreflight({
+        done: true,
+        items: [],
+        organization: {
+          id: "cohort",
+          inputFingerprint: "inputs",
+          sourceIds: [],
+          readyToComplete: true,
+        },
+      }),
+    ).toBe("complete");
+    expect(knowledgeFrontierPreflight({ done: false, items: [], continuation: true })).toBe(
+      "yield",
+    );
+    expect(knowledgeFrontierPreflight({ done: false, items: [] })).toBe("defer");
+    expect(
+      knowledgeFrontierPreflight({
+        done: false,
+        items: [],
+        candidateDecisions: [{ id: "candidate", revision: 2 }],
+      }),
+    ).toBe("continue");
+  });
+
+  test("settles a gated maintenance frontier before resolving any model backend", async () => {
+    let resolutions = 0;
+    const driver = makeDriver({
+      preflight: async () => "complete",
+      resolveBackend: () => {
+        resolutions++;
+        return null;
+      },
+    });
+    const outcome = await driver.execute(
+      claimed({ kind: "synthesis", payload: { focus: "knowledge-maintenance", batchId: "batch" } }),
+    );
+    expect(outcome).toMatchObject({ ok: true, modelId: null, usage: null });
+    expect(resolutions).toBe(0);
+  });
+
+  test("defers incomplete deterministic inputs without a model attempt", async () => {
+    const driver = makeDriver({
+      preflight: async () => "defer",
+      resolveBackend: () => {
+        throw new Error("must not resolve");
+      },
+    });
+    expect(await driver.execute(claimed())).toMatchObject({
+      ok: false,
+      deferredUntil: 20000,
+      modelId: null,
+      usage: null,
+    });
+  });
+
   test("a successful run harvests text + usage and persists a transcript", async () => {
     const driver = makeDriver({
       resolveBackend: () =>
@@ -118,6 +212,28 @@ describe("CognitionRunDriver", () => {
       },
     });
     expect(t.events.map((e) => e.type)).toContain("agent.message.end");
+  });
+
+  test("uses terminal totals once rather than adding cumulative live usage", async () => {
+    const driver = makeDriver({
+      resolveBackend: () =>
+        scriptedBackend((input) => {
+          const events = happyScript("done", { inputTokens: 100, outputTokens: 25 })(input);
+          events.splice(1, 0, {
+            type: "agent.usage.update",
+            payload: {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+              usage: { inputTokens: 80, outputTokens: 20 },
+            },
+          });
+          return events;
+        }),
+    });
+    expect((await driver.execute(claimed())).usage).toMatchObject({
+      promptTokens: 100,
+      completionTokens: 25,
+    });
   });
 
   test("every run of a workflow shares one stable prompt cache key, and each model call is probed", async () => {
@@ -267,6 +383,55 @@ describe("CognitionRunDriver", () => {
     // No model session started, so there is no transcript to persist.
     expect(transcripts.list()).toEqual([]);
   });
+
+  test.each([true, false])(
+    "stops a handoff only when trusted durable state confirms it: %s",
+    async (confirmed) => {
+      let continued = false;
+      const backend: ChatBackend = {
+        name: "scripted",
+        model: "scripted-model",
+        async *runTurn(input, signal) {
+          yield happyScript("", { inputTokens: 10, outputTokens: 2 })(input)[0]!;
+          yield {
+            type: "agent.tool.start",
+            payload: {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+              toolCallId: "handoff",
+              tool: "open_loop_update",
+              args: {},
+            },
+          };
+          yield {
+            type: "agent.tool.result",
+            payload: {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+              toolCallId: "handoff",
+              result: { kind: "error", code: "maintenance_handoff", message: "Requeued" },
+              durationMs: 0,
+            },
+          };
+          if (signal?.aborted) return;
+          continued = true;
+          yield happyScript("Continued", { inputTokens: 10, outputTokens: 2 })(input)[2]!;
+        },
+      };
+      const driver = makeDriver({ resolveBackend: () => backend, isRunHandedOff: () => confirmed });
+      const outcome = await driver.execute(
+        claimed({
+          kind: "synthesis",
+          payload: { focus: "knowledge-maintenance", batchId: "batch" },
+        }),
+      );
+      expect(outcome.ok).toBe(true);
+      expect(continued).toBe(!confirmed);
+      expect(transcripts.load(transcripts.list()[0]!.fileName)).toMatchObject({
+        outcome: "completed",
+      });
+    },
+  );
 
   test("a canceled turn is not a completed run", async () => {
     const driver = makeDriver({
@@ -426,6 +591,7 @@ describe("CognitionRunDriver", () => {
   test("the prompt-builder and system-prompt seams are honoured", async () => {
     const prompts: string[] = [];
     const systemPrompts: string[] = [];
+    const routedRuns: Array<string | undefined> = [];
     const driver = makeDriver({
       resolveBackend: () =>
         scriptedBackend((input) => {
@@ -433,11 +599,15 @@ describe("CognitionRunDriver", () => {
           return happyScript("ok")(input);
         }, prompts),
       promptBuilder: (run) => `custom prompt for ${run.id}`,
-      systemPrompt: () => "custom system prompt",
+      systemPrompt: (run) => {
+        routedRuns.push(run?.id);
+        return "custom system prompt";
+      },
     });
     await driver.execute(claimed());
     expect(prompts).toEqual(["custom prompt for run_1"]);
     expect(systemPrompts).toEqual(["custom system prompt"]);
+    expect(routedRuns).toEqual(["run_1"]);
   });
 
   test("passes the resolved model id to per-run tools and completion validation", async () => {
@@ -455,6 +625,142 @@ describe("CognitionRunDriver", () => {
 
     await expect(driver.execute(claimed())).resolves.toMatchObject({ ok: true });
     expect(seen).toEqual(["tools:scripted-model", "validate:scripted-model"]);
+  });
+
+  test("retains a tool-level cap signal when a backend ends normally with incomplete work", async () => {
+    const driver = makeDriver({
+      resolveBackend: () =>
+        scriptedBackend((input) => {
+          const events = happyScript("Segment stopped", { inputTokens: 10, outputTokens: 2 })(
+            input,
+          );
+          events.splice(
+            1,
+            0,
+            {
+              type: "agent.usage.update",
+              payload: {
+                sessionId: input.sessionId,
+                messageId: input.messageId,
+                usage: { inputTokens: 10, outputTokens: 2 },
+              },
+            },
+            {
+              type: "agent.tool.start",
+              payload: {
+                sessionId: input.sessionId,
+                messageId: input.messageId,
+                toolCallId: "cap",
+                tool: "knowledge_reference",
+                args: {},
+              },
+            },
+            {
+              type: "agent.tool.result",
+              payload: {
+                sessionId: input.sessionId,
+                messageId: input.messageId,
+                toolCallId: "cap",
+                result: { kind: "error", code: "tool_iteration_cap", message: "Tool cap reached" },
+                durationMs: 0,
+              },
+            },
+          );
+          return events;
+        }),
+      validateRun: () => "Knowledge batch has remaining work",
+    });
+    const outcome = await driver.execute(claimed());
+    expect(outcome).toMatchObject({
+      ok: false,
+      toolLimitReached: true,
+      usage: { promptTokens: 10, completionTokens: 2 },
+    });
+    const transcript = transcripts.load(transcripts.list()[0]!.fileName);
+    expect(transcript.outcome).toBe("failed");
+    expect(transcript.events.some((event) => event.type === "agent.tool.result")).toBe(true);
+  });
+
+  test("cancels at the first tool cap and preserves settled tools and observed cumulative usage", async () => {
+    let continued = false;
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      async *runTurn(input, signal) {
+        yield happyScript("")(input)[0]!;
+        for (const tokens of [20, 30])
+          yield {
+            type: "agent.usage.update",
+            payload: {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+              usage: { inputTokens: tokens, outputTokens: 7 },
+            },
+          };
+        yield {
+          type: "agent.tool.start",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            toolCallId: "saved",
+            tool: "knowledge_save",
+            args: {},
+          },
+        };
+        yield {
+          type: "agent.tool.result",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            toolCallId: "saved",
+            durationMs: 0,
+            result: { kind: "structured", resultType: "saved", data: { revision: 2 } },
+          },
+        };
+        yield {
+          type: "agent.tool.start",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            toolCallId: "cap",
+            tool: "knowledge_reference",
+            args: {},
+          },
+        };
+        yield {
+          type: "agent.tool.result",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            toolCallId: "cap",
+            durationMs: 0,
+            result: { kind: "error", code: "tool_iteration_cap", message: "Tool cap reached" },
+          },
+        };
+        continued = !signal?.aborted;
+        yield {
+          type: "agent.message.end",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            stopReason: signal?.aborted ? "canceled" : "end_turn",
+            usage: { inputTokens: 30, outputTokens: 7 },
+          },
+        };
+      },
+    };
+    const outcome = await makeDriver({ resolveBackend: () => backend }).execute(claimed());
+    expect(continued).toBe(false);
+    expect(outcome).toMatchObject({
+      ok: false,
+      toolLimitReached: true,
+      failure: { code: "tool_iteration_cap", retryable: false },
+      usage: { promptTokens: 30, completionTokens: 7 },
+    });
+    const transcript = transcripts.load(transcripts.list()[0]!.fileName);
+    expect(transcript.failureCode).toBe("tool_iteration_cap");
+    expect(transcript.events.filter((event) => event.type === "agent.tool.result")).toHaveLength(2);
+    expect(transcript.usage).toMatchObject({ promptTokens: 30, completionTokens: 7 });
   });
 
   test("fails closed when post-turn validation reports incomplete durable work", async () => {

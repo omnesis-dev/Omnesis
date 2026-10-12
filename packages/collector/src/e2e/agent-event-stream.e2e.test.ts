@@ -179,6 +179,26 @@ describe("agent event stream — resume cursor, truncated terminal, batch citati
       [
         entry("agent.message.start", { role: "assistant" }),
         entry("agent.text.delta", { delta: "Three documents ground this answer." }),
+        // A live citation attempt before exposure must not mint receipts itself.
+        entry("agent.tool.start", {
+          toolCallId: "tc_unread_citations",
+          tool: "annotate_many",
+          args: {
+            annotations: [DOC_A_EXT, DOC_B_EXT, DOC_C_EXT].map((id) => ({
+              documentId: `$DOC_${id}`,
+            })),
+          },
+        }),
+        // Keep source exposure real: this live read supplies the citation receipts.
+        entry("agent.tool.start", {
+          toolCallId: "tc_fetch_citations",
+          tool: "fetch_many",
+          args: {
+            documents: [DOC_A_EXT, DOC_B_EXT, DOC_C_EXT].map((id) => ({
+              documentId: `$DOC_${id}`,
+            })),
+          },
+        }),
         // No matching `agent.tool.result`: the replay backend classifies this
         // call as LIVE and runs the real `annotate_many`, so `runBatch` builds
         // the three-item `annotate.batch` the fan-out under test consumes.
@@ -273,6 +293,31 @@ describe("agent event stream — resume cursor, truncated terminal, batch citati
       } finally {
         await stream.close();
       }
+
+      const unread = eventsOf(frames, "agent.tool.result", sessionId).filter(
+        (event) => event.payload.toolCallId === "tc_unread_citations",
+      );
+      expect(unread).toHaveLength(1);
+      expect(unread[0]!.payload.result).toMatchObject({
+        kind: "annotate.batch",
+        items: [0, 1, 2].map(() => ({ kind: "error", code: "citation_read_required" })),
+      });
+      const fetched = eventsOf(frames, "agent.tool.result", sessionId).filter(
+        (event) => event.payload.toolCallId === "tc_fetch_citations",
+      );
+      expect(fetched).toHaveLength(1);
+      expect(fetched[0]!.payload.result).toMatchObject({
+        kind: "document.batch",
+        items: [docA, docB, docC].map((documentId) => ({
+          kind: "document",
+          ref: { documentId },
+        })),
+      });
+      const unreadIndex = frames.findIndex((frame) => frame.event === unread[0]);
+      const fetchedIndex = frames.findIndex((frame) => frame.event === fetched[0]);
+      expect(unreadIndex).toBeGreaterThanOrEqual(0);
+      expect(fetchedIndex).toBeGreaterThan(unreadIndex);
+      expect(eventsOf(frames.slice(0, fetchedIndex + 1), "agent.citation", sessionId)).toEqual([]);
 
       // Precondition: every child really was recorded. `annotate` drops an
       // errored child before the session indexes the survivors, so an

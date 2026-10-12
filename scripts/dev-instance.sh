@@ -209,7 +209,7 @@ print_triple() {
     exit 6
   fi
   local token portal
-  token="$(cat "${TOKEN_FILE}")"
+  token="$(read_instance_token "${CONFIG_DIR}")"
   portal="$(portal_login_url)"
   # Copy-paste form: paste this block into another shell and immediately drive
   # `cli`/curl at the isolated instance. The CA path is absolute so it resolves

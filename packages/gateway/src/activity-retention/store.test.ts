@@ -94,6 +94,47 @@ describe("activity retention storage", () => {
     ]);
   });
 
+  test("decision snapshots expire in bounded batches without deleting durable judgement metadata", () => {
+    const verdict = db.prepare(`INSERT INTO knowledge_decisions
+      (id,purpose,input_fingerprint,model_id,latency_ms,rubric_version,created_at)
+      VALUES (?,'review','fixture-input','scripted',1,'fixture-rubric',?)`);
+    const payload = db.prepare(`INSERT INTO knowledge_decision_inputs
+      (decision_id,request_json,response_json,availability,created_at)
+      VALUES (?,'{}','{}','available',?)`);
+    for (const [id, at] of [
+      ["old_a", 100],
+      ["old_b", 200],
+      ["fresh", 2000],
+    ] as const) {
+      verdict.run(id, at);
+      payload.run(id, at);
+      db.prepare(
+        "INSERT INTO knowledge_decision_input_subjects VALUES(?,'node','fixture-page')",
+      ).run(id);
+    }
+    expect(pruneActivityRetentionBatch(db, "cognitionDecisions", 1000, 1)).toMatchObject({
+      deleted: 1,
+      hasMore: true,
+    });
+    expect(pruneActivityRetentionBatch(db, "cognitionDecisions", 1000, 1)).toMatchObject({
+      deleted: 1,
+      hasMore: true,
+    });
+    expect(pruneActivityRetentionBatch(db, "cognitionDecisions", 1000, 1)).toMatchObject({
+      deleted: 0,
+      hasMore: false,
+    });
+    expect(db.prepare("SELECT decision_id FROM knowledge_decision_inputs").all()).toEqual([
+      { decision_id: "fresh" },
+    ]);
+    expect(db.prepare("SELECT decision_id FROM knowledge_decision_input_subjects").all()).toEqual([
+      { decision_id: "fresh" },
+    ]);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_decisions").get()).toEqual({
+      count: 3,
+    });
+  });
+
   test("terminal subscription firing deletion revokes its bearer token atomically", () => {
     seedSubscription();
     const firing = db.prepare(

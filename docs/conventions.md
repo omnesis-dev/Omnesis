@@ -1189,3 +1189,14 @@ Every rule below is documented but not machine-checked. Reviewers are expected t
 | `credentialState()` answers from the stored credential, never from a live request                                                                                                                | this doc Layer 1 + `packages/source-sdk/src/define-source.ts` JSDoc             |
 | Navigation menus mark, never explain — diagnostics live on the surface that owns the subject                                                                                                     | this doc Layer 1                                                                |
 | A separately deployed wire contract advertises a version range; no schema pins a single literal                                                                                                  | this doc Layer 1                                                                |
+
+### Source-owned evidence authority
+
+Gateway-internal sources with mixed human and generated material register an
+explicit evidence policy in `packages/gateway/src/sources/evidence-authority.ts`.
+Trusted source writers seal speaker ranges against exact body identity; ordinary
+collector metadata or rendered labels cannot mint those ranges. Shared factual
+consumers ask the registry and fail closed when a required projection is missing.
+They preserve attributed speech as indivisible witnesses and never expand a
+partial read. The semantic `evidenceAuthority` metadata digest participates in
+normal Knowledge source invalidation; its value alone does not grant authority.

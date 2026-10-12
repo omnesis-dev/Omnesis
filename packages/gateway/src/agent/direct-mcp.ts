@@ -434,6 +434,7 @@ const DIRECT_MCP_SAFE_ERROR_CODES = new Set([
   "invalid_args",
   "catalog_failed",
   "not_found",
+  "loop_not_found",
   "seed_not_found",
   "sql_over_cap",
   "sql_not_permitted",
@@ -474,6 +475,8 @@ function safeDirectToolErrorMessage(code: string): string {
       return "Tool arguments were invalid.";
     case "not_found":
       return "The requested item was not found.";
+    case "loop_not_found":
+      return "No accessible loop was found for that ID. Copy an exact loopId from list_loops or search_loops before retrying; do not reconstruct or guess IDs.";
     case "seed_not_found":
       return "A requested connection seed was not found.";
     case "sql_over_cap":

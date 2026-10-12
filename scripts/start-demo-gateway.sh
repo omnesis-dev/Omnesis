@@ -23,6 +23,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/scripts/lib/test_instance"
 CONFIG_DIR="${OMNESIS_CONFIG_DIR:-/tmp/omnesis-agent-demo}"
 PORT="${OMNESIS_GATEWAY_PORT:-27600}"
 
@@ -102,10 +103,10 @@ fi
 RC=$?
 
 if [[ "$SUBCOMMAND" == "start" && $RC -eq 0 ]]; then
-  TOKEN="$(cat "${CONFIG_DIR}/token" 2>/dev/null || true)"
+  TOKEN="$(read_instance_token "${CONFIG_DIR}")"
   if [[ -n "$TOKEN" ]]; then
     echo
-    echo "→ One-click portal: https://localhost:${PORT}/portal/?token=${TOKEN}"
+    echo "→ One-click portal: $(read_instance_token "${CONFIG_DIR}" "https://localhost:${PORT}")"
   fi
 fi
 exit $RC

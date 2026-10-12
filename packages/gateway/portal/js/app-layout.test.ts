@@ -205,7 +205,8 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     await vi.waitFor(() => expect(host.querySelector(".sidebar-test-instance")).not.toBeNull());
     const card = host.querySelector(".sidebar-test-instance");
     expect(card?.textContent?.trim()).toBe("Test gateway");
-    expect(card?.previousElementSibling?.className).toBe("sidebar-brand");
+    expect(card?.parentElement?.id).toBe("global-navigation-panel");
+    expect(host.querySelector(".sidebar-brand")).not.toBeNull();
     expect(card?.nextElementSibling?.className).toBe("sidebar-nav");
   });
 

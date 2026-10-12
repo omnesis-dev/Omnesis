@@ -320,6 +320,26 @@ describe("decideNextTurn", () => {
       { name: "open_loop_search", args: { query: "library-books" }, result: searchResult([]) },
     ];
 
+    const replay = [
+      base[0]!,
+      {
+        name: "open_loop_search",
+        args: { query: "library-books" },
+        result: searchResult([
+          {
+            id: "existing",
+            title,
+            state: "open",
+            docs: [DOC_ID],
+            attachedBriefs: [{ id: "held", state: "unread" }],
+          },
+        ]),
+      },
+    ];
+    expect(decideNextTurn(history(dataPrompt("created"), replay), b)).toMatchObject({
+      kind: "final",
+    });
+
     // After reconcile miss → create the tracking loop.
     const create = decideNextTurn(history(dataPrompt("created"), base), b);
     expect(create).toMatchObject({
@@ -430,6 +450,26 @@ describe("decideNextTurn", () => {
         result: { kind: "structured", resultType: "open_loop.updated", data: {} },
       },
     ];
+    const autoClosed = [
+      ...base,
+      {
+        name: "open_loop_update",
+        args: { id: "loop_1", state: "done" },
+        result: {
+          kind: "structured",
+          data: {
+            loop: {
+              id: "loop_1",
+              attachedBriefs: [{ id: "brief_1", state: "dismissed_already_handled" }],
+            },
+          },
+        },
+      },
+    ];
+    expect(decideNextTurn(history(dataPrompt("created"), autoClosed), b)).toMatchObject({
+      kind: "tool",
+      name: "open_loop_ledger_append",
+    });
     const del = decideNextTurn(history(dataPrompt("created"), afterClose), b);
     // Only the ACTIVE brief is deleted; the terminally-dismissed one survives.
     expect(del).toMatchObject({ kind: "tool", name: "brief_delete", args: { id: "brief_1" } });
@@ -577,6 +617,92 @@ describe("decideNextTurn", () => {
     expect((turn as { args: { title: string } }).args.title).toContain("INV-2041");
   });
 
+  test("reconsideration recognizes a retired commitment instead of recreating it", () => {
+    const title = "Registration REG-5150 — payment required";
+    const turns = history(dataPrompt("created"), [
+      {
+        name: "fetch_many",
+        args: { documents: [{ documentId: DOC_ID }] },
+        result: fetchResult(title),
+      },
+      {
+        name: "open_loop_search",
+        args: { query: "registration REG-5150" },
+        result: {
+          kind: "structured",
+          data: { loops: [], retired: [{ title: "Registration REG-5150", outcome: "done" }] },
+        },
+      },
+    ]);
+    expect(decideNextTurn(turns, behaviors(title, RESOLVED_COMMIT)).kind).toBe("final");
+  });
+
+  test("a retry uses a freshly fetched terminal owner when active search no longer returns it", () => {
+    const title = "Payment confirmation";
+    const turns = history(dataPrompt("created"), [
+      {
+        name: "fetch_many",
+        args: { documents: [{ documentId: DOC_ID }] },
+        result: fetchResult(title),
+      },
+      { name: "open_loop_search", args: { query: "invoice INV-2041" }, result: searchResult([]) },
+      {
+        name: "open_loop_fetch",
+        args: { id: "original-loop" },
+        result: {
+          kind: "structured",
+          data: {
+            id: "original-loop",
+            title: "Pay invoice INV-2041",
+            state: "done",
+            attachedBriefs: [],
+          },
+        },
+      },
+    ]);
+    expect(decideNextTurn(turns, behaviors(title, RESOLVE))).toMatchObject({
+      kind: "tool",
+      name: "open_loop_update",
+      args: { id: "original-loop", state: "done" },
+    });
+  });
+
+  test("a planted duplicate is created for a different source, not again for its own source", () => {
+    const title = "Repeated invoice notice";
+    const sabotage: ArcDocBehavior = {
+      onCreated: { ...COMMIT.onCreated, forceCreate: true } as Extract<
+        ArcDocBehavior["onCreated"],
+        { kind: "commit" }
+      >,
+    };
+    const decide = (docs: string[]) =>
+      decideNextTurn(
+        history(dataPrompt("created"), [
+          {
+            name: "fetch_many",
+            args: { documents: [{ documentId: DOC_ID }] },
+            result: fetchResult(title),
+          },
+          {
+            name: "open_loop_search",
+            args: { query: "invoice INV-2041" },
+            result: searchResult([
+              {
+                id: "existing",
+                title: "Pay invoice INV-2041",
+                state: "open",
+                docs,
+                attachedBriefs: [{ id: "brief-existing", state: "unread" }],
+              },
+            ]),
+          },
+        ]),
+        behaviors(title, sabotage),
+      );
+    expect(decide(["another-source"])).toMatchObject({ kind: "tool", name: "open_loop_create" });
+    expect(decide([DOC_ID]).kind).toBe("final");
+  });
+
   test("resolvedCommit on a search miss: create, then close, then ledger — never a brief", () => {
     const title = "Registration REG-5150 — payment required";
     const b = behaviors(title, RESOLVED_COMMIT);
@@ -722,7 +848,27 @@ describe("decideNextTurn", () => {
     expect(acked).toMatchObject({ kind: "tool", name: "brief_delete" });
     expect(
       decideNextTurn(history(fbPrompt("dismissed_acknowledged"), []), none, "saboteur"),
-    ).toMatchObject({ kind: "tool", name: "open_loop_create" });
+    ).toMatchObject({ kind: "tool", name: "brief_fetch", args: { id: "brief_7" } });
+    const read = {
+      name: "brief_fetch",
+      args: { id: "brief_7" },
+      result: {
+        kind: "structured",
+        data: { id: "brief_7", citations: ["notice-source"] },
+      },
+    };
+    expect(
+      decideNextTurn(history(fbPrompt("dismissed_acknowledged"), [read]), none, "saboteur"),
+    ).toMatchObject({ kind: "tool", name: "open_loop_create", args: { docs: ["notice-source"] } });
+    expect(
+      decideNextTurn(
+        history(fbPrompt("dismissed_acknowledged"), [
+          { ...read, result: { kind: "error", code: "not_found" } },
+        ]),
+        none,
+        "saboteur",
+      ),
+    ).toMatchObject({ kind: "final" });
 
     // wrong: delete the misread loop; the saboteur marks it done.
     const wrong = decideNextTurn(history(fbPrompt("dismissed_wrong"), []), none, "correct");
@@ -913,5 +1059,277 @@ describe("scripted loop-model HTTP server", () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+test("maintenance reads the actual offered source before completing discovery", () => {
+  const prompt =
+    "Loop agent run run_current (kind: synthesis, attempt 1).\nMaintain the evidence-backed synthesis graph for this batch.";
+  const first = decideNextTurn(history(prompt, []), new Map());
+  expect(first).toMatchObject({ kind: "tool", name: "knowledge_next_frontier" });
+  const steps = [
+    {
+      name: "knowledge_next_frontier",
+      args: {},
+      result: {
+        kind: "structured",
+        data: {
+          batchId: "b",
+          done: false,
+          items: [
+            {
+              id: "source:fixture",
+              depth: 0,
+              inputFingerprint: "fp",
+              inputVersions: { "source:fixture": "v1" },
+              source: {
+                id: "fixture",
+                title: "Neutral reference",
+                content: "A fictional reference paragraph.",
+                contentHash: "v1",
+              },
+            },
+          ],
+        },
+      },
+    },
+  ];
+  expect(decideNextTurn(history(prompt, steps), new Map())).toMatchObject({
+    kind: "tool",
+    name: "fetch_many",
+    args: { documents: [{ documentId: "fixture" }] },
+  });
+  expect(
+    decideNextTurn(
+      history(prompt, [
+        ...steps,
+        {
+          name: "fetch_many",
+          args: { documents: [{ documentId: "fixture" }] },
+          result: { kind: "structured", data: {} },
+        },
+      ]),
+      new Map(),
+    ),
+  ).toMatchObject({
+    kind: "tool",
+    name: "knowledge_discovery_complete",
+    args: { id: "source:fixture", inputFingerprint: "fp" },
+  });
+});
+
+test("maintenance selects updated behavior from the actual folded source body", () => {
+  const prompt =
+    "Loop agent run run_revision (kind: synthesis, attempt 1).\nMaintain the evidence-backed synthesis graph for this batch.";
+  const title = "Fictional observatory reference";
+  const behaviors = new Map<string, ArcDocBehavior>([
+    [
+      title,
+      {
+        onCreated: { kind: "ignore" },
+        onUpdated: {
+          kind: "inform",
+          marker: "OBS-REFERENCE",
+          briefTitle: "Observatory reference revised",
+        },
+        updatedContents: [
+          "First revision adds an inventory.",
+          "Final revision adds inventory and access instructions.",
+        ],
+      },
+    ],
+  ]);
+  const next = (content: string) =>
+    decideNextTurn(
+      history(prompt, [
+        {
+          name: "knowledge_next_frontier",
+          args: {},
+          result: {
+            kind: "structured",
+            data: {
+              batchId: "b",
+              done: false,
+              items: [
+                {
+                  id: "source:revision",
+                  depth: 0,
+                  inputFingerprint: "current-fingerprint",
+                  inputVersions: { "source:revision": "current-version" },
+                  source: { id: "revision", title, content, contentHash: "current-version" },
+                },
+              ],
+            },
+          },
+        },
+        {
+          name: "fetch_many",
+          args: { documents: [{ documentId: "revision" }] },
+          result: fetchResult(title),
+        },
+      ]),
+      behaviors,
+    );
+  expect(next("Initial overview.")).toMatchObject({
+    kind: "tool",
+    name: "knowledge_discovery_complete",
+  });
+  expect(next("First revision adds an inventory.")).toMatchObject({
+    kind: "tool",
+    name: "brief_list",
+  });
+  expect(next("Final revision adds inventory and access instructions.")).toMatchObject({
+    kind: "tool",
+    name: "brief_list",
+  });
+});
+
+test("stale loop maintenance reads canonical prose before retaining unchanged context", () => {
+  const prompt =
+    "Loop agent run run_owner (kind: synthesis, attempt 1).\nMaintain the evidence-backed synthesis graph for this batch.";
+  const node = {
+    id: "loop_fixture",
+    ownerId: "loop_fixture",
+    kind: "loop",
+    title: "Review the studio inventory",
+    markdown:
+      '<claim id="legacy" refs="source:fixture">Tracked from the triggering document.</claim>',
+    revision: 3,
+    validity: "stale",
+    metadata: {},
+    claims: [
+      {
+        id: "legacy",
+        refs: ["source:fixture"],
+        supportLogic: "all",
+        validFrom: null,
+        validUntil: null,
+      },
+    ],
+  };
+  const frontier = {
+    name: "knowledge_next_frontier",
+    args: {},
+    result: {
+      kind: "structured",
+      data: {
+        batchId: "b",
+        done: false,
+        items: [
+          {
+            id: node.id,
+            depth: 1,
+            node,
+            pendingClaimIds: ["legacy"],
+            inputFingerprint: "fp",
+            inputVersions: { "source:fixture": "v1" },
+          },
+        ],
+      },
+    },
+  };
+  expect(decideNextTurn(history(prompt, [frontier]), new Map())).toMatchObject({
+    kind: "tool",
+    name: "open_loop_fetch",
+    args: { id: node.id },
+  });
+  const fetched = (description: string) => ({
+    name: "open_loop_fetch",
+    args: { id: node.id },
+    result: { kind: "structured", data: { id: node.id, title: node.title, description } },
+  });
+  expect(
+    decideNextTurn(
+      history(prompt, [frontier, fetched("Tracked from the triggering document.")]),
+      new Map(),
+    ),
+  ).toMatchObject({
+    kind: "tool",
+    name: "knowledge_save",
+    args: {
+      inputFingerprint: "fp",
+      reviewedClaimIds: ["legacy"],
+      node: { expectedRevision: 3, markdown: node.markdown },
+    },
+  });
+  expect(
+    decideNextTurn(history(prompt, [frontier, fetched("Canonical prose was revised.")]), new Map()),
+  ).toMatchObject({ kind: "final" });
+});
+
+test("maintenance adopts duplicate evidence through an owner read and source routing, without ledger churn", () => {
+  const prompt =
+    "Loop agent run run_duplicate (kind: synthesis, attempt 1).\nMaintain the evidence-backed synthesis graph for this batch.";
+  const action = {
+    kind: "commit" as const,
+    marker: "observatory",
+    searchQuery: "observatory",
+    loopTitle: "Confirm observatory access",
+    briefTitle: "Confirm observatory access",
+  };
+  const b = behaviors("Observatory access", { onCreated: action });
+  const steps = [
+    {
+      name: "knowledge_next_frontier",
+      args: {},
+      result: {
+        kind: "structured",
+        data: {
+          batchId: "batch",
+          done: false,
+          items: [
+            {
+              id: "source:fixture",
+              depth: 0,
+              inputFingerprint: "fp",
+              inputVersions: { "source:fixture": "v1" },
+              source: {
+                id: "fixture",
+                title: "Observatory access",
+                content: "Please confirm access.",
+                contentHash: "v1",
+              },
+            },
+          ],
+        },
+      },
+    },
+    {
+      name: "fetch_many",
+      args: { documents: [{ documentId: "fixture" }] },
+      result: { kind: "structured", data: {} },
+    },
+    {
+      name: "open_loop_search",
+      args: { query: "observatory" },
+      result: searchResult([
+        { id: "winner", title: "Confirm observatory access", state: "open", attachedBriefs: [] },
+      ]),
+    },
+  ];
+  expect(decideNextTurn(history(prompt, steps), b)).toMatchObject({
+    kind: "tool",
+    name: "open_loop_fetch",
+    args: { id: "winner" },
+  });
+  expect(
+    decideNextTurn(
+      history(prompt, [
+        ...steps,
+        {
+          name: "open_loop_fetch",
+          args: { id: "winner" },
+          result: {
+            kind: "structured",
+            data: { id: "winner", title: "Confirm observatory access" },
+          },
+        },
+      ]),
+      b,
+    ),
+  ).toMatchObject({
+    kind: "tool",
+    name: "knowledge_discovery_complete",
+    args: { id: "source:fixture", inputFingerprint: "fp", targets: ["winner"] },
   });
 });

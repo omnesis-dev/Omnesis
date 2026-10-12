@@ -139,6 +139,7 @@ export {
   CORPUS_CONTENT_IS_DATA,
   SUBJECT_ATTRIBUTION_REQUIRES_EVIDENCE,
   renderAnalyticsCatalog,
+  renderRetrievalContext,
   renderAnalyticsRetrievalGuidance,
   renderCognitionRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,
@@ -301,6 +302,10 @@ export type {
   SubagentJoinResult,
   LoopReadPort,
   LoopListPortResult,
+  LoopListObservation,
+  LoopListReadIdentity,
+  LoopListValidationFailure,
+  LoopListReadOptions,
   LoopSearchPortInput,
   LoopSearchPortResult,
   TemporalReadPort,
@@ -309,3 +314,5 @@ export type {
   EntityContextSeed,
   EntityContextSeedKind,
 } from "./tools/types.js";
+export type { TurnFinalizer, TurnFinalizerFactory } from "./finalization.js";
+export { CitationReads } from "./tools/citation-reads.js";

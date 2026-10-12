@@ -1,32 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-/**
- * Brain bench: a quick-capture voice note is read once, in the gateway's words.
- *
- * A voice note lands in the omnesis-notes day document at once, carrying the
- * device's own transcript, and the gateway's transcriber replaces that text a
- * little later. The note is addressed to the agent, so its `data` run would
- * normally be claimed straight away — and would reason over the device's rough
- * transcript first and the gateway's transcript second. The waker's readiness
- * hold prevents that: while the day document still holds a voice note waiting
- * on the transcriber, its run is parked (up to `brain.pendingContentBarrier`),
- * the transcript's update folds into that parked run, and the run is released
- * once nothing on the document is waiting any more.
- *
- * The bench runs the synthetic transcriber, which answers at once, so the
- * pending state is arranged deterministically instead of raced: before the
- * voice note is sent, the day's earlier note is given a queued transcription
- * with a retry due hours out — the row a voice note waiting on its retry
- * backoff leaves behind. That keeps the day document pending after the new
- * note's own transcript lands, so the test can see the run parked with the
- * transcript already folded in, then release it by removing the row (what a
- * give-up does) and read what the agent was handed.
- *
- * A typed note is the control: no transcription is ever pending for it, so its
- * run is claimed at once with no hold.
- *
- * Every note is invented; the model is the bench's puppet (no inference).
+/** Quick captures become real source-maintenance work. Pending transcription
+ * blocks interpretation until the gateway's final text is available. The fixture
+ * parks an earlier retry deterministically rather than racing the transcriber;
+ * typed notes are the control and the model remains the scripted bench puppet.
  */
 
 import "./synth-env.js";
@@ -34,6 +12,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   BrainBench,
+  sourceInterpretations,
+  preserveCurrentOwner,
   compressCognitionCadences,
   waitFor,
   type ExecutedTool,
@@ -55,24 +35,6 @@ const DEVICE_TEXT = "pick up the dry cleaning buy fore stamps";
 /** What was said — the synthetic transcriber returns the audio bytes as the transcript. */
 const SPOKEN = "Pick up the dry cleaning and buy four stamps.";
 
-/** The pending-content hold's shipped ceiling — the bench leaves it at its default. */
-const PENDING_CONTENT_BARRIER_MS = 60 * 60_000;
-
-interface RunRow {
-  id: string;
-  status: string;
-  next_attempt_at: number;
-  enqueued_at: number;
-  payload_json: string;
-}
-
-interface DataRunPayload {
-  event: "created" | "updated";
-  immediate?: boolean;
-  diff?: string;
-  barrierUntil?: number;
-}
-
 let bench: BrainBench;
 
 beforeAll(async () => {
@@ -80,7 +42,13 @@ beforeAll(async () => {
     experimental: true,
     // No scripted behavior: the puppet fetches each run's document, then
     // finishes. The fetch is what the agent was handed, and all this suite reads.
-    behaviors: {},
+    brain: { knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 } },
+    behaviors: {
+      dynamic: sourceInterpretations({
+        sources: [{ plan: { calls: [] } }],
+        maintainNode: preserveCurrentOwner,
+      }),
+    },
     extraInference: { assignments: { transcriber: "replay" } },
   });
 }, 300_000);
@@ -166,38 +134,12 @@ function dayDocumentContains(text: string): Promise<true> {
   );
 }
 
-/** Every `data` run the notes document has had, oldest first. */
-function dataRuns(docId: string): RunRow[] {
-  return bench.sql
-    .prepare<[string], RunRow>(
-      `SELECT id, status, next_attempt_at, enqueued_at, payload_json
-         FROM cognition_runs WHERE kind = 'data' AND dedupe_key = ?
-        ORDER BY enqueued_at, rowid`,
-    )
-    .all(`data:doc:${docId}`);
-}
-
-function payloadOf(run: RunRow): DataRunPayload {
-  return JSON.parse(run.payload_json) as DataRunPayload;
-}
-
 /** The document text the agent was handed: its run's `fetch_many` result. */
 async function fetchedContent(runId: string): Promise<string> {
   const tools: ExecutedTool[] = await bench.obs.executedTools(runId);
   const fetches = tools.filter((t) => t.tool === "fetch_many");
   expect(fetches.length).toBeGreaterThan(0);
   return fetches.map((t) => JSON.stringify(t.result)).join("\n");
-}
-
-function waitForStatus(runId: string, status: string): Promise<RunRow> {
-  return waitFor(
-    () => `run ${runId} to reach ${status} (now ${String(bench.runRow(runId)?.status)})`,
-    () => {
-      const row = bench.runRow(runId) as unknown as RunRow | undefined;
-      return row?.status === status ? row : null;
-    },
-    60_000,
-  );
 }
 
 // ── the suite ───────────────────────────────────────────────────────────────
@@ -219,15 +161,18 @@ describe("voice notes and the Brain's readiness hold (brain bench)", () => {
     docId = await notesDocId();
     await bench.drainUntilQuiet();
 
-    const runs = dataRuns(docId);
+    const runs = await bench.obs.runsForSource(docId);
     expect(runs).toHaveLength(1);
     const [run] = runs;
     expect(run!.status).toBe("completed");
-    const payload = payloadOf(run!);
-    expect(payload).toMatchObject({ event: "created", immediate: true });
-    // Nothing on the document was waiting on a transcriber, so no barrier
-    // pushed the run out: it was due the moment it was enqueued.
-    expect(payload.barrierUntil).toBeUndefined();
+    expect(run!.kind).toBe("synthesis");
+    expect(
+      bench.sql
+        .prepare(
+          "SELECT 1 FROM knowledge_work WHERE subject_id=? AND last_error='pending_content' AND status='pending'",
+        )
+        .get(docId),
+    ).toBeUndefined();
     expect(await fetchedContent(run!.id)).toContain(TYPED_TEXT);
   }, 120_000);
 
@@ -247,7 +192,7 @@ describe("voice notes and the Brain's readiness hold (brain bench)", () => {
         new Date(now).toISOString(),
       );
     });
-    const runsBefore = dataRuns(docId).length;
+    const runsBefore = (await bench.obs.runsForSource(docId)).length;
 
     await sendVoiceNote(VOICE_ID, DEVICE_TEXT, SPOKEN);
 
@@ -261,62 +206,53 @@ describe("voice notes and the Brain's readiness hold (brain bench)", () => {
       30_000,
     );
 
-    // Its run is parked, with the transcript's update folded into it: one
-    // pending run whose diff already carries the gateway's words and never the
-    // device's.
+    // Pending content remains in the durable intake buffer, before any source batch is bought.
     const held = await waitFor(
-      () => `a held data run carrying the transcript (runs: ${JSON.stringify(dataRuns(docId))})`,
-      () => {
-        const pending = dataRuns(docId).filter((r) => r.status === "pending");
-        const run = pending.length === 1 ? pending[0]! : null;
-        return run && payloadOf(run).diff?.includes(SPOKEN) ? run : null;
-      },
+      "a source waiting on pending voice content",
+      () =>
+        bench.sql
+          .prepare<
+            [string],
+            { id: string; due_at: number }
+          >("SELECT id,due_at FROM knowledge_work WHERE subject_id=? AND status='pending' AND last_error='pending_content'")
+          .get(docId) ?? null,
       30_000,
     );
-    expect(dataRuns(docId)).toHaveLength(runsBefore + 1);
-    const heldPayload = payloadOf(held);
-    expect(heldPayload.event).toBe("updated");
-    expect(heldPayload.immediate).toBe(true);
-    expect(heldPayload.diff).not.toContain(DEVICE_TEXT);
-    // Held by the pending-content barrier: due at the barrier deadline, an hour
-    // out, not at once as an addressed document otherwise is.
-    expect(heldPayload.barrierUntil).toBeDefined();
-    expect(held.next_attempt_at).toBe(heldPayload.barrierUntil);
-    expect(held.next_attempt_at).toBeGreaterThan(Date.now() + PENDING_CONTENT_BARRIER_MS / 2);
-    expect(bench.puppetCalls.filter((c) => c.runId === held.id)).toHaveLength(0);
-
+    expect(await bench.obs.runsForSource(docId)).toHaveLength(runsBefore);
+    expect(held.id).toBeTruthy();
     // The earlier note's transcription is given up on: nothing on the document
     // is pending any more, so the readiness pass releases the parked run.
     bench.withWriteHandle((db) => {
       db.prepare("DELETE FROM voice_note_transcriptions WHERE note_id = ?").run(TYPED_ID);
     });
-    await waitForStatus(held.id, "completed");
     await bench.drainUntilQuiet();
 
-    // One run for the voice note, and it read the gateway's transcript only.
-    const runs = dataRuns(docId);
+    const runs = await bench.obs.runsForSource(docId);
     expect(runs).toHaveLength(runsBefore + 1);
-    expect(runs.at(-1)!.id).toBe(held.id);
-    expect(bench.puppetCalls.filter((c) => c.runId === held.id).length).toBeGreaterThan(0);
-    const content = await fetchedContent(held.id);
+    const run = runs[0]!;
+    expect(run.status).toBe("completed");
+    const content = await fetchedContent(run.id);
     expect(content).toContain(SPOKEN);
     expect(content).not.toContain(DEVICE_TEXT);
-    const prompt = await bench.obs.promptFor(held.id);
-    expect(prompt).not.toContain(DEVICE_TEXT);
+    expect(
+      bench.sql
+        .prepare("SELECT 1 FROM knowledge_work WHERE id=? AND status IN ('pending','batched')")
+        .get(held.id),
+    ).toBeUndefined();
   }, 180_000);
 
   test("a typed note after the hold is again read at once", async () => {
-    const before = dataRuns(docId).length;
+    const before = (await bench.obs.runsForSource(docId)).length;
     await captureTypedNote(randomUUID(), "Return the library books on Monday.");
     // The capture reaches the corpus through the notes day's debounced
     // projection; drain only once it has, or the wake may not exist yet.
     await dayDocumentContains("Return the library books on Monday.");
     await bench.drainUntilQuiet();
 
-    const runs = dataRuns(docId);
+    const runs = await bench.obs.runsForSource(docId);
     expect(runs).toHaveLength(before + 1);
-    const run = runs.at(-1)!;
+    const run = runs[0]!;
     expect(run.status).toBe("completed");
-    expect(payloadOf(run).barrierUntil).toBeUndefined();
+    expect(run.kind).toBe("synthesis");
   }, 120_000);
 });

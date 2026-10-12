@@ -17,7 +17,10 @@ type MemoryDeps = Pick<
 > & {
   getSettings: () => Pick<
     ResolvedBrainSettings,
-    "annotationConfidenceCeiling" | "annotationBasisCeilings" | "annotationConfidenceFloor"
+    | "annotationConfidenceCeiling"
+    | "annotationBasisCeilings"
+    | "annotationConfidenceFloor"
+    | "personProfileBudget"
   >;
   clock?: () => number;
 };
@@ -38,6 +41,7 @@ export function createInteractiveMemoryProfile(deps: MemoryDeps): {
         annotationConfidenceCeiling: settings.annotationConfidenceCeiling,
         annotationBasisCeilings: settings.annotationBasisCeilings,
         annotationConfidenceFloor: settings.annotationConfidenceFloor,
+        personProfileBudget: settings.personProfileBudget,
         ...(deps.validateAnnotationEvidence
           ? { validateAnnotationEvidence: deps.validateAnnotationEvidence }
           : {}),

@@ -10,8 +10,11 @@
  */
 
 import { describe, expect, test } from "vitest";
+import Database from "better-sqlite3";
 import { arcById, generateArcSet, FROZEN_ARC_SEED, type ArcSet } from "./briefs-arcs.js";
 import {
+  runScorecard,
+  completedSourceRunCounts,
   attributeLoops,
   computeDailyMix,
   computeScorecardMetrics,
@@ -321,6 +324,30 @@ describe("computeScorecardMetrics", () => {
     expect(lingering.metrics.resolutionRecall).toBe(4 / 5);
   });
 
+  test("retains raw refusals while partitioning only verified concurrency retries", () => {
+    const result = computeScorecardMetrics(
+      SET,
+      observations(perfectLoops(), {
+        mutatingToolCalls: 25,
+        mutatingToolCallsFailed: 4,
+        verifiedConcurrentCreateRetries: 1,
+        verifiedFrontierRetries: 1,
+        mutatingToolCallsUncorrected: 2,
+      }),
+      1,
+    );
+    expect(result.counts.mutatingToolCallsFailed).toBe(4);
+    expect(result.counts.verifiedConcurrentCreateRetries).toBe(1);
+    expect(result.counts.malformedToolCallsFailed).toBe(2);
+    expect(result.counts.mutatingToolCallsFailed).toBe(
+      result.counts.verifiedConcurrentCreateRetries +
+        result.counts.verifiedFrontierRetries +
+        result.counts.malformedToolCallsFailed,
+    );
+    expect(result.metrics.malformedToolCallRateRaw).toBe(4 / 25);
+    expect(result.metrics.malformedToolCallRate).toBe(2 / 25);
+  });
+
   test("only UNCORRECTED failures gate as malformed_tool_call_rate; the raw rate reports all of them", () => {
     // A self-corrected burst: three failed calls, all followed by a
     // successful same-tool call in the same run. Gated rate stays zero;
@@ -366,4 +393,49 @@ describe("computeScorecardMetrics", () => {
       /representsDays/,
     );
   });
+});
+
+test("priced scorecards refuse startup until actual maintenance runs are budgeted", async () => {
+  await expect(
+    runScorecard({
+      gatewayMode: "experimental",
+      seed: 1,
+      backend: {
+        kind: "http",
+        backendName: "fixture",
+        url: "http://127.0.0.1:1",
+        modelId: "fixture",
+      },
+    }),
+  ).rejects.toThrow("actual-run budget reservation");
+});
+
+test("counts evidence revisions separately from later retrieval maintenance", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec(`
+      CREATE TABLE cognition_runs(id TEXT,kind TEXT,status TEXT,payload_json TEXT,dedupe_key TEXT,usage_json TEXT,enqueued_at INTEGER);
+      CREATE TABLE knowledge_work(subject_kind TEXT,subject_id TEXT,reason TEXT,batch_id TEXT,status TEXT DEFAULT 'completed');
+      CREATE TABLE knowledge_batches(id TEXT,run_id TEXT);
+      INSERT INTO cognition_runs VALUES
+        ('initial','synthesis','completed','{}','initial',NULL,1),
+        ('catchup','synthesis','completed','{}','catchup',NULL,2),
+        ('changed','synthesis','completed','{}','changed',NULL,3),
+        ('legacy','data','completed','{}','data:doc:legacy-doc',NULL,4),
+        ('pending','synthesis','pending','{}','pending',NULL,5),
+        ('handoff','synthesis','completed','{}','handoff',NULL,6);
+      INSERT INTO knowledge_batches VALUES ('b1','initial'),('b2','catchup'),('b3','changed'),('b4','pending'),('b5','handoff');
+      INSERT INTO knowledge_work(subject_kind,subject_id,reason,batch_id) VALUES
+        ('source','doc','change','b1'),('source','doc','review','b2'),
+        ('source','doc','change','b3'),('source','doc','change','b4'),
+        ('source','other','review','b2');
+      INSERT INTO knowledge_work VALUES('source','doc','change','b5','deferred');
+    `);
+    expect(completedSourceRunCounts(db, ["doc", "other", "legacy-doc"])).toEqual({
+      dataRunsCompleted: 3,
+      sourceMaintenanceRunsCompleted: 2,
+    });
+  } finally {
+    db.close();
+  }
 });

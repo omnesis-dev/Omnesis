@@ -317,10 +317,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           skips them).
         </p>
         <p>
-          The same report is in the portal under <strong>Debug → Doctor</strong>. A collector's own
-          report covers its configuration, source access, disk, process, keyring and service; run it
-          from <strong>Settings → Devices</strong> by expanding the collector and choosing
-          <strong>Run</strong> under <strong>Health</strong>, or <strong>Run health checks</strong>
+          The same report is in the portal under <strong>Debug → System → Health</strong>. A
+          collector's own report covers its configuration, source access, disk, process, keyring and
+          service; run it from <strong>Settings → Devices</strong> by expanding the collector and
+          choosing <strong>Run</strong> under <strong>Health</strong>, or
+          <strong>Run health checks</strong>
           for every collector at once.
         </p>
         <p>
@@ -344,15 +345,15 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
 
         <h3 id="calendar">Reading the calendar</h3>
         <p>
-          <strong>Debug → Calendar</strong> combines structured dates supplied by sources (<strong
-            >Source record</strong
-          >), interpretations recorded by the agent (<strong>Agent interpretation</strong>), and
-          date expressions found in document text (<strong>Date mention</strong>). Source records
-          and agent interpretations form the agenda under Timed, All day &amp; due, and Activities
-          &amp; visits, with up to four entries per row within each day’s category. Narrower screens
-          show fewer columns. Date mentions are grouped by document in a collapsed section, with
-          possible deadline mentions counted separately. A date mention does not establish that an
-          event happened or that an obligation belongs to you.
+          <strong>Debug → Knowledge → Timeline</strong> combines structured dates supplied by
+          sources (<strong>Source record</strong>), interpretations recorded by the agent (<strong
+            >Agent interpretation</strong
+          >), and date expressions found in document text (<strong>Date mention</strong>). Source
+          records and agent interpretations form the agenda under Timed, All day &amp; due, and
+          Activities &amp; visits, with up to four entries per row within each day’s category.
+          Narrower screens show fewer columns. Date mentions are grouped by document in a collapsed
+          section, with possible deadline mentions counted separately. A date mention does not
+          establish that an event happened or that an obligation belongs to you.
         </p>
         <p>
           Filter by origin; this choice is remembered in your browser. <strong>Upcoming</strong>
@@ -950,16 +951,28 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <p>
           When <code>OMNESIS_CODEX_COMMAND</code> points at your own Codex executable, Omnesis
           treats the runtime as externally managed: update it yourself, restart the gateway, then
-          refresh the model list.
+          refresh the model list. If the operating system denies starting the runtime, check execute
+          permissions and directory access for the configured executable.
         </p>
         <p>
-          Codex runs three interactive turns at once by default and two other inference calls, and
-          queues the rest. Tune this with <code>inference.codex.interactivePoolSize</code> and
+          Codex reserves separate capacity for three interactive turns, four background turns, and
+          two inference calls by default, and queues the rest. Tune this with
+          <code>inference.codex.interactivePoolSize</code>,
+          <code>inference.codex.backgroundPoolSize</code> (1–32), and
           <code>inference.codex.inferencePoolSize</code> (or the
-          <code>OMNESIS_CODEX_INTERACTIVE_POOL_SIZE</code> and
+          <code>OMNESIS_CODEX_INTERACTIVE_POOL_SIZE</code>,
+          <code>OMNESIS_CODEX_BACKGROUND_POOL_SIZE</code>, and
           <code>OMNESIS_CODEX_INFERENCE_POOL_SIZE</code> environment variables, which win) and
           restart the gateway. More slots use more memory, and every process shares the same ChatGPT
           allowance.
+        </p>
+
+        <p>
+          A Codex turn that receives no model-stream activity for five minutes is interrupted,
+          releasing its runtime slot. Time spent executing Omnesis tools is excluded. Set
+          <code>inference.codex.turnIdleTimeoutMs</code> (1000–3600000 milliseconds), or
+          <code>OMNESIS_CODEX_TURN_IDLE_TIMEOUT_MS</code> to override it, and restart the gateway.
+          This limits silence rather than the total duration of an active turn.
         </p>
 
         <h3 id="claude-code">Claude Code runtime and capacity</h3>

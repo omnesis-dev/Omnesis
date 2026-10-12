@@ -72,8 +72,14 @@ describe("Briefs scorecard instrument validation", () => {
     expect(result.metrics.updateRecall).toBe(1);
     expect(result.metrics.silentCloseViolations).toBe(0);
     expect(result.metrics.infraFailureRate).toBe(0);
-    expect(result.metrics.malformedToolCallRate).toBe(0);
-    expect(result.metrics.malformedToolCallRateRaw).toBe(0);
+    expect(result.metrics.malformedToolCallRate, JSON.stringify(result.failedActions)).toBe(0);
+    expect(result.counts.malformedToolCallsFailed, JSON.stringify(result.failedActions)).toBe(0);
+    expect(result.counts.mutatingToolCallsFailed).toBe(
+      result.counts.verifiedConcurrentCreateRetries + result.counts.verifiedFrontierRetries,
+    );
+    expect(result.metrics.malformedToolCallRateRaw).toBe(
+      result.counts.mutatingToolCallsFailed / result.counts.mutatingToolCalls,
+    );
     expect(result.counts.duplicatesMinted).toBe(0);
     expect(result.counts.runsFailed).toBe(0);
     // The update-quality gold really measured the decision thread's notes.
@@ -147,7 +153,18 @@ describe("Briefs scorecard instrument validation", () => {
     // The defects are AGENT defects, not infrastructure failures — a
     // saboteur run still completes cleanly at the queue level.
     expect(result.metrics.infraFailureRate).toBe(0);
-    expect(result.metrics.malformedToolCallRate).toBe(0);
-    expect(result.metrics.malformedToolCallRateRaw).toBe(0);
+    expect(result.metrics.malformedToolCallRate, JSON.stringify(result.failedActions)).toBe(0);
+    // This model deliberately creates a duplicate after refreshing a lost
+    // concurrent-create race. Its corrected refusal stays in raw accounting;
+    // it must not receive the perfect model's successful-adoption exemption.
+    expect(result.counts.mutatingToolCallsUncorrected).toBe(0);
+    expect(result.counts.mutatingToolCallsFailed).toBe(
+      result.counts.malformedToolCallsFailed +
+        result.counts.verifiedConcurrentCreateRetries +
+        result.counts.verifiedFrontierRetries,
+    );
+    expect(result.metrics.malformedToolCallRateRaw).toBe(
+      result.counts.mutatingToolCallsFailed / result.counts.mutatingToolCalls,
+    );
   }, 600_000);
 });

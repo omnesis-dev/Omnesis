@@ -7,6 +7,7 @@ import {
   parseBriefJudgeVerdict,
   briefJudgeGateSet,
   buildBriefJudgeUserPrompt,
+  buildBriefJudgeSystemPrompt,
   runBriefJudgeGate,
   LlmBriefJudge,
   type BriefJudge,
@@ -77,10 +78,10 @@ describe("buildBriefJudgeUserPrompt", () => {
     expect(p).toContain("grounded in 2 cited document(s)");
     expect(p).toContain("rolls up 1 tracked obligation(s)");
     expect(p).toContain("would surface now");
-    expect(p).toContain("carries a concrete event/due moment");
+    expect(p).toContain("event time supplied");
   });
 
-  it("marks a dated reminder as timing-satisfied and omits empty body", () => {
+  it("keeps timing assessment for a future reminder and omits empty body", () => {
     const p = buildBriefJudgeUserPrompt({
       ...candidate,
       description: undefined,
@@ -89,8 +90,43 @@ describe("buildBriefJudgeUserPrompt", () => {
       hasEventAt: false,
     });
     expect(p).toContain("scheduled to surface later");
+    expect(p).toContain("timing still requires assessment");
+    expect(p).not.toContain("satisfied by construction");
     expect(p).not.toContain("- description:");
     expect(p).not.toContain("- body:");
+  });
+});
+
+describe("brief judge timing contract", () => {
+  it("renders explicit dates and evaluates the later intended display time", () => {
+    const now = "2031-04-03T09:00:00.000Z";
+    const nextShow = "2031-04-10T09:00:00.000Z";
+    const eventAt = "2031-04-12T14:00:00.000Z";
+    const prompt = buildBriefJudgeUserPrompt({
+      ...candidate,
+      now,
+      nextShow,
+      eventAt,
+      scheduledForLater: true,
+    });
+    expect(prompt).toContain(`current time: ${now}`);
+    expect(prompt).toContain(`proposed eventAt: ${eventAt}`);
+    expect(prompt).toContain(`earliest display nextShow: ${nextShow}`);
+    expect(prompt).toContain(`intended display time: ${nextShow}`);
+    expect(
+      buildBriefJudgeUserPrompt({ ...candidate, now, nextShow: "2031-04-01T09:00:00.000Z" }),
+    ).toContain(`intended display time: ${now}`);
+  });
+  it("assesses premature chasing without banning informative future updates", () => {
+    for (const lane of ["reactive", "lookahead", "dated_reminder", "noticing"] as const) {
+      const prompt = buildBriefJudgeSystemPrompt(lane);
+      expect(prompt).toContain("Future scheduling does not automatically satisfy this gate");
+      expect(prompt).toContain(
+        "chase completion before the source's anchored expected window has elapsed",
+      );
+      expect(prompt).toContain("Useful new information about a future plan");
+      expect(prompt).toContain("Preserve approximate windows and uncertainty");
+    }
   });
 });
 

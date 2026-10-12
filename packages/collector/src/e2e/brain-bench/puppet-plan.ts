@@ -103,6 +103,7 @@ export type RunFlavour =
   | "time_based.decay.gone"
   | "feedback.dismissal"
   | "feedback.provenance"
+  | "synthesis.knowledge"
   | "synthesis.noticing"
   | "synthesis.collision.loops"
   | "synthesis.collision.temporal"
@@ -127,6 +128,11 @@ export function readRunContext(prompt: string): RunContext | null {
   const env = parseCognitionRunEnvelope(prompt);
   if (!env) return null;
   const base = { runId: env.runId, kind: env.kind, attempt: env.attempt, prompt };
+  if (
+    env.kind === "synthesis" &&
+    prompt.includes("Maintain the evidence-backed synthesis graph for this batch.")
+  )
+    return { ...base, flavour: "synthesis.knowledge", subject: null, detail: null };
 
   const m = (re: RegExp): RegExpExecArray | null => re.exec(prompt);
 
@@ -302,6 +308,8 @@ export interface PuppetBehavior {
 
 /** The behavior table a bench hands the puppet. */
 export interface PuppetBehaviors {
+  /** Stateful protocols derive their next deterministic tool call from actual prior tool results. */
+  dynamic?: (ctx: RunContext, steps: readonly ToolStep[]) => NextTurn | null;
   behaviors?: readonly PuppetBehavior[];
   /** Text for a run that matches nothing. Defaults to a no-op note. */
   fallbackText?: string;
@@ -425,6 +433,8 @@ export function decideNextTurn(messages: readonly WireMessage[], table: PuppetBe
     return { kind: "final", text: "This is not a cognition run prompt; refusing to act." };
   }
   const steps = collectToolSteps(messages);
+  const dynamic = table.dynamic?.(ctx, steps);
+  if (dynamic) return dynamic;
 
   // A run whose subject is a document is given the document first: the
   // behavior table keys on the title, which only a real fetch can supply.

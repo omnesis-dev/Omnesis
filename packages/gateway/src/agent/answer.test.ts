@@ -76,7 +76,10 @@ class CitingBackend implements ChatBackend {
   readonly model = "citing";
   readonly turns: TurnInput[] = [];
 
-  constructor(private readonly documentIds: readonly string[]) {}
+  constructor(
+    private readonly documentIds: readonly string[],
+    private readonly answer = "The budget review is on Tuesday.",
+  ) {}
 
   async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
     this.turns.push(input);
@@ -97,7 +100,7 @@ class CitingBackend implements ChatBackend {
     }
     yield {
       type: "agent.text.delta",
-      payload: { sessionId, messageId, delta: "The budget review is on Tuesday." },
+      payload: { sessionId, messageId, delta: this.answer },
     };
     yield { type: "agent.message.end", payload: { sessionId, messageId, stopReason: "end_turn" } };
   }
@@ -489,7 +492,11 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
         } as unknown as Awaited<ReturnType<DocumentPort["fetch"]>>;
       },
     };
-    const backend = new CitingBackend(["doc_budget", "doc_budget", "doc_missing"]);
+    const inventedMarker = "\uE200cite\uE202invented-marker-id\uE201";
+    const backend = new CitingBackend(
+      ["doc_budget", "doc_budget", "doc_missing"],
+      `The budget review is on Tuesday. ${inventedMarker}`,
+    );
     const service = new AgentService({
       backendFactory: () => backend,
       ports: { search: stubSearch, document: citedDocument },
@@ -502,6 +509,7 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
     const result = await service.generateReadOnlyAnswerCandidate("When is the review?", []);
 
     expect(result.answer).toBe("The budget review is on Tuesday.");
+    expect(JSON.stringify(result.trace)).toContain(inventedMarker);
     expect(result.citations).toEqual([
       {
         documentId: "doc_budget",
@@ -512,6 +520,18 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
       },
     ]);
     expect(backend.turns[0]?.systemPrompt).toContain("Citations on the answer surface");
+    expect(backend.turns[0]?.systemPrompt).toContain(
+      "do not invent inline citation markers or search-result identifiers",
+    );
+    expect(backend.turns[0]?.systemPrompt).toContain(
+      "exact supporting source version you inspected",
+    );
+    expect(backend.turns[0]?.systemPrompt).toContain(
+      "You may cite a maintained synthesis you read",
+    );
+    expect(backend.turns[0]?.systemPrompt).toContain(
+      "qualify or omit a claim its cited evidence cannot support",
+    );
     await service.dispose();
   });
 
@@ -1166,5 +1186,35 @@ describe("the gates a conversation's own turns wait behind", () => {
     releaseDelete();
     await expect(deletion).resolves.toBe(true);
     await service.dispose();
+  });
+});
+
+describe("experimental answer grounding finalization", () => {
+  it("uses the shared finalizer before returning an Answer candidate", async () => {
+    const backend = new RecordingBackend();
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "test",
+      grounding: {
+        getVerifier: async () => ({
+          verify: async () => ({ label: "neutral" as const }),
+          dispose() {},
+        }),
+      },
+    });
+    try {
+      const candidate = await service.generateReadOnlyAnswerCandidate(
+        "Which calibration is complete?",
+      );
+      expect(candidate.answer).toContain("couldn’t verify");
+      expect(candidate.answer).not.toContain("Reply to");
+      expect(backend.turns).toHaveLength(2);
+      expect(backend.turns[1]?.tools).toEqual([]);
+      expect(backend.turns[1]?.history).toEqual([]);
+      expect(backend.turns[1]?.finalAnswerOnly).toBe(true);
+    } finally {
+      await service.dispose();
+    }
   });
 });

@@ -20,6 +20,8 @@ import { DeviceId, SourceId } from "@omnesis/types";
 import { createDatabase } from "../db.js";
 import { digestCandidate, type AnswerStoreError } from "../privacy/store.js";
 import { listPrivacyExchangePresentations } from "../privacy/presentation.js";
+import { captureKnowledgeCanonicalFence } from "../brain/knowledge/canonical-fence.js";
+import { KNOWLEDGE_DISCOVERY_POLICY } from "../brain/knowledge/discovery-policy.js";
 import { runWithPriority } from "../priority.js";
 import { withRequestTiming, getRequestTiming } from "../request-timing.js";
 import { Scheduler } from "./scheduler.js";
@@ -279,6 +281,110 @@ describe("writeGateFromScheduler", () => {
         outcome: "ok",
         requestId: "44444444-4444-4444-8444-444444444444",
         sourceMode: "all",
+      });
+    } finally {
+      reader.close();
+    }
+  });
+
+  test("canonical admission reserves discovered owners through the real writer", async () => {
+    const gate = writeGateFromScheduler(scheduler);
+    await gate.createOpenLoop(
+      {
+        id: "loop-admission",
+        createdByRun: "seed",
+        title: "Prepare an exhibit",
+        confidence: 0.8,
+        importance: 0.5,
+      },
+      { priors: [], runId: "seed" },
+      1,
+    );
+    const fixture = new Database(dbPath);
+    try {
+      // Stimulate an offered canonical frontier; the operation under test always
+      // crosses Scheduler → WriterTaskRunner → the production writer worker.
+      fixture.exec(
+        "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('admission-batch','admission-run','admission-fingerprint','routine','running',1,1)",
+      );
+      fixture.exec(
+        "INSERT INTO knowledge_frontier(batch_id,node_id,input_fingerprint,input_versions_json,depth,status) VALUES('admission-batch','loop-admission','offered','{}',0,'offered')",
+      );
+      const fence = captureKnowledgeCanonicalFence(
+        fixture,
+        { batchId: "admission-batch", runId: "admission-run" },
+        { id: "loop-admission" },
+        "open_loop_update",
+      );
+      await expect(
+        gate["knowledge.admitCanonical"]({ fence, maxVisited: 256 }, 2),
+      ).resolves.toEqual({ admitted: true });
+      expect(
+        fixture
+          .prepare("SELECT node_id FROM knowledge_batch_regions WHERE batch_id='admission-batch'")
+          .all(),
+      ).toEqual([{ node_id: "loop-admission" }]);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  test("published retrieval catch-up reaches the real writer and releases discovery exactly once", async () => {
+    const gate = writeGateFromScheduler(scheduler);
+    const boundary = "2027-02-03T10:00:00.000Z";
+    await gate.upsertDocuments([
+      {
+        providerId: "fictional",
+        sourceId: "fictional:local",
+        externalId: "workshop-plan",
+        title: "Workshop plan",
+        content: "The workshop has a shared materials list.",
+        contentHash: "workshop-v1",
+        metadata: {},
+        sourceCreatedAt: boundary,
+        sourceUpdatedAt: boundary,
+      },
+    ]);
+    const reader = new Database(dbPath, { readonly: true });
+    try {
+      const source = reader
+        .prepare<[], { id: string }>("SELECT id FROM documents WHERE external_id='workshop-plan'")
+        .get()!;
+      await gate["knowledge.coverage"](
+        {
+          subjectId: source.id,
+          inputRevision: "workshop-v1",
+          phase: "organization",
+          policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+          status: "considered",
+          retrievalBoundary: boundary,
+        },
+        1,
+      );
+      await expect(
+        gate["knowledge.reconsiderRetrieval"](
+          { publishedThrough: "2027-02-03T09:00:00.000Z", limit: 1 },
+          2,
+        ),
+      ).resolves.toBe(0);
+      await expect(
+        gate["knowledge.reconsiderRetrieval"]({ publishedThrough: boundary, limit: 1 }, 3),
+      ).resolves.toBe(1);
+      await expect(
+        gate["knowledge.reconsiderRetrieval"]({ publishedThrough: boundary, limit: 1 }, 4),
+      ).resolves.toBe(0);
+      expect(
+        reader
+          .prepare(
+            "SELECT status,reviewed_at,reconsider_at,retrieval_boundary,retrieval_reconsidered FROM knowledge_discovery_coverage WHERE subject_id=?",
+          )
+          .get(source.id),
+      ).toEqual({
+        status: "considered",
+        reviewed_at: 1,
+        reconsider_at: 3,
+        retrieval_boundary: null,
+        retrieval_reconsidered: 1,
       });
     } finally {
       reader.close();

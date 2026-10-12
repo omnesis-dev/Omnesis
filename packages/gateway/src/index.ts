@@ -1217,9 +1217,15 @@ const codexRuntimeService = new CodexRuntimeService({
   interactivePoolSize:
     parseNonNegativeIntEnv("OMNESIS_CODEX_INTERACTIVE_POOL_SIZE") ??
     config.inference?.codex?.interactivePoolSize,
+  backgroundPoolSize:
+    parseNonNegativeIntEnv("OMNESIS_CODEX_BACKGROUND_POOL_SIZE") ??
+    config.inference?.codex?.backgroundPoolSize,
   inferencePoolSize:
     parseNonNegativeIntEnv("OMNESIS_CODEX_INFERENCE_POOL_SIZE") ??
     config.inference?.codex?.inferencePoolSize,
+  turnIdleTimeoutMs:
+    parseNonNegativeIntEnv("OMNESIS_CODEX_TURN_IDLE_TIMEOUT_MS") ??
+    config.inference?.codex?.turnIdleTimeoutMs,
   getSubagentDepthCap: () =>
     configStore.get().agent?.subagentDepthCap ?? CONFIG_DEFAULTS.agent.subagentDepthCap,
 });
@@ -1319,6 +1325,8 @@ searchPipeline.setTemporalIndex(
 );
 
 const agentLifecycle = new AgentLifecycle({
+  getGroundingVerifier: (signal) => entailmentService.get(signal),
+  isGroundingEnabled: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps).active,
   inferenceRegistry,
   config,
   configStore,
@@ -1804,6 +1812,10 @@ const entailmentService = new EntailmentVerifierService({
           {
             promptTokens: u.promptTokens,
             completionTokens: u.completionTokens,
+            ...(u.cacheReadTokens !== undefined ? { cacheReadTokens: u.cacheReadTokens } : {}),
+            ...(u.cacheCreationTokens !== undefined
+              ? { cacheCreationTokens: u.cacheCreationTokens }
+              : {}),
           },
         )
         .catch((err) => {
@@ -2500,7 +2512,12 @@ const app = createServer(db, DB_PATH, {
   io: ioGate,
   getBootstrapSettings: () => {
     const b = resolveBrainSettings(configStore.get().brain);
-    return { ...b.bootstrap, recencyWindowMs: b.recencyWindowMs };
+    return {
+      ...b.bootstrap,
+      recencyWindowMs: b.recencyWindowMs,
+      knowledgeRecentWindowMs: b.knowledge.recentWindowMs,
+      knowledge: true,
+    };
   },
   getBudgetSettings: () => resolveBrainSettings(configStore.get().brain).budget,
   // Idempotent: an already-started lane keeps its original instant, so a
@@ -2512,6 +2529,7 @@ const app = createServer(db, DB_PATH, {
     if (existing !== null) return Number(existing) || nowMs;
     await writeGate.setCognitionEngineState(COGNITION_BOOTSTRAP_STARTED_AT_KEY, String(nowMs));
     scheduler.kickPeriodic("cognition.bootstrap");
+    scheduler.kickPeriodic("knowledge.maintenance");
     return nowMs;
   },
   probeBackend: (key: string) => inferenceRegistry.probeBackend(key),
@@ -2631,7 +2649,7 @@ agentLifecycle.setInteractiveMemoryProfile(
     db,
     writeGate,
     getSettings: () => resolveBrainSettings(configStore.get().brain),
-    getEntailmentVerifier: () => entailmentService.get(),
+    getEntailmentVerifier: (signal) => entailmentService.get(signal),
     validateAnnotationEvidence,
     log: log.child("memory"),
   }),
@@ -2676,7 +2694,7 @@ await bootBriefs({
       // Read-worker gate for `lookup_people`; the steward wraps its calls at
       // background priority so background runs never jump ahead of interactive.
       personLookupGate: ioGate,
-      getEntailmentVerifier: () => entailmentService.get(),
+      getEntailmentVerifier: (signal) => entailmentService.get(signal),
       validateAnnotationEvidence,
       // Push bar — live-gated by brain.judge.enabled; null ⇒ ship unjudged.
       getBriefJudge: () =>

@@ -23,6 +23,8 @@ const gapi = vi.hoisted(() => ({
   getToken: vi.fn(),
   setCredentials: vi.fn(),
   getProfile: vi.fn(),
+  revokeCredentials: vi.fn(),
+  removeAllListeners: vi.fn(),
 }));
 
 vi.mock("googleapis", () => ({
@@ -33,6 +35,8 @@ vi.mock("googleapis", () => ({
           generateAuthUrl: gapi.generateAuthUrl,
           getToken: gapi.getToken,
           setCredentials: gapi.setCredentials,
+          revokeCredentials: gapi.revokeCredentials,
+          removeAllListeners: gapi.removeAllListeners,
           on: vi.fn(),
           credentials: {},
         };
@@ -42,7 +46,8 @@ vi.mock("googleapis", () => ({
   },
 }));
 
-import { authenticateWith, parseOAuthCallbackUrl, SCOPES } from "./provider.js";
+import { authenticateWith, GoogleProvider, parseOAuthCallbackUrl, SCOPES } from "./provider.js";
+import googleProvider from "./index.js";
 import type { AddressInfo } from "node:net";
 import type {
   AskableChallenge,
@@ -185,6 +190,32 @@ beforeEach(() => {
 
 afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("Google context lifecycle", () => {
+  test("unused context cleanup releases the client without revoking its authorization", async () => {
+    const provider = new GoogleProvider(ACCOUNT, await configDirWithClient(8000));
+    await provider.initialize();
+    await googleProvider.disposeContext!({
+      provider,
+      auth: provider.getAuth(),
+      accountId: ACCOUNT,
+    });
+    expect(gapi.revokeCredentials).not.toHaveBeenCalled();
+    expect(gapi.removeAllListeners).toHaveBeenCalledWith("tokens");
+    expect(() => provider.getAuth()).toThrow("Google provider not initialized");
+    provider.dispose();
+    expect(gapi.revokeCredentials).not.toHaveBeenCalled();
+  });
+
+  test("explicit disconnection still revokes authorization and releases the client", async () => {
+    const provider = new GoogleProvider(ACCOUNT, await configDirWithClient(8000));
+    await provider.initialize();
+    await provider.disconnect();
+    expect(gapi.revokeCredentials).toHaveBeenCalledOnce();
+    expect(gapi.removeAllListeners).toHaveBeenCalledWith("tokens");
+    expect(() => provider.getAuth()).toThrow("Google provider not initialized");
+  });
 });
 
 describe("parseOAuthCallbackUrl", () => {

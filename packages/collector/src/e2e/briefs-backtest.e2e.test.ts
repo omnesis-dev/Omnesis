@@ -8,11 +8,8 @@
  *
  * Asserts the two composable halves and their product:
  *   - the clock route reports virtual time and moves on POST;
- *   - backfilled (pre-T0) documents do NOT wake the agent — they are
- *     stale relative to the virtual T0;
- *   - a dripped window datum DOES wake a data run, because the virtual
- *     clock sits at the datum's instant when it lands (in wall time the
- *     datum is months old — only the virtual clock makes it "fresh").
+ *   - backfilled and dripped documents receive current-version discovery;
+ *   - no-op interpretation creates no canonical obligation.
  *
  * Zero tokens: the scripted loop-model server answers every run with a
  * no-behavior no-op; what is under test is wake mechanics, not agent
@@ -27,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 // runs, so the collector's discovery loop loads the synth provider packages.
 import "./synth-env.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
+import { openHarnessDb } from "./briefs-scorecard.js";
 import { runBridge } from "./briefs-backtest-bridge.js";
 import { startScriptedLoopModelServer, type ScriptedLoopModelServer } from "./fake-loop-model.js";
 
@@ -66,10 +64,7 @@ function seedSnapshot(): void {
              '{"documentType":"email"}', ?, ?, ?, ?)`,
   );
   const at = (ms: number): string => new Date(ms).toISOString();
-  // Ten backfill docs, all OLDER than the 7-day recency window at T0 —
-  // the as-of-T0 corpus. (Backfill inside the window would legitimately
-  // wake: it is recent as of T0; the fixture stays outside it so the
-  // no-backfill-wakes assertion is exact.)
+  // Ten historical context documents form the as-of-T0 corpus.
   for (let i = 0; i < 10; i += 1) {
     const ts = at(T0 - (i + 10) * 86_400_000);
     insert.run(
@@ -110,6 +105,12 @@ describe("briefs backtest bridge (virtual clock + mirror replay)", () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
       universe: "e2e-minimal",
+      extraGatewayConfig: {
+        brain: {
+          bootstrap: { enabled: false },
+          knowledge: { soonDelay: "1s", routineDelay: "1s" },
+        },
+      },
       extraInference: {
         backends: { scripted: { type: "http", url: server.url } },
         assignments: { "background-agent": `scripted/${server.modelId}` },
@@ -130,7 +131,7 @@ describe("briefs backtest bridge (virtual clock + mirror replay)", () => {
     }
   }, 30_000);
 
-  test("the clock route is virtual, the replay wakes only the window datum, at virtual time", async () => {
+  test("the clock route is virtual, the replay interprets historical and window evidence at virtual time", async () => {
     const h = harness!;
 
     const status = (await h.gatewayJson("/status")) as {
@@ -160,22 +161,28 @@ describe("briefs backtest bridge (virtual clock + mirror replay)", () => {
     const after = (await h.gatewayJson("/admin/brain/clock")) as { now: string };
     expect(Date.parse(after.now)).toBe(UNTIL);
 
-    // Exactly ONE data run woke: the dripped datum. The ten backfill
-    // docs were stale relative to virtual T0 and the recency gate
-    // skipped them (that is the as-of-T0 corpus, not the replay). The
-    // wake flushes from the debounce buffer once the cursor passes its
-    // due instant, so poll briefly.
-    await expect
-      .poll(
-        async () => {
-          const runs = (await h.gatewayJson("/admin/brain/runs?kind=data&limit=100")) as {
-            items: Array<{ status: string }>;
-          };
-          return runs.items.map((r) => r.status);
-        },
-        { timeout: 30_000, interval: 500 },
-      )
-      .toEqual(["completed"]);
+    // Both historical and window evidence enter current discovery. Completion
+    // must refer to each current content hash, not a legacy data-run key.
+    const db = openHarnessDb(h);
+    try {
+      await expect
+        .poll(
+          () =>
+            db
+              .prepare(
+                `SELECT COUNT(DISTINCT d.id) AS n
+        FROM documents d JOIN knowledge_discovery_coverage c ON c.subject_id=d.id
+        AND c.input_revision=d.content_hash AND c.phase='interpretation' AND c.status='considered'
+        WHERE d.external_id LIKE 'bt-%'`,
+              )
+              .get(),
+          { timeout: 60_000, interval: 500 },
+        )
+        .toEqual({ n: 11 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM open_loops").get()).toEqual({ n: 0 });
+    } finally {
+      db.close();
+    }
 
     // The corpus is fully present in the mirror (backfill + window).
     const search = (await h.gatewayJson("/documents/search?q=BT-4411&limit=5")) as {

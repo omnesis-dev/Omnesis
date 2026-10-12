@@ -713,6 +713,14 @@
           </table>
         </div>
 
+        <p>
+          For PDFs with repeated wide column gaps, extracted text preserves positioned segments in a
+          labelled text block. Coordinates describe the source layout; they are not values or
+          inferred table headings. This keeps otherwise empty columns distinguishable. Ordinary
+          prose stays plain text. Existing extracted copies change only when fetched again;
+          rebuilding a source deletes its indexed data before fetching it again.
+        </p>
+
         <h3 id="local-files">Local Files</h3>
         <p>
           Local Files indexes documents on the collector's own machine — the folders you name,

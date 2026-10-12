@@ -109,6 +109,7 @@ function seedPersonAnnotation(
     verificationState?: "unverified" | "verified" | "failed" | null;
     evidenceDocId?: string;
     createdAt?: number;
+    profileBudget?: { maxFacts: number; maxCharacters: number };
   } = {},
 ): void {
   createPersonAnnotation(
@@ -126,6 +127,7 @@ function seedPersonAnnotation(
       verificationState: opts.verificationState ?? null,
     },
     opts.createdAt ?? NOW,
+    opts.profileBudget,
   );
 }
 
@@ -740,6 +742,9 @@ describe("SQL aggregation ↔ pure-labeler parity", () => {
 
     for (let i = 0; i < 120; i++) {
       seedPersonAnnotation(db, `p-rand-${i}`, {
+        // Calibration covers retained large profiles too; keep all 120 samples
+        // and the deterministic label distribution under an explicit fixture budget.
+        profileBudget: { maxFacts: 120, maxCharacters: 10_000 },
         confidence: confidence(),
         verificationState: VERIFICATION_STATES[randInt(VERIFICATION_STATES.length)],
         evidenceDocId: `pdoc-${i % 25}`,

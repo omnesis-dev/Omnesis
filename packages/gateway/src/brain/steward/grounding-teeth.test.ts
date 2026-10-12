@@ -25,6 +25,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
+import { withPersonProfileRead } from "../person-profile-test-tools.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { listSweepTallies } from "../storage/sweep-tally.js";
 import { directWriteGate } from "../../write-gate.js";
@@ -34,6 +35,8 @@ import {
   listTemporalAnnotationEvidence,
 } from "../../enrichment/temporal-annotations/storage.js";
 import { createDocAnnotation } from "../storage/annotations.js";
+import { annotationEvidenceFrame } from "../annotation-verification.js";
+import { contextualEvidence } from "./annotation-gate-evidence.js";
 import { RunConsumptionTracker } from "./consumption.js";
 import { createOpenLoopMirror } from "./mirror.js";
 import { buildCognitionOwnTools, type CognitionToolDeps } from "./tools.js";
@@ -155,8 +158,99 @@ describe("grounding teeth (asserted claims + temporal annotation evidence)", () 
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
+
+  test.each(["value", "resolver", "verifier"] as const)(
+    "document annotation cancellation during %s cannot write or start the next paid stage",
+    async (stage) => {
+      const doc = insertDoc(db, "cancel-observation", "The workshop installed a new kiln.");
+      const controller = new AbortController();
+      let resolved = 0;
+      let verified = 0;
+      const tools = buildTools({
+        annotationsEnabled: true,
+        checkRecord: async () => {
+          if (stage === "value") controller.abort(new Error("cancelled fixture"));
+          return { save: true };
+        },
+        getEntailmentVerifier: async (signal) => {
+          expect(signal).toBeInstanceOf(AbortSignal);
+          resolved++;
+          if (stage === "resolver") {
+            controller.abort(new Error("cancelled fixture"));
+            expect(signal?.aborted).toBe(true);
+          }
+          return {
+            verify: async (input) => {
+              verified++;
+              expect(input.signal).toBeDefined();
+              controller.abort(new Error("cancelled fixture"));
+              return { label: "entailment" as const };
+            },
+            dispose() {
+              throw new Error("shared verifier must not be disposed");
+            },
+          };
+        },
+      });
+      await expect(
+        tool(tools, "annotate_durable").invoke(
+          {
+            docId: doc,
+            claimType: "equipment",
+            claimText: "The workshop installed a new kiln.",
+            evidenceDocId: doc,
+            evidenceQuote: "The workshop installed a new kiln.",
+            confidence: 0.8,
+            claimBasis: "quoted",
+          },
+          { ...CTX, abortSignal: controller.signal },
+        ),
+      ).rejects.toThrow("cancelled fixture");
+      expect(resolved).toBe(stage === "value" ? 0 : 1);
+      expect(verified).toBe(stage === "verifier" ? 1 : 0);
+      expect(db.prepare("SELECT id FROM doc_annotations").all()).toEqual([]);
+    },
+  );
+
+  test.each(["changed", "deleted"] as const)(
+    "source %s during value admission never reaches the verifier",
+    async (change) => {
+      const doc = insertDoc(db, "changing-source", "The workshop installed a new kiln.");
+      let resolutions = 0;
+      const tools = buildTools({
+        annotationsEnabled: true,
+        checkRecord: async () => {
+          if (change === "deleted") db.prepare("DELETE FROM documents WHERE id=?").run(doc);
+          else
+            db.prepare(
+              "UPDATE documents SET content='Different evidence', content_hash='new-version' WHERE id=?",
+            ).run(doc);
+          return { save: true };
+        },
+        getEntailmentVerifier: async () => {
+          resolutions++;
+          return fakeVerifier("entailment");
+        },
+      });
+      const result = await tool(tools, "annotate_durable").invoke(
+        {
+          docId: doc,
+          claimType: "equipment",
+          claimText: "The workshop installed a new kiln.",
+          evidenceDocId: doc,
+          evidenceQuote: "The workshop installed a new kiln.",
+          confidence: 0.8,
+          claimBasis: "quoted",
+        },
+        CTX,
+      );
+      expect(result).toMatchObject({ kind: "error", code: "revision_conflict" });
+      expect(resolutions).toBe(0);
+      expect(db.prepare("SELECT id FROM doc_annotations").all()).toEqual([]);
+    },
+  );
 
   const QUOTE = "we paid the venue deposit this morning";
   function seedEvidence(): string {
@@ -289,10 +383,22 @@ describe("grounding teeth (asserted claims + temporal annotation evidence)", () 
       expect(c.verificationState).toBe("verified");
       expect(c.evidenceDocId).toBe(ev);
     }
-    expect(verifier.calls).toEqual([
-      { claim: "the venue deposit was paid", evidence: QUOTE },
-      { claim: "a deposit payment was made", evidence: QUOTE },
+    expect(verifier.calls.slice(0, 2)).toEqual([
+      {
+        claim: "the venue deposit was paid",
+        evidence: contextualEvidence(QUOTE, `Quick update — ${QUOTE}, receipt attached.`),
+        signal: expect.any(AbortSignal),
+      },
+      {
+        claim: "a deposit payment was made",
+        evidence: contextualEvidence(QUOTE, `Quick update — ${QUOTE}, receipt attached.`),
+        signal: expect.any(AbortSignal),
+      },
     ]);
+    expect(verifier.calls).toHaveLength(3);
+    expect(JSON.parse(verifier.calls[2]!.claim)).toMatchObject({
+      title: "Venue deposit confirmed",
+    });
   });
 
   test("configured verifier unavailable → Brief is held and no unchecked claim persists", async () => {
@@ -528,14 +634,20 @@ describe("grounding teeth (asserted claims + temporal annotation evidence)", () 
     expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
   });
 
-  test("a scheduled reminder reaches the judge marked timing-satisfied", async () => {
+  test("a scheduled reminder reaches the judge with explicit display and event timing", async () => {
     const seen: BriefJudgeCandidate[] = [];
     await tool(buildTools({ getBriefJudge: () => spyJudge("ship", seen) }), "brief_create").invoke(
       { ...briefArgs(), nextShow: "2026-08-01T06:00:00.000Z", eventAt: "2026-08-01T00:00:00.000Z" },
       CTX,
     );
-    expect(seen[0]!.scheduledForLater).toBe(true);
-    expect(seen[0]!.hasEventAt).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      scheduledForLater: true,
+      hasEventAt: true,
+      now: new Date(NOW).toISOString(),
+      nextShow: "2026-08-01T06:00:00.000Z",
+      eventAt: "2026-08-01T00:00:00.000Z",
+    });
   });
 
   test("the judge runs AFTER the claims teeth: a claim-fix refusal never reaches it", async () => {
@@ -714,6 +826,179 @@ describe("grounding teeth (asserted claims + temporal annotation evidence)", () 
     };
   }
 
+  test("temporal value refusal precedes verifier resolution and leaves no entry", async () => {
+    const ev = insertDoc(db, "temporal-value", TIX_QUOTE);
+    let values = 0,
+      resolutions = 0;
+    const tools = buildTools({
+      checkRecord: async () => {
+        values++;
+        return { save: false, decisionId: "decision", score: 0.1, threshold: 0.5 };
+      },
+      getEntailmentVerifier: async () => {
+        resolutions++;
+        return fakeVerifier("entailment");
+      },
+    });
+    const result = await tool(tools, "temporal_annotation_add").invoke(
+      tixArgs({ evidence: { docId: ev, quote: TIX_QUOTE } }),
+      CTX,
+    );
+    expect(structured(result).resultType).toBe("record.not_saved");
+    expect(values).toBe(1);
+    expect(resolutions).toBe(0);
+    expect(db.prepare("SELECT id FROM temporal_annotations").all()).toEqual([]);
+  });
+
+  test("invalid temporal evidence spends neither value nor entailment checks", async () => {
+    const ev = insertDoc(db, "temporal-invalid", TIX_QUOTE);
+    let values = 0,
+      resolutions = 0;
+    const tools = buildTools({
+      checkRecord: async () => {
+        values++;
+        return { save: true };
+      },
+      getEntailmentVerifier: async () => {
+        resolutions++;
+        return fakeVerifier("entailment");
+      },
+    });
+    const result = await tool(tools, "temporal_annotation_add").invoke(
+      tixArgs({ evidence: { docId: ev, quote: "Invented unrelated passage" } }),
+      CTX,
+    );
+    expect(errorResult(result).code).toBe("evidence_not_found");
+    expect(values).toBe(0);
+    expect(resolutions).toBe(0);
+  });
+
+  test.each(["initial", "value", "resolver", "verifier"] as const)(
+    "temporal cancellation during %s prevents the next paid stage and write",
+    async (stage) => {
+      const ev = insertDoc(db, "temporal-cancel", TIX_QUOTE);
+      const controller = new AbortController();
+      const cancel = () => controller.abort(new Error("cancelled temporal fixture"));
+      if (stage === "initial") cancel();
+      let values = 0,
+        resolutions = 0,
+        verifications = 0;
+      const tools = buildTools({
+        checkRecord: async () => {
+          values++;
+          if (stage === "value") cancel();
+          return { save: true };
+        },
+        getEntailmentVerifier: async () => {
+          resolutions++;
+          if (stage === "resolver") cancel();
+          return {
+            verify: async (input) => {
+              verifications++;
+              expect(input.signal).toBeDefined();
+              cancel();
+              return { label: "entailment" as const };
+            },
+            dispose() {
+              throw new Error("shared verifier disposed");
+            },
+          };
+        },
+      });
+      await expect(
+        tool(tools, "temporal_annotation_add").invoke(
+          tixArgs({ evidence: { docId: ev, quote: TIX_QUOTE } }),
+          { ...CTX, abortSignal: controller.signal },
+        ),
+      ).rejects.toThrow("cancelled temporal fixture");
+      expect(values).toBe(stage === "initial" ? 0 : 1);
+      expect(resolutions).toBe(stage === "resolver" || stage === "verifier" ? 1 : 0);
+      expect(verifications).toBe(stage === "verifier" ? 1 : 0);
+      expect(db.prepare("SELECT id FROM temporal_annotations").all()).toEqual([]);
+    },
+  );
+
+  test.each(["changed", "deleted", "hidden"] as const)(
+    "temporal source %s during value assessment never reaches entailment",
+    async (change) => {
+      const ev = insertDoc(db, "temporal-source-race", TIX_QUOTE);
+      let resolutions = 0;
+      const tools = buildTools({
+        checkRecord: async () => {
+          if (change === "deleted") db.prepare("DELETE FROM documents WHERE id=?").run(ev);
+          else if (change === "hidden")
+            db.prepare("INSERT INTO removed_sources(id,removed_at) VALUES ('gmail-test',?)").run(
+              NOW,
+            );
+          else db.prepare("UPDATE documents SET content_hash='changed' WHERE id=?").run(ev);
+          return { save: true };
+        },
+        getEntailmentVerifier: async () => {
+          resolutions++;
+          return fakeVerifier("entailment");
+        },
+      });
+      const result = await tool(tools, "temporal_annotation_add").invoke(
+        tixArgs({ evidence: { docId: ev, quote: TIX_QUOTE } }),
+        CTX,
+      );
+      expect(errorResult(result).code).toBe("revision_conflict");
+      expect(resolutions).toBe(0);
+      expect(db.prepare("SELECT id FROM temporal_annotations").all()).toEqual([]);
+    },
+  );
+
+  test("temporal source revision changes during verification leave no entry", async () => {
+    const ev = insertDoc(db, "temporal-verification-race", TIX_QUOTE);
+    const tools = buildTools({
+      getEntailmentVerifier: async () => ({
+        verify: async () => {
+          db.prepare(
+            "UPDATE documents SET content_hash='changed-during-verification' WHERE id=?",
+          ).run(ev);
+          return { label: "entailment" as const };
+        },
+        dispose() {},
+      }),
+    });
+    const result = await tool(tools, "temporal_annotation_add").invoke(
+      tixArgs({ evidence: { docId: ev, quote: TIX_QUOTE } }),
+      CTX,
+    );
+    expect(errorResult(result).code).toBe("revision_conflict");
+    expect(db.prepare("SELECT id FROM temporal_annotations").all()).toEqual([]);
+  });
+
+  test("cancelling temporal re-grounding preserves the standing entry", async () => {
+    const ev = insertDoc(db, "temporal-update-cancel", TIX_QUOTE);
+    const added = structured(
+      await tool(buildTools(), "temporal_annotation_add").invoke(tixArgs(), CTX),
+    );
+    const controller = new AbortController();
+    const tools = buildTools({
+      getEntailmentVerifier: async () => ({
+        verify: async () => {
+          controller.abort(new Error("cancelled update"));
+          return { label: "entailment" as const };
+        },
+        dispose() {},
+      }),
+    });
+    await expect(
+      tool(tools, "temporal_annotation_update").invoke(
+        {
+          annotationId: added.data.id,
+          sentence: "Changed sentence",
+          evidence: { docId: ev, quote: TIX_QUOTE },
+        },
+        { ...CTX, abortSignal: controller.signal },
+      ),
+    ).rejects.toThrow("cancelled update");
+    expect(getTemporalAnnotationById(db, added.data.id as string)?.sentence).toBe(
+      "passport expires",
+    );
+  });
+
   test("a temporal-annotation add without evidence stays legal and skips verification", async () => {
     const verifier = fakeVerifier("neutral"); // would refuse if consulted
     const res = await tool(
@@ -747,7 +1032,9 @@ describe("grounding teeth (asserted claims + temporal annotation evidence)", () 
       },
     ]);
     // The gate judged the quote against the entry's sentence.
-    expect(verifier.calls).toEqual([{ claim: "passport expires", evidence: TIX_QUOTE }]);
+    expect(verifier.calls).toEqual([
+      { claim: "passport expires", evidence: TIX_QUOTE, signal: expect.any(AbortSignal) },
+    ]);
   });
 
   test("update with evidence replaces the grounding atoms and unions the doc link", async () => {
@@ -839,7 +1126,9 @@ describe("grounding teeth (asserted claims + temporal annotation evidence)", () 
     );
     expect(structured(res).resultType).toBe("temporal_annotation.updated");
     // No new sentence supplied → the standing one is what the gate judged.
-    expect(verifier.calls).toEqual([{ claim: "passport expires", evidence: TIX_QUOTE }]);
+    expect(verifier.calls).toEqual([
+      { claim: "passport expires", evidence: TIX_QUOTE, signal: expect.any(AbortSignal) },
+    ]);
   });
 
   test("temporal_annotation_update refuses an unknown id before verification", async () => {
@@ -911,7 +1200,7 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
   function tool(tools: ToolHandle[], name: string): ToolHandle {
     const t = tools.find((x) => x.name === name);
     if (!t) throw new Error(`no tool ${name}`);
-    return t;
+    return withPersonProfileRead(db, tools, t);
   }
   function insertPerson(id: string, name: string): void {
     db.prepare(
@@ -952,7 +1241,13 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     expect(data.evidenceCount).toBe(2);
     // ONE gate call, judging the claim against both quotes jointly.
     expect(verifier.calls).toHaveLength(1);
-    expect(verifier.calls[0]!.evidence).toBe(`[1] ${Q1}\n[2] ${Q2}`);
+    expect(verifier.calls[0]).toHaveProperty("assessment", "annotation_atomic");
+    expect(verifier.calls[0]!.evidence).toBe(
+      annotationEvidenceFrame([
+        { quote: Q1, source: `Note — ${Q1}.` },
+        { quote: Q2, source: `Heads up: ${Q2}.` },
+      ]),
+    );
     const atoms = db
       .prepare<
         [],
@@ -965,7 +1260,7 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     ]);
   });
 
-  test("a scalar-only annotate passes the bare quote to the gate, unchanged", async () => {
+  test("a scalar-only annotation preserves its surrounding source context", async () => {
     const subject = insertDoc(db, "d1", `Note — ${Q1}.`);
     const verifier = fakeVerifier("entailment");
     const res = await tool(
@@ -974,7 +1269,10 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     ).invoke(annotateArgs(subject, subject, { claimBasis: "quoted" }), CTX);
     expect(structured(res).data.evidenceCount).toBeUndefined();
     expect(verifier.calls).toHaveLength(1);
-    expect(verifier.calls[0]!.evidence).toBe(Q1);
+    expect(verifier.calls[0]).toHaveProperty("assessment", "annotation_atomic");
+    expect(verifier.calls[0]!.evidence).toBe(
+      annotationEvidenceFrame([{ quote: Q1, source: `Note — ${Q1}.` }]),
+    );
   });
 
   test("a missing additional-evidence doc refuses naming the failing index, before any verifier call", async () => {
@@ -1045,7 +1343,13 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     );
     expect(structured(res).data.evidenceCount).toBe(2);
     expect(verifier.calls).toHaveLength(1);
-    expect(verifier.calls[0]!.evidence).toBe(`[1] ${Q1}\n[2] ${Q2}`);
+    expect(verifier.calls[0]).toHaveProperty("assessment", "annotation_atomic");
+    expect(verifier.calls[0]!.evidence).toBe(
+      annotationEvidenceFrame([
+        { quote: Q1, source: `Note — ${Q1}.` },
+        { quote: Q2, source: `Heads up: ${Q2}.` },
+      ]),
+    );
     expect(
       db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM person_annotation_evidence").get()!
         .n,
@@ -1055,7 +1359,10 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
   test("a multi-atom claim re-affirms via a stamps-only revise gated on the JOINT evidence (doc store)", async () => {
     const subject = insertDoc(db, "d1", `Note — ${Q1}.`);
     const ev2 = insertDoc(db, "d2", `Heads up: ${Q2}.`);
-    const joint = `[1] ${Q1}\n[2] ${Q2}`;
+    const joint = annotationEvidenceFrame([
+      { quote: Q1, source: `Note — ${Q1}.` },
+      { quote: Q2, source: `Heads up: ${Q2}.` },
+    ]);
     // A verifier that entails ONLY on the concatenated atom set — a
     // synthesized claim whose atoms only jointly establish it. Gating the
     // revise on the scalar mirror alone would refuse forever (a livelock:
@@ -1108,7 +1415,10 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     insertPerson("per_1", "Maya Reeves");
     const ev1 = insertDoc(db, "d1", `Note — ${Q1}.`);
     const ev2 = insertDoc(db, "d2", `Heads up: ${Q2}.`);
-    const joint = `[1] ${Q1}\n[2] ${Q2}`;
+    const joint = annotationEvidenceFrame([
+      { quote: Q1, source: `Note — ${Q1}.` },
+      { quote: Q2, source: `Heads up: ${Q2}.` },
+    ]);
     const calls: Array<{ claim: string; evidence: string }> = [];
     const verifier: EntailCapability = {
       // eslint-disable-next-line @typescript-eslint/require-await

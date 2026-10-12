@@ -41,6 +41,8 @@ import {
 } from "@omnesis/core";
 import {
   AgentSession,
+  CitationReads,
+  type TurnFinalizerFactory,
   buildBuiltinTools,
   CITATION_TOOL_NAMES,
   selectDocumentCitationTools,
@@ -61,6 +63,11 @@ import {
 } from "@omnesis/agent";
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
+import { AgentTurnCompleter } from "../inference/agent-turn-completer.js";
+import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
+import { createAnswerGroundingFinalizer, type AnswerGroundingOptions } from "./answer-grounding.js";
+import { normalizeAnswerProse } from "./answer-prose.js";
+import { CITATION_GROUNDING } from "./citation-grounding.js";
 import {
   buildConversationMemoryEvidenceTool,
   type ConversationMemoryEvidence,
@@ -189,6 +196,11 @@ export interface AgentServiceDeps {
    */
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
+  grounding?: {
+    enabled?: () => boolean;
+    getVerifier: AnswerGroundingOptions["getVerifier"];
+    promptSupport?: (prompt: string) => AnswerGroundingOptions["promptSupport"];
+  };
   /**
    * Sub-agent orchestration config. When omitted, the `spawn_subagent`
    * tool is not wired — a plain agent with no nesting. When present, the
@@ -234,9 +246,12 @@ export interface AgentServiceDeps {
     | string
     | ((profile: AgentPromptProfile, context: AgentPromptContext) => string | Promise<string>);
   /** Fail-closed model boundary for externally authorized Answer runs. */
-  externalAnswerScope?: (
-    authorization: CorpusAuthorization,
-  ) => Promise<{ tools: readonly ToolHandle[]; systemPrompt: string }>;
+  externalAnswerScope?: (authorization: CorpusAuthorization) => Promise<{
+    tools: readonly ToolHandle[];
+    systemPrompt: string;
+    groundingReads?: CitationReads;
+    groundingDocument?: DocumentPort;
+  }>;
   /**
    * Optional broadcast hook. The gateway wires this to the WS server's
    * admin-scope broadcaster so future hello-authenticated clients (iOS)
@@ -543,9 +558,9 @@ const ANSWER_CITATIONS_PROMPT = `
 
 # Citations on the answer surface
 
-After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call other than \`annotate_many\`. Anything you write before any other tool call is not part of the answer, but everything you write on either side of \`annotate_many\` is, so write nothing there that you would not send as the answer. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released, so leave them out.
+After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call other than \`annotate_many\`. Anything you write before any other tool call is not part of the answer, but everything you write on either side of \`annotate_many\` is, so write nothing there that you would not send as the answer. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. ${CITATION_GROUNDING} Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released. Omit notes; include an exact quote when citing a bounded partial read. Citation recording requires a current document snapshot explicitly fetched this turn; batch unread sources through fetch_many before annotate_many. You may cite a fetched synthesis page directly without opening every underlying source.
 
-Never write a URL or a document id in your text, even when the question asks for links. The caller receives each cited document's real links through its citation; a link you compose yourself is a guess, and a wrong one. When links are asked for, cite the documents and say in words which ones they are.`;
+Use returned structured citations only; do not invent inline citation markers or search-result identifiers. Never write a URL or a document id in your text, even when the question asks for links. The caller receives each cited document's real links through its citation; a link you compose yourself is a guess, and a wrong one. When links are asked for, cite the documents and say in words which ones they are.`;
 
 const FIRING_EVIDENCE_ANSWER_PROMPT = `
 
@@ -837,15 +852,21 @@ interface LiveSessionEntry {
 export class AgentService {
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
+  private readonly citationReads = new CitationReads();
+  private readonly grounding: AgentServiceDeps["grounding"];
+  private readonly loopRead: ToolPorts["loopRead"];
   private readonly documentPort: DocumentPort;
   private readonly searchRecordPort: ToolPorts["record"];
   private readonly systemPrompt:
     | string
     | ((profile: AgentPromptProfile, context: AgentPromptContext) => string | Promise<string>);
   private readonly externalAnswerScope:
-    | ((
-        authorization: CorpusAuthorization,
-      ) => Promise<{ tools: readonly ToolHandle[]; systemPrompt: string }>)
+    | ((authorization: CorpusAuthorization) => Promise<{
+        tools: readonly ToolHandle[];
+        systemPrompt: string;
+        groundingReads?: CitationReads;
+        groundingDocument?: DocumentPort;
+      }>)
     | undefined;
   private readonly broadcastEvent: ((event: WsEvent) => void) | undefined;
   private readonly sessionIdGen: () => string;
@@ -1021,7 +1042,10 @@ export class AgentService {
         ...(deps.subagents.deepResearch ? { caps: deps.subagents.deepResearch } : {}),
       });
     }
+    this.grounding = deps.grounding;
+    this.loopRead = deps.ports.loopRead;
     this.tools = buildBuiltinTools({
+      citationReads: this.citationReads,
       ports: { ...deps.ports, ...(subagentPort ? { subagent: subagentPort } : {}) },
       planStore: this.planStore,
       experimental: experimentalVisible(),
@@ -1376,6 +1400,10 @@ export class AgentService {
       tools: [...tools],
       systemPrompt,
       initialHistory,
+      finalizer:
+        resumedOrigin && usesAnchoredThreadProfile(resumedOrigin)
+          ? undefined
+          : this.answerFinalizer(systemPrompt, undefined, undefined, opts.timeZone),
       timeZone: opts.timeZone,
       caller: opts.caller,
     });
@@ -1479,7 +1507,11 @@ export class AgentService {
     }
     const experimental =
       this.interactiveWriteProfile && experimentalVisible()
-        ? this.interactiveWriteProfile.buildOwnTools(`interactive_${sessionId}`)
+        ? adaptInteractiveKnowledgeReads(
+            this.interactiveWriteProfile.buildOwnTools(`interactive_${sessionId}`),
+            this.tools,
+            this.documentPort.supportsKnowledgeAliases === true,
+          )
         : [];
     // The broader profile shares annotation consumption with loop/brief writes.
     // Preserve those handles so their provenance tracker sees every memory read.
@@ -1565,6 +1597,56 @@ export class AgentService {
     });
   }
 
+  private answerFinalizer(
+    prompt: string,
+    reads = this.citationReads,
+    document = this.documentPort,
+    timeZone?: string,
+  ): TurnFinalizerFactory | undefined {
+    if (!this.grounding || this.grounding.enabled?.() === false) return undefined;
+    return createAnswerGroundingFinalizer({
+      timeZone,
+      reads,
+      document,
+      ...(document === this.documentPort ? { loops: this.loopRead } : {}),
+      promptSupport: this.grounding.promptSupport?.(prompt),
+      getVerifier: this.grounding.getVerifier,
+      repair: async (repairPrompt, signal) => {
+        const backend = this.backendFactory("agent");
+        if (!backend) throw new Error("Repair model unavailable");
+        const completer = new AgentTurnCompleter({ backend });
+        try {
+          const result = await completer.completeWithUsage(repairPrompt, { signal });
+          if (result.usage)
+            this.recordSpend?.({
+              mechanism: "answer-grounding-repair",
+              modelId: backend.model,
+              usage: {
+                inputTokens: result.usage.promptTokens,
+                outputTokens: result.usage.completionTokens,
+              },
+              completed: true,
+            });
+          return result.text;
+        } finally {
+          await completer.dispose();
+        }
+      },
+      // No rejected prose, evidence, or free-text verifier reasons in logs.
+      diagnostic: (value) =>
+        log.info(
+          `Answer grounding ${value.status}: ${value.reason}; attempts=${value.attempts}; evidence=${value.evidenceCount}${value.freshnessFailure ? `; freshness=${value.freshnessFailure}` : ""}${value.inventoryFailure ? `; inventory=${value.inventoryFailure}` : ""}`,
+          {
+            messageId: value.messageId,
+            checks: value.checks,
+            repairTrigger: value.repairTrigger,
+            selectionIncomplete: value.selectionIncomplete,
+            ...(value.sourceFailure ? { sourceFailure: value.sourceFailure } : {}),
+          },
+        ),
+    });
+  }
+
   /**
    * Replace an idle session's AgentSession with one rebuilt on `profile`'s
    * system prompt, keeping the full history. The AgentSession freezes its
@@ -1587,6 +1669,7 @@ export class AgentService {
       tools: [...this.buildInteractiveTools(sessionId, profile)],
       systemPrompt,
       initialHistory: entry.session.historySnapshot(),
+      finalizer: this.answerFinalizer(systemPrompt, undefined, undefined, entry.session.timeZone),
       timeZone: entry.session.timeZone,
       caller: entry.session.caller,
     });
@@ -2408,6 +2491,11 @@ export class AgentService {
         ? `${basePrompt}${FIRING_EVIDENCE_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`
         : `${basePrompt}${READ_ONLY_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`,
       initialHistory,
+      finalizer: this.answerFinalizer(
+        basePrompt,
+        externalScope?.groundingReads,
+        externalScope?.groundingDocument,
+      ),
       // An Answer is a task: its caller waits on the task, not on each token,
       // so a quota that resets in a minute should delay it rather than fail it.
       rateLimitPatience: BACKGROUND_RATE_LIMIT_PATIENCE,
@@ -2526,7 +2614,7 @@ export class AgentService {
     }
     assertSuccessfulAnswerTerminal(terminal);
     if (completionFailure) throw completionFailure;
-    const answer = text.trim().length > 0 ? text : earlierText;
+    const answer = normalizeAnswerProse(text.trim().length > 0 ? text : earlierText);
     if (answer.trim().length === 0) {
       throw new AgentError("answer_empty", "the agent returned an empty answer");
     }
@@ -2986,13 +3074,19 @@ export class AgentService {
     // second lookup would then hand the finalizer a prompt and a tool set built
     // in different zones.
     const parentZone = this.sessions.get(input.sessionId)?.session.timeZone;
+    const finalPrompt = await this.resolveChatPrompt("interactive", { timeZone: parentZone });
+    const groundingFinalizer = this.answerFinalizer(finalPrompt, undefined, undefined, parentZone);
     const finalizer = new AgentSession({
+      finalizer: groundingFinalizer
+        ? (identity) =>
+            groundingFinalizer({ ...identity, question: input.query, priorUserStatements: [] })
+        : undefined,
       // Keep the parent session id in tool context, so normal annotate_many
       // events and their durable Timeline records belong to the parent turn.
       sessionId: input.sessionId,
       backend,
       tools: [...this.buildInteractiveTools(input.sessionId, "interactive")],
-      systemPrompt: await this.resolveChatPrompt("interactive", { timeZone: parentZone }),
+      systemPrompt: finalPrompt,
       timeZone: parentZone,
     });
     let terminal: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;

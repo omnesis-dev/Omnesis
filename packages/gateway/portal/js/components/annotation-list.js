@@ -4,6 +4,7 @@
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
 import { timeAgo } from "../lib/format.js";
+import { KnowledgeIcon } from "../lib/knowledge-link-icons.js";
 import { getAnnotationDependents } from "../api.js";
 import { LoadMore } from "./load-more.js";
 import { useCursorPage } from "../lib/use-cursor-page.js";
@@ -30,10 +31,10 @@ function DependentsDisclosure({ label, dependents, children }) {
         <a
           key=${`${d.kind}:${d.id}`}
           class="meta-annotation-dependent"
-          href=${`/portal/debug/cognition/${d.kind === "brief" ? "briefs" : "loops"}/${encodeURIComponent(d.id)}`}
+          href=${`/portal/debug/cognition/${d.kind === "brief" ? "briefs" : "knowledge"}/${encodeURIComponent(d.id)}${d.kind === "brief" ? "" : "?kind=loop"}`}
           style="display:block;"
         >
-          ${d.kind}: ${d.title || d.id}
+          ${d.kind === "loop" && html`<${KnowledgeIcon} kind="loop" />`}${d.kind}: ${d.title || d.id}
         </a>
       `)}
       ${children}
@@ -76,10 +77,10 @@ function AnnotationDependents({ annotation, store }) {
         <a
           key=${`${d.kind}:${d.id}`}
           class="meta-annotation-dependent"
-          href=${`/portal/debug/cognition/${d.kind === "brief" ? "briefs" : "loops"}/${encodeURIComponent(d.id)}`}
+          href=${`/portal/debug/cognition/${d.kind === "brief" ? "briefs" : "knowledge"}/${encodeURIComponent(d.id)}${d.kind === "brief" ? "" : "?kind=loop"}`}
           style="display:block;"
         >
-          ${d.kind}: ${d.title || d.id}
+          ${d.kind === "loop" && html`<${KnowledgeIcon} kind="loop" />`}${d.kind}: ${d.title || d.id}
         </a>
       `)}
       <${LoadMore}

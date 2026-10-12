@@ -467,7 +467,14 @@ export const cognitionSynthesisRunPayloadSchema = z.preprocess(
   },
   z
     .object({
-      focus: z.enum(["noticing", "collision", "annotation-contradiction"]),
+      focus: z.enum(["noticing", "collision", "annotation-contradiction", "knowledge-maintenance"]),
+      batchId: z.string().min(1).optional(),
+      /** Internal bounded preference for first root population. */
+      schedulingClass: z.literal("initial-root").optional(),
+      organizationCohortId: z.string().min(1).optional(),
+      /** Durable run lineage for paid segments of the same maintenance batch. */
+      continuedFromRunId: z.string().min(1).optional(),
+      continuedByRunId: z.string().min(1).optional(),
       /** noticing: the local day the pass covers. */
       date: z.string().min(1).optional(),
       /** collision: the colliding loop ids to judge. */

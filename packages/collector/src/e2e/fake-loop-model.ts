@@ -28,6 +28,14 @@
 
 import { createServer, type Server } from "node:http";
 import { parseCognitionRunEnvelope } from "@omnesis/core";
+import { parseClaimMarkup } from "@omnesis/gateway/src/brain/knowledge/claims.js";
+import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
+import { preserveCurrentOwner, refreshCurrentOwner } from "./brain-bench/source-interpretations.js";
+import {
+  readRunContext,
+  collectToolSteps as collectMaintenanceSteps,
+  type PuppetPlan,
+} from "./brain-bench/puppet-plan.js";
 import type { ArcAction, ArcDocBehavior } from "./briefs-arcs.js";
 
 const SCRIPTED_LOOP_MODEL_ID = "scripted-loop-agent-v1";
@@ -158,6 +166,7 @@ export type FeedbackPolicy = "correct" | "saboteur";
 function feedbackPlanFor(
   fb: FeedbackPromptMeta,
   policy: FeedbackPolicy,
+  evidence: string[] = [],
 ): Array<{ name: string; args: Record<string, unknown> }> | { finalText: string } {
   if (fb.state === "dismissed_already_handled") {
     if (policy === "saboteur") {
@@ -211,6 +220,7 @@ function feedbackPlanFor(
           args: {
             title: `Follow up: ${fb.briefTitle}`,
             description: "Tracking the acknowledged notice.",
+            docs: evidence,
             confidence: 0.6,
             importance: 0.5,
           },
@@ -232,6 +242,7 @@ interface SearchLoopHit {
   id: string;
   title: string;
   state: string;
+  docs?: string[];
   attachedBriefs: Array<{ id: string; state: string }>;
 }
 
@@ -308,7 +319,48 @@ function planFor(
   if (hits === null) {
     return { finalText: "open_loop_search failed; stopping without mutating anything." };
   }
-  const matched = hits.find((l) => l.title.includes(action.marker));
+  const fetchedOwner = steps
+    .filter((step) => step.name === "open_loop_fetch")
+    .map((step) => structuredData(step.result))
+    .find((row) => typeof row?.title === "string" && row.title.includes(action.marker));
+  const matched =
+    hits.find((l) => l.title.includes(action.marker)) ??
+    (fetchedOwner as unknown as SearchLoopHit | undefined);
+  // A historical commitment is not a fresh obligation just because the active
+  // search omits its terminal owner. These fixture arcs have unique markers.
+  const retired = structuredData(search.result)?.retired;
+  if (
+    !matched &&
+    Array.isArray(retired) &&
+    retired.some((entry: { title?: string }) => entry.title?.includes(action.marker))
+  )
+    return [{ name: "open_loop_search", args: { query: action.searchQuery } }];
+  const alreadyOwned = hits.find(
+    (hit) => hit.title.includes(action.marker) && hit.docs?.includes(docId),
+  );
+  if (action.kind === "commit" && alreadyOwned) {
+    const reconciled = [{ name: "open_loop_search", args: { query: action.searchQuery } }];
+    if (alreadyOwned.attachedBriefs.length || ["done", "dismissed"].includes(alreadyOwned.state))
+      return reconciled;
+    // A previous attempt may have committed the loop but stopped before its
+    // brief. Finish that plan without repeating even a planted duplicate mint.
+    return [
+      ...reconciled,
+      { name: "brief_list", args: {} },
+      {
+        name: "brief_create",
+        args: {
+          kind: "loop",
+          title: action.briefTitle,
+          description: "Needs your attention.",
+          citations: [docId],
+          relatedLoopIds: [alreadyOwned.id],
+          confidence: 0.9,
+          urgency: 0.5,
+        },
+      },
+    ];
+  }
 
   if (action.kind === "commit") {
     if (matched && !action.forceCreate) {
@@ -353,24 +405,32 @@ function planFor(
   }
 
   if (action.kind === "schedule") {
+    // Reconsideration must adopt a dated commitment already represented by a
+    // loop and its brief; its scheduled follow-up belongs to that same owner.
+    if (matched && (matched.attachedBriefs.length || ["done", "dismissed"].includes(matched.state)))
+      return [{ name: "open_loop_search", args: { query: action.searchQuery } }];
     // A fresh dated commitment: reconcile (no match exists in the arc), then
     // track it as a loop and create a brief HELD until the scheduled day,
     // plus a re-verify run tied to the loop. loopId is read from the create
     // step's result once it lands (same seam as the commit plan).
     const create = steps.find((s) => s.name === "open_loop_create");
-    const loopId = createdLoopId(create);
+    const loopId = matched?.id ?? createdLoopId(create);
     return [
       { name: "open_loop_search", args: { query: action.searchQuery } },
-      {
-        name: "open_loop_create",
-        args: {
-          title: action.loopTitle,
-          description: "Dated self-reminder tracked from the triggering document.",
-          confidence: 0.9,
-          importance: 0.7,
-          docs: [docId],
-        },
-      },
+      ...(matched
+        ? []
+        : [
+            {
+              name: "open_loop_create",
+              args: {
+                title: action.loopTitle,
+                description: "Dated self-reminder tracked from the triggering document.",
+                confidence: 0.9,
+                importance: 0.7,
+                docs: [docId],
+              },
+            },
+          ]),
       {
         name: "brief_create",
         args: {
@@ -505,7 +565,19 @@ function planFor(
     ];
   }
 
-  const activeBriefIds = matched.attachedBriefs
+  // Closing a loop can itself dismiss its awareness brief. Use the mutation's
+  // actual returned state instead of trying to delete an already settled card
+  // that the active-only brief inventory correctly no longer returns.
+  const updated = steps.find(
+    (step) =>
+      step.name === "open_loop_update" &&
+      typeof step.args === "object" &&
+      step.args !== null &&
+      "id" in step.args &&
+      step.args.id === matched.id,
+  );
+  const updatedLoop = structuredData(updated?.result)?.loop as SearchLoopHit | undefined;
+  const activeBriefIds = (updatedLoop?.attachedBriefs ?? matched.attachedBriefs)
     .filter((b) => b.state === "unread" || b.state === "read" || b.state === "dismissed_snoozed")
     .map((b) => b.id);
   return [
@@ -514,6 +586,117 @@ function planFor(
     ...activeBriefIds.map((id) => ({ name: "brief_delete", args: { id } })),
     { name: "open_loop_ledger_append", args: { id: matched.id, note: action.ledgerNote } },
   ];
+}
+
+/** Current maintenance uses durable frontiers; legacy recovery below remains explicit. */
+function maintenanceTurn(
+  messages: readonly WireMessage[],
+  behaviors: ReadonlyMap<string, ArcDocBehavior>,
+): NextTurn | null {
+  const prompt = messages.find((message) => message.role === "user")?.content ?? "";
+  const context = readRunContext(prompt);
+  if (context?.flavour !== "synthesis.knowledge") return null;
+  return knowledgePuppet({
+    maxRevisionConflictRetries: 8,
+    targets(item, steps) {
+      if (!item.source) return [];
+      const behavior = behaviors.get(item.source.title);
+      const action =
+        behavior?.onUpdated && behavior.updatedContents?.includes(item.source.content)
+          ? behavior.onUpdated
+          : behavior?.onCreated;
+      if (action?.kind !== "commit" || action.forceCreate) return [];
+      const owner = steps
+        .filter((step) => step.name === "open_loop_fetch")
+        .map((step) => structuredData(step.result))
+        .find((row) => typeof row?.title === "string" && row.title.includes(action.marker));
+      return typeof owner?.id === "string" ? [owner.id] : [];
+    },
+    plan(item, ctx, steps) {
+      const frontierAt = steps.map((step) => step.name).lastIndexOf("knowledge_next_frontier");
+      const local = steps.slice(frontierAt + 1);
+      if (!item.source) {
+        if (item.node?.kind !== "loop" || item.node.validity !== "stale")
+          return refreshCurrentOwner(item, ctx, steps);
+        // The loop fixture's prose is deliberately unchanged by its ledger/state
+        // actions. Read the canonical owner before explicitly retaining that
+        // context; do not wait for an asynchronous mirror conversion to repair it.
+        const ownerStep = local.find(
+          (step) => step.name === "open_loop_fetch" && step.args?.id === item.node!.ownerId,
+        );
+        const calls: PuppetPlan["calls"] = [
+          { tool: "open_loop_fetch", args: { id: item.node.ownerId } },
+        ];
+        if (!ownerStep) return { calls };
+        const owner = structuredData(ownerStep.result);
+        if (
+          owner?.title !== item.node.title ||
+          owner.description !== parseClaimMarkup(item.node.markdown).text
+        )
+          return {
+            calls,
+            finalText: "Canonical loop prose changed; refuse stale fixture preservation.",
+          };
+        const preserved = preserveCurrentOwner(
+          { ...item, node: { ...item.node, validity: "current" } },
+          ctx,
+          steps,
+        );
+        return { ...preserved, calls: [...calls, ...preserved.calls] };
+      }
+      const behavior = behaviors.get(item.source.title);
+      const action =
+        behavior?.onUpdated && behavior.updatedContents?.includes(item.source.content)
+          ? behavior.onUpdated
+          : behavior?.onCreated;
+      const plan = action
+        ? planFor(action, item.source.id, local)
+        : { finalText: "No scripted mutation for this source." };
+      const calls: PuppetPlan["calls"] = [
+        { tool: "fetch_many", args: { documents: [{ documentId: item.source.id }] } },
+      ];
+      // A conflict retry must not forget an owner this run already discovered
+      // and closed: active search may now omit it. Read its current canonical
+      // state again rather than using the earlier snapshot as truth.
+      if (action && action.kind !== "ignore" && action.kind !== "inform") {
+        const previousOwner = steps
+          .slice(0, frontierAt)
+          .filter((step) => step.name === "open_loop_search")
+          .flatMap((step) => searchHits(step) ?? [])
+          .find((hit) => hit.title.includes(action.marker));
+        if (previousOwner) calls.push({ tool: "open_loop_fetch", args: { id: previousOwner.id } });
+      }
+      if (!Array.isArray(plan)) return { calls, finalText: plan.finalText };
+      for (const call of plan) {
+        // Duplicate evidence needs an exact owner read and a durable routing
+        // hint, not a meaningless canonical ledger mutation that races its creator.
+        if (
+          action?.kind === "commit" &&
+          !action.forceCreate &&
+          call.name === "open_loop_ledger_append"
+        ) {
+          calls.push({ tool: "open_loop_fetch", args: { id: call.args.id } });
+          continue;
+        }
+        if (call.name.startsWith("brief_") && call.name !== "brief_list")
+          calls.push({ tool: "brief_list", args: {} });
+        if (
+          ["open_loop_update", "open_loop_delete", "open_loop_ledger_append"].includes(call.name) &&
+          typeof call.args.id === "string"
+        )
+          calls.push({ tool: "open_loop_fetch", args: { id: call.args.id } });
+        calls.push({
+          tool: call.name,
+          args: ["open_loop_create", "open_loop_update", "brief_create", "brief_update"].includes(
+            call.name,
+          )
+            ? { annotationDependencies: [], ...call.args }
+            : call.args,
+        });
+      }
+      return { calls };
+    },
+  })(context, collectMaintenanceSteps(messages));
 }
 
 /**
@@ -527,11 +710,27 @@ export function decideNextTurn(
 ): NextTurn {
   const prompt = messages.find((m) => m.role === "user")?.content ?? "";
   const meta = parseRunPrompt(prompt);
+  const maintenance = maintenanceTurn(messages, behaviors);
+  if (maintenance) return maintenance;
 
   if (meta.kind === "feedback") {
     const fb = parseFeedbackPrompt(prompt);
     if (!fb) return { kind: "final", text: "Malformed feedback prompt; refusing to act." };
-    const plan = feedbackPlanFor(fb, feedbackPolicy);
+    const steps = collectToolSteps(messages);
+    let evidence: string[] = [];
+    if (feedbackPolicy === "saboteur" && fb.state === "dismissed_acknowledged") {
+      const fetched = steps.find((step) => step.name === "brief_fetch");
+      if (!fetched) return { kind: "tool", name: "brief_fetch", args: { id: fb.briefId } };
+      const citations = structuredData(fetched.result)?.citations;
+      if (
+        !Array.isArray(citations) ||
+        !citations.length ||
+        citations.some((id) => typeof id !== "string")
+      )
+        return { kind: "final", text: "The acknowledged brief has no usable source evidence." };
+      evidence = citations;
+    }
+    const plan = feedbackPlanFor(fb, feedbackPolicy, evidence);
     if (!Array.isArray(plan)) return { kind: "final", text: plan.finalText };
     return emitNextPlanned(plan, collectToolSteps(messages));
   }
@@ -684,12 +883,26 @@ export async function startScriptedLoopModelServer(
         );
         const prompt = body.messages.find((m) => m.role === "user")?.content ?? "";
         const meta = parseRunPrompt(prompt);
+        const steps = collectToolSteps(body.messages);
+        const frontierAt = steps.map((step) => step.name).lastIndexOf("knowledge_next_frontier");
+        const frontier = structuredData(steps[frontierAt]?.result);
+        const completed = new Set(
+          steps
+            .slice(frontierAt + 1)
+            .filter((step) => step.name === "knowledge_discovery_complete")
+            .map((step) => (step.args as { id?: unknown })?.id),
+        );
+        const source = (
+          frontier?.items as
+            | Array<{ id: string; source?: { id: string; content: string } }>
+            | undefined
+        )?.find((item) => item.source && !completed.has(item.id))?.source;
         calls.push({
           at: Date.now(),
           runId: meta.runId,
           kind: meta.kind,
           event: meta.event,
-          docId: meta.docId,
+          docId: meta.docId ?? source?.id ?? null,
           prompt,
           emitted: turn,
         });

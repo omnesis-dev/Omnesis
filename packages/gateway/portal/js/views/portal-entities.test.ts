@@ -25,7 +25,7 @@ const VIEWS = new URL(".", import.meta.url).pathname;
 const LIB = join(VIEWS, "..", "lib");
 
 /** Files whose purpose is to emit entities, not to render them. */
-const ESCAPERS = new Set(["sql-editor.js", "file-type-icons.js"]);
+const ESCAPERS = new Set(["sql-editor.js", "file-type-icons.js", "knowledge-link-icons.js"]);
 
 function jsFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>

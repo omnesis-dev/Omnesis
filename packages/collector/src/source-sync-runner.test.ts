@@ -3464,3 +3464,75 @@ describe("SourceSyncRunner — the sync lease", () => {
     expect(gateway.claims).toEqual([]);
   });
 });
+
+describe("SourceSyncRunner — initial inventory provenance", () => {
+  test("uses one inventory identity across initial pages and stops marking subsequent syncs", async () => {
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    let page = 0;
+    const source = makeDocumentSource("inventory-fixture", async () => {
+      page++;
+      return {
+        documents: [makeDoc(`item-${page}`, "inventory-fixture")],
+        deletedExternalIds: [],
+        cursor: { page },
+        hasMore: page === 1,
+      };
+    });
+    const { registry } = makeRegistry();
+    registry.registerProvider(makeProvider(source));
+    const runner = new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000);
+    await runner.runOne(source);
+    const args = writes.mock.calls.map(
+      ([input]) => input as Parameters<GatewayClient["upsertWithCursor"]>[0],
+    );
+    expect(args).toHaveLength(2);
+    expect(args[0].initialInventory).toEqual({
+      id: expect.any(String),
+      startedAt: expect.any(String),
+    });
+    expect(args[1].initialInventory).toEqual(args[0].initialInventory);
+    await runner.runOne(source);
+    expect(
+      (writes.mock.calls[2][0] as Parameters<GatewayClient["upsertWithCursor"]>[0])
+        .initialInventory,
+    ).toBeUndefined();
+  });
+
+  test.each([true, false])(
+    "resumes an incomplete inventory after restart (cursor committed=%s)",
+    async (hasCursor) => {
+      const inventory = {
+        id: "12345678-1234-4234-8234-123456789012",
+        startedAt: "2027-01-12T12:00:00.000Z",
+      };
+      const gateway = Object.assign(new RecordingGateway(), {
+        getInitialSourceInventory: vi.fn(async () => inventory),
+      });
+      const writes = vi.spyOn(gateway, "upsertWithCursor");
+      const source = makeDocumentSource("inventory-resume", async () => ({
+        documents: [],
+        deletedExternalIds: [],
+        cursor: { page: 2 },
+        hasMore: false,
+      }));
+      if (hasCursor)
+        gateway.syncStates.set(source.id, {
+          sourceId: source.id,
+          cursor: { page: 1 },
+          lastSyncedAt: inventory.startedAt,
+          initialInventory: inventory,
+        });
+      const { registry } = makeRegistry();
+      registry.registerProvider(makeProvider(source));
+      await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+        source,
+      );
+      expect(
+        (writes.mock.calls[0][0] as Parameters<GatewayClient["upsertWithCursor"]>[0])
+          .initialInventory,
+      ).toEqual(inventory);
+      expect(gateway.getInitialSourceInventory).toHaveBeenCalledTimes(hasCursor ? 0 : 1);
+    },
+  );
+});

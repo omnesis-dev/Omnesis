@@ -3,6 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import { COGNITION_MUTATING_TOOL_NAMES } from "../steward/tools.js";
+import { KNOWLEDGE_MUTATING_TOOLS } from "../knowledge/tools.js";
 import {
   COGNITIVE_ARTIFACTS,
   allGrantableMutatingTools,
@@ -18,7 +19,7 @@ describe("the artifact → tool map", () => {
     // A verb missing here would be granted to nobody and silently disappear
     // from every workflow's toolset.
     const grantable = new Set(allGrantableMutatingTools());
-    for (const name of COGNITION_MUTATING_TOOL_NAMES) {
+    for (const name of [...COGNITION_MUTATING_TOOL_NAMES, ...KNOWLEDGE_MUTATING_TOOLS]) {
       expect(grantable.has(name), name).toBe(true);
     }
   });

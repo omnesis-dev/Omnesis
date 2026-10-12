@@ -478,6 +478,15 @@ export function parseRoute() {
         : "/portal/debug/calendar",
     };
   }
+  if (cognitionMatch && (!cognitionMatch[1] || cognitionMatch[1] === "overview")) {
+    return { view: "debug", tab: "cognition", cognitionTab: "runs", cognitionId: null,
+      redirectTo: "/portal/debug/cognition/runs" };
+  }
+  if (["loops", "briefs"].includes(cognitionMatch?.[1])) {
+    const id = cognitionMatch[2] ? decodePathSegment(cognitionMatch[2]) : null;
+    return { view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: id,
+      redirectTo: `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=${cognitionMatch[1] === "briefs" ? "brief" : "loop"}` };
+  }
   if (cognitionMatch) {
     return {
       view: "debug",

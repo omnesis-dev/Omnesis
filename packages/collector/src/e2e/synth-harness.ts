@@ -1257,10 +1257,35 @@ export class SyntheticE2EHarness {
         ...rest,
       };
     });
-    await this.gatewayJson<{ ingested?: number }>("/documents", {
+    // A source that has already synced has a claimed write epoch. Explicit
+    // fixture pushes use that current epoch and must expose a concurrent fence
+    // rejection instead of silently looking like successful ingestion.
+    const writeEpochs = Object.fromEntries(
+      await Promise.all(
+        [...new Set(documents.map((document) => document.sourceId))].map(async (sourceId) => {
+          const { wipeEpoch } = await this.gatewayJson<{ wipeEpoch: number }>(
+            `/sync-state/${encodeURIComponent(sourceId)}`,
+          );
+          return [sourceId, wipeEpoch] as const;
+        }),
+      ),
+    );
+    const result = await this.gatewayJson<{
+      ingested?: number;
+      rejectedSourceIds?: string[];
+      rejected?: Array<{ sourceId: string; reason: string }>;
+    }>("/documents", {
       method: "POST",
-      body: JSON.stringify({ documents }),
+      body: JSON.stringify({ documents, writeEpochs }),
     });
+    if (result.rejected?.length)
+      throw new Error(
+        `Fixture ingestion rejected sources: ${result.rejected.map(({ sourceId, reason }) => `${sourceId} (${reason})`).join(", ")}`,
+      );
+    if (result.rejectedSourceIds?.length)
+      throw new Error(
+        `Fixture ingestion lost its source write epoch: ${result.rejectedSourceIds.join(", ")}`,
+      );
   }
 
   /**

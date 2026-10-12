@@ -14,7 +14,25 @@ describe("resolveBrainSettings", () => {
   it("applies the documented defaults for an absent block", () => {
     const r = resolveBrainSettings(undefined);
     expect(r).toEqual({
-      workerConcurrency: 1,
+      knowledge: {
+        immediateThreshold: 0.8,
+        soonThreshold: 0.4,
+        soonDelayMs: 3600000,
+        routineDelayMs: 21600000,
+        recentWindowMs: 30 * 86_400_000,
+        rootMaxChars: 8000,
+        maxSeeds: 64,
+        maxVisitedPerSeed: 256,
+        maxFrontierNodes: 32,
+        maxFrontierChars: 65536,
+        cascadeBatchSize: 100,
+        discoveryBatchSize: 32,
+        bootstrapBatchSize: 64,
+        maxReviewsPerTick: 16,
+        maxReviewIntervalMs: 2592000000,
+        checkpointLeadMs: 86400000,
+      },
+      workerConcurrency: 4,
       conversationDebounceMs: 60 * 60 * 1000,
       conversationMaxDeferMs: 6 * 60 * 60 * 1000,
       documentUpdateDebounceMs: 30 * 60 * 1000,
@@ -68,6 +86,7 @@ describe("resolveBrainSettings", () => {
       annotationConfidenceCeiling: 0.9,
       annotationBasisCeilings: { quoted: 0.9, inferred: 0.7, synthesized: 0.55 },
       annotationConfidenceFloor: 0.25,
+      personProfileBudget: { maxFacts: 20, maxCharacters: 4000 },
     });
   });
 
@@ -163,6 +182,8 @@ describe("brain config schema", () => {
     expect(validateConfig({ brain: { nonsense: 1 } as never }).ok).toBe(false);
     expect(validateConfig({ brain: { dailyRunHour: 24 } }).ok).toBe(false);
     expect(validateConfig({ brain: { workerConcurrency: 0 } }).ok).toBe(false);
+    expect(validateConfig({ brain: { workerConcurrency: 32 } }).ok).toBe(true);
+    expect(validateConfig({ brain: { workerConcurrency: 33 } }).ok).toBe(false);
   });
 
   it("accepts a background-agent assignment keyed by the capability role id", () => {
@@ -222,6 +243,10 @@ describe("CONFIG_DEFAULTS.brain cross-check against the live resolver", () => {
       r.annotationBasisCeilings.synthesized,
     );
     expect(defAt("/brain/annotations/confidenceFloor")).toBe(r.annotationConfidenceFloor);
+    expect(defAt("/brain/annotations/personProfile/maxFacts")).toBe(r.personProfileBudget.maxFacts);
+    expect(defAt("/brain/annotations/personProfile/maxCharacters")).toBe(
+      r.personProfileBudget.maxCharacters,
+    );
     expect(defAt("/brain/reverification/enabled")).toBe(r.reverification.enabled);
     expect(defAt("/brain/reverification/intervalDays")).toBe(r.reverification.intervalDays);
     expect(defAt("/brain/reverification/maxPerSweep")).toBe(r.reverification.maxPerSweep);
@@ -301,6 +326,14 @@ describe("proactive-lane knobs (experimental prototypes)", () => {
       synthesized: 0.4,
     });
     expect(basisTuned.annotationConfidenceFloor).toBe(0.3);
+    expect(
+      resolveBrainSettings({ annotations: { personProfile: { maxFacts: 12 } } })
+        .personProfileBudget,
+    ).toEqual({ maxFacts: 12, maxCharacters: 4000 });
+    expect(
+      resolveBrainSettings({ annotations: { personProfile: { maxCharacters: 2500 } } })
+        .personProfileBudget,
+    ).toEqual({ maxFacts: 20, maxCharacters: 2500 });
 
     // An operator turning the lane down: every producer honours an explicit
     // disable, and the tuned fields survive alongside it.
@@ -372,5 +405,44 @@ describe("merge-adjudication knob", () => {
     expect(validateConfig({ brain: { mergeAdjudication: { nonsense: 1 } as never } }).ok).toBe(
       false,
     );
+  });
+});
+
+describe("knowledge maintenance configuration", () => {
+  it("keeps display defaults and runtime defaults aligned", () => {
+    expect(defAt("/brain/knowledge")).toEqual(BRAIN_DEFAULTS.knowledge);
+  });
+  it("supports deterministic compressed timing and bounds routine delay by soon delay", () => {
+    const resolved = resolveBrainSettings({
+      knowledge: {
+        soonDelay: "2ms",
+        routineDelay: "1ms",
+        maxReviewInterval: "5ms",
+        checkpointLead: "1ms",
+        recentWindowDays: 7,
+        maxSeeds: 2,
+      },
+    });
+    expect(resolved.knowledge).toMatchObject({
+      soonDelayMs: 2,
+      routineDelayMs: 2,
+      maxReviewIntervalMs: 5,
+      checkpointLeadMs: 1,
+      recentWindowMs: 7 * 86_400_000,
+      maxSeeds: 2,
+    });
+  });
+  it.each([
+    { recentWindowDays: 0 },
+    { recentWindowDays: 3651 },
+    { maxSeeds: 0 },
+    { maxVisitedPerSeed: 4097 },
+    { cascadeBatchSize: 1001 },
+    { rootMaxChars: 32001 },
+    { soonThreshold: 0.9 },
+    { immediateThreshold: 0.2 },
+    { enabled: true },
+  ])("rejects unsafe knowledge settings %j", (knowledge) => {
+    expect(validateConfig({ brain: { knowledge } }).ok).toBe(false);
   });
 });

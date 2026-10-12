@@ -61,14 +61,16 @@ export interface BriefJudgeCandidate {
   citationCount: number;
   /** How many tracked obligations it rolls up — 0 ⇒ a standalone observation. */
   relatedLoopCount: number;
-  /**
-   * The card is scheduled to surface later (a dated reminder set to appear on
-   * its day), so it passes the TIMING gate by construction — judge it on the
-   * other three.
-   */
+  /** Legacy timing hint; scheduling alone does not establish appropriate timing. */
   scheduledForLater: boolean;
-  /** It carries a concrete event/due moment — a signal it is time-bound, not a passing note. */
+  /** Legacy presence hint; prefer the explicit eventAt value when supplied. */
   hasEventAt: boolean;
+  /** Current run time in ISO 8601; optional for existing callers/fixtures. */
+  now?: string;
+  /** Source-supported event moment, not an invented timestamp for an estimate. */
+  eventAt?: string;
+  /** Earliest intended display time in ISO 8601, distinct from the event/deadline. */
+  nextShow?: string;
 }
 
 /** SHIP (persist and surface) or HOLD (do not create), with a one-line reason for the log. */
@@ -100,7 +102,7 @@ const BRIEF_JUDGE_TIMEOUT_MS = 45_000;
 const GATE_AWARENESS =
   '1. AWARENESS — it tells the user something they do not already have. HOLD if it merely reflects back an action the user just took or a note they just wrote/received themselves; a bare receipt ("noted", "scheduled", "you created X") adds nothing.';
 const GATE_TIMING =
-  "2. TIMING — it lands before it matters. HOLD if the moment it refers to has already passed. (A card scheduled to surface later passes this gate by construction — judge it on the other three.)";
+  "2. TIMING — assess the card at its intended display time: the later of current time and nextShow when supplied. Future scheduling does not automatically satisfy this gate. HOLD if the proposed display is too late to be useful, or if it asks the user to chase completion before the source's anchored expected window has elapsed without separate evidence of a problem or an earlier action requirement. Useful new information about a future plan, or justified preparation, can merit earlier display without demanding completion. Preserve approximate windows and uncertainty; do not invent missing dates or treat a chosen review time as the source deadline.";
 const GATE_CONSEQUENCE =
   "3. CONSEQUENCE — there is a real cost to NOT seeing it: a missed deadline, a shortfall, a broken commitment, a closing window. HOLD if nothing happens when it is ignored.";
 const GATE_SYNTHESIS =
@@ -158,13 +160,23 @@ export function buildBriefJudgeUserPrompt(c: BriefJudgeCandidate): string {
   if (c.body !== undefined && c.body.trim() !== "") {
     lines.push(`- body: ${c.body}`);
   }
+  if (c.now !== undefined) lines.push(`- current time: ${c.now}`);
+  if (c.eventAt !== undefined) lines.push(`- proposed eventAt: ${c.eventAt}`);
+  if (c.nextShow !== undefined) lines.push(`- earliest display nextShow: ${c.nextShow}`);
+  if (c.now !== undefined) {
+    const intendedDisplay =
+      c.nextShow !== undefined && Date.parse(c.nextShow) > Date.parse(c.now) ? c.nextShow : c.now;
+    lines.push(`- intended display time: ${intendedDisplay}`);
+  }
   lines.push(
     `- grounded in ${c.citationCount} cited document(s)`,
     `- rolls up ${c.relatedLoopCount} tracked obligation(s)`,
     c.scheduledForLater
-      ? "- scheduled to surface later (a dated reminder) — TIMING is satisfied by construction"
+      ? "- scheduled to surface later; timing still requires assessment"
       : "- would surface now",
-    c.hasEventAt ? "- carries a concrete event/due moment" : "- carries no specific moment",
+    c.hasEventAt
+      ? "- event time supplied; assess its relation to the proposed display"
+      : "- no exact event time supplied; preserve any stated approximate window",
     "",
     "Does this clear the bar?",
   );

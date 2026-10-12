@@ -24,8 +24,8 @@
  * restriction in their candidate SQL directly.
  */
 
-import type { LexicalRanker } from "./bm25.js";
-import type Database from "better-sqlite3";
+import { readRetrievalCoverage } from "./retrieval-coverage.js";
+import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
 type Db = Database.Database;
 import {
   createLogger,
@@ -67,6 +67,8 @@ import {
   resolveTemporalConfig,
 } from "./search-config.js";
 import { RefCountStage, type SearchStageContext } from "./stages/index.js";
+import type { LexicalRanker } from "./bm25.js";
+import type Database from "better-sqlite3";
 import type { TemporalLaneRequest } from "./temporal-lane.js";
 import type { SearchWorkerPool } from "../workers/search-pool.js";
 import type {
@@ -142,6 +144,11 @@ export interface SearchPipelineOptions {
 }
 
 export class SearchPipeline {
+  /** A completed published scan is not an assertion of exhaustive search recall. */
+  retrievalCoverage() {
+    return readRetrievalCoverage(this.indexDb, this.gatewayDb);
+  }
+
   private indexDb: Db;
   private embedder?: Embedder;
   private searchConfig?: SearchConfig;
@@ -590,7 +597,11 @@ export class SearchPipeline {
     // Merge the core's outputs back onto the shared context so the downstream
     // main-thread stages and the response mapping see them as if the stages had
     // run inline.
-    ctx.results = cg.results;
+    ctx.results = this.gatewayDb
+      ? cg.results.filter((hit) =>
+          isKnowledgeDocumentReadable(this.gatewayDb!, hit.documentId, hit.sourceId),
+        )
+      : cg.results;
     Object.assign(ctx.stageReports, cg.stageReports);
     if (ctx.stageReports.temporal) ctx.stageReports.temporal.eventMs = eventMs;
     if (cg.timing.bm25Ms !== undefined) ctx.timing.bm25Ms = cg.timing.bm25Ms;
@@ -617,49 +628,65 @@ export class SearchPipeline {
     // hydrated chunk text and fetched hashes, so neither path rereads index.db.
     // See #269 — retire the disabled-v2 agent fallback after the rollout proves reliable.
     const v2 = resolveSearchV2Config(this.searchConfig);
-    if (
-      options?.agentContext &&
-      v2.enabled &&
-      this.gatewayDb &&
-      (!authorization || authorization.graphContext === "unrestricted")
-    ) {
-      this.hydrateMetadataFields(ctx.results);
-      ctx.results = enrichAgentSearch(this.gatewayDb, ctx.results, {
-        ...v2,
-        cleanRefCounts: true,
-        limit: ctx.limit,
-        excludeDocumentIds: options.excludeDocumentIds,
-        indexedContentHashes: cg.contentHashByDoc,
-      });
-    } else {
-      ctx.results = dedupeByContentHashWith(cg.contentHashByDoc, ctx.results, ctx.limit);
-      this.hydrateMetadataFields(ctx.results);
+    const finalizeVisibleResults = () => {
+      // Rebuild graph context from authoritative rows after the last asynchronous
+      // enrichment. Never carry pre-await copies, paths or summaries forward.
+      ctx.results = ctx.results
+        .filter(
+          (hit) =>
+            !this.gatewayDb ||
+            isKnowledgeDocumentReadable(this.gatewayDb, hit.documentId, hit.sourceId),
+        )
+        .map(({ provenance: _provenance, ...hit }) => hit);
       if (
-        options?.graphContext &&
+        options?.agentContext &&
         v2.enabled &&
         this.gatewayDb &&
         (!authorization || authorization.graphContext === "unrestricted")
       ) {
-        // A singleton keeps each result's own root, score and snippet intact.
-        // The same bounded provenance reader discovers its off-pool copies
-        // and trails. Only the configured top results pay for graph traversal.
-        const db = this.gatewayDb;
-        const topN = Number.isFinite(v2.topN) ? Math.max(0, Math.min(10, Math.trunc(v2.topN))) : 0;
-        ctx.results = ctx.results.map((hit, rank) => {
-          if (rank >= topN) return hit;
-          return (
-            enrichAgentSearch(db, [hit], {
+        this.hydrateMetadataFields(ctx.results);
+        ctx.results = enrichAgentSearch(this.gatewayDb, ctx.results, {
+          ...v2,
+          cleanRefCounts: true,
+          limit: ctx.limit,
+          excludeDocumentIds: options.excludeDocumentIds,
+          indexedContentHashes: cg.contentHashByDoc,
+        });
+      } else {
+        ctx.results = dedupeByContentHashWith(cg.contentHashByDoc, ctx.results, ctx.limit);
+        this.hydrateMetadataFields(ctx.results);
+        if (
+          options?.graphContext &&
+          v2.enabled &&
+          this.gatewayDb &&
+          (!authorization || authorization.graphContext === "unrestricted")
+        ) {
+          // A singleton keeps each result's own root, score and snippet intact.
+          // The same bounded provenance reader discovers its off-pool copies
+          // and trails. Only the configured top results pay for graph traversal.
+          const db = this.gatewayDb;
+          const topN = Number.isFinite(v2.topN)
+            ? Math.max(0, Math.min(10, Math.trunc(v2.topN)))
+            : 0;
+          ctx.results = ctx.results.flatMap((hit, rank) => {
+            if (rank >= topN) return [hit];
+            // An empty enrichment is an intentional visibility exclusion.
+            return enrichAgentSearch(db, [hit], {
               ...v2,
               topN: 1,
               limit: 1,
               excludeDocumentIds: options.excludeDocumentIds,
               indexedContentHashes: cg.contentHashByDoc,
-            })[0] ?? hit
-          );
-        });
+            });
+          });
+        }
       }
+    };
+    finalizeVisibleResults();
+    if (query.includeBoundRow) {
+      await this.hydrateBoundRows(ctx.results);
+      finalizeVisibleResults();
     }
-    if (query.includeBoundRow) await this.hydrateBoundRows(ctx.results);
 
     const facets = buildFacets(ctx.results);
     ctx.timing.totalMs = Date.now() - startMs;

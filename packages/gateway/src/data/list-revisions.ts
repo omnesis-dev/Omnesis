@@ -78,6 +78,30 @@ export function installMutableListRevisions(db: Db): void {
       END;
 
   `);
+  installKnowledgeCoverageRevision(db);
+}
+
+/** Knowledge coverage changes share the existing cursor fence without resetting legacy rows. */
+export function installKnowledgeCoverageRevision(db: Db): void {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='knowledge_work' AND type='table'").get())
+    return;
+  for (const [table, prefix] of [
+    ["knowledge_work", "work"],
+    ["knowledge_discovery_coverage", "coverage"],
+  ] as const) {
+    for (const event of ["INSERT", "UPDATE", "DELETE"] as const) {
+      const row = event === "DELETE" ? "OLD" : "NEW";
+      const relevant =
+        prefix === "work" ? `${row}.subject_kind='source'` : `${row}.phase='organization'`;
+      db.exec(`CREATE TRIGGER IF NOT EXISTS mutable_list_knowledge_${prefix}_${event.toLowerCase()}
+        AFTER ${event} ON ${table} WHEN ${relevant} BEGIN
+        UPDATE mutable_list_revisions SET revision=revision+1 WHERE scope='cognition-coverage'; END;`);
+    }
+  }
+  db.exec(`CREATE TRIGGER IF NOT EXISTS mutable_list_knowledge_document_delete BEFORE DELETE ON documents
+    WHEN EXISTS(SELECT 1 FROM knowledge_work WHERE subject_kind='source' AND subject_id=OLD.id)
+      OR EXISTS(SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id=OLD.id)
+    BEGIN UPDATE mutable_list_revisions SET revision=revision+1 WHERE scope='cognition-coverage'; END;`);
 }
 
 /** Install the collector-membership fence introduced by schema migration 139. */

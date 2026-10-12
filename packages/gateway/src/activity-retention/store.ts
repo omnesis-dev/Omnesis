@@ -156,7 +156,24 @@ function pruneCognitionDecisions(db: Db, cutoff: number, limit: number): number 
           )`,
       )
       .run(cutoff, limit - dropped).changes;
-    return dropped + stripped;
+    const used = dropped + stripped;
+    if (
+      used >= limit ||
+      !db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_decision_inputs'",
+        )
+        .get()
+    )
+      return used;
+    const inputs = db
+      .prepare<[number, number]>(
+        `DELETE FROM knowledge_decision_inputs WHERE decision_id IN (
+      SELECT decision_id FROM knowledge_decision_inputs
+      WHERE created_at<? ORDER BY created_at,decision_id LIMIT ?)`,
+      )
+      .run(cutoff, limit - used).changes;
+    return used + inputs;
   })();
 }
 

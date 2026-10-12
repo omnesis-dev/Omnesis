@@ -1,6 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { upsertConversationDocument } from "./sources/omnesis-chat/document-writer.js";
+import type { ConversationEvidenceProjection } from "./sources/omnesis-chat/evidence-projection.js";
+import {
+  assertPersonProfileReceipt,
+  getPersonAnnotation as getWithdrawalPersonAnnotation,
+  type PersonProfileBudget,
+} from "./brain/storage/person-annotations.js";
+import { KnowledgeStorageError } from "./brain/knowledge/types.js";
+import type { KnowledgeCanonicalFence } from "./brain/knowledge/canonical-fence.js";
+import { withdrawKnowledgeOwner } from "./brain/knowledge/owner-withdrawal.js";
+
+import {
+  knowledgeGateFromCall,
+  directKnowledgeGate,
+  type KnowledgeWriteGate,
+} from "./brain/knowledge/writer.js";
+
 import { promoteSourceWireContract } from "./data/repositories/SourceWireContractRepository.js";
 import { replaceSourceSyncIssues } from "./data/repositories/SourceSyncIssueRepository.js";
 import type {
@@ -54,7 +71,6 @@ import {
  * extending both this interface and the WriteOps registry.
  */
 
-import type { AccountDescriptor, SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import { advanceOccWatermark } from "./data/occ-materialized.js";
 import type { PairingGenerationFence } from "./data/pairing-generation-fence.js";
 import { withPairingGenerationFence } from "./data/pairing-generation-fence.js";
@@ -505,7 +521,6 @@ import {
   createDocAnnotationSuperseding,
   supersedeDocAnnotationBy,
   updateDocAnnotation,
-  deleteDocAnnotation,
   invalidateAnnotationsForDoc,
   cascadeAnnotationPrivacyDelete,
   invalidateBriefClaimsForDoc,
@@ -514,7 +529,6 @@ import {
   createPersonAnnotationSuperseding,
   supersedePersonAnnotationBy,
   revisePersonAnnotation,
-  deletePersonAnnotation,
   invalidatePersonAnnotationsForDoc,
   cascadePersonAnnotationPrivacyDelete,
   mutateWithConsumptionDependencies,
@@ -658,7 +672,7 @@ import type {
   ExtractedVocabularyDocument,
 } from "./transcribe/vocabulary/types.js";
 
-export interface WriteGate {
+export interface WriteGate extends KnowledgeWriteGate {
   advanceTranscriptionVocabularyRebuild(
     settings: VocabularySettings,
   ): Promise<{ ready: boolean; worked: boolean }>;
@@ -1587,11 +1601,9 @@ export interface WriteGate {
     now: number,
   ): Promise<EnqueueCognitionRunResult>;
   /** Atomically claim due `pending` runs (bumps attempts). */
-  claimDueCognitionRuns(opts: {
-    now: number;
-    limit?: number;
-    maxAttempts?: number;
-  }): Promise<ClaimedCognitionRun[]>;
+  claimDueCognitionRuns(
+    opts: Parameters<typeof claimDueCognitionRuns>[1],
+  ): Promise<ClaimedCognitionRun[]>;
   /**
    * Settle one attempt: mark the row completed/failed and fold the
    * attempt's usage into its (day, mechanism, model) spend bucket, in
@@ -1759,25 +1771,29 @@ export interface WriteGate {
   createPersonAnnotation(
     input: CreatePersonAnnotationInput,
     now: number,
+    budget?: PersonProfileBudget,
   ): Promise<PersonAnnotationRow>;
   /** Atomic create-and-supersede — the person-store sibling of `createDocAnnotationSuperseding`. */
   createPersonAnnotationSuperseding(
     input: CreatePersonAnnotationInput,
-    supersedesId: string,
+    supersedesId: string | readonly string[],
     now: number,
+    budget?: PersonProfileBudget,
   ): Promise<{ annotation: PersonAnnotationRow; superseded: boolean }>;
   /** Pure belief retirement — the person-store sibling of `supersedeDocAnnotationBy`. */
   supersedePersonAnnotationBy(
     id: string,
     supersededById: string,
     now: number,
+    budget?: PersonProfileBudget,
   ): Promise<{ superseded: boolean }>;
   revisePersonAnnotation(
     id: string,
     patch: UpdatePersonAnnotationPatch,
     now: number,
+    budget?: PersonProfileBudget,
   ): Promise<boolean>;
-  retractPersonAnnotation(id: string, now: number): Promise<boolean>;
+  retractPersonAnnotation(id: string, now: number, budget?: PersonProfileBudget): Promise<boolean>;
   invalidatePersonAnnotationsForDoc(
     docId: string,
     now: number,
@@ -2032,9 +2048,15 @@ export interface WriteGate {
    * `sourceDocId` with the supplied citation set. Type A:
    * conversations as first-class documents.
    */
+  upsertConversationDocument(
+    doc: DocumentInput,
+    projection: ConversationEvidenceProjection,
+    citations: ReadonlyArray<ConversationCitationInput>,
+  ): Promise<void>;
   upsertConversationCitations(
     sourceDocId: string,
     citations: ReadonlyArray<ConversationCitationInput>,
+    evidenceProjection?: ConversationEvidenceProjection,
   ): Promise<UpsertConversationCitationsResult>;
 
   // ── omnesis-notes ─────────────────────────────────────────────────
@@ -2157,6 +2179,7 @@ import {
   type WriterOpName,
   type WriterReturn,
 } from "./scheduler/writer-handlers.js";
+import type { AccountDescriptor, SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
 /**
  * Dispatch function signature — takes an op name + positional args and
@@ -2220,8 +2243,30 @@ function canonicalizerRegistryForWrite(
     : buildSafeUrlCanonicalizerRegistry(specs);
 }
 
+const gateCalls = new WeakMap<WriteGate, WriterCallFn>();
+export function maintenanceCanonicalWriteGate(
+  gate: WriteGate,
+  fence: () => KnowledgeCanonicalFence,
+): WriteGate {
+  const call = gateCalls.get(gate);
+  if (!call) throw new Error("Maintenance requires a registered writer gate");
+  return writeGateFromCall(
+    async <K extends WriterOpName>(
+      op: K,
+      args: WriterArgs<K>,
+    ): Promise<Awaited<WriterReturn<K>>> => {
+      const scope = fence();
+      const result = await call("knowledge.canonicalMutation", [scope, op, args as unknown[]]);
+      if (!result.ok) throw new KnowledgeStorageError(result.code, result.message);
+      scope.owners = result.owners;
+      scope.collections = result.collections;
+      return result.value as Awaited<WriterReturn<K>>;
+    },
+  );
+}
 export function writeGateFromCall(call: WriterCallFn): WriteGate {
-  return {
+  const gate: WriteGate = {
+    ...knowledgeGateFromCall(call),
     upsertDocuments: (
       docs,
       canonicalizers,
@@ -2595,14 +2640,16 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     deleteDocAnnotation: (id, now) => call("cognition.annotationDelete", [id, now]),
     invalidateAnnotationsForDoc: (docId, now) =>
       call("cognition.annotationInvalidate", [docId, now]),
-    createPersonAnnotation: (input, now) => call("cognition.personAnnotationCreate", [input, now]),
-    createPersonAnnotationSuperseding: (input, supersedesId, now) =>
-      call("cognition.personAnnotationCreateSuperseding", [input, supersedesId, now]),
-    supersedePersonAnnotationBy: (id, supersededById, now) =>
-      call("cognition.personAnnotationSupersede", [id, supersededById, now]),
-    revisePersonAnnotation: (id, patch, now) =>
-      call("cognition.personAnnotationRevise", [id, patch, now]),
-    retractPersonAnnotation: (id, now) => call("cognition.personAnnotationRetract", [id, now]),
+    createPersonAnnotation: (input, now, budget) =>
+      call("cognition.personAnnotationCreate", [input, now, budget]),
+    createPersonAnnotationSuperseding: (input, supersedesId, now, budget) =>
+      call("cognition.personAnnotationCreateSuperseding", [input, supersedesId, now, budget]),
+    supersedePersonAnnotationBy: (id, supersededById, now, budget) =>
+      call("cognition.personAnnotationSupersede", [id, supersededById, now, budget]),
+    revisePersonAnnotation: (id, patch, now, budget) =>
+      call("cognition.personAnnotationRevise", [id, patch, now, budget]),
+    retractPersonAnnotation: (id, now, budget) =>
+      call("cognition.personAnnotationRetract", [id, now, budget]),
     invalidatePersonAnnotationsForDoc: (docId, now) =>
       call("cognition.personAnnotationInvalidate", [docId, now]),
     cascadePersonAnnotationPrivacyDelete: (deletedDocIds) =>
@@ -2706,8 +2753,10 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("cognition.notesEdit", [oldText, newText, opts]),
     wipeCognitionNotes: (now) => call("cognition.notesWipe", [now]),
 
-    upsertConversationCitations: (sourceDocId, citations) =>
-      call("omnesisChat.upsertConversationCitations", [sourceDocId, citations]),
+    upsertConversationDocument: (doc, projection, citations) =>
+      call("omnesisChat.upsertConversationDocument", [doc, projection, citations]),
+    upsertConversationCitations: (sourceDocId, citations, projection) =>
+      call("omnesisChat.upsertConversationCitations", [sourceDocId, citations, projection]),
 
     appendNoteEntry: (entry, audit, browserAuthority) =>
       call("notes.appendEntry", [entry, audit, browserAuthority]),
@@ -2731,6 +2780,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     nearDupGenerationSweepStep: (config) => call("nearDup.generationSweepStep", [config]),
     markNearDupDfDirty: () => call("nearDup.markDfDirty", []),
   };
+  gateCalls.set(gate, call);
+  return gate;
 }
 
 /**
@@ -2739,7 +2790,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
  * writer invariant.
  */
 export function directWriteGate(db: Db): WriteGate {
-  return {
+  const gate: WriteGate = {
+    ...directKnowledgeGate(db),
     upsertDocuments: async (
       docs,
       canonicalizers,
@@ -3244,7 +3296,9 @@ export function directWriteGate(db: Db): WriteGate {
       supersedeDocAnnotationBy(db, id, supersededById, now),
     updateDocAnnotation: async (id, patch, now) => updateDocAnnotation(db, id, patch, now),
     deleteDocAnnotation: async (id, now) =>
-      retractAnnotationWithDependentRechecks(db, "doc", id, now, () => deleteDocAnnotation(db, id)),
+      retractAnnotationWithDependentRechecks(db, "doc", id, now, () =>
+        withdrawKnowledgeOwner(db, "doc_annotation", id, now),
+      ),
     invalidateAnnotationsForDoc: async (docId, now) => invalidateAnnotationsForDoc(db, docId, now),
     cascadeAnnotationPrivacyDelete: async (deletedDocIds) =>
       cascadeAnnotationPrivacyDelete(db, deletedDocIds),
@@ -3253,16 +3307,26 @@ export function directWriteGate(db: Db): WriteGate {
       cascadeBriefClaimPrivacyDelete(db, deletedDocIds),
     cascadeOpenLoopPrivacyDelete: async (deletedDocIds) =>
       cascadeOpenLoopPrivacyDeleteWithMirrors(db, deletedDocIds),
-    createPersonAnnotation: async (input, now) => createPersonAnnotation(db, input, now),
-    createPersonAnnotationSuperseding: async (input, supersedesId, now) =>
-      createPersonAnnotationSuperseding(db, input, supersedesId, now),
-    supersedePersonAnnotationBy: async (id, supersededById, now) =>
-      supersedePersonAnnotationBy(db, id, supersededById, now),
-    revisePersonAnnotation: async (id, patch, now) => revisePersonAnnotation(db, id, patch, now),
-    retractPersonAnnotation: async (id, now) =>
-      retractAnnotationWithDependentRechecks(db, "person", id, now, () =>
-        deletePersonAnnotation(db, id),
-      ),
+    createPersonAnnotation: async (input, now, budget) =>
+      createPersonAnnotation(db, input, now, budget),
+    createPersonAnnotationSuperseding: async (input, supersedesId, now, budget) =>
+      createPersonAnnotationSuperseding(db, input, supersedesId, now, budget),
+    supersedePersonAnnotationBy: async (id, supersededById, now, budget) =>
+      supersedePersonAnnotationBy(db, id, supersededById, now, budget),
+    revisePersonAnnotation: async (id, patch, now, budget) =>
+      revisePersonAnnotation(db, id, patch, now, budget),
+    retractPersonAnnotation: async (id, now, budget) =>
+      retractAnnotationWithDependentRechecks(db, "person", id, now, () => {
+        const owner = getWithdrawalPersonAnnotation(db, id);
+        if (budget) {
+          if (!owner)
+            throw new Error(
+              "Person profile changed; reread the complete profile before reconciling",
+            );
+          assertPersonProfileReceipt(db, owner.personId, budget);
+        }
+        return withdrawKnowledgeOwner(db, "person_annotation", id, now);
+      }),
     invalidatePersonAnnotationsForDoc: async (docId, now) =>
       invalidatePersonAnnotationsForDoc(db, docId, now),
     cascadePersonAnnotationPrivacyDelete: async (deletedDocIds) =>
@@ -3366,8 +3430,10 @@ export function directWriteGate(db: Db): WriteGate {
       editCognitionNotes(db, oldText, newText, opts),
     wipeCognitionNotes: async (now) => wipeCognitionNotes(db, now),
 
-    upsertConversationCitations: async (sourceDocId, citations) =>
-      upsertConversationCitations(db, sourceDocId, citations),
+    upsertConversationDocument: async (doc, projection, citations) =>
+      upsertConversationDocument(db, doc, projection, citations),
+    upsertConversationCitations: async (sourceDocId, citations, projection) =>
+      upsertConversationCitations(db, sourceDocId, citations, projection),
 
     appendNoteEntry: async (entry, audit, browserAuthority) =>
       insertNoteEntry(db, entry, audit, browserAuthority),
@@ -3396,4 +3462,18 @@ export function directWriteGate(db: Db): WriteGate {
       markNearDupDfDirty(db);
     },
   };
+  gateCalls.set(
+    gate,
+    async <K extends WriterOpName>(
+      op: K,
+      args: WriterArgs<K>,
+    ): Promise<Awaited<WriterReturn<K>>> => {
+      const handler = (
+        writerHandlers as unknown as Record<string, (db: Db, ...args: unknown[]) => unknown>
+      )[op];
+      if (!handler) throw new Error("Unsupported direct writer operation");
+      return handler(db, ...args) as Awaited<WriterReturn<K>>;
+    },
+  );
+  return gate;
 }

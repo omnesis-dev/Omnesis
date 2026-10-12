@@ -2521,6 +2521,32 @@ const brainAnnotationBasisCeilings = z
 
 const brainAnnotations = z
   .object({
+    personProfile: z
+      .object({
+        maxFacts: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Maximum active facts in a person's compact profile. Consolidate or replace lower-value facts before adding more.",
+          ),
+        maxCharacters: z
+          .number()
+          .int()
+          .min(500)
+          .max(20000)
+          .optional()
+          .describe(
+            "Maximum total claim-text characters in a person's profile; evidence and retired history do not consume this budget.",
+          ),
+      })
+      .strict()
+      .optional()
+      .describe(
+        "Whole-person profile budget, enforced across merged identities and concurrent writes. Oversized profiles may be repaired by shrinking them.",
+      ),
     enabled: z
       .boolean()
       .describe(
@@ -2708,14 +2734,128 @@ const brainDigest = z
   })
   .strict();
 
+/** Bounded maintenance of grounded synthesis; shares the existing Brain gate. */
+const brainKnowledge = z
+  .object({
+    immediateThreshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe("Urgency score that schedules synthesis immediately.")
+      .optional(),
+    soonThreshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe("Urgency score that schedules synthesis in the soon tier.")
+      .optional(),
+    soonDelay: duration.describe("Maximum debounce for the soon maintenance tier.").optional(),
+    routineDelay: duration
+      .describe("Maximum debounce for routine maintenance; floored to the soon delay.")
+      .optional(),
+    recentWindowDays: z
+      .number()
+      .int()
+      .min(1)
+      .max(3650)
+      .describe(
+        "Recent initial-inventory window in days; older inventory follows historical review controls.",
+      )
+      .optional(),
+    rootMaxChars: z
+      .number()
+      .int()
+      .min(256)
+      .max(32000)
+      .describe("Hard character budget for the tagged root wiki.")
+      .optional(),
+    maxSeeds: z
+      .number()
+      .int()
+      .min(1)
+      .max(512)
+      .describe("Maximum evidence changes considered in one maintenance plan.")
+      .optional(),
+    maxVisitedPerSeed: z
+      .number()
+      .int()
+      .min(1)
+      .max(4096)
+      .describe("Maximum dependency region explored per evidence change.")
+      .optional(),
+    maxFrontierChars: z
+      .number()
+      .int()
+      .min(4096)
+      .max(1048576)
+      .describe(
+        "Maximum JSON characters in a maintenance frontier response; oversized nodes require an explicit fetch.",
+      )
+      .optional(),
+    maxFrontierNodes: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum synthesis nodes offered in one frontier tool response.")
+      .optional(),
+    cascadeBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .describe("Maximum deterministic cascade steps per writer slice.")
+      .optional(),
+    discoveryBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum new evidence records considered in one discovery slice.")
+      .optional(),
+    bootstrapBatchSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(512)
+      .describe("Maximum historical records inventoried per resumable bootstrap slice.")
+      .optional(),
+    maxReviewsPerTick: z
+      .number()
+      .int()
+      .min(1)
+      .max(256)
+      .describe("Maximum synthesis review candidates considered per scheduling tick.")
+      .optional(),
+    maxReviewInterval: duration
+      .describe("Maximum time since meaningful verification before a review is required.")
+      .optional(),
+    checkpointLead: duration
+      .describe("How far ahead of a checkpoint proactive review becomes due.")
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.soonThreshold ?? 0.4) > (value.immediateThreshold ?? 0.8))
+      ctx.addIssue({
+        code: "custom",
+        path: ["soonThreshold"],
+        message: "Soon urgency threshold must not exceed the immediate threshold.",
+      });
+  });
+
 const brain = z
   .object({
+    knowledge: brainKnowledge
+      .describe("Grounded synthesis, discovery and maintenance scheduling.")
+      .optional(),
     workerConcurrency: z
       .number()
       .int()
       .min(1)
+      .max(32)
       .describe(
-        "Agent-run-queue workers draining in parallel. Non-daily runs are serialized regardless of this knob.",
+        "Concurrent region-fenced knowledge maintenance runs (default 4, maximum 32). Root and legacy runs execute exclusively.",
       )
       .optional(),
     conversationDebounce: duration
@@ -3148,12 +3288,30 @@ const inference = z
       .optional(),
     codex: z
       .object({
+        turnIdleTimeoutMs: z
+          .number()
+          .int()
+          .min(1000)
+          .max(3600000)
+          .describe(
+            "Maximum Codex model-stream silence in milliseconds while awaiting output, excluding Omnesis tool execution. Default 300000 (five minutes); 1000–3600000. Restart the gateway after changing.",
+          )
+          .optional(),
         interactivePoolSize: z
           .number()
           .int()
           .min(0)
           .describe(
-            "Concurrent top-level Codex agent turns. Default 3; 0 shares the serialized background runtime. Restart the gateway after changing.",
+            "Concurrent interactive Codex agent turns. Default 3; 0 uses the owner runtime. Restart the gateway after changing.",
+          )
+          .optional(),
+        backgroundPoolSize: z
+          .number()
+          .int()
+          .min(1)
+          .max(32)
+          .describe(
+            "Concurrent background Codex agent turns, independent of interactive and nested calls. Default 4; maximum 32. Restart the gateway after changing.",
           )
           .optional(),
         inferencePoolSize: z

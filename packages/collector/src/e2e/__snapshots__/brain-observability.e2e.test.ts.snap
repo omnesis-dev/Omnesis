@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`Brain Bench — the golden snapshot > one datum-intake arc leaves exactly the state the golden records 1`] = `
+exports[`Brain Bench — the golden snapshot > one source-interpretation arc leaves exactly the state the golden records 1`] = `
 {
   "briefs": [
     {
@@ -87,8 +87,8 @@ exports[`Brain Bench — the golden snapshot > one datum-intake arc leaves exact
   "runs": [
     {
       "attempts": 1,
-      "dedupeKey": "data:doc:doc#2",
-      "kind": "data",
+      "dedupeKey": null,
+      "kind": "synthesis",
       "status": "completed",
     },
     {

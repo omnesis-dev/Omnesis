@@ -83,7 +83,6 @@ describe("runConversationBackfill", () => {
       setFlag: () => {
         flagSet = true;
       },
-      lookupDocId: (p, s, e) => findConversationDocId(db, p, s, e),
     });
 
     expect(result).toEqual({ upserted: 2, skipped: 0, failed: 0 });
@@ -103,7 +102,6 @@ describe("runConversationBackfill", () => {
       setFlag: () => {
         flagSet = true;
       },
-      lookupDocId: () => null,
     });
 
     expect(result.upserted).toBeNull();
@@ -119,7 +117,6 @@ describe("runConversationBackfill", () => {
       setFlag: () => {
         flagSet = true;
       },
-      lookupDocId: () => null,
     });
     expect(result).toEqual({ upserted: 0, skipped: 0, failed: 0 });
     expect(flagSet).toBe(true);
@@ -136,7 +133,6 @@ describe("runConversationBackfill", () => {
       setFlag: () => {
         flagSet = true;
       },
-      lookupDocId: (p, s, e) => findConversationDocId(db, p, s, e),
     });
     expect(result.failed).toBe(1);
     expect(result.upserted).toBe(1);
@@ -152,7 +148,6 @@ describe("runConversationBackfill", () => {
       setFlag: () => {
         flagSet = true;
       },
-      lookupDocId: (p, s, e) => findConversationDocId(db, p, s, e),
     });
     expect(result).toEqual({ upserted: 0, skipped: 1, failed: 0 });
     // Empty conversation must not produce a document.

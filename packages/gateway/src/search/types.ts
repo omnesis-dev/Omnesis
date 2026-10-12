@@ -249,9 +249,9 @@ export interface SearchStageReport {
   effectiveK?: number;
   /** ms spent in `embedder.embedQuery` (vector stage only). */
   embedMs?: number;
-  /** ms spent in the HNSW search + JOIN SQL (vector stage only). */
+  /** ms spent in vector search and its SQLite reads (vector stage only). */
   sqlMs?: number;
-  /** Engine that ranked: "hnsw" for the vector stage; "memory" or "fts5" for BM25. */
+  /** Engine that ranked: "hnsw" or bounded "exact" for the vector stage; "memory" or "fts5" for BM25. */
   engine?: string;
   /** Tokens dropped from BM25 MATCH for exceeding the common-token threshold. */
   droppedTokens?: string[];

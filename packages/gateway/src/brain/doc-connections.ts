@@ -50,6 +50,7 @@ export function readDocConnections(
         claimType: a.claimType,
         claim: a.claimText,
         confidence: a.confidence,
+        verificationState: a.verificationState ?? "unverified",
         evidenceDocId: a.evidenceDocId,
       }))
     : [];

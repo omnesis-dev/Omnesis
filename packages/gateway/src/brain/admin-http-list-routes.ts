@@ -102,6 +102,11 @@ export function mountCognitionListAdminRoutes(
     startBootstrap?: ((now: number) => Promise<number>) | undefined;
     /** Shared cache for the expensive month-by-month scan. */
     timelineProbe?: BootstrapTimelineProbe | undefined;
+    knowledgeTimelineProbe?:
+      | import("./bootstrap-status.js").CachedScanProbe<
+          import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryTimeline
+        >
+      | undefined;
     /** Shared cache for the expensive backlog probe. */
     backlogProbe?: BootstrapBacklogProbe | undefined;
   },
@@ -183,6 +188,17 @@ export function mountCognitionListAdminRoutes(
   // Expensive in exactly the way the backlog is, and cached the same way.
   app.get("/admin/brain/bootstrap/timeline", scope.admin(), async (c) => {
     requireVisible();
+    const settings = options.getBootstrapSettings?.();
+    if (settings?.knowledge) {
+      const probe = options.knowledgeTimelineProbe;
+      if (!probe) throw new NotFoundError("Not found");
+      const value = c.req.query("cached") === "1" ? probe.peek() : await probe.get();
+      return c.json(
+        value
+          ? { ...value, pending: false, computedAt: iso(value.computedAt) }
+          : { mode: "knowledge", pending: true },
+      );
+    }
     const probe = options.timelineProbe;
     if (!probe) throw new NotFoundError("Not found");
     if (c.req.query("cached") === "1") {
@@ -199,6 +215,8 @@ export function mountCognitionListAdminRoutes(
     requireVisible();
     const settings = options.getBootstrapSettings?.();
     if (!settings) throw new NotFoundError("Not found");
+    if (settings.knowledge)
+      return c.json(query.knowledgeBootstrapStatus(settings, now(), options.getBudgetSettings?.()));
     return c.json(bootstrapStatusDto(query.bootstrapStatus(settings, now())));
   });
 
@@ -211,6 +229,17 @@ export function mountCognitionListAdminRoutes(
   // `computedAt` so a client dates the figure instead of implying it is live.
   app.get("/admin/brain/bootstrap/backlog", scope.admin(), async (c) => {
     requireVisible();
+    const settings = options.getBootstrapSettings?.();
+    if (settings?.knowledge) {
+      const probe = options.knowledgeTimelineProbe;
+      if (!probe) throw new NotFoundError("Not found");
+      const value = c.req.query("cached") === "1" ? probe.peek() : await probe.get();
+      return c.json(
+        value
+          ? { ...value, pending: false, computedAt: iso(value.computedAt) }
+          : { mode: "knowledge", pending: true },
+      );
+    }
     const probe = options.backlogProbe;
     if (!probe) throw new NotFoundError("Not found");
     // `cached=1` returns only what is already in hand — the polling half of a
@@ -283,6 +312,7 @@ export function mountCognitionListAdminRoutes(
         completionTokens: row.completionTokens,
         lastProgressAt: iso(row.lastProgressAt),
         status: row.status,
+        ...(row.unit ? { unit: row.unit, costAttribution: row.costAttribution } : {}),
       })),
       pageInfo: listPageInfo(hasMore, limit, nextCursor),
     });

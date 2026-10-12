@@ -33,6 +33,7 @@ import {
   setIndexEmbedModel,
   wipeAndRecreateVectorIndex,
   getWatermark,
+  setWatermark,
   getIndexedDocumentCount,
   deleteIndexBySource,
   deleteChunksByDocumentBatch,
@@ -641,6 +642,18 @@ async function handleInit(init: IndexerInit): Promise<void> {
       betweenPageSleepMs: init.indexerBetweenPageSleepMs,
       dbWriteBatchSize: init.dbWriteBatchSize,
       indexWriteOptions: { usearch: usearchHandle },
+      onPageCommitted: () => {
+        const pendingDeletes = preparePendingVectorDeletes(
+          indexDb,
+          usearchHandle,
+          PENDING_VECTOR_DELETE_BATCH,
+        );
+        const error = persistGraphAfterSourcePurges("committed index page", pendingDeletes);
+        if (error) throw new Error(`index publication failed: ${error}`);
+        // Page writes already update materialized counts atomically. Rebuilding
+        // all per-source date ranges here would scan the corpus on every page;
+        // the existing phase-end refresh owns that full reconciliation.
+      },
     });
 
     log(
@@ -791,6 +804,8 @@ async function handleInit(init: IndexerInit): Promise<void> {
           // The main-thread search handle reads the on-disk graph. Persist each
           // boot phase before starting another potentially long scan.
           saveError = persistGraphAfterSourcePurges("post-initial", preparedVectorDeletes);
+          if (!saveError && result.scannedThrough)
+            setWatermark(indexDb, "published_scan_boundary", result.scannedThrough);
         } catch (err) {
           postJobUpdate("indexer.cycle", "errored", {
             trigger: "boot",
@@ -1073,6 +1088,7 @@ async function runIndexCycle(trigger: "timer" | "wake"): Promise<void> {
         preparedVectorDeletes,
       );
       if (saveError) throw new Error(`index publication failed: ${saveError}`);
+      if (r.scannedThrough) setWatermark(indexDb, "published_scan_boundary", r.scannedThrough);
       if (r.indexed > 0 || r.updated > 0) {
         try {
           refreshIndexStats(indexDb);

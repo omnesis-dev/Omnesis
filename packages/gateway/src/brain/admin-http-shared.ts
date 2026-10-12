@@ -238,6 +238,7 @@ export function decisionDto(
     createdAt: iso(decision.createdAt),
     request: parseJsonOrNull(decision.requestJson),
     response: parseJsonOrNull(decision.responseJson),
+    inputInspection: decision.purpose === "record-check",
   };
 }
 

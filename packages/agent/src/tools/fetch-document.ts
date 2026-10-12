@@ -3,7 +3,7 @@
 
 /**
  * `fetch_document` — pull the full body of a document the agent already
- * surfaced via `search_documents`.
+ * surfaced via context or another retrieval tool.
  *
  * The agent uses this when a snippet isn't enough — usually one or two times
  * per turn, on the most relevant hits. The returned `document` payload is
@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { ToolResult } from "@omnesis/core";
 
 import type { ToolContext, ToolHandle } from "../backend.js";
+import type { CitationReads } from "./citation-reads.js";
 import type { DocumentPort } from "./types.js";
 
 export const fetchDocumentArgsSchema = z.object({
@@ -23,8 +24,23 @@ export const fetchDocumentArgsSchema = z.object({
     .string()
     .min(1)
     .describe(
-      "Document ID returned by a prior search_documents call (the `documentId` " +
-        "field on a result item).",
+      "Opaque documentId supplied in authorized context or returned by a retrieval tool. " +
+        "Copy it exactly; do not add a prefix. An alias is allowed only when explicitly supported by this tool description.",
+    ),
+  contentOffset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe("Optional character offset for a bounded body read; use with maxContentChars."),
+  maxContentChars: z
+    .number()
+    .int()
+    .min(1)
+    .max(65536)
+    .optional()
+    .describe(
+      "Optional body character limit. Partial reads can be cited only with an exact quote from the returned span; fetch another span when needed.",
     ),
   includeNeighbors: z
     .boolean()
@@ -40,6 +56,7 @@ export type FetchDocumentArgs = z.infer<typeof fetchDocumentArgsSchema>;
 
 export interface FetchDocumentToolDeps {
   port: DocumentPort;
+  citationReads?: CitationReads;
 }
 
 export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle {
@@ -49,7 +66,10 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
       "Fetch the full body of a previously surfaced document. Returns the " +
       "document plus, if asked, its neighbors in the reference graph. Call " +
       "this when a search snippet is insufficient — don't fetch every " +
-      "candidate, only the ones likely to answer the question.",
+      "candidate, only the ones likely to answer the question." +
+      (deps.port.supportsKnowledgeAliases
+        ? " Also accepts wiki:<pageId> links from maintained context. Copy a wiki:<pageId> alias only from an actual wiki link. A knowledgeContext overlay separates claim provenance from navigation; its returned documentIds are opaque corpus IDs: copy them exactly into fetch tools, without adding wiki: or any other prefix. Missing or stale projections are unavailable, so use search instead."
+        : ""),
     schema: fetchDocumentArgsSchema,
     summarize(args: unknown): string | undefined {
       if (!args || typeof args !== "object") return undefined;
@@ -57,7 +77,7 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
       if (typeof a.documentId !== "string") return undefined;
       return a.documentId.slice(0, 24);
     },
-    async invoke(rawArgs: unknown, _ctx: ToolContext): Promise<ToolResult> {
+    async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = fetchDocumentArgsSchema.safeParse(rawArgs);
       if (!parsed.success) {
         return {
@@ -78,6 +98,39 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
             message: `no document with id ${args.documentId}`,
           };
         }
+        let document = r.document;
+        let full = true;
+        let observed: string | undefined;
+        if (
+          document &&
+          typeof document === "object" &&
+          "content" in document &&
+          typeof document.content === "string"
+        ) {
+          const offset = args.contentOffset ?? 0;
+          const limit =
+            args.maxContentChars ??
+            (args.contentOffset === undefined ? document.content.length : 65536);
+          observed = document.content.slice(offset, offset + limit);
+          full = offset === 0 && observed.length === document.content.length;
+          if (!full)
+            document = {
+              ...document,
+              content: observed,
+              contentRange: {
+                offset,
+                returnedCharacters: observed.length,
+                totalCharacters: document.content.length,
+                truncated: true,
+              },
+            };
+        }
+        deps.citationReads?.record(
+          ctx,
+          r,
+          full,
+          full ? undefined : { offset: args.contentOffset ?? 0, length: observed?.length ?? 0 },
+        );
         // Port's `document` is typed as `unknown` so adapters can return
         // any shape; the protocol's `docBodySchema` is permissive
         // (passthrough on extra fields, every field optional except `id`).
@@ -85,7 +138,7 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
         return {
           kind: "document",
           ref: r.ref,
-          document: r.document as ToolResult & { kind: "document" } extends {
+          document: document as ToolResult & { kind: "document" } extends {
             document: infer D;
           }
             ? D

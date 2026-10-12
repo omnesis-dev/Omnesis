@@ -46,6 +46,9 @@ let db: Db;
 
 beforeEach(() => {
   db = new Database(":memory:");
+  db.exec(
+    "CREATE TABLE people(id TEXT PRIMARY KEY, merged_into TEXT); INSERT INTO people(id) VALUES ('per_1')",
+  );
   createAnnotationStorageTables(db);
   createPersonAnnotationStorageTables(db);
   createBriefsStorageTables(db);

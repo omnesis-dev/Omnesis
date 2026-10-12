@@ -44,6 +44,7 @@ export default defineConfig({
       "scripts/text-files.test.mjs",
       "scripts/typecheck-lanes.test.mjs",
       "scripts/dev-scripts-smoke.test.mjs",
+      "scripts/instance-token.test.mjs",
       "scripts/ios-identity.test.mjs",
       "scripts/gateway-boot-budget.test.mjs",
       "scripts/run-e2e.test.mjs",

@@ -185,7 +185,16 @@ export interface EntailVerdict {
  * verdict silently blocking or approving writes.
  */
 export interface EntailCapability {
-  verify(input: { claim: string; evidence: string }): Promise<EntailVerdict>;
+  verify(input: {
+    claim: string;
+    evidence: string;
+    /** Untrusted interpretation constraints; never additional evidence. */
+    context?: string;
+    /** Internal proof protocols; omitted uses the default contextual or scalar verifier. */
+    assessment?: "annotation_atomic" | "answer_segments";
+    /** Prevent release and further attempts after cancellation; transport may finish in flight. */
+    signal?: AbortSignal;
+  }): Promise<EntailVerdict>;
   dispose(): Promise<void> | void;
 }
 

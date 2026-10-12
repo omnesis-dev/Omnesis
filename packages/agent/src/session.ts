@@ -32,6 +32,7 @@ import {
 } from "@omnesis/core";
 
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE, OUTPUT_TRUNCATED_MESSAGE } from "./turn-outcome.js";
+import { FINALIZATION_DRAFT_LIMIT, type TurnFinalizerFactory } from "./finalization.js";
 import type {
   AssistantPart,
   ChatBackend,
@@ -64,6 +65,8 @@ const CANCELED_TRANSCRIPT_MESSAGE: Record<CancelCause, string> = {
 };
 
 export interface SessionOptions {
+  /** Host-supplied pre-release policy; omitted sessions retain normal streaming. */
+  finalizer?: TurnFinalizerFactory;
   sessionId: string;
   backend: ChatBackend;
   tools: ReadonlyArray<ToolHandle>;
@@ -130,6 +133,7 @@ export class AgentSession {
   readonly sessionId: string;
 
   private readonly backend: ChatBackend;
+  private readonly finalizer: TurnFinalizerFactory | undefined;
   private readonly tools: ReadonlyArray<ToolHandle>;
   private readonly systemPrompt: string;
   private readonly idGen: () => string;
@@ -148,6 +152,7 @@ export class AgentSession {
   constructor(opts: SessionOptions) {
     this.sessionId = opts.sessionId;
     this.backend = opts.backend;
+    this.finalizer = opts.finalizer;
     this.tools = opts.tools;
     this.systemPrompt = opts.systemPrompt;
     this.idGen = opts.idGen ?? defaultIdGen;
@@ -457,11 +462,26 @@ export class AgentSession {
     opts: SendOptions,
     onExternalAbort: () => void,
   ): Promise<AgentMessageEndEvent> {
+    let finalizer: ReturnType<TurnFinalizerFactory> | undefined;
+    let draft = "";
+    let draftOverflow = false;
+    let nextTextSegment = false;
     let thrown: unknown;
     let terminalToBroadcast: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
     let pendingToolBoundary: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
     try {
       try {
+        finalizer = this.finalizer?.({
+          sessionId: this.sessionId,
+          messageId: turn.messageId,
+          question: text,
+          priorUserStatements: this.history
+            .filter((message) => message.role === "user")
+            .flatMap((message) =>
+              message.parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])),
+            )
+            .slice(-16),
+        });
         const priorHistory = [...this.history];
         // Append user turn to canonical history before asking the backend to
         // build its stream so even a synchronous backend-construction throw
@@ -507,10 +527,42 @@ export class AgentSession {
           }
 
           const event = this.normalizeEvent(rawEvent, turn);
+          if (
+            event.type !== "agent.tool.result" ||
+            turn.pendingToolUses.has(event.payload.toolCallId)
+          )
+            finalizer?.observe(event);
+          if (finalizer && event.type === "agent.text.delta") {
+            if (nextTextSegment) {
+              draft = "";
+              nextTextSegment = false;
+            }
+            draftOverflow ||= draft.length + event.payload.delta.length > FINALIZATION_DRAFT_LIMIT;
+            draft = (draft + event.payload.delta).slice(0, FINALIZATION_DRAFT_LIMIT);
+            // Neither intermediate history commits nor live snapshots receive
+            // candidate prose before the host policy accepts it.
+            continue;
+          }
+          if (finalizer && event.type === "agent.thinking.delta") continue;
+          if (event.type === "agent.tool.result") nextTextSegment = true;
           if (event.type === "agent.message.end") {
             if (event.payload.stopReason === "tool_use") {
               pendingToolBoundary = event;
               continue;
+            }
+            if (finalizer && event.payload.stopReason === "end_turn") {
+              const approved = await finalizer.finalize({
+                draft,
+                overflow: draftOverflow,
+                signal: turn.abortController.signal,
+              });
+              if (turn.abortController.signal.aborted) break;
+              const approvedEvent: AgentEvent = {
+                type: "agent.text.delta",
+                payload: { sessionId: this.sessionId, messageId: turn.messageId, delta: approved },
+              };
+              this.handleEvent(approvedEvent, turn);
+              this.broadcast(approvedEvent);
             }
             this.handleEvent(event, turn);
             terminalToBroadcast = event;

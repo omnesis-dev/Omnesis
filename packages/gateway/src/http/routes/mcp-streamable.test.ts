@@ -125,17 +125,25 @@ const PRINCIPAL_AUTH: Record<string, PrincipalOAuthAuthContext> = {
 
 function service(
   scopedHandles?: (authorization: CorpusAuthorization) => readonly ToolHandle[],
+  canonicalOverrides: readonly ToolHandle[] = [],
 ): DirectMcpService {
   return new DirectMcpService(
-    DIRECT_MCP_TOOL_NAMES.map((name) => ({
-      name,
-      description: `Canonical ${name}`,
-      schema:
-        name === "fetch_many"
-          ? z.object({ documents: z.array(z.object({ documentId: z.string() })) }).strict()
-          : z.object({ value: z.string().optional() }).strict(),
-      invoke: async () => ({ kind: "structured", resultType: "test.result", data: { ok: true } }),
-    })),
+    DIRECT_MCP_TOOL_NAMES.map(
+      (name) =>
+        canonicalOverrides.find((handle) => handle.name === name) ?? {
+          name,
+          description: `Canonical ${name}`,
+          schema:
+            name === "fetch_many"
+              ? z.object({ documents: z.array(z.object({ documentId: z.string() })) }).strict()
+              : z.object({ value: z.string().optional() }).strict(),
+          invoke: async () => ({
+            kind: "structured",
+            resultType: "test.result",
+            data: { ok: true },
+          }),
+        },
+    ),
     () => Promise.resolve({}),
     scopedHandles,
   );
@@ -862,7 +870,8 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
         documentByUrl: { lookup: async (url) => ({ url, durationMs: 0 }) },
       },
     });
-    const { app, runtime } = appFixture(service(() => scoped));
+    // The canonical surface is complete; only the authorized scoped search is substituted.
+    const { app, runtime } = appFixture(service(() => scoped, scoped));
     closeables.push(runtime);
     const { client, transport } = await connect(app, restrictedDirectToken);
     closeables.push(client, transport);

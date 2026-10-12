@@ -77,6 +77,14 @@ function makeGate(): {
   }> = [];
   const deleteCalls: Array<{ providerId: string; sourceId: string; externalIds: string[] }> = [];
   const gate = {
+    upsertConversationDocument: async (
+      doc: unknown,
+      _projection: unknown,
+      citations: ReadonlyArray<ConversationCitationInput>,
+    ) => {
+      upsertCalls.push([doc]);
+      citationCalls.push({ docId: "doc-1", citations });
+    },
     upsertDocuments: async (docs: unknown[]) => {
       upsertCalls.push(docs);
     },
@@ -178,7 +186,6 @@ describe("ConversationUpserter debouncing", () => {
     const { gate, upsertCalls, citationCalls } = makeGate();
     const upserter = new ConversationUpserter({
       writeGate: gate,
-      lookupDocId: () => "doc-1",
       debounceMs: 30_000,
       scheduler: { setTimeout: sched.setTimeout, clearTimeout: sched.clearTimeout },
     });
@@ -198,7 +205,6 @@ describe("ConversationUpserter debouncing", () => {
     const { gate, upsertCalls } = makeGate();
     const upserter = new ConversationUpserter({
       writeGate: gate,
-      lookupDocId: () => "doc-1",
       debounceMs: 30_000,
       scheduler: { setTimeout: sched.setTimeout, clearTimeout: sched.clearTimeout },
     });
@@ -219,7 +225,6 @@ describe("ConversationUpserter debouncing", () => {
     const { gate, upsertCalls } = makeGate();
     const upserter = new ConversationUpserter({
       writeGate: gate,
-      lookupDocId: () => "doc-1",
       debounceMs: 30_000,
       scheduler: { setTimeout: sched.setTimeout, clearTimeout: sched.clearTimeout },
     });
@@ -234,7 +239,6 @@ describe("ConversationUpserter debouncing", () => {
     const { gate, upsertCalls } = makeGate();
     const upserter = new ConversationUpserter({
       writeGate: gate,
-      lookupDocId: () => "doc-1",
       debounceMs: 30_000,
       scheduler: { setTimeout: sched.setTimeout, clearTimeout: sched.clearTimeout },
     });
@@ -253,7 +257,6 @@ describe("ConversationUpserter debouncing", () => {
     const { gate, upsertCalls } = makeGate();
     const upserter = new ConversationUpserter({
       writeGate: gate,
-      lookupDocId: () => "doc-1",
       debounceMs: 30_000,
       scheduler: { setTimeout: sched.setTimeout, clearTimeout: sched.clearTimeout },
     });
@@ -269,7 +272,6 @@ describe("ConversationUpserter debouncing", () => {
     const { gate, upsertCalls } = makeGate();
     const upserter = new ConversationUpserter({
       writeGate: gate,
-      lookupDocId: () => "doc-1",
       debounceMs: 30_000,
       scheduler: { setTimeout: sched.setTimeout, clearTimeout: sched.clearTimeout },
     });
@@ -278,17 +280,16 @@ describe("ConversationUpserter debouncing", () => {
     expect(upsertCalls).toHaveLength(0);
   });
 
-  test("lookupDocId returning null skips the citation write", async () => {
+  test("publishes the document and citations atomically without a read-side ID lookup", async () => {
     const { gate, upsertCalls, citationCalls } = makeGate();
     const upserter = new ConversationUpserter({
       writeGate: gate,
-      lookupDocId: () => null,
       debounceMs: 30_000,
       scheduler: { setTimeout: sched.setTimeout, clearTimeout: sched.clearTimeout },
     });
     upserter.enqueue("s_1", async () => makeRecord("s_1"));
     await upserter.flush("s_1");
     expect(upsertCalls).toHaveLength(1);
-    expect(citationCalls).toHaveLength(0);
+    expect(citationCalls).toHaveLength(1);
   });
 });

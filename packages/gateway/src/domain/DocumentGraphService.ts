@@ -60,6 +60,7 @@ import {
   type DocumentGraph,
   type BuildDocumentGraphOptions,
 } from "@omnesis/core";
+import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
 import { getUrlTraversalHubSources } from "../url-graph-roles.js";
 import { sourcePrefixPredicate } from "../data/source-addressing.js";
 import {
@@ -503,7 +504,7 @@ function loadDocRow(db: Db, id: string): DocRow | null {
        WHERE id = ?`,
     )
     .get(id);
-  return row ?? null;
+  return row && isKnowledgeDocumentReadable(db, row.id, row.source_id) ? row : null;
 }
 
 function loadPersonRow(db: Db, id: string): PersonRow | null {

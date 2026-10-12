@@ -7,12 +7,14 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
+import { parseCognitionRunEnvelope, type TemporalItem, type TemporalKind } from "@omnesis/core";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { createOpenLoop, updateOpenLoop, appendOpenLoopLedger } from "../storage/open-loops.js";
 import { retireLoop } from "../storage/retired-loops.js";
 import { createBrief, setBriefState, updateBrief } from "../storage/briefs.js";
 import { resolveBrainSettings } from "../config.js";
 import { cognitionSpendDay } from "../storage/spend.js";
+import { WIKI_AUTHORING_GUIDANCE } from "../knowledge/wiki-authoring.js";
 import {
   insertTemporalAnnotation,
   markTemporalAnnotationsRefilePresented,
@@ -30,15 +32,16 @@ import {
   denyMergeCandidate,
   type MergeCandidateProposal,
 } from "../../merge-candidates.js";
+import { readDigestInputs } from "./digest-inputs.js";
 import {
   addressedDataSteeringMode,
   buildCognitionRunPrompt,
+  buildCognitionWorkflowInstructions,
   fenceSafe,
   buildCognitionSystemPrompt,
   cognitionRunCarriesBriefRules,
 } from "./prompts.js";
 import type Database from "better-sqlite3";
-import type { TemporalItem, TemporalKind } from "@omnesis/core";
 import type { ClaimedCognitionRun } from "../storage/types.js";
 
 type Db = Database.Database;
@@ -130,11 +133,136 @@ function annotationItem(o: {
 }
 
 describe("Cognition Steward system prompt", () => {
+  test("ordinary source-run instructions allow only independently closable decomposition", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
+    expect(prompt).toContain(
+      "One request whose parts share a single settlement normally stays one loop",
+    );
+    expect(prompt).toContain(
+      "its own evidence-supported completion criterion and can be closed independently",
+    );
+    expect(prompt).toContain("do not split routine checklist steps or partial deliveries");
+    expect(prompt).toContain(
+      "read both synthesis nodes and use knowledge_link with part_of from child to parent",
+    );
+    expect(prompt).toContain("parent’s remaining scope and completion criterion explicit");
+    expect(prompt).toContain("Shared topic alone does not establish containment");
+    expect(prompt).toContain(
+      "project wiki for context rather than inventing an umbrella obligation",
+    );
+    expect(prompt).toContain("Organizational links provide neither evidence nor automatic closure");
+    expect(prompt).toContain("use blocked_by only for genuine operational blocking");
+    expect(prompt).not.toContain("never a loop per part");
+    expect(prompt).not.toContain("merging loops buys the user nothing");
+  });
+
+  test("reconciles matching outcomes and linked replies before claiming a request unanswered", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
+    expect(prompt).toContain("use open_loop_fetch on plausible matching outcomes");
+    expect(prompt).toContain("current state, ledger and source links");
+    expect(prompt).toContain("read specific linked replies or thread connections");
+    expect(prompt).toContain("especially when search coverage is catching_up");
+    expect(prompt).toContain("do not read every search hit");
+    expect(prompt).toContain(
+      "preserve unknown status when the available evidence does not settle it",
+    );
+  });
+
+  test("does not turn historical outcomes or missing follow-up into current obligations", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
+    expect(prompt).toContain("Creating or reopening an open loop requires evidence");
+    expect(prompt).toContain("currently actionable outcome for the user");
+    expect(prompt).toContain(
+      "Missing later indexed evidence proves neither resolution nor non-resolution",
+    );
+    expect(prompt).toContain("Preserve unknown current status instead of inventing a task");
+    expect(prompt).toContain(
+      "maintain loops only where the evidence establishes their outcome and current status",
+    );
+  });
+
   test("states the notes cap without carrying the notes", () => {
     const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
     expect(prompt).toContain("4096 bytes");
     expect(prompt).not.toContain("<agent-notes>");
     expect(prompt).toContain("given verbatim in every run message, beneath its rules");
+  });
+
+  test("preserves estimated timing without fabricating deadline precision", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
+    expect(prompt).toContain('type "approximate"');
+    expect(prompt).toContain("keep the note without inventing a date");
+    expect(prompt).toContain("Never fabricate HH:mm, midnight or end-of-day precision");
+    expect(prompt).toContain("source event/request date, not ingestion or the current run");
+    expect(prompt).toContain("Follow-up/review timing is a separate scheduling choice");
+  });
+
+  test("preserves a loop's outcome identity while allowing clarification", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
+    expect(prompt).toContain(
+      "A shared person, topic, or project does not make two outcomes the same",
+    );
+    expect(prompt).toContain(
+      "Clarify a title or description when it still tracks the SAME outcome",
+    );
+    expect(prompt).toContain("never silently replace its completion criterion");
+    expect(prompt).toContain("correct the same-outcome framing with a transparent ledger note");
+    expect(prompt).toContain(
+      "dismiss/remove the loop under the retirement rules with an explicit reason",
+    );
+    expect(prompt).toContain(
+      "completion of a different task is not fulfilment of the original outcome",
+    );
+    expect(prompt).toContain("Maintain a separate loop for a distinct supported action");
+    expect(prompt).toContain("preserving relevant context links");
+  });
+
+  test.each([true, false])(
+    "separates reference curation from canonical ownership and notification (annotations=%s)",
+    (annotationsEnabled) => {
+      const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096, annotationsEnabled });
+      expect(prompt).toContain("When knowledge tools are offered");
+      expect(prompt).toContain(
+        "Reference synthesis and proactive notification are separate decisions",
+      );
+      expect(prompt).toContain("single-home rule does not forbid grounded wiki synthesis");
+      expect(prompt).toContain("without creating a second operational owner");
+      const persistentMemory = prompt.slice(prompt.indexOf("# Your persistent memory"));
+      expect(persistentMemory).toContain("Each fact has ONE canonical home");
+      expect(persistentMemory).toContain(
+        "single-home rule does not forbid grounded wiki synthesis",
+      );
+      expect(prompt).not.toContain("Never restate one store's content in another");
+    },
+  );
+
+  test("person memory requires useful profile context rather than event summaries involving someone", () => {
+    const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096, annotationsEnabled: true });
+    expect(prompt).toContain("One explicit source can establish useful person context");
+    expect(prompt).toContain("Keep necessary historical bounds and source attribution");
+    expect(prompt).toContain("retrieve sufficient exact source spans");
+    expect(prompt).toContain(
+      "do not repair it into a document observation just to pass verification",
+    );
+    expect(prompt).toContain("rejection of a mixed or artifact-framed note does not establish");
+    expect(prompt).toContain(
+      "evidence independently supports a meaningful role, relationship, attribute or bounded circumstance",
+    );
+    expect(prompt).toContain(
+      "Move episode-specific detail to an existing relevant wiki or temporal annotation only when it adds value there",
+    );
+    expect(prompt).toContain("do not force a replacement, retain trivia, or repeatedly paraphrase");
+    expect(prompt).toContain("Read the complete profile by following every nextCursor");
+    expect(prompt).toContain(
+      "based on the whole profile rather than appending a record per source or period",
+    );
+    expect(prompt).toContain("without inventing continuity or broader scope");
+    expect(prompt).toContain(
+      "A one-off message, event or transaction summary merely involving that person",
+    );
+    expect(prompt).toContain(
+      "A change in role, relationship or meaningful personal circumstances can belong",
+    );
   });
 
   test("carries no clock, so it never changes with the time of the run", () => {
@@ -302,7 +430,15 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("2026-06-29T10:00:00.000Z");
     expect(prompt).toContain("2026-07-02T10:00:00.000Z");
     expect(prompt).toContain("3 days old");
+    expect(prompt).toContain("One request with a single settlement normally stays one loop");
+    expect(prompt).toContain("material, independently closable sub-outcomes");
+    expect(prompt).toContain("link child to parent with part_of");
+    expect(prompt).toContain("Links supply neither evidence nor automatic closure");
+    expect(prompt).not.toContain("stays ONE loop");
     expect(prompt).toContain("fetch_many");
+    expect(prompt).toContain("every factual statement from the title, description, and body");
+    expect(prompt).toContain("factual premises embedded in advice");
+    expect(prompt).toContain("correcting the claim list alone does not correct the card");
   });
 
   test("a data run receives its source projection and is told not to duplicate it", () => {
@@ -1000,6 +1136,18 @@ describe("Cognition Steward run prompts", () => {
     expect(dataRun).not.toContain("Second axis — awareness");
   });
 
+  test("temporal authoring distinguishes relative-expression anchors from artifact timestamps", () => {
+    for (const annotationsEnabled of [false, true]) {
+      const system = buildCognitionSystemPrompt({ notesMaxBytes: 4096, annotationsEnabled });
+      expect(system).toContain("originating document date or explicitly evidenced event date");
+      expect(system).toContain(
+        "upload, synchronization and modification dates are not automatically event dates",
+      );
+      expect(system).toContain("preserve that uncertainty rather than inventing an absolute date");
+      expect(system).not.toContain("the datum date stated by data/bootstrap runs");
+    }
+  });
+
   test("annotate guidance rides the shared system prompt (every run kind) when enabled, never the data prompt", () => {
     const docId = insertDoc("msg_anno");
     // The reactive data prompt no longer carries annotate guidance — it moved to
@@ -1161,6 +1309,394 @@ describe("Cognition Steward run prompts", () => {
     );
     expect(prompt).toContain("fewer than two of the flagged temporal annotations are still live");
     expect(prompt).toContain("Do nothing");
+  });
+
+  test("document annotations require synthesis or substantial compression without widening their subject", () => {
+    const system = buildCognitionSystemPrompt({ notesMaxBytes: 8000, annotationsEnabled: true });
+    expect(system).toContain(
+      "adds multi-source contextual synthesis or substantially compresses a long source",
+    );
+    expect(system).toContain("even when the source is personally meaningful");
+    expect(system).toContain("retain materially useful outcomes from a long substantive source");
+    expect(system).toContain("need not preserve every detail or add a second source");
+    expect(system).toContain("wording overlap alone does not disqualify it");
+    expect(system).toContain("assessment or effective period, measurement basis");
+    expect(system).toContain("do not substitute for those qualifications");
+    expect(system).toContain("date timeless facts or invent missing dates");
+    expect(system).toContain(
+      "one document, while its contextual synthesis may draw on several evidence documents",
+    );
+    expect(system).not.toContain("one document and nothing wider");
+    const maintenance = buildCognitionWorkflowInstructions(
+      claimed({
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "annotation-review" },
+      }),
+    );
+    expect(maintenance).toContain("Document annotations need additive value");
+    expect(maintenance).toContain("reread their actual subject and supporting sources");
+    expect(maintenance).toContain(
+      "retain materially useful outcomes from a long substantive source",
+    );
+    expect(maintenance).toContain("neither every detail nor a second source is required");
+    expect(maintenance).toContain("wording overlap alone is not a reason to retire it");
+    expect(maintenance).toContain("assessment or effective period, measurement basis");
+    expect(maintenance).toContain("do not impose one date on the whole note");
+    expect(maintenance).toContain(
+      "retire redundant annotations through canonical annotation tools",
+    );
+    expect(maintenance).toContain(
+      "Single-source support or raw document length alone does not justify retirement",
+    );
+    expect(maintenance).toContain("do not manufacture annotations to mark a source processed");
+    expect(maintenance).toContain("When reviewing existing person annotations");
+    expect(maintenance).toContain(
+      "knowledge_save can refresh unchanged proof but cannot rewrite person-profile text",
+    );
+    expect(maintenance).toContain(
+      "Retire one-off message or event summaries that merely involve the person",
+    );
+    expect(maintenance).toContain(
+      "do not reject a fact merely for having one source or being time-bound",
+    );
+  });
+
+  test("common maintenance instructions are stable across variants and volatile run context", () => {
+    const first = claimed({
+      id: "cache-first",
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "batch-first" },
+    });
+    const second = claimed({
+      id: "cache-second",
+      kind: "synthesis",
+      attempts: 2,
+      payload: {
+        focus: "knowledge-maintenance",
+        batchId: "batch-second",
+        organizationCohortId: "cohort-second",
+      },
+    });
+    const common = buildCognitionWorkflowInstructions(first);
+    expect(common).toBe(buildCognitionWorkflowInstructions(second));
+    const a = buildCognitionRunPrompt(first, {
+      ...deps(),
+      clock: () => NOW,
+      memory: { notes: "First private note", selfMemory: "" },
+    });
+    const b = buildCognitionRunPrompt(second, {
+      ...deps(),
+      clock: () => NOW + 60000,
+      memory: { notes: "Second private note", selfMemory: "" },
+    });
+    expect(a.startsWith(common)).toBe(true);
+    expect(b.startsWith(common)).toBe(true);
+    expect(common).toContain("Verify before you brief");
+    expect(common).toContain("knowledge_next_frontier");
+    for (const dynamic of [
+      "cache-first",
+      "cache-second",
+      "batch-first",
+      "First private note",
+      "Current time:",
+    ])
+      expect(common).not.toContain(dynamic);
+    expect(b.indexOf("joint organization pass")).toBeLessThan(b.indexOf("Loop agent run"));
+    expect(buildCognitionWorkflowInstructions(claimed({ kind: "feedback" }))).toBe("");
+  });
+
+  test("knowledge maintenance retains the run identity and standing context", () => {
+    const prompt = buildCognitionRunPrompt(
+      claimed({
+        kind: "synthesis",
+        attempts: 2,
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "batch_1",
+          continuedFromRunId: "run_previous",
+        },
+      }),
+      deps(),
+    );
+    expect(parseCognitionRunEnvelope(prompt)).toEqual({
+      runId: "run_7",
+      kind: "synthesis",
+      attempt: 2,
+    });
+    expect(prompt).toContain("knowledge_next_frontier({})");
+    expect(prompt).toContain("never pass batchId");
+    expect(prompt).toContain("Completion has two distinct branches");
+    expect(prompt).toContain("knowledge_save records the reviewed claim outcomes");
+    expect(prompt).toContain("Never call knowledge_discovery_complete for a synthesis node");
+    expect(prompt).toContain("separately offered as a source frontier item");
+    expect(prompt).toContain("including the source: prefix");
+    expect(prompt).toContain(
+      "Source/discovery and organization completion calls still require their entire offered inputFingerprint verbatim",
+    );
+    expect(prompt).toContain(
+      "inputFingerprint may be omitted only after knowledge_next_frontier and then a complete knowledge_fetch(editing:true)",
+    );
+    expect(prompt).toContain("matching the offered id, kind and expectedRevision");
+    expect(prompt).toContain("Explicit wrong, blank or stale fingerprints are never corrected");
+    expect(prompt).toContain("repeat the complete editing read before saving");
+    expect(prompt).toContain("matching frontier-and-complete-editing-read receipt");
+    expect(prompt).not.toContain("verbatim into completion/save calls");
+    expect(prompt).not.toContain("use knowledge_save with the offered inputFingerprint");
+    expect(prompt).toContain("request a fresh frontier");
+    expect(prompt).toContain("never drop a required repair target");
+    expect(prompt).toContain("Converted owner references start as context-only");
+    expect(prompt).toContain('claims[].relations[ref] = "supports"');
+    expect(prompt).toContain('retain "context" for merely related evidence');
+    expect(prompt).toContain("Claim tags and asserted status alone do not establish verification");
+    expect(prompt).toContain("reviewedClaimIds");
+    expect(prompt).toContain("pendingClaimIdsOmitted");
+    expect(prompt).toContain("does not settle untouched claims");
+    expect(prompt).toContain("Your notes file is currently empty.");
+    expect(prompt).toContain(
+      "An informative new future plan may merit awareness without an immediate task",
+    );
+    expect(prompt).toContain(
+      "A window that has not elapsed does not justify chasing completion now",
+    );
+    expect(prompt).toContain("set nextShow to that review time");
+  });
+
+  test.each([
+    { focus: "knowledge-maintenance", batchId: "batch_page" },
+    { focus: "knowledge-maintenance", batchId: "batch_root", schedulingClass: "initial-root" },
+    { focus: "knowledge-maintenance", batchId: "batch_joint", organizationCohortId: "cohort" },
+  ])(
+    "maintenance leads with frontier goals and one editorial contract before brief-only rules: %j",
+    (payload) => {
+      const prompt = buildCognitionRunPrompt(claimed({ kind: "synthesis", payload }), deps());
+      expect(prompt.startsWith("Maintain the evidence-backed synthesis graph")).toBe(true);
+      expect(prompt).toContain("Claim repair: for non-root nodes without review=true");
+      expect(prompt).toContain(
+        "Page curation: a wiki with review=true has maintenanceGoal=wiki_curation",
+      );
+      expect(prompt).toContain(
+        "follow its node-specific maintenanceTask even inside organization work",
+      );
+      expect(prompt).toContain(
+        "takes precedence over ordinary claim repair even when review=false",
+      );
+      expect(prompt).toContain("including roots that already contain supported claims");
+      expect(prompt).toContain(
+        "Root orientation: a root frontier has maintenanceGoal=root_orientation",
+      );
+      expect(prompt).toContain("Organization: reconcile coherent evidence");
+      expect(prompt).toContain(
+        "These goals do not change the frontier's permissions or completion rules",
+      );
+      expect(prompt).toContain("title, opening synthesis and section structure");
+      expect(prompt).toContain(
+        "Claim preservation protects supported assertions and IDs, not the old outline",
+      );
+      expect(prompt).toContain(
+        "Focused claim repairs need not perform this whole-page editorial pass",
+      );
+      expect(prompt.split(WIKI_AUTHORING_GUIDANCE)).toHaveLength(2);
+      expect(prompt.indexOf(WIKI_AUTHORING_GUIDANCE)).toBeLessThan(prompt.indexOf("Current time:"));
+      const briefScope = prompt.indexOf("apply only when writing a brief");
+      expect(briefScope).toBeGreaterThan(prompt.indexOf(WIKI_AUTHORING_GUIDANCE));
+      expect(briefScope).toBeLessThan(prompt.indexOf("How a brief reads — the house style."));
+      expect(prompt).toContain("Verify before you brief");
+      expect(parseCognitionRunEnvelope(prompt)?.runId).toBe("run_7");
+    },
+  );
+
+  test.each([
+    claimed({
+      kind: "data",
+      payload: { docId: "source-progress", event: "created", datumAt: NOW },
+    }),
+    claimed({
+      kind: "synthesis",
+      payload: { focus: "knowledge-maintenance", batchId: "batch_progress" },
+    }),
+  ])("source workflows reconcile progress without inventing a new obligation: %j", (run) => {
+    const actualRun =
+      run.kind === "data"
+        ? claimed({
+            kind: "data",
+            payload: { docId: insertDoc("source-progress"), event: "created", datumAt: NOW },
+          })
+        : run;
+    const prompt = buildCognitionRunPrompt(actualRun, deps());
+    expect(prompt).toContain("even when the source adds no new request, wiki or brief");
+    expect(prompt).toContain("bounded open_loop_search for the same outcome");
+    expect(prompt).toContain("preserving independently outstanding scope");
+    expect(prompt).toContain(
+      "A reply or partial delivery does not establish completion of the entire outcome",
+    );
+    expect(prompt).toContain("already-recorded progress is not lost");
+    expect(prompt).toContain("Do not scan every loop, force a write for every source");
+  });
+
+  test("initial root maintenance asks for evidence investigation before summarizing", () => {
+    const prompt = buildCognitionRunPrompt(
+      claimed({
+        kind: "synthesis",
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "batch_root",
+          schedulingClass: "initial-root",
+        },
+      }),
+      deps(),
+    );
+    expect(prompt).toContain("initial root population");
+    expect(prompt).toContain("Split compound legacy spans");
+    expect(prompt).toContain(
+      "finish required operational mutations before the terminal knowledge_save",
+    );
+    expect(prompt).toContain(
+      "state or deadline changes, retirement, and ledger notes must succeed first",
+    );
+    expect(prompt).toContain("After operational mutations, call knowledge_next_frontier");
+    expect(prompt).toContain("fetch the retained owner again with knowledge_fetch(editing=true)");
+    expect(prompt).toContain(
+      "Do not settle an item while a required canonical action remains refused or incomplete",
+    );
+    expect(prompt).toContain("Separate advice from each factual clause");
+    expect(prompt).toContain(
+      "Marking a span recommendation or unsupported does not qualify its displayed words",
+    );
+    expect(prompt).toContain(
+      "Never create or reopen an obligation merely because a historical attempt failed",
+    );
+    expect(prompt).toContain("Anchor relative deadlines and waiting periods");
+    expect(prompt).toContain("never to ingestion time or the day of this run");
+    expect(prompt).toContain("An empty root has no claims to revalidate");
+    expect(prompt).toContain("knowledge_fetch(editing=true)");
+    expect(prompt).toContain("discovery leads, not verified evidence");
+    expect(prompt).toContain("Let the normal entailment verifier assess");
+    expect(prompt).toContain("keeping the root empty is valid");
+    expect(prompt).toContain("No new project wiki is required");
+    const ordinary = buildCognitionRunPrompt(
+      claimed({
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch_other" },
+      }),
+      deps(),
+    );
+    expect(ordinary).not.toContain("This batch includes initial root population");
+  });
+
+  test.each([
+    { focus: "knowledge-maintenance", batchId: "batch_page" },
+    { focus: "knowledge-maintenance", batchId: "batch_root", schedulingClass: "initial-root" },
+    { focus: "knowledge-maintenance", batchId: "batch_joint", organizationCohortId: "cohort" },
+  ])(
+    "maintenance wiki guidance preserves structure, grounding, and scoped navigation: %j",
+    (payload) => {
+      const prompt = buildCognitionRunPrompt(claimed({ kind: "synthesis", payload }), deps());
+      expect(prompt).toContain(WIKI_AUTHORING_GUIDANCE);
+      expect(prompt).toContain("Open with the latest supported observation");
+      expect(prompt).toContain(
+        "retaining its evidence date and attribution when the present state is not established",
+      );
+      expect(prompt).toContain(
+        "The overview must not imply stronger currentness than the supported detail",
+      );
+      expect(prompt).not.toContain("Open with the latest supported state");
+      expect(prompt).toContain("descriptive Markdown ## sections");
+      expect(prompt).toContain("opening claim tag on its own line");
+      expect(prompt).toContain("smallest relevant supported paragraph");
+      expect(prompt).toContain("subsequent factual claims remain separate spans");
+      expect(prompt).toContain("[Page title](wiki:actual-page-id)");
+      expect(prompt).toContain("links to the most relevant existing wiki subpages");
+      expect(prompt).toContain("Navigation links are not evidence");
+      expect(prompt).toContain(
+        "A distinct scope or the absence of a parent does not make a page unrelated",
+      );
+      expect(prompt).toContain("including considered relatedPageIds at publication");
+      expect(prompt).toContain(
+        "use related_to when source-grounded shared context makes lateral navigation useful",
+      );
+      expect(prompt).toContain(
+        "A shared name, organization or keyword alone does not establish that relationship",
+      );
+      expect(prompt).toContain(
+        "after considering both hierarchy and lateral relationships in the read library",
+      );
+      expect(prompt).toContain("never force a parent or create edges merely to avoid standalone");
+      expect(prompt).toContain("Evidence arrival order is not event order");
+      expect(prompt).toContain("rather than appending each notification as a separate summary");
+      expect(prompt).toContain("Consolidate repeated assertions about the same matter");
+      expect(prompt).toContain("distinct dates, scope or outcomes");
+      expect(prompt).toContain("explicitly account for removed claim IDs");
+      expect(prompt).toContain("observation date, measured category, units");
+      expect(prompt).toContain("distinguish a subtotal from an overall total");
+      expect(prompt).toContain("state the uncertainty rather than inventing it");
+      expect(prompt).toContain("does not make the page body navigable");
+      expect(prompt).toContain("inline links to relevant read counterparts");
+      expect(prompt).toContain("leave unauthorized counterpart edits for their review");
+      expect(prompt).toContain("Assess placement in the existing library");
+      expect(prompt).toContain("Standalone pages remain valid");
+      expect(prompt).toContain("from child to parent with part_of");
+      expect(prompt).toContain("including incoming children");
+      expect(prompt).toContain("a hierarchy edge is navigation, not support");
+      expect(prompt).toContain("within its hard character budget");
+      expect(prompt).toContain(
+        "do not add empty headings, invent content, or impose section or page quotas",
+      );
+      expect(prompt).toContain("publishing another page does not grant root mutation authority");
+      expect(prompt).toContain("Call knowledge_list({kind:'wiki'})");
+      expect(prompt).toContain(
+        "knowledge_fetch for a bounded selection of relevant existing pages and tracked outcomes",
+      );
+      expect(prompt).toContain("consider newly available pages as well as retained context");
+      expect(prompt).toContain("When recoverableNavigation is offered");
+      expect(prompt).toContain("select useful navigation or explain why none fits");
+      expect(prompt).toContain("no recovery hints are offered");
+      expect(prompt).toContain("a bounded selection of meaningful knowledge_history snapshots");
+      expect(prompt).toContain("Treat historical links only as candidate identities");
+      expect(prompt).toContain("read currently authorized targets, assess their present relevance");
+      expect(prompt).toContain(
+        "use current supported claims before including grounded context and links",
+      );
+      expect(prompt).toContain("Do not restore historical text or links automatically");
+      expect(prompt).toContain(
+        "reintroduce unavailable targets, or inspect history on every review",
+      );
+      expect(prompt).toContain("A loop's open state describes the tracking system");
+      expect(prompt).toContain("state the last observed situation with its evidence date");
+      expect(prompt).toContain("do not promote missing closure into an ongoing status");
+      expect(prompt).toContain(
+        "Merely adding headings to the old root does not complete this orientation review",
+      );
+      expect(prompt).toContain("short grounded summary with a meaningful link to that actual page");
+      expect(prompt).toContain("retain the factual claim refs that support the summary");
+      expect(prompt).toContain("Anchor time-sensitive context to evidence-backed dates");
+      expect(prompt).toContain("do not enumerate every page, force a new topic");
+      expect(prompt).toContain("report only claims actually reviewed");
+    },
+  );
+
+  test("organization cohorts ask for joint durable context and an explicit no-page alternative", () => {
+    const prompt = buildCognitionRunPrompt(
+      claimed({
+        kind: "synthesis",
+        payload: {
+          focus: "knowledge-maintenance",
+          batchId: "batch_joint",
+          organizationCohortId: "cohort_joint",
+        },
+      }),
+      deps(),
+    );
+    expect(prompt).toContain("joint organization pass");
+    expect(prompt).toContain("cohort is an admission window, not a single topic");
+    expect(prompt).toContain("inspect coherent subsets independently");
+    expect(prompt).toContain("use bounded targeted search or graph traversal");
+    expect(prompt).toContain(
+      "Fetch truncated sources fully before completing their interpretation",
+    );
+    expect(prompt).toContain("Completed decisions, settled arrangements");
+    expect(prompt).toContain("There is no page quota");
+    expect(prompt).toContain("knowledge_organization_complete");
+    expect(prompt).toContain("not the joint organization decision");
   });
 
   test("a malformed synthesis payload degrades to a no-op finish", () => {
@@ -1467,6 +2003,29 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("finish with a short note");
   });
 
+  test("digest preflight distinguishes an empty packet from actual editorial inputs", () => {
+    const horizon = { items: [], timeZone: "UTC", truncated: false };
+    const read = () => readDigestInputs(db, NOW, deps().cfg, horizon);
+    expect(read().hasInputs).toBe(false);
+    createBrief(
+      db,
+      {
+        id: "editorial-input",
+        createdByRun: "seed",
+        kind: "info",
+        title: "Laboratory calibration changed",
+        description: "The review moved.",
+        confidence: 0.8,
+        urgency: 0.4,
+      },
+      NOW - 1000,
+    );
+    expect(read().hasInputs).toBe(true);
+    expect(read().overnightLines.join(" ")).toContain("Laboratory calibration changed");
+    const old = readDigestInputs(db, NOW + 400 * 86_400_000, deps().cfg, horizon);
+    expect(old.hasInputs).toBe(false);
+  });
+
   test("a digest run injects the horizon, overnight briefs, and the editorial contract", () => {
     createBrief(
       db,
@@ -1601,13 +2160,14 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).not.toContain("14:00–15:00");
   });
 
-  test("a digest with an empty world states its empty sections", () => {
+  test("a digest whose inputs disappeared after preflight cannot request an all-clear card", () => {
     const prompt = buildCognitionRunPrompt(
       claimed({ kind: "daily", payload: { digest: true, date: "2026-07-02" } }),
       deps(),
     );
-    expect(prompt).toContain("What is coming, now through +3 days: (empty)");
-    expect(prompt).toContain("Briefs from the last 24h: (none)");
+    expect(prompt).toContain("No editorial inputs are available");
+    expect(prompt).toContain("Finish without creating or updating a brief");
+    expect(prompt).not.toContain("Compose EXACTLY ONE");
   });
 
   test("a sweep run carries the operator's steering verbatim inside the standard guardrails", () => {
@@ -2389,4 +2949,15 @@ describe("merge-adjudication run prompts", () => {
     expect(prompt).not.toContain("assertedClaims");
     expect(prompt).not.toContain("chain-of-verification");
   });
+});
+
+test("separates actor and quoted context from current obligations in the shared mission", () => {
+  expect(buildCognitionSystemPrompt({ notesMaxBytes: 4000 })).toContain(
+    "a file owner, sender, quoted speaker and debtor are different roles",
+  );
+  expect(buildCognitionSystemPrompt({ notesMaxBytes: 4000 })).toContain(
+    "Drafts, quoted earlier messages and table rows retain their own status",
+  );
+  expect(WIKI_AUTHORING_GUIDANCE).toContain("Open with the latest supported observation");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain("do not transfer a result, failure or date");
 });

@@ -120,6 +120,7 @@ export function createSearchDocumentsTool(deps: SearchToolDeps): ToolHandle {
           query: r.query,
           durationMs: r.durationMs,
           candidates: r.totalCandidates,
+          ...(r.coverage ? { coverage: r.coverage } : {}),
           results: [...r.results],
         };
       } catch (err) {

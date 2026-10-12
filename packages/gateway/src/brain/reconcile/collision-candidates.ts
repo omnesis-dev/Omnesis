@@ -28,6 +28,7 @@
  * seeing is never re-proposed.
  */
 
+import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import { deadlineDueDay } from "../ranking.js";
 import { SYNTHESIS_DEDUPE_PREFIX } from "../run-payloads.js";
 import type Database from "better-sqlite3";
@@ -105,7 +106,7 @@ export function findCollisionCandidates(
       { id: string; importance: number; deadline_json: string | null; last_update: number }
     >(
       `SELECT id, importance, deadline_json, last_update FROM open_loops
-        WHERE state IN (${inClause(CANDIDATE_STATES.length)})`,
+        WHERE ${knowledgeOwnerReadPredicate(db, "open_loops.id")} AND state IN (${inClause(CANDIDATE_STATES.length)})`,
     )
     .all(...CANDIDATE_STATES);
   if (loops.length < 2) return [];

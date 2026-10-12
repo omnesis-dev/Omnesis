@@ -38,6 +38,7 @@ import { hydrateChunkText } from "./hydrate-chunks.js";
 import { applyBoostPass } from "./stages/boost-stage.js";
 import { diversityIsEnabled, diversityReorder } from "./stages/diversity-stage.js";
 import { hnswSearchCandidates } from "./vector-hnsw.js";
+import { boundedExactVectorCandidates } from "./vector-bounded-exact.js";
 import { temporalLaneCandidates, type TemporalLaneRequest } from "./temporal-lane.js";
 import type { VectorReadSource } from "../indexer/usearch-index.js";
 import type { ResolvedDiversityConfig, ResolvedSearchSettings } from "./search-config.js";
@@ -291,6 +292,7 @@ function runVector(
   const { hnswOverFetch, alwaysOverFetch } = req.vectorConfig;
   const sqlStart = Date.now();
   let candidates: SearchCandidate[];
+  let engine = "hnsw";
   try {
     // Follow the active generation BEFORE comparing model identities. If the
     // pointer just flipped, checking the old handle first would report a model
@@ -314,18 +316,30 @@ function runVector(
       return { candidates: [], degraded: true };
     }
 
-    candidates = hnswSearchCandidates(
-      res.usearchRead,
+    const exact = boundedExactVectorCandidates(
       res.indexDb,
       req.queryVector,
       req.filters,
       req.candidateLimit,
-      {
-        documentIds: req.allowedDocumentIds,
-        hnswOverFetch,
-        alwaysOverFetch,
-      },
+      req.candidateLimit * hnswOverFetch,
+      req.allowedDocumentIds,
+      req.queryModelId ?? activeModelId,
     );
+    if (exact !== null) engine = "exact";
+    candidates =
+      exact ??
+      hnswSearchCandidates(
+        res.usearchRead,
+        res.indexDb,
+        req.queryVector,
+        req.filters,
+        req.candidateLimit,
+        {
+          documentIds: req.allowedDocumentIds,
+          hnswOverFetch,
+          alwaysOverFetch,
+        },
+      );
   } catch (err) {
     // A refresh failure or query/index dimension mismatch during an embedder
     // swap degrades to BM25 rather than failing the request. The registry does
@@ -333,7 +347,7 @@ function runVector(
     const reason = SKIP_REASON_REINDEXING;
     stageReports.vector = { status: "skipped", reason };
     log.warn(
-      `Vector: skipped (HNSW refresh/search failed, likely mid-embedder-swap): ${
+      `Vector: skipped (Vector index refresh/search failed, likely mid-embedder-swap): ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
@@ -354,11 +368,11 @@ function runVector(
     effectiveK: req.candidateLimit * hnswOverFetch,
     embedMs: req.embedMs,
     sqlMs,
-    engine: "hnsw",
+    engine,
   };
   log.info(
     `Vector: ${candidates.length} candidates in ${durationMs}ms ` +
-      `(embed=${req.embedMs}ms sql=${sqlMs}ms engine=hnsw)`,
+      `(embed=${req.embedMs}ms sql=${sqlMs}ms engine=${engine})`,
   );
   return { candidates, degraded: false };
 }

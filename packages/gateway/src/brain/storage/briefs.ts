@@ -13,6 +13,10 @@
  * feedback run returns it to `unread` with `next_show` set.
  */
 
+import {
+  isKnowledgeOwnerReadable,
+  knowledgeOwnerReadPredicate,
+} from "../knowledge/storage-fence.js";
 import { insertBriefClaimSet, replaceBriefClaimSet, type BriefClaimInput } from "./brief-claims.js";
 import { isTerminalBriefState, type BriefKind, type BriefRow, type BriefState } from "./types.js";
 import type { BriefFeedSortKey, FeedTier } from "../ranking.js";
@@ -165,6 +169,7 @@ export function createBrief(db: Db, input: CreateBriefInput, now: number): Brief
 }
 
 export function getBrief(db: Db, id: string): BriefRow | null {
+  if (!isKnowledgeOwnerReadable(db, id)) return null;
   const row = db.prepare<[string], BriefDbRow>("SELECT * FROM briefs WHERE id = ?").get(id);
   return row ? rowToBrief(db, row) : null;
 }
@@ -189,7 +194,7 @@ function hasExactlyStates<T extends string>(actual: readonly T[], expected: read
 
 /** Briefs ordered newest-created first. */
 export function listBriefs(db: Db, options: ListBriefsOptions = {}): BriefRow[] {
-  const conditions: string[] = [];
+  const conditions: string[] = [knowledgeOwnerReadPredicate(db, "briefs.id")];
   const params: (string | number)[] = [];
   let pageIndex = "idx_briefs_created_page";
   if (options.states && options.states.length > 0) {
@@ -237,7 +242,7 @@ export function newestBriefForRun(db: Db, runId: string): BriefRow | null {
     .prepare<
       [string],
       BriefDbRow
-    >("SELECT * FROM briefs WHERE created_by_run = ? ORDER BY created_at DESC, id DESC LIMIT 1")
+    >(`SELECT * FROM briefs WHERE created_by_run = ? AND ${knowledgeOwnerReadPredicate(db, "briefs.id")} ORDER BY created_at DESC, id DESC LIMIT 1`)
     .get(runId);
   return row ? rowToBrief(db, row) : null;
 }
@@ -269,7 +274,7 @@ export function listBriefsForLoop(
     .prepare<(string | number)[], BriefDbRow>(
       `SELECT b.* FROM briefs b
        JOIN brief_related_loops rl ON rl.brief_id = b.id
-       WHERE rl.loop_id = ?
+       WHERE rl.loop_id = ? AND ${knowledgeOwnerReadPredicate(db, "b.id")}
        ${cursor}
        ORDER BY b.created_at DESC, b.id DESC
        ${limit}`,
@@ -288,7 +293,7 @@ export function listShowableBriefs(db: Db, now: number): BriefRow[] {
   const rows = db
     .prepare<[number, number], BriefDbRow>(
       `SELECT * FROM briefs
-       WHERE state IN ('unread', 'read')
+       WHERE ${knowledgeOwnerReadPredicate(db, "briefs.id")} AND state IN ('unread', 'read')
          AND (next_show IS NULL OR next_show <= ?)
          AND (relevant_until IS NULL OR relevant_until > ?)`,
     )
@@ -305,7 +310,7 @@ export function listShowableBriefCandidates(db: Db, now: number): ShowableBriefC
   const rows = db
     .prepare<[number, number], BriefDbRow>(
       `SELECT * FROM briefs
-       WHERE state IN ('unread', 'read')
+       WHERE ${knowledgeOwnerReadPredicate(db, "briefs.id")} AND state IN ('unread', 'read')
          AND (next_show IS NULL OR next_show <= ?)
          AND (relevant_until IS NULL OR relevant_until > ?)`,
     )
@@ -395,7 +400,7 @@ export function listBriefFeedPage(
                 date(@snapshotNow / 1000.0, 'unixepoch', 'localtime') AS snapshot_day
            FROM briefs b
            LEFT JOIN nearest_deadlines nd ON nd.brief_id = b.id
-          WHERE b.state IN ('unread', 'read')
+          WHERE ${knowledgeOwnerReadPredicate(db, "b.id")} AND b.state IN ('unread', 'read')
             AND (b.next_show IS NULL OR b.next_show <= @snapshotNow)
             AND (b.relevant_until IS NULL OR b.relevant_until > @snapshotNow)
        ),
@@ -495,7 +500,7 @@ export function countShowableUnreadBriefs(db: Db, now: number): number {
   const row = db
     .prepare<[number, number], { n: number }>(
       `SELECT COUNT(*) AS n FROM briefs
-       WHERE state = 'unread'
+       WHERE ${knowledgeOwnerReadPredicate(db, "briefs.id")} AND state = 'unread'
          AND (next_show IS NULL OR next_show <= ?)
          AND (relevant_until IS NULL OR relevant_until > ?)`,
     )
@@ -716,6 +721,7 @@ export function findActiveBriefsForLoops(
       `SELECT b.id, b.title, b.state, brl.loop_id
        FROM briefs b JOIN brief_related_loops brl ON brl.brief_id = b.id
        WHERE brl.loop_id IN (${placeholders})
+         AND ${knowledgeOwnerReadPredicate(db, "b.id")}
          AND b.state IN ('unread', 'read', 'dismissed_snoozed')
          AND (b.relevant_until IS NULL OR b.relevant_until > ?)
        ORDER BY b.created_at`,

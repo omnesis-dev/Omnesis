@@ -335,3 +335,9 @@ describe("run-kind trigger exhaustiveness", () => {
     });
   });
 });
+
+test("identifies knowledge maintenance with a navigable batch instead of a noticing pass", () => {
+  expect(
+    decodeRunTrigger("synthesis", { focus: "knowledge-maintenance", batchId: "batch_example" }),
+  ).toEqual({ type: "knowledge-maintenance", batchId: "batch_example" });
+});

@@ -39,20 +39,27 @@ for (const [index, [name, value, max]] of labels.entries()) {
 JS
 }
 
+# Resolve relative to this library, not the caller's working directory.
+read_instance_token() (
+  local root directory
+  directory="${1:?instance config directory required}"
+  case "$directory" in /*) ;; *) directory="${PWD}/${directory}" ;; esac
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  cd "$root"
+  node --import tsx scripts/lib/instance-token.mjs "$directory" "${2:-}"
+)
+
 portal_login_url() {
-  node - "${URL}" "$(cat "${TOKEN_FILE}")" <<'JS'
-const url = new URL("/portal/", process.argv[2]);
-url.searchParams.set("token", process.argv[3]);
-process.stdout.write(url.href);
-JS
+  read_instance_token "${CONFIG_DIR}" "${URL}"
 }
 
 # A healthy instance keeps its startup labels. Never imply that reusing a
 # process changes the identity displayed by its portal.
 check_test_instance_reuse() {
   [[ -n "${TEST_SESSION}" || -n "${TEST_PURPOSE}" ]] || return 0
-  local status
-  status="$(curl -fsS --max-time 10 --cacert "${CA_CERT}" -H "Authorization: Bearer $(cat "${TOKEN_FILE}")" "${URL}/status")" || {
+  local status token
+  token="$(read_instance_token "${CONFIG_DIR}")" || return 2
+  status="$(curl -fsS --max-time 10 --cacert "${CA_CERT}" -H "Authorization: Bearer ${token}" "${URL}/status")" || {
     echo "Cannot verify running instance labels; stop it before starting with labels." >&2
     return 2
   }

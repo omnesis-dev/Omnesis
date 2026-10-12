@@ -28,7 +28,7 @@ const stubSearch: SearchPort = {
 const stubDocument: DocumentPort = { fetch: async () => null };
 
 /** Records the turn the session hands the backend, then ends the turn. */
-function recordingService(): {
+function recordingService(onVerification?: (context: string) => void): {
   service: AgentService;
   seen: () => TurnInput | undefined;
   turnComplete: Promise<void>;
@@ -43,6 +43,11 @@ function recordingService(): {
     model: "recording",
     async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
       seen = input;
+      if (onVerification)
+        yield {
+          type: "agent.text.delta",
+          payload: { sessionId: input.sessionId, messageId: input.messageId, delta: "Hello." },
+        };
       yield {
         type: "agent.message.end",
         payload: {
@@ -57,6 +62,19 @@ function recordingService(): {
     backendFactory: () => backend,
     ports: { search: stubSearch, document: stubDocument },
     systemPrompt: "test",
+    ...(onVerification
+      ? {
+          grounding: {
+            getVerifier: async () => ({
+              verify: async (input: { context?: string }) => {
+                onVerification(input.context ?? "");
+                return { label: "entailment" as const };
+              },
+              dispose() {},
+            }),
+          },
+        }
+      : {}),
     // The turn is over when its end event reaches the broadcast — this service
     // has no transcript store, so there is no persistence hook to wait on.
     broadcastEvent: (event) => {
@@ -93,4 +111,21 @@ describe("the audience a conversation speaks for", () => {
   it("stays absent when the session was opened without one", async () => {
     expect((await turnFor())?.caller).toBeUndefined();
   });
+});
+
+it("carries the session caller zone through the service into answer verification", async () => {
+  let context = "";
+  const { service, turnComplete } = recordingService((value) => {
+    context = value;
+  });
+  try {
+    const { sessionId } = await service.createSession("token:test", {
+      timeZone: "Pacific/Auckland",
+    });
+    service.sendMessage("token:test", sessionId, "Hello.");
+    await turnComplete;
+    expect(JSON.parse(context).callerClock).toContain("Pacific/Auckland");
+  } finally {
+    await service.dispose();
+  }
 });

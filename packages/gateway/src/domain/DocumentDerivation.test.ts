@@ -41,11 +41,23 @@ describe("document derivation", () => {
     }
   });
 
-  function seedDoc(id: string, opts: { derived?: boolean; ingestedAt?: string } = {}): void {
+  function seedDoc(
+    id: string,
+    opts: { derived?: boolean; ingestedAt?: string; updatedAt?: string } = {},
+  ): void {
     db.prepare(
       `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at)
        VALUES (?, 'web', 'web:pages', ?, ?, '', ?, '{}', ?, ?, ?, ?)`,
-    ).run(id, id, `Title ${id}`, `h-${id}`, NOW, NOW, opts.ingestedAt ?? NOW, NOW);
+    ).run(
+      id,
+      id,
+      `Title ${id}`,
+      `h-${id}`,
+      NOW,
+      NOW,
+      opts.ingestedAt ?? NOW,
+      opts.updatedAt ?? opts.ingestedAt ?? NOW,
+    );
     if (opts.derived === true) {
       for (const stage of DERIVATION_STAGES) {
         db.prepare(`UPDATE documents SET ${stage.column} = ? WHERE id = ?`).run(NOW, id);
@@ -107,6 +119,27 @@ describe("document derivation", () => {
     seedDoc("recent", { ingestedAt: new Date(now - 60_000).toISOString() });
     const stage = DERIVATION_STAGES[0];
     expect(oldestPendingDerivationMs(db, stage, now)).toBe(3 * 3_600_000);
+  });
+
+  test("freshly invalidated old documents age from their local rewrite, not ingestion or source time", () => {
+    const now = Date.parse(NOW);
+    const old = new Date(now - 7 * 86_400_000).toISOString();
+    const recent = new Date(now - 60_000).toISOString();
+    seedDoc("rewritten", { derived: true, ingestedAt: old });
+    // Model a source-backed rewrite: local write time advances, source event
+    // time may remain historical, and all affected stages become pending.
+    db.prepare(
+      `UPDATE documents SET updated_at=?, source_updated_at=?,
+       links_extracted_at=NULL, people_resolved_at=NULL, dates_extracted_at=NULL
+       WHERE id='rewritten'`,
+    ).run(recent, old);
+    for (const stage of DERIVATION_STAGES)
+      expect(oldestPendingDerivationMs(db, stage, now)).toBe(60_000);
+
+    // A different genuinely delayed generation still determines the backlog age.
+    seedDoc("delayed", { ingestedAt: new Date(now - 3 * 3_600_000).toISOString() });
+    for (const stage of DERIVATION_STAGES)
+      expect(oldestPendingDerivationMs(db, stage, now)).toBe(3 * 3_600_000);
   });
 
   test("oldest-pending age is null once the stage has drained", () => {

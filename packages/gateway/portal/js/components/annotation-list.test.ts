@@ -19,7 +19,7 @@ function expandToHostNodes(vnode: any, out: any[] = []): any[] {
   if (typeof vnode.type === "function") {
     return expandToHostNodes(vnode.type(vnode.props ?? {}), out);
   }
-  out.push({ tag: vnode.type, class: vnode.props?.class ?? "", text: collectText(vnode.props?.children) });
+  out.push({ tag: vnode.type, markup: vnode.props?.dangerouslySetInnerHTML?.__html, href: vnode.props?.href, class: vnode.props?.class ?? "", text: collectText(vnode.props?.children) });
   expandToHostNodes(vnode.props?.children, out);
   return out;
 }
@@ -115,6 +115,8 @@ describe("AnnotationList", () => {
     const summary = nodes.find((n) => n.tag === "summary");
     expect(summary?.text.trim()).toBe("2 dependent outputs");
     const links = nodes.filter((n) => n.class === "meta-annotation-dependent");
+    expect(links[1].href).toBe("/portal/debug/cognition/knowledge/loop_1?kind=loop");
+    expect(nodes.some((n) => n.markup?.includes("kn-link-icon--loop"))).toBe(true);
     expect(links.map((l) => l.text.trim())).toEqual([
       "brief: Practice day changed",
       "loop: Confirm the new practice day",
