@@ -186,8 +186,8 @@
   max-width: var(--figure-width);
   margin-inline: auto;
   color: var(--text-primary);
-  font-size: 1.1875rem;
-  line-height: 1.7;
+  font-size: 1.125rem;
+  line-height: 1.65;
   text-align: left;
   overflow-wrap: anywhere;
 }
@@ -404,7 +404,7 @@ html:not(.js) .blog-page #load-comments {
   }
 
   .post-body {
-    font-size: 1.125rem;
+    font-size: 1.0625rem;
   }
 
   .post-body pre {
