@@ -20,8 +20,9 @@
  * narrow local mirrors of the route-handler return shapes.
  */
 
+import type { DeviceTlsTrust } from "../tls-device-trust.js";
 import type { InferenceOverview } from "../models/backends.js";
-import type { DeviceUpdateState, SyncRemediation } from "@omnesis/types";
+import type { DeviceTlsTrustMode, DeviceUpdateState, SyncRemediation } from "@omnesis/types";
 import type { SecretStoreStatus } from "../secret-store.js";
 import type { ClientVersionState } from "../client-version.js";
 import type { IndexStats, SourceReadAccessResult } from "@omnesis/source-sdk";
@@ -269,6 +270,10 @@ export interface DeviceEntry {
   updateDetail?: string | null;
   /** For an agent device, the harness it is connected to. */
   harness?: string | null;
+  /** How the device verifies the gateway's certificate, as its hello reported it. */
+  tlsMode?: DeviceTlsTrustMode | null;
+  /** Set when the device pins a certificate the gateway replaces or has replaced. */
+  tlsTrust?: DeviceTlsTrust;
   /** For an agent device, whether its corpus access needs a human to re-authorize it. */
   agentAuthorization?:
     | { status: "authorized" }

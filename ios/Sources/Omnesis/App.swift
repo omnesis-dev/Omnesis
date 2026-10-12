@@ -1095,6 +1095,7 @@ public final class AppStore {
     /// past its natural lifetime.
     private func installCoordinatorHooks() {
         pairingCoord.setOnError { [weak self] msg in self?.lastError = msg }
+        pairingCoord.setOnSystemTrustAdopted { [weak self] in self?.reload() }
         syncCoord.setOnError { [weak self] msg in self?.lastError = msg }
         syncCoord.setOnLifecycleApplied { [weak self] event, generation in
             await self?.handleLifecycleEvent(event, generation: generation)
@@ -1742,7 +1743,7 @@ public final class AppStore {
             let session: URLSessionLike = if let revocationSession {
                 revocationSession
             } else if pending.tlsMode == .pinnedLeaf, let fingerprint = pending.fingerprint {
-                PinnedSession(fingerprintHex: fingerprint).session
+                PinnedSession(fingerprintHex: fingerprint, host: pending.url.host).session
             } else {
                 URLSession.shared
             }

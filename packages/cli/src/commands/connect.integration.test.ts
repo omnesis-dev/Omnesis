@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { X509Certificate } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import { pinnedTrust } from "@omnesis/agent-integration";
 import { buildTlsTrust } from "./connect.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -157,9 +158,13 @@ describe("connect TLS ceremony", () => {
   test("trusts a live self-signed gateway before health verification and pins the same leaf", async () => {
     const trust = await buildTlsTrust(gatewayUrl, configDirectory);
 
-    expect(trust).toMatchObject({ leafFingerprintSha256: fingerprint });
-    expect(trust?.caPem).toContain("BEGIN CERTIFICATE");
-    expect(readFileSync(join(configDirectory, "tls", "cert.pem"), "utf8")).toBe(trust?.caPem);
+    expect(trust?.saved).toMatchObject({ leafFingerprintSha256: fingerprint });
+    // A self-signed localhost gateway stays pinned, for every round-trip too.
+    expect(trust?.run).toEqual(trust?.saved);
+    expect(trust?.observed.caPem).toContain("BEGIN CERTIFICATE");
+    expect(readFileSync(join(configDirectory, "tls", "cert.pem"), "utf8")).toBe(
+      trust?.observed.caPem,
+    );
     expect(healthRequests).toBe(1);
   });
 
@@ -185,7 +190,7 @@ describe("connect TLS ceremony", () => {
 
     healthStatus = 200;
     const rotated = await buildTlsTrust(gatewayUrl, configDirectory);
-    expect(rotated).toEqual({
+    expect(rotated?.saved).toEqual({
       caPem: rotatedCertificate.certPem,
       leafFingerprintSha256: rotatedCertificate.fingerprint,
     });
@@ -217,7 +222,7 @@ describe("connect certificate pin", () => {
       expectedFingerprint: `sha256:${rotatedCertificate.fingerprint}`,
     });
 
-    expect(trust).toEqual({
+    expect(trust?.saved).toEqual({
       caPem: rotatedCertificate.certPem,
       leafFingerprintSha256: rotatedCertificate.fingerprint,
     });
@@ -284,7 +289,7 @@ describe("connect certificate pin", () => {
     const trust = await buildTlsTrust(gatewayUrl, configuration, {
       expectedFingerprint: rotatedCertificate.fingerprint,
     });
-    expect(trust?.leafFingerprintSha256).toBe(rotatedCertificate.fingerprint);
+    expect(pinnedTrust(trust!.saved)?.leafFingerprintSha256).toBe(rotatedCertificate.fingerprint);
     expect(readFileSync(join(configuration, "tls", "cert.pem"), "utf8")).toBe(
       rotatedCertificate.certPem,
     );

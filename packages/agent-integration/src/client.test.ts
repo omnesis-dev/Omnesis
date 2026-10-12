@@ -15,6 +15,7 @@ import {
   AGENT_INTEGRATION_PROTOCOL_MIN_VERSION,
   AGENT_INTEGRATION_PROTOCOL_VERSION,
 } from "./protocol.js";
+import { GatewayTrust } from "./trust.js";
 import type { ClientOptions, RawData } from "ws";
 
 class FakeSocket extends EventEmitter {
@@ -699,5 +700,60 @@ describe("AgentIntegrationClient", () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(sockets).toHaveLength(1);
     expect(client.getState()).toBe("stopped");
+  });
+
+  test("reads TLS options per connection and reports its trust in the hello", async () => {
+    vi.useFakeTimers();
+    const trust = new GatewayTrust({
+      gatewayUrl: "https://gateway.example.test:7600",
+      trust: { mode: "system" },
+      harness: "openclaw",
+      systemRoots: () => [],
+    });
+    const connectionOptions = vi.spyOn(trust, "connectionOptions");
+    const sockets: FakeSocket[] = [];
+    const seen: ClientOptions[] = [];
+    const inbox = new DurableIntegrationInbox(":memory:");
+    inboxes.push(inbox);
+    const client = new AgentIntegrationClient({
+      gatewayUrl: "https://gateway.example.test:7600",
+      deliveryToken: "omn_delivery_example",
+      tls: trust,
+      capability: defaultIntegrationCapability("openclaw", 2),
+      inbox,
+      starter: async () => ({ localRunId: "run", nativeSessionId: "session" }),
+      webSocketFactory: (_url, _protocol, options) => {
+        seen.push(options);
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectInitialMs: 10,
+      reconnectMaxMs: 20,
+    });
+    client.start();
+    sockets[0].open();
+    const hello = JSON.parse(sockets[0].sent[0]) as {
+      payload: { capabilities: { tls?: { mode: string } } };
+    };
+    expect(hello.payload.capabilities.tls).toEqual({ mode: "system" });
+    sockets[0].close();
+    await vi.advanceTimersByTimeAsync(11);
+
+    expect(sockets).toHaveLength(2);
+    expect(connectionOptions).toHaveBeenCalledTimes(2);
+    expect(seen[1]).toMatchObject({ rejectUnauthorized: true });
+    await client.stop();
+  });
+
+  test("a plaintext loopback hello claims no TLS trust", async () => {
+    const { client, sockets } = setup();
+    client.start();
+    sockets[0].open();
+    const hello = JSON.parse(sockets[0].sent[0]) as {
+      payload: { capabilities: Record<string, unknown> };
+    };
+    expect(hello.payload.capabilities).not.toHaveProperty("tls");
+    await client.stop();
   });
 });

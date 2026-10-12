@@ -147,9 +147,9 @@ export const revokePairingBody = z.object({
 export type RevokePairingBody = z.infer<typeof revokePairingBody>;
 
 // POST /admin/devices/pair-qr — encode a versioned pairing payload
-// server-side. Omitted trustMode retains the V2/V3 compatibility path;
-// auto selects system trust only for an HTTPS origin configured on the
-// gateway's exact allowlist, and otherwise retains the compatibility fallback.
+// server-side. auto (also the default when trustMode is omitted) selects
+// system trust for an origin the gateway knows is publicly certified, and
+// otherwise pins the served leaf (V3) or falls back to V2 without TLS.
 export const pairQrBody = z.object({
   pairingCode: nonEmptyString,
   gatewayUrl: nonEmptyString,

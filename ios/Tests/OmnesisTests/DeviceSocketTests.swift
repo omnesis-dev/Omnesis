@@ -112,6 +112,35 @@ final class DeviceSocketTests: XCTestCase {
         XCTAssertFalse(omnesisAppVersion().isEmpty)
     }
 
+    /// The gateway warns before a pinned phone's certificate renews only when
+    /// the hello says which trust the phone holds.
+    func testHelloDeclaresTheTrustModeWhenKnown() throws {
+        let command = DeviceSocket.helloCommand(
+            id: "hello-1",
+            capabilities: .ios(tlsMode: .pinnedLeaf)
+        )
+        guard case .object(let payload)? = command["payload"],
+              case .object(let capabilities)? = payload["capabilities"]
+        else { return XCTFail("expected hello capabilities") }
+        XCTAssertEqual(capabilities["tls"], .object(["mode": .string("pinned-leaf")]))
+
+        let encoded = try JSONEncoder().encode(PairingCapabilities.ios(tlsMode: .system))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(json["tls"] as? [String: String], ["mode": "system"])
+    }
+
+    func testHelloOmitsTheTrustModeWhenUnknown() throws {
+        let command = DeviceSocket.helloCommand(id: "hello-1", capabilities: .ios())
+        guard case .object(let payload)? = command["payload"],
+              case .object(let capabilities)? = payload["capabilities"]
+        else { return XCTFail("expected hello capabilities") }
+        XCTAssertNil(capabilities["tls"])
+
+        let encoded = try JSONEncoder().encode(PairingCapabilities.ios())
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil(json["tls"])
+    }
+
     // MARK: - Gateway-originated command acknowledgements
 
     //

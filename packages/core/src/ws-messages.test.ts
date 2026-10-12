@@ -151,6 +151,23 @@ describe("hello handshake schemas", () => {
     expect(r.ok).toBe(true);
   });
 
+  test("accepts any reported TLS trust mode, so a newer client's mode never fails its hello", () => {
+    for (const mode of ["pinned-leaf", "system", "a-future-mode"]) {
+      expect(
+        parseRequestPayload("hello", {
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: { tls: { mode, detail: "extra" } },
+        }).ok,
+      ).toBe(true);
+    }
+    expect(
+      parseRequestPayload("hello", {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: { tls: { mode: "x".repeat(33) } },
+      }).ok,
+    ).toBe(false);
+  });
+
   test("accepts only the affirmative device-doctor capability", () => {
     expect(
       parseRequestPayload("hello", {

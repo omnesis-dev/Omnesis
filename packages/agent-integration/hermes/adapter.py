@@ -14,6 +14,7 @@ chat are retained in Hermes' transcript but are never routed to a human chat.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import http.client
 import ipaddress
@@ -31,7 +32,7 @@ import time
 import unicodedata
 import urllib.parse
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -1004,6 +1005,22 @@ class Credentials:
     oauth_refresh_token: Optional[str]
     ca_pem: Optional[str]
     leaf_fingerprint_sha256: Optional[str]
+    # Ordinary system-root and hostname verification instead of a pin, for a
+    # gateway addressed by a DNS name whose certificate a public CA issued.
+    system_trust: bool = False
+
+    @property
+    def tls_mode(self) -> Optional[str]:
+        """How this installation verifies the gateway; None over plain loopback.
+
+        A pin is ``pinned-ca`` when it could act as an issuer, and
+        ``pinned-leaf`` when it could not.
+        """
+        if self.system_trust:
+            return "system"
+        if self.ca_pem is None:
+            return None
+        return "pinned-ca" if _pem_is_ca(self.ca_pem) else "pinned-leaf"
 
 
 def _hermes_home() -> Path:
@@ -1072,19 +1089,28 @@ def _load_credentials(path: Path) -> Credentials:
         raise ConfigurationError("remote integrations require HTTPS")
     ca_pem = None
     fingerprint = None
+    system_trust = False
     tls = raw.get("tls")
     if parsed.scheme == "https":
-        if not isinstance(tls, dict) or set(tls) != {
+        # Exactly one of two shapes. The pinned one carries no `mode` key,
+        # because older plugins read it strictly and rewrite this file on every
+        # OAuth rotation.
+        if tls == {"mode": "system"}:
+            system_trust = True
+        elif not isinstance(tls, dict) or set(tls) != {
             "caPem",
             "leafFingerprintSha256",
         }:
-            raise ConfigurationError("HTTPS requires exact CA and leaf-pin trust material")
-        if not isinstance(tls["caPem"], str) or not tls["caPem"]:
-            raise ConfigurationError("caPem must be non-empty")
-        if not isinstance(tls["leafFingerprintSha256"], str):
-            raise ConfigurationError("leafFingerprintSha256 must be a string")
-        ca_pem = tls["caPem"]
-        fingerprint = _normalize_fingerprint(tls["leafFingerprintSha256"])
+            raise ConfigurationError(
+                "HTTPS requires system trust or exact CA and leaf-pin trust material"
+            )
+        else:
+            if not isinstance(tls["caPem"], str) or not tls["caPem"]:
+                raise ConfigurationError("caPem must be non-empty")
+            if not isinstance(tls["leafFingerprintSha256"], str):
+                raise ConfigurationError("leafFingerprintSha256 must be a string")
+            ca_pem = tls["caPem"]
+            fingerprint = _normalize_fingerprint(tls["leafFingerprintSha256"])
     management_token = raw.get("managementToken")
     oauth = raw.get("oauth")
     if management_token is None and oauth is None:
@@ -1133,6 +1159,7 @@ def _load_credentials(path: Path) -> Credentials:
         oauth_refresh_token=refresh_token,
         ca_pem=ca_pem,
         leaf_fingerprint_sha256=fingerprint,
+        system_trust=system_trust,
     )
 
 
@@ -1549,6 +1576,37 @@ def _record_gateway_capabilities(path: Path, subscriptions: bool) -> None:
         _release_owned_refresh_lock(lock_path, descriptor)
 
 
+def _record_system_trust(path: Path, pinned_fingerprint: str) -> Optional[Credentials]:
+    """Replace the pin this process upgraded from with ``{"mode": "system"}``.
+
+    Under the refresh lock and re-read first, like the capability record: the
+    OAuth tokens in this file rotate, and writing back an older snapshot would
+    restore an already-spent refresh token. Returns the credentials as written,
+    read before the lock is released so a refresh landing after it cannot be
+    overwritten by them; None, with nothing changed, when the file no longer
+    holds that pin — a re-run of ``omnesis connect`` decided since.
+    """
+    lock_path = Path(f"{path}.refresh.lock")
+    descriptor = _acquire_refresh_lock(lock_path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ConfigurationError("credential file must contain an object")
+        tls = raw.get("tls")
+        if not isinstance(tls, dict) or not isinstance(tls.get("leafFingerprintSha256"), str):
+            return None
+        try:
+            if _normalize_fingerprint(tls["leafFingerprintSha256"]) != pinned_fingerprint:
+                return None
+        except ConfigurationError:
+            return None
+        raw["tls"] = {"mode": "system"}
+        _write_private_json(path, raw)
+        return _load_credentials(path)
+    finally:
+        _release_owned_refresh_lock(lock_path, descriptor)
+
+
 def _reconcile_gateway_capabilities(path: Path) -> bool:
     credentials = _load_credentials(path)
     probe = OmnesisAdapter.for_tools()
@@ -1777,28 +1835,167 @@ def _oauth_token_endpoint(raw: Any, gateway_url: str) -> str:
     return f"{gateway_url.rstrip('/')}/oauth/token"
 
 
+class TlsPinMismatchError(ssl.SSLError):
+    """The gateway presented a certificate other than the pinned one."""
+
+
+def _public_name_candidate(host: Optional[str]) -> bool:
+    """Whether a certificate for this host could have come from a public CA."""
+    if not host:
+        return False
+    host = host.strip("[]").lower().removesuffix(".")
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    return host != "localhost" and not host.endswith(".localhost")
+
+
+@functools.lru_cache(maxsize=8)
+def _pem_is_ca(ca_pem: str) -> bool:
+    """Whether a pinned PEM may issue certificates. OpenSSL lists only those."""
+    probe = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    probe.load_verify_locations(cadata=ca_pem)
+    return bool(probe.get_ca_certs())
+
+
+def _pin_upgradable(credentials: Credentials) -> bool:
+    """Whether a renewal from a public CA may replace this pin.
+
+    Only where a fresh ``omnesis connect`` would have chosen system trust: a
+    DNS name, and a pinned leaf rather than a CA. An IP address, a loopback
+    name or a pinned CA stays strictly pinned — there is no public trust to
+    fall back on.
+    """
+    if credentials.ca_pem is None or credentials.system_trust:
+        return False
+    host = urllib.parse.urlparse(credentials.gateway_url).hostname
+    return _public_name_candidate(host) and not _pem_is_ca(credentials.ca_pem)
+
+
+_SSL_CONTEXTS: Dict[tuple[bool, Optional[str], bool], ssl.SSLContext] = {}
+_SSL_CONTEXTS_LOCK = threading.Lock()
+
+
 def _ssl_context(credentials: Credentials) -> Optional[ssl.SSLContext]:
-    if credentials.ca_pem is None:
+    if credentials.system_trust:
+        key: tuple[bool, Optional[str], bool] = (True, None, False)
+    elif credentials.ca_pem is None:
         return None
-    context = ssl.create_default_context(cadata=credentials.ca_pem)
-    context.check_hostname = True
-    context.verify_mode = ssl.CERT_REQUIRED
-    if hasattr(ssl, "VERIFY_X509_PARTIAL_CHAIN"):
-        context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
-    return context
+    else:
+        key = (False, credentials.ca_pem, _pin_upgradable(credentials))
+    with _SSL_CONTEXTS_LOCK:
+        cached = _SSL_CONTEXTS.get(key)
+        if cached is not None:
+            return cached
+        system, ca_pem, upgradable = key
+        if system:
+            context = ssl.create_default_context()
+        elif upgradable:
+            # The pin and the public roots are both trusted, and the pin
+            # decides which vouched for a connection (see `_verify_peer`).
+            context = ssl.create_default_context()
+            context.load_verify_locations(cadata=ca_pem)
+        else:
+            context = ssl.create_default_context(cadata=ca_pem)
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+        if not system and hasattr(ssl, "VERIFY_X509_PARTIAL_CHAIN"):
+            context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        _SSL_CONTEXTS[key] = context
+        return context
 
 
-def _verify_leaf(ssl_object: Any, expected: Optional[str]) -> None:
-    if expected is None:
-        return
+def _verify_peer(ssl_object: Any, credentials: Credentials) -> bool:
+    """Check the pin after a verified handshake; True when to adopt system trust.
+
+    The handshake has already verified the chain and the name. OpenSSL refuses
+    a CA:FALSE certificate as an issuer, so with an upgradable pin a
+    certificate other than the pinned leaf can only have been anchored by a
+    public root — a renewal, which a fresh pairing would trust the same way.
+    """
+    expected = credentials.leaf_fingerprint_sha256
+    if credentials.system_trust or expected is None:
+        return False
     if ssl_object is None:
         raise ssl.SSLError("TLS peer certificate unavailable for pin validation")
     certificate = ssl_object.getpeercert(binary_form=True)
     if not certificate:
         raise ssl.SSLError("TLS peer did not provide a leaf certificate")
     actual = hashlib.sha256(certificate).hexdigest()
-    if actual != expected:
-        raise ssl.SSLError("TLS leaf certificate pin mismatch")
+    if actual == expected:
+        return False
+    if _pin_upgradable(credentials):
+        return True
+    raise TlsPinMismatchError("TLS leaf certificate pin mismatch")
+
+
+# OpenSSL verification codes that a different certificate than expected, or
+# one this installation cannot trust, produces.
+_X509_CERT_HAS_EXPIRED = 10
+_X509_CERT_NOT_YET_VALID = 9
+_X509_HOSTNAME_MISMATCH = 62
+
+
+def _tls_failure_message(error: BaseException, gateway_url: Optional[str]) -> Optional[str]:
+    """The operator-facing account of a certificate failure; None for anything else."""
+    seen = 0
+    current: Optional[BaseException] = error
+    while current is not None and seen < 10:
+        seen += 1
+        cause: Optional[str] = None
+        expired = False
+        if isinstance(current, TlsPinMismatchError):
+            cause = "it presents a certificate other than the one this installation pinned"
+        elif isinstance(current, ssl.SSLCertVerificationError):
+            code = getattr(current, "verify_code", None)
+            if code == _X509_CERT_HAS_EXPIRED:
+                cause, expired = "its certificate has expired", True
+            elif code == _X509_CERT_NOT_YET_VALID:
+                cause = "its certificate is not yet valid on this machine's clock"
+                expired = True
+            elif code == _X509_HOSTNAME_MISMATCH:
+                cause = "its certificate does not cover the name this installation uses"
+            else:
+                cause = "its certificate is not one this installation trusts"
+        if cause is not None:
+            gateway = (
+                f"the Omnesis gateway at {gateway_url}" if gateway_url else "the Omnesis gateway"
+            )
+            if expired:
+                return (
+                    f"Omnesis is unreachable over TLS: {gateway} was refused because "
+                    f"{cause}. Renew it on the gateway host (`omnesis tls status` "
+                    "there says how)."
+                )
+            return (
+                f"Omnesis is unreachable over TLS: {gateway} was refused because "
+                f"{cause}. Run `omnesis connect hermes --refresh` on this machine to "
+                "trust its current certificate, adding `--trust-fingerprint "
+                "sha256:<fingerprint>` with the fingerprint `omnesis tls status` "
+                "prints on the gateway host to run it unattended."
+            )
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _describe_transport_failure(
+    error: BaseException, gateway_url: Optional[str], what: str
+) -> str:
+    """What to tell the model when a call reached no answer.
+
+    A certificate failure is described in full, with its repair command,
+    because nothing the model can do helps and the operator needs the words.
+    Anything else names only its kind: an exception's own text can carry what
+    a peer sent, and that never travels to the model.
+    """
+    tls = _tls_failure_message(error, gateway_url)
+    if tls is not None:
+        return tls
+    return f"{what} failed ({type(error).__name__})"
 
 
 def _validate_handle(value: Any, field: str) -> str:
@@ -2934,6 +3131,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         adapter._pending_answer_requests = {}
         adapter._session_runs = {}
         adapter._oauth_refresh_lock = threading.Lock()
+        adapter._system_trust_writer = None
         return adapter
 
     def _ensure_tool_resources(self) -> bool:
@@ -2983,6 +3181,8 @@ class OmnesisAdapter(BasePlatformAdapter):
         # per run: runs and firings are not one to one.
         self._session_runs: Dict[str, list[Dict[str, Any]]] = {}
         self._oauth_refresh_lock = threading.Lock()
+        # The thread recording a move to system trust, while one runs.
+        self._system_trust_writer: Optional[threading.Thread] = None
         self._socket: Any = None
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
@@ -3377,10 +3577,11 @@ class OmnesisAdapter(BasePlatformAdapter):
                 fragment="",
             )
         )
+        credentials = self._credentials
         socket_connection = websockets.connect(
             ws_url,
-            subprotocols=[f"omnesis-token.{self._credentials.delivery_token}"],
-            ssl=_ssl_context(self._credentials),
+            subprotocols=[f"omnesis-token.{credentials.delivery_token}"],
+            ssl=_ssl_context(credentials),
             open_timeout=15,
             max_size=MAX_FRAME_BYTES,
         )
@@ -3388,7 +3589,9 @@ class OmnesisAdapter(BasePlatformAdapter):
             self._socket = websocket
             transport = getattr(websocket, "transport", None)
             ssl_object = transport.get_extra_info("ssl_object") if transport else None
-            _verify_leaf(ssl_object, self._credentials.leaf_fingerprint_sha256)
+            if _verify_peer(ssl_object, credentials):
+                self._adopt_system_trust()
+            tls_mode = self._credentials.tls_mode
             hello_id = f"hermes-{time.time_ns()}"
             await websocket.send(
                 json.dumps(
@@ -3417,6 +3620,10 @@ class OmnesisAdapter(BasePlatformAdapter):
                                     "maxConcurrentRuns": 1,
                                     "watchPrivacyPolicyVersion": 1,
                                 },
+                                # How this connection was verified, so the
+                                # gateway can name a client still pinned to a
+                                # certificate it is about to renew.
+                                **({"tls": {"mode": tls_mode}} if tls_mode else {}),
                             },
                         },
                     },
@@ -4050,16 +4257,16 @@ class OmnesisAdapter(BasePlatformAdapter):
             "Content-Length": str(len(body)),
         }
         if parsed.scheme == "https":
+            credentials = self._credentials
             connection: Any = http.client.HTTPSConnection(
                 parsed.hostname,
                 parsed.port or 443,
-                context=_ssl_context(self._credentials),
+                context=_ssl_context(credentials),
                 timeout=GATEWAY_TIMEOUT_SECONDS,
             )
             connection.connect()
-            _verify_leaf(
-                connection.sock, self._credentials.leaf_fingerprint_sha256
-            )
+            if _verify_peer(connection.sock, credentials):
+                self._adopt_system_trust()
         else:
             connection = http.client.HTTPConnection(
                 parsed.hostname, parsed.port or 80, timeout=GATEWAY_TIMEOUT_SECONDS
@@ -4271,10 +4478,16 @@ class OmnesisAdapter(BasePlatformAdapter):
             )
             self._pending_answer_requests.pop(pending_key, None)
             return json.dumps(_answer_failure_payload(failure))
-        except Exception:
+        except Exception as error:
             self._pending_answer_requests.pop(pending_key, None)
             logger.warning("Omnesis answer request failed", exc_info=True)
-            return json.dumps({"error": "Omnesis answer request failed"})
+            return json.dumps(
+                {
+                    "error": _describe_transport_failure(
+                        error, self._credentials.gateway_url, "Omnesis answer request"
+                    )
+                }
+            )
         finally:
             answer_state.close()
         self._pending_answer_requests.pop(pending_key, None)
@@ -4584,9 +4797,15 @@ class OmnesisAdapter(BasePlatformAdapter):
                     **({"code": failure.code} if failure.code else {}),
                 }
             )
-        except Exception:
+        except Exception as error:
             logger.warning("Omnesis %s request failed", name, exc_info=True)
-            return json.dumps({"error": f"Omnesis {name} request failed"})
+            return json.dumps(
+                {
+                    "error": _describe_transport_failure(
+                        error, self._credentials.gateway_url, f"Omnesis {name} request"
+                    )
+                }
+            )
         return _forwarded_tool_result(result)
 
     def _mcp_request(
@@ -4800,13 +5019,14 @@ class OmnesisAdapter(BasePlatformAdapter):
             "Content-Length": str(len(body)),
             "Accept": "application/json",
         }
+        credentials = self._credentials
         if parsed.scheme == "https":
             same_gateway_origin = _normalized_url_origin(parsed) == _normalized_url_origin(gateway)
             connection: Any = http.client.HTTPSConnection(
                 parsed.hostname,
                 parsed.port or 443,
                 context=(
-                    _ssl_context(self._credentials)
+                    _ssl_context(credentials)
                     if same_gateway_origin
                     else ssl.create_default_context()
                 ),
@@ -4822,8 +5042,8 @@ class OmnesisAdapter(BasePlatformAdapter):
                 # The operational gateway keeps its paired leaf pin. A distinct
                 # authorization server discovered from that pinned gateway uses
                 # ordinary CA and hostname validation, as OAuth permits.
-                if same_gateway_origin:
-                    _verify_leaf(connection.sock, self._credentials.leaf_fingerprint_sha256)
+                if same_gateway_origin and _verify_peer(connection.sock, credentials):
+                    self._adopt_system_trust()
             connection.request("POST", parsed.path, body, headers)
             response = connection.getresponse()
             return response.status, response.read(MAX_FRAME_BYTES + 1)
@@ -4892,6 +5112,41 @@ class OmnesisAdapter(BasePlatformAdapter):
         self._credentials = _load_credentials(path)
         return self._credentials.oauth_access_token
 
+    def _adopt_system_trust(self) -> None:
+        """Move this process to system trust now, and record it for later starts.
+
+        The switch in memory is immediate, so the next connection on any thread
+        verifies by name. The file is written from a helper thread: this can
+        run inside a token refresh that already holds the refresh lock and is
+        about to write the file itself, and that lock is not re-entrant.
+        Waiting for it elsewhere lets that write land first, then patches it.
+        """
+        current = self._credentials
+        if current is None or current.system_trust or current.leaf_fingerprint_sha256 is None:
+            return
+        pinned = current.leaf_fingerprint_sha256
+        self._credentials = replace(
+            current, system_trust=True, ca_pem=None, leaf_fingerprint_sha256=None
+        )
+        logger.info(
+            "Omnesis gateway certificate renewed and verified by a public CA for %s; "
+            "using system trust from now on",
+            urllib.parse.urlparse(current.gateway_url).hostname,
+        )
+        path = self._credential_path
+
+        def record() -> None:
+            try:
+                recorded = _record_system_trust(path, pinned)
+                if recorded is not None:
+                    self._credentials = recorded
+            except Exception as error:
+                logger.warning("Could not record system trust for Omnesis: %s", error)
+
+        writer = threading.Thread(target=record, name="omnesis-system-trust")
+        self._system_trust_writer = writer
+        writer.start()
+
     def _post_json(
         self,
         endpoint: str,
@@ -4921,14 +5176,16 @@ class OmnesisAdapter(BasePlatformAdapter):
         if extra_headers:
             headers.update(extra_headers)
         if parsed.scheme == "https":
+            credentials = self._credentials
             connection: Any = http.client.HTTPSConnection(
                 parsed.hostname,
                 parsed.port or 443,
-                context=_ssl_context(self._credentials),
+                context=_ssl_context(credentials),
                 timeout=timeout,
             )
             connection.connect()
-            _verify_leaf(connection.sock, self._credentials.leaf_fingerprint_sha256)
+            if _verify_peer(connection.sock, credentials):
+                self._adopt_system_trust()
         else:
             connection = http.client.HTTPConnection(
                 parsed.hostname, parsed.port or 80, timeout=timeout
@@ -5176,7 +5433,16 @@ class OmnesisAdapter(BasePlatformAdapter):
                     "kind": "timed_out",
                 }
             )
-        except Exception:
+        except Exception as error:
+            # A certificate failure means nothing reached the gateway, so it
+            # is unreachable too; its message names the repair, because
+            # retrying cannot help.
+            tls_failure = _tls_failure_message(
+                error, self._credentials.gateway_url if self._credentials else None
+            )
+            if tls_failure is not None:
+                logger.warning("Omnesis %s refused the gateway certificate", action)
+                return json.dumps({"error": tls_failure, "kind": "unreachable"})
             # No answer reached us. Usually that means nothing happened, but a
             # response discarded on the way back looks identical from here, so
             # this does not promise that nothing was created — it says how to

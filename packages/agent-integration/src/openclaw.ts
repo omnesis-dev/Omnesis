@@ -26,6 +26,7 @@ import {
   loadOperationalIntegrationCredentials,
   subscriptionsAvailable,
   updateIntegrationCapabilities,
+  updateIntegrationTlsTrust,
   type OperationalIntegrationCredentials,
 } from "./credentials.js";
 import { readGatewayCapabilities } from "./gateway-capabilities.js";
@@ -63,6 +64,8 @@ import {
   type ForwardedTool,
 } from "./forwarded-tools.js";
 import { harnessClientName } from "./harness.js";
+import { GatewayTlsError } from "./tls.js";
+import { GatewayTrust } from "./trust.js";
 import {
   IntegrationOAuthProvider,
   SerializedIntegrationAuthProvider,
@@ -1015,6 +1018,8 @@ class OpenClawIntegrationService {
   private ingestion: DurableTranscriptIngestor | null = null;
   private credentials: OperationalIntegrationCredentials | null = null;
   private credentialsPath: string | null = null;
+  /** How every client of this service verifies the gateway; one per start. */
+  private trust: GatewayTrust | null = null;
   private answerMcp: NativeAnswerMcpClient | null = null;
   /** The connection's Direct and Notes tools, as the gateway lists them. */
   private forwardedTools: ForwardedToolCatalogue | null = null;
@@ -1048,6 +1053,12 @@ class OpenClawIntegrationService {
 
   nudge(): void {
     this.ingestion?.nudge();
+  }
+
+  /** Set together with the credentials, so present whenever the service runs. */
+  private requireTrust(): GatewayTrust {
+    if (!this.trust) throw new Error("integration service is not running");
+    return this.trust;
   }
 
   toolForContext(context: OpenClawPluginToolContext): OpenClawAgentTool | null {
@@ -1183,10 +1194,30 @@ class OpenClawIntegrationService {
     let ingestion: DurableTranscriptIngestor | null = null;
     let delivery: AgentIntegrationClient | null = null;
     try {
+      const trust = new GatewayTrust({
+        gatewayUrl: credentials.gatewayUrl,
+        trust: credentials.tls,
+        harness: "openclaw",
+        logger: context.logger,
+        // A renewed public certificate moved this process to system trust;
+        // record it so the next start, and the gateway's view of this device,
+        // agree. Patched in place, never from the snapshot loaded above.
+        onUpgraded: (previousFingerprint) => {
+          const next = updateIntegrationTlsTrust(
+            credentialsPath,
+            { mode: "system" },
+            { replacingPin: previousFingerprint },
+          );
+          if (next && this.credentialsPath === credentialsPath) this.credentials = next;
+        },
+      });
+      // Read now, so missing or malformed trust material fails the start
+      // rather than the first background request.
+      trust.mode();
       const ingestionHttp = new PinnedGatewayHttpClient(
         credentials.gatewayUrl,
         credentials.ingestionToken,
-        credentials.tls,
+        trust,
       );
       ingestion = new DurableTranscriptIngestor({
         stream: "openclaw",
@@ -1208,7 +1239,7 @@ class OpenClawIntegrationService {
       delivery = new AgentIntegrationClient({
         gatewayUrl: credentials.gatewayUrl,
         deliveryToken: credentials.deliveryToken,
-        tls: credentials.tls,
+        tls: trust,
         capability: defaultIntegrationCapability("openclaw", credentials.maxConcurrentRuns ?? 2),
         sourceCommit: INTEGRATION_SOURCE_COMMIT,
         inbox,
@@ -1225,6 +1256,7 @@ class OpenClawIntegrationService {
       this.inbox = inbox;
       this.credentials = credentials;
       this.credentialsPath = credentialsPath;
+      this.trust = trust;
       if (hasIntegrationOAuth(credentials)) {
         const oauthProvider = new IntegrationOAuthProvider(
           credentialsPath,
@@ -1238,10 +1270,10 @@ class OpenClawIntegrationService {
             undefined,
             // A question asked after a long silence repairs the credential
             // itself rather than failing and waiting for somebody to notice.
-            () => reissueIntegrationOAuthTokens(oauthProvider, credentials, "openclaw"),
+            () => reissueIntegrationOAuthTokens(oauthProvider, credentials, "openclaw", trust),
             context.logger,
           ),
-          credentials.tls,
+          trust,
         );
         this.answerMcp = answerMcp;
         this.forwardedTools = new ForwardedToolCatalogue({
@@ -1284,6 +1316,7 @@ class OpenClawIntegrationService {
       this.inbox = null;
       this.credentials = null;
       this.credentialsPath = null;
+      this.trust = null;
       const forwardedTools = this.forwardedTools;
       this.answerMcp = null;
       this.forwardedTools = null;
@@ -1322,7 +1355,7 @@ class OpenClawIntegrationService {
     try {
       capabilities = await readGatewayCapabilities(
         credentials.gatewayUrl,
-        credentials.tls,
+        this.requireTrust(),
         CAPABILITY_PROBE_TIMEOUT_MS,
       );
     } catch (error) {
@@ -1375,7 +1408,8 @@ class OpenClawIntegrationService {
   private async runOAuthKeepalive(): Promise<void> {
     const credentials = this.credentials;
     const credentialsPath = this.credentialsPath;
-    if (!credentials || !credentialsPath || !hasIntegrationOAuth(credentials)) return;
+    const trust = this.trust;
+    if (!credentials || !credentialsPath || !trust || !hasIntegrationOAuth(credentials)) return;
     const provider = new IntegrationOAuthProvider(credentialsPath, harnessClientName("openclaw"));
     // Without a registered client there is no approved credential to ask for
     // by name; only `omnesis connect` can start one.
@@ -1392,7 +1426,7 @@ class OpenClawIntegrationService {
         async () => {
           // Another process may have repaired it while this one waited.
           if (provider.tokens()) return;
-          await reissueIntegrationOAuthTokens(provider, credentials, "openclaw");
+          await reissueIntegrationOAuthTokens(provider, credentials, "openclaw", trust);
         },
       );
       return;
@@ -1408,9 +1442,9 @@ class OpenClawIntegrationService {
       provider,
       credentials.gatewayUrl,
       undefined,
-      () => reissueIntegrationOAuthTokens(provider, credentials, "openclaw"),
+      () => reissueIntegrationOAuthTokens(provider, credentials, "openclaw", trust),
       this.logger,
-    ).renew(integrationOAuthFetch(credentials.gatewayUrl, credentials.tls));
+    ).renew(integrationOAuthFetch(credentials.gatewayUrl, trust));
   }
 
   async stop(): Promise<void> {
@@ -1428,6 +1462,7 @@ class OpenClawIntegrationService {
     this.inbox = null;
     this.credentials = null;
     this.credentialsPath = null;
+    this.trust = null;
     this.answerMcp = null;
     this.forwardedTools = null;
     this.completionRoutes = null;
@@ -1849,7 +1884,7 @@ class OpenClawIntegrationService {
     const http = new PinnedGatewayHttpClient(
       credentials.gatewayUrl,
       authority.token,
-      credentials.tls,
+      this.requireTrust(),
     );
     const trimmed = report.trim().slice(0, MAX_OUTCOME_REPORT);
     const reported = await this.postOutcomeReport(http, authority.endpoint, {
@@ -1938,7 +1973,7 @@ class OpenClawIntegrationService {
     const http = new PinnedGatewayHttpClient(
       credentials.gatewayUrl,
       authority.token,
-      credentials.tls,
+      this.requireTrust(),
     );
     const request = { endpoint: authority.endpoint, question };
     // File the route before the ask, and leave it filed if the ask times out:
@@ -2049,7 +2084,7 @@ class OpenClawIntegrationService {
     const http = new PinnedGatewayHttpClient(
       credentials.gatewayUrl,
       credentials.managementToken,
-      credentials.tls,
+      this.requireTrust(),
     );
     const requestJson = async (
       method: "GET" | "POST" | "PATCH" | "DELETE",
@@ -2184,10 +2219,12 @@ const SUBSCRIPTION_MANAGEMENT_TIMEOUT_MS = 300_000;
  *
  * A timeout therefore says plainly that the work may have succeeded and names
  * listing as the next step. A refusal carries the gateway's own status so the
- * decision is visible rather than restated. Only an unreachable gateway invites
- * a retry.
+ * decision is visible rather than restated. A certificate failure is passed
+ * through as it is: it names its cause and the one command that repairs it,
+ * and retrying cannot. Only an unreachable gateway invites a retry.
  */
-function describeManagementFailure(error: unknown, action: string): Error {
+export function describeManagementFailure(error: unknown, action: string): Error {
+  if (error instanceof GatewayTlsError) return error;
   if (error instanceof GatewayRequestTimeoutError) {
     return new Error(
       `Omnesis did not answer the ${action} within ${Math.round(error.timeoutMs / 1000)}s. ` +

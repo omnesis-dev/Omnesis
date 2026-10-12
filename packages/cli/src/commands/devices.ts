@@ -38,6 +38,7 @@ import {
   AGENT_INTEGRATION_PROTOCOL_MIN_VERSION,
   AGENT_INTEGRATION_PROTOCOL_VERSION,
   IntegrationHttpError,
+  GatewayTrust,
   PinnedGatewayHttpClient,
   type TlsTrust,
 } from "@omnesis/agent-integration";
@@ -90,6 +91,10 @@ interface DeviceListItem extends DeviceRecord {
   agentAuthorization?:
     | { status: "authorized" }
     | { status: "needs-reauthorization"; remedy: string };
+  /** Set when the device pins a certificate the gateway replaces or has replaced. */
+  tlsTrust?:
+    | { status: "pinned-renews"; renewsAt: string; remedy: string }
+    | { status: "stranded"; rotatedAt: string; remedy: string };
   /** Agent connections whose sign-in this device revoke would end. */
   revocationImpact?: {
     fingerprint?: string;
@@ -489,6 +494,16 @@ const devicesListCommand = defineCommand({
         console.log(
           `${" ".repeat(2)}${c.yellow}needs re-authorization${c.reset} — corpus access has lapsed. ` +
             `On that machine run: ${c.bold}${d.agentAuthorization.remedy}${c.reset}`,
+        );
+      }
+      if (d.tlsTrust?.status === "stranded") {
+        console.log(
+          `${" ".repeat(2)}${c.yellow}certificate changed${c.reset} — paired before the gateway replaced its certificate on ${d.tlsTrust.rotatedAt} and silent since. ` +
+            `${c.bold}${d.tlsTrust.remedy}${c.reset}`,
+        );
+      } else if (d.tlsTrust?.status === "pinned-renews") {
+        console.log(
+          `${" ".repeat(2)}${c.dim}pinned certificate — stops connecting when the gateway renews it on ${d.tlsTrust.renewsAt}. ${d.tlsTrust.remedy}${c.reset}`,
         );
       }
       const updateNotice = deviceUpdateNoticeLine(d);
@@ -1113,7 +1128,11 @@ export async function redeemAgentIntegrationPairingCode(
   try {
     if (options.tls) {
       responsePayload = await withSpinner("Provisioning agent integration", () =>
-        new PinnedGatewayHttpClient(gatewayUrl, "", options.tls).postJson("/devices/pair", body),
+        new PinnedGatewayHttpClient(
+          gatewayUrl,
+          "",
+          new GatewayTrust({ gatewayUrl, trust: options.tls, harness }),
+        ).postJson("/devices/pair", body),
       );
     } else {
       const res = await withSpinner("Provisioning agent integration", () =>

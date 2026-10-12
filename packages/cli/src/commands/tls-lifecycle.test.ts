@@ -81,8 +81,9 @@ describe("renderTlsStatus", () => {
   });
 
   test("says what is served, when it expires, what it misses, how it renews and what the last attempt did", () => {
-    renderTlsStatus(snapshot(), print);
+    renderTlsStatus(snapshot({ renewsAt: "2026-09-20T00:00:00.000Z" }), print);
     const text = lines.join("\n");
+    expect(text).toContain("next renewal 2026-09-20T00:00:00.000Z");
     expect(text).toContain("expiring");
     expect(text).toContain("Tailscale, minted by Omnesis");
     expect(text).toContain("15 days remaining");
@@ -91,7 +92,7 @@ describe("renderTlsStatus", () => {
     expect(text).toContain("automatic, 30 days before expiry");
     expect(text).toContain("HTTPS is not enabled");
     expect(text).toContain("previously sha256:" + "cd".repeat(32));
-    expect(text).toContain("omnesis devices repair");
+    expect(text).toContain("named by `omnesis devices list` with its repair command");
   });
 
   test("an expired operator-managed certificate names its own renewal path", () => {

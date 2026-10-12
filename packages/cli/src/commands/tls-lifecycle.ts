@@ -117,6 +117,9 @@ export function renderTlsStatus(snapshot: TlsLifecycleSnapshot, print = console.
   }
   if (served.error) print(`  ${c.red}problem${c.reset}      ${served.error}`);
   print(`  ${c.dim}renewal${c.reset}      ${renewalLabel(snapshot)}`);
+  if (snapshot.renewsAt) {
+    print(`  ${c.dim}next renewal${c.reset} ${snapshot.renewsAt}`);
+  }
   if (snapshot.renewal.lastRenewedAt) {
     print(`  ${c.dim}last renewed${c.reset} ${snapshot.renewal.lastRenewedAt}`);
   }
@@ -132,7 +135,7 @@ export function renderTlsStatus(snapshot: TlsLifecycleSnapshot, print = console.
   }
   if (snapshot.rotation) {
     print(
-      `  ${c.dim}rotated${c.reset}      ${snapshot.rotation.rotatedAt} (previously sha256:${snapshot.rotation.previousFingerprintSha256}); phones paired by fingerprint before then need \`omnesis devices repair <name>\`, and a collector or CLI host that refuses the new certificate needs \`omnesis tls trust\``,
+      `  ${c.dim}rotated${c.reset}      ${snapshot.rotation.rotatedAt} (previously sha256:${snapshot.rotation.previousFingerprintSha256}); a phone or agent that pinned the old one and has not reconnected is named by \`omnesis devices list\` with its repair command, and a collector or CLI host that refuses the new certificate needs \`omnesis tls trust\``,
     );
   }
 }

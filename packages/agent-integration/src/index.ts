@@ -14,6 +14,7 @@ export {
   loadIntegrationCredentials,
   subscriptionsAvailable,
   updateIntegrationCapabilities,
+  updateIntegrationTlsTrust,
   loadOperationalIntegrationCredentials,
   hasIntegrationOAuth,
   upgradeLegacyIntegrationCredentials,
@@ -118,12 +119,17 @@ export {
 } from "./protocol.js";
 export {
   certificateFingerprint,
+  GatewayTlsError,
+  isSystemTrust,
   normalizeFingerprint,
-  pinnedTlsOptions,
+  pinnedTrust,
   TlsPinError,
   tlsTrustSchema,
   validateGatewayUrl,
   verifyPeerFingerprint,
   websocketUrl,
+  type PinnedTlsTrust,
   type TlsTrust,
+  type TlsTrustMode,
 } from "./tls.js";
+export { GatewayTrust, type GatewayTrustOptions } from "./trust.js";

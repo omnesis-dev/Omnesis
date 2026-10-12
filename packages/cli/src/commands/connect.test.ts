@@ -79,6 +79,8 @@ vi.mock("@omnesis/core", async (importOriginal) => {
   return {
     ...actual,
     fetchPeerCert: vi.fn(),
+    // Pinned unless a test says the gateway's certificate is publicly trusted.
+    verifiesUnderSystemTrust: vi.fn(async () => false),
     ensureGatewayTrust: vi.fn(async () => ({ action: "skipped" as const })),
   };
 });
@@ -122,7 +124,7 @@ vi.mock("../harness-restart.js", async (importOriginal) => ({
   spawnHarnessCommand: harnessCommands.run,
 }));
 
-import { ensureGatewayTrust, fetchPeerCert } from "@omnesis/core";
+import { ensureGatewayTrust, fetchPeerCert, verifiesUnderSystemTrust } from "@omnesis/core";
 import {
   loadIntegrationCredentials,
   writeIntegrationCredentials,
@@ -145,6 +147,7 @@ import {
   assertHermesCompletionNotifications,
   assertOpenClawCompletionNotifications,
   connectCommand,
+  buildTlsTrust,
   continuityCredentialFor,
   dotenvSetting,
   encodeDotenvValue,
@@ -306,6 +309,7 @@ beforeEach(() => {
     pem: "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n",
     fingerprint: "a".repeat(64),
   });
+  (verifiesUnderSystemTrust as Mock).mockResolvedValue(false);
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("{}", { status: 200 })),
@@ -1416,6 +1420,36 @@ describe("reconnecting an already-connected installation", () => {
         pinned,
         verified,
       ),
+    ).toBeUndefined();
+  });
+
+  it("counts a gateway verified by name at the same address as the same gateway", () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-connect-continuity-system-"));
+    tempHomes.push(home);
+    const system = { mode: "system" as const };
+    const unverified = { verifiedFingerprint: false };
+    const pinnedPath = seedConnectedInstall(
+      home,
+      "https://gateway.example.org:7600/",
+      "c".repeat(64),
+    );
+    expect(
+      continuityCredentialFor(pinnedPath, "https://gateway.example.org:7600", system, unverified),
+    ).toBe(SAVED_DELIVERY);
+    expect(
+      continuityCredentialFor(pinnedPath, "https://other.example.org:7600", system, unverified),
+    ).toBeUndefined();
+
+    const credentials = JSON.parse(readFileSync(pinnedPath, "utf8")) as Record<string, unknown>;
+    writeFileSync(pinnedPath, JSON.stringify({ ...credentials, tls: system }));
+    expect(
+      continuityCredentialFor(pinnedPath, "https://gateway.example.org:7600", system, unverified),
+    ).toBe(SAVED_DELIVERY);
+    // A certificate trusted on sight where a publicly trusted one used to be
+    // proves nothing about which gateway answers.
+    const onSight = { caPem: "fictional", leafFingerprintSha256: "d".repeat(64) };
+    expect(
+      continuityCredentialFor(pinnedPath, "https://gateway.example.org:7600", onSight, unverified),
     ).toBeUndefined();
   });
 
@@ -2852,6 +2886,161 @@ describe("connect --print-home", () => {
     await run({ harness: "openclaw", "print-home": true });
 
     expect(logged).toHaveBeenCalledWith(join(root, ".clawdbot"));
+  });
+});
+
+describe("connect to a gateway whose certificate a public CA issued", () => {
+  const PRESENTED = "a".repeat(64);
+
+  function seedHermesHome(): string {
+    const home = mkdtempSync(join(tmpdir(), "omnesis-connect-system-"));
+    tempHomes.push(home);
+    writeFileSync(join(home, "config.yaml"), "display:\n  background_process_notifications: all\n");
+    return home;
+  }
+
+  it("trusts it by name: nothing saved, nothing asked", async () => {
+    (verifiesUnderSystemTrust as Mock).mockResolvedValue(true);
+    const home = seedHermesHome();
+
+    await run({
+      harness: "hermes",
+      dir: home,
+      "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+      code: "PAIR-CODE",
+    });
+
+    expect(verifiesUnderSystemTrust).toHaveBeenCalledWith("gateway.example.org", 7600, PRESENTED);
+    expect(redeemAgentIntegrationPairingCode).toHaveBeenCalledWith(
+      ENV.OMNESIS_GATEWAY_URL,
+      "PAIR-CODE",
+      "hermes",
+      expect.objectContaining({ tls: { mode: "system" } }),
+    );
+    expect(loadIntegrationCredentials(join(home, "omnesis", "integration.json")).tls).toEqual({
+      mode: "system",
+    });
+    expect(existsSync(join(process.env.OMNESIS_CONFIG_DIR!, "tls", "cert.pem"))).toBe(false);
+    expect(ensureGatewayTrust).not.toHaveBeenCalled();
+  });
+
+  it("writes a shape older plugins read until the new plugin is installed", async () => {
+    (verifiesUnderSystemTrust as Mock).mockResolvedValue(true);
+    (writeIntegrationCredentials as Mock).mockClear();
+    const home = seedHermesHome();
+
+    await run({
+      harness: "hermes",
+      dir: home,
+      "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+      code: "PAIR-CODE",
+    });
+
+    const writes = (writeIntegrationCredentials as Mock).mock.calls.map(
+      ([, written]) => (written as { tls?: unknown }).tls,
+    );
+    expect(writes[0]).toEqual(expect.objectContaining({ leafFingerprintSha256: PRESENTED }));
+    expect(writes).not.toContainEqual({ mode: "system" });
+    expect(loadIntegrationCredentials(join(home, "omnesis", "integration.json")).tls).toEqual({
+      mode: "system",
+    });
+  });
+
+  it("keeps the pin when the certificate does not verify publicly", async () => {
+    const home = seedHermesHome();
+
+    await run({
+      harness: "hermes",
+      dir: home,
+      "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+      code: "PAIR-CODE",
+    });
+
+    expect(loadIntegrationCredentials(join(home, "omnesis", "integration.json")).tls).toEqual(
+      expect.objectContaining({ leafFingerprintSha256: PRESENTED }),
+    );
+  });
+
+  it("asks the gateway over the promised certificate, and keeps trust by name", async () => {
+    (verifiesUnderSystemTrust as Mock).mockResolvedValue(true);
+    const preflight = vi.fn(async () => {});
+    const configDir = mkdtempSync(join(tmpdir(), "omnesis-connect-system-config-"));
+    tempHomes.push(configDir);
+    const pinned = { caPem: expect.any(String), leafFingerprintSha256: PRESENTED };
+
+    const promised = await buildTlsTrust(ENV.OMNESIS_GATEWAY_URL, configDir, {
+      expectedFingerprint: `sha256:${PRESENTED}`,
+      preflight,
+    });
+    expect(preflight).toHaveBeenCalledWith(pinned);
+    expect(promised).toEqual({ saved: { mode: "system" }, observed: pinned, run: pinned });
+
+    preflight.mockClear();
+    const unpromised = await buildTlsTrust(ENV.OMNESIS_GATEWAY_URL, configDir, { preflight });
+    expect(preflight).toHaveBeenCalledWith({ mode: "system" });
+    expect(unpromised?.run).toEqual({ mode: "system" });
+  });
+
+  it("checks --trust-fingerprint against the served leaf and binds this run to it", async () => {
+    (verifiesUnderSystemTrust as Mock).mockResolvedValue(true);
+    const home = seedHermesHome();
+
+    await run({
+      harness: "hermes",
+      dir: home,
+      "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+      code: "PAIR-CODE",
+      "trust-fingerprint": `sha256:${PRESENTED}`,
+    });
+    // The promise binds this run: the code is spent over the certificate it
+    // was checked against, and only the installation trusts by name.
+    expect(redeemAgentIntegrationPairingCode).toHaveBeenCalledWith(
+      ENV.OMNESIS_GATEWAY_URL,
+      "PAIR-CODE",
+      "hermes",
+      expect.objectContaining({
+        tls: expect.objectContaining({ leafFingerprintSha256: PRESENTED }),
+      }),
+    );
+    expect(integrationMocks.requestJson).toHaveBeenCalled();
+    expect(loadIntegrationCredentials(join(home, "omnesis", "integration.json")).tls).toEqual({
+      mode: "system",
+    });
+
+    const other = seedHermesHome();
+    await expect(
+      run({
+        harness: "hermes",
+        dir: other,
+        "gateway-url": ENV.OMNESIS_GATEWAY_URL,
+        code: "PAIR-CODE",
+        "trust-fingerprint": `sha256:${"b".repeat(64)}`,
+      }),
+    ).rejects.toThrow(/fingerprint mismatch/);
+    expect(existsSync(join(other, "omnesis", "integration.json"))).toBe(false);
+  });
+
+  it("a refresh moves a pinned installation to system trust once the new plugin is in", async () => {
+    (verifiesUnderSystemTrust as Mock).mockResolvedValue(true);
+    const home = seedHermesHome();
+    const credentialsPath = seedRefreshableInstall(home, "hermes");
+    const pinned = { caPem: ROTATED_CERT_PEM, leafFingerprintSha256: ROTATED_FINGERPRINT };
+    const seeded = JSON.parse(readFileSync(credentialsPath, "utf8")) as Record<string, unknown>;
+    writeFileSync(credentialsPath, `${JSON.stringify({ ...seeded, tls: pinned })}\n`, {
+      mode: 0o600,
+    });
+    (writeIntegrationCredentials as Mock).mockClear();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await run({ harness: "hermes", dir: home, refresh: true });
+
+    // Plugins from before system trust cannot read it, so the ceremony's
+    // early writes keep the shape they read; the switch is the last write.
+    for (const [, written] of (writeIntegrationCredentials as Mock).mock.calls) {
+      expect((written as { tls?: unknown }).tls).not.toEqual({ mode: "system" });
+    }
+    expect(loadIntegrationCredentials(credentialsPath).tls).toEqual({ mode: "system" });
+    expect(redeemAgentIntegrationPairingCode).not.toHaveBeenCalled();
   });
 });
 

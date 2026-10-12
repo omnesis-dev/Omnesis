@@ -5,9 +5,12 @@ import { describe, expect, test } from "vitest";
 
 import {
   certificateFingerprint,
+  classifyTlsFailure,
+  GatewayTlsError,
   mcpEndpointUrl,
   normalizeFingerprint,
   TlsPinError,
+  isSystemTrust,
   validateGatewayUrl,
   verifyPeerFingerprint,
   websocketUrl,
@@ -46,5 +49,54 @@ describe("TLS identity validation", () => {
     expect(mcpEndpointUrl("https://gateway.example.org/omnesis").toString()).toBe(
       "https://gateway.example.org/omnesis/mcp",
     );
+  });
+
+  test("tells system trust from a pin", () => {
+    expect(isSystemTrust({ mode: "system" })).toBe(true);
+    expect(isSystemTrust({ caPem: "pem", leafFingerprintSha256: "a".repeat(64) })).toBe(false);
+  });
+});
+
+describe("certificate failures, in the operator's words", () => {
+  const context = { gatewayUrl: "https://gateway.example.test:7600", harness: "hermes" };
+
+  test("a pin mismatch names the refresh command and the unattended form", () => {
+    const failure = classifyTlsFailure(new TlsPinError("mismatch"), context);
+    expect(failure).toBeInstanceOf(GatewayTlsError);
+    expect(failure?.message).toContain("https://gateway.example.test:7600");
+    expect(failure?.message).toContain("pinned");
+    expect(failure?.message).toContain("`omnesis connect hermes --refresh`");
+    expect(failure?.message).toContain("--trust-fingerprint sha256:");
+    expect(failure?.message).toContain("omnesis tls status");
+  });
+
+  test("reads Node's verification code through wrapping errors", () => {
+    const wrapped = new Error("fetch failed", {
+      cause: Object.assign(new Error("self-signed certificate"), {
+        code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+      }),
+    });
+    const failure = classifyTlsFailure(wrapped, context);
+    expect(failure?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(failure?.message).toContain("omnesis connect hermes --refresh");
+    expect(failure?.cause).toBe(wrapped);
+  });
+
+  test("an expired certificate is renewed on the gateway, not re-trusted here", () => {
+    const failure = classifyTlsFailure(
+      Object.assign(new Error("certificate has expired"), { code: "CERT_HAS_EXPIRED" }),
+      context,
+    );
+    expect(failure?.message).toContain("has expired");
+    expect(failure?.message).toContain("Renew it on the gateway host");
+  });
+
+  test("leaves anything else alone, and an already classified failure as it is", () => {
+    expect(classifyTlsFailure(new Error("connect ECONNREFUSED"), context)).toBeNull();
+    expect(
+      classifyTlsFailure(Object.assign(new Error("refused"), { code: "ECONNREFUSED" }), context),
+    ).toBeNull();
+    const classified = new GatewayTlsError("already said");
+    expect(classifyTlsFailure(classified, context)).toBe(classified);
   });
 });

@@ -164,7 +164,25 @@ describe("PairingQrService", () => {
     ).toThrow(/HTTPS/);
   });
 
-  it("preserves the rollout-safe V3/V2 defaults when trustMode is omitted", () => {
+  it("treats an omitted trustMode as auto", () => {
+    expect(
+      JSON.parse(
+        qr(fingerprint, ["https://gateway.example.com"]).encode({
+          pairingCode: "ABCDEF0123",
+          gatewayUrl: "https://gateway.example.com",
+        }),
+      ),
+    ).toMatchObject({ v: 4, tls: { mode: "system" } });
+    expect(
+      JSON.parse(
+        qr(fingerprint, [], "android", {
+          publiclyTrustedHosts: ["studio.tail-example.ts.net"],
+        }).encode({
+          pairingCode: "ABCDEF0123",
+          gatewayUrl: "https://studio.tail-example.ts.net:7600",
+        }),
+      ),
+    ).toMatchObject({ v: 4, tls: { mode: "system" } });
     expect(
       JSON.parse(
         qr(fingerprint).encode({

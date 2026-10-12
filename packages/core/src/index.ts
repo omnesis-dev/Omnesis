@@ -235,6 +235,7 @@ export {
   retrustGateway,
   tlsErrorCode,
   type TofuResult,
+  verifiesUnderSystemTrust,
 } from "./tofu.js";
 
 export { retry, type RetryOptions } from "./retry.js";
@@ -697,6 +698,13 @@ export {
   type TlsOwnership,
   type TlsRenewalMode,
 } from "./tls-material.js";
+export {
+  deviceTlsTrust,
+  deviceTlsTrustMode,
+  type DeviceTlsTrust,
+  type TlsTrustDeviceFacts,
+  type TlsTrustSnapshotFacts,
+} from "./tls-device-trust.js";
 
 export {
   extractLinks,

@@ -867,6 +867,21 @@ function DeviceAccessSection({ device, overview, onSave }) {
   `;
 }
 
+/** A UTC day, written out: "Dec 10, 2026". */
+function calendarDate(iso) {
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** Renders text whose `backticked` spans are commands as inline code. */
+function withInlineCode(text) {
+  return text.split("`").map((part, i) => (i % 2 === 1 ? html`<code>${part}</code>` : part));
+}
+
 /**
  * One device, rendered as a card. Collapsed: kind icon, name, a single
  * plain-language status line, and a quiet kind/hostname sub-line, plus the
@@ -914,6 +929,9 @@ export function DeviceCard({
   // ticket expires from disuse. Nothing else on this card would say so.
   const needsReauthorization =
     !revoked && d.agentAuthorization?.status === "needs-reauthorization";
+  // A device that pins the gateway's exact certificate cannot follow its
+  // renewal; the gateway names it before the renewal and after it.
+  const tlsTrust = revoked ? null : (d.tlsTrust ?? null);
 
   return html`
     <div id=${`device-${d.id}`} class=${`devices-card ${expanded ? "expanded" : ""} ${isThis ? "is-this" : ""} ${revoked ? "revoked" : ""} ${needsPairing ? "needs-pairing" : ""} ${activeNow ? "online" : "offline"}`}>
@@ -928,6 +946,8 @@ export function DeviceCard({
               ${!revoked && versionChip(d)}
               ${!revoked && updateChip(d)}
               ${needsReauthorization && html`<span class="devices-card-badge revoked">Needs re-authorization</span>`}
+              ${tlsTrust?.status === "stranded" && html`<span class="devices-card-badge needs-pairing">Certificate changed</span>`}
+              ${tlsTrust?.status === "pinned-renews" && html`<span class="devices-card-badge revoked">Pinned certificate</span>`}
             </span>
             <span class="devices-card-sub">${sub}</span>
           </span>
@@ -959,6 +979,14 @@ export function DeviceCard({
             <div class="devices-card-repair">
               This device still hosts sources. Bring it back with its identity, sources and cursors intact:
               <code>omnesis devices repair ${d.name}</code>
+            </div>
+          `}
+          ${tlsTrust && html`
+            <div class="devices-card-repair">
+              ${tlsTrust.status === "stranded"
+                ? `Paired before the gateway replaced its certificate on ${calendarDate(tlsTrust.rotatedAt)} and silent since, so it may still trust the old one. `
+                : `Trusts only the certificate the gateway serves now, which it renews on ${calendarDate(tlsTrust.renewsAt)}. `}
+              ${withInlineCode(tlsTrust.remedy)}
             </div>
           `}
           <${DeviceHealth}

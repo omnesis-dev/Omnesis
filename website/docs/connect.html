@@ -892,7 +892,8 @@
           it needs the <a href="#trust-certificate">one-time trust setting</a> first. It cannot
           connect to a gateway that serves its self-signed certificate at all: give the gateway a
           Tailscale, domain or mkcert <a href="/docs/setup#certificates">certificate</a> first.
-          OpenClaw and Hermes pin the gateway's fingerprint instead, so they connect either way.
+          OpenClaw and Hermes verify a Tailscale or domain certificate by name and pin any other
+          certificate's fingerprint, so they connect either way.
         </p>
         <p>
           The Claude plugin declares the HTTP connection and adds skills that teach Claude how to
@@ -1235,8 +1236,11 @@
         </div>
         <p>
           A refresh keeps the paired device, repairs the sign-in when needed, and uses no pairing
-          code. It also re-establishes TLS trust, so a renewed gateway certificate needs a refresh,
-          not a new pairing. When a refresh does need a new approval, the approval screen suggests
+          code. It also re-establishes TLS trust. An agent that verifies a Tailscale or domain
+          certificate by name follows its renewals without one; an agent that pinned a self-signed
+          certificate needs a refresh after it changes, not a new pairing, and
+          <code>omnesis doctor</code> prints the command with the new fingerprint so it runs
+          unattended. When a refresh does need a new approval, the approval screen suggests
           replacing the integration's existing connection, which keeps its name and access level.
         </p>
         <p>

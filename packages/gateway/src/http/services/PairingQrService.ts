@@ -233,7 +233,10 @@ export class PairingQrService {
     );
     if (!verdict.usable) throw new BadRequestError(verdict.reason);
 
-    switch (input.trustMode) {
+    // A caller that names no trust mode gets the one its origin earns: a pin
+    // on a publicly trusted name would strand the phone at the next renewal.
+    const trustMode = input.trustMode ?? "auto";
+    switch (trustMode) {
       case "auto":
         return verdict.systemTrust
           ? this.systemTrustPayload(input)
@@ -256,10 +259,8 @@ export class PairingQrService {
           }),
         );
       }
-      case undefined:
-        return this.compatibilityPayload(input);
       default:
-        return assertNever(input.trustMode);
+        return assertNever(trustMode);
     }
   }
 

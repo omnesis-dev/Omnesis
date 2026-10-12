@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createServer, type Server } from "node:http";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   DEFAULT_GATEWAY_TIMEOUT_MS,
@@ -10,6 +10,7 @@ import {
   IntegrationHttpError,
   PinnedGatewayHttpClient,
 } from "./http.js";
+import { GatewayTrust } from "./trust.js";
 
 const servers: Server[] = [];
 
@@ -192,5 +193,22 @@ describe("PinnedGatewayHttpClient errors", () => {
       });
       expect(error.gatewayError).toBeUndefined();
     }
+  });
+});
+
+describe("PinnedGatewayHttpClient trust", () => {
+  test("refuses an HTTPS gateway with no trust at all, before dialling it", async () => {
+    const client = new PinnedGatewayHttpClient("https://gateway.example.test:7600", "");
+    await expect(client.requestJson("GET", "/health")).rejects.toThrow(/requires pinned TLS trust/);
+  });
+
+  test("a plaintext loopback gateway reads no TLS options and reports no trust", async () => {
+    const gatewayUrl = await errorServer(200, { ok: true });
+    const trust = new GatewayTrust({ gatewayUrl, trust: undefined, harness: "openclaw" });
+    const connectionOptions = vi.spyOn(trust, "connectionOptions");
+    const client = new PinnedGatewayHttpClient(gatewayUrl, "", trust);
+    await client.requestJson("GET", "/health");
+    expect(connectionOptions).not.toHaveBeenCalled();
+    expect(trust.helloCapability()).toBeUndefined();
   });
 });

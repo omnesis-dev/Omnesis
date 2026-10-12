@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { connect as tlsConnect, getCACertificates, setDefaultCACertificates } from "node:tls";
+import {
+  connect as tlsConnect,
+  getCACertificates,
+  setDefaultCACertificates,
+  type ConnectionOptions,
+} from "node:tls";
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -131,6 +136,67 @@ export function fetchPeerCert(
           code: "ETIMEDOUT",
         }),
       );
+    });
+  });
+}
+
+/**
+ * Whether the gateway at `host:port` could be trusted the way any HTTPS client
+ * trusts a public site: `host` is a DNS name (not an IP literal, not
+ * `localhost`), the chain it serves verifies under the bundled public roots
+ * for exactly that name, and the leaf it presents is `expectedFingerprint` —
+ * the certificate the caller already observed, so the answer is about that
+ * certificate and not whichever one a second connection happened to meet.
+ *
+ * Any failure, a network one included, is a `false`: the caller then takes
+ * the pinned path, which reports a network failure in its own words.
+ */
+export function verifiesUnderSystemTrust(
+  host: string,
+  port: number,
+  expectedFingerprint: string,
+  options: {
+    /** The public roots to verify against. Defaults to Node's bundled set. */
+    roots?: readonly string[];
+    /** Name resolution for the dial; the default resolves `host` as usual. */
+    lookup?: ConnectionOptions["lookup"];
+    timeoutMs?: number;
+  } = {},
+): Promise<boolean> {
+  const name = host
+    .replace(/^\[(.*)\]$/u, "$1")
+    .replace(/\.$/u, "")
+    .toLowerCase();
+  if (name === "" || isIP(name) !== 0 || name === "localhost" || name.endsWith(".localhost")) {
+    return Promise.resolve(false);
+  }
+  const expected = normalizeCertFingerprint(expectedFingerprint);
+  if (expected === null) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const socket = tlsConnect(
+      {
+        host,
+        port,
+        servername: host,
+        ca: [...(options.roots ?? getCACertificates("bundled"))],
+        rejectUnauthorized: true,
+        timeout: options.timeoutMs ?? 10_000,
+        ...(options.lookup ? { lookup: options.lookup } : {}),
+      },
+      () => {
+        const raw = socket.getPeerCertificate().raw;
+        socket.destroy();
+        resolve(
+          raw !== undefined &&
+            raw.length > 0 &&
+            createHash("sha256").update(raw).digest("hex") === expected,
+        );
+      },
+    );
+    socket.on("error", () => resolve(false));
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve(false);
     });
   });
 }

@@ -1648,6 +1648,39 @@ describe("devices list", () => {
     expect(JSON.parse(output)).toEqual({ items: [device("level-voice")] });
   });
 
+  it("names a device stranded by a certificate change, and one that will be, with the fix", async () => {
+    const agent = {
+      ...device(null),
+      id: "device-agent",
+      name: "studio-agent",
+      kind: "agent",
+      tlsTrust: {
+        status: "stranded",
+        rotatedAt: "2026-09-10T00:00:00.000Z",
+        remedy: "On the machine running it: `omnesis connect hermes --refresh`.",
+      },
+    };
+    const phone = {
+      ...device(null),
+      id: "device-phone",
+      name: "studio-phone",
+      kind: "ios",
+      tlsTrust: {
+        status: "pinned-renews",
+        renewsAt: "2026-12-10T00:00:00.000Z",
+        remedy:
+          "Update the app and open it, or pair it again: `omnesis devices repair studio-phone`.",
+      },
+    };
+    const { output } = await runList([Response.json({ items: [agent, phone] })]);
+    expect(output).toContain(
+      "certificate changed — paired before the gateway replaced its certificate on 2026-09-10T00:00:00.000Z and silent since. On the machine running it: `omnesis connect hermes --refresh`.",
+    );
+    expect(output).toContain(
+      "pinned certificate — stops connecting when the gateway renews it on 2026-12-10T00:00:00.000Z. Update the app",
+    );
+  });
+
   it("still lists every device when the access levels cannot be read", async () => {
     const { output } = await runList([
       Response.json({ items: [device("level-voice")] }),

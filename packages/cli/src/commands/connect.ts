@@ -28,12 +28,16 @@ import {
   ensureGatewayTrust,
   fetchPeerCert,
   normalizeCertFingerprint,
+  verifiesUnderSystemTrust,
 } from "@omnesis/core";
 import {
   IntegrationHttpError,
   loadIntegrationCredentials,
   loadOperationalIntegrationCredentials,
   PinnedGatewayHttpClient,
+  GatewayTrust,
+  isSystemTrust,
+  pinnedTrust,
   resolveHarnessBinary,
   upgradeLegacyIntegrationCredentials,
   writeIntegrationCredentials,
@@ -53,7 +57,11 @@ import {
   installedSubscriptionsCapability,
   persistGatewayCapabilities,
   persistGatewayTrust,
+  persistInstalledGatewayTrust,
+  preinstallTrust,
   readIntegrationCapabilities,
+  withRunTrust,
+  type ConnectTlsTrust,
   warnOnVersionDrift,
 } from "../connect-gateway-facts.js";
 import { approveInteractive } from "../approve.js";
@@ -1011,8 +1019,10 @@ export async function buildTlsTrust(
      * `http://` URL, each of which would otherwise let it pass unkept.
      */
     expectedFingerprint?: string;
+    /** The harness being connected, named in a certificate failure's repair command. */
+    harness?: Harness;
   } = {},
-): Promise<TlsTrust | undefined> {
+): Promise<ConnectTlsTrust | undefined> {
   // Normalized here so a malformed pin is refused before a socket is opened,
   // rather than surfacing as a certificate that matches nothing.
   const pin =
@@ -1056,10 +1066,48 @@ export async function buildTlsTrust(
       EXIT_USER_ERROR,
     );
   }
-  await options.preflight?.({
-    caPem: before.pem,
-    leafFingerprintSha256: before.fingerprint,
-  });
+  // Every request below is checked against the certificate observed above,
+  // and the run fails if a different one answers by the end.
+  const confirmTrust = async (trust: TlsTrust): Promise<void> => {
+    try {
+      await new PinnedGatewayHttpClient(
+        gatewayUrl,
+        "",
+        new GatewayTrust({
+          gatewayUrl,
+          trust,
+          ...(options.harness ? { harness: options.harness } : {}),
+        }),
+      ).requestJson("GET", "/health");
+    } catch (error) {
+      const status = error instanceof IntegrationHttpError ? ` with HTTP ${error.status}` : "";
+      throw new CliError(
+        `${c.red}Gateway health check failed${status}; no credentials were written.${c.reset}`,
+        EXIT_USER_ERROR,
+      );
+    }
+    const after = await fetchPeerCert(host, port);
+    if (before.fingerprint !== after.fingerprint || before.pem !== after.pem) {
+      throw new CliError(
+        `${c.red}Gateway TLS certificate changed during setup; no credentials were written.${c.reset}`,
+        EXIT_USER_ERROR,
+      );
+    }
+  };
+  const observed = { caPem: before.pem, leafFingerprintSha256: before.fingerprint };
+  // A DNS name whose certificate a public CA issued for it is kept the way
+  // any HTTPS client trusts it: by name, so a renewal changes nothing. Nothing
+  // is saved under the config directory and nothing is asked. An IP address,
+  // a loopback name or a self-signed certificate takes the pinned path below.
+  // A promised fingerprint still binds this run: its own requests stay pinned
+  // to the certificate checked against it.
+  if (await verifiesUnderSystemTrust(host, port, before.fingerprint)) {
+    const run: TlsTrust = pin ? observed : { mode: "system" };
+    await options.preflight?.(run);
+    await confirmTrust(run);
+    return { saved: { mode: "system" }, observed, run };
+  }
+  await options.preflight?.(observed);
   const certPath = join(configDir, "tls", "cert.pem");
   // A verified certificate is saved like a rotation is: at the end, once the
   // gateway has answered, so a run this function refuses leaves the trust every
@@ -1123,31 +1171,76 @@ export async function buildTlsTrust(
   } else if (!pin) {
     await ensureGatewayTrust({ gatewayUrl, configDir });
   }
-  const trust: TlsTrust = {
-    caPem: before.pem,
-    leafFingerprintSha256: before.fingerprint,
-  };
-  try {
-    await new PinnedGatewayHttpClient(gatewayUrl, "", trust).requestJson("GET", "/health");
-  } catch (error) {
-    const status = error instanceof IntegrationHttpError ? ` with HTTP ${error.status}` : "";
-    throw new CliError(
-      `${c.red}Gateway health check failed${status}; no credentials were written.${c.reset}`,
-      EXIT_USER_ERROR,
-    );
-  }
-  const after = await fetchPeerCert(host, port);
-  if (before.fingerprint !== after.fingerprint || before.pem !== after.pem) {
-    throw new CliError(
-      `${c.red}Gateway TLS certificate changed during setup; no credentials were written.${c.reset}`,
-      EXIT_USER_ERROR,
-    );
-  }
+  await confirmTrust(observed);
   if (replaceSavedCertificate) {
     atomicWriteFileSync(certPath, before.pem, { ensureDir: true, mode: 0o600 });
     applyCaTrustInProcess(certPath);
   }
-  return trust;
+  return { saved: observed, observed, run: observed };
+}
+
+/**
+ * The trust a resumed redemption connects with.
+ *
+ * The journal recorded the trust the interrupted run settled on. A pin is
+ * reused as recorded, and a fingerprint brought to the resume is checked
+ * against it — otherwise the resume would be the one path where the promise
+ * passes unkept. System trust recorded no certificate, so the one served now
+ * is observed, and must still verify by name: it is what is written before
+ * the plugin is installed, and what a promised fingerprint binds this run to.
+ */
+async function resumedRedemptionTrust(
+  journal: ConnectRedemptionJournal,
+  pin: string | undefined,
+  journalPath: string,
+): Promise<ConnectTlsTrust | undefined> {
+  const recorded = journal.tls;
+  if (!recorded) {
+    if (pin === undefined) return undefined;
+    throw new CliError(
+      `${c.red}The pending connect journal is for ${journal.gatewayUrl}, which ` +
+        `has no certificate to verify. Re-run without --trust-fingerprint to resume it, ` +
+        `or delete ${journalPath} to start over.${c.reset}`,
+      EXIT_USER_ERROR,
+    );
+  }
+  const pinned = pinnedTrust(recorded);
+  if (pinned) {
+    if (pin !== undefined && pinned.leafFingerprintSha256 !== pin) {
+      throw new CliError(
+        `${c.red}The pending connect journal recorded a different gateway certificate ` +
+          `(sha256:${pinned.leafFingerprintSha256}) than --trust-fingerprint promises ` +
+          `(sha256:${pin}); nothing was changed.${c.reset}`,
+        EXIT_USER_ERROR,
+      );
+    }
+    return { saved: pinned, observed: pinned, run: pinned };
+  }
+  const url = new URL(journal.gatewayUrl);
+  const port = Number(url.port) || 443;
+  const served = await fetchPeerCert(url.hostname, port);
+  if (pin !== undefined && served.fingerprint !== pin) {
+    throw new CliError(
+      `${c.red}Certificate fingerprint mismatch for ${journal.gatewayUrl}.\n` +
+        `  Expected: sha256:${pin}\n  Got:      sha256:${served.fingerprint}\n` +
+        `Refusing to connect; nothing was changed.${c.reset}`,
+      EXIT_USER_ERROR,
+    );
+  }
+  if (!(await verifiesUnderSystemTrust(url.hostname, port, served.fingerprint))) {
+    throw new CliError(
+      `${c.red}The gateway at ${journal.gatewayUrl} no longer presents a publicly trusted ` +
+        `certificate, which the pending connect journal relied on. Delete ${journalPath} ` +
+        `and connect again; nothing was changed.${c.reset}`,
+      EXIT_USER_ERROR,
+    );
+  }
+  const observed = { caPem: served.pem, leafFingerprintSha256: served.fingerprint };
+  return {
+    saved: { mode: "system" },
+    observed,
+    run: pin === undefined ? { mode: "system" } : observed,
+  };
 }
 
 /**
@@ -1157,9 +1250,10 @@ export async function buildTlsTrust(
  * Presenting it lets a re-run of connect reconnect that device — same id, same
  * watches — instead of colliding with it. It is offered only to the gateway it
  * came from: one presenting the certificate the installation pinned, or one at
- * the same address whose certificate this run verified against an explicit
- * fingerprint. An address alone is not enough once a certificate was pinned,
- * because the certificate now answering there may have been trusted on sight.
+ * the same address whose certificate this run verified — against an explicit
+ * fingerprint, or under public roots for that name. An address alone is not
+ * enough once the installation used HTTPS, because the certificate now
+ * answering there may have been trusted on sight.
  */
 export function continuityCredentialFor(
   credentialsPath: string,
@@ -1175,8 +1269,9 @@ export function continuityCredentialFor(
     // An unreadable record proves nothing; the pairing proceeds as a new host.
     return undefined;
   }
-  const savedPin = saved.tls?.leafFingerprintSha256;
-  if (savedPin !== undefined && savedPin === tls?.leafFingerprintSha256) {
+  const savedPin = saved.tls ? pinnedTrust(saved.tls)?.leafFingerprintSha256 : undefined;
+  const presentedPin = tls ? pinnedTrust(tls)?.leafFingerprintSha256 : undefined;
+  if (savedPin !== undefined && savedPin === presentedPin) {
     return saved.deliveryToken;
   }
   let sameAddress: boolean;
@@ -1185,9 +1280,12 @@ export function continuityCredentialFor(
   } catch {
     sameAddress = false;
   }
-  return sameAddress && (savedPin === undefined || options.verifiedFingerprint)
-    ? saved.deliveryToken
-    : undefined;
+  if (!sameAddress) return undefined;
+  const verified =
+    saved.tls === undefined ||
+    options.verifiedFingerprint ||
+    (tls !== undefined && isSystemTrust(tls));
+  return verified ? saved.deliveryToken : undefined;
 }
 
 interface ConnectRecovery {
@@ -1222,6 +1320,9 @@ function connectRedemptionPath(home: string): string {
 
 function parseConnectTls(value: unknown, label: string): TlsTrust | undefined {
   if (value === undefined) return undefined;
+  if (isPlainObject(value) && value.mode === "system" && Object.keys(value).length === 1) {
+    return { mode: "system" };
+  }
   if (
     !isPlainObject(value) ||
     typeof value.caPem !== "string" ||
@@ -1702,11 +1803,20 @@ export const connectCommand = defineCommand({
       let capabilities: GatewayCapabilities | undefined;
       const tls = await buildTlsTrust(existing.credentials.gatewayUrl, configDir, {
         ...pinOption,
+        harness,
         preflight: async (trust) => {
-          capabilities = await readIntegrationCapabilities(existing.credentials.gatewayUrl, trust);
+          capabilities = await readIntegrationCapabilities(
+            existing.credentials.gatewayUrl,
+            trust,
+            harness,
+          );
         },
       });
-      capabilities ??= await readIntegrationCapabilities(existing.credentials.gatewayUrl, tls);
+      capabilities ??= await readIntegrationCapabilities(
+        existing.credentials.gatewayUrl,
+        tls?.run,
+        harness,
+      );
       warnOnVersionDrift(capabilities, harness);
       skillCapabilities = { subscriptions: capabilities.subscriptions };
       const credentials = persistGatewayTrust(credentialsPath, existing.credentials, tls);
@@ -1738,6 +1848,7 @@ export const connectCommand = defineCommand({
           writePlaintextSecretFile(configPath, retiredConfig);
         }
       }
+      persistInstalledGatewayTrust(credentialsPath, tls);
       persistGatewayCapabilities(credentialsPath, skillCapabilities);
       console.log(
         `Refreshed the ${c.bold}${harness}${c.reset} Omnesis plugin without changing its operational device pairing.`,
@@ -1751,11 +1862,20 @@ export const connectCommand = defineCommand({
         let capabilities: GatewayCapabilities | undefined;
         const recoveryTls = await buildTlsTrust(pendingRecovery.gatewayUrl, configDir, {
           ...pinOption,
+          harness,
           preflight: async (trust) => {
-            capabilities = await readIntegrationCapabilities(pendingRecovery.gatewayUrl, trust);
+            capabilities = await readIntegrationCapabilities(
+              pendingRecovery.gatewayUrl,
+              trust,
+              harness,
+            );
           },
         });
-        capabilities ??= await readIntegrationCapabilities(pendingRecovery.gatewayUrl, recoveryTls);
+        capabilities ??= await readIntegrationCapabilities(
+          pendingRecovery.gatewayUrl,
+          recoveryTls?.run,
+          harness,
+        );
         warnOnVersionDrift(capabilities, harness);
         skillCapabilities = { subscriptions: capabilities.subscriptions };
         const prepared = prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
@@ -1767,6 +1887,7 @@ export const connectCommand = defineCommand({
           );
           await authorizeHarness(home, harness, credentials);
           applyConnectRecovery(home, pendingRecovery, prepared, skillCapabilities);
+          persistInstalledGatewayTrust(credentialsPath, recoveryTls);
           persistGatewayCapabilities(credentialsPath, skillCapabilities);
         } finally {
           prepared.cleanup();
@@ -1824,40 +1945,17 @@ export const connectCommand = defineCommand({
         }
         gatewayUrl = normalizeHarnessGatewayUrl(gatewayUrl);
 
-        // A resumed redemption reuses the certificate its journal recorded and
-        // never observes one, so a pin brought to the resume is checked against
-        // that record — otherwise it would be the one path where the promise
-        // passes unkept. The journal's certificate is what the redeem connects
-        // with, so a matching record is a kept promise, not merely a note.
-        if (pin !== undefined && pendingRedemption) {
-          const journalled = pendingRedemption.tls?.leafFingerprintSha256;
-          if (journalled === undefined) {
-            throw new CliError(
-              `${c.red}The pending connect journal is for ${pendingRedemption.gatewayUrl}, which ` +
-                `has no certificate to verify. Re-run without --trust-fingerprint to resume it, ` +
-                `or delete ${connectRedemptionPath(home)} to start over.${c.reset}`,
-              EXIT_USER_ERROR,
-            );
-          }
-          if (journalled !== pin) {
-            throw new CliError(
-              `${c.red}The pending connect journal recorded a different gateway certificate ` +
-                `(sha256:${journalled}) than --trust-fingerprint promises (sha256:${pin}); ` +
-                `nothing was changed.${c.reset}`,
-              EXIT_USER_ERROR,
-            );
-          }
-        }
         let capabilities: GatewayCapabilities | undefined;
         const tls = pendingRedemption
-          ? pendingRedemption.tls
+          ? await resumedRedemptionTrust(pendingRedemption, pin, connectRedemptionPath(home))
           : await buildTlsTrust(gatewayUrl, configDir, {
               ...pinOption,
+              harness,
               preflight: async (trust) => {
-                capabilities = await readIntegrationCapabilities(gatewayUrl, trust);
+                capabilities = await readIntegrationCapabilities(gatewayUrl, trust, harness);
               },
             });
-        capabilities ??= await readIntegrationCapabilities(gatewayUrl, tls);
+        capabilities ??= await readIntegrationCapabilities(gatewayUrl, tls?.run, harness);
         warnOnVersionDrift(capabilities, harness);
         skillCapabilities = { subscriptions: capabilities.subscriptions };
         const identity =
@@ -1869,7 +1967,7 @@ export const connectCommand = defineCommand({
           version: 1,
           harness,
           gatewayUrl,
-          ...(tls ? { tls } : {}),
+          ...(tls ? { tls: tls.saved } : {}),
           identity,
           pairingCode: code,
           idempotencyKey: randomBytes(32).toString("base64url"),
@@ -1880,15 +1978,20 @@ export const connectCommand = defineCommand({
         try {
           let pairing: Awaited<ReturnType<typeof redeemAgentIntegrationPairingCode>>;
           try {
-            const continuityCredential = continuityCredentialFor(credentialsPath, gatewayUrl, tls, {
-              verifiedFingerprint: pin !== undefined && tls?.leafFingerprintSha256 === pin,
-            });
+            const continuityCredential = continuityCredentialFor(
+              credentialsPath,
+              gatewayUrl,
+              tls?.saved,
+              // A pin reaching this point was checked against the served
+              // certificate, whichever trust the run settled on.
+              { verifiedFingerprint: pin !== undefined && tls !== undefined },
+            );
             pairing = await redeemAgentIntegrationPairingCode(gatewayUrl, code, harness, {
               idempotencyKey: redemptionJournal.idempotencyKey,
               maxConcurrentRuns,
               suggestedName: identity.suggestedName,
               ...(continuityCredential ? { continuityCredential } : {}),
-              ...(tls ? { tls } : {}),
+              ...(tls ? { tls: tls.run } : {}),
             });
           } catch (error) {
             // Nothing was committed, so the journal would only pin the next
@@ -1899,6 +2002,9 @@ export const connectCommand = defineCommand({
             throw error;
           }
 
+          // The shape every shipped plugin reads goes in first; system trust
+          // follows once the plugin that reads it is installed.
+          const preinstall = preinstallTrust(undefined, tls);
           const runtimeCredentials: IntegrationCredentials = {
             gatewayUrl,
             deliveryToken: pairing.credentials.delivery.token,
@@ -1909,7 +2015,7 @@ export const connectCommand = defineCommand({
               clientInformation: {},
               tokens: {},
             },
-            ...(tls ? { tls } : {}),
+            ...(preinstall ? { tls: preinstall } : {}),
             maxConcurrentRuns,
           };
           const env = {
@@ -1928,7 +2034,7 @@ export const connectCommand = defineCommand({
             version: 1,
             harness,
             gatewayUrl,
-            ...(tls ? { tls } : {}),
+            ...(tls ? { tls: tls.saved } : {}),
             identity,
             pairingDeviceName: pairing.device.name,
             ...(selectedOpenClawConfigPath
@@ -1946,8 +2052,9 @@ export const connectCommand = defineCommand({
           writeConnectRecovery(home, recovery);
           rmSync(connectRedemptionPath(home), { force: true });
           try {
-            await authorizeHarness(home, harness, runtimeCredentials);
+            await authorizeHarness(home, harness, withRunTrust(runtimeCredentials, tls));
             applyConnectRecovery(home, recovery, prepared, skillCapabilities);
+            persistInstalledGatewayTrust(credentialsPath, tls);
             persistGatewayCapabilities(credentialsPath, skillCapabilities);
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);

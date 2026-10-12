@@ -22,15 +22,19 @@ import { join } from "node:path";
 import {
   agentIntegrationVersion,
   describeVersionDrift,
+  GatewayTrust,
   IntegrationHttpError,
   loadIntegrationCredentials,
   parseGatewayCapabilities,
   PinnedGatewayHttpClient,
   subscriptionsAvailable,
+  isSystemTrust,
   updateIntegrationCapabilities,
+  updateIntegrationTlsTrust,
   writeIntegrationCredentials,
   type GatewayCapabilities,
   type IntegrationCredentials,
+  type PinnedTlsTrust,
   type TlsTrust,
 } from "@omnesis/agent-integration";
 
@@ -49,14 +53,19 @@ import type { Harness, HarnessSkillCapabilities } from "./harness-skills.js";
  */
 export async function readIntegrationCapabilities(
   gatewayUrl: string,
-  tls?: TlsTrust,
+  tls: TlsTrust | undefined,
+  harness: Harness,
 ): Promise<GatewayCapabilities> {
   let capabilities: GatewayCapabilities;
   try {
     // A harness has no token yet, which is why `/health` is public. `/status`
     // stays read-scoped and is never reached from here.
     capabilities = parseGatewayCapabilities(
-      await new PinnedGatewayHttpClient(gatewayUrl, "", tls).requestJson("GET", "/health"),
+      await new PinnedGatewayHttpClient(
+        gatewayUrl,
+        "",
+        new GatewayTrust({ gatewayUrl, trust: tls, harness }),
+      ).requestJson("GET", "/health"),
     );
   } catch (error) {
     const detail =
@@ -95,33 +104,91 @@ export function warnOnVersionDrift(capabilities: GatewayCapabilities, harness: H
   if (drift.warning) console.log(`${c.yellow}${drift.warning}${c.reset}`);
 }
 
+function sameTrust(a: TlsTrust | undefined, b: TlsTrust | undefined): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
 /**
- * Re-pin the certificate this installation will present to the gateway.
+ * The trust one `omnesis connect` run settled on.
  *
- * Written before the plugin is installed, because the OAuth round-trip that
- * follows has to be made over the certificate actually in front of us — a
- * rotation during `--refresh` would otherwise leave the saved pin naming one
- * that no longer exists. `tls` is an old field: every shipped plugin already
- * understands it.
+ * Three views of one decision, because they are needed at different moments.
+ * `saved` is what the installation keeps. `observed` pins the certificate
+ * this run saw, in the shape every shipped plugin reads — written first, so
+ * an installation whose ceremony stops part-way still works with whichever
+ * plugin it has. `run` is what this run's own requests verify with: the
+ * observed certificate when the operator promised a fingerprint, so the
+ * promise binds every round-trip, and `saved` otherwise.
+ */
+export interface ConnectTlsTrust {
+  saved: TlsTrust;
+  observed: PinnedTlsTrust;
+  run: TlsTrust;
+}
+
+/**
+ * The trust to write before the plugin is installed: `saved` when every
+ * shipped plugin reads it, otherwise the observed pin. Plugins from before
+ * system trust read `{ mode: "system" }` as an unreadable credential file, so
+ * system trust replaces a pin only once the plugin that reads it is in place
+ * ({@link persistInstalledGatewayTrust}).
+ */
+export function preinstallTrust(
+  current: TlsTrust | undefined,
+  trust: ConnectTlsTrust | undefined,
+): TlsTrust | undefined {
+  if (!trust) return undefined;
+  if (isSystemTrust(trust.saved) && !(current && isSystemTrust(current))) return trust.observed;
+  return trust.saved;
+}
+
+/**
+ * Record how this installation will verify the gateway, on any change of
+ * shape or content, before the plugin is installed.
+ *
+ * Written first because the OAuth round-trip that follows has to be made over
+ * the certificate actually in front of us — a rotation during `--refresh`
+ * would otherwise leave the saved pin naming one that no longer exists. What
+ * is written is {@link preinstallTrust}; the credentials returned carry the
+ * run's own trust, for that round-trip.
  */
 export function persistGatewayTrust(
   credentialsPath: string,
   credentials: IntegrationCredentials,
-  tls: TlsTrust | undefined,
+  trust: ConnectTlsTrust | undefined,
 ): IntegrationCredentials {
-  if (
-    credentials.tls?.leafFingerprintSha256 === tls?.leafFingerprintSha256 &&
-    credentials.tls?.caPem === tls?.caPem
-  ) {
-    return credentials;
+  const written = preinstallTrust(credentials.tls, trust);
+  if (!sameTrust(credentials.tls, written)) {
+    const next: IntegrationCredentials = { ...credentials, ...(written ? { tls: written } : {}) };
+    // A gateway reached over plain loopback carries no pin at all, so an
+    // installation that moved off HTTPS must lose the stale one rather than
+    // keep presenting it.
+    if (!written) delete next.tls;
+    writeIntegrationCredentials(credentialsPath, next);
+    credentials = next;
   }
-  const next: IntegrationCredentials = { ...credentials, ...(tls ? { tls } : {}) };
-  // A gateway reached over plain loopback carries no pin at all, so an
-  // installation that moved off HTTPS must lose the stale one rather than
-  // keep presenting it.
-  if (!tls) delete next.tls;
-  writeIntegrationCredentials(credentialsPath, next);
-  return next;
+  return withRunTrust(credentials, trust);
+}
+
+/** The credentials this run's own requests use: the same file, verified the run's way. */
+export function withRunTrust(
+  credentials: IntegrationCredentials,
+  trust: ConnectTlsTrust | undefined,
+): IntegrationCredentials {
+  return trust ? { ...credentials, tls: trust.run } : credentials;
+}
+
+/**
+ * Write the trust the installation keeps, once the plugin that reads it is
+ * installed. Re-reads the file first: the OAuth round-trip in between
+ * rotated its tokens.
+ */
+export function persistInstalledGatewayTrust(
+  credentialsPath: string,
+  trust: ConnectTlsTrust | undefined,
+): void {
+  if (!trust || !existsSync(credentialsPath)) return;
+  if (sameTrust(loadIntegrationCredentials(credentialsPath).tls, trust.saved)) return;
+  updateIntegrationTlsTrust(credentialsPath, trust.saved);
 }
 
 /**

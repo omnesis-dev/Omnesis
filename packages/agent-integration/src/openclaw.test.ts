@@ -37,8 +37,10 @@ import {
   registerOpenClawIntegration,
   answerCompletionContinuation,
   backgroundPrompt,
+  describeManagementFailure,
   sendAnswerCompletion,
 } from "./openclaw.js";
+import { GatewayTlsError } from "./tls.js";
 import {
   AGENT_INTEGRATION_PROTOCOL_MIN_VERSION,
   AGENT_INTEGRATION_PROTOCOL_VERSION,
@@ -2507,5 +2509,20 @@ describe("shutting down while a run is still being watched", () => {
     await new Promise((settle) => setTimeout(settle, 10));
     expect(fake.runtime.subagent.getSessionMessages).not.toHaveBeenCalled();
     expect(postJson).not.toHaveBeenCalled();
+  });
+});
+
+describe("what a failed subscription-management call tells the model", () => {
+  test("a certificate failure is passed through with its repair command", () => {
+    const failure = new GatewayTlsError(
+      "Omnesis is unreachable over TLS: run `omnesis connect openclaw --refresh` on this machine.",
+    );
+    expect(describeManagementFailure(failure, "create")).toBe(failure);
+  });
+
+  test("any other transport failure says how to find out what happened", () => {
+    expect(describeManagementFailure(new Error("socket hang up"), "create").message).toContain(
+      "List subscriptions",
+    );
   });
 });

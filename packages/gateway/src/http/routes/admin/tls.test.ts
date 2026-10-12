@@ -161,3 +161,49 @@ describe("/admin/tls", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("certificate pins on the device list and in the doctor", () => {
+  test("a device that reports a pin is named with its fix; one that verifies by name is not", async () => {
+    const renewsAt = "2026-12-10T00:00:00.000Z";
+    const renewing: TlsLifecyclePort = {
+      ...tlsLifecycle,
+      snapshot: () => ({ ...snapshot, renewsAt }),
+    };
+    createDevice(db, {
+      name: "pinned-phone",
+      kind: "ios",
+      capabilities: { platform: "ios", tls: { mode: "pinned-leaf" } },
+    });
+    createDevice(db, {
+      name: "named-phone",
+      kind: "ios",
+      capabilities: { platform: "ios", tls: { mode: "system" } },
+    });
+    const pinApp = createServer(db, dbPath, { tlsLifecycle: renewing });
+    const admin = { headers: { Authorization: `Bearer ${token([SCOPE_ADMIN])}` } };
+
+    const res = await pinApp.request("/admin/devices", admin);
+    expect(res.status).toBe(200);
+    const { items } = (await res.json()) as {
+      items: Array<{ name: string; tlsMode: string | null; tlsTrust?: unknown }>;
+    };
+    expect(items.find((d) => d.name === "pinned-phone")).toMatchObject({
+      tlsMode: "pinned-leaf",
+      tlsTrust: {
+        status: "pinned-renews",
+        renewsAt,
+        remedy: expect.stringContaining("omnesis devices repair pinned-phone"),
+      },
+    });
+    const named = items.find((d) => d.name === "named-phone");
+    expect(named?.tlsMode).toBe("system");
+    expect(named).not.toHaveProperty("tlsTrust");
+
+    const doctor = await pinApp.request("/admin/doctor", admin);
+    expect(doctor.status).toBe(200);
+    const report = JSON.stringify(await doctor.json());
+    expect(report).toContain("fleet.tls-pin-renewal");
+    expect(report).toContain("pinned-phone");
+    expect(report).not.toMatch(/fleet\.tls-pin-renewal[^}]*named-phone/u);
+  });
+});

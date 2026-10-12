@@ -17,6 +17,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -477,6 +478,105 @@ class PairingServiceTest {
         assertNull(svc.pushClaimCredential("device-b"))
         svc.unpair()
         assertNull(svc.pushClaimCredential("device-a"))
+    }
+
+    private fun pinnedBundle(url: String) = PairingCredentialBundle(
+        url = url,
+        token = "secret-token",
+        pairingGeneration = "token-row-7",
+        accountId = "local",
+        deviceId = "dev-pinned",
+        name = "Riverside gateway",
+        scopes = listOf("read", "write"),
+        tlsMode = PairingTlsMode.PINNED_LEAF.persistedValue,
+        fingerprint = "b".repeat(64),
+    )
+
+    private fun storeWith(bundle: PairingCredentialBundle) = InMemoryStore().apply {
+        set("gateway.credential.v1", OmnesisJson.encodeToString(bundle))
+    }
+
+    @Test
+    fun upgradeTrustToSystem_rewrites_a_pinned_dns_pairing_and_keeps_everything_else() {
+        val store = storeWith(pinnedBundle("https://gateway.example.com:7600"))
+        val svc = service(store)
+
+        assertTrue(svc.upgradeTrustToSystem())
+
+        val upgraded = requireNotNull(svc.current())
+        assertEquals(PairingTlsMode.SYSTEM, upgraded.tlsMode)
+        assertNull(upgraded.fingerprint)
+        assertEquals("https://gateway.example.com:7600", upgraded.url)
+        assertEquals("secret-token", upgraded.token)
+        assertEquals("token-row-7", upgraded.pairingGeneration)
+        assertEquals("dev-pinned", upgraded.deviceId)
+        assertEquals("Riverside gateway", upgraded.gatewayName)
+        assertEquals(listOf("read", "write"), upgraded.scopes)
+        val persisted = OmnesisJson.decodeFromString<PairingCredentialBundle>(
+            requireNotNull(store.get("gateway.credential.v1")),
+        )
+        assertEquals(PairingTlsMode.SYSTEM.persistedValue, persisted.tlsMode)
+        assertNull(persisted.fingerprint)
+        // Already system: nothing left to upgrade.
+        assertFalse(svc.upgradeTrustToSystem())
+    }
+
+    @Test
+    fun upgradeTrustToSystem_moves_legacy_split_key_state_into_one_bundle() {
+        val store = InMemoryStore().apply {
+            set("gateway.url", "https://gateway.example.com")
+            set("gateway.token", "secret-token")
+            set("gateway.accountId", "local")
+            set("gateway.deviceId", "dev-legacy-v3")
+            set("gateway.name", "Existing gateway")
+            set("gateway.scopes", "[\"read\"]")
+            set("gateway.fingerprint", "a".repeat(64))
+        }
+        val svc = service(store)
+
+        assertTrue(svc.upgradeTrustToSystem())
+
+        val upgraded = requireNotNull(svc.current())
+        assertEquals(PairingTlsMode.SYSTEM, upgraded.tlsMode)
+        assertNull(upgraded.fingerprint)
+        assertEquals("dev-legacy-v3", upgraded.deviceId)
+        assertEquals(listOf("read"), upgraded.scopes)
+        assertNull(store.get("gateway.fingerprint"))
+        assertNull(store.get("gateway.url"))
+    }
+
+    @Test
+    fun upgradeTrustToSystem_leaves_ip_localhost_and_non_origin_pairings_pinned() {
+        listOf(
+            "https://192.0.2.10:7600",
+            "https://[2001:db8::1]:7600",
+            "https://localhost:7600",
+            "https://gateway.localhost",
+            "https://gateway.example.com/omnesis",
+        ).forEach { url ->
+            val bundle = pinnedBundle(url)
+            val store = storeWith(bundle)
+
+            assertFalse(url, service(store).upgradeTrustToSystem())
+            assertEquals(url, OmnesisJson.encodeToString(bundle), store.get("gateway.credential.v1"))
+        }
+    }
+
+    @Test
+    fun upgradeTrustToSystem_ignores_unpaired_legacy_and_system_pairings() {
+        assertFalse(service(InMemoryStore()).upgradeTrustToSystem())
+
+        val legacy = pinnedBundle("https://gateway.example.com")
+            .copy(tlsMode = PairingTlsMode.LEGACY.persistedValue, fingerprint = null)
+        val legacyStore = storeWith(legacy)
+        assertFalse(service(legacyStore).upgradeTrustToSystem())
+        assertEquals(PairingTlsMode.LEGACY, service(legacyStore).current()?.tlsMode)
+
+        val system = pinnedBundle("https://gateway.example.com")
+            .copy(tlsMode = PairingTlsMode.SYSTEM.persistedValue, fingerprint = null)
+        val systemStore = storeWith(system)
+        assertFalse(service(systemStore).upgradeTrustToSystem())
+        assertEquals(OmnesisJson.encodeToString(system), systemStore.get("gateway.credential.v1"))
     }
 
     private class InterruptingCleanupStore : SecureStore {

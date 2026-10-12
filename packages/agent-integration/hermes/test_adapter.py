@@ -11,6 +11,7 @@ import pathlib
 import signal
 import socket
 import sqlite3
+import ssl
 import stat
 import subprocess
 import sys
@@ -20,6 +21,7 @@ import time
 import types
 import unittest
 from pathlib import Path
+from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock, call, patch
 
 
@@ -497,9 +499,22 @@ class DeliveryContractTests(unittest.TestCase):
         certificate = b"fictional-certificate"
         peer = Mock()
         peer.getpeercert.return_value = certificate
-        adapter_module._verify_leaf(peer, hashlib.sha256(certificate).hexdigest())
-        with self.assertRaises(Exception):
-            adapter_module._verify_leaf(peer, "0" * 64)
+        credentials = adapter_module.Credentials(
+            gateway_url="https://127.0.0.1:7600",
+            delivery_token="omn_delivery_example",
+            ingestion_token="omn_ingestion_example",
+            management_token=None,
+            oauth_client_id=None,
+            oauth_access_token=None,
+            oauth_refresh_token=None,
+            ca_pem="fictional",
+            leaf_fingerprint_sha256=hashlib.sha256(certificate).hexdigest(),
+        )
+        self.assertFalse(adapter_module._verify_peer(peer, credentials))
+        with self.assertRaises(adapter_module.TlsPinMismatchError):
+            adapter_module._verify_peer(
+                peer, dataclasses.replace(credentials, leaf_fingerprint_sha256="0" * 64)
+            )
 
     def test_transcript_projection_excludes_private_background_sessions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -901,6 +916,24 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(sys.modules, {"websockets": module}):
             await self.instance._delivery_connection()
         self.assertEqual(seen, ["ws://127.0.0.1:7600/omnesis/device/ws"])
+
+    async def test_the_hello_reports_how_the_gateway_was_verified(self):
+        socket = HandshakeSocket()
+        with patch.dict(sys.modules, {"websockets": scripted_websockets(socket)}):
+            await self.instance._delivery_connection()
+        self.assertNotIn("tls", json.loads(socket.sent[0])["payload"]["capabilities"])
+
+        self.instance._credentials = dataclasses.replace(
+            self.instance._credentials,
+            gateway_url="https://gateway.example.test:7600",
+            system_trust=True,
+        )
+        socket = HandshakeSocket()
+        with patch.dict(sys.modules, {"websockets": scripted_websockets(socket)}):
+            await self.instance._delivery_connection()
+        self.assertEqual(
+            json.loads(socket.sent[0])["payload"]["capabilities"]["tls"], {"mode": "system"}
+        )
 
     async def test_the_connection_survives_a_heartbeat_landing_in_its_handshake(self):
         """The handshake itself, not the helper it is supposed to use.
@@ -6168,6 +6201,395 @@ class DeviceUpdateHandlerTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual(len(self.websocket.sent), 1)
         self.assertEqual(self.instance._socket.sent, [])
+
+
+_TRUST_NAME = "gateway.example.test"
+
+
+def _mint_certificates(directory: Path) -> Dict[str, Dict[str, Any]]:
+    """A private root standing in for the public CAs, and the certificates a
+    renewal and an adversary would present."""
+
+    def openssl(*args: str) -> None:
+        subprocess.run(["openssl", *args], check=True, capture_output=True)
+
+    def extensions(name: str, profile: str) -> Path:
+        path = directory / f"{name}.ext"
+        san = f"subjectAltName = DNS:{_TRUST_NAME}, IP:127.0.0.1\n"
+        keys = "subjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid:always\n"
+        if profile == "ca":
+            body = (
+                "basicConstraints = critical, CA:TRUE\n"
+                "keyUsage = critical, keyCertSign, cRLSign, digitalSignature\n"
+            )
+        elif profile == "leaf":
+            body = (
+                "basicConstraints = critical, CA:FALSE\n"
+                "keyUsage = critical, digitalSignature, keyEncipherment\n"
+                "extendedKeyUsage = serverAuth\n"
+            )
+        else:
+            body = "basicConstraints = critical, CA:FALSE\n"
+        path.write_text(body + san + keys, encoding="utf-8")
+        return path
+
+    def self_signed(name: str, profile: str) -> None:
+        config = directory / f"{name}.cnf"
+        config.write_text(
+            "[req]\ndistinguished_name = dn\n[dn]\n[v3]\n"
+            + extensions(name, profile).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        openssl(
+            "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+            "-nodes", "-days", "3", "-subj", f"/CN={name}",
+            "-keyout", str(directory / f"{name}.key"), "-out", str(directory / f"{name}.pem"),
+            "-extensions", "v3", "-config", str(config),
+        )
+
+    def issued_by(name: str, issuer: str, profile: str = "leaf") -> None:
+        openssl(
+            "req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+            "-nodes", "-subj", f"/CN={name}",
+            "-keyout", str(directory / f"{name}.key"), "-out", str(directory / f"{name}.csr"),
+        )
+        openssl(
+            "x509", "-req", "-in", str(directory / f"{name}.csr"),
+            "-CA", str(directory / f"{issuer}.pem"), "-CAkey", str(directory / f"{issuer}.key"),
+            "-CAcreateserial", "-days", "3", "-extfile", str(extensions(name, profile)),
+            "-out", str(directory / f"{name}.pem"),
+        )
+
+    self_signed("root", "ca")
+    issued_by("current", "root")
+    issued_by("renewed", "root")
+    issued_by("bare", "root", "bare")
+    # Signed with a pinned leaf's own key: what an adversary holding a copy of
+    # that key, but no CA, could present.
+    issued_by("impostor", "bare")
+    self_signed("ca-pin", "ca")
+    minted: Dict[str, Dict[str, Any]] = {}
+    for name in ("root", "current", "renewed", "bare", "impostor", "ca-pin"):
+        pem = (directory / f"{name}.pem").read_text(encoding="utf-8")
+        minted[name] = {
+            "pem": pem,
+            "cert": directory / f"{name}.pem",
+            "key": directory / f"{name}.key",
+            "fingerprint": hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest(),
+        }
+    return minted
+
+
+def _pinned_credentials(
+    pin: Dict[str, Any], host: str = _TRUST_NAME
+) -> "adapter_module.Credentials":
+    return adapter_module.Credentials(
+        gateway_url=f"https://{host}:7600",
+        delivery_token="omn_delivery_example",
+        ingestion_token="omn_ingestion_example",
+        management_token="omn_management_example",
+        oauth_client_id="client_fictional",
+        oauth_access_token="access_fictional",
+        oauth_refresh_token="refresh_fictional",
+        ca_pem=pin["pem"],
+        leaf_fingerprint_sha256=pin["fingerprint"],
+    )
+
+
+class GatewayTrustTests(unittest.TestCase):
+    """System trust, the legacy pin, and the move from one to the other."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.minted = _mint_certificates(Path(cls.directory.name))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def setUp(self):
+        adapter_module._SSL_CONTEXTS.clear()
+        self.home = tempfile.TemporaryDirectory()
+        self.path = Path(self.home.name) / "omnesis" / "integration.json"
+        self.path.parent.mkdir(parents=True)
+        self.raw = {
+            "gatewayUrl": f"https://{_TRUST_NAME}:7600",
+            "deliveryToken": "omn_delivery_example",
+            "ingestionToken": "omn_ingestion_example",
+            "managementToken": "omn_management_example",
+            "oauth": {
+                "redirectUri": "http://127.0.0.1:48123/callback",
+                "clientInformation": {"client_id": "client_fictional"},
+                "tokens": {"access_token": "access_old", "refresh_token": "refresh_old"},
+            },
+            "tls": {
+                "caPem": self.minted["current"]["pem"],
+                "leafFingerprintSha256": self.minted["current"]["fingerprint"],
+            },
+            "capabilities": {"subscriptions": True},
+        }
+        self.path.write_text(json.dumps(self.raw), encoding="utf-8")
+
+    def tearDown(self):
+        adapter_module._SSL_CONTEXTS.clear()
+        self.home.cleanup()
+
+    def write(self, raw):
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+
+    def test_the_loader_accepts_system_trust_or_the_exact_legacy_pin(self):
+        loaded = adapter_module._load_credentials(self.path)
+        self.assertEqual(loaded.tls_mode, "pinned-leaf")
+        self.write({**self.raw, "tls": {"mode": "system"}})
+        loaded = adapter_module._load_credentials(self.path)
+        self.assertEqual(loaded.tls_mode, "system")
+        self.assertIsNone(loaded.ca_pem)
+        for tls in (
+            {**self.raw["tls"], "mode": "system"},
+            {"mode": "pinned-leaf"},
+            {"mode": "insecure"},
+            {"caPem": self.raw["tls"]["caPem"]},
+            None,
+        ):
+            self.write({**self.raw, "tls": tls})
+            with self.assertRaises(adapter_module.ConfigurationError):
+                adapter_module._load_credentials(self.path)
+
+    def test_the_reported_mode_says_whether_the_pin_could_issue(self):
+        self.assertEqual(_pinned_credentials(self.minted["current"]).tls_mode, "pinned-leaf")
+        self.assertEqual(_pinned_credentials(self.minted["ca-pin"]).tls_mode, "pinned-ca")
+        self.assertFalse(adapter_module._public_name_candidate("localhost."))
+        self.assertFalse(adapter_module._public_name_candidate("gateway.localhost."))
+        self.assertTrue(adapter_module._public_name_candidate(f"{_TRUST_NAME}."))
+
+    def test_contexts_trust_the_pin_alone_or_beside_the_system_roots(self):
+        system_roots = ssl.create_default_context().cert_store_stats()["x509"]
+        upgradable = adapter_module._ssl_context(_pinned_credentials(self.minted["current"]))
+        self.assertEqual(upgradable.cert_store_stats()["x509"], system_roots + 1)
+        self.assertTrue(upgradable.check_hostname)
+        if hasattr(ssl, "VERIFY_X509_PARTIAL_CHAIN"):
+            self.assertTrue(upgradable.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN)
+        # Cached per trust, so a connection does not reload the root store.
+        self.assertIs(
+            adapter_module._ssl_context(_pinned_credentials(self.minted["current"])), upgradable
+        )
+        for strict in (
+            _pinned_credentials(self.minted["current"], host="127.0.0.1"),
+            _pinned_credentials(self.minted["current"], host="localhost"),
+            _pinned_credentials(self.minted["ca-pin"]),
+        ):
+            self.assertEqual(adapter_module._ssl_context(strict).cert_store_stats()["x509"], 1)
+        system = adapter_module._ssl_context(
+            dataclasses.replace(
+                _pinned_credentials(self.minted["current"]),
+                system_trust=True,
+                ca_pem=None,
+                leaf_fingerprint_sha256=None,
+            )
+        )
+        self.assertEqual(system.cert_store_stats()["x509"], system_roots)
+
+    def test_verify_peer_adopts_only_where_a_public_root_could_have_vouched(self):
+        peer = Mock()
+        peer.getpeercert.return_value = ssl.PEM_cert_to_DER_cert(self.minted["renewed"]["pem"])
+        self.assertTrue(
+            adapter_module._verify_peer(peer, _pinned_credentials(self.minted["current"]))
+        )
+        self.assertFalse(
+            adapter_module._verify_peer(peer, _pinned_credentials(self.minted["renewed"]))
+        )
+        for strict in (
+            _pinned_credentials(self.minted["current"], host="127.0.0.1"),
+            _pinned_credentials(self.minted["ca-pin"]),
+        ):
+            with self.assertRaises(adapter_module.TlsPinMismatchError):
+                adapter_module._verify_peer(peer, strict)
+        with self.assertRaises(ssl.SSLError):
+            adapter_module._verify_peer(None, _pinned_credentials(self.minted["current"]))
+
+    def test_adopting_system_trust_waits_for_a_refresh_and_keeps_its_tokens(self):
+        instance = adapter_module.OmnesisAdapter.for_tools()
+        instance._credential_path = self.path
+        instance._credentials = adapter_module._load_credentials(self.path)
+        lock_path = Path(f"{self.path}.refresh.lock")
+        # A token refresh in this same process holds the lock and is about to
+        # write the file itself.
+        descriptor = adapter_module._acquire_refresh_lock(lock_path)
+        try:
+            with self.assertLogs(adapter_module.logger, level="INFO"):
+                instance._adopt_system_trust()
+            self.assertEqual(instance._credentials.tls_mode, "system")
+            refreshed = json.loads(self.path.read_text(encoding="utf-8"))
+            self.assertIn("caPem", refreshed["tls"])
+            refreshed["oauth"]["tokens"] = {
+                "access_token": "access_new",
+                "refresh_token": "refresh_new",
+            }
+            adapter_module._write_private_json(self.path, refreshed)
+        finally:
+            adapter_module._release_owned_refresh_lock(lock_path, descriptor)
+        instance._system_trust_writer.join(timeout=10)
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["tls"], {"mode": "system"})
+        self.assertEqual(saved["oauth"]["tokens"]["refresh_token"], "refresh_new")
+        self.assertEqual(saved["capabilities"], {"subscriptions": True})
+        self.assertEqual(instance._credentials.tls_mode, "system")
+        self.assertEqual(instance._credentials.oauth_access_token, "access_new")
+
+    def test_recording_system_trust_leaves_a_pin_chosen_since_alone(self):
+        self.write(
+            {
+                **self.raw,
+                "tls": {
+                    "caPem": self.minted["renewed"]["pem"],
+                    "leafFingerprintSha256": self.minted["renewed"]["fingerprint"],
+                },
+            }
+        )
+        self.assertIsNone(
+            adapter_module._record_system_trust(self.path, self.minted["current"]["fingerprint"])
+        )
+        self.assertIn("caPem", json.loads(self.path.read_text(encoding="utf-8"))["tls"])
+
+    def test_certificate_failures_name_the_repair(self):
+        mismatch = adapter_module.TlsPinMismatchError("TLS leaf certificate pin mismatch")
+        message = adapter_module._describe_transport_failure(
+            mismatch, f"https://{_TRUST_NAME}:7600", "Omnesis answer request"
+        )
+        self.assertIn("pinned", message)
+        self.assertIn("`omnesis connect hermes --refresh`", message)
+        self.assertIn("--trust-fingerprint sha256:", message)
+        untrusted = ssl.SSLCertVerificationError(1, "certificate verify failed")
+        untrusted.verify_code = 18
+        wrapped = ConnectionError("transport")
+        wrapped.__cause__ = untrusted
+        self.assertIn(
+            "not one this installation trusts",
+            adapter_module._describe_transport_failure(wrapped, None, "Omnesis answer request"),
+        )
+        expired = ssl.SSLCertVerificationError(1, "certificate verify failed")
+        expired.verify_code = 10
+        self.assertIn(
+            "Renew it on the gateway host",
+            adapter_module._describe_transport_failure(expired, None, "Omnesis answer request"),
+        )
+        self.assertEqual(
+            adapter_module._describe_transport_failure(
+                RuntimeError("private detail must-not-leave"), None, "Omnesis answer request"
+            ),
+            "Omnesis answer request failed (RuntimeError)",
+        )
+
+    def test_tool_errors_carry_the_certificate_failure(self):
+        instance = adapter_module.OmnesisAdapter.for_tools()
+        instance._credentials = _pinned_credentials(self.minted["current"])
+        instance._state = Mock()
+        instance._subscriptions_available = Mock(return_value=True)
+        instance._session_identity = Mock(return_value=("slack", "chat-fictional"))
+        instance._request_json = Mock(
+            side_effect=adapter_module.TlsPinMismatchError("TLS leaf certificate pin mismatch")
+        )
+        result = json.loads(
+            instance.manage_subscriptions({"action": "list"}, "session-fictional")
+        )
+        self.assertEqual(result["kind"], "unreachable")
+        self.assertNotIn("List subscriptions", result["error"])
+        self.assertIn("omnesis connect hermes --refresh", result["error"])
+        self.assertNotIn("omnesis connect hermes --refresh", json.dumps(
+            adapter_module._SUBSCRIPTION_UNSUPPORTED_MESSAGES
+        ))
+        forwarded = json.loads(
+            instance.call_forwarded_tool(next(iter(adapter_module._FORWARDED_TOOL_NAMES)), {})
+        )
+        self.assertIn("omnesis connect hermes --refresh", forwarded["error"])
+
+
+class GatewayTrustHandshakeTests(unittest.TestCase):
+    """The trust decision over real handshakes, against a private root."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.minted = _mint_certificates(Path(cls.directory.name))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def setUp(self):
+        adapter_module._SSL_CONTEXTS.clear()
+        root = str(self.minted["root"]["cert"])
+        real = ssl.create_default_context
+
+        # The private root stands in for the public CA set.
+        def default_context(purpose=ssl.Purpose.SERVER_AUTH, *, cafile=None, capath=None, cadata=None):
+            if cadata is not None:
+                return real(purpose, cadata=cadata)
+            return real(purpose, cafile=root)
+
+        self.patch = patch.object(adapter_module.ssl, "create_default_context", default_context)
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        adapter_module._SSL_CONTEXTS.clear()
+
+    def serve(self, leaf: str, chain: tuple[str, ...] = ()) -> int:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        bundle = Path(self.directory.name) / f"{leaf}-bundle.pem"
+        bundle.write_text(
+            "".join(self.minted[name]["pem"] for name in (leaf, *chain)), encoding="utf-8"
+        )
+        context.load_cert_chain(str(bundle), str(self.minted[leaf]["key"]))
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        self.addCleanup(listener.close)
+
+        def accept():
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                return
+            try:
+                with context.wrap_socket(connection, server_side=True) as tls:
+                    tls.recv(1)
+            except (OSError, ssl.SSLError):
+                pass
+
+        thread = threading.Thread(target=accept, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        return listener.getsockname()[1]
+
+    def handshake(self, credentials, port: int, host: str = _TRUST_NAME) -> bool:
+        context = adapter_module._ssl_context(credentials)
+        raw = socket.create_connection(("127.0.0.1", port), timeout=5)
+        with context.wrap_socket(raw, server_hostname=host) as tls:
+            return adapter_module._verify_peer(tls, credentials)
+
+    def test_the_pinned_leaf_stays_pinned(self):
+        port = self.serve("current")
+        self.assertFalse(self.handshake(_pinned_credentials(self.minted["current"]), port))
+
+    def test_a_renewal_from_a_public_root_is_adopted(self):
+        port = self.serve("renewed")
+        self.assertTrue(self.handshake(_pinned_credentials(self.minted["current"]), port))
+
+    def test_a_gateway_addressed_by_ip_stays_strict(self):
+        port = self.serve("renewed")
+        with self.assertRaises(ssl.SSLCertVerificationError):
+            self.handshake(
+                _pinned_credentials(self.minted["current"], host="127.0.0.1"),
+                port,
+                host="127.0.0.1",
+            )
+
+    def test_a_certificate_signed_by_the_pinned_leaf_is_refused(self):
+        port = self.serve("impostor", ("bare",))
+        with self.assertRaises(ssl.SSLCertVerificationError):
+            self.handshake(_pinned_credentials(self.minted["bare"]), port)
 
 
 if __name__ == "__main__":

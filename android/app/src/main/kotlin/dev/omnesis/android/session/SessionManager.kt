@@ -51,6 +51,7 @@ import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.ui.agent.AgentCoordinator
 import dev.omnesis.android.voice.SpeechVocabulary
 import dev.omnesis.android.transport.client.TranscriptionVocabularyClient
+import java.net.URI
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Provider
@@ -401,7 +402,7 @@ class SessionManager @Inject constructor(
                     continue
                 }
                 val http = GatewayHttp(
-                    PinnedOkHttp.build(pending.fingerprint),
+                    PinnedOkHttp.build(pending.fingerprint, host = hostOf(pending.url)),
                     pending.url,
                     pending.token,
                     pending.pairingGeneration,
@@ -503,19 +504,31 @@ class SessionManager @Inject constructor(
         }
         settleLocalState(pairing, atLaunch)
         val requirePin = pairing.tlsMode == PairingTlsMode.PINNED_LEAF
+        val host = hostOf(pairing.url)
+        val upgrade = { onSystemTrustVerified(pairing) }
         val http = GatewayHttp(
-            PinnedOkHttp.build(pairing.fingerprint, requirePin = requirePin),
+            PinnedOkHttp.build(
+                pairing.fingerprint,
+                requirePin = requirePin,
+                host = host,
+                onSystemTrustVerified = upgrade,
+            ),
             pairing.url,
             pairing.token,
             pairing.pairingGeneration,
         )
-        val streaming = PinnedOkHttp.buildStreaming(pairing.fingerprint, requirePin = requirePin)
+        val streaming = PinnedOkHttp.buildStreaming(
+            pairing.fingerprint,
+            requirePin = requirePin,
+            host = host,
+            onSystemTrustVerified = upgrade,
+        )
         val socket = DeviceSocket(
             client = streaming,
             gatewayUrl = pairing.url,
             token = pairing.token,
             scope = scope,
-            capabilities = deviceCapabilities,
+            capabilities = deviceCapabilities.withTlsMode(pairing.tlsMode.persistedValue),
         )
         val agent = AgentClient(http)
         val admin = AdminClient(http)
@@ -564,7 +577,7 @@ class SessionManager @Inject constructor(
                 ?.let { token ->
                     NotificationsClient(
                         GatewayHttp(
-                            PinnedOkHttp.build(pairing.fingerprint, requirePin = requirePin),
+                            PinnedOkHttp.build(pairing.fingerprint, requirePin = requirePin, host = host),
                             pairing.url,
                             token,
                         ),
@@ -953,6 +966,7 @@ class SessionManager @Inject constructor(
                 PinnedOkHttp.build(
                     current.pairing.fingerprint,
                     requirePin = current.pairing.tlsMode == PairingTlsMode.PINNED_LEAF,
+                    host = hostOf(current.pairing.url),
                 ),
                 current.pairing.url,
                 minted.token,
@@ -1016,4 +1030,19 @@ class SessionManager @Inject constructor(
 
     private fun relayConsentIdentity(deviceId: String, appId: String): String =
         "$deviceId\u001f$appId"
+
+    /**
+     * A pinned session's gateway proved a publicly trusted certificate for its DNS
+     * name. Called on the TLS handshake thread, so it only posts: the main thread
+     * switches the pairing to system trust and rebuilds the session, the same path
+     * as a gateway URL change. A callback from a session that a re-pair, unpair or
+     * URL change has since replaced does nothing.
+     */
+    private fun onSystemTrustVerified(verified: Pairing) {
+        scope.launch(Dispatchers.Main) {
+            if (pairingService.current() == verified && pairingService.upgradeTrustToSystem()) rebuild()
+        }
+    }
+
+    private fun hostOf(url: String): String? = runCatching { URI(url).host }.getOrNull()
 }

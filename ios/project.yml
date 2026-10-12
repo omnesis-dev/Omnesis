@@ -256,6 +256,7 @@ targets:
       # These files are deliberately dual-target members: app and extension
       # share one wire client, one Keychain posture and one TLS pinning path.
       - path: Sources/Omnesis/Notifications/NotificationClaimer.swift
+      - path: Sources/Omnesis/Pairing/GatewayTrustPolicy.swift
       - path: Sources/Omnesis/Pairing/Keychain.swift
       - path: Sources/Omnesis/Pairing/PairingCredentialBundle.swift
       - path: Sources/Omnesis/Pairing/PairingTlsMode.swift

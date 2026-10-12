@@ -3,14 +3,15 @@
 
 /**
  * The served certificate, as the doctor reads it: expiry, the names it
- * misses, a replacement that could not be activated, and the phones that
- * may still pin a certificate the gateway no longer serves. Every remedy
+ * misses, a replacement that could not be activated, and the phones and
+ * agents that pin a certificate the gateway replaces or has replaced. Every remedy
  * names the command for the material's ownership, because a Tailscale
  * certificate, the gateway's own self-signed one and an operator's are
  * renewed by different hands.
  */
 
 import { assertNever } from "../utils.js";
+import { deviceTlsTrust, type TlsTrustDeviceFacts } from "../tls-device-trust.js";
 import type { TlsLifecycleSnapshot, TlsOwnership } from "../tls-material.js";
 
 /** The subset of the evaluator's collector this module reports through. */
@@ -20,17 +21,8 @@ export interface TlsCheckSink {
   fail(section: string, id: string, message: string, hint: string): void;
 }
 
-export interface TlsCheckDevice {
-  name: string;
-  kind: string;
-  pairedAt?: number | null;
-  lastSeenAt?: number | null;
-  revokedAt?: number | null;
-}
-
 const GATEWAY = "Gateway";
 const FLEET = "Fleet";
-const PHONE_KINDS = new Set(["ios", "android"]);
 
 function ownershipNoun(ownership: TlsOwnership): string {
   switch (ownership) {
@@ -102,14 +94,14 @@ function capitalize(text: string): string {
 
 export function checkGatewayTls(
   snapshot: TlsLifecycleSnapshot | null | undefined,
-  devices: ReadonlyArray<TlsCheckDevice> | null | undefined,
+  devices: ReadonlyArray<TlsTrustDeviceFacts> | null | undefined,
   ck: TlsCheckSink,
 ): void {
   if (!snapshot) return;
   const { served } = snapshot;
   const noun = ownershipNoun(snapshot.ownership);
   const pinned =
-    " Phones paired by fingerprint stop connecting when it changes and need `omnesis devices repair <name>`; a collector or CLI host that refuses the new certificate needs `omnesis tls trust`.";
+    " A phone or agent that pins it stops connecting when it changes: a phone needs `omnesis devices repair <name>`, an agent `omnesis connect <harness> --refresh` on its machine, and a collector or CLI host that refuses the new certificate `omnesis tls trust`.";
 
   switch (served.state) {
     case "valid":
@@ -183,29 +175,41 @@ export function checkGatewayTls(
     );
   }
 
-  // Only a self-signed certificate is ever pinned; a rotation of one issued
-  // by a CA is verified by name, so it strands nobody.
-  if (snapshot.rotation && devices && served.selfSigned) {
-    const rotatedAt = Date.parse(snapshot.rotation.rotatedAt);
-    const stranded = devices.filter(
-      (device) =>
-        PHONE_KINDS.has(device.kind) &&
-        !device.revokedAt &&
-        typeof device.pairedAt === "number" &&
-        device.pairedAt < rotatedAt &&
-        (device.lastSeenAt === null ||
-          device.lastSeenAt === undefined ||
-          device.lastSeenAt < rotatedAt),
-    );
-    if (stranded.length > 0) {
-      const names = stranded.map((device) => device.name).join(", ");
-      const one = stranded.length === 1;
-      ck.warn(
-        FLEET,
-        "fleet.tls-pin-repair",
-        `${stranded.length} phone${one ? "" : "s"} paired before the certificate rotated on ${snapshot.rotation.rotatedAt} ${one ? "has" : "have"} not connected since: ${names}`,
-        `A phone that pinned the previous certificate cannot connect until it is paired again: \`omnesis devices repair ${one ? names : "<name>"}\`. One paired through system trust reconnects on its own and can be left alone.`,
-      );
+  if (!devices) return;
+  const stranded: string[] = [];
+  const strandedNames: string[] = [];
+  const renewing: string[] = [];
+  const renewingNames: string[] = [];
+  let rotatedAt = "";
+  let renewsAt = "";
+  for (const device of devices) {
+    const trust = deviceTlsTrust(device, snapshot);
+    if (trust?.status === "stranded") {
+      rotatedAt = trust.rotatedAt;
+      stranded.push(`${device.name}: ${trust.remedy}`);
+      strandedNames.push(device.name);
+    } else if (trust?.status === "pinned-renews") {
+      renewsAt = trust.renewsAt;
+      renewing.push(`${device.name}: ${trust.remedy}`);
+      renewingNames.push(device.name);
     }
+  }
+  if (stranded.length > 0) {
+    const one = stranded.length === 1;
+    ck.warn(
+      FLEET,
+      "fleet.tls-pin-repair",
+      `${stranded.length} device${one ? "" : "s"} paired before the certificate was replaced on ${rotatedAt} ${one ? "has" : "have"} not connected since: ${strandedNames.join(", ")}`,
+      `${stranded.join(" ")} A device that verifies the gateway by name reconnects on its own and can be left alone; revoke one that is no longer used.`,
+    );
+  }
+  if (renewing.length > 0) {
+    const one = renewing.length === 1;
+    ck.warn(
+      FLEET,
+      "fleet.tls-pin-renewal",
+      `${renewing.length} device${one ? " pins" : "s pin"} the served certificate, which the gateway replaces on ${renewsAt}: ${renewingNames.join(", ")}`,
+      `Before then: ${renewing.join(" ")}`,
+    );
   }
 }

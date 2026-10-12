@@ -462,6 +462,13 @@ export function hasPerDeviceCursor(mode: MultiDeviceMode): boolean {
 }
 
 /**
+ * How a device verifies the gateway's certificate; see `DeviceCapability.tls`.
+ * `pinned-ca` trusts one private authority, so it follows renewals that the
+ * authority signs. Readers treat any other value as unreported.
+ */
+export type DeviceTlsTrustMode = "system" | "pinned-leaf" | "pinned-ca" | "legacy";
+
+/**
  * Declared capabilities of a device. Sent in the `hello` message when
  * the device connects to the gateway. Used by admin clients to know
  * what a device can do (which sources it can host, etc.).
@@ -504,6 +511,14 @@ export interface DeviceCapability {
     /** Understands privacy-policy decisions on Watch creation and revision. */
     watchPrivacyPolicyVersion?: 1;
   };
+  /**
+   * How this device verifies the gateway's TLS certificate. `pinned-leaf`
+   * trusts one exact leaf and breaks when that certificate is replaced;
+   * `system` verifies the gateway's name through public roots. Absent from
+   * clients that do not report it. Validated leniently on the wire, so a
+   * newer client's mode never fails its hello.
+   */
+  tls?: { mode: DeviceTlsTrustMode | (string & {}) };
   /** Device hostname, for display. */
   hostname?: string;
   /** Platform: "macos" | "linux" | "ios" | "web" | ... */

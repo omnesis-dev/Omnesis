@@ -122,6 +122,12 @@ const deviceCapabilitySchema = z
         message: "the protocol range must not be inverted",
       })
       .optional(),
+    // Lenient on purpose: a mode a newer client reports must not fail its
+    // hello or pairing; `deviceTlsTrustMode` narrows it when read.
+    tls: z
+      .object({ mode: z.string().max(32) })
+      .passthrough()
+      .optional(),
     hostname: z.string().optional(),
     platform: z.string().optional(),
     version: z.string().optional(),

@@ -78,6 +78,13 @@ public struct Pairing: Equatable, Sendable {
         self.fingerprint = fingerprint
         self.tlsMode = tlsMode ?? (fingerprint == nil ? .legacy : .pinnedLeaf)
     }
+
+    /// Whether this is a pinned-leaf pairing to `host` with the pin `pin`,
+    /// both compared case-insensitively.
+    func isPinned(to host: String, fingerprint pin: String) -> Bool {
+        guard tlsMode == .pinnedLeaf, let pairedHost = url.host, let fingerprint else { return false }
+        return pairedHost.caseInsensitiveCompare(host) == .orderedSame && fingerprint.lowercased() == pin.lowercased()
+    }
 }
 
 /// Response from `POST /devices/pair`. Decoded verbatim from the gateway.
@@ -719,7 +726,7 @@ public final class PairingService: Sendable {
 
     /// Update only the gateway URL — used when the user switches from LAN
     /// to Tailscale / tunnel without re-running the full pairing flow.
-    /// Token and accountId stay unchanged.
+    /// Every other field of the pairing stays unchanged.
     public func updateGatewayURL(_ url: URL) throws {
         guard let next = validatedGatewayURL(url.absoluteString) else {
             if url.scheme?.lowercased() != "https" {
@@ -740,18 +747,27 @@ public final class PairingService: Sendable {
                 )
             }
         }
-        try commit(
-            PairingCredentialBundle(
-                url: next.absoluteString,
-                token: pairing.token,
-                accountId: pairing.accountId,
-                deviceId: pairing.deviceId,
-                name: pairing.gatewayName,
-                scopes: pairing.scopes,
-                tlsMode: pairing.tlsMode.rawValue,
-                fingerprint: pairing.fingerprint
-            )
-        )
+        try commit(PairingCredentialBundle(pairing, url: next, tlsMode: pairing.tlsMode, fingerprint: pairing.fingerprint))
+        OmnesisURLSession.reset()
+    }
+
+    /// Replace a leaf pin with system trust once the gateway's chain was seen
+    /// to verify under the system roots for `verifiedHost` by a session pinned
+    /// to `pinnedFingerprint`. Only the current pairing, when it is still
+    /// pinned to exactly that host and pin and its host is one
+    /// ``GatewayTrustPolicy`` lets qualify, is rewritten; a report from a
+    /// session built for an earlier pairing or address changes nothing. Every
+    /// other field of the pairing is kept. Returns whether the stored pairing
+    /// changed, in which case the caller rebuilds its clients.
+    @discardableResult
+    public func upgradeTrustToSystem(verifiedHost: String, pinnedFingerprint: String) throws -> Bool {
+        guard let pairing = try current(),
+              pairing.isPinned(to: verifiedHost, fingerprint: pinnedFingerprint),
+              GatewayTrustPolicy.systemTrustQualifies(host: pairing.url.host)
+        else { return false }
+        try commit(PairingCredentialBundle(pairing, url: pairing.url, tlsMode: .system, fingerprint: nil))
+        OmnesisURLSession.reset()
+        return true
     }
 
     // MARK: - Helpers

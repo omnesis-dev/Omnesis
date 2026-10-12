@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { normalizeEmail, normalizePhone } from "@omnesis/core";
+import { deviceTlsTrust, deviceTlsTrustMode, normalizeEmail, normalizePhone } from "@omnesis/core";
 import { pushPlanRequestSchema, pushRegistrationSchema } from "@omnesis/core/push";
 import {
   buildPage,
@@ -168,10 +168,17 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     // so nothing else on this row would say so — see
     // `access/agent-device-authorization.ts`. Derived per request rather than
     // cached, because it turns on token expiry.
+    //
+    // `tlsTrust` names a device that pins a certificate the gateway replaces
+    // or already replaced — see `@omnesis/core` `tls-device-trust.ts`.
     const agentAuthorizations = accessService.agentDeviceAuthorizations();
     const revocationImpacts = accessService.agentDeviceRevocationImpacts();
+    const tlsSnapshot = deps.tlsLifecycle?.snapshot() ?? null;
     const devices = statusCache.listDevices.map((d) => {
       const authorization = agentAuthorizations.get(d.id);
+      const tlsMode = deviceTlsTrustMode(d.capabilities);
+      const harness = d.capabilities?.agentIntegration?.harness ?? null;
+      const tlsTrust = deviceTlsTrust({ ...d, harness, tlsMode }, tlsSnapshot);
       const revocationImpact = revocationImpacts.get(d.id);
       const pushPlan =
         (d.kind === "ios" || d.kind === "android") && d.capabilities.pushAppId
@@ -187,6 +194,9 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
         updateDisposition: fleetUpdate.dispositionFor(d),
         needsPairing: deviceNeedsPairing(d, statusCache.sourceHostingDeviceIds.has(d.id)),
         pushPlan,
+        harness,
+        tlsMode,
+        ...(tlsTrust ? { tlsTrust } : {}),
         ...(authorization ? { agentAuthorization: authorization } : {}),
         ...(d.kind === "agent"
           ? {

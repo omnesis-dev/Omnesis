@@ -12,7 +12,11 @@
  * hello on the version reported.
  */
 
-import { loadIntegrationCredentials, PinnedGatewayHttpClient } from "@omnesis/agent-integration";
+import {
+  GatewayTrust,
+  loadIntegrationCredentials,
+  PinnedGatewayHttpClient,
+} from "@omnesis/agent-integration";
 import { harnessIntegrationPath } from "./detect.js";
 
 export interface HarnessUpdateResult {
@@ -25,6 +29,7 @@ export interface HarnessUpdateResult {
 
 export async function reportHarnessUpdateResult(
   home: string,
+  harness: string,
   result: HarnessUpdateResult,
 ): Promise<void> {
   // The strict loader: a file the plugin could not read has no refresh to
@@ -33,7 +38,7 @@ export async function reportHarnessUpdateResult(
   const client = new PinnedGatewayHttpClient(
     credentials.gatewayUrl,
     credentials.managementToken,
-    credentials.tls,
+    new GatewayTrust({ gatewayUrl: credentials.gatewayUrl, trust: credentials.tls, harness }),
   );
   await client.postJson("/devices/update-result", result);
 }

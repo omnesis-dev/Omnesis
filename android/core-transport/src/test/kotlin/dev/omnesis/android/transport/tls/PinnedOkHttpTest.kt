@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.transport.tls
 
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
@@ -15,6 +16,8 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
+import java.net.InetAddress
+import java.util.concurrent.atomic.AtomicInteger
 
 class PinnedOkHttpTest {
     private lateinit var server: MockWebServer
@@ -113,5 +116,53 @@ class PinnedOkHttpTest {
                 .newCall(Request.Builder().url(server.url("/")).build())
                 .execute()
         }
+    }
+
+    @Test
+    fun pinnedTrustAcceptsAPubliclyTrustedRotationForTheDnsHostAndReportsTheUpgrade() {
+        val root = HeldCertificate.Builder().certificateAuthority(0).commonName("Example Root").build()
+        val systemTrust = HandshakeCertificates.Builder().addTrustedCertificate(root.certificate).build().trustManager
+        val pinned = HeldCertificate.Builder().addSubjectAlternativeName("gateway.example.com").signedBy(root).build()
+        val renewed = HeldCertificate.Builder().addSubjectAlternativeName("gateway.example.com").signedBy(root).build()
+        server.useHttps(
+            HandshakeCertificates.Builder().heldCertificate(renewed, root.certificate).build().sslSocketFactory(),
+            false,
+        )
+        server.start()
+        serverStarted = true
+        server.enqueue(MockResponse().setBody("renewed"))
+        server.enqueue(MockResponse().setBody("renewed"))
+        val loopback = object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> =
+                if (hostname == "gateway.example.com") {
+                    listOf(InetAddress.getLoopbackAddress())
+                } else {
+                    Dns.SYSTEM.lookup(hostname)
+                }
+        }
+
+        fun client(host: String, upgrades: AtomicInteger) = PinnedOkHttp.buildForTest(
+            OkHttpClient.Builder().dns(loopback),
+            fingerprint = LeafCertPinner.sha256Hex(pinned.certificate.encoded),
+            requirePin = true,
+            host = host,
+            onSystemTrustVerified = { upgrades.incrementAndGet() },
+            systemTrust = systemTrust,
+        )
+
+        val upgrades = AtomicInteger()
+        val byName = server.url("/").newBuilder().host("gateway.example.com").build()
+        client("gateway.example.com", upgrades).newCall(Request.Builder().url(byName).build()).execute().use {
+            assertEquals(200, it.code)
+            assertEquals("renewed", it.body!!.string())
+        }
+        assertEquals(1, upgrades.get())
+
+        val ipUpgrades = AtomicInteger()
+        val byIp = server.url("/").newBuilder().host("127.0.0.1").build()
+        assertThrows(IOException::class.java) {
+            client("127.0.0.1", ipUpgrades).newCall(Request.Builder().url(byIp).build()).execute()
+        }
+        assertEquals(0, ipUpgrades.get())
     }
 }

@@ -326,7 +326,7 @@ final class AdminCoordinator {
         briefsClient = BriefsClient(baseURL: pairing.url, token: pairing.token)
         privacyClient = PrivacyClient(baseURL: pairing.url, token: pairing.token)
         accessClient = AccessClient(baseURL: pairing.url, token: pairing.token)
-        let socket = DeviceSocket(gatewayUrl: pairing.url, token: pairing.token)
+        let socket = DeviceSocket(gatewayUrl: pairing.url, token: pairing.token, capabilities: .ios(tlsMode: pairing.tlsMode))
         deviceSocket = socket
         subscribeSocket(socket)
         Task {

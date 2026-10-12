@@ -1720,6 +1720,66 @@ describe("expanded device cards", () => {
     expect(host.textContent).not.toContain("Needs re-authorization");
   });
 
+  test("names a device stranded by a certificate change, and one that will be, with its fix", async () => {
+    const device = {
+      id: "device_agent",
+      name: "Fictional agent",
+      kind: "agent",
+      pairedAt: 1,
+      lastSeenAt: null,
+      online: false,
+      capabilities: { agentIntegration: { harness: "hermes" } },
+      tlsTrust: {
+        status: "stranded",
+        rotatedAt: "2026-09-10T12:00:00.000Z",
+        remedy: "On the machine running it: `omnesis connect hermes --refresh`.",
+      },
+    };
+    const props = {
+      isThis: false,
+      tokens: [],
+      expanded: true,
+      onToggle: vi.fn(),
+      onRevokeDevice: vi.fn(),
+      onForgetDevice: vi.fn(),
+      onRevokeToken: vi.fn(),
+    };
+
+    await act(async () => {
+      render(h(DeviceCard, { ...props, device }), host);
+    });
+    expect(host.textContent).toContain("Certificate changed");
+    expect(host.textContent).toContain("replaced its certificate on Sep 10, 2026");
+    expect(host.querySelector(".devices-card-repair code")?.textContent).toBe(
+      "omnesis connect hermes --refresh",
+    );
+
+    await act(async () => {
+      render(
+        h(DeviceCard, {
+          ...props,
+          device: {
+            ...device,
+            tlsTrust: {
+              status: "pinned-renews",
+              renewsAt: "2026-12-10T12:00:00.000Z",
+              remedy: "On the machine running it: `omnesis connect hermes --refresh`.",
+            },
+          },
+        }),
+        host,
+      );
+    });
+    expect(host.textContent).toContain("Pinned certificate");
+    expect(host.textContent).toContain("which it renews on Dec 10, 2026");
+
+    await act(async () => {
+      render(h(DeviceCard, { ...props, device: { ...device, tlsTrust: undefined } }), host);
+    });
+    expect(host.textContent).not.toContain("Certificate changed");
+    expect(host.textContent).not.toContain("Pinned certificate");
+  });
+
   test("shows a phone's transport and lets the operator withdraw relay consent", async () => {
     const onWithdrawRelayConsent = vi.fn();
     const phone = {

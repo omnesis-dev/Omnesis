@@ -88,6 +88,36 @@ final class PairingCoordinator {
         }
     }
 
+    /// Persist system trust in place of a leaf pin once a pinned session saw
+    /// the gateway's chain verify under the system roots for the paired host.
+    /// `onAdopted` runs on the main actor after the stored pairing changed, so
+    /// the caller can rebuild everything that captured the old trust. AppStore
+    /// calls this once during its own init.
+    func setOnSystemTrustAdopted(_ onAdopted: @escaping @MainActor @Sendable () -> Void) {
+        OmnesisURLSession.setSystemTrustUpgradeHandler { [weak self] host, fingerprintHex in
+            Task { @MainActor in
+                guard let self,
+                      self.upgradeTrustToSystem(verifiedHost: host, pinnedFingerprint: fingerprintHex)
+                else { return }
+                onAdopted()
+            }
+        }
+    }
+
+    /// Rewrite the pinned pairing to `verifiedHost` with `pinnedFingerprint`
+    /// as system-trusted. Returns whether the stored pairing changed; a
+    /// pairing that does not qualify, or no longer matches what was verified,
+    /// is left alone.
+    @discardableResult
+    func upgradeTrustToSystem(verifiedHost: String, pinnedFingerprint: String) -> Bool {
+        do {
+            return try service.upgradeTrustToSystem(verifiedHost: verifiedHost, pinnedFingerprint: pinnedFingerprint)
+        } catch {
+            onError("Keychain error: \(error)")
+            return false
+        }
+    }
+
     /// Synchronous pair entrypoint. Only supports V1 payloads; V2 needs
     /// `pairAsync(raw:)`.
     /// Returns the new pairing on success so the caller can run cross-

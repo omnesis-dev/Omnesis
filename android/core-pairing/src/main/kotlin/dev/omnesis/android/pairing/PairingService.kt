@@ -7,6 +7,7 @@ import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.DeviceCapabilities
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.http.postJson
+import dev.omnesis.android.transport.tls.GatewayTrustPolicy
 import dev.omnesis.android.transport.tls.PinnedOkHttp
 import kotlinx.serialization.encodeToString
 import okhttp3.OkHttpClient
@@ -125,6 +126,38 @@ class PairingService(
         } else {
             store.set(Keys.URL, url)
         }
+    }
+
+    /**
+     * Switch a pinned-leaf pairing to system trust after the gateway presented a
+     * chain the platform trusts for the paired DNS name, so a later renewal of that
+     * publicly trusted certificate cannot strand the phone. Applies only when
+     * the pairing URL is an HTTPS origin whose host qualifies under
+     * [GatewayTrustPolicy.systemTrustQualifies]; everything else about the pairing,
+     * its generation included, is kept. Returns true when the pairing changed.
+     */
+    fun upgradeTrustToSystem(): Boolean {
+        val pairing = current() ?: return false
+        if (pairing.tlsMode != PairingTlsMode.PINNED_LEAF) return false
+        if (runCatching { requireSystemOrigin(pairing.url) }.isFailure) return false
+        val host = runCatching { PairingPayload.requireHttpsUrl(pairing.url).host }.getOrNull()
+        if (!GatewayTrustPolicy.systemTrustQualifies(host)) return false
+        val existing = store.get(Keys.CREDENTIAL)?.let { raw ->
+            runCatching { OmnesisJson.decodeFromString<PairingCredentialBundle>(raw) }.getOrNull()
+        }
+        val bundle = existing ?: PairingCredentialBundle(
+            url = pairing.url,
+            token = pairing.token,
+            pairingGeneration = pairing.pairingGeneration,
+            accountId = pairing.accountId,
+            deviceId = pairing.deviceId ?: return false,
+            name = pairing.gatewayName.orEmpty(),
+            scopes = pairing.scopes,
+            tlsMode = pairing.tlsMode.persistedValue,
+            fingerprint = pairing.fingerprint,
+        )
+        persistBundle(bundle.copy(tlsMode = PairingTlsMode.SYSTEM.persistedValue, fingerprint = null))
+        return true
     }
 
     /**

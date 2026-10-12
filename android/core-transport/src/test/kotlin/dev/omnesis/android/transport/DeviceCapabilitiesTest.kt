@@ -3,7 +3,11 @@
 
 package dev.omnesis.android.transport
 
+import dev.omnesis.android.transport.dto.OmnesisJson
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -64,5 +68,24 @@ class DeviceCapabilitiesTest {
                 listOf(HostedSourceContract("photos"), HostedSourceContract("photos")),
             )
         }
+    }
+
+    /**
+     * The gateway names devices still pinned to a certificate that is about to
+     * renew from the `tls` block of the hello; a phone that never sets a mode
+     * sends no block at all rather than a null.
+     */
+    @Test
+    fun announcesTheTlsModeOnlyOnceTheCompositionRootSetsIt() {
+        val base = DeviceCapabilities.android(emptyList())
+        val bare = OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), base).jsonObject
+        assertFalse(bare.containsKey("tls"))
+
+        val pinned = OmnesisJson.encodeToJsonElement(
+            DeviceCapabilities.serializer(),
+            base.withTlsMode("pinned-leaf"),
+        ).jsonObject
+        assertEquals("pinned-leaf", pinned["tls"]!!.jsonObject["mode"]!!.jsonPrimitive.content)
+        assertEquals("system", base.withTlsMode("pinned-leaf").withTlsMode("system").tls?.mode)
     }
 }

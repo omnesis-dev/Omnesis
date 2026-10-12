@@ -24,7 +24,8 @@ import {
   OAUTH_TOKEN_TIMEOUT_MS,
   type GatewayRequestOptions,
 } from "./http.js";
-import { mcpEndpointUrl, pinnedTlsOptions, type TlsTrust, validateGatewayUrl } from "./tls.js";
+import { GatewayTlsError, mcpEndpointUrl, validateGatewayUrl } from "./tls.js";
+import { GatewayTrust } from "./trust.js";
 import { ANSWER_CITATIONS_META_KEY, answerCitationsSchema } from "./answer-citations.js";
 import type { AnswerPoster } from "./answer-wait.js";
 
@@ -117,7 +118,8 @@ export class NativeAnswerMcpClient {
   constructor(
     gatewayUrl: string,
     authProvider: AuthProvider | OAuthClientProvider | string,
-    private readonly trust?: TlsTrust,
+    /** May be omitted only for a plaintext loopback gateway. */
+    trust?: GatewayTrust,
     private readonly nativeConversationId?: string,
   ) {
     const base = validateGatewayUrl(gatewayUrl);
@@ -277,14 +279,16 @@ export class NativeAnswerMcpClient {
     send: (client: Client, remainingMs: number) => Promise<T>,
   ): Promise<T> {
     const deadline = Date.now() + timeoutMs;
-    await this.connect(signal, remainingBudget(deadline));
     try {
+      await this.connect(signal, remainingBudget(deadline));
       return await send(this.client!, remainingBudget(deadline));
     } catch (error) {
       if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
         throw new GatewayRequestTimeoutError(timeoutMs);
       }
-      throw error;
+      // The transport may wrap what the pinned fetch threw; the certificate
+      // failure is the part the caller can act on.
+      throw findGatewayTlsError(error) ?? error;
     }
   }
 
@@ -427,22 +431,30 @@ const OAUTH_HTTP_BUDGETS: OAuthHttpBudgets = {
 
 export function integrationOAuthFetch(
   gatewayUrl: string,
-  trust?: TlsTrust,
+  trust?: GatewayTrust,
   budgets: OAuthHttpBudgets = OAUTH_HTTP_BUDGETS,
 ): FetchLike {
   return pinnedFetch(validateGatewayUrl(gatewayUrl), trust, true, budgets);
 }
 
+function findGatewayTlsError(error: unknown): GatewayTlsError | null {
+  let current: unknown = error;
+  for (let depth = 0; depth < 10 && current && typeof current === "object"; depth += 1) {
+    if (current instanceof GatewayTlsError) return current;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
 function pinnedFetch(
   base: URL,
-  trust?: TlsTrust,
+  trustOption?: GatewayTrust,
   allowDiscoveredAuthorizationServer = false,
   oauthBudgets?: OAuthHttpBudgets,
 ): FetchLike {
-  if (base.protocol === "https:" && !trust) {
-    throw new Error("HTTPS integration requires pinned TLS trust material");
-  }
-  const pinnedOptions = base.protocol === "https:" ? pinnedTlsOptions(base.hostname, trust!) : null;
+  const trust =
+    trustOption ??
+    new GatewayTrust({ gatewayUrl: base.href.replace(/\/+$/u, ""), trust: undefined });
   return async (input, init) => {
     const requestValue = new Request(input, init);
     const url = new URL(requestValue.url);
@@ -463,7 +475,10 @@ function pinnedFetch(
       const outgoing = request(
         url,
         {
-          ...(sameOrigin ? (pinnedOptions ?? {}) : {}),
+          // Read per request, so a move to system trust reaches the next one.
+          ...(sameOrigin && url.protocol === "https:"
+            ? { ...trust.connectionOptions(), agent: trust.agent() }
+            : {}),
           method: requestValue.method,
           headers: Object.fromEntries(requestValue.headers.entries()),
           signal: requestValue.signal,
@@ -498,7 +513,7 @@ function pinnedFetch(
       );
       outgoing.on("error", (error) => {
         if (timeout) clearTimeout(timeout);
-        reject(error);
+        reject(sameOrigin ? trust.classify(error) : error);
       });
       if (oauthPath && oauthBudgets !== undefined) {
         const budgetMs = isTokenEndpointPath(url.pathname)

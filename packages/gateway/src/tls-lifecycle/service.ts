@@ -240,6 +240,7 @@ export class TlsLifecycleService {
         lastRenewedAt: this.record.lastRenewedAt,
       },
       rotation: this.record.rotation,
+      renewsAt: this.nextRenewalAt()?.toISOString() ?? null,
       proxiedHosts: this.options.proxiedHosts?.() ?? [],
     };
   }

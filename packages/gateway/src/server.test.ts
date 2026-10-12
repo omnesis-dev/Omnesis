@@ -3622,7 +3622,7 @@ describe("device management endpoints", () => {
     return ((await res.json()) as { pairingCode: string }).pairingCode;
   }
 
-  test("/admin/devices/pair-qr emits V3 with fingerprint when TLS is configured", async () => {
+  test("/admin/devices/pair-qr pins the leaf (V3) for an IP address when no trust mode is named", async () => {
     const pairingCode = await mintPairingCode();
     const fp = "a".repeat(64);
     const customApp = createServer(db, undefined, { tlsFingerprintSha256: fp });
@@ -3648,7 +3648,7 @@ describe("device management endpoints", () => {
     });
   });
 
-  test("/admin/devices/pair-qr falls back to V2 when TLS is unconfigured", async () => {
+  test("/admin/devices/pair-qr falls back to V2 for an IP address when TLS is unconfigured", async () => {
     const pairingCode = await mintPairingCode();
     const res = await req("/admin/devices/pair-qr", {
       method: "POST",
@@ -3664,6 +3664,30 @@ describe("device management endpoints", () => {
       v: 2,
       gatewayUrl: "https://10.0.0.5:7600",
       pairingCode,
+    });
+  });
+
+  test("/admin/devices/pair-qr gives an allowlisted origin system trust when no trust mode is named", async () => {
+    const pairingCode = await mintPairingCode();
+    const customApp = createServer(db, undefined, {
+      tlsFingerprintSha256: "c".repeat(64),
+      systemTrustPairingOrigins: ["https://public-gateway.example.com"],
+    });
+    const res = await customApp.request("/admin/devices/pair-qr", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ pairingCode, gatewayUrl: "https://public-gateway.example.com" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { qrPayload: string };
+    expect(JSON.parse(body.qrPayload)).toEqual({
+      v: 4,
+      gatewayUrl: "https://public-gateway.example.com",
+      pairingCode,
+      tls: { mode: "system" },
     });
   });
 

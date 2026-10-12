@@ -4,7 +4,8 @@
 import http from "node:http";
 import https from "node:https";
 
-import { pinnedTlsOptions, type TlsTrust, validateGatewayUrl } from "./tls.js";
+import { type TlsTrust, validateGatewayUrl } from "./tls.js";
+import { GatewayTrust } from "./trust.js";
 
 const SUBSCRIPTION_CONDITION_UNSUPPORTED = "SUBSCRIPTION_CONDITION_UNSUPPORTED";
 
@@ -169,19 +170,21 @@ function parseUnprocessableGatewayError(
 
 export class PinnedGatewayHttpClient {
   private readonly base: URL;
-  private readonly tlsOptions: ReturnType<typeof pinnedTlsOptions> | null;
+  private readonly trust: GatewayTrust;
 
+  /**
+   * `trust` may be omitted only for a plaintext loopback gateway. A harness
+   * passes its shared {@link GatewayTrust}, which also names the repair a
+   * certificate failure needs; bare trust material verifies the same way
+   * and leaves such a failure as Node reports it.
+   */
   constructor(
     gatewayUrl: string,
     private readonly token: string,
-    trust?: TlsTrust,
+    trust?: GatewayTrust | TlsTrust,
   ) {
     this.base = validateGatewayUrl(gatewayUrl);
-    if (this.base.protocol === "https:" && !trust) {
-      throw new Error("HTTPS integration requires pinned TLS trust material");
-    }
-    this.tlsOptions =
-      this.base.protocol === "https:" ? pinnedTlsOptions(this.base.hostname, trust!) : null;
+    this.trust = GatewayTrust.resolve(trust, gatewayUrl);
   }
 
   requestJson<T = unknown>(
@@ -199,7 +202,9 @@ export class PinnedGatewayHttpClient {
       const req = request(
         url,
         {
-          ...(this.tlsOptions ?? {}),
+          ...(url.protocol === "https:"
+            ? { ...this.trust.connectionOptions(), agent: this.trust.agent() }
+            : {}),
           method,
           headers: {
             Authorization: `Bearer ${this.token}`,
@@ -250,7 +255,7 @@ export class PinnedGatewayHttpClient {
           });
         },
       );
-      req.on("error", reject);
+      req.on("error", (error) => reject(this.trust.classify(error)));
       req.on("timeout", () => req.destroy(new GatewayRequestTimeoutError(timeoutMs)));
       req.end(body ?? undefined);
     });

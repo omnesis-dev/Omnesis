@@ -659,20 +659,33 @@ Certificate  expiring
         <h3 id="pinned-clients">Clients that pinned the old certificate</h3>
         <p>
           A renewed certificate has a new fingerprint, which matters to clients that pinned the old
-          one. The gateway never drops a pin on a client's behalf.
+          one. A phone or agent pinned to a certificate that verifies publicly for the name it
+          connects to switches to verifying that name on its next connection, so it follows every
+          later renewal. Otherwise the gateway never drops a pin on a client's behalf.
         </p>
         <ul>
           <li>
-            <strong>Phones paired through a Tailscale certificate</strong> verify the name through
-            the operating system, so they keep working across renewals.
+            <strong>Phones paired through a Tailscale or domain name</strong> verify the name
+            through the operating system and keep working across renewals. A phone paired by
+            fingerprint to such a name does the same once it runs a current app and is opened.
           </li>
           <li>
-            <strong>Phones paired by fingerprint</strong>, which includes every pairing against the
-            self-signed certificate, stop connecting when it changes. A phone paired by fingerprint
-            on a local address while the gateway serves a Tailscale certificate stops at each
-            renewal, which the pairing screen dates. Run
-            <code>omnesis devices repair &lt;name&gt;</code> and pair the phone again;
-            <code>omnesis doctor</code> lists phones that have not connected since a renewal.
+            <strong>Phones paired by fingerprint to a local address or an mkcert certificate</strong
+            >, which includes every pairing against the self-signed certificate, stop connecting
+            when the certificate changes. When the gateway renews that certificate itself, the
+            pairing screen dates the renewal. Run
+            <code>omnesis devices repair &lt;name&gt;</code> and pair the phone again, by the
+            gateway's Tailscale or domain name if it has one.
+          </li>
+          <li>
+            <strong>OpenClaw and Hermes</strong> connected to a Tailscale or domain name verify that
+            name and keep working across renewals. Connected to an address, or to a certificate no
+            public authority issued, they pin it and stop at a renewal. Afterwards, run the command
+            the doctor prints on the agent's machine, which carries the new fingerprint:
+            <code
+              >omnesis connect &lt;harness&gt; --refresh --trust-fingerprint
+              sha256:&lt;served&gt;</code
+            >.
           </li>
           <li>
             <strong>A collector or CLI on another machine</strong> saved the certificate on first
@@ -686,6 +699,12 @@ Certificate  expiring
             and follows a renewal when it next reconnects.
           </li>
         </ul>
+        <p>
+          Phones and agents report how they verify the gateway. <code>omnesis doctor</code>,
+          <code>omnesis devices list</code> and the portal's Devices page name a device that pins a
+          certificate the gateway will renew, with how to make it verify by name instead, and a
+          device that has not connected since a renewal, with the command that brings it back.
+        </p>
 
         <nav class="docs-pager" aria-label="Pages">
           <a href="/docs/operating"

@@ -6,7 +6,7 @@ import XCTest
 
 /// Unit coverage for the lazy fingerprint-routing helper that fronts every
 /// transport client. Three seams are exercised: the pure routing logic via
-/// `_resolveSession(tlsMode:fingerprint:)`, the cache lifecycle via
+/// `resolveSession(tlsMode:fingerprint:host:)`, the cache lifecycle via
 /// `_setCached(_:)` + `reset()`, and the full `shared` resolution against a
 /// substitute `PairingStore` via `_setStore(_:)` — including a store that
 /// cannot be read at all.
@@ -20,39 +20,40 @@ final class OmnesisURLSessionTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        OmnesisURLSession.setSystemTrustUpgradeHandler(nil)
         OmnesisURLSession._setStore(nil)
         OmnesisURLSession.reset()
         try await super.tearDown()
     }
 
-    // MARK: - _resolveSession
+    // MARK: - resolveSession
 
     func test_resolve_nilFingerprint_fallsThroughToShared() {
-        let session = OmnesisURLSession._resolveSession(tlsMode: nil, fingerprint: nil)
+        let session = OmnesisURLSession.resolveSession(tlsMode: nil, fingerprint: nil, host: nil)
         XCTAssertTrue(session === URLSession.shared)
     }
 
     func test_resolve_explicitPinnedEmptyFingerprintRejectsTrust() {
-        let session = OmnesisURLSession._resolveSession(tlsMode: "pinned-leaf", fingerprint: "")
+        let session = OmnesisURLSession.resolveSession(tlsMode: "pinned-leaf", fingerprint: "", host: nil)
         XCTAssertTrue(session.delegate is RejectingTrustSession)
     }
 
     func test_resolve_explicitPinnedShortFingerprintRejectsTrust() {
         // 63 chars — one short of the SHA-256 hex length.
         let short = String(repeating: "a", count: 63)
-        let session = OmnesisURLSession._resolveSession(tlsMode: "pinned-leaf", fingerprint: short)
+        let session = OmnesisURLSession.resolveSession(tlsMode: "pinned-leaf", fingerprint: short, host: nil)
         XCTAssertTrue(session.delegate is RejectingTrustSession)
     }
 
     func test_resolve_explicitPinnedNonHexFingerprintRejectsTrust() {
         // Right length, wrong alphabet.
         let bogus = String(repeating: "z", count: 64)
-        let session = OmnesisURLSession._resolveSession(tlsMode: "pinned-leaf", fingerprint: bogus)
+        let session = OmnesisURLSession.resolveSession(tlsMode: "pinned-leaf", fingerprint: bogus, host: nil)
         XCTAssertTrue(session.delegate is RejectingTrustSession)
     }
 
     func test_resolve_validLowercase_returnsPinnedDelegate() {
-        let session = OmnesisURLSession._resolveSession(tlsMode: "pinned-leaf", fingerprint: validHex)
+        let session = OmnesisURLSession.resolveSession(tlsMode: "pinned-leaf", fingerprint: validHex, host: nil)
         XCTAssertFalse(session === URLSession.shared)
         // PinnedSession installs itself as the URLSession's delegate.
         XCTAssertTrue(
@@ -63,17 +64,79 @@ final class OmnesisURLSessionTests: XCTestCase {
 
     func test_resolve_validUppercase_returnsPinnedDelegate() {
         // Regex is case-insensitive; PinnedSession lowercases internally.
-        let session = OmnesisURLSession._resolveSession(tlsMode: nil, fingerprint: validHexUpper)
+        let session = OmnesisURLSession.resolveSession(tlsMode: nil, fingerprint: validHexUpper, host: nil)
         XCTAssertFalse(session === URLSession.shared)
         XCTAssertTrue(session.delegate is PinnedSession)
     }
 
     func test_resolve_systemTrust_ignoresStaleFingerprintAndUsesWebPKI() {
-        let session = OmnesisURLSession._resolveSession(
+        let session = OmnesisURLSession.resolveSession(
             tlsMode: "system",
-            fingerprint: validHex
+            fingerprint: validHex,
+            host: TrustFixtures.host
         )
         XCTAssertTrue(session === URLSession.shared)
+    }
+
+    // MARK: - System trust upgrade handler
+
+    func test_pinnedSession_reportsSystemTrustToTheInstalledHandler() throws {
+        let calls = EvaluationLog()
+        let session = try OmnesisURLSession.resolveSession(
+            tlsMode: "pinned-leaf",
+            fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            systemTrust: TrustFixtures.anchoredEvaluator
+        )
+        // Installed after the session was resolved: the handler is looked up
+        // when the chain verifies, not captured at resolution.
+        OmnesisURLSession.setSystemTrustUpgradeHandler { calls.report(host: $0, fingerprint: $1) }
+        let pinned = try XCTUnwrap(session.delegate as? PinnedSession)
+
+        XCTAssertEqual(
+            try pinned.resolve(TrustFixtures.servedTrust(TrustFixtures.leafTwo), challengeHost: TrustFixtures.host),
+            .systemOnly
+        )
+        let pin = try TrustFixtures.fingerprint(TrustFixtures.leafOne)
+        XCTAssertEqual(calls.reports, [.init(host: TrustFixtures.host, fingerprint: pin)])
+    }
+
+    func test_pinnedSession_toAnIPHostNeverReportsSystemTrust() throws {
+        let calls = EvaluationLog()
+        OmnesisURLSession.setSystemTrustUpgradeHandler { calls.report(host: $0, fingerprint: $1) }
+        let session = try OmnesisURLSession.resolveSession(
+            tlsMode: "pinned-leaf",
+            fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: "192.0.2.10",
+            systemTrust: { _, _ in true }
+        )
+        let pinned = try XCTUnwrap(session.delegate as? PinnedSession)
+
+        XCTAssertEqual(
+            try pinned.resolve(TrustFixtures.servedTrust(TrustFixtures.leafTwo), challengeHost: "192.0.2.10"),
+            .rejected
+        )
+        XCTAssertEqual(calls.count, 0)
+    }
+
+    func test_handlerMayResetTheSharedSessionWithoutDeadlocking() throws {
+        let reset = expectation(description: "handler ran")
+        OmnesisURLSession.setSystemTrustUpgradeHandler { _, _ in
+            OmnesisURLSession.reset()
+            reset.fulfill()
+        }
+        let session = try OmnesisURLSession.resolveSession(
+            tlsMode: "pinned-leaf",
+            fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            systemTrust: { _, _ in true }
+        )
+        let pinned = try XCTUnwrap(session.delegate as? PinnedSession)
+        XCTAssertEqual(
+            try pinned.resolve(TrustFixtures.servedTrust(TrustFixtures.leafOne), challengeHost: TrustFixtures.host),
+            .pinned(systemTrusted: true)
+        )
+        wait(for: [reset], timeout: 1)
     }
 
     // MARK: - Cache lifecycle (reset / _setCached)

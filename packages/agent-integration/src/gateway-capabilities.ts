@@ -11,7 +11,7 @@
  */
 
 import { PinnedGatewayHttpClient } from "./http.js";
-import type { TlsTrust } from "./tls.js";
+import type { GatewayTrust } from "./trust.js";
 
 export interface GatewayCapabilities {
   /** Product version, for the drift warning. Absent on a gateway too old to say. */
@@ -58,7 +58,7 @@ export function parseGatewayCapabilities(health: unknown): GatewayCapabilities {
 
 export async function readGatewayCapabilities(
   gatewayUrl: string,
-  tls?: TlsTrust,
+  tls?: GatewayTrust,
   timeoutMs?: number,
 ): Promise<GatewayCapabilities> {
   const health = await new PinnedGatewayHttpClient(gatewayUrl, "", tls).requestJson(

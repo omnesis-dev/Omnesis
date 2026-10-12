@@ -261,6 +261,13 @@ export interface TlsLifecycleSnapshot {
   /** The last time the served fingerprint changed, for clients that pinned the old one. */
   rotation: { previousFingerprintSha256: string; rotatedAt: string } | null;
   /**
+   * When the gateway will itself replace the served certificate, which is
+   * when a client that pinned it stops connecting. Null for a certificate the
+   * gateway does not renew (its long-lived self-signed one, operator-managed
+   * material, or renewal switched off). Optional on the wire.
+   */
+  renewsAt?: string | null;
+  /**
    * Hosts the gateway is addressed by that a trusted reverse proxy serves
    * with its own certificate, so this certificate need not cover them.
    * Optional on the wire; readers treat absence as an empty list.

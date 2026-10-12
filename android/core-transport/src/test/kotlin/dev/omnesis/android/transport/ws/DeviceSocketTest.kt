@@ -116,7 +116,7 @@ class DeviceSocketTest {
             ),
             version = "9.8.7",
             pushAppId = "dev.omnesis.android",
-        ),
+        ).withTlsMode("pinned-leaf"),
     )
 
     /** Drives the hello handshake from the server side until the client is Connected. */
@@ -141,6 +141,8 @@ class DeviceSocketTest {
             capabilities["multiDeviceModes"]!!.jsonObject["android-activity-segments"]!!.jsonPrimitive.content,
         )
         assertFalse(capabilities.containsKey("syncLease"))
+        // The gateway warns about pinned phones before a certificate renewal from this.
+        assertEquals("pinned-leaf", capabilities["tls"]!!.jsonObject["mode"]!!.jsonPrimitive.content)
         val helloId = hello["id"]!!.jsonPrimitive.content
         serverSide.ws!!.send(
             """{"kind":"response","correlationId":"$helloId","ok":true,""" +

@@ -3022,7 +3022,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
     currentVersion: ctx.currentVersion,
     reportHarnessResult: async (harness, result) => {
       const role = roles.harnesses.find((candidate) => candidate.harness === harness);
-      if (role) await reportHarnessUpdateResult(role.home, result);
+      if (role) await reportHarnessUpdateResult(role.home, harness, result);
     },
     confirm: (message) => confirmInteractive(message, yes),
     approve: (message) => approveInteractive(message, yes),

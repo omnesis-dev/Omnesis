@@ -70,6 +70,12 @@ export const deviceCapabilitySchema = z
     syncLease: z.boolean().optional(),
     deviceDoctor: z.literal(true).optional(),
     pushAppId: z.string().trim().min(1).max(255).optional(),
+    // Lenient on purpose: a mode a newer client reports must not fail its
+    // hello or pairing; `deviceTlsTrustMode` narrows it when read.
+    tls: z
+      .object({ mode: z.string().max(32) })
+      .passthrough()
+      .optional(),
     // Pair-time adoption keys: the client's per-install identity and the
     // device id it was last paired as.
     installId: z.string().trim().min(1).max(120).optional(),

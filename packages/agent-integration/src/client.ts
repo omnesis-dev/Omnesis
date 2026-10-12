@@ -19,7 +19,8 @@ import {
   answerCompletionPrepareCommandSchema,
   type AgentIntegrationCapability,
 } from "./protocol.js";
-import { pinnedTlsOptions, type TlsTrust, validateGatewayUrl, websocketUrl } from "./tls.js";
+import { type TlsTrust, websocketUrl } from "./tls.js";
+import { GatewayTrust } from "./trust.js";
 import { INTEGRATION_VERSION } from "./version.js";
 import { capDeviceUpdateDetail } from "./command-output.js";
 import {
@@ -67,7 +68,8 @@ export type IntegrationConnectionState =
 export interface AgentIntegrationClientOptions {
   gatewayUrl: string;
   deliveryToken: string;
-  tls?: TlsTrust;
+  /** Shared with the process's other gateway clients, so they follow one trust. */
+  tls?: GatewayTrust | TlsTrust;
   capability: AgentIntegrationCapability;
   inbox: DurableIntegrationInbox;
   starter: DeliveryStarter;
@@ -216,7 +218,7 @@ function responseError(correlationId: string, code: string, message: string): st
 export class AgentIntegrationClient {
   private readonly opts: AgentIntegrationClientOptions;
   private readonly wsUrl: URL;
-  private readonly wsOptions: ClientOptions;
+  private readonly trust: GatewayTrust;
   private readonly factory: WebSocketFactory;
   private readonly log: IntegrationLogger;
   private socket: SocketLike | null = null;
@@ -236,15 +238,8 @@ export class AgentIntegrationClient {
       ...options,
       capability: agentIntegrationCapabilitySchema.parse(options.capability),
     };
-    const gateway = validateGatewayUrl(options.gatewayUrl);
-    if (gateway.protocol === "https:" && !options.tls) {
-      throw new Error("HTTPS integration requires pinned TLS trust material");
-    }
+    this.trust = GatewayTrust.resolve(options.tls, options.gatewayUrl, options.capability.harness);
     this.wsUrl = websocketUrl(options.gatewayUrl);
-    this.wsOptions =
-      gateway.protocol === "https:"
-        ? (pinnedTlsOptions(gateway.hostname, options.tls!) as ClientOptions)
-        : {};
     this.factory =
       options.webSocketFactory ??
       ((url, protocol, tlsOptions) => new WebSocket(url, protocol, tlsOptions));
@@ -283,10 +278,11 @@ export class AgentIntegrationClient {
     this.setState("connecting");
     let socket: SocketLike;
     try {
+      // Read per connection: a move to system trust reaches the next socket.
       socket = this.factory(
         this.wsUrl.toString(),
         websocketAuthProtocol(this.opts.deliveryToken),
-        this.wsOptions,
+        this.trust.connectionOptions() as ClientOptions,
       );
     } catch (error) {
       this.log.warn(
@@ -305,7 +301,7 @@ export class AgentIntegrationClient {
       this.track(this.handleMessage(socket, decodeRaw(data)), "delivery message handling failed");
     });
     socket.on("error", (error) => {
-      this.log.warn(`delivery socket error: ${error.message}`);
+      this.log.warn(`delivery socket error: ${this.trust.classify(error).message}`);
       // Reconnecting is driven from `close` alone, so the close is issued here
       // rather than assumed. `ws` does emit `close` after every `error`, but
       // several of its error paths get there by an orderly shutdown that waits
@@ -330,6 +326,9 @@ export class AgentIntegrationClient {
   private sendHello(socket: SocketLike): void {
     if (this.socket !== socket || this.stopped) return;
     this.setState("authenticating");
+    // How this connection was verified, so the gateway can name a client still
+    // pinned to a certificate it is about to renew.
+    const tls = this.trust.helloCapability();
     const command = makeCommand("hello", {
       capabilities: {
         hostname: this.opts.capability.harness,
@@ -337,6 +336,7 @@ export class AgentIntegrationClient {
         version: INTEGRATION_VERSION,
         ...(this.opts.sourceCommit ? { sourceCommit: this.opts.sourceCommit } : {}),
         agentIntegration: this.opts.capability,
+        ...(tls ? { tls } : {}),
       },
       protocolVersion: DEVICE_WS_PROTOCOL_VERSION,
     });

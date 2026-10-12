@@ -52,6 +52,267 @@ final class PinnedSessionTests: XCTestCase {
         )
     }
 
+    // MARK: - Verdict
+
+    func testPinnedLeafOnADNSHostThatAlsoVerifiesUnderSystemRootsIsUpgradable() throws {
+        let verdict = try PinnedSession.verdict(
+            trust: TrustFixtures.servedTrust(TrustFixtures.leafOne),
+            fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            challengeHost: TrustFixtures.host,
+            systemTrust: TrustFixtures.anchoredEvaluator
+        )
+        XCTAssertEqual(verdict, .pinned(systemTrusted: true))
+    }
+
+    func testAHostThatCannotCarryAPublicCertificateNeverRunsTheSystemEvaluation() throws {
+        let evaluations = EvaluationLog()
+        let trust = try TrustFixtures.servedTrust(TrustFixtures.leafTwo)
+        for host in ["192.0.2.10", "[2001:db8::1]", "localhost"] {
+            XCTAssertEqual(
+                try PinnedSession.verdict(
+                    trust: trust,
+                    fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafTwo),
+                    host: host,
+                    challengeHost: host,
+                    systemTrust: evaluations.recording(true)
+                ),
+                .pinned(systemTrusted: false)
+            )
+            XCTAssertEqual(
+                try PinnedSession.verdict(
+                    trust: trust,
+                    fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+                    host: host,
+                    challengeHost: host,
+                    systemTrust: evaluations.recording(true)
+                ),
+                .rejected,
+                "a rotated leaf on \(host) must stay rejected"
+            )
+        }
+        XCTAssertEqual(evaluations.count, 0)
+    }
+
+    func testAChallengeForAnotherHostGetsTheStrictPinVerdict() throws {
+        let evaluations = EvaluationLog()
+        let pinned = try TrustFixtures.servedTrust(TrustFixtures.leafOne)
+        let rotated = try TrustFixtures.servedTrust(TrustFixtures.leafTwo)
+        let fingerprint = try TrustFixtures.fingerprint(TrustFixtures.leafOne)
+
+        let verdicts = [pinned, rotated].map { trust in
+            PinnedSession.verdict(
+                trust: trust,
+                fingerprint: fingerprint,
+                host: TrustFixtures.host,
+                challengeHost: "other.example.com",
+                systemTrust: evaluations.recording(true)
+            )
+        }
+
+        XCTAssertEqual(verdicts, [.pinned(systemTrusted: false), .rejected])
+        XCTAssertEqual(evaluations.count, 0)
+    }
+
+    func testTheChallengeHostMatchesThePairedHostCaseInsensitively() throws {
+        let verdict = try PinnedSession.verdict(
+            trust: TrustFixtures.servedTrust(TrustFixtures.leafTwo),
+            fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            challengeHost: TrustFixtures.host.uppercased(),
+            systemTrust: TrustFixtures.anchoredEvaluator
+        )
+        XCTAssertEqual(verdict, .systemOnly)
+    }
+
+    func testSelfSignedPinStaysPinnedWithoutSystemTrust() throws {
+        let (trust, fingerprint) = try XCTUnwrap(Self.makeSelfSignedTrust())
+        let verdict = PinnedSession.verdict(
+            trust: trust,
+            fingerprint: fingerprint,
+            host: TrustFixtures.host,
+            challengeHost: TrustFixtures.host,
+            systemTrust: TrustFixtures.anchoredEvaluator
+        )
+        XCTAssertEqual(verdict, .pinned(systemTrusted: false))
+    }
+
+    func testRotatedLeafValidForThePairedNameIsSystemOnly() throws {
+        let verdict = try PinnedSession.verdict(
+            trust: TrustFixtures.servedTrust(TrustFixtures.leafTwo),
+            fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            challengeHost: TrustFixtures.host,
+            systemTrust: TrustFixtures.anchoredEvaluator
+        )
+        XCTAssertEqual(verdict, .systemOnly)
+    }
+
+    func testRotatedLeafValidOnlyForAnotherNameIsRejected() throws {
+        let verdict = try PinnedSession.verdict(
+            trust: TrustFixtures.servedTrust(TrustFixtures.leafTwo),
+            fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: "other.example.com",
+            challengeHost: "other.example.com",
+            systemTrust: TrustFixtures.anchoredEvaluator
+        )
+        XCTAssertEqual(verdict, .rejected)
+    }
+
+    func testRotatedLeafFromAnUnknownRootIsRejected() throws {
+        let (unrelated, _) = try XCTUnwrap(Self.makeSelfSignedTrust())
+        let unrelatedRoot = try XCTUnwrap((SecTrustCopyCertificateChain(unrelated) as? [SecCertificate])?.first)
+        let verdict = try PinnedSession.verdict(
+            trust: TrustFixtures.servedTrust(TrustFixtures.leafTwo),
+            fingerprint: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            challengeHost: TrustFixtures.host,
+            systemTrust: { trust, host in
+                PinnedSession.evaluateSystemTrust(
+                    trust,
+                    host: host,
+                    anchors: [unrelatedRoot],
+                    verifyDate: TrustFixtures.verifyDate
+                )
+            }
+        )
+        XCTAssertEqual(verdict, .rejected)
+    }
+
+    func testSystemEvaluationIgnoresExceptionsOnTheServedTrust() throws {
+        // The pinned path sets exceptions on the challenge's trust. Build a
+        // served trust that fails only on the name, make it pass through its
+        // own exceptions, and check the system evaluation still refuses it.
+        let host = "other.example.com"
+        let root = try TrustFixtures.certificate(TrustFixtures.root)
+        var created: SecTrust?
+        XCTAssertEqual(
+            try SecTrustCreateWithCertificates(
+                TrustFixtures.certificate(TrustFixtures.leafTwo),
+                SecPolicyCreateSSL(true, host as CFString),
+                &created
+            ),
+            errSecSuccess
+        )
+        let trust = try XCTUnwrap(created)
+        XCTAssertEqual(SecTrustSetAnchorCertificates(trust, [root] as CFArray), errSecSuccess)
+        XCTAssertEqual(SecTrustSetAnchorCertificatesOnly(trust, true), errSecSuccess)
+        XCTAssertEqual(SecTrustSetVerifyDate(trust, TrustFixtures.verifyDate as CFDate), errSecSuccess)
+        XCTAssertFalse(SecTrustEvaluateWithError(trust, nil), "the leaf is not valid for \(host)")
+
+        let exceptions = try XCTUnwrap(SecTrustCopyExceptions(trust))
+        XCTAssertTrue(SecTrustSetExceptions(trust, exceptions))
+        XCTAssertTrue(SecTrustEvaluateWithError(trust, nil), "the exceptions make the served trust pass")
+
+        XCTAssertFalse(PinnedSession.evaluateSystemTrust(
+            trust,
+            host: host,
+            anchors: [root],
+            verifyDate: TrustFixtures.verifyDate
+        ))
+    }
+
+    func testSystemTrustCallbackFiresOncePerSessionNamingTheHostAndPin() throws {
+        let calls = EvaluationLog()
+        let fingerprint = try TrustFixtures.fingerprint(TrustFixtures.leafOne)
+        let session = PinnedSession(
+            fingerprintHex: fingerprint.uppercased(),
+            host: TrustFixtures.host,
+            onSystemTrustVerified: { calls.report(host: $0, fingerprint: $1) },
+            systemTrust: TrustFixtures.anchoredEvaluator
+        )
+        let pinned = try TrustFixtures.servedTrust(TrustFixtures.leafOne)
+        let rotated = try TrustFixtures.servedTrust(TrustFixtures.leafTwo)
+
+        XCTAssertEqual(session.resolve(pinned, challengeHost: TrustFixtures.host), .pinned(systemTrusted: true))
+        XCTAssertEqual(session.resolve(rotated, challengeHost: TrustFixtures.host), .systemOnly)
+        XCTAssertEqual(session.resolve(pinned, challengeHost: TrustFixtures.host), .pinned(systemTrusted: true))
+        XCTAssertEqual(calls.reports, [.init(host: TrustFixtures.host, fingerprint: fingerprint)])
+    }
+
+    func testRejectedStrictlyPinnedAndOtherHostChallengesNeverFireTheCallback() throws {
+        let calls = EvaluationLog()
+        let strict = try PinnedSession(
+            fingerprintHex: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: "192.0.2.10",
+            onSystemTrustVerified: { calls.report(host: $0, fingerprint: $1) },
+            systemTrust: { _, _ in true }
+        )
+        XCTAssertEqual(
+            try strict.resolve(TrustFixtures.servedTrust(TrustFixtures.leafOne), challengeHost: "192.0.2.10"),
+            .pinned(systemTrusted: false)
+        )
+        let rejecting = try PinnedSession(
+            fingerprintHex: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            onSystemTrustVerified: { calls.report(host: $0, fingerprint: $1) },
+            systemTrust: { _, _ in false }
+        )
+        XCTAssertEqual(
+            try rejecting.resolve(TrustFixtures.servedTrust(TrustFixtures.leafTwo), challengeHost: TrustFixtures.host),
+            .rejected
+        )
+        let elsewhere = try PinnedSession(
+            fingerprintHex: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            onSystemTrustVerified: { calls.report(host: $0, fingerprint: $1) },
+            systemTrust: { _, _ in true }
+        )
+        XCTAssertEqual(
+            try elsewhere.resolve(TrustFixtures.servedTrust(TrustFixtures.leafOne), challengeHost: "other.example.com"),
+            .pinned(systemTrusted: false)
+        )
+        XCTAssertEqual(calls.count, 0)
+    }
+
+    // MARK: - Challenge dispositions
+
+    func testChallengeDispositionsFollowTheVerdict() throws {
+        let fingerprint = try TrustFixtures.fingerprint(TrustFixtures.leafOne)
+        let accepting = PinnedSession(fingerprintHex: fingerprint, host: TrustFixtures.host, systemTrust: { _, _ in true })
+        let rotated = try TrustFixtures.servedTrust(TrustFixtures.leafTwo)
+        XCTAssertEqual(disposition(of: accepting, for: rotated), .useCredential)
+
+        let refusing = PinnedSession(fingerprintHex: fingerprint, host: TrustFixtures.host, systemTrust: { _, _ in false })
+        XCTAssertEqual(disposition(of: refusing, for: rotated), .cancelAuthenticationChallenge)
+
+        let pinned = try TrustFixtures.servedTrust(TrustFixtures.leafOne)
+        XCTAssertEqual(disposition(of: refusing, for: pinned), .useCredential)
+    }
+
+    func testAChallengeForAnotherHostIsNeverAcceptedOnSystemTrustAlone() throws {
+        let calls = EvaluationLog()
+        let accepting = try PinnedSession(
+            fingerprintHex: TrustFixtures.fingerprint(TrustFixtures.leafOne),
+            host: TrustFixtures.host,
+            onSystemTrustVerified: { calls.report(host: $0, fingerprint: $1) },
+            systemTrust: { _, _ in true }
+        )
+        let rotated = try TrustFixtures.servedTrust(TrustFixtures.leafTwo)
+
+        XCTAssertEqual(disposition(of: accepting, for: rotated, host: "other.example.com"), .cancelAuthenticationChallenge)
+        XCTAssertEqual(calls.count, 0)
+    }
+
+    private func disposition(
+        of pinned: PinnedSession,
+        for trust: SecTrust,
+        host: String = TrustFixtures.host
+    )
+        -> URLSession.AuthChallengeDisposition? {
+        let challenge = URLAuthenticationChallenge(
+            protectionSpace: ServerTrustProtectionSpace(trust: trust, host: host),
+            proposedCredential: nil,
+            previousFailureCount: 0,
+            failureResponse: nil,
+            error: nil,
+            sender: NoopChallengeSender()
+        )
+        var result: URLSession.AuthChallengeDisposition?
+        pinned.urlSession(pinned.session, didReceive: challenge) { disposition, _ in result = disposition }
+        return result
+    }
+
     // MARK: - Test cert helper
 
     /// Builds a `SecTrust` over a self-signed cert and returns the
@@ -110,4 +371,36 @@ final class PinnedSessionTests: XCTestCase {
             .replacingOccurrences(of: " ", with: "")
         return Data(base64Encoded: stripped)
     }
+}
+
+/// A server-trust protection space carrying a chosen `SecTrust`, so the
+/// delegate's challenge handler can run without a TLS handshake.
+private final class ServerTrustProtectionSpace: URLProtectionSpace, @unchecked Sendable {
+    private let trust: SecTrust
+
+    init(trust: SecTrust, host: String) {
+        self.trust = trust
+        super.init(
+            host: host,
+            port: 443,
+            protocol: NSURLProtectionSpaceHTTPS,
+            realm: nil,
+            authenticationMethod: NSURLAuthenticationMethodServerTrust
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("not coded")
+    }
+
+    override var serverTrust: SecTrust? {
+        trust
+    }
+}
+
+private final class NoopChallengeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_: URLCredential, for _: URLAuthenticationChallenge) {}
+    func continueWithoutCredential(for _: URLAuthenticationChallenge) {}
+    func cancel(_: URLAuthenticationChallenge) {}
 }

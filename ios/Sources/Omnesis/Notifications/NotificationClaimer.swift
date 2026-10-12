@@ -583,7 +583,7 @@ public enum NotificationClaimCredentials {
                   fingerprint.count == 64,
                   fingerprint.allSatisfy(\.isHexDigit)
             else { return nil }
-            session = PinnedSession(fingerprintHex: fingerprint).session
+            session = PinnedSession(fingerprintHex: fingerprint, host: baseURL.host).session
         case .legacy:
             return nil
         }

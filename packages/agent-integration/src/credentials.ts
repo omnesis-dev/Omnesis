@@ -16,7 +16,12 @@ import {
 import { dirname } from "node:path";
 import { z } from "zod";
 
-import { tlsTrustSchema } from "./tls.js";
+import {
+  normalizeFingerprint,
+  pinnedTlsTrustSchema,
+  tlsTrustSchema,
+  type TlsTrust,
+} from "./tls.js";
 
 export const integrationCredentialsSchema = z
   .object({
@@ -173,6 +178,47 @@ export function updateIntegrationCapabilities(
   const current = loadIntegrationCredentials(path);
   const next = integrationCredentialsSchema.parse({ ...current, capabilities });
   writeIntegrationCredentials(path, next);
+  return next;
+}
+
+/**
+ * Record how this installation verifies the gateway, without disturbing
+ * anything else in the file.
+ *
+ * Re-reads first, like `updateIntegrationCapabilities`: the running plugin
+ * rotates the OAuth tokens in this file, and a snapshot taken before a
+ * network round-trip would restore an already-spent refresh token. A file
+ * from before the OAuth upgrade keeps its legacy shape.
+ *
+ * With `replacingPin`, the write happens only while the file still holds that
+ * pin, and `null` is returned otherwise: a running plugin that moved off a pin
+ * must not overwrite trust an `omnesis connect` chose since.
+ */
+export function updateIntegrationTlsTrust(
+  path: string,
+  tls: TlsTrust,
+  options: { replacingPin?: string } = {},
+): OperationalIntegrationCredentials | null {
+  const current = readJson(path);
+  if (options.replacingPin !== undefined) {
+    const saved = (current as { tls?: unknown } | null)?.tls;
+    const parsed = pinnedTlsTrustSchema.safeParse(saved);
+    if (
+      !parsed.success ||
+      parsed.data.leafFingerprintSha256 !== normalizeFingerprint(options.replacingPin)
+    ) {
+      return null;
+    }
+  }
+  const modern = integrationCredentialsSchema.safeParse(current);
+  if (modern.success) {
+    const next = integrationCredentialsSchema.parse({ ...modern.data, tls });
+    writeIntegrationCredentials(path, next);
+    return next;
+  }
+  const legacy = legacyIntegrationCredentialsSchema.parse(current);
+  const next = legacyIntegrationCredentialsSchema.parse({ ...legacy, tls });
+  writeSecretFileDurably(path, `${JSON.stringify(next, null, 2)}\n`);
   return next;
 }
 

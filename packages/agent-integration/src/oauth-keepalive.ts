@@ -23,6 +23,7 @@
  */
 
 import { IntegrationHttpError, OAUTH_TOKEN_TIMEOUT_MS, PinnedGatewayHttpClient } from "./http.js";
+import { GatewayTrust } from "./trust.js";
 import type { IntegrationOAuthProvider } from "./oauth.js";
 import type { IntegrationCredentials } from "./credentials.js";
 
@@ -114,7 +115,9 @@ export class IntegrationReauthorizationRequiredError extends Error {
 export async function reissueIntegrationOAuthTokens(
   provider: IntegrationOAuthProvider,
   credentials: IntegrationCredentials,
-  harnessHint?: string,
+  harnessHint: string,
+  /** The process's shared trust; defaults to the trust in `credentials`. */
+  trust?: GatewayTrust,
 ): Promise<void> {
   const clientId = provider.clientInformation()?.client_id;
   if (typeof clientId !== "string" || clientId === "") {
@@ -123,7 +126,12 @@ export async function reissueIntegrationOAuthTokens(
   const http = new PinnedGatewayHttpClient(
     credentials.gatewayUrl,
     credentials.managementToken,
-    credentials.tls,
+    trust ??
+      new GatewayTrust({
+        gatewayUrl: credentials.gatewayUrl,
+        trust: credentials.tls,
+        harness: harnessHint,
+      }),
   );
   let response: ReissuedTokenResponse;
   try {

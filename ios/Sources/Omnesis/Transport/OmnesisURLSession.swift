@@ -12,6 +12,13 @@ import Foundation
 /// Pairings written before the explicit mode key infer pinned trust when a
 /// fingerprint exists and legacy trust otherwise.
 ///
+/// A pinned session also knows the paired host, so a renewed publicly trusted
+/// certificate on a DNS name keeps working. When it sees one, it calls the
+/// handler installed with ``setSystemTrustUpgradeHandler(_:)`` with the host
+/// and pin it verified; the app uses that to persist system trust for the
+/// pairing those still describe. The notification-service extension
+/// installs none, so it only recovers the connection.
+///
 /// Without this plumbing the pin would only be enforced during the pairing
 /// exchange itself — every other call (Apple Health upload, search, sync
 /// poll, WebSocket events) would fall back to system trust, which can't
@@ -22,12 +29,14 @@ public enum OmnesisURLSession {
     /// atomic `PairingCredentialBundle` representation.
     public static let fingerprintKeychainKey = "gateway.fingerprint"
     public static let tlsModeKeychainKey = "gateway.tlsMode"
+    public static let urlKeychainKey = "gateway.url"
 
     /// Lowercase-hex SHA-256 of the leaf cert. 64 hex chars exactly.
     private static let fingerprintPattern = "^[0-9a-fA-F]{64}$"
 
     private static let lock = NSLock()
     private static var cached: URLSession?
+    private static var systemTrustUpgradeHandler: PinnedSession.SystemTrustVerified?
 
     /// The session handed out for every access made while the store is
     /// unreadable. Held apart from ``cached`` so a later successful read still
@@ -90,9 +99,38 @@ public enum OmnesisURLSession {
         cached = nil
     }
 
+    /// Install what a pinned session calls, with its host and pin, when the
+    /// gateway's chain verifies under the system roots for the paired host.
+    /// Sessions resolved before the call use it too, including ones dropped
+    /// by ``reset()`` that live clients still hold, so the handler must check
+    /// that the host and pin still describe the current pairing. Pass `nil` to
+    /// remove it.
+    public static func setSystemTrustUpgradeHandler(_ handler: PinnedSession.SystemTrustVerified?) {
+        lock.lock()
+        defer { lock.unlock() }
+        systemTrustUpgradeHandler = handler
+    }
+
+    /// Runs the installed handler outside the lock, so a handler that resolves
+    /// or resets the shared session cannot deadlock.
+    private static func notifySystemTrustVerified(host: String, fingerprintHex: String) {
+        lock.lock()
+        let handler = systemTrustUpgradeHandler
+        lock.unlock()
+        handler?(host, fingerprintHex)
+    }
+
     /// Pure routing helper extracted so unit tests can drive the persisted
-    /// trust contract without spinning up a Keychain.
-    static func _resolveSession(tlsMode rawMode: String?, fingerprint: String?) -> URLSession {
+    /// trust contract without spinning up a Keychain. `host` is the paired
+    /// gateway's host, which decides whether a pinned session may fall back
+    /// to system trust; `systemTrust` replaces the system roots in tests.
+    static func resolveSession(
+        tlsMode rawMode: String?,
+        fingerprint: String?,
+        host: String?,
+        systemTrust: @escaping PinnedSession.SystemTrustEvaluator = PinnedSession.systemRoots
+    )
+        -> URLSession {
         let mode = PairingTlsMode(rawValue: rawMode ?? "") ??
             (fingerprint == nil ? .legacy : .pinnedLeaf)
         switch mode {
@@ -105,7 +143,14 @@ public enum OmnesisURLSession {
             else {
                 return RejectingTrustSession.make()
             }
-            return PinnedSession(fingerprintHex: fp).session
+            return PinnedSession(
+                fingerprintHex: fp,
+                host: host,
+                onSystemTrustVerified: { host, fingerprintHex in
+                    notifySystemTrustVerified(host: host, fingerprintHex: fingerprintHex)
+                },
+                systemTrust: systemTrust
+            ).session
         }
     }
 
@@ -128,14 +173,16 @@ public enum OmnesisURLSession {
                     // verdict.
                     return .contract(RejectingTrustSession.make())
                 }
-                return .contract(_resolveSession(
+                return .contract(resolveSession(
                     tlsMode: credential.tlsMode,
-                    fingerprint: credential.fingerprint
+                    fingerprint: credential.fingerprint,
+                    host: URL(string: credential.url)?.host
                 ))
             }
-            let session = try _resolveSession(
+            let session = try resolveSession(
                 tlsMode: store.get(tlsModeKeychainKey),
-                fingerprint: store.get(fingerprintKeychainKey)
+                fingerprint: store.get(fingerprintKeychainKey),
+                host: store.get(urlKeychainKey).flatMap { URL(string: $0)?.host }
             )
             return .contract(session)
         } catch {

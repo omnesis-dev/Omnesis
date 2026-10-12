@@ -46,7 +46,19 @@ data class DeviceCapabilities(
     val multiDeviceModes: Map<String, String>,
     val replicaVersionPolicies: Map<String, String> = emptyMap(),
     val syncLease: Boolean = false,
+    /**
+     * How this device trusts the gateway's certificate: `system`, `pinned-leaf` or
+     * `legacy`. The gateway reads it to name phones still pinned to a leaf that is
+     * about to renew, or that a renewal has already stranded. Absent until the
+     * composition root knows the pairing.
+     */
+    val tls: TlsCapability? = null,
 ) {
+    @Serializable
+    data class TlsCapability(val mode: String)
+
+    fun withTlsMode(mode: String) = copy(tls = TlsCapability(mode))
+
     fun withPairingIdentity(
         hostname: String,
         suggestedName: String,

@@ -1068,9 +1068,15 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td><a href="/docs/notifications#status">Notification status</a></td>
               </tr>
               <tr>
-                <td>A phone or remote collector stops connecting after a certificate renewal</td>
+                <td>
+                  A phone, agent or remote collector stops connecting after a certificate renewal
+                </td>
                 <td>It pinned the old certificate's fingerprint</td>
-                <td><a href="/docs/security#tls">TLS certificate</a></td>
+                <td>
+                  <a href="/docs/security#pinned-clients"
+                    >Clients that pinned the old certificate</a
+                  >
+                </td>
               </tr>
               <tr>
                 <td>A collector reports <code>Gateway upgrade required</code></td>

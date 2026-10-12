@@ -13,6 +13,7 @@ import {
   authorizeIntegrationOAuth,
   authorizeIntegrationOAuthWithCredentialLock,
   clearPendingAuthorization,
+  GatewayTrust,
   harnessClientName,
   integrationOAuthFetch,
   loadIntegrationCredentials,
@@ -106,7 +107,12 @@ export async function authorizeHarness(
 ): Promise<IntegrationCredentials> {
   const consent = options.consent ?? true;
   const credentialsPath = join(home, "omnesis", "integration.json");
-  const fetchFn = integrationOAuthFetch(credentials.gatewayUrl, credentials.tls);
+  const trust = new GatewayTrust({
+    gatewayUrl: credentials.gatewayUrl,
+    trust: credentials.tls,
+    harness,
+  });
+  const fetchFn = integrationOAuthFetch(credentials.gatewayUrl, trust);
   const gatewayUrl = credentials.gatewayUrl;
   const provider = new IntegrationOAuthProvider(
     credentialsPath,
@@ -443,7 +449,7 @@ export async function authorizeHarness(
       const management = new PinnedGatewayHttpClient(
         gatewayUrl,
         credentials.managementToken,
-        credentials.tls,
+        trust,
       );
       const bound = await management.postJson<{ binding: string }>(
         "/agent-integration/oauth-binding",

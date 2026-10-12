@@ -234,7 +234,7 @@ describe("checkGatewayTls", () => {
     });
   });
 
-  test("phones paired before a rotation and silent since are named for repair; the rest are not", () => {
+  test("devices paired before a rotation and silent since are named for repair; the rest are not", () => {
     const rotatedAt = "2026-09-10T00:00:00.000Z";
     const before = Date.parse(rotatedAt) - 1000;
     const after = Date.parse(rotatedAt) + 1000;
@@ -254,6 +254,13 @@ describe("checkGatewayTls", () => {
           revokedAt: before,
         },
         { name: "studio-collector", kind: "collector", pairedAt: before, lastSeenAt: before },
+        {
+          name: "named-phone",
+          kind: "ios",
+          tlsMode: "system",
+          pairedAt: before,
+          lastSeenAt: before,
+        },
       ],
       ck,
     );
@@ -261,9 +268,9 @@ describe("checkGatewayTls", () => {
     expect(repair).toMatchObject({
       status: "warn",
       section: "Fleet",
-      message: `2 phones paired before the certificate rotated on ${rotatedAt} have not connected since: old-phone, silent-phone`,
+      message: `2 devices paired before the certificate was replaced on ${rotatedAt} have not connected since: old-phone, silent-phone`,
       hint: expect.stringMatching(
-        /omnesis devices repair <name>.*system trust reconnects on its own/u,
+        /omnesis devices repair old-phone.*omnesis devices repair silent-phone.*verifies the gateway by name reconnects on its own/u,
       ),
     });
 
@@ -274,7 +281,7 @@ describe("checkGatewayTls", () => {
       one,
     );
     expect(one.out.find((c) => c.id === "fleet.tls-pin-repair")).toMatchObject({
-      message: expect.stringMatching(/^1 phone paired .* has not connected since: old-phone$/u),
+      message: expect.stringMatching(/^1 device paired .* has not connected since: old-phone$/u),
       hint: expect.stringMatching(/omnesis devices repair old-phone`/u),
     });
 
@@ -285,18 +292,74 @@ describe("checkGatewayTls", () => {
       none,
     );
     expect(none.out.map((c) => c.id)).toEqual(["gateway.tls"]);
+  });
 
-    // A certificate issued by a CA is verified by name; its rotation strands no phone.
-    const issued = sink();
+  test("a publicly trusted rotation strands pinned phones and agents too", () => {
+    const rotatedAt = "2026-09-10T00:00:00.000Z";
+    const before = Date.parse(rotatedAt) - 1000;
+    const ck = sink();
     checkGatewayTls(
       snapshot({
         ownership: "tailscale",
         served: served({ selfSigned: false }),
         rotation: { previousFingerprintSha256: "cd".repeat(32), rotatedAt },
       }),
-      [{ name: "old-phone", kind: "ios", pairedAt: before, lastSeenAt: before }],
-      issued,
+      [
+        { name: "old-phone", kind: "ios", pairedAt: before, lastSeenAt: before },
+        {
+          name: "studio-agent",
+          kind: "agent",
+          harness: "hermes",
+          tlsMode: "pinned-leaf",
+          pairedAt: before,
+          lastSeenAt: before,
+        },
+        {
+          name: "named-agent",
+          kind: "agent",
+          harness: "openclaw",
+          tlsMode: "system",
+          pairedAt: before,
+          lastSeenAt: before,
+        },
+      ],
+      ck,
     );
-    expect(issued.out.map((c) => c.id)).toEqual(["gateway.tls"]);
+    expect(ck.out.find((c) => c.id === "fleet.tls-pin-repair")).toMatchObject({
+      message: expect.stringMatching(/2 devices .* since: old-phone, studio-agent$/u),
+      hint: expect.stringContaining(
+        `studio-agent: On the machine running it: \`omnesis connect hermes --refresh --trust-fingerprint sha256:${"ab".repeat(32)}\`.`,
+      ),
+    });
+  });
+
+  test("a device that reports a pin is warned before the gateway renews the certificate", () => {
+    const renewsAt = "2026-12-10T00:00:00.000Z";
+    const ck = sink();
+    checkGatewayTls(
+      snapshot({ ownership: "tailscale", served: served({ selfSigned: false }), renewsAt }),
+      [
+        { name: "pinned-phone", kind: "android", tlsMode: "pinned-leaf", pairedAt: 1 },
+        { name: "named-phone", kind: "ios", tlsMode: "system", pairedAt: 1 },
+        { name: "quiet-phone", kind: "ios", pairedAt: 1 },
+      ],
+      ck,
+    );
+    expect(ck.out.find((c) => c.id === "fleet.tls-pin-renewal")).toMatchObject({
+      status: "warn",
+      section: "Fleet",
+      message: `1 device pins the served certificate, which the gateway replaces on ${renewsAt}: pinned-phone`,
+      hint: expect.stringMatching(
+        /^Before then: pinned-phone: .*omnesis devices repair pinned-phone/u,
+      ),
+    });
+
+    const notRenewed = sink();
+    checkGatewayTls(
+      snapshot({ renewsAt: null }),
+      [{ name: "pinned-phone", kind: "android", tlsMode: "pinned-leaf", pairedAt: 1 }],
+      notRenewed,
+    );
+    expect(notRenewed.out.map((c) => c.id)).toEqual(["gateway.tls"]);
   });
 });

@@ -77,6 +77,15 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
     public let multiDeviceModes: [String: String]
     public let replicaVersionPolicies: [String: String]
     public let syncLease: Bool
+    /// The TLS trust this device holds for the gateway, so the gateway can
+    /// tell a pinned phone apart before its certificate renews. Absent from
+    /// the pairing exchange, where the gateway itself chose the mode.
+    public let tls: TLS?
+
+    /// Wire shape of ``tls``: `{"mode": "system" | "pinned-leaf" | "legacy"}`.
+    public struct TLS: Codable, Equatable, Sendable {
+        public let mode: String
+    }
 
     public static func ios(
         hostname: String? = nil,
@@ -84,7 +93,8 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
         installId: String? = nil,
         previousDeviceId: String? = nil,
         pushAppId: String? = Bundle.main.bundleIdentifier,
-        version: String = omnesisAppVersion()
+        version: String = omnesisAppVersion(),
+        tlsMode: PairingTlsMode? = nil
     )
         -> PairingCapabilities {
         let contracts = NativeHostedSourceRegistry.ios
@@ -106,7 +116,8 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
             replicaVersionPolicies: Dictionary(uniqueKeysWithValues: contracts.compactMap { contract in
                 contract.replicaVersionPolicy.map { (contract.sourceType, $0) }
             }),
-            syncLease: contracts.contains { $0.multiDeviceMode == .replicated }
+            syncLease: contracts.contains { $0.multiDeviceMode == .replicated },
+            tls: tlsMode.map { TLS(mode: $0.rawValue) }
         )
     }
 
@@ -125,6 +136,7 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
         if let installId { result["installId"] = .string(installId) }
         if let pushAppId { result["pushAppId"] = .string(pushAppId) }
         if let previousDeviceId { result["previousDeviceId"] = .string(previousDeviceId) }
+        if let tls { result["tls"] = .object(["mode": .string(tls.mode)]) }
         return result
     }
 }

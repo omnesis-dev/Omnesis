@@ -9,8 +9,10 @@ import { describe, expect, test } from "vitest";
 import {
   integrationCredentialsSchema,
   loadIntegrationCredentials,
+  loadOperationalIntegrationCredentials,
   upgradeLegacyIntegrationCredentials,
   updateIntegrationOAuthState,
+  updateIntegrationTlsTrust,
 } from "./credentials.js";
 
 const runtimeCredentials = {
@@ -117,6 +119,91 @@ describe("integration credentials", () => {
         },
       });
       expect(statSync(runtimePath).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts system trust or the legacy pin, and nothing mixed", () => {
+    expect(
+      integrationCredentialsSchema.parse({ ...runtimeCredentials, tls: { mode: "system" } }).tls,
+    ).toEqual({ mode: "system" });
+    expect(integrationCredentialsSchema.parse(runtimeCredentials).tls).toEqual(
+      runtimeCredentials.tls,
+    );
+    for (const tls of [
+      { ...runtimeCredentials.tls, mode: "system" },
+      { mode: "pinned-leaf", ...runtimeCredentials.tls },
+      { mode: "system", caPem: runtimeCredentials.tls.caPem },
+      { mode: "insecure" },
+    ]) {
+      expect(() => integrationCredentialsSchema.parse({ ...runtimeCredentials, tls })).toThrow();
+    }
+  });
+
+  test("records system trust without disturbing a concurrent OAuth rotation", () => {
+    const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-tls-"));
+    try {
+      const runtimePath = join(directory, "integration.json");
+      writeFileSync(runtimePath, JSON.stringify(runtimeCredentials), { mode: 0o600 });
+      // The plugin rotates the tokens on disk after the trust was loaded.
+      updateIntegrationOAuthState(runtimePath, {
+        ...runtimeCredentials.oauth,
+        tokens: { ...runtimeCredentials.oauth.tokens, refresh_token: "principal_refresh_rotated" },
+      });
+      const next = updateIntegrationTlsTrust(runtimePath, { mode: "system" });
+      const saved = loadIntegrationCredentials(runtimePath);
+      expect(saved.tls).toEqual({ mode: "system" });
+      expect(saved.oauth.tokens.refresh_token).toBe("principal_refresh_rotated");
+      expect(next).toEqual(saved);
+      expect(statSync(runtimePath).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("records system trust in a pre-OAuth file without upgrading it", () => {
+    const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-tls-legacy-"));
+    try {
+      const runtimePath = join(directory, "integration.json");
+      const legacy = {
+        gatewayUrl: runtimeCredentials.gatewayUrl,
+        deliveryToken: runtimeCredentials.deliveryToken,
+        ingestionToken: runtimeCredentials.ingestionToken,
+        tls: runtimeCredentials.tls,
+      };
+      writeFileSync(runtimePath, JSON.stringify(legacy), { mode: 0o600 });
+      updateIntegrationTlsTrust(runtimePath, { mode: "system" });
+      expect(loadOperationalIntegrationCredentials(runtimePath)).toEqual({
+        ...legacy,
+        tls: { mode: "system" },
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("moving off a pin leaves trust chosen since alone", () => {
+    const directory = mkdtempSync(join(tmpdir(), "omnesis-integration-tls-cas-"));
+    try {
+      const runtimePath = join(directory, "integration.json");
+      const chosenSince = { ...runtimeCredentials.tls, leafFingerprintSha256: "b".repeat(64) };
+      writeFileSync(runtimePath, JSON.stringify({ ...runtimeCredentials, tls: chosenSince }), {
+        mode: 0o600,
+      });
+      expect(
+        updateIntegrationTlsTrust(
+          runtimePath,
+          { mode: "system" },
+          { replacingPin: runtimeCredentials.tls.leafFingerprintSha256 },
+        ),
+      ).toBeNull();
+      expect(loadIntegrationCredentials(runtimePath).tls).toEqual(chosenSince);
+
+      expect(
+        updateIntegrationTlsTrust(runtimePath, { mode: "system" }, { replacingPin: "B".repeat(64) })
+          ?.tls,
+      ).toEqual({ mode: "system" });
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
