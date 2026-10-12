@@ -28,12 +28,12 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
+    "@omnesis/gateway": "*",
     "@types/turndown": "^5.0.6",
     "esbuild": "^0.28.2",
-    "jszip": "^3.10.1",
+    "jszip": "^3.10.2",
     "linkedom": "^0.18.13",
     "playwright": "^1.60.0",
-    "sharp": "^0.35.5",
-    "@omnesis/gateway": "*"
+    "sharp": "^0.35.5"
   }
 }
