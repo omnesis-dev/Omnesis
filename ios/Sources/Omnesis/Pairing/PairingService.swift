@@ -78,13 +78,6 @@ public struct Pairing: Equatable, Sendable {
         self.fingerprint = fingerprint
         self.tlsMode = tlsMode ?? (fingerprint == nil ? .legacy : .pinnedLeaf)
     }
-
-    /// Whether this is a pinned-leaf pairing to `host` with the pin `pin`,
-    /// both compared case-insensitively.
-    func isPinned(to host: String, fingerprint pin: String) -> Bool {
-        guard tlsMode == .pinnedLeaf, let pairedHost = url.host, let fingerprint else { return false }
-        return pairedHost.caseInsensitiveCompare(host) == .orderedSame && fingerprint.lowercased() == pin.lowercased()
-    }
 }
 
 /// Response from `POST /devices/pair`. Decoded verbatim from the gateway.

@@ -21,3 +21,12 @@ extension PairingCredentialBundle {
         )
     }
 }
+
+extension Pairing {
+    /// Whether this is a pinned-leaf pairing to `host` with the pin `pin`,
+    /// both compared case-insensitively.
+    func isPinned(to host: String, fingerprint pin: String) -> Bool {
+        guard tlsMode == .pinnedLeaf, let pairedHost = url.host, let fingerprint else { return false }
+        return pairedHost.caseInsensitiveCompare(host) == .orderedSame && fingerprint.lowercased() == pin.lowercased()
+    }
+}
