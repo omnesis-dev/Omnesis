@@ -12,7 +12,7 @@ import Foundation
 /// is testable in the sim-less SwiftPM logic lane.
 @available(iOS 17.0, *)
 enum HomeTab: Hashable {
-    case agent, search, people, sources, privacy, briefs, watches
+    case agent, search, people, sources, privacy, tasks, watches
 }
 
 /// What the app was presenting when it last left the foreground. Persisting
@@ -217,13 +217,13 @@ enum AgentComposerForegroundFocusPolicy {
 @available(iOS 17.0, *)
 func homeTab(for target: PushTarget) -> HomeTab {
     switch target {
-    case .brief: .briefs
     case .privacyApproval: .privacy
     // HomeView intercepts this target and presents the authorization sheet.
     // The fallback keeps this function total for callers predating that sheet.
     case .accessAuthorization: .agent
     case .agentAnswer: .agent
     case .watchFiring, .watch: .watches
+    case .task: .tasks
     case .sourcePermission: .sources
     }
 }
@@ -241,7 +241,7 @@ extension HomeTab {
         case "agent": return .agent
         case "search": return .search
         case "people": return .people
-        case "briefs": return .briefs
+        case "tasks": return .tasks
         case "sources": return .sources
         default: return .agent
         }

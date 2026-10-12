@@ -42,7 +42,6 @@ it("gates before backend startup, preserves uncertain and oversized inputs, and 
     syncSources: false,
     clock: "virtual",
     entailment: "accept-all",
-    judge: "hold-all",
     decision: {
       policy: (request) =>
         Object.fromEntries(
@@ -134,7 +133,8 @@ it("gates before backend startup, preserves uncertain and oversized inputs, and 
     email({
       externalId: "long-reference",
       title: "Long reference",
-      content: "Routine detail. ".repeat(1700) + "A new durable constraint appears at the end.",
+      // Beyond the discovery decision's 128 KiB input budget in UTF-8.
+      content: "界".repeat(45_000) + " A new durable constraint appears at the end.",
     }),
   ]) {
     await bench.push(doc);

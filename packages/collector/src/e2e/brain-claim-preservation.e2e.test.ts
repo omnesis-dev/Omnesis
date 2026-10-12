@@ -161,7 +161,6 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
     embedder: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     decision: {
       policy: (request) =>
         Object.fromEntries(
@@ -428,7 +427,6 @@ it("reviews published pages with omitted discovery targets and both hierarchy en
     embedder: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     decision: {
       policy: (request) =>
         Object.fromEntries(

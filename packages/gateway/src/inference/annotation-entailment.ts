@@ -263,6 +263,28 @@ export function assessAnnotationEntailment(
   return { label: "entailment" };
 }
 
+/**
+ * The claim's words that no valid assertion span covers, in reading order —
+ * empty when the response is unreadable or every word is covered. Candidate
+ * text only: naming these back to the verifier exposes no source quote.
+ */
+export function uncoveredClaimWords(text: string, claim: string): string[] {
+  const read = inspected(text, claim);
+  if ("failure" in read) return [];
+  const words: string[] = [];
+  for (const match of claim.matchAll(/\S+/gu)) {
+    let offset = match.index;
+    for (const character of match[0]) {
+      if (!/\p{P}/u.test(character) && !read.covered[offset]) {
+        words.push(match[0]);
+        break;
+      }
+      offset += character.length;
+    }
+  }
+  return words;
+}
+
 /** Compatibility wrapper: diagnostic detail does not change the verdict contract. */
 export function parseAnnotationEntailment(
   text: string,

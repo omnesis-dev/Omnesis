@@ -18,6 +18,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -43,6 +44,7 @@ function dpIndexes(d: Db): string[] {
 function makePre64(d: Db): void {
   d.exec("DROP INDEX IF EXISTS idx_document_people_person_source");
   d.exec("CREATE INDEX idx_document_people_person ON document_people(person_id)");
+  createLegacyBriefTables(d);
   d.pragma("user_version = 63");
 }
 

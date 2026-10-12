@@ -86,8 +86,10 @@ export function advanceKnowledgeCascade(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_organization_members'",
       )
       .get();
-    const hasBriefLinks = !!db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='brief_related_loops'")
+    const hasObservationLinks = !!db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='observation_related_loops'",
+      )
       .get();
     const hasRetiredLoops = !!db
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='retired_loops'")
@@ -202,20 +204,28 @@ export function advanceKnowledgeCascade(
         (item.kind === "purge" || !(item.root_kind === "node" && item.root_id === item.target_id))
       ) {
         if (item.kind === "purge") queueKnowledgeProjectionCleanup(db, [item.target_id], now);
-        if (item.kind === "purge" && hasBriefLinks) {
-          const brief = db
+        if (item.kind === "purge" && hasObservationLinks) {
+          const observation = db
             .prepare<
               [string],
-              { brief_id: string }
-            >("SELECT brief_id FROM brief_related_loops WHERE loop_id=? ORDER BY brief_id LIMIT 1")
+              { observation_id: string }
+            >("SELECT observation_id FROM observation_related_loops WHERE loop_id=? ORDER BY observation_id LIMIT 1")
             .get(item.target_id);
-          if (brief) {
+          if (observation) {
             db.prepare(
               "INSERT OR IGNORE INTO knowledge_node_tombstones(id,deleted_at) VALUES(?,?)",
-            ).run(brief.brief_id, now);
-            enqueueCascade(db, "purge", { kind: "node", id: brief.brief_id }, "deleted", now);
-            db.prepare("DELETE FROM briefs WHERE id=?").run(brief.brief_id);
-            db.prepare("DELETE FROM brief_related_loops WHERE brief_id=?").run(brief.brief_id);
+            ).run(observation.observation_id, now);
+            enqueueCascade(
+              db,
+              "purge",
+              { kind: "node", id: observation.observation_id },
+              "deleted",
+              now,
+            );
+            db.prepare("DELETE FROM observations WHERE id=?").run(observation.observation_id);
+            db.prepare("DELETE FROM observation_related_loops WHERE observation_id=?").run(
+              observation.observation_id,
+            );
             continue;
           }
         }

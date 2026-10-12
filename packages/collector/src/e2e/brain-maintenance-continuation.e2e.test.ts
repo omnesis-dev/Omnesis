@@ -28,7 +28,6 @@ it("continues a paid maintenance batch beyond the tool cap without replaying set
     experimental: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     decision: {
       policy: (request) =>
         Object.fromEntries(

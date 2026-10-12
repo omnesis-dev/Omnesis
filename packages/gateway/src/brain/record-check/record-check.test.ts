@@ -1272,7 +1272,6 @@ describe("record check", () => {
         runId: "run_1",
         idGen: () => `id${++seq}`,
         annotationsEnabled: true,
-        briefLane: "reactive",
         log,
         ...overrides,
       });

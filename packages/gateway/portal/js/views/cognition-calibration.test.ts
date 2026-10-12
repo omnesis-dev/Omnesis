@@ -14,7 +14,6 @@ import * as calibration from "./cognition-calibration.js";
 
 describe("familyDisplayName", () => {
   test("labels the known families and passes unknown ones through (data-driven)", () => {
-    expect(calibration.familyDisplayName("brief")).toBe("Briefs");
     expect(calibration.familyDisplayName("doc-annotation")).toBe("Document notes");
     expect(calibration.familyDisplayName("person-annotation")).toBe("People notes");
     // A family the gateway grows later must still render, not vanish.

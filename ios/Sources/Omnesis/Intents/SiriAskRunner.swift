@@ -398,10 +398,10 @@ struct SiriAskRunner {
     /// fresh. Nil covers a resume that failed outright and one that
     /// succeeded into a conversation this ask must not continue: a thread
     /// frozen by a context-window failure cannot accept sends, and an
-    /// anchored thread (a brief's, a watch firing's) belongs to the
-    /// surface that opened it — resuming one would also break the
+    /// anchored thread (the Morning brief, a watch firing's) belongs to
+    /// the surface that opened it — resuming one would also break the
     /// `resumeTranscriptLimit` count, which is of visible messages while
-    /// an anchored thread hides a seeded prefix.
+    /// an anchored thread can hide a seeded prefix.
     private static func resume(
         _ client: AgentClient,
         _ resumeFromId: String

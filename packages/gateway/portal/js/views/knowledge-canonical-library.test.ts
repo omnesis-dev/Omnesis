@@ -5,12 +5,12 @@ import { expect, it } from "vitest";
 import { libraryStateLabel, libraryStatusOptions, RetirementMetadata } from "./knowledge-canonical-library.js";
 it("uses canonical owner states rather than synthesis validity", () => {
   expect(libraryStateLabel({ kind: "loop", validity: "stale", canonicalFields: { state: "open" } })).toBe("Open");
-  expect(libraryStateLabel({ kind: "brief", canonicalFields: { state: "dismissed_snoozed" } })).toBe("Snoozed");
+  expect(libraryStateLabel({ kind: "observation", canonicalFields: { state: "held" } })).toBe("Held");
   expect(libraryStateLabel({ libraryType: "retired-loop", canonicalFields: { state: "deleted" } })).toBe("Retired · Deleted");
 });
-it("offers retirement filters alongside active outcomes and all prior brief state buckets", () => {
+it("offers retirement filters alongside active outcomes and the observation lifecycle states", () => {
   expect(libraryStatusOptions("loop").map(([value]: string[]) => value)).toEqual(["all", "active", "resolved", "retired", "open", "snoozed", "done", "dismissed", "decayed", "deleted"]);
-  expect(libraryStatusOptions("brief").map(([value]: string[]) => value)).toEqual(["all", "unread", "read", "snoozed", "dismissed"]);
+  expect(libraryStatusOptions("observation").map(([value]: string[]) => value)).toEqual(["all", "open", "live", "held", "shipped", "dropped"]);
   expect(libraryStatusOptions("wiki")).toEqual([]);
 });
 it("retains recurrence count and cadence on the existing owner card", () => {

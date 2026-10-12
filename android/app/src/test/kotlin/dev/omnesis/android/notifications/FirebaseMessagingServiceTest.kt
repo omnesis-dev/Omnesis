@@ -90,7 +90,7 @@ class FirebaseMessagingServiceTest {
         val deliveries = mutableListOf(
             delivery("agent-answer", "conversation_answer", 1),
             delivery("conversation", "conversation_update", 2),
-            delivery("brief", "brief_example", 3),
+            delivery("source-permission", "photos:local", 3),
             delivery("watch", "watch_example", 4),
             delivery("needs-auth", "fictional:source", 5),
             delivery("privacy-approval", "approval_example", 6),
@@ -172,7 +172,7 @@ class FirebaseMessagingServiceTest {
             currentSession = { original },
             claim = {
                 current = Any()
-                delivery("brief", "brief_stale", 7)
+                delivery("watch", "watch_stale", 7)
             },
             isCurrent = { it === current },
             render = { _, _ -> rendered = true; NotificationRenderOutcome.Rendered },
@@ -188,7 +188,7 @@ class FirebaseMessagingServiceTest {
 
     @Test fun bounded_drain_stops_at_the_requested_limit() {
         val session = Any()
-        val deliveries = ArrayDeque((1..4).map { delivery("brief", "brief_$it", it) })
+        val deliveries = ArrayDeque((1..4).map { delivery("watch", "watch_$it", it) })
         val rendered = mutableListOf<String>()
         val confirmed = mutableListOf<String>()
 
@@ -221,7 +221,7 @@ class FirebaseMessagingServiceTest {
                 session = session,
                 maxItems = 1,
                 isCurrent = { true },
-                claim = { delivery("brief", "brief_failed", 8) },
+                claim = { delivery("watch", "watch_failed", 8) },
                 render = { _, _ -> NotificationRenderOutcome.RejectedInvalid },
                 confirm = { _, _ -> confirmed = true },
             )
@@ -238,7 +238,7 @@ class FirebaseMessagingServiceTest {
         var renderedWith: Any? = null
         val processor = ClaimedWakeProcessor(
             currentSession = { original },
-            claim = { delivery("brief", "brief_example", 10) },
+            claim = { delivery("watch", "watch_example", 10) },
             isCurrent = {
                 checks += 1
                 val matched = it === current
@@ -260,7 +260,7 @@ class FirebaseMessagingServiceTest {
     }
 
     @Test fun render_outcomes_have_explicit_confirmation_policy() {
-        val delivery = delivery("brief", "brief_example", 8)
+        val delivery = delivery("watch", "watch_example", 8)
         NotificationRenderOutcome.entries.forEach { outcome ->
             var confirmed = false
             val processor = ClaimedWakeProcessor(
@@ -277,7 +277,7 @@ class FirebaseMessagingServiceTest {
     }
 
     @Test fun notifications_disabled_reports_health_without_confirming_delivery() {
-        val delivery = delivery("brief", "brief_example", 9)
+        val delivery = delivery("watch", "watch_example", 9)
         var reports = 0
         var confirmed = false
         val processor = ClaimedWakeProcessor(

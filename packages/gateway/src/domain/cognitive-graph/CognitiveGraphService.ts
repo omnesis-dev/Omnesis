@@ -227,7 +227,7 @@ function expandCognitive(
         if (people.capHit) capHits++;
         for (const p of people.rows) addPerson(p, "involves");
       }
-      const related = capped(listRelatedLoops(db, vertex.loopId, now), PER_KIND_CAP);
+      const related = capped(listRelatedLoops(db, vertex.loopId), PER_KIND_CAP);
       if (related.capHit) capHits++;
       for (const l of related.rows) addLoop(l, "related-to");
       const temporalAnnotations = capped(

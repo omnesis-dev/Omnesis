@@ -14,7 +14,6 @@ final class DevAnnotationTargetTests: XCTestCase {
         XCTAssertEqual(doc.id, "doc-1")
         XCTAssertEqual(doc.label, "Re: Q4 budget review")
 
-        XCTAssertEqual(DevAnnotationTarget.brief("b-1").type, "brief")
         XCTAssertEqual(DevAnnotationTarget.openLoop("l-1").type, "open_loop")
         XCTAssertEqual(DevAnnotationTarget.retiredLoop("rl-1").type, "retired_loop")
         XCTAssertEqual(DevAnnotationTarget.agentRun("r-1").type, "agent_run")
@@ -28,7 +27,6 @@ final class DevAnnotationTargetTests: XCTestCase {
 
     func testDefaultLabelsFallBackToNounPlusId() {
         XCTAssertEqual(DevAnnotationTarget.openLoop("l-9").label, "Loop l-9")
-        XCTAssertEqual(DevAnnotationTarget.brief("b-9").label, "Brief b-9")
     }
 
     func testRouteTargetHasNoId() {

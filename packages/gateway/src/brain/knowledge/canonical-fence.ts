@@ -19,7 +19,6 @@ import type { AnnotationScope } from "../../enrichment/temporal/annotation-scope
 export interface KnowledgeCanonicalFence extends KnowledgeRunFence {
   collections?: KnowledgeReconciliationReceipt[];
   temporalScope?: AnnotationScope;
-  briefCreateGuard?: { loopIds: string[]; supersedes: string[]; force: boolean };
   owners: Array<{ kind: KnowledgeOwnerKind; id: string; version: string | null }>;
   evidenceVersions: Record<string, string | number | null>;
   inputs: Array<{ nodeId: string; fingerprint: string; versions: Record<string, string | number> }>;
@@ -39,21 +38,7 @@ export function knowledgeCanonicalOwnerVersion(
       db.prepare("SELECT 1 FROM sqlite_master WHERE name='open_loop_ledger' AND type='table'").get()
         ? db.prepare("SELECT MAX(seq) AS seq FROM open_loop_ledger WHERE loop_id=?").get(id)
         : null;
-    const claims =
-      kind === "brief" &&
-      db.prepare("SELECT 1 FROM sqlite_master WHERE name='brief_claims' AND type='table'").get()
-        ? db
-            .prepare(
-              "SELECT * FROM brief_claims WHERE brief_id=? AND invalidated_at IS NULL ORDER BY id LIMIT 1025",
-            )
-            .all(id)
-        : [];
-    if (claims.length > 1024)
-      throw new KnowledgeStorageError(
-        "revision_conflict",
-        "Canonical brief claim snapshot exceeds its bounded read budget",
-      );
-    return knowledgeHash([owner, ledger, claims]);
+    return knowledgeHash([owner, ledger]);
   } catch (error) {
     if (error instanceof KnowledgeStorageError && error.code === "reference_invalid") return null;
     throw error;
@@ -77,8 +62,8 @@ function captureOwners(
   const input = args as Record<string, unknown>;
   const kind: KnowledgeOwnerKind | undefined = tool.startsWith("open_loop_")
     ? "loop"
-    : tool.startsWith("brief_")
-      ? "brief"
+    : tool.startsWith("observation_")
+      ? "observation"
       : tool.startsWith("person_annotation_") || tool === "annotate_person"
         ? "person_annotation"
         : tool.startsWith("annotation_") || tool === "annotate_durable"

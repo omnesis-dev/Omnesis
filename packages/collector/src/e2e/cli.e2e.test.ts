@@ -400,14 +400,14 @@ describe("CLI end-to-end (e2e-minimal)", () => {
     expect(r.stderr).not.toContain("UnhandledPromiseRejection");
   });
 
-  test("`omnesis brain` refuses cleanly when the Briefs feature is hidden", async () => {
+  test("`omnesis brain` refuses cleanly when the Brain is hidden", async () => {
     // This harness boots without OMNESIS_EXPERIMENTAL and without a
     // `background-agent` assignment, so the feature gate is off and the
     // /admin/brain routes 404. The CLI must turn that into a clear
     // refusal, not a bare "Not found". Reads refuse on visibility (not
     // activity), so the message names the experimental switch rather
-    // than the model assignment. The active-path coverage lives in
-    // briefs-cli.e2e.test.ts.
+    // than the model assignment. The active path is covered by the
+    // Brain CLI suite.
     let r: CliResult;
     try {
       r = await execCli(harness, ["brain", "loops"]);

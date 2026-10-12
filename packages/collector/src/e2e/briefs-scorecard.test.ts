@@ -74,7 +74,7 @@ function observations(
 ): ScorecardObservations {
   return {
     loops,
-    briefCreates: 5,
+    observationNotes: 5,
     loopCreates: loops.length,
     runsCompleted: 22,
     runsFailed: 0,
@@ -91,10 +91,9 @@ function observations(
   };
 }
 
-/** The sixteen loops a CORRECT agent leaves behind on the frozen arc set.
- * Arcs that CORRECTLY end with no loop: mistaken-commit (retracted ->
- * deleted), feedback-noise (not-relevant -> deleted), feedback-wrong
- * (wrong -> deleted), feedback-ack (info brief only, never a loop). */
+/** The fourteen loops a CORRECT agent leaves behind on the frozen arc set.
+ * The arc that CORRECTLY ends with no loop: mistaken-commit (retracted ->
+ * deleted). */
 function perfectLoops(): ObservedLoop[] {
   const docIds = fakeDocIds(SET);
   const byFirstStep = (arcId: string): string =>
@@ -114,8 +113,6 @@ function perfectLoops(): ObservedLoop[] {
     loop({ id: "l-errand-cutter", state: "open", docs: [byFirstStep("errand-cutter")] }),
     loop({ id: "l-errand-key", state: "open", docs: [byFirstStep("errand-key")] }),
     loop({ id: "l-nudge", state: "open", docs: [byFirstStep("nudge")] }),
-    loop({ id: "l-fb-handled", state: "done", docs: [byFirstStep("feedback-handled")] }),
-    loop({ id: "l-fb-snooze", state: "open", docs: [byFirstStep("feedback-snooze")] }),
   ];
 }
 
@@ -123,11 +120,10 @@ describe("computeDailyMix", () => {
   test("derives the documented mix from the frozen arc set", () => {
     expect(computeDailyMix(SET)).toEqual({
       representsDays: 1,
-      datumsDelivered: 40,
-      eligibleWakes: 36,
+      datumsDelivered: 35,
+      eligibleWakes: 31,
       wakerSkips: 2,
-      expectedRuns: 37,
-      feedbackRuns: 5,
+      expectedRuns: 32,
     });
   });
 });
@@ -191,14 +187,14 @@ describe("countUncorrectedFailures", () => {
         { tool: "open_loop_create", ok: false },
         { tool: "open_loop_create", ok: false },
         { tool: "open_loop_create", ok: true },
-        { tool: "brief_create", ok: true },
+        { tool: "observation_note", ok: true },
       ]),
     ).toBe(0);
     // A DIFFERENT tool succeeding later does not correct the failure...
     expect(
       countUncorrectedFailures([
         { tool: "open_loop_create", ok: false },
-        { tool: "brief_create", ok: true },
+        { tool: "observation_note", ok: true },
       ]),
     ).toBe(1);
     // ...nor does an earlier success, and a trailing failure never corrects.
@@ -223,12 +219,12 @@ describe("computeScorecardMetrics", () => {
     expect(metrics.silentCloseViolations).toBe(0);
     expect(metrics.infraFailureRate).toBe(0);
     expect(metrics.malformedToolCallRate).toBe(0);
-    expect(metrics.briefsPerDay).toBe(5);
+    expect(metrics.observationsPerDay).toBe(5);
     expect(metrics.tokensPerDay).toBe(91_000);
-    expect(counts.reconcileOpportunities).toBe(15);
-    expect(counts.resolutionTargets).toBe(5);
-    expect(counts.loopsJustified).toBe(16);
-    expect(counts.loopArcTargets).toBe(14);
+    expect(counts.reconcileOpportunities).toBe(13);
+    expect(counts.resolutionTargets).toBe(4);
+    expect(counts.loopsJustified).toBe(14);
+    expect(counts.loopArcTargets).toBe(12);
     expect(counts.updateTargets).toBe(4);
     expect(counts.updatesLanded).toBe(4);
   });
@@ -246,9 +242,9 @@ describe("computeScorecardMetrics", () => {
     );
     const { metrics, counts } = computeScorecardMetrics(SET, observations(loops), 1);
     expect(counts.duplicatesMinted).toBe(1);
-    expect(metrics.duplicateRate).toBeCloseTo(1 / 15, 10);
-    expect(metrics.resolutionRecall).toBe(4 / 5);
-    expect(metrics.loopPrecision).toBeCloseTo(16 / 17, 10);
+    expect(metrics.duplicateRate).toBeCloseTo(1 / 13, 10);
+    expect(metrics.resolutionRecall).toBe(3 / 4);
+    expect(metrics.loopPrecision).toBeCloseTo(14 / 15, 10);
   });
 
   test("closing the ambiguous arc counts a silent-close violation; an unjustified loop drops precision", () => {
@@ -265,14 +261,14 @@ describe("computeScorecardMetrics", () => {
     );
     const { metrics } = computeScorecardMetrics(SET, observations(loops), 1);
     expect(metrics.silentCloseViolations).toBe(1);
-    expect(metrics.loopPrecision).toBeCloseTo(16 / 17, 10);
+    expect(metrics.loopPrecision).toBeCloseTo(14 / 15, 10);
   });
 
   test("a wrong-merged bait (no loop for an expecting arc) drops loop_recall, not precision", () => {
     const loops = perfectLoops().filter((l) => l.id !== "l-obligation-quote");
     const { metrics, counts } = computeScorecardMetrics(SET, observations(loops), 1);
-    expect(counts.loopArcsTracked).toBe(13);
-    expect(metrics.loopRecall).toBeCloseTo(13 / 14, 10);
+    expect(counts.loopArcsTracked).toBe(11);
+    expect(metrics.loopRecall).toBeCloseTo(11 / 12, 10);
     expect(metrics.loopPrecision).toBe(1);
     expect(metrics.duplicateRate).toBe(0);
   });
@@ -321,7 +317,7 @@ describe("computeScorecardMetrics", () => {
 
     const open = perfectLoops().map((l) => (l.id === "l-ooo" ? { ...l, state: "open" } : l));
     const lingering = computeScorecardMetrics(SET, observations(open), 1);
-    expect(lingering.metrics.resolutionRecall).toBe(4 / 5);
+    expect(lingering.metrics.resolutionRecall).toBe(3 / 4);
   });
 
   test("retains raw refusals while partitioning only verified concurrency retries", () => {
@@ -387,7 +383,7 @@ describe("computeScorecardMetrics", () => {
       2,
     );
     expect(metrics.infraFailureRate).toBeCloseTo(0.2, 10);
-    expect(metrics.briefsPerDay).toBe(2.5);
+    expect(metrics.observationsPerDay).toBe(2.5);
     expect(metrics.tokensPerDay).toBe(45_500);
     expect(() => computeScorecardMetrics(SET, observations(perfectLoops()), 0)).toThrow(
       /representsDays/,

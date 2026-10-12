@@ -88,6 +88,7 @@ export async function runCollisionSweepPass(
     const candidates = findCollisionCandidates(deps.db, {
       limit: maxPerSweep,
       selfPersonId: deps.getSelfPersonId(),
+      now,
     });
     for (const c of candidates) {
       await deps.writeGate.enqueueCognitionRun(

@@ -107,7 +107,7 @@ describe("AnnotationList", () => {
     const withDeps = {
       ...ANN,
       dependents: [
-        { kind: "brief", id: "brief_1", title: "Practice day changed" },
+        { kind: "observation", id: "obs_1", title: "Practice day changed" },
         { kind: "loop", id: "loop_1", title: "Confirm the new practice day" },
       ],
     };
@@ -115,10 +115,12 @@ describe("AnnotationList", () => {
     const summary = nodes.find((n) => n.tag === "summary");
     expect(summary?.text.trim()).toBe("2 dependent outputs");
     const links = nodes.filter((n) => n.class === "meta-annotation-dependent");
+    expect(links[0].href).toBe("/portal/debug/cognition/observations/obs_1");
     expect(links[1].href).toBe("/portal/debug/cognition/knowledge/loop_1?kind=loop");
+    expect(nodes.some((n) => n.markup?.includes("kn-link-icon--observation"))).toBe(true);
     expect(nodes.some((n) => n.markup?.includes("kn-link-icon--loop"))).toBe(true);
     expect(links.map((l) => l.text.trim())).toEqual([
-      "brief: Practice day changed",
+      "observation: Practice day changed",
       "loop: Confirm the new practice day",
     ]);
   });

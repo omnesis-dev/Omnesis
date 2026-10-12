@@ -91,7 +91,9 @@ it.each([
       experimental: true,
       syncSources: false,
       brain: {
-        bootstrap: { enabled: false },
+        // The universe's fixed dates can lie beyond the default history
+        // horizon; this case is about the recent window alone.
+        bootstrap: { enabled: false, horizon: "3650d" },
         derivationBarrier: "0s",
         knowledge: { recentWindowDays, soonDelay: "0s", routineDelay: "0s" },
       },

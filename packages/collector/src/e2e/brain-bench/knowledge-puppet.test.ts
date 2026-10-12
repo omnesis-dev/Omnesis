@@ -26,6 +26,35 @@ const frontier = (items: unknown[], done = false): ToolStep => ({
   result: { kind: "structured", data: { batchId: "b", done, items } },
 });
 describe("knowledge puppet protocol", () => {
+  it("works around inputs it leaves pending and ends its turn once only those remain", () => {
+    const next = knowledgePuppet({
+      plan: () => ({ calls: [] }),
+      leavePending: (item) => item.source?.id === "heavy",
+    });
+    const heavy = {
+      ...source,
+      id: "source:heavy",
+      inputFingerprint: "fp-heavy",
+      source: { ...source.source, id: "heavy" },
+    };
+    expect(next(ctx, [frontier([heavy, source])])).toMatchObject({
+      name: "knowledge_discovery_complete",
+      args: { id: "source:doc" },
+    });
+    const settled: ToolStep = {
+      name: "knowledge_discovery_complete",
+      args: { id: "source:doc", inputFingerprint: "fp" },
+      result: { kind: "structured", data: {} },
+    };
+    expect(next(ctx, [frontier([heavy, source]), settled])).toMatchObject({
+      name: "knowledge_next_frontier",
+    });
+    expect(next(ctx, [frontier([heavy, source]), settled, frontier([heavy])])).toMatchObject({
+      kind: "final",
+      text: expect.stringContaining("pending"),
+    });
+  });
+
   it("allows an explicitly refused new-page draft during source discovery without swallowing node settlement errors", () => {
     const next = knowledgePuppet({
       expectedRefusals: () => [{ tool: "knowledge_save", code: "claim_invalid" }],
@@ -52,6 +81,36 @@ describe("knowledge puppet protocol", () => {
         { ...refused, result: { kind: "error", code: "revision_conflict", message: "Stale" } },
       ]),
     ).toMatchObject({ kind: "final" });
+  });
+
+  it("re-reads a source after a source_read_required refusal, within a bound", () => {
+    const next = knowledgePuppet({ plan: () => ({ calls: [] }) });
+    const refused: ToolStep = {
+      name: "knowledge_discovery_complete",
+      args: { id: "source:doc", inputFingerprint: "fp" },
+      result: { kind: "error", code: "source_read_required", message: "Read it again" },
+    };
+    const reread: ToolStep = {
+      name: "fetch_many",
+      args: { documents: [{ documentId: "doc" }] },
+      result: { kind: "document.batch", items: [] },
+    };
+    expect(next(ctx, [frontier([source]), refused])).toEqual({
+      kind: "tool",
+      name: "fetch_many",
+      args: { documents: [{ documentId: "doc" }] },
+    });
+    expect(next(ctx, [frontier([source]), refused, reread])).toMatchObject({
+      name: "knowledge_discovery_complete",
+      args: { id: "source:doc", inputFingerprint: "fp" },
+    });
+    const settled = { ...refused, result: { kind: "structured", data: {} } };
+    expect(next(ctx, [frontier([source]), refused, reread, settled])).toMatchObject({
+      name: "knowledge_next_frontier",
+    });
+    expect(
+      next(ctx, [frontier([source]), refused, reread, refused, reread, refused]),
+    ).toMatchObject({ kind: "final", text: expect.stringContaining("refused") });
   });
 
   it("accepts a complete source read at its semantic revision without confusing the body hash", () => {

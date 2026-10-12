@@ -33,7 +33,7 @@ class FcmPushManagerTest {
         assertTrue(diagnostic.extras.getString("android.text")!!.contains("Tailscale hostname"))
         manager.showClaimFailureDiagnostic(GatewayException.Network(java.net.ConnectException("refused again")))
         assertEquals(1, system.allNotifications.size)
-        assertTrue(manager.showClaimed(delivery("brief", "brief_example", 42)))
+        assertTrue(manager.showClaimed(delivery("watch", "watch_example", 42)))
         assertEquals(1, system.allNotifications.size)
         assertEquals("Fictional notification 42", system.allNotifications.single().extras.getString("android.title"))
         manager.showClaimFailureDiagnostic(GatewayException.Network(java.net.ConnectException("new outage")))
@@ -48,19 +48,18 @@ class FcmPushManagerTest {
         val deliveries = listOf(
             delivery("agent-answer", "conversation_answer", 1),
             delivery("conversation", "conversation_update", 2),
-            delivery("brief", "brief_example", 3),
-            delivery("watch", "watch_example", 4),
-            delivery("needs-auth", "fictional_source", 5),
-            delivery("privacy-approval", "approval_example", 6),
-            delivery("source-permission", "photos:local", 7),
-            delivery("access-authorization", "access", 8),
+            delivery("watch", "watch_example", 3),
+            delivery("needs-auth", "fictional_source", 4),
+            delivery("privacy-approval", "approval_example", 5),
+            delivery("source-permission", "photos:local", 6),
+            delivery("access-authorization", "access", 7),
         )
 
         deliveries.forEach { assertTrue(manager.showClaimed(it)) }
 
         val systemManager = context.getSystemService(NotificationManager::class.java)
         val notifications = shadowOf(systemManager).allNotifications
-        assertEquals(8, notifications.size)
+        assertEquals(7, notifications.size)
         assertEquals(
             deliveries.map { it.title }.toSet(),
             notifications.map { it.extras.getString("android.title") }.toSet(),
@@ -106,7 +105,7 @@ class FcmPushManagerTest {
     fun lease_retry_replaces_the_existing_local_notification() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = FcmPushManager(context)
-        val firstLease = delivery("brief", "brief_retry", 8)
+        val firstLease = delivery("watch", "watch_retry", 8)
         val retryLease = firstLease.copy(
             id = "00000000-0000-4000-8000-000000000099",
             title = "Fictional retry replacement",
@@ -128,7 +127,7 @@ class FcmPushManagerTest {
         val manager = FcmPushManager(ApplicationProvider.getApplicationContext())
         assertEquals(
             NotificationRenderOutcome.RejectedInvalid,
-            manager.showClaimedOutcome(delivery("brief", "", 8)),
+            manager.showClaimedOutcome(delivery("watch", "", 8)),
         )
         assertEquals(
             NotificationRenderOutcome.DeferredUnknownKind,
@@ -141,7 +140,7 @@ class FcmPushManagerTest {
         shadowOf(context.getSystemService(NotificationManager::class.java)).setNotificationsEnabled(false)
         assertEquals(
             NotificationRenderOutcome.DeferredNotificationsDisabled,
-            FcmPushManager(context).showClaimedOutcome(delivery("brief", "brief_example", 10)),
+            FcmPushManager(context).showClaimedOutcome(delivery("watch", "watch_example", 10)),
         )
     }
 

@@ -318,6 +318,20 @@ export const patchNoteEntry = (id, text) =>
 export const deleteNoteEntry = (id) =>
   request("DELETE", `/notes/${encodeURIComponent(id)}`);
 
+// Tasks: the bullet-journal view of the user's own tasks and the Brain's
+// suggestions. Always mounted (no model or experimental mode needed).
+// `date` is the viewer's local day (YYYY-MM-DD) the view is read for. Every
+// mutation answers `{ task, receipt: { text, undoSeq } }`; `undoTask(seq)`
+// reverts the change a receipt names.
+export const listTasks = (view, date, query = {}) =>
+  request("GET", "/tasks", { query: { view, date, ...query } });
+export const getTask = (id) => request("GET", `/tasks/${encodeURIComponent(id)}`);
+// The journal's counts alone — open tasks per view on `date` — for the nav.
+export const getTaskCounts = (date) => request("GET", "/tasks/counts", { query: { date } });
+export const taskAction = (id, body) =>
+  request("POST", `/tasks/${encodeURIComponent(id)}/actions`, { body });
+export const undoTask = (seq) => request("POST", "/tasks/undo", { body: { seq } });
+
 // Developer annotations (gateway OMNESIS_DEV_MODE). The route 404s when dev
 // mode is off; the floating capture button is only shown when /status reports
 // `developer`, so this is reached only in developer mode. Reads happen via the
@@ -669,8 +683,8 @@ export const getDoctorReport = () => request("GET", "/admin/doctor");
 // --- Cognition (read-only Cognition Steward debug surface) ---
 // Every one of these is a GET against the `/admin/brain/*` read surface —
 // the Cognition debug tab is strictly read-only, so there is no mutating
-// counterpart here (no dismiss/wipe). All 404 unless the Briefs feature is
-// active (experimental + a background-agent model assigned).
+// counterpart here (no dismiss/wipe). All 404 unless the Brain is active
+// (experimental + a background-agent model assigned).
 
 export const getCognitionLoops = (query) => request("GET", "/admin/brain/loops", { query });
 export const getCognitionPulse = () => request("GET", "/admin/brain/pulse");
@@ -680,8 +694,8 @@ export const getCognitionLoop = (id, { includeChildren = true } = {}) =>
   });
 export const getCognitionLoopLedger = (id, query) =>
   request("GET", `/admin/brain/loops/${encodeURIComponent(id)}/ledger`, { query });
-export const getCognitionLoopBriefs = (id, query) =>
-  request("GET", `/admin/brain/loops/${encodeURIComponent(id)}/briefs`, { query });
+export const getCognitionLoopObservations = (id, query) =>
+  request("GET", `/admin/brain/loops/${encodeURIComponent(id)}/observations`, { query });
 export const getCognitionLoopScheduled = (id, query) =>
   request("GET", `/admin/brain/loops/${encodeURIComponent(id)}/scheduled`, { query });
 export const getCognitionRunKinds = () => request("GET", "/admin/brain/run-kinds");
@@ -690,14 +704,20 @@ export const getCognitionRun = (id) =>
   request("GET", `/admin/brain/runs/${encodeURIComponent(id)}`);
 export const getCognitionTranscript = (fileName) =>
   request("GET", `/admin/brain/transcripts/${encodeURIComponent(fileName)}`);
-export const getCognitionBriefs = (query) => request("GET", "/admin/brain/briefs", { query });
-// Opens (or returns) the brief's talk-back thread; the caller then
-// navigates to /agent/<conversationId>. Not part of the read-only
-// /admin/brain family — it drives the user-facing POST /briefs/:id/thread.
-export const openBriefThread = (id) =>
-  request("POST", `/briefs/${encodeURIComponent(id)}/thread`);
-export const getCognitionBrief = (id) =>
-  request("GET", `/admin/brain/briefs/${encodeURIComponent(id)}`);
+// Observations: what agent runs noted for a morning brief, with the
+// decision model's scores and why each one shipped, waits or closed.
+// `state` filters to live | held | shipped | dropped, or `open` (live + held).
+export const getCognitionObservations = (query) =>
+  request("GET", "/admin/brain/observations", { query });
+export const getCognitionObservation = (id) =>
+  request("GET", `/admin/brain/observations/${encodeURIComponent(id)}`);
+// Observations whose noted scores would have earned a same-day push.
+export const getCognitionWouldPush = (query) =>
+  request("GET", "/admin/brain/observations/would-push", { query });
+// One day's sent morning brief (`day` = YYYY-MM-DD; the latest when omitted)
+// with its ranked observation items.
+export const getCognitionMorningBrief = (day) =>
+  request("GET", "/admin/brain/morning-brief", { query: day ? { day } : {} });
 export const getCognitionNotes = () => request("GET", "/admin/brain/notes");
 export const getKnowledgeNodes = (query) => request("GET", "/admin/brain/knowledge", { query });
 export const getKnowledgeNode = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}`, { query: { editing: "1" } });
@@ -766,7 +786,7 @@ export const getCognitionCoverage = (query) =>
   request("GET", "/admin/brain/coverage", { query });
 // Per-(day, mechanism, model) spend breakdown. Unlike the /admin/brain
 // family this is NOT feature-gated — spend is passive accounting that
-// exists even when briefs is off.
+// exists even when the Brain is off.
 export const getCognitionMechanismSpend = (query) =>
   request("GET", "/admin/cognition/spend", { query });
 // Measurement-only calibration report (reliability bins + ECE per artifact
@@ -1567,6 +1587,12 @@ export const getAgentConfig = () => request("GET", "/admin/agent/config");
 // The model that would answer right now (current agent assignment, decoupled
 // from any conversation's history). Returns a `ModelDisplay`.
 export const getAgentModel = () => request("GET", "/agent/model");
+/** What one day's brief in the Morning brief conversation was based on. */
+export const getConversationBrief = (conversationId, day) =>
+  request(
+    "GET",
+    `/agent/conversations/${encodeURIComponent(conversationId)}/briefs/${encodeURIComponent(day)}`,
+  );
 
 // --- Model management ---
 

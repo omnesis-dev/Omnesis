@@ -17,17 +17,11 @@ describe("siblingRolesForRecentModels", () => {
       "privacy-reviewer",
       "background-agent",
       "watch-judge",
-      "brief-judge",
     ]);
   });
 
   it("is symmetric: every chat role sees the same group", () => {
-    for (const role of [
-      "privacy-reviewer",
-      "background-agent",
-      "watch-judge",
-      "brief-judge",
-    ] as const) {
+    for (const role of ["privacy-reviewer", "background-agent", "watch-judge"] as const) {
       expect(siblingRolesForRecentModels(role)).toEqual(siblingRolesForRecentModels("agent"));
     }
   });

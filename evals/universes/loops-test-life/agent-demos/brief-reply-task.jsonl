@@ -1,0 +1,7 @@
+# Golden cassette: a reply in the Morning brief conversation. The agent finds
+# the task the user means and completes it; `capture` threads the real id.
+{"afterMs": 0, "event": {"type": "agent.message.start", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "role": "assistant"}}}
+{"afterMs": 0, "event": {"type": "agent.tool.start", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "toolCallId": "tc-list", "tool": "task_list", "args": {"query": "harvest fair"}}}, "capture": {"task": "data.tasks.0.id"}}
+{"afterMs": 0, "event": {"type": "agent.tool.start", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "toolCallId": "tc-done", "tool": "task_update", "args": {"id": "$CAP_task", "action": "complete", "note": "Paid by bank transfer."}}}}
+{"afterMs": 0, "event": {"type": "agent.text.delta", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "delta": "Done: the harvest fair deposit is marked paid."}}}
+{"afterMs": 0, "event": {"type": "agent.message.end", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "stopReason": "end_turn"}}}

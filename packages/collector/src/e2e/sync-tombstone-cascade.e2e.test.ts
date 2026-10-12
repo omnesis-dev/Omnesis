@@ -105,7 +105,7 @@ function annotationExists(id: string): boolean {
   );
 }
 
-function rowExists(table: "open_loops" | "briefs" | "brief_claims", id: string): boolean {
+function rowExists(table: "open_loops" | "observations", id: string): boolean {
   return gatewayDb(
     (db) =>
       db
@@ -117,14 +117,11 @@ function rowExists(table: "open_loops" | "briefs" | "brief_claims", id: string):
 function loopId(externalId: string): string {
   return `loop-${externalId}`;
 }
-function briefId(externalId: string): string {
-  return `brief-${externalId}`;
-}
-function claimId(externalId: string): string {
-  return `claim-${externalId}`;
+function observationId(externalId: string): string {
+  return `obs-${externalId}`;
 }
 
-function seedLoopAndBrief(externalId: string, docId: string): void {
+function seedLoopAndObservation(externalId: string, docId: string): void {
   gatewayDb(
     (db) =>
       db.transaction(() => {
@@ -139,36 +136,23 @@ function seedLoopAndBrief(externalId: string, docId: string): void {
           docId,
         );
         db.prepare(
-          `INSERT INTO briefs
-         (id, created_by_run, kind, title, description, confidence, urgency, created_at, updated_at)
-       VALUES (?, 'run-sync-cascade-test', 'awareness', ?, ?, 0.8, 0.5, ?, ?)`,
+          `INSERT INTO observations
+         (id, created_by_run, summary, why, claims_json, created_at, updated_at)
+       VALUES (?, 'run-sync-cascade-test', ?, ?, ?, ?, ?)`,
         ).run(
-          briefId(externalId),
-          "Fictional project brief",
+          observationId(externalId),
           "A project note needs review",
+          "The project is scheduled for review",
+          JSON.stringify([{ docId, quote: "project review", verification: "unverified" }]),
           now,
           now,
-        );
-        db.prepare("INSERT INTO brief_citations (brief_id, position, doc_id) VALUES (?, 0, ?)").run(
-          briefId(externalId),
-          docId,
-        );
-        db.prepare("INSERT INTO brief_related_loops (brief_id, loop_id) VALUES (?, ?)").run(
-          briefId(externalId),
-          loopId(externalId),
         );
         db.prepare(
-          `INSERT INTO brief_claims
-         (id, brief_id, claim_text, evidence_doc_id, evidence_quote, claim_basis, confidence, created_at)
-       VALUES (?, ?, ?, ?, ?, 'quoted', 0.8, ?)`,
-        ).run(
-          claimId(externalId),
-          briefId(externalId),
-          "The project is scheduled for review",
-          docId,
-          "project review",
-          now,
-        );
+          "INSERT INTO observation_citations (observation_id, position, doc_id) VALUES (?, 0, ?)",
+        ).run(observationId(externalId), docId);
+        db.prepare(
+          "INSERT INTO observation_related_loops (observation_id, loop_id) VALUES (?, ?)",
+        ).run(observationId(externalId), loopId(externalId));
       })(),
     false,
   );
@@ -274,7 +258,7 @@ describe("sync tombstone cascade survives derived-store failures", () => {
       seedAnnotation(`annotation-${externalId}`, id);
     }
     for (const externalId of VICTIMS) {
-      seedLoopAndBrief(externalId, documentId(externalId));
+      seedLoopAndObservation(externalId, documentId(externalId));
       // The loop's corpus projection must be taken with its parent loop.
       await harness.pushDocument({
         providerId: "system",
@@ -327,8 +311,7 @@ describe("sync tombstone cascade survives derived-store failures", () => {
     expect(annotationExists(`annotation-${VICTIMS[0]}`)).toBe(false);
     expect(pendingCascade(victimId)).toEqual({ indexDone: false, cognitionDone: true });
     expect(rowExists("open_loops", loopId(VICTIMS[0]))).toBe(false);
-    expect(rowExists("briefs", briefId(VICTIMS[0]))).toBe(false);
-    expect(rowExists("brief_claims", claimId(VICTIMS[0]))).toBe(false);
+    expect(rowExists("observations", observationId(VICTIMS[0]))).toBe(false);
     expect(documentExistsFor("open-loops", loopId(VICTIMS[0]))).toBe(false);
     const mirrorId = mirrorIds.get(VICTIMS[0])!;
     expect(chunkCount(mirrorId)).toBeGreaterThan(0);
@@ -360,8 +343,8 @@ describe("sync tombstone cascade survives derived-store failures", () => {
     gatewayDb(
       (db) =>
         db.exec(
-          `CREATE TRIGGER fail_sync_brain_delete BEFORE DELETE ON brief_claims
-       WHEN OLD.id = '${claimId(VICTIMS[1])}'
+          `CREATE TRIGGER fail_sync_brain_delete BEFORE DELETE ON observations
+       WHEN OLD.id = '${observationId(VICTIMS[1])}'
        BEGIN SELECT RAISE(ABORT, 'synthetic Brain delete failure'); END`,
         ),
       false,
@@ -373,9 +356,9 @@ describe("sync tombstone cascade survives derived-store failures", () => {
     expect(documentExists(VICTIMS[1]), responseBody).toBe(false);
     expect(chunkCount(victimId)).toBe(0);
     // Document annotations are purged in the primary writer transaction;
-    // the claim and loop are the separate Brain cascade this trigger stops.
+    // the observation and loop are the separate Brain cascade this trigger stops.
     expect(annotationExists(`annotation-${VICTIMS[1]}`)).toBe(false);
-    expect(rowExists("brief_claims", claimId(VICTIMS[1]))).toBe(true);
+    expect(rowExists("observations", observationId(VICTIMS[1]))).toBe(true);
     expect(rowExists("open_loops", loopId(VICTIMS[1]))).toBe(true);
     expect(documentExistsFor("open-loops", loopId(VICTIMS[1]))).toBe(true);
     const mirrorId = mirrorIds.get(VICTIMS[1])!;
@@ -389,7 +372,7 @@ describe("sync tombstone cascade survives derived-store failures", () => {
       () =>
         pendingCascade(victimId) === undefined &&
         pendingCascade(mirrorId) === undefined &&
-        !rowExists("brief_claims", claimId(VICTIMS[1])) &&
+        !rowExists("observations", observationId(VICTIMS[1])) &&
         !rowExists("open_loops", loopId(VICTIMS[1])) &&
         !documentExistsFor("open-loops", loopId(VICTIMS[1])) &&
         chunkCount(mirrorId) === 0,

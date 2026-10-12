@@ -4,7 +4,7 @@
 /**
  * Pure-logic coverage for the Cognition view's run-queue presentation:
  * the pending→(running|retrying|scheduled|queued) fan-out, the per-state
- * lead timestamp, the brief filter buckets, the legacy-subtab alias, and
+ * lead timestamp, the legacy-subtab alias, and
  * the two-unit relative-time formatter. Plain
  * function calls in the node env — same harness as cognition.test.ts.
  */
@@ -75,31 +75,12 @@ describe("runTimeLabel", () => {
   });
 });
 
-describe("briefMatchesFilter", () => {
-  test("buckets the eight stored states into the five filters", () => {
-    const b = (state: string) => ({ state });
-    expect(cognition.briefMatchesFilter(b("unread"), "unread")).toBe(true);
-    expect(cognition.briefMatchesFilter(b("read"), "read")).toBe(true);
-    expect(cognition.briefMatchesFilter(b("dismissed_snoozed"), "snoozed")).toBe(true);
-    // "dismissed" = the four terminal dismissals, NOT snoozed.
-    for (const s of [
-      "dismissed_already_handled",
-      "dismissed_acknowledged",
-      "dismissed_not_relevant",
-      "dismissed_wrong",
-    ]) {
-      expect(cognition.briefMatchesFilter(b(s), "dismissed")).toBe(true);
-    }
-    expect(cognition.briefMatchesFilter(b("dismissed_snoozed"), "dismissed")).toBe(false);
-    expect(cognition.briefMatchesFilter(b("unread"), "all")).toBe(true);
-  });
-});
-
 describe("resolveSection", () => {
   test("aliases the legacy scheduled tab to runs; junk falls back to runs", () => {
     expect(cognition.resolveSection("scheduled")).toBe("runs");
     expect(cognition.resolveSection("runs")).toBe("runs");
     expect(cognition.resolveSection("memory")).toBe("notes");
+    expect(cognition.resolveSection("observations")).toBe("observations");
     // The Calendar is a Debug tab of its own, not a Cognition section.
     expect(cognition.resolveSection("calendar")).toBe("runs");
     expect(cognition.resolveSection(undefined)).toBe("runs");

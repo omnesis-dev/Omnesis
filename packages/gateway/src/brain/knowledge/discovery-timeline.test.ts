@@ -18,6 +18,8 @@ beforeEach(() => {
   createKnowledgeWorkTables(db);
 });
 afterEach(() => db.close());
+/** A horizon floor older than every fixture: nothing is out of scope. */
+const ALL_HISTORY = "2000-01-01T00:00:00.000Z";
 function source(
   id: string,
   date: string | null = "2025-06-15T10:00:00Z",
@@ -53,16 +55,30 @@ it("counts both phases exhaustively by current content generation and policy, re
   coverage("three", "organization", "considered");
   coverage("old", "interpretation", "considered", "v1");
   coverage("policy", "interpretation", "considered", "v2", "older-policy");
-  expect(knowledgeDiscoveryByMonth(db)).toEqual([
+  expect(knowledgeDiscoveryByMonth(db, ALL_HISTORY)).toEqual([
     {
       month: "2025-06",
-      interpretation: { considered: 1, gated: 1, deferred: 0, failed: 0, pending: 3 },
-      organization: { considered: 1, gated: 0, deferred: 1, failed: 1, pending: 2 },
+      interpretation: {
+        considered: 1,
+        gated: 1,
+        deferred: 0,
+        failed: 0,
+        pending: 3,
+        outOfScope: 0,
+      },
+      organization: { considered: 1, gated: 0, deferred: 1, failed: 1, pending: 2, outOfScope: 0 },
     },
     {
       month: null,
-      interpretation: { considered: 0, gated: 0, deferred: 0, failed: 0, pending: 1 },
-      organization: { considered: 0, gated: 0, deferred: 0, failed: 0, pending: 1 },
+      interpretation: {
+        considered: 0,
+        gated: 0,
+        deferred: 0,
+        failed: 0,
+        pending: 1,
+        outOfScope: 0,
+      },
+      organization: { considered: 0, gated: 0, deferred: 0, failed: 0, pending: 1, outOfScope: 0 },
     },
   ]);
 });
@@ -78,9 +94,31 @@ it("excludes unreadable/deleted source generations and cognition-authored source
     source(`authored-${index}`, null, entry.sourceId);
     for (const type of entry.exclusiveDocumentTypes) source(`type-${type}`, null, "fixture", type);
   }
-  const months = knowledgeDiscoveryByMonth(db);
+  const months = knowledgeDiscoveryByMonth(db, ALL_HISTORY);
   expect(months).toHaveLength(1);
   expect(months[0]!.interpretation.pending).toBe(1);
   db.prepare("DELETE FROM documents WHERE id='visible'").run();
-  expect(knowledgeDiscoveryByMonth(db)).toEqual([]);
+  expect(knowledgeDiscoveryByMonth(db, ALL_HISTORY)).toEqual([]);
+});
+
+it("reports unreviewed documents dated before the history horizon as out of scope, not pending", () => {
+  source("recent", "2025-06-20T10:00:00Z");
+  source("old-unread", "2025-06-02T10:00:00Z");
+  source("old-read", "2025-06-01T10:00:00Z");
+  coverage("old-read", "interpretation", "considered");
+  expect(knowledgeDiscoveryByMonth(db, "2025-06-10T00:00:00.000Z")).toEqual([
+    {
+      month: "2025-06",
+      // Review already done before the horizon moved stays counted as review.
+      interpretation: {
+        considered: 1,
+        gated: 0,
+        deferred: 0,
+        failed: 0,
+        pending: 1,
+        outOfScope: 1,
+      },
+      organization: { considered: 0, gated: 0, deferred: 0, failed: 0, pending: 1, outOfScope: 2 },
+    },
+  ]);
 });

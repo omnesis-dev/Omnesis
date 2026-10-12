@@ -12,8 +12,8 @@ import XCTest
 /// working where a hand naturally starts it. Both shipped once.
 ///
 /// The harness is `MenuRevealDemoRoot`, launched with
-/// `DEMO_MENU_REVEAL=briefs` — a container over a fixture-seeded briefs list,
-/// no gateway required.
+/// `DEMO_MENU_REVEAL=list` — a container over a fixture list whose rows carry
+/// swipe actions, no gateway required.
 final class MenuRevealGestureUITests: XCTestCase {
     /// Must match `MenuRevealDemoRoot.moreMarker` / `.menuMarker`.
     private let moreMarker = "MENU-REVEAL-MORE-TAPPED"
@@ -26,7 +26,7 @@ final class MenuRevealGestureUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchEnvironment["DEMO_MENU_REVEAL"] = "briefs"
+        app.launchEnvironment["DEMO_MENU_REVEAL"] = "list"
         app.launch()
     }
 
@@ -36,7 +36,7 @@ final class MenuRevealGestureUITests: XCTestCase {
 
     private func firstRow() -> XCUIElement {
         let row = app.cells.firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 15), "briefs list did not load")
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "fixture list did not load")
         return row
     }
 
@@ -59,13 +59,12 @@ final class MenuRevealGestureUITests: XCTestCase {
         XCTAssertGreaterThan(before, 0, "no rows to clear")
         app.cells.firstMatch.swipeLeft()
 
-        // "Done" for a loop brief, "Got it" for an info one.
-        let clear = app.buttons["Done"].exists ? app.buttons["Done"] : app.buttons["Got it"]
+        let clear = app.buttons["Done"]
         XCTAssertTrue(clear.waitForExistence(timeout: 5), "trailing swipe revealed no clear action")
         clear.tap()
 
-        // Row count, not the row's own label: a brief's accessibility label is
-        // its whole card and blows past XCUITest's 128-character query limit.
+        // Row count, not the row's own label, so the check does not depend on
+        // which fixture row happened to be first.
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline, app.cells.count == before {
             _ = XCTWaiter.wait(for: [XCTestExpectation(description: "tick")], timeout: 0.25)
@@ -165,22 +164,22 @@ final class MenuRevealGestureUITests: XCTestCase {
     /// its window. Drags on the sheet must stay with the presented content;
     /// moving the app and menu underneath leaves two contradictory navigation
     /// states stacked on screen.
-    func testRevealIsDisabledWhileBriefSheetIsPresented() {
+    func testRevealIsDisabledWhileRowSheetIsPresented() {
         let row = firstRow()
         row.tap()
 
         let detail = app.staticTexts[detailMarker]
-        XCTAssertTrue(detail.waitForExistence(timeout: 5), "the brief sheet did not present")
+        XCTAssertTrue(detail.waitForExistence(timeout: 5), "the row sheet did not present")
 
         dragRight(fromRelativeX: 0.2)
 
-        XCTAssertTrue(detail.exists, "the brief sheet stopped being the active surface")
+        XCTAssertTrue(detail.exists, "the row sheet stopped being the active surface")
         XCTAssertFalse(
             app.staticTexts[menuBehindSheetMarker].waitForExistence(timeout: 1),
-            "dragging the brief sheet revealed the menu underneath it"
+            "dragging the row sheet revealed the menu underneath it"
         )
 
-        dismissBriefSheet()
+        dismissRowSheet()
         var revealed = false
         for _ in 1 ... 2 {
             dragRight(fromRelativeX: 0.2)
@@ -195,10 +194,10 @@ final class MenuRevealGestureUITests: XCTestCase {
     /// Closing is blocked by the same modal gate. The harness stages the
     /// otherwise-unreachable combination deliberately so the leftward path is
     /// covered independently of whether the opening path works.
-    func testHideIsDisabledWhileBriefSheetIsPresented() {
+    func testHideIsDisabledWhileRowSheetIsPresented() {
         firstRow().tap()
         let stageOpenMenu = app.buttons["stageOpenMenu"]
-        XCTAssertTrue(stageOpenMenu.waitForExistence(timeout: 5), "the brief sheet did not present")
+        XCTAssertTrue(stageOpenMenu.waitForExistence(timeout: 5), "the row sheet did not present")
         stageOpenMenu.tap()
 
         let openMarker = app.staticTexts[menuBehindSheetMarker]
@@ -207,9 +206,9 @@ final class MenuRevealGestureUITests: XCTestCase {
         dragLeft(fromRelativeX: 0.8)
 
         waitForSettlingGesture()
-        XCTAssertTrue(openMarker.exists, "dragging the brief sheet hid the menu underneath it")
+        XCTAssertTrue(openMarker.exists, "dragging the row sheet hid the menu underneath it")
 
-        dismissBriefSheet()
+        dismissRowSheet()
         XCTAssertTrue(
             waitForHittable(app.staticTexts[menuMarker], timeout: 4),
             "the staged menu was not visible after dismissing the sheet"
@@ -328,13 +327,13 @@ final class MenuRevealGestureUITests: XCTestCase {
         )
     }
 
-    private func dismissBriefSheet() {
-        let close = app.buttons["closeBriefSheet"]
-        XCTAssertTrue(close.waitForExistence(timeout: 5), "the brief sheet had no close control")
+    private func dismissRowSheet() {
+        let close = app.buttons["closeRowSheet"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "the row sheet had no close control")
         close.tap()
         XCTAssertTrue(
             waitForDisappearance(of: close, timeout: 5),
-            "the brief sheet did not dismiss"
+            "the row sheet did not dismiss"
         )
     }
 

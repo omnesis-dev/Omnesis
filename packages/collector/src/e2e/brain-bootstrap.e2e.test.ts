@@ -313,6 +313,126 @@ describe("historical discovery: admission lifecycle", () => {
   }, 300_000);
 });
 
+describe("historical discovery: the history horizon", () => {
+  let bench: BrainBench;
+  let notBefore = "";
+  const month = (at: number) => new Date(at).toISOString().slice(0, 7);
+  const ids = {
+    recent: "horizon-recent",
+    edge: "horizon-edge",
+    old: "horizon-old",
+    ancient: "horizon-ancient",
+    late: "horizon-late",
+  };
+  const dated: Record<string, number> = {};
+  const admitted = () =>
+    historicalAdmissions(bench)
+      .map((w) => w.subject_id)
+      .sort();
+  beforeAll(async () => {
+    bench = await BrainBench.start({
+      experimental: true,
+      // Admission limits apply only to this scenario's explicit history.
+      syncSources: false,
+      clock: "virtual",
+      // The default horizon (90 days) is the knob under test.
+      brain: {
+        ...OFF,
+        bootstrap: { enabled: true, maxRunsPerDay: 10, maxRuns: 50, backlogTarget: 10 },
+      },
+      behaviors: {
+        dynamic: sourceInterpretations({ maintainNode: preserveCurrentOwner, sources: [] }),
+      },
+    });
+    await bench.drainUntilQuiet();
+    const { now } = await bench.clock.now();
+    for (const [key, days] of [
+      ["recent", 20],
+      ["edge", 80],
+      ["old", 200],
+      ["ancient", 3 * 365],
+    ] as const) {
+      dated[key] = now - days * DAY;
+      seedHistory(bench, {
+        id: ids[key],
+        title: `Studio archive ${key}`,
+        content: `Archived studio planning notes (${key}).`,
+        at: dated[key]!,
+        sourceId: SRC,
+      });
+    }
+    await bench.obs.startBootstrap();
+    await waitFor(
+      "in-horizon historical admissions",
+      () => (historicalAdmissions(bench).length === 2 ? true : null),
+      120_000,
+    );
+    await bench.drainUntilQuiet();
+    // A later admission proves the engine kept passing over the old history
+    // on a new day, rather than the assertions racing the first pass.
+    await bench.clock.advance(DAY);
+    const { now: later } = await bench.clock.now();
+    seedHistory(bench, {
+      id: ids.late,
+      title: "Studio archive late",
+      content: "Archived studio planning notes (late).",
+      at: later - 10 * DAY,
+      sourceId: SRC,
+    });
+    await waitFor(
+      "a later in-horizon admission",
+      () => (admitted().includes(ids.late) ? true : null),
+      120_000,
+    );
+    await bench.drainUntilQuiet();
+  }, 600_000);
+  afterAll(async () => {
+    await bench?.destroy();
+  }, 60_000);
+
+  test("only history dated inside the horizon is admitted and read", () => {
+    expect(admitted()).toEqual([ids.edge, ids.late, ids.recent].sort());
+    for (const id of [ids.recent, ids.edge, ids.late]) expect(covered(bench, id)).toBe(true);
+    for (const id of [ids.old, ids.ancient]) expect(covered(bench, id)).toBe(false);
+  });
+
+  test("status settles with nothing owed and names the horizon", async () => {
+    const status = await bench.obs.bootstrapStatus();
+    const { now } = await bench.clock.now();
+    expect(status.state).toBe("running");
+    expect(status.admission?.pending).toBe(0);
+    expect(status.admission?.batched).toBe(0);
+    expect(status.horizon?.horizonMs).toBe(90 * DAY);
+    notBefore = status.horizon!.notBefore;
+    expect(Math.abs(Date.parse(notBefore) - (now - 90 * DAY))).toBeLessThan(DAY);
+  });
+
+  test("the timeline counts history beyond the horizon as out of scope, not pending", async () => {
+    const timeline = await bench.obs.bootstrapTimeline();
+    expect(timeline.mode).toBe("knowledge");
+    for (const key of ["old", "ancient"] as const) {
+      const row = timeline.months.find((m) => m.month === month(dated[key]!));
+      expect(row?.interpretation).toMatchObject({ pending: 0, outOfScope: 1 });
+      expect(row?.organization).toMatchObject({ pending: 0, outOfScope: 1 });
+    }
+    const recent = timeline.months.find((m) => m.month === month(dated.recent!));
+    expect(recent?.interpretation.outOfScope).toBe(0);
+  });
+
+  test("raising the horizon reaches further back without a restart", async () => {
+    await bench.patchConfig({ brain: { bootstrap: { horizon: "1y" } } });
+    await waitFor(
+      "admission inside the raised horizon",
+      () => (admitted().includes(ids.old) ? true : null),
+      120_000,
+    );
+    await bench.drainUntilQuiet();
+    expect(covered(bench, ids.old)).toBe(true);
+    expect(admitted()).not.toContain(ids.ancient);
+    expect((await bench.obs.bootstrapStatus()).horizon?.horizonMs).toBe(365 * DAY);
+  }, 300_000);
+});
+
 describe("historical discovery: provider outage", () => {
   let bench: BrainBench;
   const id = "history-outage";

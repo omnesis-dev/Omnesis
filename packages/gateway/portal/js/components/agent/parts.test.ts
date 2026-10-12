@@ -7,7 +7,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { ephemeralResultArrived, MessageBubble, renderPart } from "./parts.js";
+import { ephemeralResultArrived, MessageBubble, prettyToolName, renderPart } from "./parts.js";
 
 describe("ephemeralResultArrived", () => {
   it("is false until a result lands (spinner stays, rotation parked)", () => {
@@ -972,5 +972,18 @@ describe("renderPart — after-the-fact card affordances", () => {
     expect(host!.querySelector(".agent-ephemeral-time")?.textContent).toBe("10:47 AM");
     expect(host!.textContent).not.toContain("raw-invented");
     expect(host!.querySelector('button[aria-label="Show raw JSON"]')).not.toBeNull();
+  });
+});
+
+describe("prettyToolName", () => {
+  it("names the task tools in words", () => {
+    expect(prettyToolName("task_list")).toBe("Check tasks");
+    expect(prettyToolName("task_create")).toBe("Add a task");
+    expect(prettyToolName("task_update")).toBe("Update a task");
+    expect(prettyToolName("task_undo")).toBe("Undo a task change");
+  });
+
+  it("falls back to the raw name for a tool it does not know", () => {
+    expect(prettyToolName("cite_record")).toBe("cite_record");
   });
 });

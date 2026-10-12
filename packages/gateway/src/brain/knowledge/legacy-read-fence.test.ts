@@ -28,17 +28,13 @@ import {
   searchOpenLoopsLexical,
 } from "../storage/open-loops.js";
 import {
-  countShowableUnreadBriefs,
-  createBrief,
-  findActiveBriefsForLoops,
-  getBrief,
-  listBriefFeedPage,
-  listBriefs,
-  listBriefsForLoop,
-  listShowableBriefCandidates,
-  listShowableBriefs,
-  newestBriefForRun,
-} from "../storage/briefs.js";
+  createObservation,
+  findOpenObservationsForLoops,
+  getObservation,
+  listObservations,
+  listObservationsForLoop,
+  listOpenObservations,
+} from "../storage/observations.js";
 import {
   createDocAnnotation,
   getDocAnnotation,
@@ -55,7 +51,6 @@ import {
   listPersonAnnotationEvidence,
   listRecentLivePersonAnnotations,
 } from "../storage/person-annotations.js";
-import { listLiveBriefClaims } from "../storage/brief-claims.js";
 import {
   countLiveDependentsForAnnotation,
   listConsumedPriorsForDependent,
@@ -125,9 +120,11 @@ function saveOwner(kind: KnowledgeOwnerKind, id: string): void {
         ownerId: id,
         kind,
         title: owner.title,
+        // Observation prose is never rewritten by synthesis; its node can
+        // only gain provenance over the unchanged text.
         markdown:
-          kind === "brief"
-            ? `## Description\n${claim}\n\n## Body\n${claim.replace('id="detail"', 'id="body"')}`
+          kind === "observation"
+            ? `<claim id="detail" refs="source:${newer}">${owner.markdown}</claim>`
             : claim,
         expectedRevision: 0,
         inputVersions: { [`source:${newer}`]: "newer" },
@@ -159,43 +156,26 @@ function seedOwners(): string {
     );
   }
   appendOpenLoopLedger(db, "hidden-loop", { runId: "run", note: PRIVATE_TEXT }, NOW);
-  createBrief(
+  createObservation(
     db,
     {
-      id: "visible-brief",
-      title: "Workshop reminder",
-      description: "The workshop is scheduled.",
+      id: "visible-observation",
+      summary: "Workshop reminder",
+      why: "The workshop is scheduled.",
       createdByRun: "run",
-      kind: "info",
-      confidence: 0.7,
-      urgency: 0.5,
       citations: [original],
     },
     NOW - 100,
   );
-  createBrief(
+  createObservation(
     db,
     {
-      id: "hidden-brief",
-      title: "Workshop reminder",
-      description: "The workshop is scheduled.",
+      id: "hidden-observation",
+      summary: "Workshop reminder",
+      why: "The workshop is scheduled.",
       createdByRun: "run",
-      kind: "info",
-      confidence: 0.7,
-      urgency: 0.5,
       citations: [original],
       relatedLoopIds: ["visible-loop"],
-      claims: [
-        {
-          id: "legacy-claim",
-          claimText: "The workshop is scheduled.",
-          evidenceDocId: original,
-          evidenceQuote: "The workshop is scheduled.",
-          claimBasis: "quoted",
-          confidence: 0.7,
-          verificationState: null,
-        },
-      ],
     },
     NOW,
   );
@@ -228,14 +208,14 @@ function seedOwners(): string {
   );
   for (const [kind, id] of [
     ["loop", "hidden-loop"],
-    ["brief", "hidden-brief"],
+    ["observation", "hidden-observation"],
     ["doc_annotation", "hidden-doc"],
     ["person_annotation", "hidden-person"],
   ] as const)
     saveOwner(kind, id);
   // No legacy owner attachment points at the new source that supplied its prose.
   expect(getOpenLoop(db, "hidden-loop")!.docs).toEqual([original]);
-  expect(getBrief(db, "hidden-brief")!.citations).toEqual([original]);
+  expect(getObservation(db, "hidden-observation")!.citations).toEqual([original]);
   expect(getDocAnnotation(db, "hidden-doc")!.evidenceDocId).toBe(original);
   expect(getPersonAnnotation(db, "hidden-person")!.evidenceDocId).toBe(original);
   const loop = getOpenLoop(db, "hidden-loop")!;
@@ -309,18 +289,14 @@ function assertHidden(mirror: string): void {
   expect(
     listRecentLivePersonAnnotations(db, { sinceMs: 0, limit: 1 }).map((row) => row.id),
   ).toEqual(["visible-person"]);
-  expect(getBrief(db, "hidden-brief")).toBeNull();
-  expect(listLiveBriefClaims(db, "hidden-brief")).toEqual([]);
-  expect(listBriefs(db, { limit: 1 }).map((row) => row.id)).toEqual(["visible-brief"]);
-  expect(newestBriefForRun(db, "run")!.id).toBe("visible-brief");
-  expect(listBriefsForLoop(db, "visible-loop")).toEqual([]);
-  expect(findActiveBriefsForLoops(db, ["visible-loop"], NOW)).toEqual([]);
-  expect(listShowableBriefs(db, NOW).map((row) => row.id)).toEqual(["visible-brief"]);
-  expect(listShowableBriefCandidates(db, NOW).map((row) => row.id)).toEqual(["visible-brief"]);
-  expect(listBriefFeedPage(db, NOW, 0, { limit: 1 }).map((row) => row.brief.id)).toEqual([
-    "visible-brief",
+  expect(getObservation(db, "hidden-observation")).toBeNull();
+  expect(listObservations(db, { limit: 1 }).map((row) => row.id)).toEqual(["visible-observation"]);
+  expect(listObservations(db, { createdByRun: "run" }).map((row) => row.id)).toEqual([
+    "visible-observation",
   ]);
-  expect(countShowableUnreadBriefs(db, NOW)).toBe(1);
+  expect(listObservationsForLoop(db, "visible-loop")).toEqual([]);
+  expect(findOpenObservationsForLoops(db, ["visible-loop"])).toEqual([]);
+  expect(listOpenObservations(db).map((row) => row.id)).toEqual(["visible-observation"]);
   expect(listLiveDependentsForAnnotation(db, "doc", "visible-doc")).toEqual([]);
   expect(countLiveDependentsForAnnotation(db, "doc", "visible-doc")).toBe(0);
   expect(listConsumedPriorsForDependent(db, "loop", "visible-loop")).toEqual([
@@ -345,7 +321,7 @@ function assertHidden(mirror: string): void {
     buildSynthesisDeltaPrime(db, { now: NOW, cfg }),
   ]) {
     expect(prime).not.toContain("hidden-loop");
-    expect(prime).not.toContain("hidden-brief");
+    expect(prime).not.toContain("hidden-observation");
     expect(prime).not.toContain("violet");
   }
 }
@@ -428,31 +404,28 @@ it("projects stale ancestors through support but preserves context navigation an
   expect(knowledgeNodeFence(db, "supported").stale).toBe(false);
 });
 
-it("fences attached briefs and their knowledge descendants while a loop privacy purge is pending", () => {
+it("fences attached observations and their knowledge nodes while a loop privacy purge is pending", () => {
   seedOwners();
   for (const id of ["attached-owned", "attached-legacy"]) {
-    createBrief(
+    createObservation(
       db,
       {
         id,
-        title: "Workshop follow-up",
-        description: PRIVATE_TEXT,
+        summary: "Workshop follow-up",
+        why: PRIVATE_TEXT,
         createdByRun: "run",
-        kind: "info",
-        confidence: 0.7,
-        urgency: 0.5,
         citations: [original],
         relatedLoopIds: ["hidden-loop", "visible-loop"],
       },
       NOW,
     );
-    expect(getBrief(db, id)).not.toBeNull();
+    expect(getObservation(db, id)).not.toBeNull();
   }
   saveKnowledgeNode(
     db,
     {
       id: "attached-owned",
-      kind: "brief",
+      kind: "observation",
       ownerId: "attached-owned",
       title: "Workshop follow-up",
       markdown: `<claim id="detail" refs="source:${original}">The workshop is scheduled.</claim>`,
@@ -461,30 +434,17 @@ it("fences attached briefs and their knowledge descendants while a loop privacy 
     },
     NOW,
   );
-  saveKnowledgeNode(
-    db,
-    {
-      id: "linked-page",
-      kind: "wiki",
-      title: "Workshop",
-      markdown: '<claim id="detail" refs="brief:attached-owned">The workshop is scheduled.</claim>',
-      expectedRevision: 0,
-      inputVersions: { "brief:attached-owned": 1 },
-    },
-    NOW,
-  );
   expect(getKnowledgeNode(db, "attached-owned")).not.toBeNull();
   db.prepare(
     `INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES(?,'',1,?)
     ON CONFLICT(document_id) DO UPDATE SET deleted=1`,
   ).run(newer, NOW + 1);
-  expect(getBrief(db, "attached-owned")).toBeNull();
-  expect(getBrief(db, "attached-legacy")).toBeNull();
-  expect(listBriefsForLoop(db, "visible-loop")).toEqual([]);
-  expect(findActiveBriefsForLoops(db, ["visible-loop"], NOW)).toEqual([]);
-  expect(countShowableUnreadBriefs(db, NOW)).toBe(1);
+  expect(getObservation(db, "attached-owned")).toBeNull();
+  expect(getObservation(db, "attached-legacy")).toBeNull();
+  expect(listObservationsForLoop(db, "visible-loop")).toEqual([]);
+  expect(findOpenObservationsForLoops(db, ["visible-loop"])).toEqual([]);
+  expect(listOpenObservations(db).map((row) => row.id)).toEqual(["visible-observation"]);
   expect(getKnowledgeNode(db, "attached-owned")).toBeNull();
-  expect(getKnowledgeNode(db, "linked-page")).toBeNull();
 });
 
 it("honors a source-wide removal tombstone before document deletion starts", () => {

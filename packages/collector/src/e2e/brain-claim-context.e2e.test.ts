@@ -151,7 +151,6 @@ it("rejects an unchanged factual claim moved to an unsupported page scope throug
     syncSources: false,
     entailment: ({ context }) =>
       context?.includes("Unrelated orbital mission") ? "neutral" : "entailment",
-    judge: "hold-all",
     decision: {
       policy: (request) =>
         Object.fromEntries(

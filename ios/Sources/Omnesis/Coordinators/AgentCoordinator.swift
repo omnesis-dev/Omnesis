@@ -104,10 +104,17 @@ public final class AgentCoordinator {
     /// and may continue running after this request fails.
     private(set) var cancelError: Error?
 
-    /// Origin anchor of the active conversation when it is an anchored
-    /// thread (brief talk-back or watch firing). Drives the context
-    /// card pinned above the transcript; nil for plain conversations.
-    private(set) var briefOrigin: ConversationOrigin?
+    /// Origin anchor of the active conversation when it did not start as a
+    /// blank chat (a watch firing, the Morning brief). Drives the context
+    /// card pinned above a watch thread and the Morning brief's undeletable
+    /// state; nil for plain conversations.
+    private(set) var conversationOrigin: ConversationOrigin?
+
+    /// Index, among the conversation's visible messages, of the first one
+    /// loaded. Older pages prepend before it. Lets the Morning brief thread
+    /// place the latest brief's `messageIndex` within what is loaded.
+    @ObservationIgnored
+    private var loadedMessageStartIndex = 0
 
     /// True while the transcript for a just-switched-to conversation is
     /// still loading over the network. Set the instant a resume begins —
@@ -331,7 +338,7 @@ public final class AgentCoordinator {
         lastTurnError = nil
         cancelError = nil
         pendingSessionMint = nil
-        briefOrigin = nil
+        conversationOrigin = nil
         transcriptLoading = false
         transcriptVersion = 0
         transcriptPaging.reset()
@@ -569,7 +576,8 @@ public final class AgentCoordinator {
         trailAnnotations = .empty
         recordCitations = []
         planItems = []
-        briefOrigin = nil
+        conversationOrigin = nil
+        loadedMessageStartIndex = 0
         busy = false
         terminalFailure = nil
         deepResearch = false
@@ -666,16 +674,21 @@ public final class AgentCoordinator {
         model = session.model
         backend = session.backend
         title = session.title
-        briefOrigin = session.origin
-        // A brief thread's leading messages are the folded transcript of
-        // the steward run that created the brief — context for the
-        // agent, internals for the user. Hide that prefix everywhere
-        // (turns, citations, annotations) and let the pinned brief card
-        // carry the context instead.
+        conversationOrigin = session.origin
+        // A watch thread's leading messages are the folded transcript of
+        // the run that opened it — context for the agent, internals for the
+        // user. Hide that prefix everywhere (turns, citations, annotations)
+        // and let the pinned watch card carry the context instead.
         let visible = session.messagesAreVisible
             ? session.messages
             : Self.visibleMessages(session.messages, origin: session.origin)
-        turns = AgentTurnBuilder.turns(from: visible, busy: session.busy)
+        loadedMessageStartIndex = max(0, session.messageCount - visible.count)
+        let sourced = Self.timelineMessages(visible, startIndex: loadedMessageStartIndex, origin: session.origin)
+        turns = AgentTurnBuilder.turns(
+            from: visible,
+            busy: session.busy,
+            breakBefore: Self.briefTurnBreaks(origin: session.origin, startIndex: loadedMessageStartIndex)
+        )
         // The record's own account of how the last turn died, which carries the
         // provider's disposition. `AgentTurnBuilder.turns(from:)` already lifted
         // a failure out of the history marker for a conversation stored before
@@ -697,7 +710,7 @@ public final class AgentCoordinator {
                 )
             }
         }
-        var cits = AgentTurnBuilder.citations(from: visible)
+        var cits = AgentTurnBuilder.citations(from: sourced)
         // Seed the Citations set from any persisted Deep Research
         // `report_artifact` part. A deep-research run cites via the
         // merged artifact set, not via `annotate` tool pairs, so
@@ -705,7 +718,7 @@ public final class AgentCoordinator {
         // resumed citation drawer loses those sources. Each seed has empty
         // entries because quote/note context is not persisted.
         var seenDocs = Set(cits.map(\.documentId))
-        for ref in AgentTurnBuilder.reportArtifactCitations(from: visible)
+        for ref in AgentTurnBuilder.reportArtifactCitations(from: sourced)
             where !seenDocs.contains(ref.documentId) {
             seenDocs.insert(ref.documentId)
             cits.append(AgentCitation(documentId: ref.documentId, ref: ref, entries: []))
@@ -717,8 +730,8 @@ public final class AgentCoordinator {
         // resume the same way it does live. Mirror of the citations rebuild
         // above. The raw `trace_connections` walk output is deliberately not
         // rebuilt — it never feeds the Timeline.
-        trailAnnotations = AgentTurnBuilder.trailAnnotations(from: visible)
-        recordCitations = AgentTurnBuilder.recordCitations(from: visible)
+        trailAnnotations = AgentTurnBuilder.trailAnnotations(from: sourced)
+        recordCitations = AgentTurnBuilder.recordCitations(from: sourced)
         // Reset persisted-history state first. Active-turn state not represented
         // by ChatMessage (plan, usage, tool children, research lifecycle) is
         // restored by replayEvents below.
@@ -769,21 +782,27 @@ public final class AgentCoordinator {
     /// supply: there are no replay events to fold, nothing is busy, and no
     /// turn is in flight.
     private func applyStoredTranscript(_ page: ConversationMessagePage) {
+        conversationOrigin = page.origin ?? conversationOrigin
         let visible = page.messagesAreVisible
             ? page.messages
-            : Self.visibleMessages(page.messages, origin: briefOrigin)
-        turns = AgentTurnBuilder.turns(from: visible)
-        var cits = AgentTurnBuilder.citations(from: visible)
+            : Self.visibleMessages(page.messages, origin: conversationOrigin)
+        loadedMessageStartIndex = max(0, page.messageCount - visible.count)
+        let sourced = Self.timelineMessages(visible, startIndex: loadedMessageStartIndex, origin: conversationOrigin)
+        turns = AgentTurnBuilder.turns(
+            from: visible,
+            breakBefore: Self.briefTurnBreaks(origin: conversationOrigin, startIndex: loadedMessageStartIndex)
+        )
+        var cits = AgentTurnBuilder.citations(from: sourced)
         var seenDocs = Set(cits.map(\.documentId))
-        for ref in AgentTurnBuilder.reportArtifactCitations(from: visible)
+        for ref in AgentTurnBuilder.reportArtifactCitations(from: sourced)
             where !seenDocs.contains(ref.documentId) {
             seenDocs.insert(ref.documentId)
             cits.append(AgentCitation(documentId: ref.documentId, ref: ref, entries: []))
         }
         citations = cits
         citationsByDocId = Dictionary(uniqueKeysWithValues: cits.enumerated().map { ($1.documentId, $0) })
-        trailAnnotations = AgentTurnBuilder.trailAnnotations(from: visible)
-        recordCitations = AgentTurnBuilder.recordCitations(from: visible)
+        trailAnnotations = AgentTurnBuilder.trailAnnotations(from: sourced)
+        recordCitations = AgentTurnBuilder.recordCitations(from: sourced)
         planClearTask?.cancel()
         planClearTask = nil
         planItems = []
@@ -811,14 +830,21 @@ public final class AgentCoordinator {
             guard transcriptPaging.owns(request) else { return false }
             let visible = page.messagesAreVisible
                 ? page.messages
-                : Self.visibleMessages(page.messages, origin: briefOrigin)
+                : Self.visibleMessages(page.messages, origin: conversationOrigin)
             let prefix = "older-\(request.cursor?.hashValue ?? 0)-"
-            let olderTurns = AgentTurnBuilder.turns(from: visible, idPrefix: prefix)
+            loadedMessageStartIndex = max(0, loadedMessageStartIndex - visible.count)
+            let olderTurns = AgentTurnBuilder.turns(
+                from: visible,
+                idPrefix: prefix,
+                breakBefore: Self.briefTurnBreaks(origin: conversationOrigin, startIndex: loadedMessageStartIndex)
+            )
             turns.insert(
                 contentsOf: olderTurns,
                 at: 0
             )
-            mergeOlderCitations(from: visible)
+            mergeOlderCitations(
+                from: Self.timelineMessages(visible, startIndex: loadedMessageStartIndex, origin: conversationOrigin)
+            )
             transcriptVersion &+= 1
             transcriptPaging.finishLoadMore(
                 request,
@@ -884,9 +910,8 @@ public final class AgentCoordinator {
         recordCitations = records
     }
 
-    /// The messages a user should see for a conversation. An anchored
-    /// thread (brief talk-back or watch firing) opens with the
-    /// creating run's folded transcript — agent context, not user
+    /// The messages a user should see for a conversation. A watch thread
+    /// opens with the creating run's folded transcript — agent context, not user
     /// content — so when the origin declares a seed prefix AND carries
     /// the snapshot that replaces it visually (the pinned context card),
     /// that prefix is dropped. Without the snapshot (threads created
@@ -910,8 +935,45 @@ public final class AgentCoordinator {
     /// Whether this build renders a pinned context card for the origin —
     /// the precondition for hiding the seeded transcript prefix.
     nonisolated static func hasContextCard(_ origin: ConversationOrigin) -> Bool {
-        (origin.kind == "brief" && origin.brief != nil)
-            || (origin.kind == "watch_firing" && origin.watch != nil)
+        origin.kind == "watch_firing" && origin.watch != nil
+    }
+
+    /// Where the Morning brief thread's turns must break, as indices into a page whose first message has
+    /// visible index `startIndex`, each with the brief that starts there. A brief is an assistant message
+    /// with no user message before it, so without a break it would fold into the previous day's last answer.
+    nonisolated static func briefTurnBreaks(origin: ConversationOrigin?, startIndex: Int) -> [Int: DailyBriefMessageRef] {
+        guard let origin, origin.isDailyBrief else { return [:] }
+        return Dictionary(origin.briefs.map { ($0.messageIndex - startIndex, $0) }.filter { $0.0 >= 0 }) { _, last in last }
+    }
+
+    /// The messages the citation timeline is built from. The Morning brief
+    /// thread is one conversation but its working state is one day, so its
+    /// timeline starts at the latest brief: earlier days stay in the
+    /// transcript but their sources do not crowd today's. Every other
+    /// conversation's timeline covers everything loaded.
+    ///
+    /// `startIndex` is the visible-message index of `messages.first`, which
+    /// is how a loaded page is placed against the brief's `messageIndex`.
+    nonisolated static func timelineMessages(
+        _ messages: [ChatMessage],
+        startIndex: Int,
+        origin: ConversationOrigin?
+    )
+        -> [ChatMessage] {
+        guard let latest = origin?.latestDailyBrief else { return messages }
+        let cut = latest.messageIndex - startIndex
+        if cut <= 0 { return messages }
+        if cut >= messages.count { return [] }
+        return Array(messages[cut...])
+    }
+
+    /// Whether the conversation on screen may be deleted. The Morning brief
+    /// conversation may not; either the open transcript's origin or its list
+    /// summary can say so, whichever arrived first.
+    var activeConversationDeletable: Bool {
+        guard conversationOrigin?.isDailyBrief != true else { return false }
+        guard let sessionId else { return true }
+        return conversations.first { $0.sessionId == sessionId }?.isDeletable ?? true
     }
 
     /// Whether the surface is already a blank new conversation — nothing said on it, nothing it
@@ -923,7 +985,7 @@ public final class AgentCoordinator {
     var isBlankNewConversation: Bool {
         sessionId == nil
             && turns.isEmpty
-            && briefOrigin == nil
+            && conversationOrigin == nil
             && !transcriptLoading
             && fatalError == nil
             && terminalFailure == nil
@@ -3111,7 +3173,7 @@ let agentEphemeralTools: Set<String> = [
     "fetch_loop",
     "list_loops",
     "entity_context",
-    // The steward toolset, reachable from brief talk-back threads.
+    // The steward toolset.
     // These are quick background actions the agent narrates in prose —
     // their cards flash by live (AgentEphemeralActionCard) and are never
     // rebuilt into resumed history.
@@ -3121,11 +3183,10 @@ let agentEphemeralTools: Set<String> = [
     "open_loop_update",
     "open_loop_delete",
     "open_loop_ledger_append",
-    "brief_list",
-    "brief_fetch",
-    "brief_create",
-    "brief_update",
-    "brief_delete",
+    "observation_list",
+    "observation_note",
+    "observation_withdraw",
+    "observation_suppress",
     "temporal_query",
     "temporal_annotation_add",
     "temporal_annotation_update",
@@ -3213,8 +3274,16 @@ enum AgentTurnBuilder {
     /// per-turn shape the UI renders. Each user-text message starts a
     /// new turn; subsequent assistant + user(tool_result) messages are
     /// folded into the same assistant turn until the next user-text
-    /// arrives.
-    static func turns(from messages: [ChatMessage], idPrefix: String = "", busy: Bool = false) -> [AgentTurn] {
+    /// arrives — or until an index in `breakBefore`, where an assistant
+    /// message starts a turn of its own even with no user message before
+    /// it (each morning brief, whose turn takes the brief's `turnId`).
+    static func turns(
+        from messages: [ChatMessage],
+        idPrefix: String = "",
+        busy: Bool = false,
+        breakBefore: [Int: DailyBriefMessageRef] = [:]
+    )
+        -> [AgentTurn] {
         var out: [AgentTurn] = []
         var i = 0
         var n = 0
@@ -3243,12 +3312,15 @@ enum AgentTurnBuilder {
                 i += 1
             case .assistant:
                 var assistant = AgentAssistantTurn(
-                    id: "\(idPrefix)a-\(n)", parts: [], stopReason: nil, failure: nil, citationCount: 0
+                    id: breakBefore[i]?.turnId ?? "\(idPrefix)a-\(n)", parts: [], stopReason: nil, failure: nil, citationCount: 0
                 )
                 n += 1
                 var toolIndexById: [String: Int] = [:]
+                let turnStart = i
                 fold: while i < messages.count {
                     switch messages[i] {
+                    case .assistant where i != turnStart && breakBefore[i] != nil:
+                        break fold
                     case .unknown:
                         // The fold belongs to the preceding assistant
                         // turn; a whole new role ends it. Hand control
@@ -3681,7 +3753,7 @@ enum AgentTurnBuilder {
             return url.count > 80 ? String(url.prefix(77)) + "…" : url
         default:
             if agentEphemeralTools.contains(tool) {
-                // Loop-agent actions (briefs / loops / temporal notes / notes):
+                // Steward actions (brief items / loops / temporal notes / notes):
                 // surface the most human-readable arg instead of raw JSON —
                 // these render in the ephemeral card's header.
                 if let title = dict["title"] as? String { return String(title.prefix(80)) }
@@ -3834,8 +3906,7 @@ extension AgentCoordinator {
     /// Test/preview hook — stamp in a transcript without touching the
     /// network.
     func installPreviewState(
-        // Nil for the landing: a session is minted lazily on the first send, so a conversation
-        // nobody has spoken in yet does not have one.
+        // Nil for the landing: a session is minted lazily on the first send.
         sessionId: String?,
         model: String,
         backend: String,
@@ -3850,7 +3921,8 @@ extension AgentCoordinator {
         conversationsNextCursor: String? = nil,
         transcriptNextCursor: String? = nil,
         conversationsError: Error? = nil,
-        conversationActionError: Error? = nil
+        conversationActionError: Error? = nil,
+        origin: ConversationOrigin? = nil
     ) {
         sendOperationGeneration &+= 1
         turnGeneration &+= 1
@@ -3889,6 +3961,7 @@ extension AgentCoordinator {
             )
         }
         self.planItems = planItems
+        self.conversationOrigin = origin
     }
 }
 #endif

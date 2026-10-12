@@ -388,10 +388,22 @@ describe("partitioned local transcript sources across real collectors", () => {
       expect(docs.some((row) => row.content.includes("member transcript"))).toBe(true);
     }
 
+    // A sync already in flight may have read the files before they go, and a
+    // trigger that lands while one runs is skipped: remove them from idle.
+    await vi.waitFor(
+      () =>
+        expect(
+          member.engine
+            .getStatuses()
+            .filter((s) => (SOURCE_IDS as readonly string[]).includes(s.sourceId))
+            .map((s) => s.state),
+        ).not.toContain("syncing"),
+      { timeout: 30_000, interval: 50 },
+    );
     unlinkSync(memberClaudeFile);
     unlinkSync(memberCodexFile);
     unlinkSync(memberPiFile);
-    for (const id of SOURCE_IDS) member.engine.triggerSync(id);
+    for (const id of SOURCE_IDS) expect(member.engine.triggerSync(id).triggered).toEqual([id]);
     await vi.waitFor(
       () => {
         const db = new Database(harness.getDbPath(), { readonly: true });

@@ -28,7 +28,7 @@ const frameSchema = z
 const evidenceSchema = z.object({ evidenceParts: z.array(z.string()).min(1).max(128) }).strict();
 const assessment = z.object({
   verdict: z.enum(["supported", "unsupported", "contradicted"]),
-  evidenceSegments: z.array(z.string().min(1).max(32)).max(16),
+  evidenceSegments: z.array(z.string().min(1).max(32)).max(MAX_SEGMENTS),
   reason: z.string().trim().min(1).max(4096),
 });
 const placement = assessment.extend({
@@ -115,7 +115,7 @@ export function prepareAnswerWitnessRequest(input: {
     "Authorized evidence is labeled with engine-assigned segment IDs. Return evidenceSegments IDs, not copied quotes or offsets. Each ID denotes its exact text, interpreted with ALL surrounding source material and authority constraints. The segment boundary never removes qualifications. Selected_quote permits only selectedQuotes IDs; surrounding text, title and dates constrain interpretation but supply no independent witnesses. Qualified verified statements are indivisible. Do not infer facts from limitation, framing labels, proposed context or other unnumbered material.",
     "User statements establish only what the user stated; action receipts establish execution only; tracked records establish their stated system-state scope, not independent real-world truth. Preserve all packet limitations. Scope caveats need no separate administrative-prose witness. Nonfactual conversation may use the observed user statement as its conversational trigger, not as proof of unstated factual premises.",
     "Supported requires nonempty evidenceSegments establishing the entire assessment. Unsupported or contradicted may have no witnesses. Valid IDs alone do not establish relevance: judge factual support before selecting them. Do not retain a positive verdict merely because an ID exists.",
-    'Return only JSON: {"witnessSet":"the supplied witnessSet","contentInContext":{"verdict":"supported|unsupported|contradicted","evidenceSegments":["s0"],"reason":"concise reason"},"placementSupport":{"verdict":"supported|unsupported|contradicted|not_applicable","evidenceSegments":["s1"],"reason":"concise reason"}}. At most16 IDs and4096 reason characters per assessment.',
+    'Return only JSON: {"witnessSet":"the supplied witnessSet","contentInContext":{"verdict":"supported|unsupported|contradicted","evidenceSegments":["s0"],"reason":"concise reason"},"placementSupport":{"verdict":"supported|unsupported|contradicted|not_applicable","evidenceSegments":["s1"],"reason":"concise reason"}}. Each ID at most once; at most 4096 reason characters per assessment.',
     JSON.stringify(packet),
   ].join("\n");
   return { prompt, witnessSet, segments };

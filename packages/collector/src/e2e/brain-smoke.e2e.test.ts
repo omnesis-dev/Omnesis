@@ -62,18 +62,20 @@ describe("Brain Bench smoke", () => {
                     id: ref("open_loop_create", "loop.id"),
                     note: "Deposit of 250 requested to confirm the booking.",
                   }),
-                  call("brief_list", {}),
-                  call("brief_create", {
-                    kind: "loop",
-                    title: "Deposit due for the autumn offsite",
-                    description: "The booking is held until the deposit is sent.",
+                  call("observation_list", {}),
+                  call("observation_note", {
+                    summary: "The autumn offsite booking is held until the deposit of 250 is sent.",
                     citations: [ctx.subject],
                     relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                    confidence: 0.9,
-                    urgency: 0.6,
+                    claims: [
+                      {
+                        docId: ctx.subject,
+                        quote: "Please send the deposit of 250 to confirm the booking.",
+                      },
+                    ],
                   }),
                 ],
-                finalText: "Tracked the deposit obligation and raised a card.",
+                finalText: "Tracked the deposit obligation and noted it for the morning brief.",
               }),
             },
           ],
@@ -88,8 +90,8 @@ describe("Brain Bench smoke", () => {
 
   test("the engine is active and intake creates no retired datum runs", async () => {
     const status = await bench.obs.status();
-    expect(status.briefs.modelAssigned).toBe(true);
-    expect(status.briefs.active).toBe(true);
+    expect(status.brain.modelAssigned).toBe(true);
+    expect(status.brain.active).toBe(true);
 
     // Historical arrivals use the same source-maintenance queue as later edits.
     const docs = bench.sql.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM documents").get();
@@ -135,18 +137,18 @@ describe("Brain Bench smoke", () => {
     expect(detail.ledger[0]!.note).toContain("Deposit of 250");
     expect(detail.ledger[0]!.runId).toBe(loop.createdByRun);
 
-    const briefs = await bench.obs.briefs();
-    expect(briefs.items).toHaveLength(1);
-    expect(briefs.items[0]!.relatedLoopIds).toEqual([loop.id]);
+    const observations = await bench.obs.observations();
+    expect(observations.items).toHaveLength(1);
+    expect(observations.items[0]!.relatedLoopIds).toEqual([loop.id]);
     expect(loop.docs).toHaveLength(1);
     // The detail route resolves citations to document refs.
-    const detailBrief = await bench.obs.brief(briefs.items[0]!.id);
-    expect(detailBrief.brief.citations.map((c) => c.id)).toEqual(loop.docs);
+    const detail0 = await bench.obs.observation(observations.items[0]!.id);
+    expect(detail0.observation.citations.map((c) => c.id)).toEqual(loop.docs);
 
     // And the operator-visible summary agrees with the rows.
     const pulse = await bench.obs.pulse();
     expect(pulse.counts.openLoops).toBe(1);
-    expect(pulse.counts.totalBriefs).toBe(1);
+    expect(pulse.counts.totalObservations).toBe(1);
     expect(pulse.counts.failedRuns24h).toBe(0);
   }, 60_000);
 

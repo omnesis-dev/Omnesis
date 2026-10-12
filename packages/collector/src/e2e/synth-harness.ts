@@ -281,7 +281,7 @@ export interface SyntheticHarnessOptions {
      * Sets `inference.allowRemoteInference` in the spawned gateway's config.
      * Required when a declared backend resolves to a non-loopback address
      * (the inference URL policy refuses remote hosts by default) — e.g. the
-     * briefs scorecard's priced cloud lane.
+     * scorecard's priced cloud lane.
      */
     allowRemoteInference?: boolean;
     /**

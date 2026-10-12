@@ -20,6 +20,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -64,6 +65,7 @@ function seedPre52(): void {
     VALUES ('2026-07-01', 4, 1000, 200, 600, 50),
            ('2026-07-02', 1, 90, 10, 0, 0)
   `);
+  createLegacyBriefTables(db);
   db.pragma("user_version = 51");
 }
 

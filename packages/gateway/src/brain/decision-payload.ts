@@ -100,9 +100,9 @@ export function captureDecisionPayloadSubjects(
         edges.push(
           `UNION SELECT d.target_kind,d.target_id FROM ${name} d JOIN ancestors a ON a.kind='node' AND d.node_id=a.id`,
         );
-    if (table(db, "brief_related_loops") && table(db, "knowledge_nodes"))
+    if (table(db, "observation_related_loops") && table(db, "knowledge_nodes"))
       edges.push(
-        "UNION SELECT 'node',b.loop_id FROM brief_related_loops b JOIN ancestors a ON a.kind='node' AND b.brief_id=a.id WHERE EXISTS(SELECT 1 FROM knowledge_nodes n WHERE n.id=b.loop_id) OR EXISTS(SELECT 1 FROM knowledge_node_tombstones t WHERE t.id=b.loop_id)",
+        "UNION SELECT 'node',o.loop_id FROM observation_related_loops o JOIN ancestors a ON a.kind='node' AND o.observation_id=a.id WHERE EXISTS(SELECT 1 FROM knowledge_nodes n WHERE n.id=o.loop_id) OR EXISTS(SELECT 1 FROM knowledge_node_tombstones t WHERE t.id=o.loop_id)",
       );
     if (table(db, "knowledge_retired_loop_sources"))
       edges.push(
@@ -111,7 +111,7 @@ export function captureDecisionPayloadSubjects(
     if (table(db, "knowledge_nodes")) {
       for (const [name, ownerColumn, sourceColumn] of [
         ["open_loop_docs", "loop_id", "doc_id"],
-        ["brief_citations", "brief_id", "doc_id"],
+        ["observation_citations", "observation_id", "doc_id"],
         ["doc_annotations", "id", "doc_id"],
         ["doc_annotations", "id", "evidence_doc_id"],
         ["person_annotations", "id", "evidence_doc_id"],

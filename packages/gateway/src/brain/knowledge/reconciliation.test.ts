@@ -12,7 +12,7 @@ import {
 it.each<[KnowledgeCollection, string]>([
   ["wiki", 'knowledge_list({kind:"wiki"})'],
   ["loop", "open_loop_search"],
-  ["brief", "brief_list"],
+  ["observation", "observation_list"],
   ["doc_annotation", "annotation_search({docId:targetDocumentId})"],
   ["person_annotation", "annotation_search({personId:targetPersonId})"],
   ["temporal", "temporal_query"],

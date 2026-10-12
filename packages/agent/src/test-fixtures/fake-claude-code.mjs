@@ -22,6 +22,12 @@
  *   OMNESIS_FAKE_CLAUDE_LIST_MODELS "fail" answers list_models with an error
  *   OMNESIS_FAKE_CLAUDE_TOOL       tool the `tool` scenario calls (default: the first)
  *   OMNESIS_FAKE_CLAUDE_TOOL_ARGS  JSON arguments for the `tool` scenario
+ *   OMNESIS_FAKE_CLAUDE_TOOL_PROGRESS "own" reports progress on the `tool`
+ *                                  scenario's call, "heartbeat" sends the
+ *                                  CLI's 30-second heartbeat for it (its id
+ *                                  suffixed `-heartbeat-N`), "foreign" and
+ *                                  "foreign-heartbeat" do the same for a
+ *                                  call Omnesis did not make
  *   OMNESIS_FAKE_CLAUDE_RECORD     file that receives one JSON line per run:
  *                                  argv, the environment keys, and the frames
  *                                  Omnesis sent; `<file>.frames` gets each
@@ -325,6 +331,21 @@ async function runTurn() {
         input: JSON.parse(env.OMNESIS_FAKE_CLAUDE_TOOL_ARGS ?? "{}"),
       },
     ]);
+    if (env.OMNESIS_FAKE_CLAUDE_TOOL_PROGRESS) {
+      const mode = env.OMNESIS_FAKE_CLAUDE_TOOL_PROGRESS;
+      const own = mode === "own" || mode === "heartbeat";
+      const heartbeat = mode.endsWith("heartbeat");
+      const callId = own ? toolUseId : "toolu_elsewhere";
+      send({
+        type: "tool_progress",
+        tool_use_id: heartbeat ? `${callId}-heartbeat-0` : callId,
+        tool_name: own ? `mcp__omnesis__${first.name}` : "Bash",
+        parent_tool_use_id: null,
+        elapsed_time_seconds: heartbeat ? 30 : 5,
+        ...(heartbeat && { heartbeat: true }),
+        session_id: sessionId,
+      });
+    }
     const called = await mcp("tools/call", {
       name: first.name,
       arguments: JSON.parse(env.OMNESIS_FAKE_CLAUDE_TOOL_ARGS ?? "{}"),

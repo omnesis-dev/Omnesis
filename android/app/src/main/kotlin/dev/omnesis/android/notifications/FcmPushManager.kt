@@ -300,7 +300,7 @@ class FcmPushManager @Inject constructor(
                 "Omnesis notifications",
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                description = "Briefs, watches, and account updates from your gateway"
+                description = "Watches and account updates from your gateway"
             },
         )
         // Agent answers get their own channel. Posting them on the privacy one

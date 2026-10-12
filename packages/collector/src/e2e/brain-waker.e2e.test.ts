@@ -89,7 +89,7 @@ describe("Brain intake — evidence versions", () => {
   test("boot sync creates no retired datum runs or unsolicited owner state", async () => {
     expect((await bench.obs.runs({ kind: "data" })).items).toEqual([]);
     expect((await bench.obs.loops()).items).toEqual([]);
-    expect((await bench.obs.briefs()).items).toEqual([]);
+    expect((await bench.obs.observations()).items).toEqual([]);
     expect(
       bench.sql.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM documents").get()!.n,
     ).toBeGreaterThanOrEqual(10);

@@ -4,19 +4,7 @@
 package dev.omnesis.android.screenshots
 
 import androidx.compose.foundation.background
-import java.time.Instant
 import dev.omnesis.android.designsystem.components.DeleteDocumentDialog
-import dev.omnesis.android.ui.common.CursorPagingState
-import dev.omnesis.android.ui.briefs.BriefsListContent
-import dev.omnesis.android.ui.briefs.BriefsFeedState
-import dev.omnesis.android.ui.briefs.BriefDetailSheet
-import dev.omnesis.android.ui.briefs.BriefDismissSheet
-import dev.omnesis.android.transport.dto.BriefRecordDto
-import dev.omnesis.android.transport.dto.BriefCitationDto
-import dev.omnesis.android.transport.dto.BriefDismissReasonDto
-import dev.omnesis.android.transport.dto.BriefReadStateDto
-import dev.omnesis.android.transport.dto.BriefKindDto
-import dev.omnesis.android.transport.dto.BriefsMenuEntry
 import dev.omnesis.android.ui.home.MenuRevealContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.fillMaxSize
@@ -287,184 +275,6 @@ class ScreensScreenshotTest {
         }
     }
 
-    // --- Briefs ---------------------------------------------------------------
-
-    /**
-     * Invented fixtures, per the privacy rule — never seeded from the user's corpus.
-     * One loop brief (clears as "Done"), one info brief (clears as "Got it"), one long
-     * enough to prove the row truncates rather than growing.
-     */
-    private val sampleBriefs = listOf(
-        BriefRecordDto(
-            id = "b1",
-            kind = BriefKindDto.LOOP,
-            state = BriefReadStateDto.UNREAD,
-            title = "Reply to Maya Reeves about the cabin weekend",
-            description = "She proposed dates three days ago and asked which weekend works.",
-            createdAt = "2026-05-15T11:00:00Z",
-            eventAt = "2026-05-18T09:00:00Z",
-            body = "The available options are **Saturday morning** and Sunday afternoon.\n\n- Check the weather\n- Confirm transport",
-            citations = listOf(
-                BriefCitationDto(
-                    docId = "doc-brief-1",
-                    title = "Cabin weekend planning notes",
-                    providerId = "fictional",
-                    sourceId = "notes:example",
-                ),
-            ),
-        ),
-        BriefRecordDto(
-            id = "b2",
-            kind = BriefKindDto.INFO,
-            state = BriefReadStateDto.READ,
-            title = "Design review with David Lin",
-            description = "Video call at 3:00 PM. Last time you agreed to bring the updated onboarding flow.",
-            createdAt = "2026-05-15T12:30:00Z",
-        ),
-        BriefRecordDto(
-            id = "b3",
-            kind = BriefKindDto.LOOP,
-            state = BriefReadStateDto.UNREAD,
-            title = "Invoice #204 from Stellar Sound is still unpaid and now two weeks past its due date",
-            description = "Due last Friday. No matching bank transaction has shown up yet, and the " +
-                "vendor has sent one reminder.",
-            createdAt = "2026-05-13T09:00:00Z",
-        ),
-    )
-
-    private val briefsFeed = BriefsFeedState().replacing(sampleBriefs)
-    private val briefsNow: Instant = Instant.parse("2026-05-15T13:00:00Z")
-
-    @Test
-    fun briefs_populated_dark() = capture("briefs_populated_dark", dark = true) {
-        BriefsSample(briefsFeed)
-    }
-
-    @Test
-    fun briefs_populated_light() = capture("briefs_populated_light", dark = false) {
-        BriefsSample(briefsFeed)
-    }
-
-    @Test
-    fun briefs_needs_background_agent_dark() = capture("briefs_needs_background_agent_dark", dark = true) {
-        BriefsSample(briefsFeed, needsBackgroundAgent = true)
-    }
-
-    @Test
-    fun briefs_needs_background_agent_light() = capture("briefs_needs_background_agent_light", dark = false) {
-        BriefsSample(briefsFeed, needsBackgroundAgent = true)
-    }
-
-    /** The goal state: briefs exist only when there is something to say. */
-    @Test
-    fun briefs_empty_dark() = capture("briefs_empty_dark", dark = true) {
-        BriefsSample(BriefsFeedState(), paging = CursorPagingState())
-    }
-
-    @Test
-    fun briefs_empty_light() = capture("briefs_empty_light", dark = false) {
-        BriefsSample(BriefsFeedState(), paging = CursorPagingState())
-    }
-
-    @Test
-    fun briefs_loading_dark() = capture("briefs_loading_dark", dark = true) {
-        BriefsSample(BriefsFeedState(), loading = true)
-    }
-
-    /**
-     * A brief mid-dictation: its row is the recording strip, with the transcript streaming
-     * in where the description was. Recording this golden at all also proves the mic's
-     * pulse is frozen under inspection mode — an ungated infinite animation does not just
-     * animate here, it hangs the capture forever and writes no PNGs.
-     */
-    @Test
-    fun briefs_dictating_dark() = capture("briefs_dictating_dark", dark = true) {
-        BriefsSample(briefsFeed, dictatingBriefId = "b1", dictationText = "Tell her the weekend of the")
-    }
-
-    /** The first moment, before the recogniser has heard anything. */
-    @Test
-    fun briefs_dictating_empty_dark() = capture("briefs_dictating_empty_dark", dark = true) {
-        BriefsSample(briefsFeed, dictatingBriefId = "b1", dictationText = "")
-    }
-
-    @Test
-    fun briefs_swipe_actions_light() = capture("briefs_swipe_actions_light", dark = false) {
-        BriefsSample(briefsFeed, revealedActionsBriefId = "b1")
-    }
-
-    @Test
-    fun briefs_swipe_actions_dark() = capture("briefs_swipe_actions_dark", dark = true) {
-        BriefsSample(briefsFeed, revealedActionsBriefId = "b1")
-    }
-
-    @Test
-    fun brief_detail_light() = capture("brief_detail_light", dark = false) {
-        BriefDetailSheet(
-            brief = sampleBriefs.first(),
-            openingThread = false,
-            onAsk = {}, onDismiss = { _, _ -> }, onMoreOptions = {}, onDismissRequest = {},
-        )
-    }
-
-    @Test
-    fun brief_detail_dark() = capture("brief_detail_dark", dark = true) {
-        BriefDetailSheet(
-            brief = sampleBriefs.first(),
-            openingThread = false,
-            onAsk = {}, onDismiss = { _, _ -> }, onMoreOptions = {}, onDismissRequest = {},
-        )
-    }
-
-    @Test
-    fun brief_dismiss_snooze_light() = capture("brief_dismiss_snooze_light", dark = false) {
-        BriefDismissSheet(
-            brief = sampleBriefs.first(),
-            initialReason = BriefDismissReasonDto.SNOOZED,
-            onConfirm = { _, _, _ -> }, onDismissRequest = {},
-        )
-    }
-
-    @Test
-    fun brief_dismiss_snooze_dark() = capture("brief_dismiss_snooze_dark", dark = true) {
-        BriefDismissSheet(
-            brief = sampleBriefs.first(),
-            initialReason = BriefDismissReasonDto.SNOOZED,
-            onConfirm = { _, _, _ -> }, onDismissRequest = {},
-        )
-    }
-
-    @androidx.compose.runtime.Composable
-    private fun BriefsSample(
-        feed: BriefsFeedState,
-        loading: Boolean = false,
-        paging: CursorPagingState = CursorPagingState(),
-        dictatingBriefId: String? = null,
-        dictationText: String = "",
-        revealedActionsBriefId: String? = null,
-        needsBackgroundAgent: Boolean = false,
-    ) {
-        androidx.compose.foundation.layout.Box(
-            androidx.compose.ui.Modifier
-                .fillMaxSize()
-                .background(OmTheme.colors.bgPrimary),
-        ) {
-            BriefsListContent(
-                feed = feed,
-                loading = loading,
-                loadError = null,
-                paging = paging,
-                onOpen = {}, onQuickClear = {}, onAsk = {}, onMoreOptions = {},
-                onRetry = {}, onRefresh = {},
-                dictatingBriefId = dictatingBriefId,
-                dictationText = dictationText,
-                revealedActionsBriefId = revealedActionsBriefId,
-                needsBackgroundAgent = needsBackgroundAgent,
-                now = briefsNow,
-            )
-        }
-    }
-
     @Test
     fun main_menu_drawer_agent_dark() = capture("main_menu_drawer_agent_dark", dark = true) {
         MainMenuDrawer(
@@ -476,43 +286,32 @@ class ScreensScreenshotTest {
         )
     }
 
-    /** The menu with Briefs offered by an experimental gateway, including its unread badge. */
+    /**
+     * The menu on a gateway that serves Tasks, with Tasks the current destination: "Tasks (4)"
+     * while four are open today (dark), plain "Tasks" when none are (light).
+     */
     @Test
-    fun main_menu_drawer_briefs_dark() = capture("main_menu_drawer_briefs_dark", dark = true) {
+    fun main_menu_drawer_tasks_dark() = capture("main_menu_drawer_tasks_dark", dark = true) {
         MainMenuDrawer(
-            currentRoute = "briefs",
+            currentRoute = "tasks",
             conversations = sampleConversations,
             conversationsLoading = false,
             onNewConversation = {}, onNavigate = {}, onResumeConversation = {},
             onDeleteConversation = {}, onOpenSettings = {},
-            briefsMenuEntry = BriefsMenuEntry.AVAILABLE,
-            briefsUnreadCount = 3,
+            tasksAvailable = true,
+            tasksTodayCount = 4,
         )
     }
 
     @Test
-    fun main_menu_drawer_briefs_warning_dark() = capture("main_menu_drawer_briefs_warning_dark", dark = true) {
+    fun main_menu_drawer_tasks_light() = capture("main_menu_drawer_tasks_light", dark = false) {
         MainMenuDrawer(
-            currentRoute = "briefs",
+            currentRoute = "tasks",
             conversations = sampleConversations,
             conversationsLoading = false,
             onNewConversation = {}, onNavigate = {}, onResumeConversation = {},
             onDeleteConversation = {}, onOpenSettings = {},
-            briefsMenuEntry = BriefsMenuEntry.NEEDS_ATTENTION,
-            briefsUnreadCount = 3,
-        )
-    }
-
-    @Test
-    fun main_menu_drawer_briefs_warning_light() = capture("main_menu_drawer_briefs_warning_light", dark = false) {
-        MainMenuDrawer(
-            currentRoute = "briefs",
-            conversations = sampleConversations,
-            conversationsLoading = false,
-            onNewConversation = {}, onNavigate = {}, onResumeConversation = {},
-            onDeleteConversation = {}, onOpenSettings = {},
-            briefsMenuEntry = BriefsMenuEntry.NEEDS_ATTENTION,
-            briefsUnreadCount = 3,
+            tasksAvailable = true,
         )
     }
 

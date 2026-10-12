@@ -40,6 +40,8 @@ afterEach(() => {
   db.close();
   vi.restoreAllMocks();
 });
+/** A history horizon floor older than every fixture: nothing is out of scope. */
+const ALL_HISTORY = "2000-01-01T00:00:00.000Z";
 function document(externalId: string, at = inventory.startedAt): DocumentInput {
   return {
     providerId,
@@ -80,7 +82,7 @@ it("persists partial import identity, completes only with the final cursor, and 
   expect(db.prepare("SELECT COUNT(*) AS count FROM source_inventory_documents").get()).toEqual({
     count: 2,
   });
-  expect(readKnowledgeInventoryStatus(db, 30 * 86_400_000)).toEqual(
+  expect(readKnowledgeInventoryStatus(db, 30 * 86_400_000, ALL_HISTORY)).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         sourceId,
@@ -98,6 +100,22 @@ it("persists partial import identity, completes only with the final cursor, and 
       }),
     ]),
   );
+  // Revisions dated before the history horizon are out of scope, not owed history.
+  const windows = readKnowledgeInventoryStatus(db, 30 * 86_400_000, "2021-01-01T00:00:00.000Z")
+    .filter((row) => row.phase === "organization")
+    .map((row) => [row.window, row.observed]);
+  expect(windows).toEqual(
+    expect.arrayContaining([
+      ["recent", 1],
+      ["beyond-horizon", 1],
+    ]),
+  );
+  expect(windows.some(([window]) => window === "history")).toBe(false);
+  expect(
+    readKnowledgeInventoryStatus(db, 30 * 86_400_000, "2021-01-01T00:00:00.000Z").find(
+      (row) => row.window === "beyond-horizon",
+    ),
+  ).toMatchObject({ unconsidered: 0, outOfScope: 1 });
 });
 it("records each yielded chunk before a first cursor exists and retains its identity on replay", () => {
   const args = page([document("one"), document("two"), document("three")], false);
@@ -165,7 +183,7 @@ it("reports interpretation and organization separately without claiming partial 
     },
     Date.now(),
   );
-  expect(readKnowledgeInventoryStatus(db, 30 * 86_400_000)).toEqual([
+  expect(readKnowledgeInventoryStatus(db, 30 * 86_400_000, ALL_HISTORY)).toEqual([
     expect.objectContaining({
       phase: "interpretation",
       importState: "importing",

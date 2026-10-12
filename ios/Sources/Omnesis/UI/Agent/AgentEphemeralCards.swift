@@ -16,11 +16,10 @@ enum AgentEphemeralActionLabel {
         "open_loop_update": "Update loop",
         "open_loop_delete": "Delete loop",
         "open_loop_ledger_append": "Note on loop",
-        "brief_list": "List briefs",
-        "brief_fetch": "Open brief",
-        "brief_create": "Create brief",
-        "brief_update": "Update brief",
-        "brief_delete": "Withdraw brief",
+        "observation_list": "List brief items",
+        "observation_note": "Note brief item",
+        "observation_withdraw": "Withdraw brief item",
+        "observation_suppress": "Mute brief item",
         "temporal_query": "Check dates",
         "time_index_query": "Check dates",
         "temporal_annotation_add": "Add date note",
@@ -1935,8 +1934,8 @@ struct AgentEphemeralActionCard: View {
         case "open_loop_search", "open_loop_fetch", "open_loop_create",
              "open_loop_update", "open_loop_delete", "open_loop_ledger_append":
             "arrow.triangle.2.circlepath"
-        case "brief_list", "brief_fetch", "brief_create", "brief_update", "brief_delete":
-            "rectangle.stack"
+        case "observation_list", "observation_note", "observation_withdraw", "observation_suppress":
+            "sunrise"
         case "temporal_query", "temporal_annotation_add", "temporal_annotation_update",
              "temporal_annotation_delete", "time_index_query", "time_index_add",
              "time_index_update", "time_index_delete":

@@ -4,44 +4,31 @@
 import type Database from "better-sqlite3";
 import type { KnowledgeNode } from "./types.js";
 
-/** Historical attention snapshots retain their prose, provenance and privacy obligations. */
-export function historicalBriefFields(fields: Record<string, unknown>, now: number): boolean {
+/**
+ * Observations are short-lived notes for the morning brief. A closed one, or
+ * one whose window has passed, is historical: it keeps its prose and privacy
+ * obligations but is never reviewed again.
+ */
+export function historicalObservationFields(fields: Record<string, unknown>, now: number): boolean {
   const state = fields.state;
   return (
-    (typeof state === "string" &&
-      (state.startsWith("dismissed_") || ["retired", "archived", "expired"].includes(state))) ||
+    (typeof state === "string" && (state === "shipped" || state === "dropped")) ||
     (typeof fields.relevantUntil === "number" && fields.relevantUntil <= now)
   );
 }
 
-/** Read the canonical lifecycle even before the owner reconciliation queue catches up. */
-export function isHistoricalKnowledgeBrief(
-  db: Database.Database,
-  node: Pick<KnowledgeNode, "id" | "ownerId" | "kind" | "canonicalFields">,
-  now: number,
-): boolean {
-  if (node.kind !== "brief") return false;
-  const hasBriefs = db
-    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='briefs'")
-    .get();
-  const owner = hasBriefs
-    ? db
-        .prepare<
-          [string],
-          { state: string; relevantUntil: number | null }
-        >("SELECT state,relevant_until AS relevantUntil FROM briefs WHERE id=?")
-        .get(node.ownerId ?? node.id)
-    : undefined;
-  return historicalBriefFields(owner ?? node.canonicalFields, now);
-}
-
-/** Canonical retirement is authoritative even while its readable mirror is catching up. */
+/**
+ * Canonical retirement is authoritative even while its readable mirror is
+ * catching up. Observations are never repaired by synthesis: the morning
+ * brief recheck drops or rescores them when their evidence moves, so
+ * maintenance settles them without a model turn.
+ */
 export function isHistoricalKnowledgeOwner(
   db: Database.Database,
   node: Pick<KnowledgeNode, "id" | "ownerId" | "kind" | "canonicalFields">,
-  now: number,
+  _now: number,
 ): boolean {
-  if (node.kind === "brief") return isHistoricalKnowledgeBrief(db, node, now);
+  if (node.kind === "observation") return true;
   if (node.kind === "loop") {
     const tables = db
       .prepare(

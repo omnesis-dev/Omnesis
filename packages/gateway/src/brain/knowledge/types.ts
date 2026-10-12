@@ -7,7 +7,7 @@ export type KnowledgeNodeKind =
   | "loop"
   | "doc_annotation"
   | "person_annotation"
-  | "brief";
+  | "observation";
 export type KnowledgeValidity = "current" | "stale";
 export type KnowledgeVerification = "unverified" | "verified" | "rejected" | "stale";
 export type KnowledgeRelation = "supports" | "contradicts" | "context" | "depends_on";

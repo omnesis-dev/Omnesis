@@ -34,14 +34,13 @@ import dev.omnesis.android.transport.client.AdminClient
 import dev.omnesis.android.transport.client.AgentClient
 import dev.omnesis.android.transport.client.AgentEventSource
 import dev.omnesis.android.transport.client.AnalyticsClient
-import dev.omnesis.android.transport.client.BriefsClient
 import dev.omnesis.android.transport.client.DocumentsClient
 import dev.omnesis.android.transport.client.GatewayClient
 import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.client.NotificationsClient
 import dev.omnesis.android.transport.client.SearchClient
+import dev.omnesis.android.transport.client.TasksClient
 import dev.omnesis.android.transport.client.WatchesClient
-import dev.omnesis.android.transport.dto.BriefsMenuEntry
 import dev.omnesis.android.transport.dto.ClaimedNotificationDelivery
 import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
@@ -240,7 +239,7 @@ class SessionManager @Inject constructor(
         val agent: AgentClient,
         val notes: NotesClient,
         val watches: WatchesClient,
-        val briefs: BriefsClient,
+        val tasks: TasksClient,
         val socket: DeviceSocket,
         val analytics: AnalyticsClient,
         val documents: DocumentsClient,
@@ -320,12 +319,13 @@ class SessionManager @Inject constructor(
     val developerEnabled: StateFlow<Boolean> = _developerEnabled.asStateFlow()
 
     /**
-     * What the menu should show for Briefs, from the same `/status` probe. Cleared on
-     * every rebuild for the same reason as [experimentalEnabled]: a stale value from a
-     * prior pairing must not surface the feature against a gateway that lacks it.
+     * Whether the gateway serves the Tasks journal, from the same `/status` probe. Never
+     * gated on experimental mode. Cleared on every rebuild for the same reason as
+     * [experimentalEnabled]: a stale value from a prior pairing must not surface Tasks
+     * against a gateway that lacks it.
      */
-    private val _briefsMenuEntry = MutableStateFlow(BriefsMenuEntry.HIDDEN)
-    val briefsMenuEntry: StateFlow<BriefsMenuEntry> = _briefsMenuEntry.asStateFlow()
+    private val _tasksAvailable = MutableStateFlow(false)
+    val tasksAvailable: StateFlow<Boolean> = _tasksAvailable.asStateFlow()
 
     /**
      * The gateway-dictation gate from the same `/status` probe; null until it lands and
@@ -487,7 +487,7 @@ class SessionManager @Inject constructor(
         // surface an experimental feature against a non-experimental gateway.
         _experimentalEnabled.value = false
         _developerEnabled.value = false
-        _briefsMenuEntry.value = BriefsMenuEntry.HIDDEN
+        _tasksAvailable.value = false
         _dictation.value = null
         _relayConsentPrompt.value = null
         _pushPlan.value = PushPlanState.Checking
@@ -563,7 +563,7 @@ class SessionManager @Inject constructor(
             agent = agent,
             notes = NotesClient(http),
             watches = WatchesClient(http),
-            briefs = BriefsClient(http),
+            tasks = TasksClient(http),
             socket = socket,
             analytics = analytics,
             documents = documents,
@@ -812,7 +812,7 @@ class SessionManager @Inject constructor(
             if (session !== current) return@probe false
             _experimentalEnabled.value = status.experimental
             _developerEnabled.value = status.developer
-            _briefsMenuEntry.value = BriefsMenuEntry.from(status.briefs)
+            _tasksAvailable.value = status.tasks?.available == true
             _dictation.value = status.dictation
             this.current()?.let { childScope ->
                 speechVocabulary.cache.warm(status.transcriptionVocabulary, Locale.getDefault().toLanguageTag(), childScope, ownerToken = vocabularyOwner, fetch = current.vocabulary::fetch)

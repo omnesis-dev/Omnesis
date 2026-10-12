@@ -35,7 +35,7 @@ object AgentReducer {
         "search_loops", "fetch_loop", "list_loops", "entity_context",
         "open_loop_search", "open_loop_fetch", "open_loop_create", "open_loop_update",
         "open_loop_delete", "open_loop_ledger_append",
-        "brief_list", "brief_fetch", "brief_create", "brief_update", "brief_delete",
+        "observation_suppress",
         "notes_append", "notes_rewrite", "annotate_durable", "schedule_agent_run",
         "conversation_memory_evidence", "annotation_search",
         "annotation_revise", "annotation_retract", "annotation_supersede",

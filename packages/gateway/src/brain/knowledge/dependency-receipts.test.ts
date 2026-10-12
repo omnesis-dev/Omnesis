@@ -500,7 +500,7 @@ it.each([
     receipt.rememberEditing({ ...owned, node: { ...owned.node, id: "other", ownerId: "other" } });
   const input = {
     ...proposal,
-    kind: mode === "different-kind" ? ("brief" as const) : ("loop" as const),
+    kind: mode === "different-kind" ? ("observation" as const) : ("loop" as const),
     ...(mode === "different-id" ? { id: "other" } : {}),
     ...(mode === "different-revision" ? { expectedRevision: 2 } : {}),
     ...(mode === "explicit-null" ? { ownerId: null } : {}),

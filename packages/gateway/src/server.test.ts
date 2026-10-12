@@ -9080,10 +9080,10 @@ describe("GET /status", () => {
       // break what older clients already file.
       for (const body of [
         {
-          targetType: "brief",
-          targetId: "b-1",
+          targetType: "document",
+          targetId: "doc-1",
           note: "Stale numbers.",
-          context: { label: "Brief b-1" },
+          context: { label: "Document doc-1" },
           client: "ios",
         },
         { targetType: "route", note: "General note." },

@@ -78,10 +78,18 @@ describe("decodeRunTrigger", () => {
   test("feedback's provenance-recheck variant decodes from payload and dedupe key", () => {
     expect(
       decodeRunTrigger("feedback", {
+        recheckDependentKind: "loop",
+        recheckDependentId: "loop_3",
+      }),
+    ).toEqual({ type: "provenance-recheck", dependentKind: "loop", dependentId: "loop_3" });
+    // Rechecks are loop-only; a leftover recheck of a retired dependent kind
+    // decodes as unknown rather than throwing.
+    expect(
+      decodeRunTrigger("feedback", {
         recheckDependentKind: "brief",
         recheckDependentId: "brf_3",
       }),
-    ).toEqual({ type: "provenance-recheck", dependentKind: "brief", dependentId: "brf_3" });
+    ).toEqual({ type: "unknown" });
     expect(decodeRunTrigger("feedback", {}, "feedback:provenance:loop:loop_9")).toEqual({
       type: "provenance-recheck",
       dependentKind: "loop",

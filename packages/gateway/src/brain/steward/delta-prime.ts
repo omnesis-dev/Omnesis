@@ -29,7 +29,7 @@
  */
 
 import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
-import { deadlineDueDay } from "../ranking.js";
+import { deadlineDueDay } from "../deadlines.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { listRecentLiveAnnotations } from "../storage/annotations.js";
 import { listRecentLivePersonAnnotations } from "../storage/person-annotations.js";
@@ -116,8 +116,8 @@ function safeJson(text: string): unknown {
 
 /**
  * The recent decisions the agent made inside `[fromMs, toMs]` — loops it
- * touched (`last_update` in window) and briefs it created (`created_at` in
- * window), most-recent first, capped. Titles + ids only; never source data.
+ * touched (`last_update` in window) and observations it noted (`created_at`
+ * in window), most-recent first, capped. Titles + ids only; never source data.
  */
 function recentDecisions(db: Db, fromMs: number, toMs: number, cap: number): PrimeDecisionRow[] {
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) return [];
@@ -129,18 +129,18 @@ function recentDecisions(db: Db, fromMs: number, toMs: number, cap: number): Pri
     )
     .all(fromMs, toMs, cap)
     .map((r) => ({ at: r.at, line: `updated loop [${r.id}] "${truncate(r.title, 100)}"` }));
-  const briefs = db
-    .prepare<[number, number, number], { id: string; title: string; kind: string; at: number }>(
-      `SELECT id, title, kind, created_at AS at FROM briefs
-        WHERE ${knowledgeOwnerReadPredicate(db, "briefs.id")} AND created_at >= ? AND created_at <= ?
+  const observations = db
+    .prepare<[number, number, number], { id: string; summary: string; at: number }>(
+      `SELECT id, summary, created_at AS at FROM observations
+        WHERE ${knowledgeOwnerReadPredicate(db, "observations.id")} AND created_at >= ? AND created_at <= ?
         ORDER BY created_at DESC LIMIT ?`,
     )
     .all(fromMs, toMs, cap)
     .map((r) => ({
       at: r.at,
-      line: `created ${r.kind} brief [${r.id}] "${truncate(r.title, 100)}"`,
+      line: `noted observation [${r.id}] "${truncate(r.summary, 100)}"`,
     }));
-  return [...loops, ...briefs].sort((a, b) => b.at - a.at).slice(0, cap);
+  return [...loops, ...observations].sort((a, b) => b.at - a.at).slice(0, cap);
 }
 
 /** Assemble the header + a loops section + a recent-decisions section. */
@@ -219,7 +219,7 @@ export function buildDueSoonDeltaPrime(db: Db, input: DueSoonDeltaPrimeInput): s
 export function readDueSoonDeltaPrime(
   db: Db,
   input: DueSoonDeltaPrimeInput,
-): { text: string; hasInputs: boolean } {
+): { text: string; hasInputs: boolean; dueLoopCount: number } {
   const { now, cfg } = input;
   const windowStart = now - cfg.recencyWindowMs;
   const dueWindowEdgeDay = cognitionSpendDay(now + cfg.recencyWindowMs);
@@ -231,19 +231,20 @@ export function readDueSoonDeltaPrime(
         ORDER BY importance DESC, last_update DESC`,
     )
     .all(...ACTIVE_LOOP_STATES);
+  const isDue = (r: PrimeLoopRow): boolean => {
+    const deadline = r.deadline_json === null ? null : safeJson(r.deadline_json);
+    const due = deadline === null ? null : deadlineDueDay(deadline);
+    // Local YYYY-MM-DD days compare correctly as strings.
+    return due !== null && due <= dueWindowEdgeDay;
+  };
   const relevant = rows
-    .filter((r) => {
-      if (r.last_update >= windowStart) return true;
-      const deadline = r.deadline_json === null ? null : safeJson(r.deadline_json);
-      const due = deadline === null ? null : deadlineDueDay(deadline);
-      // Local YYYY-MM-DD days compare correctly as strings.
-      return due !== null && due <= dueWindowEdgeDay;
-    })
+    .filter((r) => r.last_update >= windowStart || isDue(r))
     .slice(0, cfg.primeMaxLoops);
   const loopLines = relevant.map((l) => renderLoopLine(db, l, cfg, now));
   const decisions = recentDecisions(db, windowStart, now, cfg.primeMaxDecisions);
   return {
     hasInputs: loopLines.length > 0 || decisions.length > 0,
+    dueLoopCount: relevant.filter(isDue).length,
     text: assemble(
       loopLines,
       decisions,

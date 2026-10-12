@@ -11,7 +11,7 @@
  * `cognition_engine_state`, enqueues under a day-scoped dedupe key, and writes
  * its marker LAST so a crash replays and folds.
  *
- * Every test here runs the gateway on the briefs VIRTUAL clock and crosses the
+ * Every test here runs the gateway on the cognition VIRTUAL clock and crosses the
  * boundaries deliberately rather than waiting them out. Wall-clock time of day
  * is never load-bearing: each suite pins the clock to a local instant it
  * computes, and every stimulus document carries an explicit source timestamp,
@@ -29,7 +29,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { z } from "zod";
-import { createBrief } from "../../../gateway/src/brain/storage/briefs.js";
+import { createObservation } from "../../../gateway/src/brain/storage/observations.js";
 import { structuredData } from "./brain-bench/puppet-plan.js";
 import {
   BrainBench,
@@ -449,27 +449,20 @@ describe("rhythm: the morning digest", () => {
         synthesis: { enabled: false },
         collision: { enabled: false },
       },
+      // The morning brief is appended to a conversation, which needs the
+      // interactive role assigned; no conversation turn runs here.
+      agent: { behaviors: [] },
       behaviors: {
         dynamic: sourceInterpretations({ sources: [], maintainNode: preserveCurrentOwner }),
         behaviors: [
           {
             flavour: "daily.digest",
             // The digest's subject is the local day it composes for, so the
-            // card carries it — one suite boots several digests and each
-            // must be attributable to its own day.
+            // message carries it — each send is attributable to its own day.
             plan: (ctx) => ({
               calls: [
-                call("brief_list"),
-                call("brief_create", {
-                  kind: "info",
-                  title: `Morning brief — ${DIGEST_MARKER} ${ctx.subject}`,
-                  description: "One rehearsal to confirm; nothing else needs you today.",
-                  body: "Nothing else needs you today.",
-                  confidence: 0.7,
-                  urgency: 0.4,
-                }),
                 // Authority probe. The morning-digest workflow is granted the
-                // brief artifact and nothing else, so this verb is not in its
+                // morning brief and nothing else, so this verb is not in its
                 // toolset at all — the call cannot land.
                 call("open_loop_create", {
                   title: `Digest overreach — ${DIGEST_MARKER}`,
@@ -477,8 +470,11 @@ describe("rhythm: the morning digest", () => {
                   confidence: 0.8,
                   importance: 0.8,
                 }),
+                call("morning_brief_send", {
+                  text: `**Worth your attention**\n\n- ${DIGEST_MARKER} ${ctx.subject}: the rehearsal room changed.`,
+                }),
               ],
-              finalText: "Composed the morning brief.",
+              finalText: "Sent the morning brief.",
             }),
           },
         ],
@@ -508,24 +504,21 @@ describe("rhythm: the morning digest", () => {
       expect(run.status).toBe("completed");
       expect((await bench.obs.run(run.id)).transcripts).toEqual([]);
     }
-    expect((await bench.obs.briefs()).items).toEqual([]);
+    expect((await bench.obs.morningBrief()).sent).toBeNull();
   }, 120_000);
 
   test("crossing the digest hour composes exactly one digest for the day", async () => {
-    // An editorial pass needs something real to compose; an empty bootstrap
-    // is tested above and must not generate a fabricated all-clear card.
+    // An editorial pass needs something real to compose; an empty morning
+    // is tested above and must not send a fabricated all-clear message.
     const seedAt = (await bench.clock.now()).now;
     bench.withWriteHandle((db) =>
-      createBrief(
+      createObservation(
         db,
         {
-          id: "digest-editorial-input",
+          id: "obs_digest_editorial_input",
           createdByRun: "seed",
-          kind: "info",
-          title: "Rehearsal room changed",
-          description: "Use the revised room assignment.",
-          confidence: 0.8,
-          urgency: 0.4,
+          summary: "The rehearsal room changed.",
+          why: "Use the revised room assignment.",
         },
         seedAt,
       ),
@@ -550,23 +543,22 @@ describe("rhythm: the morning digest", () => {
     expect(bench.markers.get("daily_last_run_day")! >= DIGEST_DAY).toBe(true);
   }, 240_000);
 
-  test("the digest prompt is the composition flavour and its card is the day's one brief", async () => {
+  test("the digest prompt is the composition flavour and its send is the day's one message", async () => {
     const run = runRows(bench, "daily").find((r) => r.dedupe_key === `daily:digest:${DIGEST_DAY}`)!;
     const prompt = await bench.obs.promptFor(run.id);
-    expect(prompt).toContain(`Morning digest for ${DIGEST_DAY}.`);
-    expect(prompt).toContain('Compose EXACTLY ONE brief of kind "info"');
+    expect(prompt).toContain(`Morning brief for ${DIGEST_DAY}.`);
+    expect(prompt).toContain("send it with morning_brief_send, exactly once");
+    expect(prompt).toContain("[obs_digest_editorial_input] The rehearsal room changed.");
     // The digest is delta-primed with what is landing, not with a source batch.
     expect(prompt).toContain("Loops due soon or recently touched (most important first):");
     expect(prompt).not.toContain("Daily batch review for source");
 
-    const briefs = await bench.obs.briefs();
-    const cards = briefs.items.filter((b) => b.title.includes(`${DIGEST_MARKER} ${DIGEST_DAY}`));
-    expect(cards).toHaveLength(1);
-    expect(cards[0]!.kind).toBe("info");
-    expect(cards[0]!.createdByRun).toBe(run.id);
+    const brief = await bench.obs.morningBrief(DIGEST_DAY);
+    expect(brief.sent).toMatchObject({ day: DIGEST_DAY, runId: run.id, itemCount: 1 });
+    expect(brief.items.map((item) => item.observationId)).toEqual(["obs_digest_editorial_input"]);
   }, 120_000);
 
-  test("the digest's authority is brief-only — its loop write never lands", async () => {
+  test("the digest's authority is the morning brief only — its loop write never lands", async () => {
     const loops = await bench.obs.loops();
     expect(loops.items).toHaveLength(0);
     const pulse = await bench.obs.pulse();
@@ -592,10 +584,10 @@ describe("rhythm: the morning digest", () => {
     await bench.drainUntilQuiet();
 
     expect(runRows(bench, "daily").map((r) => r.id)).toEqual(before);
-    const briefs = await bench.obs.briefs();
-    expect(
-      briefs.items.filter((b) => b.title.includes(`${DIGEST_MARKER} ${DIGEST_DAY}`)),
-    ).toHaveLength(1);
+    const brief = await bench.obs.morningBrief(DIGEST_DAY);
+    expect(brief.sent?.runId).toBe(
+      runRows(bench, "daily").find((r) => r.dedupe_key === `daily:digest:${DIGEST_DAY}`)!.id,
+    );
   }, 120_000);
 });
 
@@ -749,7 +741,7 @@ describe("rhythm: historical admission coverage", () => {
 
 describe("rhythm: synthesis noticing and the collision sweep", () => {
   let bench: BrainBench;
-  const NOTICING_MARKER = "Noticing pass card";
+  const NOTICING_MARKER = "Noticing pass observation";
   /** The day the suite's clock starts on; resolved once the bench exists. */
   let D0_DAY = "";
   let bootDayNoon = 0;
@@ -823,18 +815,22 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
         behaviors: [
           {
             flavour: "synthesis.noticing",
+            // The boot-time pass runs before the suite's message exists and
+            // notes nothing; later passes cite that message.
             plan: (ctx) => ({
               calls: [
-                call("brief_list"),
-                call("brief_create", {
-                  kind: "info",
-                  title: `${NOTICING_MARKER} for ${ctx.subject}`,
-                  description: "A pattern worth knowing, with no clock on it.",
-                  confidence: 0.6,
-                  urgency: 0.3,
-                }),
+                call("observation_list"),
+                ...(collisionDocId
+                  ? [
+                      call("observation_note", {
+                        summary: `${NOTICING_MARKER} for ${ctx.subject}`,
+                        why: "A pattern worth knowing, with no clock on it.",
+                        citations: [collisionDocId],
+                      }),
+                    ]
+                  : []),
               ],
-              finalText: "Noticed one thing.",
+              finalText: collisionDocId ? "Noticed one thing." : "Nothing to notice yet.",
             }),
           },
           {
@@ -859,7 +855,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       },
       60_000,
     );
-    // The noticing run can enqueue brief/root maintenance after it completes.
+    // The noticing run can enqueue observation/root maintenance after it completes.
     // Settle that boot-time work before intentionally rewinding within its day.
     await bench.drainUntilQuiet();
     await bench.clock.set(bootDayNoon);
@@ -884,7 +880,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
     await bench?.destroy();
   }, 60_000);
 
-  test("the noticing pass fires on its cadence and its card lands", async () => {
+  test("the noticing pass fires on its cadence", async () => {
     const runs = runRows(bench, "synthesis").filter(
       (r) => r.dedupe_key === `synthesis:noticing:${D0_DAY}`,
     );
@@ -896,11 +892,8 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
     expect(prompt).toContain(`Synthesis pass ("Noticing") for ${D0_DAY}.`);
     expect(prompt).toContain("ORIGINATE at most ONE piece of awareness");
     expect(prompt).toContain("All tracked loops (most important first):");
-
-    const briefs = await bench.obs.briefs();
-    const cards = briefs.items.filter((b) => b.title.startsWith(NOTICING_MARKER));
-    expect(cards).toHaveLength(1);
-    expect(cards[0]!.createdByRun).toBe(runs[0]!.id);
+    // This boot-time pass has nothing to cite yet; the next day's pass is
+    // where the observation is asserted.
   }, 240_000);
 
   test("the per-day cap holds a second noticing pass inside the same day", async () => {
@@ -966,6 +959,14 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       `synthesis:noticing:${D0_DAY}`,
       `synthesis:noticing:${nextDay}`,
     ]);
+
+    // That pass cites the suite's message, so its observation lands.
+    const nextRun = noticing.find((r) => r.dedupe_key === `synthesis:noticing:${nextDay}`)!;
+    expect(nextRun.status).toBe("completed");
+    const noticed = await bench.obs.observationsMatching(`${NOTICING_MARKER} for ${nextDay}`);
+    expect(noticed).toHaveLength(1);
+    expect(noticed[0]!.createdByRun).toBe(nextRun.id);
+    expect(noticed[0]!.citations).toHaveLength(1);
   }, 240_000);
 
   test("a settled verdict is not re-bought while its loops stand untouched", async () => {
@@ -1008,7 +1009,7 @@ interface SweepDto {
   steeringPrompt: string;
   stats: {
     runs: number;
-    briefsCreated: number;
+    observationsNoted: number;
     loopsCreated: number;
     loopsTouched: number;
     annotationsCreated: number;
@@ -1074,14 +1075,12 @@ describe("rhythm: scheduled sweeps", () => {
                   confidence: 0.8,
                   claimBasis: "quoted",
                 }),
-                call("brief_create", {
-                  kind: "loop",
-                  title: `${SWEEP_MARKER} — rehearsal date outstanding`,
-                  description: "The autumn showcase still has no rehearsal date.",
+                call("observation_list"),
+                call("observation_note", {
+                  summary: `${SWEEP_MARKER} — the autumn showcase still has no rehearsal date.`,
                   citations: [sweepDocId],
+                  claims: [{ docId: sweepDocId, quote: QUOTE }],
                   relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                  confidence: 0.85,
-                  urgency: 0.5,
                 }),
               ],
               finalText: "Audited the rehearsal bookings.",
@@ -1198,13 +1197,13 @@ describe("rhythm: scheduled sweeps", () => {
         {
           runs: number;
           failed_runs: number;
-          briefs_created: number;
+          observations_noted: number;
           loops_created: number;
           loops_touched: number;
           annotations_created: number;
         }
       >(
-        "SELECT runs, failed_runs, briefs_created, loops_created, loops_touched, annotations_created FROM cognition_sweep_tally WHERE sweep_id = ?",
+        "SELECT runs, failed_runs, observations_noted, loops_created, loops_touched, annotations_created FROM cognition_sweep_tally WHERE sweep_id = ?",
       )
       .get(SWEEP_ID)!;
 
@@ -1213,14 +1212,16 @@ describe("rhythm: scheduled sweeps", () => {
 
     // Counted back from `created_by_run`, so the tally and the artifact stores
     // cannot disagree — assert against the stores, not against the plan.
-    const briefs = (await bench.obs.briefs()).items.filter((b) => b.createdByRun === run.id);
+    const observations = (await bench.obs.observations()).items.filter(
+      (o) => o.createdByRun === run.id,
+    );
     const loops = (await bench.obs.loops()).items.filter((l) => l.createdByRun === run.id);
     const annotations = (await bench.obs.docAnnotations(sweepDocId)).annotations;
-    expect(briefs).toHaveLength(1);
+    expect(observations).toHaveLength(1);
     expect(loops).toHaveLength(1);
     expect(annotations).toHaveLength(1);
 
-    expect(tally.briefs_created).toBe(briefs.length);
+    expect(tally.observations_noted).toBe(observations.length);
     expect(tally.loops_created).toBe(loops.length);
     expect(tally.loops_touched).toBe(1);
     expect(tally.annotations_created).toBe(annotations.length);
@@ -1229,7 +1230,7 @@ describe("rhythm: scheduled sweeps", () => {
     const dto = (await sweepList()).find((s) => s.id === SWEEP_ID)!;
     expect(dto.stats).toMatchObject({
       runs: 1,
-      briefsCreated: tally.briefs_created,
+      observationsNoted: tally.observations_noted,
       loopsCreated: tally.loops_created,
       loopsTouched: tally.loops_touched,
       annotationsCreated: tally.annotations_created,

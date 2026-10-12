@@ -16,7 +16,8 @@
  *   2. the run queue must be QUIET — no pending run due for a claim and
  *      nothing executing right now — i.e. the overnight work has
  *      settled, not merely been scheduled. Debounced rows with a future
- *      next_attempt_at deliberately don't hold the digest hostage;
+ *      next_attempt_at deliberately don't hold the digest hostage, and
+ *      neither does a spent daily budget, which parks the queue for the day;
  *   3. a grace deadline (`hour` + `graceMinutes`) bounds the wait — on a
  *      pathologically busy morning a slightly-incomplete brief beats no
  *      morning brief. The digest's facts are injected at PROMPT-BUILD
@@ -54,6 +55,12 @@ export interface DigestEnqueuerDeps {
   getGraceMinutes: () => number;
   /** Runs executing right now (the drainer's live word); 0 when unwired. */
   getActiveRunCount: () => number;
+  /**
+   * Whether the day's cognition budget is spent; read live. A spent budget
+   * parks the queue, so it can never settle, and the barrier stops waiting
+   * for it. Absent means never spent.
+   */
+  isBudgetExhausted?: () => boolean;
   /**
    * Sweeps the digest must wait for, with the anchor each one fires on. Read
    * live. Absent (or empty) leaves the barrier as batches-plus-quiet, which is
@@ -111,7 +118,8 @@ export async function runDigestEnqueuePass(
     const dailyDay = getCognitionEngineState(deps.db, COGNITION_DAILY_LAST_RUN_DAY_KEY);
     const dailiesEnqueued = dailyDay !== null && dailyDay >= boundary.day;
     const queueQuiet =
-      countDuePendingCognitionRuns(deps.db, now) === 0 && deps.getActiveRunCount() === 0;
+      (deps.isBudgetExhausted?.() ?? false) ||
+      (countDuePendingCognitionRuns(deps.db, now) === 0 && deps.getActiveRunCount() === 0);
     if (!dailiesEnqueued || !queueQuiet || !prerequisiteSweepsFired(deps, now)) {
       return { fired: false, reason: "waiting" };
     }

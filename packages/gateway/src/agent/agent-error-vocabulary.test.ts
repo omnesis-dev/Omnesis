@@ -26,8 +26,10 @@ const REVIEWED = [
   "http_api_error",
   "http_protocol_mismatch",
   "http_stream_error",
-  // Fixed sentences in packages/agent/src/anthropic-backend.ts.
+  // Fixed sentences in packages/agent/src/anthropic-backend.ts, or built by
+  // `describeHttpStatus`.
   "anthropic_api_error",
+  "anthropic_usage_limited",
   "anthropic_stream_error",
   // Fixed sentences in `friendlyCodexErrorMessage`. `codex_not_authenticated`
   // is excluded on purpose: its sentence names a filesystem path.

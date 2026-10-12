@@ -131,10 +131,10 @@ describe("ModelManager", () => {
       expect(roles).toContain("privacy-reviewer");
       // The decision model serves the mention worth gate, a stable feature.
       expect(roles).toContain("decision");
-      expect(roles).not.toContain("background-agent");
+      // The background agent serves the note agent, a stable feature.
+      expect(roles).toContain("background-agent");
       expect(roles).not.toContain("watch-judge");
       expect(roles).not.toContain("entailment-verifier");
-      expect(roles).not.toContain("brief-judge");
     });
 
     it("serves the experimental capability cards when OMNESIS_EXPERIMENTAL=1", () => {

@@ -16,7 +16,7 @@ class NotificationDispatchTest {
     @Test
     fun content_free_wake_is_exact_and_contains_no_routing_data() {
         assertTrue(isContentFreeWake(mapOf("wake" to "1")))
-        assertFalse(isContentFreeWake(mapOf("wake" to "1", "kind" to "brief")))
+        assertFalse(isContentFreeWake(mapOf("wake" to "1", "kind" to "conversation")))
         assertFalse(isContentFreeWake(mapOf("wake" to "0")))
     }
 
@@ -49,12 +49,6 @@ class NotificationDispatchTest {
                 """{"kind":"conversation","conversationId":"conv_update"}""",
             ) to
                 ClaimedPushAction("conversation", NotificationTarget.AgentConversation("conv_update")),
-            notification(
-                "brief",
-                "brief_daily",
-                """{"kind":"brief","briefId":"brief_daily"}""",
-            ) to
-                ClaimedPushAction("brief", NotificationTarget.App),
             notification(
                 "watch",
                 "fallback",
@@ -120,7 +114,7 @@ class NotificationDispatchTest {
 
     @Test
     fun lease_retry_keeps_one_stable_local_notification_identity() {
-        val firstLease = notification("brief", "brief_example")
+        val firstLease = notification("conversation", "conv_example")
         val retryLease = firstLease.copy(id = "00000000-0000-4000-8000-000000000099")
 
         assertFalse(firstLease.id == retryLease.id)
@@ -153,9 +147,12 @@ class NotificationDispatchTest {
         assertNull(notificationAction(notification("agent-answer", "bad/path")))
         assertNull(
             notificationAction(
-                notification("brief", "bad/path"),
+                notification("conversation", "bad/path"),
             ),
         )
+        // The Morning brief arrives as a conversation push; `brief` is not a kind this app routes.
+        assertNull(notificationAction(notification("brief", "brief_example")))
+        assertFalse(knownNotificationKind("brief"))
     }
 
     @Test
@@ -199,8 +196,8 @@ class NotificationDispatchTest {
     @Test
     fun malformed_typed_route_uses_the_safe_flat_fallback() {
         assertEquals(
-            ClaimedPushAction("brief", NotificationTarget.App),
-            notification("brief", "brief_fallback", """{"kind":{"nested":true}}""")
+            ClaimedPushAction("conversation", NotificationTarget.AgentConversation("conv_fallback")),
+            notification("conversation", "conv_fallback", """{"kind":{"nested":true}}""")
                 .let(::notificationAction),
         )
     }

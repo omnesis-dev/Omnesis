@@ -27,7 +27,7 @@ export function internalKnowledgeHref(value) {
   // Canonical URLs already navigate correctly; metadata normalization drops selectors.
   if (/^\/portal\//.test(value ?? "")) return null;
   const match =
-    /^(source|wiki|loop|annotation|brief):([^#]+)(?:#(claim|field|evidence):(.+))?$/.exec(
+    /^(source|wiki|loop|annotation):([^#]+)(?:#(claim|field|evidence):(.+))?$/.exec(
       knowledgeLinkReference(value) ?? "",
     );
   if (!match) return null;
@@ -36,7 +36,7 @@ export function internalKnowledgeHref(value) {
       ? `/portal/doc/${encodeURIComponent(match[2])}`
       : `/portal/debug/cognition/knowledge/${encodeURIComponent(match[2])}`;
   const query = new URLSearchParams();
-  if (["loop", "brief"].includes(match[1])) query.set("kind", match[1]);
+  if (match[1] === "loop") query.set("kind", "loop");
   if (match[3]) query.set(match[3], match[4]);
   return path + (query.size ? `?${query}` : "");
 }

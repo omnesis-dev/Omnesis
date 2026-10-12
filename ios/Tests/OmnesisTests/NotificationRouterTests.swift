@@ -166,15 +166,11 @@ final class NotificationRouterTests: XCTestCase {
         XCTAssertNil(router.consume())
     }
 
-    func testFromUserInfoParsesBrief() {
-        let userInfo: [AnyHashable: Any] = [
-            "aps": ["alert": ["title": "Morning brief", "body": "b"]],
-            "omnesis": ["kind": "brief", "briefId": "brf_digest_1"],
-        ]
-        XCTAssertEqual(PushTarget.fromUserInfo(userInfo), .brief(briefId: "brf_digest_1"))
-        // Malformed: missing briefId falls through to nil.
-        let missing: [AnyHashable: Any] = ["omnesis": ["kind": "brief"]]
-        XCTAssertNil(PushTarget.fromUserInfo(missing))
+    /// The Morning brief arrives as a conversation push. A `brief` payload
+    /// names no destination this app has, so the tap simply opens the app.
+    func testFromUserInfoIgnoresBriefKind() {
+        XCTAssertNil(PushTarget.fromUserInfo(["omnesis": ["kind": "brief", "briefId": "brf_digest_1"]]))
+        XCTAssertNil(PushTarget.fromUserInfo(["omnesis": ["kind": "brief", "targetId": "brief-flat-1"]]))
     }
 
     func testFromUserInfoParsesPrivacyApprovalUsingOpaqueIdOnly() {
@@ -243,12 +239,6 @@ extension NotificationRouterTests {
                 "omnesis": ["kind": "agent-answer", "targetId": "conv-flat-1"],
             ]),
             .agentAnswer(conversationId: "conv-flat-1")
-        )
-        XCTAssertEqual(
-            PushTarget.fromUserInfo([
-                "omnesis": ["kind": "brief", "targetId": "brief-flat-1"],
-            ]),
-            .brief(briefId: "brief-flat-1")
         )
         XCTAssertEqual(
             PushTarget.fromUserInfo([
@@ -404,7 +394,6 @@ extension NotificationRouterTests {
         // reads (see HomeTab.swift).
         XCTAssertEqual(homeTab(for: .watchFiring(watchId: "wat_1", firingKey: "wat_1:7")), .watches)
         XCTAssertEqual(homeTab(for: .watch(watchId: "wat_1")), .watches)
-        XCTAssertEqual(homeTab(for: .brief(briefId: "brf_1")), .briefs)
         XCTAssertEqual(homeTab(for: .privacyApproval(approvalId: "approval-1")), .privacy)
         XCTAssertEqual(homeTab(for: .agentAnswer(conversationId: "conv-9")), .agent)
         XCTAssertEqual(
@@ -430,7 +419,6 @@ extension NotificationRouterTests {
             "watch-firing"
         )
         XCTAssertEqual(PushTarget.watch(watchId: "wat_1").kindName, "watch")
-        XCTAssertEqual(PushTarget.brief(briefId: "brf_1").kindName, "brief")
         XCTAssertEqual(PushTarget.privacyApproval(approvalId: "approval-1").kindName, "privacy-approval")
         XCTAssertEqual(PushTarget.accessAuthorization.kindName, "access-authorization")
         XCTAssertEqual(PushTarget.agentAnswer(conversationId: "conv-9").kindName, "agent-answer")

@@ -23,6 +23,7 @@ import {
   buildClaudeCodeEnv,
   claudeCodeSessionArgs,
   claudeCodeUserContent,
+  convertToolsToMcp,
   findManagedPolicyConflict,
   isSupportedClaudeCodeVersion,
   parseClaudeCodeAuthStatus,
@@ -255,6 +256,18 @@ describe("Claude Code wire parsing", () => {
     ).toEqual({ inputTokens: 100, cacheReadTokens: 1000, outputTokens: 20 });
   });
 
+  it("advertises a tool whose arguments take one of several shapes as one object", () => {
+    const schema = z.union([
+      z.object({ id: z.string(), ref: z.string() }).strict(),
+      z.object({ id: z.string(), refs: z.array(z.string()) }).strict(),
+    ]);
+    const [tool] = convertToolsToMcp([
+      { name: "pick", description: "Pick one", schema, execute: async () => ({ content: "" }) },
+    ] as unknown as ToolHandle[]);
+    expect(tool.inputSchema).toMatchObject({ type: "object", required: ["id"] });
+    expect(tool.inputSchema).not.toHaveProperty("anyOf");
+  });
+
   it("inlines data-URL images as base64 blocks after the transcript", () => {
     const content = claudeCodeUserContent(
       input({
@@ -453,6 +466,41 @@ describe("Claude Code runtime against a scripted CLI", () => {
       expect(frames).not.toContain('"type":"user"');
     }
   });
+
+  it.each(["own", "heartbeat"])(
+    "accepts %s progress the CLI reports on a long-running Omnesis tool call",
+    async (mode) => {
+      const { runtime } = setup({
+        OMNESIS_FAKE_CLAUDE_SCENARIO: "tool",
+        OMNESIS_FAKE_CLAUDE_TOOL_PROGRESS: mode,
+      });
+      const events = await collect(
+        new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(
+          input({ tools: [searchTool()] }),
+        ),
+      );
+      expect(end(events).stopReason).toBe("end_turn");
+    },
+  );
+
+  it.each(["foreign", "foreign-heartbeat"])(
+    "fails closed when the CLI reports %s progress on a call Omnesis did not make",
+    async (mode) => {
+      const { runtime } = setup({
+        OMNESIS_FAKE_CLAUDE_SCENARIO: "tool",
+        OMNESIS_FAKE_CLAUDE_TOOL_PROGRESS: mode,
+      });
+      const events = await collect(
+        new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(
+          input({ tools: [searchTool()] }),
+        ),
+      );
+      expect(end(events).failure).toMatchObject({
+        code: "claude_code_native_tool_unavailable",
+        retryable: false,
+      });
+    },
+  );
 
   it("accepts a plugin built into the CLI that adds no tools", async () => {
     const { runtime } = setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: "builtin-plugin" });

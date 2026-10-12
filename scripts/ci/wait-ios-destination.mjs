@@ -75,7 +75,10 @@ export function waitForIOSDestination({
   packageFlags = [],
   run = execute,
   now = Date.now,
-  wait = (milliseconds) => execute("sleep", [String(milliseconds / 1000)], milliseconds + 1000),
+  // Block in-process: a `sleep` child can miss its own spawn timeout on a
+  // runner busy booting the simulator, which would abort discovery itself.
+  wait = (milliseconds) =>
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
   timeoutMs = 300_000,
   log = (text) => process.stderr.write(`${text}\n`),
 } = {}) {

@@ -1009,6 +1009,49 @@ describe("AnthropicBackend", () => {
     expect(end.payload.failure?.code).toBe("anthropic_api_error");
   });
 
+  it.each([
+    [
+      "You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+      "Anthropic refused the request: the account's API usage limit is reached.",
+    ],
+    [
+      "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      "Anthropic refused the request: the account's credit balance is too low.",
+    ],
+  ])("classifies an account-limit refusal as usage-limited: %s", async (upstream, expected) => {
+    const client: AnthropicClientLike = {
+      messages: {
+        create() {
+          throw {
+            status: 400,
+            type: "invalid_request_error",
+            error: { message: upstream },
+          };
+        },
+      },
+    };
+    const events: AgentEvent[] = [];
+    for await (const event of new AnthropicBackend({
+      apiKey: "test",
+      model: "claude-test",
+      client,
+    }).runTurn(baseInput())) {
+      events.push(event);
+    }
+    const err = events.find((e) => e.type === "agent.error");
+    if (err?.type !== "agent.error") throw new Error("expected agent.error");
+    expect(err.payload).toMatchObject({ code: "anthropic_usage_limited", message: expected });
+    const end = events.at(-1);
+    if (end?.type !== "agent.message.end") throw new Error("expected message end");
+    expect(end.payload.failure).toMatchObject({
+      code: "anthropic_usage_limited",
+      message: expected,
+      retryable: true,
+      provider: { status: 400, type: "invalid_request_error" },
+    });
+    expect(end.payload.failure?.message).not.toContain("regain access");
+  });
+
   it("preserves partial output when Anthropic reports model_context_window_exceeded", async () => {
     const { client } = stubClient([outputUsageStream([7], "model_context_window_exceeded")]);
     const events: AgentEvent[] = [];

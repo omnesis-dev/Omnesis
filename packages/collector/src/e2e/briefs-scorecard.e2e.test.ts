@@ -39,7 +39,7 @@ const DAILY_MIX_PATH = join(
   "evals/universes/loops-test-life/daily-mix.json",
 );
 
-describe("Briefs scorecard instrument validation", () => {
+describe("Loop scorecard instrument validation", () => {
   test("the committed daily-mix.json matches the arc-set derivation", () => {
     const committed = (JSON.parse(readFileSync(DAILY_MIX_PATH, "utf8")) as { mix: DailyMix }).mix;
     expect(committed).toEqual(computeDailyMix(generateArcSet(FROZEN_ARC_SEED)));
@@ -98,10 +98,9 @@ describe("Briefs scorecard instrument validation", () => {
     expect(result.counts.promptTokens).toBeGreaterThan(0);
     expect(result.counts.completionTokens).toBeGreaterThan(0);
 
-    // Reserve-then-settle fired once per expected run — the data runs plus
-    // one feedback run per simulated dismissal — in that order.
-    expect(reserves).toHaveLength(result.mix.expectedRuns + result.mix.feedbackRuns);
-    expect(settles.size).toBe(result.mix.expectedRuns + result.mix.feedbackRuns);
+    // Reserve-then-settle fired once per expected run, in that order.
+    expect(reserves).toHaveLength(result.mix.expectedRuns);
+    expect(settles.size).toBe(result.mix.expectedRuns);
     for (const [datumKey, usage] of settles) {
       expect(usage.promptTokens, datumKey).toBeGreaterThan(0);
     }
@@ -143,10 +142,9 @@ describe("Briefs scorecard instrument validation", () => {
     );
     expect(result.metrics.updateRecall).toBeLessThan(1);
 
-    // Wrong merges + feedback-vanished loops: each leaves an expecting arc
-    // with no tracked loop of its own.
+    // Wrong merges: each leaves an expecting arc with no tracked loop of its own.
     expect(result.counts.loopArcsTracked).toBe(
-      result.counts.loopArcTargets - SABOTEUR_DEFECTS.wrongMerges - SABOTEUR_DEFECTS.vanishedLoops,
+      result.counts.loopArcTargets - SABOTEUR_DEFECTS.wrongMerges,
     );
     expect(result.metrics.loopRecall).toBeLessThan(1);
 

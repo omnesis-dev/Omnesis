@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Briefs reconcile-quality E2E — the permanent regression net for the
+ * Brain reconcile-quality E2E — the permanent regression net for the
  * make-or-break algorithm.
  *
  * A real spawned gateway runs the whole engine end-to-end on the
@@ -22,7 +22,8 @@
  *  - a scripted run creates a REAL open-loop row + its mirror document
  *    (the spec's mandated scripted-backend assert);
  *  - reconcile: a later resolving datum closes the tracked loop instead
- *    of minting a duplicate; ambiguous resolutions attach a confirm brief;
+ *    of minting a duplicate; ambiguous resolutions note a confirmation
+ *    observation;
  *  - near-duplicate bait stays its own loop;
  *  - the diff engine: two rapid edits fold into ONE updated run whose
  *    prompt carries a diff spanning both edits; settled payloads are
@@ -63,7 +64,7 @@ import { startScriptedLoopModelServer, type ScriptedLoopModelServer } from "./fa
 import type Database from "better-sqlite3";
 
 // Compress the engine cadences (read by the spawned gateway from its env,
-// which inherits ours). Durations like debounce come from the `briefs`
+// which inherits ours). Durations like debounce come from the `brain`
 // config block instead — see `extraGatewayConfig` below.
 process.env.OMNESIS_COGNITION_WAKER_INTERVAL_MS = "100";
 process.env.OMNESIS_COGNITION_WAKER_IDLE_MS = "200";
@@ -74,22 +75,42 @@ process.env.OMNESIS_COGNITION_DRAIN_START_DELAY_MS = "500";
 
 const ARCS = generateArcSet(FROZEN_ARC_SEED);
 // Point-in-time surfacing arcs — computed at module load so the scheduled
-// day is genuinely in the future (the dated brief is hidden until then).
+// day is genuinely in the future (the dated observation's window opens then).
 const DATED = generateDatedReminderArcs(Date.now());
 // The same-thread reconcile arc (identity-based reconcile candidates).
 const THREAD = generateThreadReconcileArc();
 
-interface FeedResponse {
-  briefs: Array<{
-    id: string;
-    kind: string;
-    title: string;
-    state: string;
-    citations: Array<{ docId: string; title: string }>;
-  }>;
+interface ObservationRow {
+  id: string;
+  summary: string;
+  state: string;
+  window_start: number | null;
+  relevant_until: number | null;
 }
 
-describe("Briefs inert-when-off (experimental unset, model assigned)", () => {
+/** Observations whose summary carries an arc marker, oldest first. */
+function observationsWithMarker(db: Database.Database, marker: string): ObservationRow[] {
+  return db
+    .prepare<[string], ObservationRow>(
+      `SELECT id, summary, state, window_start, relevant_until FROM observations
+        WHERE instr(summary, ?) > 0 ORDER BY created_at, id`,
+    )
+    .all(marker);
+}
+
+/** The documents an observation cites, in order. */
+function observationCitations(db: Database.Database, id: string): string[] {
+  return db
+    .prepare<[string], { doc_id: string }>(
+      "SELECT doc_id FROM observation_citations WHERE observation_id = ? ORDER BY position",
+    )
+    .all(id)
+    .map((row) => row.doc_id);
+}
+
+const isOpen = (o: ObservationRow): boolean => o.state === "live" || o.state === "held";
+
+describe("Brain inert-when-off (experimental unset, model assigned)", () => {
   let harness: SyntheticE2EHarness;
   let server: ScriptedLoopModelServer;
 
@@ -113,12 +134,12 @@ describe("Briefs inert-when-off (experimental unset, model assigned)", () => {
 
   test("routes 404, /status says inactive, and an eligible datum enqueues nothing", async () => {
     const status = (await harness.gatewayJson("/status")) as {
-      briefs: { active: boolean; modelAssigned: boolean };
+      brain: { active: boolean; modelAssigned: boolean };
     };
-    expect(status.briefs.modelAssigned).toBe(true);
-    expect(status.briefs.active).toBe(false);
+    expect(status.brain.modelAssigned).toBe(true);
+    expect(status.brain.active).toBe(false);
 
-    for (const path of ["/briefs/feed", "/admin/brain/loops", "/admin/brain/runs"]) {
+    for (const path of ["/admin/brain/observations", "/admin/brain/loops", "/admin/brain/runs"]) {
       const res = await fetch(`${harness.gatewayUrl}${path}`, {
         headers: { Authorization: `Bearer ${harness.apiKey}` },
       });
@@ -141,7 +162,7 @@ describe("Briefs inert-when-off (experimental unset, model assigned)", () => {
   }, 60_000);
 });
 
-describe("Briefs reconcile quality on loops-test-life (scripted backend)", () => {
+describe("Brain reconcile quality on loops-test-life (scripted backend)", () => {
   let harness: SyntheticE2EHarness;
   let server: ScriptedLoopModelServer;
   let db: Database.Database;
@@ -187,6 +208,9 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
             maxRunsPerDay: 256,
             backlogTarget: 32,
             batchSize: 32,
+            // The universe's fixed dates lie beyond the default history
+            // horizon; this suite reads the whole ambient corpus.
+            horizon: "100y",
           },
           knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
           conversationDebounce: "2s",
@@ -244,8 +268,8 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
   });
 
   test("ambient historical discovery does not invent canonical obligations", async () => {
-    const status = (await harness.gatewayJson("/status")) as { briefs: { active: boolean } };
-    expect(status.briefs.active).toBe(true);
+    const status = (await harness.gatewayJson("/status")) as { brain: { active: boolean } };
+    expect(status.brain.active).toBe(true);
     // Historical discovery is operator-started; enabling its budget alone does
     // not authorize scanning the already synced ambient corpus.
     await new BrainObs(harness).startBootstrap();
@@ -280,12 +304,12 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       .prepare<
         [],
         { n: number }
-      >("SELECT (SELECT COUNT(*) FROM open_loops) + (SELECT COUNT(*) FROM briefs) AS n")
+      >("SELECT (SELECT COUNT(*) FROM open_loops) + (SELECT COUNT(*) FROM observations) AS n")
       .get();
     expect(row?.n).toBe(0);
   }, 60_000);
 
-  test("a scripted run creates a real open loop, its mirror document, and an awareness brief", async () => {
+  test("a scripted run creates a real open loop, its mirror document, and an observation", async () => {
     const arc = arcById(ARCS, "invoice");
     const marker = arc.marker!;
     await pushArcDoc(harness, arc.steps[0]!.doc);
@@ -307,22 +331,26 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     // The searchable mirror document exists (external_id = loop id).
     expect(docIdByExternal(db, loop.id)).not.toBeNull();
 
-    // The awareness brief is live on the feed, citing the source email.
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    const entry = feed.briefs.find((b) => b.title.includes(marker));
-    expect(entry, `brief for ${marker} on the feed`).toBeDefined();
-    expect(entry!.kind).toBe("loop");
-    expect(entry!.citations.map((c) => c.docId)).toContain(docId);
+    // The observation waits for the morning brief, citing the source email
+    // and attached to the loop.
+    const noted = observationsWithMarker(db, marker);
+    expect(noted, `observation for ${marker}`).toHaveLength(1);
+    expect(noted[0]!.state).toBe("live");
+    expect(observationCitations(db, noted[0]!.id)).toContain(docId);
+    const detail = (await harness.gatewayJson(`/admin/brain/loops/${loop.id}`)) as {
+      observations: Array<{ id: string }>;
+    };
+    expect(detail.observations.map((o) => o.id)).toEqual([noted[0]!.id]);
   }, 90_000);
 
-  test("a resolving datum closes the tracked loop instead of minting a duplicate (silent close + brief cleanup)", async () => {
+  test("a resolving datum closes the tracked loop instead of minting a duplicate (its observation drops)", async () => {
     const arc = arcById(ARCS, "invoice");
     const marker = arc.marker!;
     await pushArcDoc(harness, arc.steps[1]!.doc);
 
     // Gate on the resolution RUN settling, not on the loop state: the
-    // state flips to done one tool round before the brief cleanup and
-    // ledger note land, and asserting mid-run is a race.
+    // state flips to done one tool round before the ledger note lands, and
+    // asserting mid-run is a race.
     const resolutionDocId = await waitFor(`document row for ${arc.steps[1]!.doc.externalId}`, () =>
       docIdByExternal(db, arc.steps[1]!.doc.externalId),
     );
@@ -336,9 +364,17 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     const hits = loopsWithMarker(db, marker);
     expect(hits).toHaveLength(1);
 
-    // Silent close removed the awareness brief from the feed.
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    expect(feed.briefs.find((b) => b.title.includes(marker))).toBeUndefined();
+    // Closing the loop dropped its observation as superseded: it never ships.
+    const noted = observationsWithMarker(db, marker);
+    expect(noted.filter(isOpen)).toEqual([]);
+    expect(
+      db
+        .prepare<
+          [string],
+          { close_reason: string | null }
+        >("SELECT close_reason FROM observations WHERE id = ?")
+        .get(noted[0]!.id)?.close_reason,
+    ).toBe("superseded");
 
     // The resolution run stamped the ledger; the loop was created by a
     // DIFFERENT run (run-id stamping across the arc).
@@ -373,7 +409,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     expect(first[0]!.state).toBe("done");
   }, 90_000);
 
-  test("criterion 5: a worker killed after its first create re-claims to exactly one loop and one brief", async () => {
+  test("criterion 5: a worker killed after its first create re-claims to exactly one loop and one observation", async () => {
     const twin = arcById(ARCS, "invoice-twin");
     const marker = twin.marker!;
     let docId = docIdByExternal(db, twin.steps[0]!.doc.externalId);
@@ -402,7 +438,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     const createsBefore = createsFor();
     const completedBefore = runsForDoc(db, docId).filter((r) => r.status === "completed").length;
 
-    // The crash: the create attempt's loop + brief landed durably but the run
+    // The crash: the create attempt's loop + observation landed durably but the run
     // never settled, so a re-claimable pending run for the same datum reappears.
     enqueueCrashedDataRun(harness, {
       runId: `run_crash_c5_${Date.now()}`,
@@ -418,15 +454,14 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       return done > completedBefore ? true : null;
     });
 
-    // EXACTLY one loop and one brief — the re-attempt duplicated neither, and
-    // emitted no second open_loop_create.
+    // EXACTLY one loop and one observation — the re-attempt duplicated
+    // neither, and emitted no second open_loop_create.
     expect(loopsWithMarker(db, marker)).toHaveLength(1);
     expect(createsFor()).toBe(createsBefore);
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    expect(feed.briefs.filter((b) => b.title.includes(marker))).toHaveLength(1);
+    expect(observationsWithMarker(db, marker).filter(isOpen)).toHaveLength(1);
   }, 90_000);
 
-  test("an ambiguous fulfilment attaches a confirmation brief and leaves the loop open", async () => {
+  test("an ambiguous fulfilment notes a confirmation observation and leaves the loop open", async () => {
     const arc = arcById(ARCS, "request");
     const marker = arc.marker!;
     await pushArcDoc(harness, arc.steps[0]!.doc);
@@ -452,17 +487,17 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     });
 
     const detail = (await harness.gatewayJson(`/admin/brain/loops/${loop.id}`)) as {
-      briefs: Array<{ state: string; title: string }>;
+      observations: Array<{ state: string; summary: string; closeReason: string | null }>;
     };
-    const active = detail.briefs.filter(
-      (brief) => brief.state === "unread" || brief.state === "read",
-    );
+    // The confirmation superseded the request's observation: one open item.
+    const active = detail.observations.filter((o) => o.state === "live" || o.state === "held");
     expect(active).toHaveLength(1);
+    expect(detail.observations.filter((o) => o.closeReason === "superseded")).toHaveLength(1);
     const fulfilmentAction = arc.steps[1]!.doc.behavior.onCreated;
     if (fulfilmentAction.kind !== "resolve") {
       throw new Error("request arc fulfilment step must be a resolution");
     }
-    expect(active[0]!.title).toBe(fulfilmentAction.confirmBriefTitle);
+    expect(active[0]!.summary).toBe(fulfilmentAction.confirmObservation);
 
     // Still exactly one loop, still open — ambiguity never closes silently.
     const hits = loopsWithMarker(db, marker);
@@ -470,7 +505,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     expect(hits[0]!.state).toBe("open");
   }, 90_000);
 
-  test("a dated to-do surfaces on its scheduled day: brief held until nextShow + a re-verify run tied to the loop", async () => {
+  test("a dated to-do is windowed on its scheduled day: observation window + a re-verify run tied to the loop", async () => {
     const arc = DATED.dated;
     const marker = arc.marker!;
     const taskDoc = arc.steps[0]!.doc;
@@ -483,7 +518,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     });
     expect(loop.state).toBe("open");
 
-    // ...and the data run that built it has fully settled (loop + brief +
+    // ...and the data run that built it has fully settled (loop + observation +
     // scheduled run all landed).
     const taskDocId = docIdByExternal(db, taskDoc.externalId)!;
     await waitFor(`completed run for ${taskDoc.externalId}`, () => {
@@ -491,25 +526,21 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       return done.length > 0 ? true : null;
     });
 
-    // The brief is attached to the loop and HELD until the scheduled-day
-    // morning (nextShow), with eventAt on the day.
-    const brief = db
+    // The observation is attached to the loop and matters from the
+    // scheduled-day morning (windowStart) until the appointed time.
+    const noted = db
       .prepare<
         [string],
-        { id: string; next_show: number | null; event_at: number | null; title: string }
+        { id: string; window_start: number | null; relevant_until: number | null }
       >(
-        `SELECT b.id, b.next_show, b.event_at, b.title
-           FROM briefs b JOIN brief_related_loops brl ON brl.brief_id = b.id
-          WHERE brl.loop_id = ?`,
+        `SELECT o.id, o.window_start, o.relevant_until
+           FROM observations o JOIN observation_related_loops rl ON rl.observation_id = o.id
+          WHERE rl.loop_id = ?`,
       )
       .get(loop.id);
-    expect(brief, "dated brief attached to the loop").toBeDefined();
-    expect(brief!.next_show).toBe(Date.parse(DATED.nextShowIso));
-    expect(brief!.event_at).toBe(Date.parse(DATED.eventAtIso));
-
-    // Hidden until its day: not on today's feed.
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    expect(feed.briefs.find((b) => b.title.includes(marker))).toBeUndefined();
+    expect(noted, "dated observation attached to the loop").toBeDefined();
+    expect(noted!.window_start).toBe(Date.parse(DATED.windowStartIso));
+    expect(noted!.relevant_until).toBe(Date.parse(DATED.relevantUntilIso));
 
     // A re-verify run is scheduled for that day, tied to the loop via loopId
     // (never claimed today — its next_attempt_at is in the future), so
@@ -531,7 +562,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     expect(run!.next_attempt_at).toBeGreaterThan(Date.now());
 
     // Completing the task early resolves the loop; its cascade retracts the
-    // never-fired scheduled run and cleans up the held brief.
+    // never-fired scheduled run and drops the windowed observation.
     await pushArcDoc(harness, arc.steps[1]!.doc);
     const doneDocId = await waitFor(`document row for ${arc.steps[1]!.doc.externalId}`, () =>
       docIdByExternal(db, arc.steps[1]!.doc.externalId),
@@ -542,9 +573,10 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     });
     expect(loopsWithMarker(db, marker).some((l) => l.state === "done")).toBe(true);
     expect(scheduledRun(), "scheduled run cascade-retracted on resolve").toBeUndefined();
+    expect(observationsWithMarker(db, marker).filter(isOpen)).toEqual([]);
   }, 90_000);
 
-  test("an undated to-do is read but never auto-briefed (dated-only scope)", async () => {
+  test("an undated to-do is read but never noted (dated-only scope)", async () => {
     const arc = DATED.undated;
     const marker = arc.marker!;
     const doc = arc.steps[0]!.doc;
@@ -557,12 +589,11 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       return done.length > 0 ? true : null;
     });
 
-    // No natural moment to resurface → no loop, no brief, nothing on the feed.
+    // No natural moment to resurface → no loop and no observation.
     expect(loopsWithMarker(db, marker)).toHaveLength(0);
-    const feed = (await harness.gatewayJson("/briefs/feed")) as FeedResponse;
-    expect(feed.briefs.find((b) => b.title.includes(marker))).toBeUndefined();
+    expect(observationsWithMarker(db, marker)).toHaveLength(0);
 
-    // The transcript confirms the agent fetched it, then declined to brief.
+    // The transcript confirms the agent fetched it, then declined to note it.
     const calls = server.calls.filter((c) => c.docId === docId);
     expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const call of calls) {
@@ -686,7 +717,11 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     expect(creates.length).toBeGreaterThanOrEqual(1);
     const winner = loopsWithMarker(db, marker)[0]!;
     expect(
-      db.prepare("SELECT COUNT(*) AS n FROM brief_related_loops WHERE loop_id=?").get(winner.id),
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM observation_related_loops WHERE observation_id IN (SELECT id FROM observations WHERE state IN ('live','held')) AND loop_id=?",
+        )
+        .get(winner.id),
     ).toEqual({ n: 1 });
     const obs = new BrainObs(harness);
     const adoptedBy = new Set<string>();
@@ -784,7 +819,7 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       expect(
         db
           .prepare(
-            "SELECT (SELECT COUNT(*) FROM open_loop_docs WHERE doc_id=?) + (SELECT COUNT(*) FROM brief_citations WHERE doc_id=?) AS n",
+            "SELECT (SELECT COUNT(*) FROM open_loop_docs WHERE doc_id=?) + (SELECT COUNT(*) FROM observation_citations WHERE doc_id=?) AS n",
           )
           .get(docId, docId),
       ).toEqual({ n: 0 });
@@ -796,8 +831,8 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
     const loopsBefore = (
       db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM open_loops").get() ?? { n: 0 }
     ).n;
-    const briefsBefore = (
-      db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get() ?? { n: 0 }
+    const observationsBefore = (
+      db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM observations").get() ?? { n: 0 }
     ).n;
 
     await pushArcDoc(harness, boring);
@@ -813,11 +848,12 @@ describe("Briefs reconcile quality on loops-test-life (scripted backend)", () =>
       loops: (
         db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM open_loops").get() ?? { n: 0 }
       ).n,
-      briefs: (db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get() ?? { n: 0 })
-        .n,
+      observations: (
+        db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM observations").get() ?? { n: 0 }
+      ).n,
     };
     expect(after.loops).toBe(loopsBefore);
-    expect(after.briefs).toBe(briefsBefore);
+    expect(after.observations).toBe(observationsBefore);
 
     // The scripted transcript confirms: fetch, then done — no mutations.
     const calls = server.calls.filter((c) => c.docId === docId);

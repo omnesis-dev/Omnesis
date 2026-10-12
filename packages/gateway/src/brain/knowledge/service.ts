@@ -16,11 +16,7 @@ import {
 } from "../../inference/contextual-entailment.js";
 import { raceAbort } from "../decision-call.js";
 import { assertWikiRepairAssessment } from "./wiki-factual-repair.js";
-import {
-  briefVerificationUnavailable,
-  KnowledgeVerificationTimeoutError,
-} from "./verification-failure.js";
-import { prepareKnowledgeBriefCheck } from "./brief-check.js";
+import { KnowledgeVerificationTimeoutError } from "./verification-failure.js";
 import { CONTEXTUAL_VERIFIER, knowledgeClaimContexts } from "./claim-context.js";
 import { assertKnowledgeDependencyVersion, knowledgeHash } from "./storage-validation.js";
 import { assertKnowledgeSavePreflight } from "./save-preflight.js";
@@ -232,45 +228,14 @@ export class KnowledgeService {
       { ...input, claims: [...effectiveStates.values()] },
       parsed,
     );
-    const briefCheck = prepareKnowledgeBriefCheck(
-      this.deps.db,
-      input,
-      parsed,
-      owner,
-      this.deps.clock(),
-      effectiveStates,
-      (ref) => this.verificationReference(ref),
-    );
     let performedVerification = false;
     let verifier: EntailCapability | null = null;
-    let verifierUnavailable = false;
-    let verifierFailure: unknown;
     try {
       verifier = await this.withVerificationDeadline(
         (signal) => this.deps.getEntailmentVerifier?.(signal) ?? Promise.resolve(null),
       );
-    } catch (error) {
-      verifierUnavailable = true;
-      verifierFailure = error;
-      if (!briefCheck)
-        this.deps.log.warn("Knowledge verifier unavailable; retaining unverified claims");
-    }
-    if (briefCheck) {
-      if (verifierUnavailable) throw briefVerificationUnavailable(verifierFailure, this.deps.log);
-      if (verifier) {
-        let verdict;
-        try {
-          const { claim, evidence, context } = briefCheck.payload;
-          verdict = await this.verify(verifier, claim, evidence, context);
-        } catch (error) {
-          throw briefVerificationUnavailable(error, this.deps.log);
-        }
-        if (verdict.label !== "entailment")
-          throw new KnowledgeStorageError(
-            "claim_invalid",
-            "Evidence does not establish the complete displayed brief in its subject and time context; reconcile the title, prose, event associations and temporal anchors",
-          );
-      }
+    } catch {
+      this.deps.log.warn("Knowledge verifier unavailable; retaining unverified claims");
     }
     for (const claim of parsed.claims) {
       const previous = previousClaims.get(claim.id);
@@ -462,7 +427,7 @@ export class KnowledgeService {
       ...input,
       enforceClaimPreservation: true,
       runFence,
-      outcomeFence: briefCheck?.fence ?? outcomeFence,
+      outcomeFence,
       metadata,
       canonicalFields: owner?.canonicalFields ?? {},
       claims: states,

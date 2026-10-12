@@ -72,6 +72,8 @@ export interface StatusRoutesDeps {
    * the feature inactive, so clients keep on-device dictation.
    */
   getDictationStatus?: () => DictationFeatureStatus;
+  /** Whether a Tell Omnesis note runs an agent turn that can change tasks. */
+  getNoteAgentActive?: () => boolean;
   /** Corpus vocabulary is independent of whether the gateway transcribes audio. */
   getTranscriptionVocabularyEnabled?: () => boolean;
   /**
@@ -99,6 +101,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
     getReleaseCheck,
     getBriefsStatus,
     getDictationStatus,
+    getNoteAgentActive,
     getTranscriptionVocabularyEnabled,
     getDiskUsage,
   } = deps;
@@ -484,21 +487,19 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // renders a dead screen, and only flags a missing model on an install
       // that asked for the feature. Inactive unless the composition root wires
       // the gate in.
-      //
-      // Emitted under BOTH names during the rename. `brain` is the field to
-      // read: the subsystem is the Brain, and `briefs` there meant the whole of
-      // it rather than the one artifact type that word names elsewhere. The old
-      // key stays because the mobile clients ship independently, so removing it
-      // would break an installed app rather than an unreleased one; it goes
-      // once iOS and Android read `brain`.
       brain: brainGate,
-      briefs: brainGate,
+      // Apps that predate the Morning brief open a Briefs screen when this
+      // reads active; that screen's routes are gone, so it always reads off.
+      briefs: { ...brainGate, visible: false, active: false },
       // Tell Omnesis voice notes: whether the setting may show,
       // whether the operator switched it on, whether a runnable transcriber is
       // assigned, and whether the mobile apps should send a voice note's audio
       // to `POST /notes/voice`. A client that finds no field, or finds it
       // inactive, saves the phone's own transcript as a plain note.
       dictation: getDictationStatus?.() ?? inactiveDictationStatus(),
+      // Tasks are available on every install; `noteAgent` says whether a Tell
+      // Omnesis note is read by an agent that can add and change them.
+      tasks: { available: true, noteAgent: getNoteAgentActive?.() ?? false },
       transcriptionVocabulary: getTranscriptionVocabularyEnabled?.() ?? false,
       // How long the gateway believes a client's "I am showing this
       // conversation" mark without a refresh. Clients pace their own refresh

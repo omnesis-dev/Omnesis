@@ -27,6 +27,7 @@ import {
   supersedePersonAnnotation,
 } from "./person-annotations.js";
 import { createBriefsStorageTables } from "./schema.js";
+import { createObservation, getObservation } from "./observations.js";
 import { finalizeCognitionRun } from "./run-queue.js";
 import {
   createConsumptionEdgesTables,
@@ -83,19 +84,15 @@ function edge(over: Partial<ConsumptionEdgeInput> = {}): ConsumptionEdgeInput {
   return {
     priorStore: "doc",
     priorAnnotationId: "anno_1",
-    dependentKind: "brief",
-    dependentId: "brief_1",
+    dependentKind: "observation",
+    dependentId: "obs_1",
     runId: "run_1",
     ...over,
   };
 }
 
-function seedBrief(id = "brief_1", title = "Rehearsal day moved"): void {
-  db.prepare(
-    `INSERT INTO briefs
-       (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
-     VALUES (?, 'run_seed', 'info', ?, 0.8, 0.5, ?, ?)`,
-  ).run(id, title, NOW, NOW);
+function seedObservation(id = "obs_1", summary = "Rehearsal day moved"): void {
+  createObservation(db, { id, createdByRun: "run_seed", summary }, NOW);
 }
 
 function seedLoop(id = "loop_1", title = "Confirm the new day"): void {
@@ -119,29 +116,29 @@ describe("consumption edges", () => {
       .get()!;
     expect(row).toEqual({ run_id: "run_1", created_at: NOW });
     // A different dependent is a new edge.
-    expect(recordConsumptionEdges(db, [edge({ dependentId: "brief_2" })], NOW + 2)).toBe(1);
+    expect(recordConsumptionEdges(db, [edge({ dependentId: "obs_2" })], NOW + 2)).toBe(1);
   });
 
-  test("live-dependent reads drop edges whose brief/loop no longer exists", () => {
+  test("live-dependent reads drop edges whose observation/loop no longer exists", () => {
     seedDocAnno("anno_1");
-    seedBrief();
+    seedObservation();
     seedLoop();
     recordConsumptionEdges(
       db,
       [
         edge(),
         edge({ dependentKind: "loop", dependentId: "loop_1" }),
-        edge({ dependentKind: "brief", dependentId: "brief_gone" }),
+        edge({ dependentKind: "observation", dependentId: "obs_gone" }),
       ],
       NOW,
     );
     const deps = listLiveDependentsForAnnotation(db, "doc", "anno_1");
     expect(deps.map((d) => [d.kind, d.id, d.title])).toEqual([
-      ["brief", "brief_1", "Rehearsal day moved"],
       ["loop", "loop_1", "Confirm the new day"],
+      ["observation", "obs_1", "Rehearsal day moved"],
     ]);
     // A hard-deleted dependent drops out of the live read.
-    db.prepare("DELETE FROM briefs WHERE id = 'brief_1'").run();
+    db.prepare("DELETE FROM observations WHERE id = 'obs_1'").run();
     expect(listLiveDependentsForAnnotation(db, "doc", "anno_1").map((d) => d.id)).toEqual([
       "loop_1",
     ]);
@@ -191,7 +188,7 @@ describe("consumption edges", () => {
       ],
       NOW + 700,
     );
-    const priors = listConsumedPriorsForDependent(db, "brief", "brief_1");
+    const priors = listConsumedPriorsForDependent(db, "observation", "obs_1");
     expect(priors.map((p) => [p.store, p.annotationId, p.live, p.supersededBy])).toEqual([
       ["doc", "anno_live", true, null],
       ["doc", "anno_dead", false, null],
@@ -206,13 +203,13 @@ describe("consumption edges", () => {
     seedDocAnno("anno_a", NOW + 100);
     seedDocAnno("anno_b", NOW + 200);
     seedDocAnno("anno_c", NOW + 900);
-    seedBrief("brief_1", "Card");
+    seedObservation("obs_1", "Card");
     recordConsumptionEdges(
       db,
       [
         edge({ priorAnnotationId: "anno_a" }),
         edge({ priorAnnotationId: "anno_b" }),
-        edge({ priorAnnotationId: "anno_b", dependentId: "brief_gone" }),
+        edge({ priorAnnotationId: "anno_b", dependentId: "obs_gone" }),
         edge({ priorAnnotationId: "anno_c" }),
       ],
       NOW,
@@ -225,15 +222,15 @@ describe("consumption edges", () => {
         priorStore: "doc",
         priorAnnotationId: "anno_b",
         invalidatedAt: NOW + 200,
-        dependentKind: "brief",
-        dependentId: "brief_1",
+        dependentKind: "observation",
+        dependentId: "obs_1",
       },
     ]);
   });
 
-  test("hard retract atomically enqueues rechecks and keeps claim-less provenance", () => {
+  test("hard retract atomically drops dependent observations, enqueues loop rechecks and keeps claim-less provenance", () => {
     seedDocAnno("anno_1");
-    seedBrief();
+    seedObservation();
     seedLoop();
     recordConsumptionEdges(
       db,
@@ -247,6 +244,9 @@ describe("consumption edges", () => {
       ),
     ).toBe(true);
     expect(getDocAnnotation(db, "anno_1")).toBeNull();
+    // An observation is a short-lived note: a dead prior drops it as stale
+    // instead of minting a recheck run.
+    expect(getObservation(db, "obs_1")).toMatchObject({ state: "dropped", closeReason: "stale" });
 
     const runs = db
       .prepare<
@@ -267,15 +267,6 @@ describe("consumption edges", () => {
       {
         kind: "feedback",
         payload: {
-          recheckDependentKind: "brief",
-          recheckDependentId: "brief_1",
-          recheckGeneration: expect.any(String),
-        },
-        dedupeKey: "feedback:provenance:brief:brief_1",
-      },
-      {
-        kind: "feedback",
-        payload: {
           recheckDependentKind: "loop",
           recheckDependentId: "loop_1",
           recheckGeneration: expect.any(String),
@@ -283,7 +274,7 @@ describe("consumption edges", () => {
         dedupeKey: "feedback:provenance:loop:loop_1",
       },
     ]);
-    expect(listConsumedPriorsForDependent(db, "brief", "brief_1")).toEqual([
+    expect(listConsumedPriorsForDependent(db, "observation", "obs_1")).toEqual([
       {
         store: "doc",
         annotationId: "anno_1",
@@ -311,11 +302,22 @@ describe("consumption edges", () => {
       },
       NOW,
     );
-    seedBrief();
-    recordConsumptionEdges(db, [edge({ priorStore: "person", priorAnnotationId: "panno_1" })], NOW);
+    seedLoop();
+    recordConsumptionEdges(
+      db,
+      [
+        edge({
+          priorStore: "person",
+          priorAnnotationId: "panno_1",
+          dependentKind: "loop",
+          dependentId: "loop_1",
+        }),
+      ],
+      NOW,
+    );
     const claimedPayloadJson = JSON.stringify({
-      recheckDependentKind: "brief",
-      recheckDependentId: "brief_1",
+      recheckDependentKind: "loop",
+      recheckDependentId: "loop_1",
       recheckGeneration: "00000000-0000-4000-8000-000000000001",
     });
     db.prepare(
@@ -323,7 +325,7 @@ describe("consumption edges", () => {
          (id, kind, payload_json, dedupe_key, status, attempts,
           next_attempt_at, enqueued_at, cycle_anchor_at)
        VALUES ('run_existing', 'feedback', ?,
-               'feedback:provenance:brief:brief_1', 'pending', 3, ?, ?, ?)`,
+               'feedback:provenance:loop:loop_1', 'pending', 3, ?, ?, ?)`,
     ).run(claimedPayloadJson, NOW, NOW, NOW);
 
     expect(
@@ -344,8 +346,8 @@ describe("consumption edges", () => {
     expect(parseCognitionProvenanceRecheckPayload(foldedPayload)).not.toBeNull();
     expect(foldedPayload.recheckGeneration).not.toBe("00000000-0000-4000-8000-000000000001");
     expect(foldedPayload).toEqual({
-      recheckDependentKind: "brief",
-      recheckDependentId: "brief_1",
+      recheckDependentKind: "loop",
+      recheckDependentId: "loop_1",
       recheckGeneration: expect.any(String),
     });
 
@@ -366,8 +368,8 @@ describe("consumption edges", () => {
 
   test("failed queue insertion rolls the hard retract back", () => {
     seedDocAnno("anno_1");
-    seedBrief();
-    recordConsumptionEdges(db, [edge()], NOW);
+    seedLoop();
+    recordConsumptionEdges(db, [edge({ dependentKind: "loop", dependentId: "loop_1" })], NOW);
     db.exec(`
       CREATE TRIGGER reject_recheck BEFORE INSERT ON cognition_runs
       BEGIN

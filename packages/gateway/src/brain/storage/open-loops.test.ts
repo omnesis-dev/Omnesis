@@ -22,7 +22,7 @@ import {
   updateOpenLoop,
   type CreateOpenLoopInput,
 } from "./open-loops.js";
-import { createBrief, getBrief, setBriefState } from "./briefs.js";
+import { createObservation, getObservation, transitionObservation } from "./observations.js";
 
 function testDbPath(): string {
   return `/tmp/omnesis-test-${randomUUID()}.db`;
@@ -198,98 +198,86 @@ describe("open-loop repository", () => {
   });
 
   describe("deletion invariant", () => {
-    test("deleting a loop deletes attached non-terminal briefs, keeps terminal ones edge-free", () => {
+    test("deleting a loop deletes attached open observations, keeps closed ones edge-free", () => {
       createOpenLoop(db, loopInput({ id: "olp_1" }), 1000);
-      createBrief(
+      createObservation(
         db,
         {
-          id: "brf_live",
+          id: "obs_live",
           createdByRun: "run_1",
-          kind: "loop",
-          title: "Studio booking still unconfirmed",
-          confidence: 0.8,
-          urgency: 0.4,
+          summary: "Studio booking still unconfirmed",
           relatedLoopIds: ["olp_1"],
         },
         1000,
       );
-      createBrief(
+      createObservation(
         db,
         {
-          id: "brf_terminal",
+          id: "obs_terminal",
           createdByRun: "run_1",
-          kind: "loop",
-          title: "Old reminder",
-          confidence: 0.8,
-          urgency: 0.4,
+          summary: "Old reminder",
           relatedLoopIds: ["olp_1"],
         },
         1000,
       );
-      setBriefState(db, "brf_terminal", "dismissed_not_relevant", 1100);
+      transitionObservation(db, "obs_terminal", { state: "dropped", reason: "suppressed" }, 1100);
 
       const result = deleteOpenLoop(db, "olp_1");
       expect(result.deleted).toBe(true);
-      expect(result.deletedBriefIds).toEqual(["brf_live"]);
+      expect(result.deletedObservationIds).toEqual(["obs_live"]);
       expect(getOpenLoop(db, "olp_1")).toBeNull();
-      expect(getBrief(db, "brf_live")).toBeNull();
-      // Terminal brief survives with the dangling edge removed.
-      const terminal = getBrief(db, "brf_terminal");
-      expect(terminal?.state).toBe("dismissed_not_relevant");
+      expect(getObservation(db, "obs_live")).toBeNull();
+      // A closed observation survives with the dangling edge removed.
+      const terminal = getObservation(db, "obs_terminal");
+      expect(terminal?.state).toBe("dropped");
       expect(terminal?.relatedLoopIds).toEqual([]);
       // Ledger + doc edges FK-cascade.
       expect(listOpenLoopLedger(db, "olp_1")).toEqual([]);
     });
 
     test("deleting an unknown loop reports deleted: false", () => {
-      expect(deleteOpenLoop(db, "olp_missing")).toEqual({ deleted: false, deletedBriefIds: [] });
+      expect(deleteOpenLoop(db, "olp_missing")).toEqual({
+        deleted: false,
+        deletedObservationIds: [],
+      });
     });
   });
 
   describe("privacy-delete cascade", () => {
-    test("deleting a source document deletes derived loops and briefs (terminal included)", () => {
+    test("deleting a source document deletes derived loops and observations (closed included)", () => {
       createOpenLoop(db, loopInput({ id: "olp_1", docs: ["doc_gone", "doc_other"] }), 1000);
       createOpenLoop(db, loopInput({ id: "olp_2", docs: ["doc_other"] }), 1000);
-      // Attached to the cascaded loop, already terminally dismissed —
+      // Attached to the cascaded loop, already dropped —
       // privacy still purges it.
-      createBrief(
+      createObservation(
         db,
         {
-          id: "brf_attached",
+          id: "obs_attached",
           createdByRun: "run_1",
-          kind: "loop",
-          title: "Follow up",
-          confidence: 0.5,
-          urgency: 0.5,
+          summary: "Follow up",
           relatedLoopIds: ["olp_1"],
         },
         1000,
       );
-      setBriefState(db, "brf_attached", "dismissed_wrong", 1100);
+      transitionObservation(db, "obs_attached", { state: "dropped", reason: "suppressed" }, 1100);
       // Cites the deleted doc directly, no loop.
-      createBrief(
+      createObservation(
         db,
         {
-          id: "brf_citing",
+          id: "obs_citing",
           createdByRun: "run_1",
-          kind: "info",
-          title: "Context",
-          confidence: 0.5,
-          urgency: 0.5,
+          summary: "Context",
           citations: ["doc_gone"],
         },
         1000,
       );
       // Unrelated survivor.
-      createBrief(
+      createObservation(
         db,
         {
-          id: "brf_unrelated",
+          id: "obs_unrelated",
           createdByRun: "run_1",
-          kind: "info",
-          title: "Elsewhere",
-          confidence: 0.5,
-          urgency: 0.5,
+          summary: "Elsewhere",
           citations: ["doc_other"],
           relatedLoopIds: ["olp_2"],
         },
@@ -298,23 +286,23 @@ describe("open-loop repository", () => {
 
       const result = cascadeOpenLoopPrivacyDelete(db, ["doc_gone"]);
       expect(result.deletedLoopIds).toEqual(["olp_1"]);
-      expect(result.deletedBriefIds.sort()).toEqual(["brf_attached", "brf_citing"]);
+      expect(result.deletedObservationIds.sort()).toEqual(["obs_attached", "obs_citing"]);
       expect(getOpenLoop(db, "olp_1")).toBeNull();
-      expect(getBrief(db, "brf_attached")).toBeNull();
-      expect(getBrief(db, "brf_citing")).toBeNull();
-      // The untouched loop and brief survive.
+      expect(getObservation(db, "obs_attached")).toBeNull();
+      expect(getObservation(db, "obs_citing")).toBeNull();
+      // The untouched loop and observation survive.
       expect(getOpenLoop(db, "olp_2")).not.toBeNull();
-      expect(getBrief(db, "brf_unrelated")).not.toBeNull();
+      expect(getObservation(db, "obs_unrelated")).not.toBeNull();
     });
 
     test("no derived state is a clean no-op", () => {
       expect(cascadeOpenLoopPrivacyDelete(db, ["doc_gone"])).toEqual({
         deletedLoopIds: [],
-        deletedBriefIds: [],
+        deletedObservationIds: [],
       });
       expect(cascadeOpenLoopPrivacyDelete(db, [])).toEqual({
         deletedLoopIds: [],
-        deletedBriefIds: [],
+        deletedObservationIds: [],
       });
     });
   });
@@ -494,48 +482,44 @@ describe("open-loop repository", () => {
   });
 
   describe("listRelatedLoops", () => {
-    const NOW = 10_000;
-    const brief = (id: string, loops: string[]): void =>
-      createBrief(
+    const observe = (id: string, loops: string[]): void =>
+      createObservation(
         db,
         {
           id,
           createdByRun: "run_1",
-          kind: "loop",
-          title: "cluster",
-          confidence: 0.8,
-          urgency: 0.4,
+          summary: "cluster",
           relatedLoopIds: loops,
         },
         1_000,
       );
 
-    test("returns active loops sharing a live brief, newest first, excluding self + terminal loops", () => {
+    test("returns active loops sharing an open observation, newest first, excluding self + terminal loops", () => {
       createOpenLoop(db, loopInput({ id: "olp_1" }), 1_000);
       createOpenLoop(db, loopInput({ id: "olp_2" }), 3_000);
       createOpenLoop(db, loopInput({ id: "olp_3", state: "done" }), 2_000);
       createOpenLoop(db, loopInput({ id: "olp_lonely" }), 1_000);
-      brief("brf_a", ["olp_1", "olp_2"]); // olp_1 & olp_2 grouped
-      brief("brf_b", ["olp_1", "olp_3"]); // olp_3 is done → excluded
+      observe("obs_a", ["olp_1", "olp_2"]); // olp_1 & olp_2 grouped
+      observe("obs_b", ["olp_1", "olp_3"]); // olp_3 is done → excluded
 
       // olp_1's siblings: olp_2 (active), not olp_3 (done), not itself.
-      expect(listRelatedLoops(db, "olp_1", NOW).map((l) => l.id)).toEqual(["olp_2"]);
+      expect(listRelatedLoops(db, "olp_1").map((l) => l.id)).toEqual(["olp_2"]);
       // symmetric.
-      expect(listRelatedLoops(db, "olp_2", NOW).map((l) => l.id)).toEqual(["olp_1"]);
-      // a loop on no brief has no related loops.
-      expect(listRelatedLoops(db, "olp_lonely", NOW)).toEqual([]);
+      expect(listRelatedLoops(db, "olp_2").map((l) => l.id)).toEqual(["olp_1"]);
+      // a loop on no observation has no related loops.
+      expect(listRelatedLoops(db, "olp_lonely")).toEqual([]);
     });
 
-    test("ignores groupings through a brief that is no longer on the feed", () => {
+    test("ignores groupings through an observation that is closed", () => {
       createOpenLoop(db, loopInput({ id: "olp_x" }), 1_000);
       createOpenLoop(db, loopInput({ id: "olp_y" }), 2_000);
-      brief("brf_live", ["olp_x", "olp_y"]);
-      expect(listRelatedLoops(db, "olp_x", NOW).map((l) => l.id)).toEqual(["olp_y"]);
+      observe("obs_live", ["olp_x", "olp_y"]);
+      expect(listRelatedLoops(db, "olp_x").map((l) => l.id)).toEqual(["olp_y"]);
 
-      // The user dismisses the card (terminal state); the edge rows survive, but the
+      // The observation is dropped (terminal state); the edge rows survive, but the
       // grouping must no longer be honored — both loops are still open.
-      setBriefState(db, "brf_live", "dismissed_not_relevant", 1_100);
-      expect(listRelatedLoops(db, "olp_x", NOW)).toEqual([]);
+      transitionObservation(db, "obs_live", { state: "dropped", reason: "suppressed" }, 1_100);
+      expect(listRelatedLoops(db, "olp_x")).toEqual([]);
     });
   });
 });

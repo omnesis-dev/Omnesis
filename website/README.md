@@ -16,20 +16,11 @@ refresh the assets.
 
 ## The Brain page's brief still
 
-`brain.html` shows a phone with a brief open. The image is not a mock-up: it is
-a render of the app's own `BriefDetailSheet` against the `briefHealthRecovery`
-fixture in `ios/Sources/Omnesis/UI/PreviewMocks.swift`, so the site cannot end
-up showing a screen the app does not produce.
-
-| Asset                                             | Regenerate with                 |
-| ------------------------------------------------- | ------------------------------- |
-| `media/brief-health-trend.png` (+ `media/light/`) | `scripts/shot-website-brief.sh` |
-
-The script runs the one snapshot case that renders it
-(`OmnesisTests/PreviewSnapshotTests/testBriefDetailHealthTrend`) on the
-configured macOS build host and copies both appearances in; `--check` fails if
-either committed still has drifted from what the app renders today. Re-run it
-after changing the fixture, the brief UI, or the app's theme.
+`brain.html` shows a phone with a brief open: `media/brief-health-trend.png`
+(and its light-appearance twin in `media/light/`). It is a static still rendered
+from an earlier version of the iOS app against invented fixture data, and no
+script regenerates it; replace both images by hand if the page should show a
+different screen.
 
 ## Shared architecture stages (collector → substrate)
 

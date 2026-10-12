@@ -152,9 +152,9 @@
         <p class="docs-lead">
           <code>OMNESIS_EXPERIMENTAL=1</code> enables unstable features: browser-extension page
           notes and Find, <strong>Omnesis Brain</strong>, which reads your data in the background
-          and keeps cited notes, loops and briefs, and <strong>Omnesis Watch</strong>, which tells
-          you or an agent when a condition becomes true. This page explains how to run, observe and
-          stop them.
+          and keeps cited notes and loops and writes a morning brief, and
+          <strong>Omnesis Watch</strong>, which tells you or an agent when a condition becomes true.
+          This page explains how to run, observe and stop them.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -323,9 +323,9 @@
           Brain is a background agent. It reads your records as they arrive, and on a schedule,
           without anyone asking a question, and writes down what it learns in a form the rest of
           Omnesis can use: dated facts, unresolved commitments, cited context on documents and
-          people, maintained project and topic wikis, and occasional cards worth your attention. It
-          is the one part of Omnesis that spends model tokens with nobody asking, so most of this
-          section is about what it does with them and how to bound it.
+          people, maintained project and topic wikis, and observations for a once-a-day morning
+          brief. It is the one part of Omnesis that spends model tokens with nobody asking, so most
+          of this section is about what it does with them and how to bound it.
         </p>
         <p>
           While the experimental Brain is active, the main agent checks candidate replies against
@@ -359,11 +359,11 @@
             </li>
             <li class="flow-step flow-gate">
               <span class="flow-title">Gates</span
-              ><span class="flow-desc">Cited evidence, entailment verifier, brief judge</span>
+              ><span class="flow-desc">Cited evidence, entailment verifier, record check</span>
             </li>
             <li class="flow-step">
               <span class="flow-title">Stores</span
-              ><span class="flow-desc">Time index, loops, annotations, wikis, briefs</span>
+              ><span class="flow-desc">Time index, loops, annotations, wikis, observations</span>
             </li>
           </ol>
           <figcaption>
@@ -411,9 +411,12 @@
                   Unresolved actions, decisions, promises and obligations, with who owes what, the
                   documents involved, a deadline where there is one, and a ledger of every run that
                   changed the loop. States: <code>open</code>, <code>snoozed</code>,
-                  <code>done</code>, <code>dismissed</code>.
+                  <code>done</code>, <code>dismissed</code>. A loop Brain finds is a suggested task
+                  until you accept it.
                 </td>
-                <td>Debug → Knowledge → Loops; the mobile apps' Loops view</td>
+                <td>
+                  Tasks → Suggested, then your Tasks once accepted; Debug → Cognition → Library
+                </td>
               </tr>
               <tr>
                 <td>Annotations</td>
@@ -425,14 +428,22 @@
                 <td>The document or person page; Debug → Cognition → Library</td>
               </tr>
               <tr>
-                <td>Briefs</td>
+                <td>Observations</td>
                 <td>
-                  Cited cards for things that merit attention now, including a morning digest when
-                  there is information to compose. An empty digest input skips model inference and
-                  creates no card. Only the digest sends a push notification, at most once a day
-                  (<code>brain.digest.push</code>).
+                  Things a run noticed that you may want to hear about in the next morning brief,
+                  each citing and quoting its sources, with the window in which it matters and the
+                  loops it relates to. None reaches you directly.
                 </td>
-                <td>Debug → Knowledge → Briefs; the mobile apps' Briefs view</td>
+                <td>Debug → Cognition → Observations; Debug → Cognition → Library</td>
+              </tr>
+              <tr>
+                <td>Morning brief</td>
+                <td>
+                  One message a day in a standing conversation, built from the observations that
+                  survive the morning recheck, the day's calendar and what is due (see
+                  <a href="#brain-morning-brief">Observations and the morning brief</a>).
+                </td>
+                <td>The <strong>Morning brief</strong> conversation, in the portal and the apps</td>
               </tr>
             </tbody>
           </table>
@@ -457,13 +468,98 @@
           decided by Brain.
         </p>
 
+        <h3 id="brain-morning-brief">Observations and the morning brief</h3>
+        <p>
+          Brain does not interrupt you with what it finds. During any run, it can note an
+          <strong>observation</strong>: a short statement of something you probably do not know and
+          would act on, why it matters, the documents it rests on with an exact quote for each
+          claim, and when it stops mattering. A quote that is not in its cited document is refused.
+          When an observation is noted, the <code>decision</code> model scores three things: what
+          missing it would cost you (consequence, 0 to 4), when acting on it matters (timing, 0 to
+          3), and how likely you already know it.
+        </p>
+        <p>
+          Those first scores feed a <strong>would have pushed</strong> log. An observation is logged
+          there when it has the top consequence, acting on it matters today or tomorrow, and its
+          window closes before the next morning brief, so that it would have earned an immediate
+          notification. No notification is sent for it; the log exists to show whether such a push
+          would ever have been worth having.
+        </p>
+        <p>
+          Each morning at <code>brain.digest.hour</code> one run rechecks every open observation, in
+          this order:
+        </p>
+        <ol>
+          <li>expire those whose window has ended;</li>
+          <li>drop those whose evidence was deleted or went stale;</li>
+          <li>drop those whose related loops are all resolved;</li>
+          <li>
+            score the rest again with the <code>decision</code> model, now told what happened since
+            they were noted, and ship, hold or drop each one: drop when you probably already know it
+            (<code>brain.observations.alreadyKnownMax</code>, 0.6), ship at consequence 2 or above
+            (<code>minConsequence</code>), or at consequence 1 when timing is 2 or above
+            (<code>minTimelyConsequence</code>, <code>timelyLevel</code>), and otherwise hold it for
+            a later morning;
+          </li>
+          <li>
+            check the claims of those that ship with the <code>entailment-verifier</code>, dropping
+            any it does not support.
+          </li>
+        </ol>
+        <p>
+          Every judgement fails open: with no decision model, or one that does not answer, an
+          observation ships, and an unavailable verifier ships it unverified. What ships is ranked
+          by consequence, then timing, then age.
+        </p>
+        <p>
+          The same run then writes one message, the morning brief, into a standing conversation
+          named <strong>Morning brief</strong>. It is pinned and cannot be deleted, and opens like
+          any other conversation in the portal and the apps. Every item that ships is included,
+          together with the day's calendar and what is due; weekends are no different. When there is
+          nothing (no observations, no calendar, nothing due), no message is written.
+          <code>brain.digest.push</code> sends one notification when the brief is written.
+        </p>
+        <p>
+          The conversation reads by day: a separator names each day, and each brief shows when it
+          was sent and, under it, <strong>Based on N things</strong>, the items it shipped, each
+          with links to the documents it cites and the tasks it relates to. Today's list is open;
+          earlier days fold to one line until you open them.
+        </p>
+        <p>
+          Reply in that conversation to act on the brief. The agent sees that morning's brief and
+          its items, so “the second one” resolves, and acts on what you say with its task tools,
+          stating each change in one line. “Don't tell me about this” suppresses an item for good; a
+          stated preference (“I don't need reminders about newsletters”) is also remembered as a
+          fact about you, so later briefs leave similar items out. Earlier days stay in the
+          transcript but are outside the agent's context.
+        </p>
+        <p>
+          In experimental mode, <a href="/docs/apps#tasks">Tasks</a> gains a
+          <strong>Suggested</strong> view in the portal and the apps. Loops Brain finds appear there
+          and nowhere else, and become yours only when you accept them: a suggested task offers
+          <strong>Accept</strong>, optionally with a planned time, or <strong>Not for me</strong>.
+          Brain never changes one of your own tasks silently: when it judges one done, no longer
+          relevant or worded wrongly, the task shows the proposed change and its reason, with
+          <strong>Confirm</strong> to apply it or <strong>Keep</strong> to leave the task as it is.
+          Your own tasks never decay. Without experimental mode, neither the Suggested view nor
+          proposed changes appear.
+        </p>
+        <p>
+          <strong>Debug → Cognition → Observations</strong> lists observations by state, with each
+          one's close reason, its scores when noted and at the recheck, related tasks, the run that
+          noted it and the brief message that carried it. The same tab shows the would-have-pushed
+          log and each day's brief items. Closed observations are kept for 90 days
+          (<code>brain.observations.retentionDays</code>), then reduced to an outcome record of
+          their state, scores and what you did.
+        </p>
+
         <h3 id="brain-turning-on">Turning it on</h3>
         <p>
           Brain runs only when two things are true: the gateway runs with
           <code>OMNESIS_EXPERIMENTAL=1</code>, and a model is assigned to the
           <code>background-agent</code> role and can actually be reached. Either alone does nothing.
           The second step is the one that starts spending: assigning the model starts the enabled
-          producers, from reacting to new records to scheduled sweeps and the morning digest. Read
+          producers, from reacting to new records to scheduled sweeps and the morning brief. Read
           <a href="#brain-spend">Bounding the spend</a> before you assign it. The one exception is
           the catch-up over your history, which waits until you start it yourself (see
           <a href="#brain-how-it-runs">How it runs</a>).
@@ -488,10 +584,9 @@
           <code>claude-code/&lt;model&gt;</code> or <code>&lt;backend&gt;/&lt;model&gt;</code> for
           an OpenAI-compatible backend you configured (see
           <a href="/docs/operating#models">Operating → Models</a>). A local GGUF model cannot serve
-          <code>background-agent</code> or <code>brief-judge</code>, which need a chat backend; it
-          can serve <code>entailment-verifier</code>. The portal's
-          <strong>Settings → Models</strong> page lists the same roles under
-          <strong>Cognition</strong>. Three further roles are optional:
+          <code>background-agent</code>, which needs a chat backend; it can serve
+          <code>entailment-verifier</code>. The portal's <strong>Settings → Models</strong> page
+          lists the same roles under <strong>Cognition</strong>. Two further roles are optional:
         </p>
         <div class="table-wrap">
           <table>
@@ -505,7 +600,13 @@
             <tbody>
               <tr>
                 <td><code>background-agent</code></td>
-                <td>Runs every Brain agent run, and compiles natural-language watches.</td>
+                <td>
+                  Runs every Brain agent run, and compiles natural-language watches. The same role
+                  reads Tell Omnesis notes (see
+                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>); that
+                  part does not depend on this mode, and its tokens appear as
+                  <strong>Note agent</strong> in the spend breakdown.
+                </td>
                 <td>Brain does not run. Stored records stay readable.</td>
               </tr>
               <tr>
@@ -519,16 +620,11 @@
                 </td>
               </tr>
               <tr>
-                <td><code>brief-judge</code></td>
-                <td>Decides whether a candidate brief is worth interrupting you for.</td>
-                <td>Briefs are created without review.</td>
-              </tr>
-              <tr>
                 <td><code>decision</code></td>
                 <td>
-                  Routes urgency, discovery, dependency repair and review, and checks whether new
-                  records belong in durable memory. Served only by TypeSafe Jev
-                  (<code>typesafe/jev-1.13.0</code>); see
+                  Routes urgency, discovery, dependency repair and review, checks whether new
+                  records belong in durable memory, and scores observations for the morning brief.
+                  Served only by TypeSafe Jev (<code>typesafe/jev-1.13.0</code>); see
                   <a href="#brain-worth-gate">Routing maintenance</a> and
                   <a href="#brain-record-check">Checking what it writes</a>. The role itself is
                   stable; <a href="/docs/operating#models">Models</a> covers its setup.
@@ -608,6 +704,15 @@
           work keeps its assigned priority. Older and undated inventory follows the
           historical-review controls. Later arrivals and edits remain reactive, even when they
           describe older events.
+        </p>
+        <p>
+          Historical review reaches back <code>brain.bootstrap.horizon</code> (default
+          <code>90d</code>), measured from now against each document's own date, not the date it was
+          imported. Older documents are never read proactively, by the catch-up or by an initial
+          import, and the coverage chart shows them as outside the horizon rather than pending.
+          Pending catch-up work that falls outside the horizon is withdrawn; reviewed work is kept.
+          Brain still finds older documents through search when they are relevant. Raise the horizon
+          (for example <code>1y</code>) to reach further back; the change applies on the next pass.
         </p>
         <p>
           Wikis use descriptive titles, sections for supported topics, and links to related pages
@@ -702,14 +807,14 @@
           Loops live in the same Library. Choose <strong>Loops</strong> in the type filter to browse
           active or resolved outcomes, and sort loaded results by deadline, importance, or recent
           update. Each outcome shows its canonical status and synthesis in one view.
-          <strong>Outcome details and activity</strong> shows people, evidence, related briefs,
-          scheduled checks, and the activity ledger without expanding a section. Advanced fields are
-          also shown without disclosure controls. Outcomes remain readable before synthesis is
-          available. Status filters and pills distinguish active, resolved, and retired outcomes in
-          the same list; outcome details retain recurrence information. Briefs also live in the
-          Library, with their status filters, feedback actions, and full metadata. Older loop and
-          brief links open the corresponding Library entry. Behavioral notes has the brain’s
-          operating lessons; these are distinct from the root wiki’s account of your life.
+          <strong>Outcome details and activity</strong> shows people, evidence, related
+          observations, scheduled checks, and the activity ledger without expanding a section.
+          Advanced fields are also shown without disclosure controls. Outcomes remain readable
+          before synthesis is available. Status filters and pills distinguish active, resolved, and
+          retired outcomes in the same list; outcome details retain recurrence information.
+          Observations also live in the Library, with their state filters, close reasons and full
+          metadata. Older loop links open the corresponding Library entry. Behavioral notes has the
+          brain’s operating lessons; these are distinct from the root wiki’s account of your life.
         </p>
         <div class="table-wrap">
           <table>
@@ -735,7 +840,7 @@
                 <td>
                   Once a day at <code>brain.dailyRunHour</code> (05:00 gateway local time): a batch
                   per high-volume source whose records are reviewed together rather than one by one,
-                  and the morning digest at <code>brain.digest.hour</code> (07:00).
+                  and the morning recheck and brief at <code>brain.digest.hour</code> (07:00).
                 </td>
               </tr>
               <tr>
@@ -763,8 +868,8 @@
               <tr>
                 <td><code>feedback</code></td>
                 <td>
-                  You dismissed or snoozed a brief, or a note that a brief or loop was built on was
-                  withdrawn or superseded.
+                  A note that a loop was built on was withdrawn or superseded. An observation built
+                  on such a note is dropped without a run.
                 </td>
               </tr>
               <tr>
@@ -819,36 +924,25 @@
             <strong>Entailment verifier.</strong> With the role assigned, a second model must agree
             that the quote supports the claim; a neutral or contradicting verdict refuses the write
             and tells the agent to weaken the claim. It checks annotations, dated facts that quote
-            evidence, and the claims inside a brief. If the verifier errors or takes longer than 45
-            seconds, an annotation is stored marked unverified for the daily re-check, but a brief
-            with an unverified claim is held. Autonomous document and person notes use structured
-            assessments of individually identified factual assertions, preserving their surrounding
-            conditions and attribution. A negative assertion refuses the note; positive verification
-            requires complete coverage and exact authorized quotes. This uses one bounded verifier
-            call; malformed output or the existing timeout leaves the note unverified. These model
-            judgments can still be wrong. Wiki and root claims also check their placement context
-            with separate assessments and source-exact positive witnesses. MiniCheck does not
-            support contextual checks; these report unavailable rather than treating a literal-only
-            result as contextual proof. Source-derived briefs also check their complete displayed
-            text, including implied associations and time anchors, against original evidence. An
-            unavailable contextual check holds the brief write. Verification is a model judgment,
-            not a guarantee of correctness.
-          </li>
-          <li>
-            <strong>Brief judge.</strong> Every candidate brief must pass four questions: does it
-            tell you something new, does it land before it matters, is there a real cost of doing
-            nothing, and does it state a conclusion no single document shows? Cards that look ahead
-            are asked whether they help you prepare instead of whether they are new. A brief that
-            fails is never created, and the run is told not to raise it again. If an assigned judge
-            times out or errors, the brief is held rather than shipped unreviewed. The morning
-            digest is exempt.
+            evidence, and, at the morning recheck, the claims inside an observation. If the verifier
+            errors or takes longer than 45 seconds, an annotation is stored marked unverified for
+            the daily re-check, and an observation ships unverified. Autonomous document and person
+            notes use structured assessments of individually identified factual assertions,
+            preserving their surrounding conditions and attribution. A negative assertion refuses
+            the note; positive verification requires complete coverage and exact authorized quotes.
+            This uses one bounded verifier call; malformed output or the existing timeout leaves the
+            note unverified. These model judgments can still be wrong. Wiki and root claims also
+            check their placement context with separate assessments and source-exact positive
+            witnesses. MiniCheck does not support contextual checks; these report unavailable rather
+            than treating a literal-only result as contextual proof. Verification is a model
+            judgment, not a guarantee of correctness.
           </li>
           <li>
             <strong>Evidence changes.</strong> When a cited document's content changes, each
             annotation that quotes it is re-checked against the new text; one whose quotes are all
-            gone is withdrawn (kept for audit), and briefs and loops built on a withdrawn note are
-            looked at again. Once a day the stalest notes are re-checked against their evidence and
-            re-affirmed, weakened, superseded or retracted.
+            gone is withdrawn (kept for audit); loops built on a withdrawn note are looked at again,
+            and observations built on it are dropped. Once a day the stalest notes are re-checked
+            against their evidence and re-affirmed, weakened, superseded or retracted.
           </li>
         </ul>
 
@@ -1048,6 +1142,14 @@
                 </td>
               </tr>
               <tr>
+                <td><code>brain.bootstrap.horizon</code></td>
+                <td>90d</td>
+                <td>
+                  How far back historical review reaches, by each document's own date. Older
+                  documents are not read proactively and do not count as pending.
+                </td>
+              </tr>
+              <tr>
                 <td><code>brain.bootstrap.activeHours</code></td>
                 <td>unset</td>
                 <td>
@@ -1192,13 +1294,13 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
 
         <h3 id="brain-observing">Observing it</h3>
         <p>
-          The portal separates <strong>Knowledge</strong> (the library, loops, briefs, and timeline)
-          from <strong>Brain activity</strong>. Activity summarizes runs and spend; Agent runs shows
-          the queue, transcripts, and decisions; Maintenance follows repair batches; Discovery shows
-          coverage and historical admission controls; Calibration compares confidence with observed
-          outcomes. Legacy memory retains agent notes and retired-loop history.
-          <strong>System → Gateway jobs</strong> shows when each scheduled task last ran. The same
-          data is available from the CLI:
+          The portal separates <strong>Knowledge</strong> (the library, loops, observations, and
+          timeline) from <strong>Brain activity</strong>. Activity summarizes runs and spend; Agent
+          runs shows the queue, transcripts, and decisions; Maintenance follows repair batches;
+          Discovery shows coverage and historical admission controls; Calibration compares
+          confidence with observed outcomes. Legacy memory retains agent notes and retired-loop
+          history. <strong>System → Gateway jobs</strong> shows when each scheduled task last ran.
+          The same data is available from the CLI:
         </p>
         <div class="table-wrap">
           <table>
@@ -1212,7 +1314,8 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
               <tr>
                 <td><code>omnesis brain loops [--state open]</code></td>
                 <td>
-                  Tracked open loops; <code>omnesis brain loop &lt;id&gt;</code> for one in full.
+                  Tracked open loops; <code>omnesis brain loop &lt;id&gt;</code> for one in full,
+                  with its ledger and the observations noted about it.
                 </td>
               </tr>
               <tr>
@@ -1267,8 +1370,8 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
             <strong>Unassign the model.</strong>
             <code>omnesis model assign background-agent disabled</code> stops all new Brain work at
             once. While experimental mode is on, the portal's Brain activity page still shows what
-            was written and the apps still show stored briefs, with a setup notice that opens the
-            model picker; the apps' Loops view needs a running Brain.
+            was written, the Morning brief conversation keeps its past messages, and Tasks keeps
+            every task, including suggestions not yet accepted. Notes stop being read.
           </li>
           <li>
             <strong>Turn experimental mode off.</strong> Restart the gateway without
@@ -1282,14 +1385,14 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
           Brain reads the same corpus the agent does and sends what a run reads to the backends
           assigned to its roles, and nowhere else; it has no web access. With a hosted model, the
           documents a run reads go to that provider. HTTP backends on a non-loopback address are
-          refused unless <code>inference.allowRemoteInference</code> is on. The morning digest's
-          title and text travel through your push setup like any other notification.
+          refused unless <code>inference.allowRemoteInference</code> is on. The morning brief's
+          notification travels through your push setup like any other conversation notification.
         </p>
         <p>
           The agent reads open loops and the time index when it answers a question, so they can
           inform an answer through <a href="/docs/connect#answer">Answer</a>, which passes your
-          privacy review as usual. A Direct grant exposes them only when it is unrestricted. Briefs
-          are exposed to neither.
+          privacy review as usual. A Direct grant exposes them only when it is unrestricted.
+          Observations are exposed to neither.
         </p>
         <p>
           Loop lists normally help the agent choose records to read. For counts or recorded
@@ -1308,16 +1411,18 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
           <li>
             Deleting a document for good (see
             <a href="/docs/search#beyond-search">Search → Beyond search</a>) removes everything
-            Brain derived from it: the loops that involve it and their briefs, the annotations and
-            dated facts that cite it, and the claims that quote it.
+            Brain derived from it: the loops and observations built on it, the observations attached
+            to those loops, the annotations and dated facts that cite it, and the claims that quote
+            it.
           </li>
           <li>
             <code>omnesis brain notes --wipe</code> clears the agent-notes file. It is the one
             direct write the <code>brain</code> command offers.
           </li>
           <li>
-            Briefs can be dismissed in the apps' Briefs view. Nothing deletes a loop, brief or
-            annotation directly; the <code>brain</code> command is read-only for them.
+            Telling the Morning brief conversation not to mention an item suppresses that
+            observation. Nothing deletes an observation or annotation directly; the
+            <code>brain</code> command is read-only for them.
           </li>
         </ul>
 
@@ -1387,8 +1492,8 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
                 </td>
                 <td>true / 7 / 45 / true</td>
                 <td>
-                  The morning digest, the hour it composes, how long it waits for the overnight
-                  queue to drain, and whether it pushes.
+                  The morning brief, the hour it is composed, how long it waits for the overnight
+                  queue to drain, and whether writing it sends a notification.
                 </td>
               </tr>
               <tr>
@@ -1451,12 +1556,20 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
               <tr>
                 <td><code>provenanceRecheck.enabled</code></td>
                 <td>true</td>
-                <td>Re-examine briefs and loops whose supporting note was withdrawn.</td>
+                <td>Re-examine loops whose supporting note was withdrawn.</td>
               </tr>
               <tr>
-                <td><code>judge.enabled</code></td>
-                <td>true</td>
-                <td>Pass every candidate brief through the <code>brief-judge</code> role.</td>
+                <td>
+                  <code>observations.retentionDays</code> / <code>alreadyKnownMax</code> /
+                  <code>minConsequence</code> / <code>minTimelyConsequence</code> /
+                  <code>timelyLevel</code>
+                </td>
+                <td>90 / 0.6 / 2 / 1 / 2</td>
+                <td>
+                  How long closed observations are kept, and the policy the morning recheck uses to
+                  ship, hold or drop them (see
+                  <a href="#brain-morning-brief">Observations and the morning brief</a>).
+                </td>
               </tr>
               <tr>
                 <td><code>mergeAdjudication.enabled</code></td>

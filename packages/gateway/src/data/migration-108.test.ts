@@ -16,7 +16,7 @@ import { MIGRATIONS } from "./migrations.js";
 const NOW = Date.parse("2026-08-15T10:00:00.000Z");
 
 describe("migration 108", () => {
-  test("enqueues one recheck per live dependent and no-ops after completion", () => {
+  test("drops a live observation, enqueues one recheck per live loop, and no-ops after completion", () => {
     const db = new Database(":memory:");
     try {
       createAnnotationStorageTables(db);
@@ -24,9 +24,8 @@ describe("migration 108", () => {
       createBriefsStorageTables(db);
       createConsumptionEdgesTables(db);
       db.prepare(
-        `INSERT INTO briefs
-           (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
-         VALUES ('brief_1', 'run_seed', 'info', 'Review the plan', 0.8, 0.5, ?, ?)`,
+        `INSERT INTO observations (id, created_by_run, summary, created_at, updated_at)
+         VALUES ('obs_1', 'run_seed', 'Review the plan', ?, ?)`,
       ).run(NOW, NOW);
       db.prepare(
         `INSERT INTO open_loops
@@ -39,8 +38,8 @@ describe("migration 108", () => {
           {
             priorStore: "person",
             priorAnnotationId: "panno_missing",
-            dependentKind: "brief",
-            dependentId: "brief_1",
+            dependentKind: "observation",
+            dependentId: "obs_1",
             runId: "run_seed",
           },
           {
@@ -53,8 +52,8 @@ describe("migration 108", () => {
           {
             priorStore: "doc",
             priorAnnotationId: "anno_missing",
-            dependentKind: "brief",
-            dependentId: "brief_gone",
+            dependentKind: "observation",
+            dependentId: "obs_gone",
             runId: "run_seed",
           },
         ],
@@ -66,7 +65,17 @@ describe("migration 108", () => {
       const firstRuns = db
         .prepare<[], { payload_json: string }>("SELECT payload_json FROM cognition_runs")
         .all();
-      expect(firstRuns).toHaveLength(2);
+      expect(firstRuns).toHaveLength(1);
+      // An observation whose prior was hard-retracted is dropped as stale
+      // rather than rechecked; the morning brief never ships it.
+      expect(
+        db
+          .prepare<
+            [],
+            { state: string; close_reason: string | null }
+          >("SELECT state, close_reason FROM observations WHERE id = 'obs_1'")
+          .get(),
+      ).toEqual({ state: "dropped", close_reason: "stale" });
       for (const run of firstRuns) {
         expect(parseCognitionProvenanceRecheckPayload(JSON.parse(run.payload_json))).not.toBeNull();
       }
@@ -85,14 +94,6 @@ describe("migration 108", () => {
           payload: JSON.parse(run.payload_json) as unknown,
         })),
       ).toEqual([
-        {
-          dedupeKey: "feedback:provenance:brief:brief_1",
-          payload: {
-            recheckDependentKind: "brief",
-            recheckDependentId: "brief_1",
-            recheckGeneration: expect.any(String),
-          },
-        },
         {
           dedupeKey: "feedback:provenance:loop:loop_1",
           payload: {

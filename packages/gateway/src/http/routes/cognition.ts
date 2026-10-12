@@ -97,14 +97,14 @@ export function mountCognitionRoutes(app: RouteApp, deps: CognitionRoutesDeps): 
         value.annotationId !== id ||
         typeof value.createdAt !== "number" ||
         !Number.isFinite(value.createdAt) ||
-        (value.kind !== "brief" && value.kind !== "loop") ||
+        (value.kind !== "observation" && value.kind !== "loop") ||
         typeof value.id !== "string"
       ) {
         return null;
       }
       return {
         createdAt: value.createdAt,
-        kind: value.kind as "brief" | "loop",
+        kind: value.kind as "observation" | "loop",
         id: value.id,
       };
     });

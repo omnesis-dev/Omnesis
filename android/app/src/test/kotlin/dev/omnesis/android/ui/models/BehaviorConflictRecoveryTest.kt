@@ -46,11 +46,11 @@ class BehaviorConflictRecoveryTest {
         val latest = ModelsOverview(modelSettings = mapOf(
             "agent" to ModelBehaviorSettings("openrouter/reasoner-v1",
                 ModelBehaviorValues(reasoningEffort = "external")),
-            "brief-judge" to ModelBehaviorSettings("openrouter/judge-v1",
+            "watch-judge" to ModelBehaviorSettings("openrouter/judge-v1",
                 ModelBehaviorValues(reasoningEffort = "high")),
         ))
         val baseline = BehaviorSaveBaseline().apply {
-            replace(mapOf("brief-judge" to ModelBehaviorSettings("openrouter/judge-v1",
+            replace(mapOf("watch-judge" to ModelBehaviorSettings("openrouter/judge-v1",
                 ModelBehaviorValues(reasoningEffort = "low"))))
         }
         var generation = 0L
@@ -69,10 +69,10 @@ class BehaviorConflictRecoveryTest {
         conflicts.mark("agent")
         val retry = async { conflicts.refresh("agent") }
         runCurrent()
-        baseline.acknowledge(BehaviorSaveRequest("brief-judge", "openrouter/judge-v1",
+        baseline.acknowledge(BehaviorSaveRequest("watch-judge", "openrouter/judge-v1",
             ModelBehaviorValues(reasoningEffort = "high")))
         generation++
-        stale.complete(ModelsOverview(modelSettings = mapOf("brief-judge" to
+        stale.complete(ModelsOverview(modelSettings = mapOf("watch-judge" to
             ModelBehaviorSettings("openrouter/judge-v1", ModelBehaviorValues(reasoningEffort = "low")))))
         runCurrent()
 
@@ -80,7 +80,7 @@ class BehaviorConflictRecoveryTest {
         assertFalse(conflicts.isBlocked("agent"))
         assertEquals(2, fetches)
         assertEquals(ModelBehaviorValues(reasoningEffort = "high"), baseline.expected(
-            BehaviorSaveRequest("brief-judge", "openrouter/judge-v1", ModelBehaviorValues()),
+            BehaviorSaveRequest("watch-judge", "openrouter/judge-v1", ModelBehaviorValues()),
         ))
     }
 }

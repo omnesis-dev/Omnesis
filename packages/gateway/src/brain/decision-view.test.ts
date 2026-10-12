@@ -69,7 +69,7 @@ describe("summarizeCognitionTranscript", () => {
           toolStart("t2", "open_loop_create", { title: "Pay the studio invoice" }),
           toolResult("t2", "structured"),
           toolStart("t3", "open_document", { id: "doc_a" }),
-          toolStart("t4", "brief_create", { title: "An invoice arrived" }),
+          toolStart("t4", "observation_note", { summary: "An invoice arrived" }),
           toolResult("t4", "structured"),
         ],
       }),
@@ -77,7 +77,7 @@ describe("summarizeCognitionTranscript", () => {
     expect(decision.researchToolCalls).toBe(2);
     expect(decision.actions).toEqual([
       { tool: "open_loop_create", detail: 'create loop "Pay the studio invoice"', ok: true },
-      { tool: "brief_create", detail: 'create brief "An invoice arrived"', ok: true },
+      { tool: "observation_note", detail: expect.any(String), ok: true },
     ]);
     expect(decision.subject).toBe("doc doc_a (created)");
     expect(decision.docId).toBe("doc_a");
@@ -111,8 +111,6 @@ describe("summarizeCognitionTranscript", () => {
         events: [
           toolStart("t1", "open_loop_ledger_append", { id: "loop_x", note: "Reply landed." }),
           toolStart("t2", "open_loop_delete", { id: "loop_x" }),
-          toolStart("t3", "brief_update", { id: "brf_1" }),
-          toolStart("t4", "brief_delete", { id: "brf_1" }),
           toolStart("t5", "notes_rewrite", { text: "…" }),
           toolStart("t6", "schedule_agent_run", { when: "2026-07-04T09:00:00Z", prompt: "…" }),
           toolStart("t7", "annotation_supersede", { id: "anno_a", supersededBy: "anno_b" }),
@@ -126,8 +124,6 @@ describe("summarizeCognitionTranscript", () => {
     expect(decision.actions.map((a) => a.detail)).toEqual([
       "ledger loop_x: Reply landed.",
       "delete loop loop_x",
-      "update brief brf_1",
-      "withdraw brief brf_1",
       "rewrite agent notes",
       "schedule run at 2026-07-04T09:00:00Z",
       "supersede anno_a → anno_b",

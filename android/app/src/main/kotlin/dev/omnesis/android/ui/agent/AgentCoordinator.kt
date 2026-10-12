@@ -16,6 +16,8 @@ import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.CreateSessionResponse
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.ChatMessage
+import dev.omnesis.android.transport.dto.DailyBriefItemsDto
+import dev.omnesis.android.transport.dto.DailyBriefMessageRef
 import dev.omnesis.android.transport.dto.formatLine
 import dev.omnesis.android.ui.common.classifyGatewayError
 import dev.omnesis.android.ui.common.CursorPagingState
@@ -77,6 +79,11 @@ class AgentCoordinator @Inject constructor() {
         val transcriptPaging: CursorPagingState = CursorPagingState(),
         /** Anchor used to project legacy, unfiltered older-message responses consistently. */
         val conversationOrigin: ConversationOrigin? = null,
+        /**
+         * Which loaded messages feed the citation timeline; null when the whole conversation
+         * does. Set only for the Morning brief conversation, whose timeline is the latest day's.
+         */
+        val timelineScope: TimelineScope? = null,
         /** Bumped after a prepend so Compose can restore the previous top-row anchor. */
         val transcriptPrependVersion: Long = 0,
         /**
@@ -302,24 +309,11 @@ class AgentCoordinator @Inject constructor() {
      * in flight is discarded via [sessionChoice]. Re-tapping the conversation already on screen
      * is a no-op. Mirrors the iOS `resumeConversation(id:)`.
      */
-    /**
-     * Resume a conversation, optionally posting [autoSend] as its first message once the
-     * resume has actually landed.
-     *
-     * The auto-send exists for dictation hand-offs, where the user spoke a question at a
-     * surface that is not the agent and expects to arrive mid-answer. It is deliberately
-     * conditional: the surface adopts the target id optimistically, before the transcript
-     * loads, so "did we land here" has to mean *and nothing failed on the way* — otherwise
-     * a dictated question posts into a thread that never opened.
-     */
-    fun resumeConversation(id: String, autoSend: String? = null) {
+    fun resumeConversation(id: String) {
         val st = _state.value
-        if (id == st.sessionId && !st.transcriptLoading) {
-            autoSend?.takeIf { it.isNotBlank() }?.let { send(it) }
-            return
-        }
+        if (id == st.sessionId && !st.transcriptLoading) return
         sessionChoice++
-        resumeInto(id, sessionChoice, autoSend)
+        resumeInto(id, sessionChoice)
     }
 
     /**
@@ -445,7 +439,7 @@ class AgentCoordinator @Inject constructor() {
      * is discarded if [sessionChoice] moved past [choice] while the fetch was in flight. Shared
      * by the explicit [resumeConversation] and the bootstrap resume-most-recent.
      */
-    private fun resumeInto(id: String, choice: Int, autoSend: String? = null) {
+    private fun resumeInto(id: String, choice: Int) {
         val c = client ?: return
         beginResume(id)
         val handoff = beginSnapshotHandoff(id)
@@ -455,11 +449,6 @@ class AgentCoordinator @Inject constructor() {
                     if (sessionChoice == choice && snapshotHandoffIsCurrent(handoff)) {
                         applyCreatedSession(it)
                         finishSnapshotHandoff(handoff, it.eventCursor)
-                        // Only once the resume has genuinely landed on this thread.
-                        val landed = _state.value
-                        if (landed.sessionId == id && landed.fatalError == null) {
-                            autoSend?.takeIf { text -> text.isNotBlank() }?.let(::send)
-                        }
                     } else {
                         discardSnapshotHandoff(handoff)
                     }
@@ -511,6 +500,7 @@ class AgentCoordinator @Inject constructor() {
                 transcriptLoading = false,
                 transcriptPaging = CursorPagingState(),
                 conversationOrigin = null,
+                timelineScope = null,
                 transcriptPrependVersion = 0,
                 terminalFailure = null,
                 sendRejectedText = null,
@@ -549,6 +539,7 @@ class AgentCoordinator @Inject constructor() {
                 transcriptLoading = true,
                 transcriptPaging = CursorPagingState(),
                 conversationOrigin = null,
+                timelineScope = null,
                 transcriptPrependVersion = 0,
                 terminalFailure = null,
                 sendRejectedText = null,
@@ -578,7 +569,13 @@ class AgentCoordinator @Inject constructor() {
             messagesAreVisible = session.messagesAreVisible,
             origin = session.origin,
         )
-        val rebuilt = AgentTurnBuilder.stateFrom(messages)
+        val rebuilt = AgentTurnBuilder.stateFrom(
+            messages,
+            breakBefore = AgentTurnBuilder.briefTurnBreaks(
+                session.origin,
+                startIndex = (session.messageCount - messages.size).coerceAtLeast(0),
+            ),
+        )
         val lastAssistantIndex = rebuilt.turns.indexOfLast { it is AgentTurn.Assistant }
         val lastTurnFailure = session.lastTurnFailure
         // The record's own account of how the last turn died, which carries the provider's
@@ -620,6 +617,7 @@ class AgentCoordinator @Inject constructor() {
                     nextCursor = session.messagePageInfo?.nextCursor,
                 ),
                 conversationOrigin = session.origin,
+                timelineScope = TimelineScope.forLoaded(session.origin, messages, session.messageCount),
                 terminalFailure = session.terminalFailure,
                 // A session is live again, so the composer comes back.
                 liveSessionMissingReason = null,
@@ -646,6 +644,7 @@ class AgentCoordinator @Inject constructor() {
                     nextCursor = session.messagePageInfo?.nextCursor,
                 ),
                 conversationOrigin = session.origin,
+                timelineScope = null,
                 terminalFailure = session.terminalFailure,
                 liveSessionMissingReason = null,
             )
@@ -675,8 +674,15 @@ class AgentCoordinator @Inject constructor() {
         )
         _state.update {
             it.copy(
-                chat = AgentTurnBuilder.stateFrom(messages),
+                chat = AgentTurnBuilder.stateFrom(
+                    messages,
+                    breakBefore = AgentTurnBuilder.briefTurnBreaks(
+                        origin,
+                        startIndex = (page.messageCount - messages.size).coerceAtLeast(0),
+                    ),
+                ),
                 conversationOrigin = origin,
+                timelineScope = TimelineScope.forLoaded(origin, messages, page.messageCount),
                 fatalError = null,
                 transcriptLoading = false,
                 transcriptPaging = CursorPagingState(nextCursor = page.messagePageInfo.nextCursor),
@@ -704,6 +710,15 @@ class AgentCoordinator @Inject constructor() {
                 if (sessionChoice == choice) applyCreatedSession(it)
             }
         }
+    }
+
+    /**
+     * What the Morning brief sent on [day] in [conversationId] was based on. Throws when there is
+     * no paired client or the read fails, which the transcript shows as a quiet Retry.
+     */
+    suspend fun dailyBriefItems(conversationId: String, day: String): DailyBriefItemsDto {
+        val c = client ?: throw IllegalStateException("not paired")
+        return c.dailyBriefItems(conversationId, day)
     }
 
     /** Load one complete page before the visible transcript, preserving live suffix turns. */
@@ -738,9 +753,17 @@ class AgentCoordinator @Inject constructor() {
                         messagesAreVisible = page.messagesAreVisible,
                         origin = latest.conversationOrigin,
                     )
-                    val merged = prependOlderTranscript(latest.chat, messages, prefixed)
+                    // Placed against the brief index by counting back from the first loaded message.
+                    val olderStart = latest.timelineScope?.firstLoaded?.let { (it - messages.size).coerceAtLeast(0) }
+                    val merged = prependOlderTranscript(
+                        latest.chat,
+                        messages,
+                        prefixed,
+                        breakBefore = olderStart?.let { AgentTurnBuilder.briefTurnBreaks(latest.conversationOrigin, it) }.orEmpty(),
+                    )
                     _state.value = latest.copy(
                         chat = merged,
+                        timelineScope = latest.timelineScope?.withOlder(messages),
                         transcriptPaging = latest.transcriptPaging.finishLoadMore(
                             started.request,
                             page.messagePageInfo.nextCursor,
@@ -1760,8 +1783,9 @@ internal fun prependOlderTranscript(
     current: AgentChatState,
     messages: List<ChatMessage>,
     idPrefix: String,
+    breakBefore: Map<Int, DailyBriefMessageRef> = emptyMap(),
 ): AgentChatState {
-    val older = AgentTurnBuilder.stateFrom(messages, idPrefix)
+    val older = AgentTurnBuilder.stateFrom(messages, idPrefix, breakBefore)
     val citations = older.citations.toMutableList()
     for (citation in current.citations) {
         val index = citations.indexOfFirst { it.documentId == citation.documentId }
@@ -1803,16 +1827,6 @@ internal fun selectVisibleConversationMessages(
     if (messagesAreVisible) messages else visibleConversationMessages(messages, origin)
 
 /**
- * Whether this build has a card to pin above the transcript for [origin] — an anchored thread
- * whose kind it recognises and whose snapshot it actually received.
- *
- * This is the precondition for two things that must agree: hiding the seeded prefix, and
- * showing the transcript rather than the blank-chat empty state. A thread whose whole
- * transcript is its seed has no visible turns, so a build that hid the prefix without drawing
- * the card would render an empty screen; one that drew neither would open on the agent's hidden
- * briefing prompt.
- */
-/**
  * Whether the surface is already a blank new conversation — nothing said on it, nothing it is a
  * reply to, nothing loading or failed.
  *
@@ -1829,9 +1843,18 @@ internal fun isBlankNewConversation(state: AgentCoordinator.UiState): Boolean =
         state.fatalError == null &&
         state.terminalFailure == null
 
+/**
+ * Whether this build has a card to pin above the transcript for [origin] — an anchored thread
+ * whose kind it recognises and whose snapshot it actually received.
+ *
+ * This is the precondition for two things that must agree: hiding the seeded prefix, and
+ * showing the transcript rather than the blank-chat empty state. A thread whose whole
+ * transcript is its seed has no visible turns, so a build that hid the prefix without drawing
+ * the card would render an empty screen; one that drew neither would open on the agent's hidden
+ * briefing prompt.
+ */
 @VisibleForTesting
 internal fun hasContextCard(origin: ConversationOrigin?): Boolean = when (origin?.kind) {
-    "brief" -> origin.brief != null
     "watch_firing" -> origin.watch != null
     else -> false
 }

@@ -516,7 +516,7 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
       "cognition.dailyRhythm",
       "cognition.digest",
       "cognition.decaySweep",
-      "cognition.snoozeResurface",
+      "cognition.observationRetention",
       "cognition.synthesis",
       "cognition.collisionSweep",
       "cognition.sweeps",
@@ -720,7 +720,7 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
       "cognition.dailyRhythm",
       "cognition.digest",
       "cognition.decaySweep",
-      "cognition.snoozeResurface",
+      "cognition.observationRetention",
       "cognition.synthesis",
       "cognition.collisionSweep",
       "cognition.sweeps",
@@ -801,7 +801,7 @@ describe("GET /status advertises the brain gate", () => {
       ...sourceRuntimeHooks(),
       getBriefsStatus: () => briefsFeatureStatus(assignedResolver, READY_DEPS),
     });
-    expect((await statusBody(app)).briefs).toEqual({
+    expect((await statusBody(app)).brain).toEqual({
       visible: false,
       enabled: false,
       modelAssigned: true,
@@ -816,7 +816,7 @@ describe("GET /status advertises the brain gate", () => {
     });
     // The reason rides all the way out to the client, so a surface can say
     // what to fix instead of rendering a feature that does nothing.
-    expect((await statusBody(app)).briefs).toEqual({
+    expect((await statusBody(app)).brain).toEqual({
       visible: true,
       enabled: true,
       modelAssigned: false,
@@ -829,11 +829,13 @@ describe("GET /status advertises the brain gate", () => {
       ...sourceRuntimeHooks(),
       getBriefsStatus: () => briefsFeatureStatus(assignedResolver, READY_DEPS),
     });
-    expect((await statusBody(app)).briefs).toEqual({
+    expect((await statusBody(app)).brain).toEqual({
       visible: true,
       enabled: true,
       modelAssigned: true,
       active: true,
     });
+    // Apps that predate the Morning brief read `briefs`; it always reads off.
+    expect((await statusBody(app)).briefs).toMatchObject({ visible: false, active: false });
   });
 });

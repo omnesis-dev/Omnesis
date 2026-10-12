@@ -26,6 +26,7 @@ import {
   getSourceDocumentProfile,
   upsertSourceDocumentProfiles,
 } from "./repositories/SourceDocumentProfileRepository.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { SourceDocumentProfileEntry } from "./repositories/SourceDocumentProfileRepository.js";
 import type { Db } from "./types.js";
 
@@ -79,6 +80,7 @@ describe("migration 81 (tombstone)", () => {
     // An install stopped just before the retired slot must still reach the head
     // rather than halting on it.
     runSchemaSetup(db);
+    createLegacyBriefTables(db);
     db.exec("PRAGMA user_version = 80");
     runMigrations(db);
     expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);

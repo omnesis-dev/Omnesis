@@ -2,20 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Write-time grounding teeth for the user-facing surfaces:
+ * Write-time grounding teeth for durable writes:
  *
- *  - `brief_create` / `brief_update` asserted claims — every factual,
- *    document-derived assertion a brief makes must cite a real document,
- *    quote it verbatim, sit inside its claim-basis confidence band, clear
- *    the persistence floor, and pass the entailment gate (cheap SQL checks
- *    strictly before any verifier call; ONE refusal names every failing
- *    claim and is re-askable; passing claims are born-verified; a configured
- *    verifier outage holds the Brief; with no verifier configured the stamp
- *    is null).
  *  - `temporal_annotation_add` / `temporal_annotation_update` conditional
- *    evidence — a write
- *    declaring its grounding gets the same quote + entailment teeth; a
- *    write without evidence is never gated.
+ *    evidence — a write declaring its grounding gets the quote + entailment
+ *    teeth; a write without evidence is never gated.
+ *  - document/person annotation evidence, including multi-evidence claims.
+ *  - output writes (loops and observations) declare the annotation priors
+ *    they rest on, and record consumption edges only for those.
  *
  * Fixture data is invented — no corpus content.
  */
@@ -27,9 +21,7 @@ import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { withPersonProfileRead } from "../person-profile-test-tools.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
-import { listSweepTallies } from "../storage/sweep-tally.js";
 import { directWriteGate } from "../../write-gate.js";
-import { listLiveBriefClaims } from "../storage/brief-claims.js";
 import {
   getTemporalAnnotationById,
   listTemporalAnnotationEvidence,
@@ -40,7 +32,6 @@ import { contextualEvidence } from "./annotation-gate-evidence.js";
 import { RunConsumptionTracker } from "./consumption.js";
 import { createOpenLoopMirror } from "./mirror.js";
 import { buildCognitionOwnTools, type CognitionToolDeps } from "./tools.js";
-import type { BriefJudge, BriefJudgeCandidate } from "./brief-judge.js";
 import type Database from "better-sqlite3";
 import type { EntailCapability, ToolResult } from "@omnesis/core";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
@@ -106,11 +97,6 @@ function fakeVerifier(
   };
 }
 
-const throwingVerifier: EntailCapability = {
-  verify: () => Promise.reject(new Error("judge backend is down")),
-  dispose() {},
-};
-
 function structured(result: ToolResult): { resultType: string; data: Record<string, unknown> } {
   if (result.kind !== "structured") {
     throw new Error(`expected a structured result, got ${JSON.stringify(result)}`);
@@ -125,7 +111,7 @@ function errorResult(result: ToolResult): { code: string; message: string } {
   return { code: result.code, message: result.message };
 }
 
-describe("grounding teeth (asserted claims + temporal annotation evidence)", () => {
+describe("grounding teeth (output dependencies + temporal annotation evidence)", () => {
   let path: string;
   let db: Db;
   let seq: number;
@@ -252,566 +238,14 @@ describe("grounding teeth (asserted claims + temporal annotation evidence)", () 
     },
   );
 
-  const QUOTE = "we paid the venue deposit this morning";
-  function seedEvidence(): string {
-    return insertDoc(db, "ev1", `Quick update — ${QUOTE}, receipt attached.`);
-  }
-  function briefArgs(claims?: unknown[]): Record<string, unknown> {
-    return {
-      kind: "info",
-      title: "Venue deposit confirmed",
-      confidence: 0.7,
-      urgency: 0.4,
-      annotationDependencies: [],
-      ...(claims !== undefined ? { assertedClaims: claims } : {}),
-    };
-  }
-  function claimArg(evidenceDocId: string, over: Record<string, unknown> = {}) {
-    return {
-      claimText: "the venue deposit was paid",
-      evidenceDocId,
-      evidenceQuote: QUOTE,
-      claimBasis: "quoted",
-      confidence: 0.8,
-      ...over,
-    };
-  }
-  function liveClaimsOfOnlyBrief(): ReturnType<typeof listLiveBriefClaims> {
-    const brief = db.prepare<[], { id: string }>("SELECT id FROM briefs").get();
-    if (!brief) throw new Error("no brief persisted");
-    return listLiveBriefClaims(db, brief.id);
-  }
-
-  // ── brief_create teeth ───────────────────────────────────────────────────
-
-  test("a zero-claims brief passes untouched (awareness cards may assert nothing)", async () => {
-    const res = await tool(buildTools(), "brief_create").invoke(briefArgs(), CTX);
-    const { resultType, data } = structured(res);
-    expect(resultType).toBe("brief.created");
-    expect(data.assertedClaimCount).toBeUndefined();
-    expect(liveClaimsOfOnlyBrief()).toEqual([]);
-  });
-
   test("an output write must make an explicit annotation-dependency judgment", async () => {
-    const res = await tool(buildTools(), "brief_create").invoke(
-      { kind: "info", title: "Venue update", confidence: 0.7, urgency: 0.4 },
+    const ev = insertDoc(db, "venue-update", "The venue confirmed the booking for Saturday.");
+    const res = await tool(buildTools(), "observation_note").invoke(
+      { summary: "Venue booking confirmed", citations: [ev] },
       CTX,
     );
     expect(errorResult(res)).toMatchObject({ code: "invalid_args" });
     expect(errorResult(res).message).toContain("annotationDependencies");
-  });
-
-  test("a claim citing a missing evidence doc refuses, naming the claim (index + text)", async () => {
-    const res = await tool(buildTools(), "brief_create").invoke(
-      briefArgs([claimArg("doc_missing")]),
-      CTX,
-    );
-    const err = errorResult(res);
-    expect(err.code).toBe("not_found");
-    expect(err.message).toContain("assertedClaims[0]");
-    expect(err.message).toContain("the venue deposit was paid");
-    expect(err.message).toContain("doc_missing");
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("a quote not present in its document refuses, naming the claim", async () => {
-    const ev = seedEvidence();
-    const res = await tool(buildTools(), "brief_create").invoke(
-      briefArgs([
-        claimArg(ev),
-        claimArg(ev, {
-          claimText: "the balance was settled",
-          evidenceQuote: "the remaining balance was settled in full",
-        }),
-      ]),
-      CTX,
-    );
-    const err = errorResult(res);
-    expect(err.code).toBe("evidence_not_found");
-    expect(err.message).toContain("assertedClaims[1]");
-    expect(err.message).toContain("the balance was settled");
-  });
-
-  test("cheap refusals come strictly before the gate — the verifier is never called", async () => {
-    const ev = seedEvidence();
-    const verifier = fakeVerifier("entailment");
-    const res = await tool(
-      buildTools({ getEntailmentVerifier: async () => verifier }),
-      "brief_create",
-    ).invoke(
-      briefArgs([
-        claimArg(ev), // would pass the gate…
-        claimArg(ev, { evidenceQuote: "a quote that appears nowhere in the document" }),
-      ]),
-      CTX,
-    );
-    expect(errorResult(res).code).toBe("evidence_not_found");
-    // …but the cheap failure on claim 1 refused the whole set gate-free.
-    expect(verifier.calls).toEqual([]);
-  });
-
-  test("an entailment refusal names the failing claim and its verdict; nothing persists", async () => {
-    const ev = seedEvidence();
-    const verifier = fakeVerifier("neutral");
-    const res = await tool(
-      buildTools({ getEntailmentVerifier: async () => verifier }),
-      "brief_create",
-    ).invoke(briefArgs([claimArg(ev, { claimText: "the entire wedding is fully paid off" })]), CTX);
-    const err = errorResult(res);
-    expect(err.code).toBe("evidence_does_not_entail_claim");
-    expect(err.message).toContain("assertedClaims[0]");
-    expect(err.message).toContain("the entire wedding is fully paid off");
-    expect(err.message).toContain("neutral");
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("claims that pass are born-verified, judged quote ⊨ claim, one gate call per claim", async () => {
-    const ev = seedEvidence();
-    const verifier = fakeVerifier("entailment");
-    const res = await tool(
-      buildTools({ getEntailmentVerifier: async () => verifier }),
-      "brief_create",
-    ).invoke(
-      briefArgs([claimArg(ev), claimArg(ev, { claimText: "a deposit payment was made" })]),
-      CTX,
-    );
-    const { data } = structured(res);
-    expect(data.assertedClaimCount).toBe(2);
-    const claims = liveClaimsOfOnlyBrief();
-    expect(claims).toHaveLength(2);
-    for (const c of claims) {
-      expect(c.verificationState).toBe("verified");
-      expect(c.evidenceDocId).toBe(ev);
-    }
-    expect(verifier.calls.slice(0, 2)).toEqual([
-      {
-        claim: "the venue deposit was paid",
-        evidence: contextualEvidence(QUOTE, `Quick update — ${QUOTE}, receipt attached.`),
-        signal: expect.any(AbortSignal),
-      },
-      {
-        claim: "a deposit payment was made",
-        evidence: contextualEvidence(QUOTE, `Quick update — ${QUOTE}, receipt attached.`),
-        signal: expect.any(AbortSignal),
-      },
-    ]);
-    expect(verifier.calls).toHaveLength(3);
-    expect(JSON.parse(verifier.calls[2]!.claim)).toMatchObject({
-      title: "Venue deposit confirmed",
-    });
-  });
-
-  test("configured verifier unavailable → Brief is held and no unchecked claim persists", async () => {
-    const ev = seedEvidence();
-    const res = await tool(
-      buildTools({ getEntailmentVerifier: async () => throwingVerifier }),
-      "brief_create",
-    ).invoke(briefArgs([claimArg(ev)]), CTX);
-    const { resultType, data } = structured(res);
-    expect(resultType).toBe("brief.held_for_verification");
-    expect(data.reason).toContain("configured entailment verifier was unavailable");
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("no verifier configured → claims persist with a NULL stamp (no gate, no stamp)", async () => {
-    const ev = seedEvidence();
-    const res = await tool(buildTools(), "brief_create").invoke(briefArgs([claimArg(ev)]), CTX);
-    expect(structured(res).resultType).toBe("brief.created");
-    // Mirrors the annotation stores: null (no verifier) is distinct from
-    // 'unverified' (a configured verifier was unavailable).
-    expect(liveClaimsOfOnlyBrief()[0]!.verificationState).toBeNull();
-  });
-
-  test("a claim below the persistence floor refuses (abstention floor), naming it", async () => {
-    const ev = seedEvidence();
-    const verifier = fakeVerifier("entailment");
-    const res = await tool(
-      buildTools({ annotationConfidenceFloor: 0.5, getEntailmentVerifier: async () => verifier }),
-      "brief_create",
-    ).invoke(briefArgs([claimArg(ev, { confidence: 0.4 })]), CTX);
-    const err = errorResult(res);
-    expect(err.code).toBe("insufficient_confidence_to_persist");
-    expect(err.message).toContain("assertedClaims[0]");
-    expect(err.message).toContain("the venue deposit was paid");
-    expect(err.message).toContain("0.40");
-    expect(err.message).toContain("0.50");
-    // A floor refusal is a cheap-stage refusal — no verifier spend.
-    expect(verifier.calls).toEqual([]);
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("an at-floor claim persists (the floor refuses strictly below it)", async () => {
-    const ev = seedEvidence();
-    const res = await tool(buildTools({ annotationConfidenceFloor: 0.5 }), "brief_create").invoke(
-      briefArgs([claimArg(ev, { confidence: 0.5 })]),
-      CTX,
-    );
-    expect(structured(res).resultType).toBe("brief.created");
-    expect(liveClaimsOfOnlyBrief()[0]!.confidence).toBe(0.5);
-  });
-
-  test("the floor applies to the POST-clamp confidence, not the reported one", async () => {
-    const ev = seedEvidence();
-    // Reported 0.9 clamps to the synthesized band's 0.55 — below a 0.6 floor.
-    const res = await tool(buildTools({ annotationConfidenceFloor: 0.6 }), "brief_create").invoke(
-      briefArgs([claimArg(ev, { claimBasis: "synthesized", confidence: 0.9 })]),
-      CTX,
-    );
-    const err = errorResult(res);
-    expect(err.code).toBe("insufficient_confidence_to_persist");
-    expect(err.message).toContain("0.55");
-  });
-
-  test("a multi-bad set refuses ONCE, naming every failing claim across failure kinds", async () => {
-    const ev = seedEvidence();
-    const verifier = fakeVerifier("entailment");
-    const res = await tool(
-      buildTools({ getEntailmentVerifier: async () => verifier }),
-      "brief_create",
-    ).invoke(
-      briefArgs([
-        claimArg(ev), // fine
-        claimArg(ev, { claimText: "cites a ghost document", evidenceDocId: "doc_missing" }),
-        claimArg(ev, {
-          claimText: "quotes text that is not there",
-          evidenceQuote: "a quote that appears nowhere in the document",
-        }),
-        claimArg(ev, { claimText: "far too weak to keep", confidence: 0.05 }),
-      ]),
-      CTX,
-    );
-    const err = errorResult(res);
-    // Mixed failure kinds → the aggregate code; every failing claim named.
-    expect(err.code).toBe("asserted_claims_refused");
-    expect(err.message).toContain("assertedClaims[1]");
-    expect(err.message).toContain("cites a ghost document");
-    expect(err.message).toContain("assertedClaims[2]");
-    expect(err.message).toContain("quotes text that is not there");
-    expect(err.message).toContain("assertedClaims[3]");
-    expect(err.message).toContain("far too weak to keep");
-    // The passing claim is not named.
-    expect(err.message).not.toContain("assertedClaims[0]");
-    // Cheap-stage refusal: the gate never ran, even for the passing claim.
-    expect(verifier.calls).toEqual([]);
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("the gate keeps judging past a refusal: one call per claim, one refusal naming all failures", async () => {
-    const ev = seedEvidence();
-    // A verifier whose verdicts are scripted per call, in order.
-    const calls: Array<{ claim: string; evidence: string }> = [];
-    const labels: Array<"entailment" | "neutral" | "contradiction"> = [
-      "neutral",
-      "entailment",
-      "contradiction",
-    ];
-    const verifier: EntailCapability = {
-      // eslint-disable-next-line @typescript-eslint/require-await
-      async verify(input) {
-        calls.push(input);
-        return { label: labels[calls.length - 1]! };
-      },
-      dispose() {},
-    };
-    const res = await tool(
-      buildTools({ getEntailmentVerifier: async () => verifier }),
-      "brief_create",
-    ).invoke(
-      briefArgs([
-        claimArg(ev, { claimText: "the entire wedding is fully paid off" }),
-        claimArg(ev, { claimText: "a deposit payment was made" }),
-        claimArg(ev, { claimText: "the venue cancelled the booking" }),
-      ]),
-      CTX,
-    );
-    const err = errorResult(res);
-    expect(err.code).toBe("asserted_claims_refused");
-    expect(err.message).toContain("assertedClaims[0]");
-    expect(err.message).toContain("neutral");
-    expect(err.message).toContain("assertedClaims[2]");
-    expect(err.message).toContain("contradiction");
-    expect(err.message).not.toContain("assertedClaims[1]");
-    // Bounded spend: exactly one gate call per claim — the first refusal
-    // did not short-circuit the second and third judgments.
-    expect(calls).toHaveLength(3);
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("per-basis clamp: a synthesized claim's confidence is capped into its band", async () => {
-    const ev = seedEvidence();
-    const res = await tool(buildTools(), "brief_create").invoke(
-      briefArgs([
-        claimArg(ev, { claimBasis: "synthesized", confidence: 0.95 }),
-        claimArg(ev, { claimText: "a deposit payment was made", confidence: 0.85 }),
-      ]),
-      CTX,
-    );
-    expect(structured(res).resultType).toBe("brief.created");
-    const claims = liveClaimsOfOnlyBrief();
-    // Default bands: synthesized ≤ 0.55; quoted ≤ 0.9 (0.85 already inside).
-    expect(claims[0]!.confidence).toBe(0.55);
-    expect(claims[1]!.confidence).toBe(0.85);
-  });
-
-  // ── brief judge gate (the push bar) ──────────────────────────────────────
-
-  /** A judge stub returning a fixed verdict, recording every candidate it saw. */
-  function spyJudge(decision: "ship" | "hold", calls: BriefJudgeCandidate[]): BriefJudge {
-    return {
-      // eslint-disable-next-line @typescript-eslint/require-await
-      async judge(candidate) {
-        calls.push(candidate);
-        return { decision, reason: `stub ${decision}` };
-      },
-    };
-  }
-
-  test("a hold on a sweep run is tallied against that sweep; other runs tally nothing", async () => {
-    // A hold is the one thing a sweep produced that leaves no trace in the
-    // artifact stores, so it cannot be counted back from `created_by_run` at
-    // settle — it has to be recorded as it happens.
-    const seen: BriefJudgeCandidate[] = [];
-    await tool(
-      buildTools({ getBriefJudge: () => spyJudge("hold", seen), sweepId: "weekly-finances" }),
-      "brief_create",
-    ).invoke(briefArgs(), CTX);
-    expect(listSweepTallies(db).get("weekly-finances")).toMatchObject({
-      briefsHeld: 1,
-      // A hold is not a run: it must not make the sweep look like it ran.
-      runs: 0,
-      lastRunAt: null,
-    });
-
-    // The same hold on a run that is not a sweep writes no row at all.
-    await tool(buildTools({ getBriefJudge: () => spyJudge("hold", seen) }), "brief_create").invoke(
-      briefArgs(),
-      CTX,
-    );
-    expect(listSweepTallies(db).size).toBe(1);
-  });
-
-  test("the judge holds a candidate: nothing is created, the agent is told why", async () => {
-    const seen: BriefJudgeCandidate[] = [];
-    const res = await tool(
-      buildTools({ getBriefJudge: () => spyJudge("hold", seen) }),
-      "brief_create",
-    ).invoke(briefArgs(), CTX);
-    const { resultType, data } = structured(res);
-    expect(resultType).toBe("brief.held_by_judge");
-    expect(data.reason).toBe("stub hold");
-    expect(data.guidance).toContain("did not authorize shipping");
-    // The candidate carried the brief's content and timing signals.
-    expect(seen).toHaveLength(1);
-    expect(seen[0]!.title).toBe("Venue deposit confirmed");
-    expect(seen[0]!.citationCount).toBe(0);
-    expect(seen[0]!.scheduledForLater).toBe(false);
-    // Held ⇒ no brief persisted.
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("the judge ships a candidate: the brief is created", async () => {
-    const seen: BriefJudgeCandidate[] = [];
-    const res = await tool(
-      buildTools({ getBriefJudge: () => spyJudge("ship", seen) }),
-      "brief_create",
-    ).invoke(briefArgs(), CTX);
-    expect(structured(res).resultType).toBe("brief.created");
-    expect(seen).toHaveLength(1);
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(1);
-  });
-
-  test("a configured judge outage holds the Brief instead of shipping it unreviewed", async () => {
-    const judge: BriefJudge = {
-      judge: () => Promise.reject(new Error("review backend unavailable")),
-    };
-    const res = await tool(buildTools({ getBriefJudge: () => judge }), "brief_create").invoke(
-      briefArgs(),
-      CTX,
-    );
-    const { resultType, data } = structured(res);
-    expect(resultType).toBe("brief.held_by_judge");
-    expect(data.reason).toContain("held rather than shipped without review");
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("a scheduled reminder reaches the judge with explicit display and event timing", async () => {
-    const seen: BriefJudgeCandidate[] = [];
-    await tool(buildTools({ getBriefJudge: () => spyJudge("ship", seen) }), "brief_create").invoke(
-      { ...briefArgs(), nextShow: "2026-08-01T06:00:00.000Z", eventAt: "2026-08-01T00:00:00.000Z" },
-      CTX,
-    );
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toMatchObject({
-      scheduledForLater: true,
-      hasEventAt: true,
-      now: new Date(NOW).toISOString(),
-      nextShow: "2026-08-01T06:00:00.000Z",
-      eventAt: "2026-08-01T00:00:00.000Z",
-    });
-  });
-
-  test("the judge runs AFTER the claims teeth: a claim-fix refusal never reaches it", async () => {
-    const ev = seedEvidence();
-    const seen: BriefJudgeCandidate[] = [];
-    const res = await tool(
-      buildTools({ getBriefJudge: () => spyJudge("ship", seen) }),
-      "brief_create",
-    ).invoke(
-      briefArgs([claimArg(ev, { evidenceQuote: "a quote that is nowhere in the doc" })]),
-      CTX,
-    );
-    // The cheap claim check refuses; the judge is never consulted.
-    expect(errorResult(res).code).toBe("evidence_not_found");
-    expect(seen).toEqual([]);
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("a judge that throws fails closed: the brief is held", async () => {
-    const judge: BriefJudge = {
-      judge: () => Promise.reject(new Error("judge model is down")),
-    };
-    const res = await tool(buildTools({ getBriefJudge: () => judge }), "brief_create").invoke(
-      briefArgs(),
-      CTX,
-    );
-    expect(structured(res).resultType).toBe("brief.held_by_judge");
-    expect(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM briefs").get()?.n).toBe(0);
-  });
-
-  test("no judge wired: briefs ship unjudged (byte-for-byte as before)", async () => {
-    const res = await tool(buildTools(), "brief_create").invoke(briefArgs(), CTX);
-    expect(structured(res).resultType).toBe("brief.created");
-  });
-
-  test("brief_fetch surfaces the live claim set", async () => {
-    const ev = seedEvidence();
-    const tools = buildTools();
-    const created = structured(
-      await tool(tools, "brief_create").invoke(briefArgs([claimArg(ev)]), CTX),
-    );
-    const briefId = (created.data.brief as { id: string }).id;
-    const fetched = structured(await tool(tools, "brief_fetch").invoke({ id: briefId }, CTX));
-    expect(fetched.data.assertedClaims).toEqual([
-      {
-        claimText: "the venue deposit was paid",
-        evidenceDocId: ev,
-        evidenceQuote: QUOTE,
-        claimBasis: "quoted",
-        confidence: 0.8,
-        // No verifier configured in this toolset → no stamp.
-        verificationState: null,
-      },
-    ]);
-  });
-
-  // ── brief_update replace-set ─────────────────────────────────────────────
-
-  test("brief_update with assertedClaims atomically replaces the live set (same teeth)", async () => {
-    const ev = seedEvidence();
-    const ev2 = insertDoc(db, "ev2", "the final balance is due on 15 July per the contract");
-    const tools = buildTools();
-    const created = structured(
-      await tool(tools, "brief_create").invoke(briefArgs([claimArg(ev)]), CTX),
-    );
-    const briefId = (created.data.brief as { id: string }).id;
-
-    const updated = await tool(tools, "brief_update").invoke(
-      {
-        id: briefId,
-        annotationDependencies: [],
-        assertedClaims: [
-          {
-            claimText: "the final balance is due on 15 July",
-            evidenceDocId: ev2,
-            evidenceQuote: "the final balance is due on 15 July",
-            claimBasis: "quoted",
-            confidence: 0.8,
-          },
-        ],
-      },
-      CTX,
-    );
-    const { data } = structured(updated);
-    expect(data.assertedClaimCount).toBe(1);
-    const live = listLiveBriefClaims(db, briefId);
-    expect(live).toHaveLength(1);
-    expect(live[0]!.claimText).toBe("the final balance is due on 15 July");
-    // The replaced claim is audit-kept, invalidated.
-    const total = db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM brief_claims").get();
-    expect(total?.n).toBe(2);
-  });
-
-  test("a refused update leaves the standing claim set untouched", async () => {
-    const ev = seedEvidence();
-    const tools = buildTools();
-    const created = structured(
-      await tool(tools, "brief_create").invoke(briefArgs([claimArg(ev)]), CTX),
-    );
-    const briefId = (created.data.brief as { id: string }).id;
-
-    const refused = await tool(tools, "brief_update").invoke(
-      {
-        id: briefId,
-        annotationDependencies: [],
-        assertedClaims: [claimArg(ev, { evidenceQuote: "a quote not in the doc" })],
-      },
-      CTX,
-    );
-    expect(errorResult(refused).code).toBe("evidence_not_found");
-    expect(listLiveBriefClaims(db, briefId).map((c) => c.claimText)).toEqual([
-      "the venue deposit was paid",
-    ]);
-  });
-
-  test("a verifier outage holds a claim-replacing update and preserves the standing set", async () => {
-    const ev = seedEvidence();
-    const initialTools = buildTools();
-    const created = structured(
-      await tool(initialTools, "brief_create").invoke(briefArgs([claimArg(ev)]), CTX),
-    );
-    const briefId = (created.data.brief as { id: string }).id;
-
-    const updateTools = buildTools({ getEntailmentVerifier: async () => throwingVerifier });
-    const held = await tool(updateTools, "brief_update").invoke(
-      {
-        id: briefId,
-        annotationDependencies: [],
-        assertedClaims: [claimArg(ev, { claimText: "a deposit payment was made" })],
-      },
-      CTX,
-    );
-    expect(structured(held).resultType).toBe("brief.held_for_verification");
-    expect(listLiveBriefClaims(db, briefId).map((c) => c.claimText)).toEqual([
-      "the venue deposit was paid",
-    ]);
-  });
-
-  test("brief_update without assertedClaims leaves the claims untouched", async () => {
-    const ev = seedEvidence();
-    const tools = buildTools();
-    const created = structured(
-      await tool(tools, "brief_create").invoke(briefArgs([claimArg(ev)]), CTX),
-    );
-    const briefId = (created.data.brief as { id: string }).id;
-    await tool(tools, "brief_update").invoke(
-      { id: briefId, title: "Retitled", annotationDependencies: [] },
-      CTX,
-    );
-    expect(listLiveBriefClaims(db, briefId)).toHaveLength(1);
-  });
-
-  test("an unknown brief refuses before the claims teeth spend a verifier call", async () => {
-    const ev = seedEvidence();
-    const verifier = fakeVerifier("entailment");
-    const res = await tool(
-      buildTools({ getEntailmentVerifier: async () => verifier }),
-      "brief_update",
-    ).invoke(
-      { id: "brf_missing", assertedClaims: [claimArg(ev)], annotationDependencies: [] },
-      CTX,
-    );
-    expect(errorResult(res).code).toBe("not_found");
-    expect(verifier.calls).toEqual([]);
   });
 
   // ── temporal-annotation conditional teeth ────────────────────────────────
@@ -1490,17 +924,15 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     const tools = buildTools({ consumption });
     const search = await tool(tools, "annotation_search").invoke({ docId: subject }, CTX);
     expect(structured(search).resultType).toBe("annotation.search_results");
-    const created = await tool(tools, "brief_create").invoke(
+    const created = await tool(tools, "observation_note").invoke(
       {
-        kind: "info",
-        title: "Venue bills match",
-        confidence: 0.7,
-        urgency: 0.3,
+        summary: "Venue bills match",
+        citations: [subject],
         annotationDependencies: [{ store: "doc", annotationId: "anno_seen" }],
       },
       CTX,
     );
-    const briefId = (structured(created).data.brief as { id: string }).id;
+    const observationId = structured(created).data.id as string;
     const edges = db
       .prepare<
         [],
@@ -1511,8 +943,8 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
       {
         prior_store: "doc",
         prior_annotation_id: "anno_seen",
-        dependent_kind: "brief",
-        dependent_id: briefId,
+        dependent_kind: "observation",
+        dependent_id: observationId,
         run_id: "run_multi_1",
       },
     ]);
@@ -1586,27 +1018,18 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
       ).resultType,
     ).toBe("open_loop.updated");
 
-    const brief = structured(
-      await tool(tools, "brief_create").invoke(
-        {
-          kind: "info",
-          title: "Studio invoice ready for review",
-          confidence: 0.7,
-          urgency: 0.3,
-          annotationDependencies,
-        },
-        CTX,
-      ),
-    );
-    const briefId = (brief.data.brief as { id: string }).id;
     expect(
       structured(
-        await tool(tools, "brief_update").invoke(
-          { id: briefId, urgency: 0.4, annotationDependencies },
+        await tool(tools, "observation_note").invoke(
+          {
+            summary: "Studio invoice ready for review",
+            citations: [subject],
+            annotationDependencies,
+          },
           CTX,
         ),
       ).resultType,
-    ).toBe("brief.updated");
+    ).toBe("observation.noted");
     expect(
       db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM cognition_consumption_edges").get()
         ?.n,
@@ -1616,14 +1039,8 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
       structured(await tool(tools, "annotation_retract").invoke({ id: annotationId }, CTX))
         .resultType,
     ).toBe("annotation.retracted");
-    const refused = await tool(tools, "brief_create").invoke(
-      {
-        kind: "info",
-        title: "Stale invoice prior",
-        confidence: 0.7,
-        urgency: 0.3,
-        annotationDependencies,
-      },
+    const refused = await tool(tools, "observation_note").invoke(
+      { summary: "Stale invoice prior", citations: [subject], annotationDependencies },
       CTX,
     );
     expect(errorResult(refused).message).toContain("dead or missing");
@@ -1647,59 +1064,47 @@ describe("multi-evidence annotate teeth + consumption provenance", () => {
     const annotationId = annotation.data.id as string;
     const racingGate = {
       ...baseGate,
-      async createBrief(
-        ...args: Parameters<typeof baseGate.createBrief>
-      ): ReturnType<typeof baseGate.createBrief> {
+      async createObservation(
+        ...args: Parameters<typeof baseGate.createObservation>
+      ): ReturnType<typeof baseGate.createObservation> {
         await baseGate.deleteDocAnnotation(annotationId, NOW + 10);
-        return baseGate.createBrief(...args);
+        return baseGate.createObservation(...args);
       },
     };
     const racingTools = buildTools({ consumption, writeGate: racingGate });
-    const refused = await tool(racingTools, "brief_create").invoke(
+    const refused = await tool(racingTools, "observation_note").invoke(
       {
-        kind: "info",
-        title: "Equipment invoice review",
-        confidence: 0.7,
-        urgency: 0.3,
+        summary: "Equipment invoice review",
+        citations: [subject],
         annotationDependencies: [{ store: "doc", annotationId }],
       },
       CTX,
     );
     expect(errorResult(refused).message).toContain("dead or missing");
-    expect(db.prepare("SELECT 1 FROM briefs WHERE title = ?").get("Equipment invoice review")).toBe(
-      undefined,
-    );
+    expect(
+      db.prepare("SELECT 1 FROM observations WHERE summary = ?").get("Equipment invoice review"),
+    ).toBe(undefined);
     expect(
       db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM cognition_consumption_edges").get()
         ?.n,
     ).toBe(0);
   });
 
-  test("with nothing consumed (or no tracker), a brief write records no edges", async () => {
-    insertDoc(db, "d1", "plain note");
+  test("with nothing consumed (or no tracker), an observation write records no edges", async () => {
+    const doc = insertDoc(db, "d1", "plain note");
     // Tracker present but empty.
     const tools = buildTools({ consumption: new RunConsumptionTracker() });
-    await tool(tools, "brief_create").invoke(
-      {
-        kind: "info",
-        title: "Quiet card",
-        confidence: 0.7,
-        urgency: 0.3,
-        annotationDependencies: [],
-      },
+    const first = await tool(tools, "observation_note").invoke(
+      { summary: "Quiet observation", citations: [doc], annotationDependencies: [] },
       CTX,
     );
+    expect(structured(first).resultType).toBe("observation.noted");
     // No tracker at all (pure-composition callers).
-    await tool(buildTools(), "brief_create").invoke(
-      {
-        kind: "info",
-        title: "Second quiet card",
-        confidence: 0.7,
-        urgency: 0.3,
-        annotationDependencies: [],
-      },
+    const second = await tool(buildTools(), "observation_note").invoke(
+      { summary: "Second quiet observation", citations: [doc], annotationDependencies: [] },
       CTX,
     );
+    expect(structured(second).resultType).toBe("observation.noted");
     expect(
       db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM cognition_consumption_edges").get()!
         .n,

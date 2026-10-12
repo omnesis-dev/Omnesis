@@ -53,6 +53,21 @@ function call(thread, name, args, then) {
     },
   });
 }
+/** The positive witness a scripted verdict cites: the evidence frame's own source text. */
+function evidenceWitness(evidence) {
+  try {
+    const frame = JSON.parse(evidence);
+    if (Array.isArray(frame.evidenceParts) && frame.evidenceParts.length)
+      return evidenceWitness(frame.evidenceParts[0]);
+    if (frame.verifiedReferences?.[0]?.text) return frame.verifiedReferences[0].text.slice(0, 1024);
+    if (frame.sources?.[0]?.authority === "selected_quote" && frame.sources[0].selectedQuotes?.[0])
+      return frame.sources[0].selectedQuotes[0].slice(0, 1024);
+    if (typeof frame.sources?.[0]?.text === "string") return frame.sources[0].text.slice(0, 1024);
+  } catch {
+    /* Ordinary source text. */
+  }
+  return evidence.slice(0, 1024);
+}
 function run(thread, inputs) {
   const prompt = inputs
     .filter((item) => item.type === "text")
@@ -66,6 +81,39 @@ function run(thread, inputs) {
   });
   if (thread.model === "fixture-ocr") return finish(thread, "Synthetic image label");
   if (thread.model === "fixture-verifier") {
+    if (prompt.includes('"assessment":"annotation_atomic"')) {
+      const input = JSON.parse(prompt.trim().split("\n").at(-1));
+      const reject = input.claim.includes("unsupported-claim");
+      return finish(
+        thread,
+        JSON.stringify({
+          coverage: { verdict: "complete", reason: "Scripted coverage." },
+          assertions: [
+            {
+              id: "a1",
+              spans: [{ text: input.claim, occurrence: 0 }],
+              candidate: {
+                actor: null,
+                action: null,
+                target: null,
+                stage: null,
+                time: null,
+                condition: null,
+                quantifier: null,
+              },
+              verdict: reject ? "unsupported" : "supported",
+              evidenceQuotes: reject ? [] : [evidenceWitness(input.evidence)],
+              reason: "Scripted fixture verdict.",
+            },
+          ],
+          placementSupport: {
+            verdict: "not_applicable",
+            evidenceQuotes: [],
+            reason: "Scripted generic annotation.",
+          },
+        }),
+      );
+    }
     if (prompt.includes("contentInContext") && prompt.includes("placementSupport")) {
       const input = JSON.parse(prompt.trim().split("\n").at(-1));
       const reject = input.claim.includes("unsupported-claim");
@@ -87,12 +135,6 @@ function run(thread, inputs) {
       );
     }
     return finish(thread, /^Claim: .*unsupported-claim/m.test(prompt) ? "NEUTRAL" : "ENTAILMENT");
-  }
-  if (thread.model === "fixture-judge") {
-    return finish(
-      thread,
-      `Reason: scripted verdict.\nVERDICT: ${prompt.includes("judge-held") ? "HOLD" : "SHIP"}`,
-    );
   }
   if (!prompt.includes("Maintain the evidence-backed synthesis graph for this batch."))
     return finish(thread, "No scripted work.");
@@ -188,38 +230,43 @@ function run(thread, inputs) {
                 : consume(),
           );
         if (item.source.title !== "Fictional registration reminder") return complete();
-        const variants = ["accepted", "judge-held", "unsupported-claim"];
-        const createNext = () => {
-          const variant = variants.shift();
-          if (!variant) return complete();
-          call(thread, "brief_list", {}, (reply) => {
+        // One observation (no model gate at note time), then one supported
+        // and one unsupported durable annotation: each annotation asks the
+        // Codex entailment verifier while this parent turn waits.
+        const annotate = (variant, then) =>
+          call(
+            thread,
+            "annotate_durable",
+            {
+              docId,
+              claimType: `codex-bench-${variant}`,
+              claimText: variant === "unsupported-claim" ? "unsupported-claim" : quote,
+              evidenceDocId: docId,
+              evidenceQuote: quote,
+              confidence: 0.9,
+              claimBasis: "quoted",
+            },
+            then,
+          );
+        const createNext = () =>
+          call(thread, "observation_list", {}, (reply) => {
             if (parseTool(reply)?.kind === "error")
-              return finish(thread, "Brief inventory read refused; preserve pending work.");
+              return finish(thread, "Observation inventory read refused; preserve pending work.");
             call(
               thread,
-              "brief_create",
+              "observation_note",
               {
-                kind: "info",
-                title: `codex-bench-${variant}`,
-                body: quote,
+                summary: "codex-bench-accepted: the workshop registration closes on Friday.",
                 citations: [docId],
-                confidence: 0.9,
-                urgency: 0.6,
+                claims: [{ docId, quote }],
                 annotationDependencies: [],
-                assertedClaims: [
-                  {
-                    claimText: variant === "unsupported-claim" ? "unsupported-claim" : quote,
-                    evidenceDocId: docId,
-                    evidenceQuote: quote,
-                    confidence: 0.9,
-                    claimBasis: "quoted",
-                  },
-                ],
               },
-              createNext,
+              () =>
+                call(thread, "annotation_search", { docId }, () =>
+                  annotate("accepted", () => annotate("unsupported-claim", complete)),
+                ),
             );
           });
-        };
         call(thread, "fetch_many", { documents: [{ documentId: docId }] }, createNext);
       };
       consume();
@@ -243,7 +290,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     return send({
       id: message.id,
       result: {
-        data: ["parent", "verifier", "judge", "ocr"].map((role) => ({
+        data: ["parent", "verifier", "ocr"].map((role) => ({
           id: `fixture-${role}`,
           model: `fixture-${role}`,
           displayName: `fixture-${role}`,

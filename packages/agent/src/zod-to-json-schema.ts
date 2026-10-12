@@ -56,6 +56,51 @@ export function zodToJsonSchema(schema: z.ZodType): JsonSchema {
   return def;
 }
 
+/**
+ * A tool's input schema as model providers accept it: an object at the root.
+ *
+ * Providers refuse `anyOf` at the top of a tool's input schema, so a tool
+ * whose arguments take one of several object shapes is advertised as one
+ * object carrying every shape's fields, required only where every shape
+ * requires them. The tool's own zod schema still decides which shape a call
+ * used, and refuses a call that mixes them.
+ */
+/**
+ * One field's schema where two shapes both carry it: the same schema stays,
+ * two enums (a discriminator's literals) combine, and anything else is left
+ * unconstrained so neither shape is advertised as impossible.
+ */
+function mergeFieldSchemas(a: JsonSchema, b: JsonSchema): JsonSchema {
+  if (JSON.stringify(a) === JSON.stringify(b)) return a;
+  if (a.enum && b.enum && a.type === b.type)
+    return { ...a, enum: [...new Set([...a.enum, ...b.enum])] };
+  const description = a.description ?? b.description;
+  return description ? { description } : {};
+}
+
+export function toolInputJsonSchema(schema: z.ZodType): JsonSchema {
+  const root = zodToJsonSchema(schema);
+  if (root.type !== undefined || !root.anyOf) return root;
+  const shapes = root.anyOf;
+  if (!shapes.every((shape) => shape.type === "object")) return root;
+  const properties: Record<string, JsonSchema> = {};
+  for (const shape of shapes)
+    for (const [key, value] of Object.entries(shape.properties ?? {})) {
+      const seen = properties[key];
+      properties[key] = seen === undefined ? value : mergeFieldSchemas(seen, value);
+    }
+  const required = (shapes[0]?.required ?? []).filter((key) =>
+    shapes.every((shape) => shape.required?.includes(key)),
+  );
+  return {
+    type: "object",
+    ...(root.description ? { description: root.description } : {}),
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+    additionalProperties: false,
+  };
+}
+
 function defOf(schema: z.ZodType): ZodDef {
   return (schema as unknown as { _def: ZodDef })._def;
 }

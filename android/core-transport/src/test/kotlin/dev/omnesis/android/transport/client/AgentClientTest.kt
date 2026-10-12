@@ -188,15 +188,16 @@ class AgentClientTest {
         server.enqueue(
             MockResponse().setBody(
                 """{"sessionId":"s_one","messages":[],"messagesAreVisible":true,
-                   "origin":{"kind":"brief","runId":"run-example","brief":{"title":"Invented brief"},"seedMessageCount":2},
+                   "origin":{"kind":"watch_firing","firingId":"fir-example","runId":"fir-example","watchId":"watch-example",
+                             "watch":{"name":"Invented watch","condition":"A fictional change","firedAt":1},"seedMessageCount":2},
                    "messagePageInfo":{"hasMore":true,"limit":25,"nextCursor":"older/cursor"}}""",
             ),
         )
         val session = client().createSession("s_one", transcriptLimit = 25)
         assertEquals("older/cursor", session.messagePageInfo?.nextCursor)
-        assertEquals("brief", session.origin?.kind)
+        assertEquals("watch_firing", session.origin?.kind)
         assertEquals(2, session.origin?.seedMessageCount)
-        assertTrue(session.origin?.brief != null)
+        assertTrue(session.origin?.watch != null)
         server.takeRequest().also {
             assertEquals("POST", it.method)
             assertEquals("/agent/sessions?transcriptLimit=25", it.path)
@@ -216,5 +217,23 @@ class AgentClientTest {
             "/agent/conversations/s_one/messages?limit=25&cursor=older%2Fcursor",
             server.takeRequest().path,
         )
+    }
+
+    /** The brief's items are read with the conversation id and day as single encoded segments, never cached. */
+    @Test
+    fun daily_brief_items_are_read_per_day_and_never_cached() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"day":"2026-10-14","messageId":"mb_today","items":[{"rank":1,"observationId":"o","summary":"S"}]}""",
+            ),
+        )
+
+        val page = client().dailyBriefItems("conv brief/1", "2026-10-14")
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/agent/conversations/conv%20brief%2F1/briefs/2026-10-14", request.path)
+        assertEquals("no-store", request.getHeader("Cache-Control"))
+        assertEquals(1, page.items.size)
     }
 }

@@ -563,6 +563,7 @@ public struct AgentView: View {
                         busy: store.agent.busy,
                         disabled: !store.agent.canComposeMessage,
                         experimentalEnabled: store.experimentalEnabled,
+                        idlePrompt: DailyBriefCopy.composerPrompt(for: store.agent.conversationOrigin),
                         speech: speechRecognizer,
                         onSend: { text, command in
                             composerText = ""
@@ -627,8 +628,7 @@ public struct AgentView: View {
             // conversation or a blank empty state.
             AgentTranscriptSkeleton()
         } else if showsLanding {
-            // A freshly opened thread with an origin (brief talk-back or a
-            // watch firing) has no visible turns (the
+            // A freshly opened watch thread has no visible turns (the
             // seeded transcript is hidden) but must show its context card,
             // not the generic empty state — so it renders the transcript
             // branch.
@@ -648,7 +648,7 @@ public struct AgentView: View {
             && !store.agent.transcriptLoading
             && store.agent.turns.isEmpty
             && store.agent.terminalFailure == nil
-            && store.agent.briefOrigin.map(AgentCoordinator.hasContextCard) != true
+            && store.agent.conversationOrigin.map(AgentCoordinator.hasContextCard) != true
     }
 
     /// Where the mark's centre sits, as a fraction of the usable height.
@@ -716,14 +716,12 @@ public struct AgentView: View {
                 // real content. The loaded set is bounded by the cursor pages
                 // reached as the user scrolls toward the start.
                 VStack(alignment: .leading, spacing: 14) {
-                    // An anchored thread is a reply to a card, not a blank
-                    // chat: pin the anchor's card above the messages. The
+                    // A watch thread is a reply to a firing, not a blank
+                    // chat: pin the firing's card above the messages. The
                     // folded run transcript that seeded the thread is
                     // hidden (see AgentCoordinator.visibleMessages) — this
                     // card carries that context for the reader instead.
-                    if let snapshot = store.agent.briefOrigin?.brief {
-                        BriefContextCard(snapshot: snapshot)
-                    } else if let origin = store.agent.briefOrigin, let watch = origin.watch {
+                    if let origin = store.agent.conversationOrigin, let watch = origin.watch {
                         WatchFiringContextCard(snapshot: watch, watchId: origin.watchId)
                     }
                     ListPagingFooter(
@@ -766,11 +764,10 @@ public struct AgentView: View {
                             )
                         }
                     }
-                    ForEach(store.agent.turns) { turn in
-                        AgentTurnBubble(turn: turn)
-                            .id(turn.id)
-                            .pagingRowFrame(id: turn.id, in: Self.scrollSpace)
-                    }
+                    AgentTranscriptTurns(
+                        agent: store.agent,
+                        scrollSpace: Self.scrollSpace
+                    )
 
                     // Turn-level "still working" dots — the single indicator
                     // that doesn't depend on a specific transcript part
@@ -1065,10 +1062,14 @@ public struct AgentView: View {
                                 )
                             }
 
-                            Button(role: .destructive) {
-                                conversationDeletion.present(conversationId: sessionId)
-                            } label: {
-                                Label("Delete this chat", systemImage: "trash")
+                            // The Morning brief conversation is a standing
+                            // thread the gateway refuses to delete.
+                            if store.agent.activeConversationDeletable {
+                                Button(role: .destructive) {
+                                    conversationDeletion.present(conversationId: sessionId)
+                                } label: {
+                                    Label("Delete this chat", systemImage: "trash")
+                                }
                             }
                         } label: {
                             Image(systemName: "ellipsis")
@@ -1375,24 +1376,21 @@ private struct TranscriptPrependScrollTarget: Equatable {
 }
 
 /// Reactive bottom-stick controller for the transcript ScrollView.
-///
-/// On iOS 18+ it observes the scroll geometry. The rule:
-///   - When the CONTENT HEIGHT changes (initial load, lazy-row
-///     materialisation, a new turn, streaming tokens) and we are still
-///     stuck to the bottom, re-align to the `__bottom__` sentinel. Because
-///     `scrollTo` clamps to the real maximum offset, this can never land
-///     past the content end, and re-firing on every size change makes it
-///     settle on the true bottom as estimated rows resolve to real heights.
-///   - When only the OFFSET changes (the user dragging) we recompute
-///     `stick`: at/near the end → keep following; dragged away → stop.
-///
-/// On iOS 17 (no `onScrollGeometryChange`) this is inert; the view's
-/// `onChange`/`onAppear` handlers provide best-effort following there.
+/// On iOS 18+ it observes the scroll geometry:
+///   - When the CONTENT HEIGHT changes (initial load, lazy-row materialisation, a new turn, streaming
+///     tokens, content that arrives after the transcript opened) and we are still stuck to the bottom,
+///     re-align to the `__bottom__` sentinel. `scrollTo` clamps to the real maximum offset, so this can
+///     never land past the content end, and re-firing on every size change settles on the true bottom.
+///   - When only the OFFSET changes while the PERSON is scrolling, we recompute `stick`: at/near the
+///     end → keep following; dragged away → stop. An offset the system or a programmatic scroll moves
+///     (the first layout, a safe-area adjustment) never unsticks, or the transcript would open at its top.
+/// On iOS 17 (no `onScrollGeometryChange`) this is inert; `onChange`/`onAppear` follow best-effort there.
 @available(iOS 17.0, *)
 private struct BottomStickController: ViewModifier {
     let proxy: ScrollViewProxy
     @Binding var stick: Bool
     let turnsEmpty: Bool
+    @State private var personScrolling = false
 
     /// How close to the content end still counts as "at the bottom" (pt).
     private static let stickThreshold: CGFloat = 60
@@ -1410,10 +1408,13 @@ private struct BottomStickController: ViewModifier {
                     if stick, !turnsEmpty {
                         proxy.scrollTo("__bottom__", anchor: .bottom)
                     }
-                } else {
-                    // Pure scroll: update whether we are still following.
+                } else if personScrolling {
+                    // The person scrolled: update whether we are still following.
                     stick = new.distanceFromEnd <= Self.stickThreshold
                 }
+            }
+            .onScrollPhaseChange { _, phase in
+                personScrolling = phase == .interacting || phase == .decelerating
             }
         } else {
             content
@@ -1517,21 +1518,20 @@ struct AgentComposer: View {
     @Binding var text: String
     let busy: Bool
     let disabled: Bool
-    /// Whether the paired gateway runs in experimental mode. Gates any
-    /// experimental slash commands the extensible command list may add.
+    /// Whether the paired gateway runs in experimental mode; gates experimental slash commands.
     let experimentalEnabled: Bool
+    /// What the empty field says while nothing else is going on.
+    let idlePrompt: String
     var speech: SpeechRecognizer
-    /// The send carries the armed slash command (or `nil` for an ordinary
-    /// turn) so the caller can fold its options (e.g. `deepResearch`) into
-    /// the POST.
+    /// The send carries the armed slash command (or `nil` for an ordinary turn) so
+    /// the caller can fold its options (e.g. `deepResearch`) into the POST.
     let onSend: (String, SlashCommand?) -> Void
     let onCancel: () -> Void
     var focused: FocusState<Bool>.Binding
 
-    /// The per-message armed slash command. Local compose-time state: it
-    /// governs the NEXT send only and is cleared on submit (or by the pill's
-    /// `×`), so it never leaks into the following turn. Seeding it is the only
-    /// way to arm Deep Research — there is no implicit auto-gating.
+    /// The per-message armed slash command. Local compose-time state: it governs the NEXT send
+    /// only and is cleared on submit (or by the pill's `×`), so it never leaks into the following
+    /// turn. Seeding it is the only way to arm Deep Research — there is no implicit auto-gating.
     @State private var armedCommand: SlashCommand?
 
     init(
@@ -1539,6 +1539,7 @@ struct AgentComposer: View {
         busy: Bool,
         disabled: Bool,
         experimentalEnabled: Bool = false,
+        idlePrompt: String = "Ask Omnesis",
         speech: SpeechRecognizer,
         onSend: @escaping (String, SlashCommand?) -> Void,
         onCancel: @escaping () -> Void,
@@ -1549,6 +1550,7 @@ struct AgentComposer: View {
         self.busy = busy
         self.disabled = disabled
         self.experimentalEnabled = experimentalEnabled
+        self.idlePrompt = idlePrompt
         self.speech = speech
         self.onSend = onSend
         self.onCancel = onCancel
@@ -1556,9 +1558,8 @@ struct AgentComposer: View {
         self._armedCommand = State(initialValue: previewArmedCommand)
     }
 
-    /// Whether the slash menu is open, and which commands it lists. Derived
-    /// from `text` via `matchSlashCommands` on every keystroke, over the
-    /// command set available for the gateway's current feature mode.
+    /// Whether the slash menu is open, and which commands it lists. Derived from `text` via
+    /// `matchSlashCommands` on every keystroke, over the commands the gateway's mode offers.
     private var menu: SlashMenuState {
         matchSlashCommands(
             text,
@@ -1771,7 +1772,7 @@ struct AgentComposer: View {
         if busy { return "Working…" }
         if speech.isListening { return "Listening…" }
         if armedCommand != nil { return "Describe what to research…" }
-        return "Ask Omnesis"
+        return idlePrompt
     }
 
     private var canSend: Bool {

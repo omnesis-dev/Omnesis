@@ -692,6 +692,10 @@ export function KnowledgeBootstrapPanel({
     <p class="debug-sub">
       These counts are source revisions admitted for historical discovery. Several revisions may
       share one maintenance run.
+      ${status.horizon &&
+      html`${" History is admitted back to "}<strong
+          >${new Date(status.horizon.notBefore).toLocaleDateString()}</strong
+        >${" ("}<code>brain.bootstrap.horizon</code>${"); older documents are not reviewed proactively."}`}
     </p>
     <div class="cognition-cards">
       <${StatCard} label="Admitted today" value=${fmtCount(admission.today)} />
@@ -757,7 +761,7 @@ export function BootstrapTab() {
   // assigned or removed mid-session.
   const loadGate = useCallback(() => {
     getStatus()
-      .then((s) => setGate(s?.brain ?? s?.briefs ?? null))
+      .then((s) => setGate(s?.brain ?? null))
       .catch(() => {
         /* the status route failing is its own error, surfaced by the page */
       });

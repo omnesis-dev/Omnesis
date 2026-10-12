@@ -26,6 +26,7 @@ import {
   listSourceDocumentProfiles,
   upsertSourceDocumentProfiles,
 } from "./repositories/SourceDocumentProfileRepository.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { SourceDocumentProfileEntry } from "./repositories/SourceDocumentProfileRepository.js";
 import type { Db } from "./types.js";
 
@@ -76,6 +77,7 @@ function seedPre80(): void {
     `INSERT INTO sync_state (source_id, cursor, last_synced_at)
      VALUES ('mailbox:owner@example.com', '{}', '2026-01-01T00:00:00.000Z')`,
   ).run();
+  createLegacyBriefTables(db);
   db.pragma("user_version = 79");
 }
 
@@ -143,6 +145,7 @@ describe("migration 80 — durable source document profiles", () => {
     try {
       runSchemaSetup(upgraded);
       upgraded.exec("DROP TABLE source_document_profiles");
+      createLegacyBriefTables(upgraded);
       upgraded.pragma("user_version = 79");
       runSchemaSetup(upgraded);
       runMigrations(upgraded, { log: createLogger("test") });

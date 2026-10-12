@@ -63,6 +63,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -96,6 +97,7 @@ import dev.omnesis.android.transport.dto.AgentDocRef
 import dev.omnesis.android.transport.dto.AgentPlanItem
 import dev.omnesis.android.transport.dto.AgentToolResult
 import dev.omnesis.android.transport.dto.ConversationSummary
+import dev.omnesis.android.transport.dto.DailyBriefMessageRef
 import dev.omnesis.android.ui.common.GatewayErrorView
 import dev.omnesis.android.ui.common.LandingBackdrop
 import dev.omnesis.android.ui.common.OmnesisMarkGlyph
@@ -113,6 +115,7 @@ fun AgentScreen(
     onOpenWatch: ((String) -> Unit)? = null,
     onOpenSettings: () -> Unit = {},
     onOpenModels: () -> Unit = {},
+    onOpenTask: (String) -> Unit = {},
     vm: AgentViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -149,6 +152,8 @@ fun AgentScreen(
         onOpenModels = onOpenModels,
         experimental = experimental,
         onLoadOlderMessages = vm::loadOlderMessages,
+        onOpenTask = onOpenTask,
+        dailyBrief = remember(vm) { DailyBriefContext(loader = DailyBriefItemsLoader { id, day -> vm.dailyBriefItems(id, day) }) },
     )
 }
 
@@ -174,6 +179,8 @@ fun AgentContent(
     onTogglePin: (String, Boolean) -> Unit = { _, _ -> },
     onDeleteConversation: (String) -> Unit = {},
     onDismissConversationActionError: () -> Unit = {},
+    onOpenTask: (String) -> Unit = {},
+    dailyBrief: DailyBriefContext = DailyBriefContext(),
 ) {
     var showCitations by remember { mutableStateOf(false) }
     var conversationMenuOpen by remember(state.sessionId) {
@@ -188,9 +195,12 @@ fun AgentContent(
     // The reference drawer surfaces only annotate-recorded citations — never the
     // merged Deep Research set (that lives in the report-artifact card) — so it stays
     // untouched during a Deep Research run, matching iOS + the portal.
-    val drawerCitations = AgentReducer.drawerCitations(state.chat)
-    val hasReferences = drawerCitations.isNotEmpty() ||
-        state.chat.records.isNotEmpty()
+    // The Morning brief conversation's timeline is the latest day's; every other thread's is
+    // the whole conversation.
+    val scope = state.timelineScope
+    val drawerCitations = AgentReducer.drawerCitations(state.chat).let { scope?.citations(it) ?: it }
+    val drawerRecords = state.chat.records.let { scope?.records(it) ?: it }
+    val hasReferences = drawerCitations.isNotEmpty() || drawerRecords.isNotEmpty()
     // Which branch of the `when` below owns the surface: the landing screen, or something
     // with content in it. Read by the top fade strip, which has nothing to dissolve on the
     // landing screen. Kept in step with that `when`.
@@ -261,6 +271,7 @@ fun AgentContent(
                             onRestoreConsumed = onAckSendRejected,
                             requestFocus = state.sessionId == null,
                             composerGeneration = state.composerGeneration,
+                            idlePlaceholder = DailyBriefCopy.composerPrompt(state.conversationOrigin),
                         )
                     }
                 }
@@ -348,6 +359,8 @@ fun AgentContent(
                         modifier = Modifier.fillMaxSize(),
                         bottomInset = (barInset + 16.dp).coerceAtLeast(72.dp),
                         onLoadOlderMessages = onLoadOlderMessages,
+                        onOpenTask = onOpenTask,
+                        dailyBrief = dailyBrief,
                     )
                     Column(
                         Modifier
@@ -410,10 +423,12 @@ fun AgentContent(
                             }
                         }
                         state.sessionId?.let { conversationId ->
-                            val pinned = state.conversations
-                                .firstOrNull { it.sessionId == conversationId }
-                                ?.pinned
-                                ?: state.activeConversationPinned
+                            val summary = state.conversations.firstOrNull { it.sessionId == conversationId }
+                            val pinned = summary?.pinned ?: state.activeConversationPinned
+                            // The Morning brief conversation is permanent; the gateway refuses
+                            // to delete it, so the menu does not offer to.
+                            val deletable = state.conversationOrigin?.isDailyBrief != true &&
+                                summary?.deletable != false
                             ConversationActionsMenu(
                                 expanded = conversationMenuOpen,
                                 pinned = pinned,
@@ -424,9 +439,13 @@ fun AgentContent(
                                     conversationMenuOpen = false
                                     onTogglePin(conversationId, !pinned)
                                 },
-                                onDelete = {
-                                    conversationMenuOpen = false
-                                    pendingDeleteId = conversationId
+                                onDelete = if (deletable) {
+                                    {
+                                        conversationMenuOpen = false
+                                        pendingDeleteId = conversationId
+                                    }
+                                } else {
+                                    null
                                 },
                             )
                         }
@@ -445,7 +464,7 @@ fun AgentContent(
                 onClose = { showCitations = false },
                 onOpen = { showCitations = true },
                 onOpenDocument = { showCitations = false; onOpenDocument(it) },
-                records = state.chat.records,
+                records = drawerRecords,
             )
         }
     }
@@ -482,7 +501,8 @@ private fun ConversationActionsMenu(
     onOpen: () -> Unit,
     onDismiss: () -> Unit,
     onTogglePin: () -> Unit,
-    onDelete: () -> Unit,
+    /** Null when the conversation cannot be deleted, which leaves the item out. */
+    onDelete: (() -> Unit)?,
 ) {
     val colors = OmTheme.colors
     Box {
@@ -504,13 +524,15 @@ private fun ConversationActionsMenu(
                 leadingIcon = { Icon(Icons.Outlined.PushPin, contentDescription = null) },
                 onClick = onTogglePin,
             )
-            DropdownMenuItem(
-                text = { Text("Delete this chat", color = colors.danger) },
-                leadingIcon = {
-                    Icon(Icons.Outlined.Delete, contentDescription = null, tint = colors.danger)
-                },
-                onClick = onDelete,
-            )
+            if (onDelete != null) {
+                DropdownMenuItem(
+                    text = { Text("Delete this chat", color = colors.danger) },
+                    leadingIcon = {
+                        Icon(Icons.Outlined.Delete, contentDescription = null, tint = colors.danger)
+                    },
+                    onClick = onDelete,
+                )
+            }
         }
     }
 }
@@ -742,6 +764,8 @@ private fun Transcript(
     modifier: Modifier = Modifier,
     bottomInset: Dp = 140.dp,
     onLoadOlderMessages: () -> Unit = {},
+    onOpenTask: (String) -> Unit = {},
+    dailyBrief: DailyBriefContext = DailyBriefContext(),
 ) {
     val turns = state.chat.turns
     // An anchored thread pins its origin card above the pagination sentinel, so the number of
@@ -749,12 +773,37 @@ private fun Transcript(
     // initial scroll position and the prepend anchor — counts from here.
     val originCard = state.conversationOrigin.takeIf { hasContextCard(it) }
     val leadingItemCount = if (originCard != null) 2 else 1
-    // Start on the newest turn so a newly opened transcript does not mistake initial
-    // composition for a user reaching the older-history boundary. An anchored thread nobody has
-    // replied to yet has no turns at all, and its card is the whole screen — so that one starts
-    // at the top rather than one row past it.
+
+    // The Morning brief conversation groups its turns by day under each brief; every other
+    // conversation lists them as bubbles.
+    val briefOrigin = state.conversationOrigin?.takeIf { it.isDailyBrief }
+    val briefConversationId = state.sessionId.takeIf { briefOrigin != null }
+    val brief = briefConversationId?.let { id ->
+        rememberDailyBriefHolder(id, dailyBrief.loader, dailyBrief.preloaded)
+            .also { holder -> if (holder.view.latestId == null) holder.observeLatest(briefOrigin?.latestDailyBrief) }
+    }
+    LaunchedEffect(brief, briefOrigin?.latestDailyBrief) { brief?.observeLatest(briefOrigin?.latestDailyBrief) }
+    val briefRows = if (brief != null && briefOrigin != null) {
+        DailyBriefRow.of(DailyBriefTranscript.of(turns, briefOrigin.briefs), brief.view)
+    } else {
+        null
+    }
+    val rowKeys = briefRows?.map { it.key } ?: turns.map { it.id }
+
+    // A conversation opens on its newest turn, so initial composition is not mistaken for a
+    // user reaching the older-history boundary. The Morning brief conversation opens on its
+    // latest brief instead, and stays there while the brief's items load beneath it. An anchored
+    // thread nobody has replied to yet has no turns at all, and its card is the whole screen —
+    // so that one starts at the top rather than one row past it.
     val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = if (turns.isEmpty()) 0 else turns.size + leadingItemCount - 1,
+        initialFirstVisibleItemIndex = when {
+            briefRows != null -> {
+                val latest = briefRows.indexOfLast { it is DailyBriefRow.Separator }
+                if (latest >= 0) latest + leadingItemCount else (briefRows.size + leadingItemCount - 1).coerceAtLeast(0)
+            }
+            turns.isEmpty() -> 0
+            else -> turns.size + leadingItemCount - 1
+        },
     )
     val scope = rememberCoroutineScope()
     val prependAnchor = rememberPrependPagingAnchor()
@@ -780,9 +829,16 @@ private fun Transcript(
     }
 
     // Follow streaming content only while stuck. Re-keys on turn count and the trailing
-    // assistant's part count so each streamed part nudges the view down.
+    // assistant's part count so each streamed part nudges the view down. The Morning brief
+    // conversation skips the first pass, which would carry it from its latest brief to the end;
+    // a send or a streamed reply still follows.
     val lastAssistantParts = (turns.lastOrNull() as? AgentTurn.Assistant)?.parts?.size ?: 0
+    var holdOpeningPosition by remember { mutableStateOf(briefRows != null) }
     LaunchedEffect(turns.size, lastAssistantParts) {
+        if (holdOpeningPosition) {
+            holdOpeningPosition = false
+            return@LaunchedEffect
+        }
         if (stickToBottom && !inInspection) {
             listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
         }
@@ -793,8 +849,34 @@ private fun Transcript(
             prependAnchor.restore(
                 completedVersion = state.transcriptPrependVersion,
                 listState = listState,
-                orderedKeys = turns.map { it.id },
+                orderedKeys = rowKeys,
                 leadingItemCount = leadingItemCount,
+            )
+        }
+    }
+
+    /** Open or fold an earlier day; an opened day is brought up to its separator. */
+    fun toggleDay(ref: DailyBriefMessageRef) {
+        val holder = brief ?: return
+        val opening = !holder.view.isOpen(ref)
+        holder.toggleDay(ref)
+        if (!opening) return
+        scope.launch {
+            withFrameNanos { }
+            val index = DailyBriefRow.of(DailyBriefTranscript.of(state.chat.turns, briefOrigin?.briefs.orEmpty()), holder.view)
+                .indexOfFirst { it.key == DailyBriefRow.separatorKey(ref) }
+            if (index >= 0) listState.animateScrollToItem(index + leadingItemCount)
+        }
+    }
+
+    @Composable
+    fun Bubble(turn: AgentTurn) {
+        when (turn) {
+            is AgentTurn.User -> UserBubble(turn.text)
+            is AgentTurn.Assistant -> AssistantTurn(
+                turn, catalog, onFlushEphemeral, onOpenDocument,
+                citations = state.chat.citations,
+                isStreaming = state.chat.isTurnStreaming(turn),
             )
         }
     }
@@ -841,22 +923,29 @@ private fun Transcript(
                             prependAnchor.capture(
                                 currentVersion = state.transcriptPrependVersion,
                                 listState = listState,
-                                eligibleKeys = turns.mapTo(hashSetOf()) { it.id },
+                                eligibleKeys = rowKeys.toHashSet(),
                             )
                             onLoadOlderMessages()
                         },
                     )
                 }
             }
-            items(turns, key = { it.id }) { turn ->
-                when (turn) {
-                    is AgentTurn.User -> UserBubble(turn.text)
-                    is AgentTurn.Assistant -> AssistantTurn(
-                        turn, catalog, onFlushEphemeral, onOpenDocument,
-                        citations = state.chat.citations,
-                        isStreaming = state.chat.isTurnStreaming(turn),
+            if (briefRows != null && brief != null && briefConversationId != null) {
+                items(briefRows, key = { it.key }, contentType = { it::class }) { row ->
+                    DailyBriefRowContent(
+                        row = row,
+                        holder = brief,
+                        context = dailyBrief,
+                        catalog = catalog,
+                        onToggleDay = ::toggleDay,
+                        onRetry = { day -> scope.launch { brief.retry(day) } },
+                        onOpenDocument = onOpenDocument,
+                        onOpenTask = onOpenTask,
+                        bubble = { Bubble(it) },
                     )
                 }
+            } else {
+                items(turns, key = { it.id }) { turn -> Bubble(turn) }
             }
             // The item is added only once the dots have actually revealed (a genuine quiet gap),
             // so a hidden/debouncing indicator never leaves an empty inter-item slot.

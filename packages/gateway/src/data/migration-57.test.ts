@@ -19,6 +19,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -73,6 +74,7 @@ function seedPre55(): void {
        VALUES (?, ?, 'topic', 'the studio booking moved to Saturday', 'doc-ev-1', 'the studio booking moved to Saturday', 0.8, 'run_seed', 1000)`,
     ).run(`${table}-row-1`, `${table}-subject-1`);
   }
+  createLegacyBriefTables(db);
   db.pragma("user_version = 56");
 }
 

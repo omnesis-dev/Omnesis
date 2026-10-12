@@ -2,7 +2,7 @@
 
 The Brain maintains evidence-backed understanding: project and topic wikis,
 tracked outcomes (loops), document and person annotations, a time index, and
-briefs. A compact **root wiki** provides current orientation to agent runs.
+observations for the morning brief. A compact **root wiki** provides current orientation to agent runs.
 These records are synthesis, not independent evidence.
 
 The answering agent can open indexed knowledge pages through its ordinary document
@@ -62,9 +62,9 @@ review is adopted by an organization batch. Read the whole page for context;
 a compact frontier still bounds which claims may be settled. A page
 review considers useful subject context and consequential later developments;
 root work selects relevant context and navigation from the current library.
-These are model goals, not additional completion guarantees. Brief house style
-and brief verification remain available when a notification is warranted,
-but apply only to writing briefs and follow the maintenance assignment.
+These are model goals, not additional completion guarantees. A run may note an
+observation for the morning brief when it finds something the owner would act
+on; noting one follows the maintenance assignment and never replaces it.
 A wiki may synthesize grounded context from canonical owners and evidence;
 it does not become another operational owner of their state.
 
@@ -85,6 +85,9 @@ content is irrelevant or verified. Maintenance tiers are configurable under
 | `maxFrontierNodes`   | 32      | Maximum offered frontier size                 |
 | `maxFrontierChars`   | 65536   | Maximum JSON characters per frontier response |
 | `maxVisitedPerSeed`  | 256     | Bounded affected-region traversal             |
+| `retryBackoff`       | `1h`    | First delay after a failed batch attempt      |
+| `retryBackoffCap`    | `1d`    | Longest delay between those retries           |
+| `maxFailedAttempts`  | 5       | Failed attempts before work is parked         |
 
 Evidence changes whose potentially affected regions overlap share a batch;
 disjoint regions can remain separate. The root is a separately coordinated
@@ -107,6 +110,32 @@ work with existing repair or discovery obligations bypasses this skip decision.
 Sources too large to judge in full also retain the interpretation path. Skipped
 history remains eligible for bounded reconsideration during organization.
 
+A batch completes only when its whole frontier settles. When its run exhausts
+its attempts first, or the batch is interrupted, the batch is abandoned but what
+it finished stays finished. A work item whose own frontier settled, with no
+frontier item of its own and no candidate decision still open, completes;
+dependents its settlement expanded to, including pages a source selected as
+discovery targets, become ordinary `change` work of their own. A selected page
+keeps its exemption from the impact gate until it next changes. (Past 64 such dependents, every seed is retried
+whole instead.) Everything else is queued again at its current input revision.
+
+Only a failed run charges a failure, and only to work it was offered or settled
+without finishing; work the batch never reached is requeued as it was. Charged
+work waits `retryBackoff`, doubling per further failure up to `retryBackoffCap`,
+and is then planned in a batch of its own: it never joins or is adopted into
+another batch, so an input one run cannot finish no longer holds its neighbours
+open. While that retry is queued, or the work is parked, other batches do not
+append the same page as a dependent. When a run retries a batch, inputs not yet
+offered are offered before ones an earlier attempt was offered and left. At `maxFailedAttempts` the work is parked instead of requeued. Parked work
+is not admitted again for the same obligation and input revision — not by the
+planner, discovery intake, joint organization or review scheduling — until its
+source document or page reaches a new revision, which is ordinary fresh work.
+The root aggregate is never parked; it keeps retrying at the capped delay.
+`GET /admin/brain/knowledge/status` reports parked work grouped by subject kind,
+reason and tier; `GET /admin/brain/knowledge/pending-work?readiness=parked` with
+that reason and tier lists it. Bootstrap admission and inventory coverage count
+parked revisions separately.
+
 New evidence needs discovery even when no dependency points to it yet. The
 agent searches established context, adds evidence to existing synthesis, or
 proposes a scoped page candidate. A source does not require its own page.
@@ -118,7 +147,7 @@ as new commitments or allowing an old proposal to overwrite an accepted plan.
 
 ## Claims and context
 
-Wikis, root text, loop descriptions, annotations and briefs use Markdown with
+Wikis, root text, loop descriptions and annotations use Markdown with
 addressable claim spans:
 
 ```html
@@ -306,6 +335,19 @@ eligible even without a future date.
 Historical notices establish what happened then; missing follow-up evidence does
 not establish a current obligation or prove that an outcome is still unresolved.
 Displayed factual premises need grounding even when they accompany advice.
+Historical review reaches back `brain.bootstrap.horizon` (default `90d`),
+measured from now against each document's own `source_created_at`, never its
+ingestion time — on an upgraded install every document was ingested recently.
+Older documents are not admitted by the historical pass or by an initial
+import's recent inventory; ordinary arrivals and edits stay reactive whatever
+their date, and agents still reach old documents through search. The floor is
+recomputed every pass, so a raised horizon takes effect without a restart. Each
+pass also withdraws pending (not yet batched) `discovery`/`upgrade` work whose
+document is now beyond the floor, without refunding admission caps; batched
+work finishes. Bootstrap status reports the floor as `horizon.notBefore`; the
+coverage timeline counts unreviewed documents before it as `outOfScope` and
+inventory status as a `beyond-horizon` window, so neither reads as a backlog
+that never drains.
 Admission fills the available batch allowance in rounds across sources, preserving
 the configured chronological order within each source. A prolific source can use
 capacity left by exhausted sources. Admitted history is due immediately at routine
@@ -389,7 +431,7 @@ changed inputs.
 The run queue uses four maintenance workers by default (`brain.workerConcurrency`,
 maximum 32). Only maintenance tied to a live batch with reserved regions can
 execute in parallel; root aggregation and legacy runs, including daily reviews
-and digests, execute exclusively. Freed slots refill while siblings run. Each
+and the morning brief run, execute exclusively. Freed slots refill while siblings run. Each
 drain renews admission rounds of four times the worker count, yielding to the
 event loop between rounds and rechecking the feature gate, daily budget and
 provider breaker before each claim. Scheduler yield, abort or the invocation
@@ -459,13 +501,12 @@ verification. Completed and
 historical records remain context without being repeatedly reopened merely
 because their outcome is old.
 
-Archived loops, retired or superseded annotations, and dismissed, retired and expired briefs preserve their historical prose rather
+Archived loops and retired or superseded annotations preserve their historical prose rather
 than undergoing routine rewriting. Evidence changes still invalidate their
 support and propagate support loss to dependent durable synthesis; privacy
 deletion still removes affected material. Canonical historical owner work settles
 before a model turn, with lifecycle and revision checked again in the writer transaction;
-dependent synthesis still receives support-loss maintenance. Snoozed briefs can become active
-again when their canonical state returns to unread. A loop is historical only after
+dependent synthesis still receives support-loss maintenance. A loop is historical only after
 its active record has been removed and an archived record exists; a retained active
 loop remains editable even when its state is done or dismissed.
 
@@ -485,7 +526,7 @@ Repeat reviews and a lone new revision paired with prior context use
 `routineDelay` with a one-minute minimum. Only already-considered evidence is
 eligible; this does not admit additional history. Owners and existing wikis are
 retrieved as context. A settled decision or arrangement can justify a wiki even
-when it creates no loop or brief. Enrich an existing reusable topic or project
+when it creates no loop. Enrich an existing reusable topic or project
 before creating a separate page. New wiki publication requires actual current
 claim-support paths to at least two source documents with distinct content
 hashes; declared candidate evidence, context references and identical copies
@@ -542,7 +583,7 @@ and policy, even if its searches still report incomplete coverage. Changed input
 get a fresh allowance; ordinary scheduled reviews remain available. Source revision, removal and
 privacy fences remain in force; absence from search never establishes absence of evidence.
 
-Canonical loop, brief and annotation writes made during maintenance automatically
+Canonical loop and annotation writes made during maintenance automatically
 enroll affected owners for grounded synthesis review, even if the agent omits
 explicit discovery targets. Persisted evidence determines their association;
 unrelated owners receive a separate review.
@@ -620,7 +661,10 @@ background cognition per local day. Enforced at the claim boundary, so reaching
 it parks the queue rather than failing runs: a parked run is resumable
 tomorrow, a failed one burns its retry budget. It counts interactive spend too,
 because a budget background work could exhaust while a chat session spent
-freely alongside it would not be a budget. **Both default to no ceiling.**
+freely alongside it would not be a budget. The day's morning brief is exempt:
+it is one run a day, so the drain still claims it once the ceiling is reached,
+and its spend counts toward the day like any other run's. **Both default to no
+ceiling.**
 
 **`brain.bootstrap.maxRunsPerDay`** — the daily historical admission cap.
 In the maintenance engine this counts source-revision work seeds, which may
@@ -633,13 +677,15 @@ delete-and-re-add would be a way around it.
 
 If you need to turn the spend down, in order:
 
-1. `brain.bootstrap.maxRunsPerDay` — the biggest lever by far.
-2. `brain.bootstrap.activeHours` — shape it onto off-peak hours rather than
+1. `brain.bootstrap.horizon` — how much history is owed at all.
+2. `brain.bootstrap.maxRunsPerDay` — the biggest lever on pace.
+3. `brain.bootstrap.activeHours` — shape it onto off-peak hours rather than
    reducing it.
-3. `brain.knowledge.maxReviewsPerTick` and `brain.reverification.maxPerSweep` —
+4. `brain.knowledge.maxReviewsPerTick` and `brain.reverification.maxPerSweep` —
    bound proactive synthesis checks and legacy annotation rechecks.
-4. Individual producers to `enabled: false`.
-5. `brain.budget.dailyTokens` as a hard stop under all of it.
+5. Individual producers to `enabled: false`.
+6. `brain.budget.dailyTokens` as a hard stop under all of it but the morning
+   brief.
 
 ### Shaping it onto hours that suit you
 
@@ -690,7 +736,7 @@ on.
 ## Watching it
 
 - **Portal → Cognition** — lane states, budget, spend by mechanism, open loops,
-  briefs, and the run queue.
+  observations, and the run queue.
 - **Portal → Debug → Background jobs** — every periodic task, when it last ran.
 - **`omnesis brain runs`** — the queue, newest first. `omnesis brain run <id>`
   and `omnesis brain transcript <id>` open one up.
@@ -700,7 +746,7 @@ on.
 
 The Debug workspace groups the brain under Cognition: Library, Agent runs,
 Maintenance and Discovery. Existing deep links stay valid. Library includes
-wikis, loops, briefs and annotations, with status filters and canonical details.
+wikis, loops, observations and annotations, with status filters and canonical details.
 Person and document notes identify their subject and link to its current profile
 or source document, including historical notes.
 Maintenance filters batches by recorded reason, tier and status, with cursor paging
@@ -763,7 +809,7 @@ the production inference seams. The progressive scenario under
 `evals/universes/sacha-bellamy/next-gen-brain/` supplies source arrivals, edits,
 late history, contradictory evidence and privacy deletion. Its clock is
 virtual; a scripted agent calls the real maintenance tools and scripted
-decision, entailment and brief-judge services make the engine replayable.
+decision and entailment services make the engine replayable.
 These tests establish execution correctness, not model judgement quality.
 
 ### Outcome admission and source framing
@@ -779,7 +825,7 @@ at write time, including legacy ingestion runs.
 Already-stale reconciliation reads are rejected before model checks; the writer
 still checks them atomically to catch changes during inference.
 
-Annotation and brief entailment checks include bounded source framing around the
+Annotation and observation entailment checks include bounded source framing around the
 selected quote. Headings, nearby qualifications and final corrections remain visible;
 truncated context is explicitly incomplete, never proof that contrary evidence is absent.
 Exact contextual decision inputs live only in the privacy-bound audit payload; the
@@ -833,8 +879,6 @@ opens the exact supporting source when records disagree. A broader project may
 remain open after a narrower request is answered; note-recording times do not
 replace source event dates. Unknown current status remains distinct from a
 supported follow-up obligation.
-
-Source-derived brief writes also verify their complete rendered title, description and body with original evidence, source dates, write time and event/display timing. This includes partial edits that omit the separate asserted-claim list. Recommendations require grounded factual premises, not evidence that the suggested action already happened. An unavailable contextual verifier holds the write; concurrent owner or evidence changes require a fresh read. Source-free operational cards retain their separate contract.
 
 Maintenance can batch up to 16 exact references with `knowledge_reference({refs: [...]})`.
 The bounded result returns complete views, individual errors, and `deferredRefs` for a
@@ -1193,13 +1237,14 @@ readability still refuse release. This does not make unverified page prose evide
 Support references are semantically unordered; reordering the same reference set
 does not advance a claim's meaning revision.
 
-### Empty morning digests
+### Empty morning briefs
 
-Digest preflight reads the same eligible temporal horizon, recent briefs and due-soon
-tracking input packet used for editorial composition. An entirely empty packet settles
-without a model turn or a card: missing bootstrap evidence is not an all-clear finding.
-An unavailable horizon defers without inference; nonempty packets retain the normal
-digest cadence and fresh claim-time reads.
+The morning run's preflight rechecks the open observations, then reads the same
+temporal horizon, ranked observations and loops coming due that composition uses. An
+entirely empty packet settles without a model turn or a message: missing bootstrap
+evidence is not an all-clear finding. An unavailable horizon defers without
+inference. A day already sent settles at once, and a run that has inputs but ends
+without calling `morning_brief_send` fails and retries.
 
 ### Resuming joint organization
 
@@ -1237,8 +1282,8 @@ candidate decision. Retry bindings preserve progress, and candidate disposition
 never completes independent source obligations. This prevents new overlapping
 admissions; it does not undo work already paid before an affinity was discovered.
 
-Brief verification unavailability leaves the existing brief unchanged and its maintenance
-obligation pending. Operational logs and the tool refusal expose only a closed failure category
+Knowledge claim verification unavailability retains the claim unverified. Operational logs
+expose only a closed failure category
 (timeout, cancellation, explicit HTTP rate limit, protocol failure or unknown), with a closed
 protocol subcategory where available. Provider error text and response bodies are excluded.
 Adapters that flatten provider errors remain unknown; these diagnostics do not establish why a

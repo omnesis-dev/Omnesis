@@ -21,6 +21,7 @@ import { readDecisionPayload } from "./decision-payload.js";
 import { areDecisionSourcesReadable, readRetainedDecisionInput } from "./decision-read-privacy.js";
 import { listKnowledgeDecisionsForRun } from "./knowledge/decision-query.js";
 import { readKnowledgeBootstrapStatus } from "./knowledge/bootstrap-status.js";
+import { historyHorizonFloor } from "./knowledge/history-horizon.js";
 import { summarizeCognitionTranscript } from "./decision-view.js";
 import { artifactProvenance } from "./artifact-provenance.js";
 import { displayPersonRefs } from "./person-refs.js";
@@ -30,8 +31,18 @@ import {
   readBootstrapBacklog,
   readBootstrapTimeline,
 } from "./bootstrap-status.js";
-import { listLiveBriefClaims } from "./storage/brief-claims.js";
-import { getBrief, listBriefs, listBriefsForLoop } from "./storage/briefs.js";
+import {
+  getObservation,
+  listObservationOutcomes,
+  listObservations,
+  listObservationsForLoop,
+  listWouldPushLog,
+} from "./storage/observations.js";
+import {
+  latestSentMorningBrief,
+  listMorningBriefItems,
+  getSentMorningBrief,
+} from "./storage/morning-brief-items.js";
 import { listCognitionCoverage } from "./storage/coverage.js";
 import { getOpenLoop, listOpenLoopLedger, listOpenLoops } from "./storage/open-loops.js";
 import { readCognitionNotes } from "./storage/notes.js";
@@ -179,8 +190,8 @@ export class CognitionAdminQueryService {
           openLoops: number;
           snoozedLoops: number;
           totalLoops: number;
-          unreadBriefs: number;
-          totalBriefs: number;
+          openObservations: number;
+          totalObservations: number;
           failedRuns24h: number;
         }
       >(
@@ -193,8 +204,8 @@ export class CognitionAdminQueryService {
            (SELECT COUNT(*) FROM open_loops WHERE state = 'open') AS openLoops,
            (SELECT COUNT(*) FROM open_loops WHERE state = 'snoozed') AS snoozedLoops,
            (SELECT COUNT(*) FROM open_loops) AS totalLoops,
-           (SELECT COUNT(*) FROM briefs WHERE state = 'unread') AS unreadBriefs,
-           (SELECT COUNT(*) FROM briefs) AS totalBriefs,
+           (SELECT COUNT(*) FROM observations WHERE state IN ('live','held')) AS openObservations,
+           (SELECT COUNT(*) FROM observations) AS totalObservations,
            (SELECT COUNT(*) FROM cognition_runs
              WHERE status = 'failed' AND completed_at >= ?) AS failedRuns24h`,
       )
@@ -227,8 +238,8 @@ export class CognitionAdminQueryService {
     return listOpenLoopLedger(this.db, id, options);
   }
 
-  listLoopBriefs(id: string, options?: Parameters<typeof listBriefsForLoop>[2]) {
-    return listBriefsForLoop(this.db, id, options);
+  listLoopObservations(id: string, options?: Parameters<typeof listObservationsForLoop>[2]) {
+    return listObservationsForLoop(this.db, id, options);
   }
 
   listRuns(options: Parameters<typeof listCognitionRuns>[1]) {
@@ -239,12 +250,35 @@ export class CognitionAdminQueryService {
     return getCognitionRun(this.db, id);
   }
 
-  listBriefs(options: Parameters<typeof listBriefs>[1]) {
-    return listBriefs(this.db, options);
+  listObservations(options: Parameters<typeof listObservations>[1]) {
+    return listObservations(this.db, options);
   }
 
-  getBrief(id: string) {
-    return getBrief(this.db, id);
+  getObservation(id: string) {
+    return getObservation(this.db, id);
+  }
+
+  wouldPushLog(limit?: number) {
+    return listWouldPushLog(this.db, limit);
+  }
+
+  observationOutcomes(limit?: number) {
+    return listObservationOutcomes(this.db, limit);
+  }
+
+  /** One sent morning brief (or the latest) with its ranked items. */
+  morningBrief(day?: string) {
+    const sent = day ? getSentMorningBrief(this.db, day) : latestSentMorningBrief(this.db);
+    const itemDay = sent?.day ?? day;
+    return {
+      sent,
+      items: itemDay
+        ? listMorningBriefItems(this.db, itemDay).map((item) => ({
+            ...item,
+            observation: getObservation(this.db, item.observationId),
+          }))
+        : [],
+    };
   }
 
   listRetiredLoops(options: Parameters<typeof listRetiredLoops>[1]) {
@@ -326,10 +360,11 @@ export class CognitionAdminQueryService {
 
   async knowledgeDiscoveryTimeline(
     io: BootstrapTimelineReader,
-    now: () => number,
+    opts: { now: () => number; horizonMs: number },
   ): Promise<import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryTimeline> {
     if (!io.knowledgeDiscoveryByMonth) throw new Error("Discovery timeline IO unavailable");
-    const months = await io.knowledgeDiscoveryByMonth();
+    const now = opts.now;
+    const months = await io.knowledgeDiscoveryByMonth(historyHorizonFloor(now(), opts.horizonMs));
     return { mode: "knowledge", months, computedAt: now() };
   }
 
@@ -429,10 +464,46 @@ export class CognitionAdminQueryService {
     return artifactProvenance(this.db, runId);
   }
 
-  briefClaims(briefId: string) {
-    const claims = listLiveBriefClaims(this.db, briefId);
-    const evidence = this.documentRefs(claims.map((claim) => claim.evidenceDocId));
-    return claims.map((claim, index) => ({ claim, evidenceDoc: evidence[index]! }));
+  /** The decision model's salience judgements of one observation, newest first. */
+  observationDecisions(observationId: string) {
+    return this.db
+      .prepare<
+        [string],
+        {
+          id: string;
+          run_id: string;
+          purpose: string;
+          lane: string;
+          model_id: string | null;
+          score: number | null;
+          threshold: number;
+          verdict: string;
+          error: string | null;
+          response_json: string | null;
+          created_at: number;
+        }
+      >(
+        `SELECT id, run_id, purpose, lane, model_id, score, threshold, verdict, error, response_json, created_at
+           FROM cognition_decisions
+          WHERE purpose = 'observation-salience' AND record_id = ?
+          ORDER BY created_at DESC LIMIT 20`,
+      )
+      .all(observationId)
+      .map((row) => ({
+        id: row.id,
+        runId: row.run_id,
+        purpose: row.purpose,
+        lane: row.lane,
+        modelId: row.model_id,
+        score: row.score,
+        threshold: row.threshold,
+        verdict: row.verdict,
+        error: row.error,
+        answers: row.response_json
+          ? ((JSON.parse(row.response_json) as { answers?: unknown }).answers ?? null)
+          : null,
+        createdAt: row.created_at,
+      }));
   }
 
   activityReader(): RunActivityReader | undefined {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { historicalBriefFields } from "./owner-maintenance.js";
+import { historicalObservationFields } from "./owner-maintenance.js";
 import {
   readKnowledgeOwner,
   buildLegacyOwnerKnowledge,
@@ -104,9 +104,10 @@ export function reconcileKnowledgeOwner(
             ...node.metadata,
             ...(owner.canonicalFields.invalidatedAt != null ||
             (owner.kind === "loop" && owner.canonicalFields.state !== "open") ||
-            (owner.kind === "brief" && historicalBriefFields(owner.canonicalFields, now))
+            (owner.kind === "observation" &&
+              historicalObservationFields(owner.canonicalFields, now))
               ? { activity: "historical" as const }
-              : owner.kind === "brief"
+              : owner.kind === "observation"
                 ? { activity: "active" as const }
                 : {}),
           },

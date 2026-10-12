@@ -148,6 +148,7 @@ it("associates the actual coalesced work and distinguishes proposed policy sched
     status: "pending",
     batchId: null,
     attempts: 0,
+    failures: 0,
   };
   associateKnowledgeUrgency(db, input, actual);
   const row = db

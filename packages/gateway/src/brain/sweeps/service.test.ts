@@ -205,18 +205,6 @@ describe("SweepService", () => {
     });
   });
 
-  test("a file that only retimes a system sweep keeps its brief lane", () => {
-    // The lane is granted for the prose. Retiming does not change what the
-    // sweep's cards say, so it must not quietly cost it the grant.
-    write("may-day", '---\nat: "05:30"\n---\n');
-    const s = svc.get("may-day")!;
-    expect(s.briefLane).toBe("lookahead");
-    expect(s.anchorMinutes).toBe(5 * 60 + 30);
-    // Replacing the prose does.
-    write("may-day", '---\nat: "05:30"\n---\n\nSomething else entirely.\n');
-    expect(svc.get("may-day")!.briefLane).toBeUndefined();
-  });
-
   test("legacy config overrides convert to files once, never over an existing one", () => {
     write("weekly-finances", "---\nenabled: false\n---\n");
     const migrated = svc.migrateLegacyOverrides({
@@ -247,24 +235,12 @@ describe("SweepService", () => {
     expect(svc.digestWindowConflicts()).toEqual([]);
   });
 
-  test("a fork of the day-ahead sweep keeps its digest exemption but loses its brief lane", () => {
-    expect(svc.get("may-day")!.briefLane).toBe("lookahead");
+  test("a fork of the day-ahead sweep keeps its digest exemption", () => {
     svc.fork("may-day");
     // The digest still has to wait for it — that is about ordering, and the
     // sweep still runs at the same point in the morning.
     expect(svc.get("may-day")!.expectedBeforeDigest).toBe(true);
     expect(svc.digestWindowConflicts()).toEqual([]);
-    // The lane was granted for the prose the gateway ships. Once the operator
-    // pins their own, the card faces the same bar as any other sweep's.
-    expect(svc.get("may-day")!.briefLane).toBeUndefined();
-    svc.remove("may-day");
-    expect(svc.get("may-day")!.briefLane).toBe("lookahead");
-  });
-
-  test("switching the day-ahead sweep off does not cost it its lane", () => {
-    // Nothing is pinned, so the grant still applies when it is switched back on.
-    svc.setEnabled("may-day", false);
-    expect(svc.get("may-day")!.briefLane).toBe("lookahead");
   });
 
   test("with the digest off, nothing is a digest-window conflict", () => {

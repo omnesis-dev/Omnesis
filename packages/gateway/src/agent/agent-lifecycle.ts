@@ -590,7 +590,7 @@ export function createAgentService(
       // edit reaches the next research stage. Generic workers get theirs
       // through `genericSystemPrompt` below, which builds the whole prompt.
       // Adjudicating specialists are the exception, for the same reason the
-      // privacy reviewer, the entailment verifier and the brief judge get
+      // privacy reviewer and the entailment verifier get
       // nothing: a bar the operator's own prose can move is not a bar.
       resolveSpecialist: (name) =>
         decorateSpecialist(
@@ -705,16 +705,35 @@ export interface AgentLifecycleDeps {
  */
 export class AgentLifecycle {
   /**
-   * Brief talk-back session profile,
-   * installed by the Briefs feature when it boots active. Held here (not
-   * only on the AgentService) because an agent-model swap rebuilds the
-   * service, and the new instance must keep serving anchored threads.
+   * The Morning brief conversation's per-turn context. Held here (not only
+   * on the AgentService) because an agent-model swap rebuilds the service,
+   * and the new instance must keep it.
    */
-  private anchoredThreadProfile: import("./service.js").AnchoredThreadProfile | null = null;
+  private dailyBriefContext: import("./service.js").DailyBriefContextProvider | null = null;
 
-  setAnchoredThreadProfile(profile: import("./service.js").AnchoredThreadProfile | null): void {
-    this.anchoredThreadProfile = profile;
-    this.routeDeps.agentService?.setAnchoredThreadProfile(profile);
+  setDailyBriefContextProvider(
+    provider: import("./service.js").DailyBriefContextProvider | null,
+  ): void {
+    this.dailyBriefContext = provider;
+    this.routeDeps.agentService?.setDailyBriefContextProvider(provider);
+  }
+
+  /**
+   * What each morning brief was based on, for the brief route. The route
+   * deps outlive a model swap, so it is set on them directly.
+   */
+  setDailyBriefDetailReader(
+    reader: import("./daily-brief-detail.js").DailyBriefDetailReader | null,
+  ): void {
+    if (reader) this.routeDeps.dailyBriefDetail = reader;
+    else delete this.routeDeps.dailyBriefDetail;
+  }
+
+  private taskTools: import("./service.js").TaskToolsProvider | null = null;
+
+  setTaskToolsProvider(provider: import("./service.js").TaskToolsProvider | null): void {
+    this.taskTools = provider;
+    this.routeDeps.agentService?.setTaskToolsProvider(provider);
   }
 
   private interactiveMemoryProfile: import("./service.js").InteractiveWriteProfile | null = null;
@@ -1203,8 +1222,9 @@ export class AgentLifecycle {
     }
 
     if (agentService) this.deps.wsEventHandler.attachAgentService(agentService);
-    if (agentService && this.anchoredThreadProfile) {
-      agentService.setAnchoredThreadProfile(this.anchoredThreadProfile);
+    if (agentService && this.taskTools) agentService.setTaskToolsProvider(this.taskTools);
+    if (agentService && this.dailyBriefContext) {
+      agentService.setDailyBriefContextProvider(this.dailyBriefContext);
     }
     if (agentService && this.interactiveMemoryProfile) {
       agentService.setInteractiveMemoryProfile(this.interactiveMemoryProfile);
@@ -1443,8 +1463,9 @@ export class AgentLifecycle {
       }
     }
 
-    if (newService && this.anchoredThreadProfile) {
-      newService.setAnchoredThreadProfile(this.anchoredThreadProfile);
+    if (newService && this.taskTools) newService.setTaskToolsProvider(this.taskTools);
+    if (newService && this.dailyBriefContext) {
+      newService.setDailyBriefContextProvider(this.dailyBriefContext);
     }
     if (newService && this.interactiveMemoryProfile) {
       newService.setInteractiveMemoryProfile(this.interactiveMemoryProfile);

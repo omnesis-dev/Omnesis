@@ -3,10 +3,10 @@
 
 /**
  * `omnesis brain` — the operator window into the Cognition Steward
- * engine (experimental). Read-only by contract: loops and briefs are
- * mutated only by the Cognition Steward in V1, so there are no create/resolve
- * subcommands; the agent-notes wipe (`notes --wipe`) is the one
- * sanctioned operator mutation. The iOS Loops screen (over the gateway's
+ * engine (experimental). Read-only by contract: loops change through the
+ * user's task commands and the Cognition Steward, observations through the
+ * Steward alone; the agent-notes wipe (`notes --wipe`) is the one sanctioned
+ * operator mutation here. The iOS Loops screen (over the gateway's
  * `/loops` routes) is the product read surface for open loops; this
  * command is the operator's, with the engine internals included.
  *
@@ -60,11 +60,10 @@ interface LoopLedgerEntryDto {
   note: string;
 }
 
-interface LoopBriefSummaryDto {
+interface LoopObservationSummaryDto {
   id: string;
-  kind: string;
   state: string;
-  title: string;
+  summary: string;
   createdAt: string | null;
 }
 
@@ -552,17 +551,20 @@ const loopsCommand = defineCommand({
 });
 
 const loopShowCommand = defineCommand({
-  meta: { name: "loop", description: "Show one open loop in full: fields, ledger, briefs" },
+  meta: {
+    name: "loop",
+    description: "Show one open loop in full: fields, ledger, observations",
+  },
   args: {
     id: { type: "positional", description: "open-loop id", required: true },
   },
   async run(ctx) {
     const id = ctx.args.id;
     if (!id) throw new CliError(`${c.red}Missing loop id${c.reset}`, EXIT_USER_ERROR);
-    const { loop, ledger, briefs } = await gatewayJson<{
+    const { loop, ledger, observations } = await gatewayJson<{
       loop: Omit<OpenLoopDto, "docs"> & { docs: LoopDocRefDto[] };
       ledger: LoopLedgerEntryDto[];
-      briefs: LoopBriefSummaryDto[];
+      observations: LoopObservationSummaryDto[];
     }>(`/admin/brain/loops/${encodeURIComponent(id)}`);
     console.log(`\n${c.bold}${loop.title}${c.reset}  (${loop.id})`);
     console.log(`  state:        ${loop.state}`);
@@ -598,13 +600,13 @@ const loopShowCommand = defineCommand({
       }
     }
 
-    console.log(`\n  ${c.dim}attached briefs:${c.reset}`);
-    if (briefs.length === 0) {
+    console.log(`\n  ${c.dim}observations:${c.reset}`);
+    if (observations.length === 0) {
       console.log(`  ${c.dim}(none)${c.reset}`);
     } else {
-      for (const brief of briefs) {
+      for (const observation of observations) {
         console.log(
-          `  ${pad(brief.id, 26)} ${pad(brief.kind, 6)} ${pad(brief.state, 26)} ${truncate(brief.title, 40)}`,
+          `  ${pad(observation.id, 26)} ${pad(observation.state, 9)} ${truncate(observation.summary, 60)}`,
         );
       }
     }
@@ -931,7 +933,7 @@ const calibrationCommand = defineCommand({
   args: {
     family: {
       type: "string",
-      description: "Restrict to one family (brief | doc-annotation | person-annotation)",
+      description: "Restrict to one family (doc-annotation | person-annotation)",
     },
     "since-days": {
       type: "string",
@@ -987,7 +989,7 @@ export const brainCommand = defineCommand({
   meta: {
     name: "brain",
     description:
-      "Inspect the Cognition Steward: open loops, briefs, runs, transcripts, decisions, spend, calibration (operator, read-only)",
+      "Inspect the Cognition Steward: open loops, runs, transcripts, decisions, spend, calibration (operator, read-only)",
   },
   subCommands: {
     loops: gateVisible(loopsCommand),

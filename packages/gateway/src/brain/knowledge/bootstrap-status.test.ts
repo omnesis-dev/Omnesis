@@ -40,6 +40,10 @@ it("reports operator consent and live discovery independently of legacy progress
     String(now),
   );
   expect(readKnowledgeBootstrapStatus(db, settings, now).state).toBe("running");
+  expect(readKnowledgeBootstrapStatus(db, settings, now).horizon).toEqual({
+    horizonMs: 90 * 86_400_000,
+    notBefore: "2026-10-14T12:00:00.000Z",
+  });
   expect(readKnowledgeBootstrapStatus(db, { ...settings, enabled: false }, now).state).toBe("off");
 });
 

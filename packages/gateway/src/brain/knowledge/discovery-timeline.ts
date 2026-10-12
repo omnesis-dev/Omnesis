@@ -15,6 +15,8 @@ export interface DiscoveryPhaseCounts {
   deferred: number;
   failed: number;
   pending: number;
+  /** Never reviewed and dated before the history horizon: out of scope, not pending. */
+  outOfScope: number;
 }
 export interface KnowledgeDiscoveryMonth {
   month: string | null;
@@ -28,8 +30,12 @@ export interface KnowledgeDiscoveryTimeline {
 }
 
 /** Full corpus scan: call only on the IO worker. Counts current readable indexed
- * generations, never provider history that has not reached this database. */
-export function knowledgeDiscoveryByMonth(db: Database.Database): KnowledgeDiscoveryMonth[] {
+ * generations, never provider history that has not reached this database.
+ * `notBefore` is the history horizon floor (`history-horizon.ts`). */
+export function knowledgeDiscoveryByMonth(
+  db: Database.Database,
+  notBefore: string,
+): KnowledgeDiscoveryMonth[] {
   const exclusion = cognitionAuthoredSqlExclusion("d.source_id");
   const types = cognitionAuthoredDocumentTypes();
   const columns = db.prepare<[], { name: string }>("PRAGMA table_info(documents)").all();
@@ -42,6 +48,7 @@ export function knowledgeDiscoveryByMonth(db: Database.Database): KnowledgeDisco
     .get()
     ? "AND NOT EXISTS(SELECT 1 FROM removed_sources s WHERE s.id=d.source_id)"
     : "";
+  const unreviewed = "CASE WHEN d.source_created_at<? THEN 'outOfScope' ELSE 'pending' END";
   const rows = db
     .prepare<
       unknown[],
@@ -54,7 +61,7 @@ export function knowledgeDiscoveryByMonth(db: Database.Database): KnowledgeDisco
     >(
       `
     SELECT strftime('%Y-%m', d.source_created_at) AS month,
-      COALESCE(i.status,'pending') AS interpretation, COALESCE(o.status,'pending') AS organization,
+      COALESCE(i.status,${unreviewed}) AS interpretation, COALESCE(o.status,${unreviewed}) AS organization,
       COUNT(*) AS count
     FROM documents d
     LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id
@@ -65,6 +72,8 @@ export function knowledgeDiscoveryByMonth(db: Database.Database): KnowledgeDisco
   `,
     )
     .all(
+      notBefore,
+      notBefore,
       KNOWLEDGE_DISCOVERY_POLICY,
       KNOWLEDGE_DISCOVERY_POLICY,
       ...exclusion.params,
@@ -77,6 +86,7 @@ export function knowledgeDiscoveryByMonth(db: Database.Database): KnowledgeDisco
     deferred: 0,
     failed: 0,
     pending: 0,
+    outOfScope: 0,
   });
   for (const row of rows) {
     let month = months.get(row.month);

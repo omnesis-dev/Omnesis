@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Briefs "test life" arc kit — seeded generation of the planted
+ * The Brain "test life" arc kit — seeded generation of the planted
  * commitment→resolution arcs the reconcile-quality instrument delivers
  * over time.
  *
@@ -10,7 +10,7 @@
  * the behavior a *correct* Cognition Steward takes when its data run processes
  * that document. The scripted fake model (`fake-loop-model.ts`) executes
  * those behaviors through the REAL tool layer; the reconcile e2e (and
- * later the scorecard) asserts the resulting loop/brief state against
+ * later the scorecard) asserts the resulting loop/observation state against
  * each arc's gold expectations.
  *
  * Arc STRUCTURE is fixed; SURFACE details (names, vendors, invoice
@@ -78,11 +78,12 @@ interface Person {
 export type ArcAction =
   | {
       /** Reconcile-first commitment: search the marker; adopt an existing
-       * loop (ledger append) or create loop + awareness brief. */
+       * loop (ledger append) or create loop + an observation for the
+       * morning brief. */
       kind: "commit";
       marker: string;
       loopTitle: string;
-      briefTitle: string;
+      observation: string;
       searchQuery: string;
       /**
        * Skip the reconcile step and always create, even when the search
@@ -93,15 +94,16 @@ export type ArcAction =
     }
   | {
       /** Resolution datum: search the marker; unambiguous → close the loop
-       * silently (state done + attached-brief cleanup); ambiguous → attach
-       * a confirmation brief and leave the loop open. */
+       * silently (state done; its open observations drop with it);
+       * ambiguous → note a confirmation observation (superseding any open
+       * one on the loop) and leave the loop open. */
       kind: "resolve";
       marker: string;
       ambiguous: boolean;
       searchQuery: string;
       ledgerNote: string;
-      /** Present when `ambiguous` — the confirm brief's title. */
-      confirmBriefTitle?: string;
+      /** Present when `ambiguous` — the confirmation observation's summary. */
+      confirmObservation?: string;
     }
   | {
       /** New information on an existing loop: search + ledger append only. */
@@ -116,7 +118,7 @@ export type ArcAction =
        * resolution synced before the request (out-of-order delivery).
        * Reconcile; if a matching open loop somehow exists, close it;
        * otherwise track the obligation as a loop created and immediately
-       * closed, with a ledger note. No brief either way — nothing needs
+       * closed, with a ledger note. No observation either way — nothing needs
        * the user. */
       kind: "resolvedCommit";
       marker: string;
@@ -128,20 +130,21 @@ export type ArcAction =
       /**
        * A dated actionable to-do (a scheduled/due date in the prose AND
        * `metadata.extra.scheduled`): reconcile, then create a tracked loop
-       * plus a brief that stays HIDDEN until the morning of the scheduled
-       * day (`nextShow`) with `eventAt` on the day, and a re-verify
+       * plus an observation that starts to matter on the morning of the
+       * scheduled day (`windowStart`) and stops at the appointed time
+       * (`relevantUntil`), and a re-verify
        * `schedule_agent_run` for that day tied to the loop (`loopId`) so it
        * auto-retracts if the task completes first. Dated items only — an
        * undated to-do gets `ignore`. */
       kind: "schedule";
       marker: string;
       loopTitle: string;
-      briefTitle: string;
+      observation: string;
       searchQuery: string;
-      /** ISO 8601: the morning of the scheduled day → the brief's nextShow. */
-      nextShow: string;
-      /** ISO 8601: the scheduled day → the brief's eventAt. */
-      eventAt: string;
+      /** ISO 8601: the morning of the scheduled day → the observation's windowStart. */
+      windowStart: string;
+      /** ISO 8601: the appointed time → the observation's relevantUntil. */
+      relevantUntil: string;
       /** ISO 8601: when the re-verify run fires (the scheduled day). */
       scheduleWhen: string;
     }
@@ -149,7 +152,7 @@ export type ArcAction =
       /**
        * A correction reveals the tracked obligation never belonged to the
        * user (a misdirected request, a misread): search the marker and
-       * DELETE the matched loop — attached briefs cascade. Marking it
+       * DELETE the matched loop — attached observations cascade. Marking it
        * `done` would be the wrong verb: nothing was fulfilled, so there
        * is no history to preserve; the record itself was the mistake.
        * No-op when no loop matches. */
@@ -158,11 +161,11 @@ export type ArcAction =
       searchQuery: string;
     }
   | {
-      /** Awareness-only datum: create a standalone `info` brief (no loop) —
+      /** Awareness-only datum: note a standalone observation (no loop) —
        * interesting context worth surfacing, nothing to act on. */
       kind: "inform";
       marker: string;
-      briefTitle: string;
+      observation: string;
     }
   | {
       /** Eligible but unimportant: fetch, decide it doesn't matter, finish. */
@@ -220,11 +223,6 @@ export interface Arc {
     | "decision"
     | "mistaken"
     | "nudge"
-    | "feedback-handled"
-    | "feedback-noise"
-    | "feedback-snooze"
-    | "feedback-ack"
-    | "feedback-wrong"
     | "distractor-bulk"
     | "distractor-stale"
     | "distractor-boring";
@@ -232,20 +230,6 @@ export interface Arc {
   marker: string | null;
   steps: ArcStep[];
   gold: ArcGold;
-  /**
-   * Post-steps user reaction the driver simulates: dismiss the arc's brief
-   * with this reason through the REAL dismissal endpoint, then wait for the
-   * feedback run it enqueues. All five dismiss-modal reactions are modelled
-   * (already_handled -> related loops close as done; not_relevant and wrong
-   * -> related loops are deleted; snoozed -> loops stay open, the brief
-   * re-surfaces at the picked time; acknowledged -> the info brief is
-   * deleted, no loop changes); the gold asserts the post-feedback state.
-   */
-  dismissal?: {
-    reason: "already_handled" | "not_relevant" | "snoozed" | "acknowledged" | "wrong";
-    /** For `snoozed`: the user-picked re-surface time, hours from dismissal. */
-    snoozeHours?: number;
-  };
 }
 
 /** Fuzzy gold: expected end-state, keyed by marker (cited docs / states),
@@ -255,8 +239,8 @@ interface ArcGold {
   loopsWithMarker: number;
   /** Final state of the arc's principal loop (when one exists). */
   finalLoopState?: "open" | "done";
-  /** Active (unread/read) briefs attached to the arc's loop at arc end. */
-  activeAttachedBriefs?: number;
+  /** Open (live/held) observations attached to the arc's loop at arc end. */
+  openAttachedObservations?: number;
   /**
    * The agent may also legitimately leave ZERO attributed loops (e.g. the
    * out-of-order arc: deciding an already-fulfilled obligation needs no
@@ -349,12 +333,6 @@ export function generateArcSet(seed: number): ArcSet {
   // pre-existing arcs keep byte-identical surfaces for a given seed.
   const poMarker = `PO-${1000 + Math.floor(rand() * 9000)}`;
   const headcountMarker = `HC-${100 + Math.floor(rand() * 900)}`;
-  // Round-4 (feedback) surfaces — drawn AFTER every earlier draw.
-  const gymMarker = `GM-${1000 + Math.floor(rand() * 9000)}`;
-  const fairMarker = `EB-${100 + Math.floor(rand() * 900)}`;
-  const concertMarker = `SN-${1000 + Math.floor(rand() * 9000)}`;
-  const outageMarker = `WO-${100 + Math.floor(rand() * 900)}`;
-  const orderMarker = `DP-${1000 + Math.floor(rand() * 9000)}`;
 
   const arcs: Arc[] = [];
 
@@ -363,7 +341,7 @@ export function generateArcSet(seed: number): ArcSet {
     id: "invoice",
     kind: "invoice",
     marker: invoiceA,
-    gold: { loopsWithMarker: 1, finalLoopState: "done", activeAttachedBriefs: 0 },
+    gold: { loopsWithMarker: 1, finalLoopState: "done", openAttachedObservations: 0 },
     steps: [
       {
         expectRun: true,
@@ -381,7 +359,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: invoiceA,
               loopTitle: `Pay invoice ${invoiceA} from ${vendor}`,
-              briefTitle: `Invoice ${invoiceA} needs payment`,
+              observation: `Invoice ${invoiceA} needs payment`,
               searchQuery: `invoice ${invoiceA} ${vendor}`,
             },
           },
@@ -422,7 +400,7 @@ export function generateArcSet(seed: number): ArcSet {
     id: "long-horizon",
     kind: "long-horizon",
     marker: contractMarker,
-    gold: { loopsWithMarker: 1, finalLoopState: "done", activeAttachedBriefs: 0 },
+    gold: { loopsWithMarker: 1, finalLoopState: "done", openAttachedObservations: 0 },
     steps: [
       {
         expectRun: true,
@@ -441,7 +419,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: contractMarker,
               loopTitle: `Return the signed venue contract ${contractMarker}`,
-              briefTitle: `Venue contract ${contractMarker} needs your signature`,
+              observation: `Venue contract ${contractMarker} needs your signature`,
               searchQuery: `venue contract ${contractMarker}`,
             },
           },
@@ -497,7 +475,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: invoiceB,
               loopTitle: `Pay invoice ${invoiceB} from ${vendor}`,
-              briefTitle: `Invoice ${invoiceB} needs payment`,
+              observation: `Invoice ${invoiceB} needs payment`,
               searchQuery: `invoice ${invoiceB} ${vendor}`,
             },
           },
@@ -506,7 +484,7 @@ export function generateArcSet(seed: number): ArcSet {
     ],
   });
 
-  // 3. request → ambiguous fulfilment (confirm brief, loop stays open).
+  // 3. request → ambiguous fulfilment (confirmation observation, loop stays open).
   // The ambiguity refreshes the commit-time awareness card into the
   // confirmation card: one obligation remains one active card.
   const leaseMarker = "Harborview-lease";
@@ -514,7 +492,7 @@ export function generateArcSet(seed: number): ArcSet {
     id: "request",
     kind: "request",
     marker: leaseMarker,
-    gold: { loopsWithMarker: 1, finalLoopState: "open", activeAttachedBriefs: 1 },
+    gold: { loopsWithMarker: 1, finalLoopState: "open", openAttachedObservations: 1 },
     steps: [
       {
         expectRun: true,
@@ -532,7 +510,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: leaseMarker,
               loopTitle: `Send ${leaseMarker} documents to ${contact1.name}`,
-              briefTitle: `${contact1.name} is waiting on the ${leaseMarker} documents`,
+              observation: `${contact1.name} is waiting on the ${leaseMarker} documents`,
               searchQuery: leaseMarker,
             },
           },
@@ -555,7 +533,7 @@ export function generateArcSet(seed: number): ArcSet {
               ambiguous: true,
               searchQuery: leaseMarker,
               ledgerNote: `Partial fulfilment: disclosure received, certificate still missing.`,
-              confirmBriefTitle: `Is the ${leaseMarker} paperwork fully sent?`,
+              confirmObservation: `Is the ${leaseMarker} paperwork fully sent?`,
             },
           },
         },
@@ -615,7 +593,7 @@ export function generateArcSet(seed: number): ArcSet {
         kind: "commit",
         marker: concurrentMarker,
         loopTitle: `Wire the ${site} deposit (${concurrentMarker})`,
-        briefTitle: `${site} deposit due Friday`,
+        observation: `${site} deposit due Friday`,
         searchQuery: concurrentMarker,
       },
     },
@@ -726,7 +704,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: invoiceC,
               loopTitle: `Pay invoice ${invoiceC} from ${vendor2}`,
-              briefTitle: `Invoice ${invoiceC} needs payment`,
+              observation: `Invoice ${invoiceC} needs payment`,
               searchQuery: `invoice ${invoiceC} ${vendor2}`,
             },
           },
@@ -760,7 +738,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: quoteC,
               loopTitle: `Decide on quote ${quoteC} from ${vendor2}`,
-              briefTitle: `Quote ${quoteC} awaits your decision`,
+              observation: `Quote ${quoteC} awaits your decision`,
               searchQuery: `quote ${quoteC} ${vendor2}`,
             },
           },
@@ -794,7 +772,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: rentalMarker,
               loopTitle: `Collect the marquee rental ${rentalMarker}`,
-              briefTitle: `Marquee rental ${rentalMarker} pickup on Thursday`,
+              observation: `Marquee rental ${rentalMarker} pickup on Thursday`,
               searchQuery: `marquee rental ${rentalMarker}`,
             },
           },
@@ -816,7 +794,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: rentalMarker,
               loopTitle: `Collect the marquee rental ${rentalMarker}`,
-              briefTitle: `Marquee rental ${rentalMarker} pickup on Thursday`,
+              observation: `Marquee rental ${rentalMarker} pickup on Thursday`,
               searchQuery: `marquee ${rentalMarker}`,
             },
           },
@@ -837,7 +815,7 @@ export function generateArcSet(seed: number): ArcSet {
     gold: {
       loopsWithMarker: 1,
       finalLoopState: "done",
-      activeAttachedBriefs: 0,
+      openAttachedObservations: 0,
       zeroLoopsAcceptable: true,
     },
     steps: [
@@ -893,7 +871,7 @@ export function generateArcSet(seed: number): ArcSet {
     gold: {
       loopsWithMarker: 1,
       finalLoopState: "done",
-      activeAttachedBriefs: 0,
+      openAttachedObservations: 0,
       zeroLoopsAcceptable: true,
     },
     steps: [
@@ -943,7 +921,7 @@ export function generateArcSet(seed: number): ArcSet {
     id: "decision-thread",
     kind: "decision",
     marker: decisionMarker,
-    gold: { loopsWithMarker: 1, finalLoopState: "open", activeAttachedBriefs: 1 },
+    gold: { loopsWithMarker: 1, finalLoopState: "open", openAttachedObservations: 1 },
     steps: [
       {
         expectRun: true,
@@ -961,7 +939,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: decisionMarker,
               loopTitle: `Decide the venue for the ${decisionTopic} (${decisionMarker})`,
-              briefTitle: `Venue decision pending for the ${decisionTopic}`,
+              observation: `Venue decision pending for the ${decisionTopic}`,
               searchQuery: decisionMarker,
             },
           },
@@ -1058,7 +1036,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: cutterMarker,
               loopTitle: `Return the tile cutter (${cutterMarker}) to ${contact3.name}`,
-              briefTitle: `Tile cutter (${cutterMarker}) goes back on Sunday`,
+              observation: `Tile cutter (${cutterMarker}) goes back on Sunday`,
               searchQuery: `tile cutter ${cutterMarker}`,
             },
           },
@@ -1088,7 +1066,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: keyMarker,
               loopTitle: `Drop off the hall key (${keyMarker}) to ${contact3.name}`,
-              briefTitle: `Hall key (${keyMarker}) drop-off on Sunday`,
+              observation: `Hall key (${keyMarker}) drop-off on Sunday`,
               searchQuery: `hall key ${keyMarker}`,
             },
           },
@@ -1174,7 +1152,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: poMarker,
               loopTitle: `Approve purchase order ${poMarker}`,
-              briefTitle: `Purchase order ${poMarker} needs your approval`,
+              observation: `Purchase order ${poMarker} needs your approval`,
               searchQuery: `purchase order ${poMarker}`,
             },
           },
@@ -1233,7 +1211,7 @@ export function generateArcSet(seed: number): ArcSet {
               kind: "commit",
               marker: headcountMarker,
               loopTitle: `Confirm the team-dinner headcount (${headcountMarker})`,
-              briefTitle: `Headcount ${headcountMarker} needed by Friday`,
+              observation: `Headcount ${headcountMarker} needed by Friday`,
               searchQuery: `headcount ${headcountMarker}`,
             },
           },
@@ -1258,191 +1236,6 @@ export function generateArcSet(seed: number): ArcSet {
               marker: headcountMarker,
               searchQuery: `headcount ${headcountMarker}`,
               ledgerNote: `Nudge from ${contact4.name}: the caterer still needs the final number (${headcountMarker}).`,
-            },
-          },
-        },
-      },
-    ],
-  });
-
-  // 16. feedback: already-handled dismissal. A real commitment is tracked
-  //     and briefed; the user dismisses the brief as ALREADY HANDLED. The
-  //     feedback run must close the related loop as done (the thing got
-  //     handled outside the corpus' view — that is a fulfilment, and the
-  //     record stays), never delete it.
-  arcs.push({
-    id: "feedback-handled",
-    kind: "feedback-handled",
-    marker: gymMarker,
-    gold: { loopsWithMarker: 1, finalLoopState: "done", activeAttachedBriefs: 0 },
-    dismissal: { reason: "already_handled" },
-    steps: [
-      {
-        expectRun: true,
-        doc: {
-          externalId: `arc-fb-handled-${gymMarker}-1`,
-          documentType: "email",
-          title: `Membership ${gymMarker} lapses next week — renew now`,
-          content: [
-            `Your studio membership ${gymMarker} lapses at the end of next`,
-            `week. Renew online any time before then to keep your rate.`,
-            `— the front desk`,
-          ].join("\n"),
-          behavior: {
-            onCreated: {
-              kind: "commit",
-              marker: gymMarker,
-              loopTitle: `Renew membership ${gymMarker} before it lapses`,
-              briefTitle: `Membership ${gymMarker} lapses next week`,
-              searchQuery: `membership ${gymMarker}`,
-            },
-          },
-        },
-      },
-    ],
-  });
-
-  // 17. feedback: not-relevant dismissal. A direct personal ask — real
-  //     enough that a correct agent tracks and briefs it — turns out to be
-  //     something the user does not care about: they dismiss the brief as
-  //     NOT RELEVANT. The feedback run must delete the related loop
-  //     (tracking it was the mistake, per the user), not keep it open and
-  //     not mark it done. The ask is deliberately commitment-shaped (a
-  //     named contact, a question needing an answer, a deadline) so the
-  //     importance gate reliably tracks it — the arc probes the feedback
-  //     reaction, not the gate.
-  arcs.push({
-    id: "feedback-not-relevant",
-    kind: "feedback-noise",
-    marker: fairMarker,
-    gold: { loopsWithMarker: 0 },
-    dismissal: { reason: "not_relevant" },
-    steps: [
-      {
-        expectRun: true,
-        doc: {
-          externalId: `arc-fb-noise-${fairMarker}-1`,
-          documentType: "message",
-          title: `Stand ${fairMarker} at the harvest fair — want one this year?`,
-          content: [
-            `Are you taking a stand (${fairMarker}) at the harvest fair`,
-            `again this year? Early-bird pricing ends Friday — tell me by`,
-            `then and I'll book yours alongside ours. — ${contact1.name}`,
-          ].join("\n"),
-          behavior: {
-            onCreated: {
-              kind: "commit",
-              marker: fairMarker,
-              loopTitle: `Answer ${contact1.name} about the stand (${fairMarker}) by Friday`,
-              briefTitle: `Stand ${fairMarker}: answer needed before Friday's early-bird deadline`,
-              searchQuery: `stand ${fairMarker}`,
-            },
-          },
-        },
-      },
-    ],
-  });
-
-  // 18. feedback: snoozed dismissal. A dated commitment is tracked and
-  //     briefed; the user snoozes the brief ("show me later", with a
-  //     picked time). The feedback run must honour the time on the brief
-  //     and KEEP the loop open — snooze means later, never never.
-  arcs.push({
-    id: "feedback-snooze",
-    kind: "feedback-snooze",
-    marker: concertMarker,
-    gold: { loopsWithMarker: 1, finalLoopState: "open" },
-    dismissal: { reason: "snoozed", snoozeHours: 24 },
-    steps: [
-      {
-        expectRun: true,
-        doc: {
-          externalId: `arc-fb-snooze-${concertMarker}-1`,
-          documentType: "message",
-          title: `Winter concert tickets (${concertMarker}) go on sale Monday`,
-          content: [
-            `Tickets for the winter concert (${concertMarker}) go on sale`,
-            `Monday morning — they sold out fast last year, grab ours early?`,
-            `— ${contact2.name}`,
-          ].join("\n"),
-          behavior: {
-            onCreated: {
-              kind: "commit",
-              marker: concertMarker,
-              loopTitle: `Buy winter concert tickets (${concertMarker}) when sales open Monday`,
-              briefTitle: `Winter concert tickets (${concertMarker}) on sale Monday`,
-              searchQuery: `concert tickets ${concertMarker}`,
-            },
-          },
-        },
-      },
-    ],
-  });
-
-  // 19. feedback: acknowledged dismissal. A no-action awareness datum is
-  //     surfaced as a standalone info brief; the user acknowledges it.
-  //     The feedback run must just delete the brief — no loop mutations
-  //     (there is no loop, and inventing one now would be noise).
-  arcs.push({
-    id: "feedback-ack",
-    kind: "feedback-ack",
-    marker: outageMarker,
-    gold: { loopsWithMarker: 0 },
-    dismissal: { reason: "acknowledged" },
-    steps: [
-      {
-        expectRun: true,
-        doc: {
-          externalId: `arc-fb-ack-${outageMarker}-1`,
-          documentType: "email",
-          title: `Water shut-off ${outageMarker}: Thursday 8am-12pm`,
-          content: [
-            `Notice ${outageMarker} from the building manager: water will be`,
-            `shut off this Thursday 8am-12pm for pipe maintenance. No action`,
-            `needed — just so you can plan around it.`,
-          ].join("\n"),
-          behavior: {
-            onCreated: {
-              kind: "inform",
-              marker: outageMarker,
-              briefTitle: `Water shut-off ${outageMarker} Thursday morning (8am-12pm)`,
-            },
-          },
-        },
-      },
-    ],
-  });
-
-  // 20. feedback: wrong dismissal. A payment demand is tracked as an
-  //     obligation; the user dismisses the brief as WRONG — the agent's
-  //     understanding was incorrect (nothing is owed). The feedback run
-  //     must delete the related loop; marking it done would fabricate a
-  //     payment that never happened, and keeping it open ignores the user.
-  arcs.push({
-    id: "feedback-wrong",
-    kind: "feedback-wrong",
-    marker: orderMarker,
-    gold: { loopsWithMarker: 0 },
-    dismissal: { reason: "wrong" },
-    steps: [
-      {
-        expectRun: true,
-        doc: {
-          externalId: `arc-fb-wrong-${orderMarker}-1`,
-          documentType: "email",
-          title: `Payment failed for order ${orderMarker} — settle within 48 hours`,
-          content: [
-            `Your payment for order ${orderMarker} could not be processed.`,
-            `Please settle the outstanding balance of $49.00 within 48 hours`,
-            `to avoid cancellation. — billing team`,
-          ].join("\n"),
-          behavior: {
-            onCreated: {
-              kind: "commit",
-              marker: orderMarker,
-              loopTitle: `Settle failed payment for order ${orderMarker} ($49)`,
-              briefTitle: `Order ${orderMarker}: payment failed — settle within 48h`,
-              searchQuery: `order ${orderMarker} payment`,
             },
           },
         },
@@ -1509,7 +1302,7 @@ export function generateThreadReconcileArc(): ThreadReconcileArc {
     id: "thread-reconcile",
     kind: "request",
     marker,
-    gold: { loopsWithMarker: 1, finalLoopState: "done", activeAttachedBriefs: 0 },
+    gold: { loopsWithMarker: 1, finalLoopState: "done", openAttachedObservations: 0 },
     steps: [
       {
         expectRun: true,
@@ -1527,7 +1320,7 @@ export function generateThreadReconcileArc(): ThreadReconcileArc {
               kind: "commit",
               marker,
               loopTitle: `Confirm the studio booking ${marker}`,
-              briefTitle: `Studio booking ${marker} needs confirmation`,
+              observation: `Studio booking ${marker} needs confirmation`,
               searchQuery: `booking ${marker} studio`,
             },
           },
@@ -1572,28 +1365,29 @@ export function generateThreadReconcileArc(): ThreadReconcileArc {
  * `daily-mix.json` baseline stay untouched.
  *
  * The DATED arc: an actionable to-do carrying a scheduled/due date arrives,
- * a correct agent tracks it as a loop and creates a brief that stays hidden
- * until the scheduled day (`nextShow`), with `eventAt` on the day and a
+ * a correct agent tracks it as a loop and notes an observation that starts
+ * to matter on the scheduled day (`windowStart`) and lapses at the appointed
+ * time (`relevantUntil`), with a
  * re-verify `schedule_agent_run` tied to the loop; a later completion datum
  * resolves the loop, whose cascade retracts the never-fired scheduled run.
  * The UNDATED arc: an equally-actionable to-do with NO scheduled date is
- * read and left untouched — no natural moment to resurface, so no brief.
+ * read and left untouched — no natural moment to resurface, so no observation.
  *
  * Times are computed relative to a passed `now` so the scheduled day is
- * genuinely in the future (the brief is hidden today). Surface details are
+ * genuinely in the future. Surface details are
  * INVENTED (privacy rule) — fictional tasks on RFC-2606 reserved domains.
  */
 export interface DatedReminderArcs {
   /** Step 0 schedules the reminder; step 1 completes it (cascade retract). */
   dated: Arc;
-  /** One step: an undated to-do that must NOT be auto-briefed. */
+  /** One step: an undated to-do that must NOT be noted. */
   undated: Arc;
   /** title → behavior for the scripted model (merge into its behavior map). */
   behaviors: Map<string, ArcDocBehavior>;
-  /** ISO 8601 morning of the scheduled day — the dated brief's nextShow. */
-  nextShowIso: string;
-  /** ISO 8601 scheduled day — the dated brief's eventAt + the re-verify run. */
-  eventAtIso: string;
+  /** ISO 8601 morning of the scheduled day — the dated observation's windowStart. */
+  windowStartIso: string;
+  /** ISO 8601 appointed time on the scheduled day — the dated observation's relevantUntil. */
+  relevantUntilIso: string;
 }
 
 /** UTC ISO 8601 at `hour:00` on the day `dayOffset` days after `now`. */
@@ -1605,13 +1399,13 @@ function isoAtHourDaysFromNow(now: number, dayOffset: number, hour: number): str
 }
 
 export function generateDatedReminderArcs(now: number): DatedReminderArcs {
-  // Tomorrow: nextShow at 08:00, eventAt at 09:00, re-verify run at 07:00.
-  // All strictly after `now` (tomorrow's date is always later than today),
-  // so the brief is hidden until its day.
-  const nextShowIso = isoAtHourDaysFromNow(now, 1, 8);
-  const eventAtIso = isoAtHourDaysFromNow(now, 1, 9);
+  // Tomorrow: windowStart at 08:00, relevantUntil at 09:00, re-verify run at
+  // 07:00. All strictly after `now` (tomorrow's date is always later than
+  // today), so the observation is noted ahead of its day.
+  const windowStartIso = isoAtHourDaysFromNow(now, 1, 8);
+  const relevantUntilIso = isoAtHourDaysFromNow(now, 1, 9);
   const scheduleWhenIso = isoAtHourDaysFromNow(now, 1, 7);
-  const scheduledDay = nextShowIso.slice(0, 10); // YYYY-MM-DD for prose + metadata
+  const scheduledDay = windowStartIso.slice(0, 10); // YYYY-MM-DD for prose + metadata
 
   const datedMarker = "library-books";
   const datedTaskTitle = `Return the library books (${datedMarker})`;
@@ -1621,7 +1415,7 @@ export function generateDatedReminderArcs(now: number): DatedReminderArcs {
     id: "dated-todo",
     kind: "request",
     marker: datedMarker,
-    gold: { loopsWithMarker: 1, finalLoopState: "done", activeAttachedBriefs: 0 },
+    gold: { loopsWithMarker: 1, finalLoopState: "done", openAttachedObservations: 0 },
     steps: [
       {
         expectRun: true,
@@ -1641,10 +1435,10 @@ export function generateDatedReminderArcs(now: number): DatedReminderArcs {
               kind: "schedule",
               marker: datedMarker,
               loopTitle: datedTaskTitle,
-              briefTitle: `Return the library books (${datedMarker}) — due today`,
+              observation: `Return the library books (${datedMarker}) — due today`,
               searchQuery: datedMarker,
-              nextShow: nextShowIso,
-              eventAt: eventAtIso,
+              windowStart: windowStartIso,
+              relevantUntil: relevantUntilIso,
               scheduleWhen: scheduleWhenIso,
             },
           },
@@ -1697,5 +1491,5 @@ export function generateDatedReminderArcs(now: number): DatedReminderArcs {
     for (const step of arc.steps) behaviors.set(step.doc.title, step.doc.behavior);
   }
 
-  return { dated, undated, behaviors, nextShowIso, eventAtIso };
+  return { dated, undated, behaviors, windowStartIso, relevantUntilIso };
 }

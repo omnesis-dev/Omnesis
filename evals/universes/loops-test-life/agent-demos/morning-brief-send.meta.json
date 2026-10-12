@@ -1,0 +1,4 @@
+{
+  "triggers": ["send it with morning_brief_send, exactly once"],
+  "role": "background-agent"
+}

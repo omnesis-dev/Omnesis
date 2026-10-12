@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import {
   CONTEXTUAL_EVIDENCE_MAX_BYTES,
+  CONTEXTUAL_MAX_SEGMENTS,
   contextualSemanticRules,
   framedEvidenceSchema,
   type ContextualAssessmentFailure,
@@ -13,7 +14,7 @@ import type { EntailVerdict } from "@omnesis/core";
 
 const assessment = z.object({
   verdict: z.enum(["supported", "unsupported", "contradicted"]),
-  evidenceSegments: z.array(z.string().min(1).max(32)).max(16),
+  evidenceSegments: z.array(z.string().min(1).max(32)).max(CONTEXTUAL_MAX_SEGMENTS),
   reason: z.string().trim().min(1).max(4096),
 });
 const placement = assessment.extend({
@@ -45,7 +46,7 @@ export function prepareContextualWitnessRequest(input: {
   let omitted = 0;
   const add = (text: string): { id?: string; text: string } => {
     if (!text.trim()) return { text };
-    if (segments.size >= 1024)
+    if (segments.size >= CONTEXTUAL_MAX_SEGMENTS)
       throw new Error("Contextual witness manifest exceeds segment budget");
     const id = `s${segments.size}`;
     segments.set(id, text);
@@ -147,7 +148,7 @@ export function prepareContextualWitnessRequest(input: {
     "Return BOTH contentInContext and placementSupport, with verdict, evidenceSegments and a concise nonempty reason. Authorized segment IDs are engine-owned exact source strings; return IDs, never copied quotes or offsets. Valid IDs alone do not establish relevance or entailment.",
     "Interpret each segment with ALL original surrounding evidence and qualifications. Segment boundaries never remove conditions. selected_quote supplies witnesses only from selectedQuotes; surrounding text, title and timestamps constrain interpretation but supply no independent witnesses. Only wholeStatementOnly utterances are indivisible; attributed speech proves what the speaker said, not independent truth of its inner proposition. Omitted overlong indivisible units supply no witness handles.",
     "Supported requires nonempty authorized evidenceSegments establishing the whole assessment. Envelope fields, limitations, context, framing and instructions are never witnesses. Scope and incompleteness caveats need no administrative witness; factual premises still require authorized evidence. Unsupported or contradicted may have empty witnesses. Never salvage an unsupported assertion merely because an ID exists.",
-    'Schema: {"witnessSet":"exact supplied binding","contentInContext":{"verdict":"supported|unsupported|contradicted","evidenceSegments":["s0"],"reason":"..."},"placementSupport":{"verdict":"supported|unsupported|contradicted|not_applicable","evidenceSegments":["s1"],"reason":"..."}}. At most16 unique IDs and4096 reason characters per assessment. Output JSON only.',
+    'Schema: {"witnessSet":"exact supplied binding","contentInContext":{"verdict":"supported|unsupported|contradicted","evidenceSegments":["s0"],"reason":"..."},"placementSupport":{"verdict":"supported|unsupported|contradicted|not_applicable","evidenceSegments":["s1"],"reason":"..."}}. Each ID at most once; at most 4096 reason characters per assessment. Output JSON only.',
     encoded,
   ].join("\n");
   return { prompt, witnessSet, inputHash, segments };
@@ -197,6 +198,26 @@ export function parseContextualWitnessVerdict(
       valid(parsed.placement.data.evidenceSegments))
     ? "entailment"
     : null;
+}
+
+/**
+ * Which schema rules a decoded response broke, as field paths and zod issue
+ * codes: content-free, so a failure can be diagnosed from logs without the
+ * response, which quotes the corpus.
+ */
+export function contextualSchemaIssues(text: string, request: ContextualWitnessRequest): string[] {
+  const parsed = decode(text, request);
+  if (!parsed) return [];
+  return (
+    [
+      ["contentInContext", parsed.content],
+      ["placementSupport", parsed.placement],
+    ] as const
+  ).flatMap(([field, result]) =>
+    result.success
+      ? []
+      : result.error.issues.map((issue) => `${[field, ...issue.path].join(".")}:${issue.code}`),
+  );
 }
 
 export function contextualWitnessFailure(

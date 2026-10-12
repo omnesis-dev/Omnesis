@@ -7,6 +7,7 @@ import { createLogger } from "@omnesis/core";
 
 import { runSchemaSetup } from "./schema.js";
 import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -77,6 +78,7 @@ describe("migration 60 - trusted external-answer audit storage", () => {
        VALUES ('release-m60', 'task-release-m60', 'token:synthetic',
                'Synthetic released answer.', '[]', 16)`,
     ).run();
+    createLegacyBriefTables(db);
     db.pragma("user_version = 59");
 
     runMigrations(db, { log: createLogger("test") });

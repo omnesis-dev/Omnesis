@@ -1182,10 +1182,12 @@ function answerFailureSummary(err: unknown): {
         );
       case "http_api_error":
       case "anthropic_api_error":
+      case "anthropic_usage_limited":
       case "http_protocol_mismatch":
-        // The backend authored this sentence from the HTTP status alone, so it
-        // already names the condition (bad credentials, missing model, rate
-        // limit). Forwarding it beats restating it less precisely here.
+        // The backend authored this sentence from the HTTP status, or from the
+        // account limit it classified, so it already names the condition (bad
+        // credentials, missing model, rate limit, a reached usage limit).
+        // Forwarding it beats restating it less precisely here.
         return withDetail(err.code, err.message);
       case "http_stream_error":
       case "anthropic_stream_error":

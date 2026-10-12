@@ -24,7 +24,7 @@ function hiddenAncestorCondition(db: Database.Database): string {
       WHERE source_document.id=a.id))`;
 }
 
-/** Canonical loop-to-brief privacy edges also apply before their physical cascade. */
+/** Canonical loop-to-observation privacy edges also apply before their physical cascade. */
 function relatedLoopPrivacyEdges(
   db: Database.Database,
   ownerColumn: string,
@@ -32,13 +32,15 @@ function relatedLoopPrivacyEdges(
 ): string {
   if (
     !db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='brief_related_loops'")
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='observation_related_loops'",
+      )
       .get()
   )
     return "";
-  return `UNION SELECT 'node', brl.loop_id FROM brief_related_loops brl
+  return `UNION SELECT 'node', brl.loop_id FROM observation_related_loops brl
     ${recursive ? "JOIN ancestors a ON a.kind='node'" : ""}
-    WHERE brl.brief_id=${ownerColumn}
+    WHERE brl.observation_id=${ownerColumn}
       AND (EXISTS (SELECT 1 FROM knowledge_nodes known_loop WHERE known_loop.id=brl.loop_id)
         OR EXISTS (SELECT 1 FROM knowledge_node_tombstones tomb_loop WHERE tomb_loop.id=brl.loop_id))`;
 }

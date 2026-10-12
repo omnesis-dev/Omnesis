@@ -282,7 +282,6 @@ it("carries wiki curation purpose into a whole-page rewrite while preserving gro
     embedder: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     decision: {
       policy: (request) =>
         Object.fromEntries(

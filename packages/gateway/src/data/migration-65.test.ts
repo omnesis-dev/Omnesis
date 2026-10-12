@@ -7,6 +7,7 @@ import { createLogger } from "@omnesis/core";
 import { createLegacyTimeIndexTables } from "../enrichment/temporal-annotations/storage.js";
 import { runSchemaSetup } from "./schema.js";
 import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -75,6 +76,7 @@ describe("migration 65 — time index becomes LLM-owned temporal annotations", (
        VALUES
          ('dev_example', 'time_index_entry', 'tix_legacy', 'Invented quality note', 'open', 10)`,
     ).run();
+    createLegacyBriefTables(db);
     db.pragma("user_version = 64");
 
     runMigrations(db, { log: createLogger("test:migration-65") });

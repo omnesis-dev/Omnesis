@@ -32,7 +32,7 @@ import {
 } from "@omnesis/core";
 
 import { readJsonRpcLines, encodeJsonRpcLine } from "./json-rpc-lines.js";
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import {
@@ -1118,7 +1118,7 @@ export function convertToolsToCodexDynamicTools(
     type: "function",
     name: h.name,
     description: h.description,
-    inputSchema: zodToJsonSchema(h.schema) as Record<string, unknown>,
+    inputSchema: toolInputJsonSchema(h.schema) as Record<string, unknown>,
   }));
 }
 

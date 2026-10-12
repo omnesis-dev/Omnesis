@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, it, expect } from "vitest";
+import { OBSERVATION_SALIENCE_SPEND_MECHANISM } from "../observations/salience.js";
 import { COGNITION_RUN_KINDS } from "../storage/types.js";
 import {
   parseCognitionDataRunPayload,
@@ -162,7 +163,9 @@ describe("cognitionMechanismLabel", () => {
   it("labels the interactive lanes, evaluators and Deep Research stages", () => {
     expect(cognitionMechanismLabel("interactive")).toBe("Interactive chat");
     expect(cognitionMechanismLabel("entailment-gate")).toBe("Evidence verifier");
-    expect(cognitionMechanismLabel("brief-judge")).toBe("Brief gate");
+    expect(cognitionMechanismLabel(OBSERVATION_SALIENCE_SPEND_MECHANISM)).toBe(
+      "Decision model · observation salience",
+    );
     expect(cognitionMechanismLabel("deep-research:history-sweep")).toBe(
       "Deep Research · history sweep",
     );
@@ -175,6 +178,7 @@ describe("cognitionMechanismLabel", () => {
     // recorded under a coarser name.
     expect(cognitionMechanismLabel("some-future-workflow")).toBe("some-future-workflow");
     expect(cognitionMechanismLabel("daily")).toBe("daily");
+    expect(cognitionMechanismLabel("brief-judge")).toBe("brief-judge");
   });
 
   it("recognises workflow ids and nothing else", () => {

@@ -3,6 +3,11 @@
 
 import "./synth-env.js";
 import { expect, test } from "vitest";
+import { scheduleKnowledgeReview } from "../../../gateway/src/brain/knowledge/work-lifecycle.js";
+import { updateOpenLoop } from "../../../gateway/src/brain/storage/open-loops.js";
+import { KnowledgeReferenceReader } from "../../../gateway/src/brain/knowledge/reference-reader.js";
+import { createGatewayLoopReadPort } from "../../../gateway/src/brain/interactive-loop-port.js";
+import { CONTEXTUAL_VERIFIER } from "../../../gateway/src/brain/knowledge/claim-context.js";
 import {
   BrainBench,
   call,
@@ -11,11 +16,6 @@ import {
   preserveCurrentOwner,
   sourceInterpretations,
 } from "./brain-bench/index.js";
-import { scheduleKnowledgeReview } from "../../../gateway/src/brain/knowledge/work-lifecycle.js";
-import { updateOpenLoop } from "../../../gateway/src/brain/storage/open-loops.js";
-import { KnowledgeReferenceReader } from "../../../gateway/src/brain/knowledge/reference-reader.js";
-import { createGatewayLoopReadPort } from "../../../gateway/src/brain/interactive-loop-port.js";
-import { CONTEXTUAL_VERIFIER } from "../../../gateway/src/brain/knowledge/claim-context.js";
 
 compressCognitionCadences();
 test("split outcome claims retain final interpretation context through real terminal saves", async () => {
@@ -85,7 +85,6 @@ test("split outcome claims retain final interpretation context through real term
       }
       return "entailment";
     },
-    judge: "hold-all",
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",

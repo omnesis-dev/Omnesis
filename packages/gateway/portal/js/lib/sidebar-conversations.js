@@ -2,6 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
+ * Whether a conversation can be deleted. The standing Morning brief
+ * conversation (`origin.kind === "daily_brief"`) cannot: the gateway
+ * answers 409, so no client offers Delete for it.
+ */
+export function canDeleteConversation(conversation) {
+  return conversation?.origin?.kind !== "daily_brief";
+}
+
+/**
  * Hide a sidebar conversation immediately, then commit or roll back the
  * local tombstone when the authoritative deletion settles.
  */

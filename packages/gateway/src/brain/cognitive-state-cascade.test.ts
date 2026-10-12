@@ -27,7 +27,7 @@ import { listPendingAbsenceCascades } from "../data/repositories/AbsenceReposito
 import { purgeCognitiveStateForDocs } from "./cognitive-state-cascade.js";
 import { listCognitionCoverage, recordCognitionCoverage } from "./storage/coverage.js";
 import { createOpenLoop, getOpenLoop } from "./storage/open-loops.js";
-import { createBrief, getBrief } from "./storage/briefs.js";
+import { createObservation, getObservation } from "./storage/observations.js";
 import { OPEN_LOOP_PROVIDER_ID, OPEN_LOOP_SOURCE_ID } from "./open-loop-source/source-meta.js";
 import type Database from "better-sqlite3";
 import type { DocumentInput } from "@omnesis/types";
@@ -151,7 +151,7 @@ describe("purgeCognitiveStateForDocs", () => {
     expect(listCognitionCoverage(db)).toHaveLength(0);
   });
 
-  test("a failed mirror delete rolls back the loop, brief and cleanup obligation for retry", async () => {
+  test("a failed mirror delete rolls back the loop, observation and cleanup obligation for retry", async () => {
     const evidenceId = seedDoc("evidence-1", "notes-synth:local");
     const loopId = "olp_retry";
     createOpenLoop(
@@ -167,15 +167,12 @@ describe("purgeCognitiveStateForDocs", () => {
       },
       NOW,
     );
-    createBrief(
+    createObservation(
       db,
       {
-        id: "brf_retry",
+        id: "obs_retry",
         createdByRun: "run_1",
-        kind: "loop",
-        title: "Studio booking still unconfirmed",
-        confidence: 0.8,
-        urgency: 0.4,
+        summary: "Studio booking still unconfirmed",
         relatedLoopIds: [loopId],
       },
       NOW,
@@ -201,14 +198,14 @@ describe("purgeCognitiveStateForDocs", () => {
     );
     expect(mirrorExists()).toBe(true);
     expect(getOpenLoop(db, loopId)).not.toBeNull();
-    expect(getBrief(db, "brf_retry")).not.toBeNull();
+    expect(getObservation(db, "obs_retry")).not.toBeNull();
     expect(listPendingAbsenceCascades(db, 10)).toEqual([]);
 
     db.exec("DROP TRIGGER reject_mirror_delete");
     await purgeCognitiveStateForDocs(db, gate, [evidenceId]);
     expect(mirrorExists()).toBe(false);
     expect(getOpenLoop(db, loopId)).toBeNull();
-    expect(getBrief(db, "brf_retry")).toBeNull();
+    expect(getObservation(db, "obs_retry")).toBeNull();
     expect(listPendingAbsenceCascades(db, 10)).toMatchObject([
       { documentIds: [mirrorId], indexDone: false, cognitionDone: false },
     ]);

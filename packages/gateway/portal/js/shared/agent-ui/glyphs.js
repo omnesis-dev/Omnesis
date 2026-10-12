@@ -3,7 +3,7 @@
 
 import { html } from "htm/preact";
 
-export const BRIEF_GLYPH = html`
+export const OBSERVATION_GLYPH = html`
   <svg
     width="11"
     height="11"
@@ -15,8 +15,8 @@ export const BRIEF_GLYPH = html`
     stroke-linejoin="round"
     aria-hidden="true"
   >
-    <rect x="3" y="6" width="10" height="7" rx="1" />
-    <path d="M4.5 4h7 M6 2h4" />
+    <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8Z" />
+    <circle cx="8" cy="8" r="1.8" />
   </svg>
 `;
 export const CLOCK_GLYPH = html`

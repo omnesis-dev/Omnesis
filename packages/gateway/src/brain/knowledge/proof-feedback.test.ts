@@ -152,7 +152,7 @@ it("caps returned claim states explicitly without returning their prose", async 
   expect(JSON.stringify(result)).not.toContain("Unqualified statement");
 });
 
-it.each(["wiki", "loop", "annotation", "brief"])(
+it.each(["wiki", "loop", "annotation"])(
   "hints whole %s views without changing their authority",
   (kind) => {
     const view = {

@@ -97,7 +97,7 @@ describe("paginateConversations", () => {
 });
 
 describe("paginateVisibleConversationMessages", () => {
-  it("removes an anchored seed and pages backward on complete turn boundaries", () => {
+  it("removes a watch-firing seed and pages backward on complete turn boundaries", () => {
     const messages: ChatMessage[] = [
       { role: "user", parts: [{ kind: "text", text: "internal seed prompt" }] },
       { role: "assistant", parts: [{ kind: "text", text: "internal seed answer" }] },
@@ -123,7 +123,13 @@ describe("paginateVisibleConversationMessages", () => {
 
     const latest = paginateVisibleConversationMessages(
       messages,
-      { kind: "brief", briefId: "brief_1", runId: "run_1", seedMessageCount: 2 },
+      {
+        kind: "watch_firing",
+        firingId: "firing_1",
+        runId: "firing_1",
+        watchId: "watch_1",
+        seedMessageCount: 2,
+      },
       2,
     );
     expect(latest.messages).toEqual(messages.slice(6));
@@ -131,7 +137,13 @@ describe("paginateVisibleConversationMessages", () => {
 
     const older = paginateVisibleConversationMessages(
       messages,
-      { kind: "brief", briefId: "brief_1", runId: "run_1", seedMessageCount: 2 },
+      {
+        kind: "watch_firing",
+        firingId: "firing_1",
+        runId: "firing_1",
+        watchId: "watch_1",
+        seedMessageCount: 2,
+      },
       2,
       latest.nextBefore!,
     );
@@ -195,7 +207,13 @@ describe("paginateVisibleConversationMessages", () => {
     ];
     const page = paginateVisibleConversationMessages(
       messages,
-      { kind: "brief", briefId: "brief_1", runId: "run_1", seedMessageCount: 2 },
+      {
+        kind: "watch_firing",
+        firingId: "firing_1",
+        runId: "firing_1",
+        watchId: "watch_1",
+        seedMessageCount: 2,
+      },
       0,
     );
     expect(page).toMatchObject({ messages: [], messageCount: 2, hasMore: true, nextBefore: 2 });
@@ -2434,13 +2452,13 @@ describe("AgentService — observer hooks", () => {
     });
     await store.save({
       ...base,
-      id: "anchored",
+      id: "morning-brief",
       updatedAt: "2026-01-01T00:00:00.000Z",
       pinned: false,
       origin: {
-        kind: "brief" as const,
-        briefId: "brief_example",
+        kind: "daily_brief" as const,
         runId: "run_example",
+        briefs: [],
       },
     });
     await store.save({
@@ -2464,7 +2482,7 @@ describe("AgentService — observer hooks", () => {
     expect(await store.load("watch-firing")).toBeNull();
     expect(await store.load("fresh")).not.toBeNull();
     expect(await store.load("pinned")).not.toBeNull();
-    expect(await store.load("anchored")).not.toBeNull();
+    expect(await store.load("morning-brief")).not.toBeNull();
   });
 
   it("deletes every eligible conversation without skipping scanned candidates", async () => {

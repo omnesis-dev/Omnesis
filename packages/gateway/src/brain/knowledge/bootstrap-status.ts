@@ -8,6 +8,8 @@ import { readRetrievalReconsiderationStatus } from "./retrieval-reconsideration.
 import { readKnowledgeInventoryStatus } from "./inventory-status.js";
 import { historicalKnowledgeAdmissions } from "./work.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery.js";
+import { KNOWLEDGE_WORK_PARKED } from "./work-retry.js";
+import { historyHorizonFloor } from "./history-horizon.js";
 import type Database from "better-sqlite3";
 
 /** Durable admission and coverage milestones; never legacy processed-document markers. */
@@ -24,14 +26,19 @@ export function readKnowledgeBootstrapStatus(
   const seeds = {
     ...historicalKnowledgeAdmissions(db, now),
     ...db
-      .prepare<[], { pending: number; batched: number; completed: number; deferred: number }>(
+      .prepare<
+        [string],
+        { pending: number; batched: number; completed: number; deferred: number; parked: number }
+      >(
         `
       SELECT COALESCE(SUM(status='pending'),0) AS pending,COALESCE(SUM(status='batched'),0) AS batched,
-      COALESCE(SUM(status='completed'),0) AS completed,COALESCE(SUM(status='deferred'),0) AS deferred
+      COALESCE(SUM(status='completed'),0) AS completed,COALESCE(SUM(status='deferred'),0) AS deferred,
+      COALESCE(SUM(status='deferred' AND last_error=?),0) AS parked
       FROM knowledge_work WHERE subject_kind='source' AND reason IN ('discovery','upgrade')`,
       )
-      .get()!,
+      .get(KNOWLEDGE_WORK_PARKED)!,
   };
+  const notBefore = historyHorizonFloor(now, settings.horizonMs);
   const windowOpen = bootstrapWindowOpen(settings.activeHours, now);
   const budget = budgetSettings ? cognitionBudgetVerdict(db, budgetSettings, now) : null;
   const state = !settings.enabled
@@ -95,9 +102,12 @@ export function readKnowledgeBootstrapStatus(
       )
       .all(),
     recentWindowMs: settings.knowledgeRecentWindowMs ?? 30 * 86_400_000,
+    /** Documents dated before `notBefore` are outside review, not pending. */
+    horizon: { horizonMs: settings.horizonMs, notBefore },
     inventory: readKnowledgeInventoryStatus(
       db,
       settings.knowledgeRecentWindowMs ?? 30 * 86_400_000,
+      notBefore,
     ),
     corpusCompletion: "not-measured" as const,
   };

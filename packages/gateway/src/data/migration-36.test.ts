@@ -21,6 +21,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -60,6 +61,7 @@ function seedPre36(): void {
        '["per_a","per_b"]', '["per_c"]', 1000, 1000),
       ('olp_2', 'run_1', 0.8, 0.4, 'Review the Q4 budget summary', '[]', '[]', 1000, 1000)
   `);
+  createLegacyBriefTables(db);
   db.pragma("user_version = 35");
 }
 

@@ -203,7 +203,7 @@ function sourcePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Pupp
 
 function nodePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): PuppetPlan {
   const node = item.node!;
-  if (["loop", "doc_annotation", "person_annotation", "brief"].includes(node.kind))
+  if (["loop", "doc_annotation", "person_annotation", "observation"].includes(node.kind))
     return nextGenOwnerPlan(item, localSteps(steps, item));
   if (node.kind === "root") {
     const orientation = z

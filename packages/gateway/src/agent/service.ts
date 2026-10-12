@@ -96,9 +96,10 @@ import { slimPersistedHistory } from "./persist-slim.js";
 import {
   deriveTitle,
   originAnchor,
-  usesAnchoredThreadProfile,
-  type AnchoredConversationOrigin,
+  latestDailyBrief,
+  DAILY_BRIEF_REF_LIMIT,
   type ConversationOrigin,
+  type DailyBriefConversationOrigin,
   type WatchFiringConversationOrigin,
   type ConversationRecord,
   type ConversationStore,
@@ -473,20 +474,29 @@ export interface AnswerCandidateTrace {
 }
 
 /**
- * How the service builds a session for an anchored thread — a conversation
- * that replies to a brief the Cognition Steward made. Injected by the Briefs
- * feature when it is active; absent (or a null backend) means such conversations cannot
- * be resumed — the profile owns the steward toolset, the talk-back
- * system prompt, and the background-agent backend the thread runs on (same
- * model as the run that created the anchor, so its cached prefix keeps
- * paying off). Both callbacks receive the origin so the toolset's audit
- * run id follows the brief anchor.
+ * What the Morning brief conversation adds to a reply turn's system prompt:
+ * the latest brief's ranked items and how to act on what the user says about
+ * them. Installed by the Brain; absent, the thread still works as an
+ * ordinary chat over its last day.
  */
-export interface AnchoredThreadProfile {
-  buildTools(origin: AnchoredConversationOrigin): ToolHandle[];
-  systemPrompt(origin: AnchoredConversationOrigin): Promise<string> | string;
-  resolveBackend(): ChatBackend | null;
-}
+export type DailyBriefContextProvider = (latest: { day: string; messageId: string }) => string;
+
+/**
+ * Builds the task tools a conversation gets, stamped with that conversation
+ * so each change records where the user asked for it.
+ */
+export type TaskToolsProvider = (conversationId: string) => ToolHandle[];
+
+/**
+ * The run's own loop writes, withheld from a conversation: there the user's
+ * word is the authority, and the task tools apply it directly.
+ */
+const RUN_LOOP_WRITE_TOOLS = new Set([
+  "open_loop_create",
+  "open_loop_update",
+  "open_loop_delete",
+  "open_loop_ledger_append",
+]);
 
 /**
  * How a TOP-LEVEL interactive session gains write access to the cognitive
@@ -499,19 +509,6 @@ export interface AnchoredThreadProfile {
  */
 export interface InteractiveWriteProfile {
   buildOwnTools(runId: string): ToolHandle[];
-}
-
-/** Input for {@link AgentService.createAnchoredThread}. */
-export interface CreateAnchoredThreadInput {
-  /** Fixed conversation title (the brief's title) — never re-derived. */
-  title: string;
-  /**
-   * The thread's origin anchor, snapshot included, WITHOUT `seedMessageCount`
-   * — the service stamps that from `initialHistory.length`.
-   */
-  origin: AnchoredConversationOrigin;
-  /** Seed history — the folded transcript of the run that made the brief. */
-  initialHistory: ChatMessage[];
 }
 
 export interface ConversationListOptions {
@@ -797,6 +794,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
+/** The fixed title of the standing Morning brief conversation. */
+export const MORNING_BRIEF_TITLE = "Morning brief";
+
+/** What a morning brief reads after a source it drew on was deleted. */
+export const MORNING_BRIEF_REDACTED_TEXT =
+  "This morning brief was removed because a source it drew on was deleted.";
+
+/** Caller the Morning brief conversation is created under; any operator caller resumes it. */
+export const MORNING_BRIEF_CALLER_ID = "brain:morning-brief";
+
 /** Bookkeeping for one live in-memory session held by {@link AgentService}. */
 interface LiveSessionEntry {
   session: AgentSession;
@@ -804,15 +811,13 @@ interface LiveSessionEntry {
   lastActive: number;
   timer: ReturnType<typeof setTimeout> | null;
   /**
-   * Prompt profile the session's system prompt was built for. `null`
-   * for anchored threads, whose prompts are owned by their own surfaces
-   * and never switch. A live resume
+   * Prompt profile the session's system prompt was built for. A live resume
    * that requests a different profile swaps the session onto the
    * requested profile's prompt so follow-up turns speak the surface
    * the caller is actually on (a voice conversation tapped open in
    * the app, a Siri follow-up into an app-resumed conversation).
    */
-  promptProfile: "interactive" | "voice" | null;
+  promptProfile: "interactive" | "voice";
   /**
    * Profile switch requested while a turn was in flight. The prompt
    * is resolved at resume time (the thunk is async); the swap itself
@@ -834,9 +839,9 @@ interface LiveSessionEntry {
     terminalFailure?: AgentConversationTerminalFailure;
     /** Durable marker for a partial latest answer, outside model-visible history. */
     lastTurnFailure?: AgentTerminalFailure;
-    /** Present on brief-anchored threads; mirrored into every save. */
+    /** Present on agent-opened threads; mirrored into every save. */
     origin?: ConversationOrigin;
-    /** Fixed title (anchored threads); absent = derive from messages. */
+    /** Fixed title (agent-opened threads); absent = derive from messages. */
     fixedTitle?: string;
     /**
      * The creator of this turn has already told the operator about what it
@@ -969,15 +974,20 @@ export class AgentService {
   /** Prevents terminal callbacks from accepting fresh work during teardown. */
   private disposing = false;
 
-  /**
-   * Set while the Briefs feature is active; cleared when it quiesces. See
-   * {@link AnchoredThreadProfile}.
-   */
-  private anchoredThreadProfile: AnchoredThreadProfile | null = null;
+  private dailyBriefContext: DailyBriefContextProvider | null = null;
 
-  setAnchoredThreadProfile(profile: AnchoredThreadProfile | null): void {
-    this.anchoredThreadProfile = profile;
+  setDailyBriefContextProvider(provider: DailyBriefContextProvider | null): void {
+    this.dailyBriefContext = provider;
   }
+
+  private taskTools: TaskToolsProvider | null = null;
+
+  setTaskToolsProvider(provider: TaskToolsProvider | null): void {
+    this.taskTools = provider;
+  }
+
+  /** Serializes finding or creating the one Morning brief conversation. */
+  private dailyBriefConversationTail: Promise<unknown> = Promise.resolve();
 
   private interactiveMemoryProfile: InteractiveWriteProfile | null = null;
 
@@ -1155,21 +1165,28 @@ export class AgentService {
   ): Promise<CreateSessionResult> {
     const resumeFromId = opts.resumeFromId;
     if (!resumeFromId) return this.createSessionUnlocked(callerId, opts);
+    return this.withResumeGate(resumeFromId, () => this.createSessionUnlocked(callerId, opts));
+  }
 
-    const previous = this.resumeCreationTails.get(resumeFromId) ?? Promise.resolve();
+  /**
+   * Run `fn` while no other resume of conversation `id` can start: resumes,
+   * and the morning brief's append, take turns.
+   */
+  private async withResumeGate<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.resumeCreationTails.get(id) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const tail = previous.then(() => gate);
-    this.resumeCreationTails.set(resumeFromId, tail);
+    this.resumeCreationTails.set(id, tail);
     await previous;
     try {
-      return await this.createSessionUnlocked(callerId, opts);
+      return await fn();
     } finally {
       release();
-      if (this.resumeCreationTails.get(resumeFromId) === tail) {
-        this.resumeCreationTails.delete(resumeFromId);
+      if (this.resumeCreationTails.get(id) === tail) {
+        this.resumeCreationTails.delete(id);
       }
     }
   }
@@ -1198,10 +1215,8 @@ export class AgentService {
         // open in the app must stop speaking TTS prose, and a Siri
         // follow-up into an app-resumed conversation must start. No
         // profile requested ⇒ the session keeps its current profile.
-        // Anchored threads (promptProfile null) own their prompts and
-        // never switch.
         const requested = opts.profile;
-        if (requested !== undefined && live.promptProfile !== null) {
+        if (requested !== undefined) {
           if (requested === live.promptProfile) {
             // The latest resume's explicit profile wins over an earlier,
             // not-yet-applied switch request.
@@ -1340,37 +1355,9 @@ export class AgentService {
     let backend: ChatBackend;
     let systemPrompt: string;
     let tools: readonly ToolHandle[];
-    // The switchable chat profile — stays null for anchored threads,
-    // whose prompts never switch.
-    let chatProfile: "interactive" | "voice" | null = null;
-    if (resumedOrigin && usesAnchoredThreadProfile(resumedOrigin)) {
-      // A brief talk-back thread runs on
-      // the Briefs feature's session profile — the steward toolset (so
-      // the agent can act on loops, briefs, and temporal annotations
-      // mid-conversation), the talk-back system prompt, and the
-      // background-agent backend. Without the feature active there is
-      // nothing safe to run it on.
-      //
-      // A watch-firing thread takes the `else` branch instead: it is an
-      // ordinary conversation and resumes on the main session profile.
-      const profile = this.anchoredThreadProfile;
-      if (!profile) {
-        throw new AgentError(
-          "anchored_thread_unavailable",
-          "this conversation is an anchored agent thread, and the Briefs feature is not active",
-        );
-      }
-      const threadBackend = profile.resolveBackend();
-      if (!threadBackend) {
-        throw new AgentError(
-          "anchored_thread_unavailable",
-          "no background-agent model is assigned for anchored threads",
-        );
-      }
-      backend = threadBackend;
-      systemPrompt = await profile.systemPrompt(resumedOrigin);
-      tools = profile.buildTools(resumedOrigin);
-    } else {
+    // The switchable chat profile: interactive or voice.
+    let chatProfile: "interactive" | "voice";
+    {
       // The main session always runs on the `agent` role. The factory only
       // returns null for an unassigned role; `agent` is guaranteed non-null
       // whenever the harness is enabled (the lifecycle never builds an
@@ -1382,6 +1369,9 @@ export class AgentService {
       backend = agentBackend;
       chatProfile = opts.profile ?? "interactive";
       systemPrompt = await this.resolveChatPrompt(chatProfile, promptContext);
+      const latestBrief = latestDailyBrief(resumedOrigin);
+      if (latestBrief && this.dailyBriefContext)
+        systemPrompt = `${systemPrompt}\n\n${this.dailyBriefContext(latestBrief)}`;
       tools = opts.unattended
         ? // An unattended turn reads the corpus with nobody watching the
           // stream, and the documents it was pointed at can be authored by
@@ -1400,10 +1390,13 @@ export class AgentService {
       tools: [...tools],
       systemPrompt,
       initialHistory,
-      finalizer:
-        resumedOrigin && usesAnchoredThreadProfile(resumedOrigin)
-          ? undefined
-          : this.answerFinalizer(systemPrompt, undefined, undefined, opts.timeZone),
+      ...(resumedOrigin?.kind === "daily_brief"
+        ? {
+            historyView: (history: ReadonlyArray<ChatMessage>) =>
+              this.dailyBriefView(sessionId, history),
+          }
+        : {}),
+      finalizer: this.answerFinalizer(systemPrompt, undefined, undefined, opts.timeZone),
       timeZone: opts.timeZone,
       caller: opts.caller,
     });
@@ -1479,12 +1472,12 @@ export class AgentService {
 
   /**
    * Tool set for a top-level interactive (or voice) session. Such a session
-   * (never a sub-agent, never an anchored thread) gains the Cognition Steward's own
+   * (never a sub-agent) gains the Cognition Steward's own
    * annotation tools in every mode and broader MUTATING tools in experimental
    * mode, so facts the user provides
    * mid-conversation are written straight into the substrate. The handles are
    * stamped with an interactive-origin run id so the audit trail says where a
-   * write came from (the analogue of the talkback_ stamp). this.tools already
+   * write came from. this.tools already
    * carries the read registry (search/fetch/people/sql/loop-read/…), so
    * buildOwnTools returns only the write surface — no read-tool duplication.
    * Sub-agents are built from this.tools via selectSubagentTools, never this
@@ -1499,7 +1492,7 @@ export class AgentService {
       memory.push(
         buildConversationMemoryEvidenceTool(async () => {
           const live = this.sessions.get(sessionId);
-          if (!live || live.meta.origin) return null;
+          if (!live || (live.meta.origin && live.meta.origin.kind !== "daily_brief")) return null;
           await this.persistConversation(sessionId, live.callerId, live.meta, undefined, false);
           return this.ensureConversationEvidence!(sessionId);
         }),
@@ -1508,11 +1501,14 @@ export class AgentService {
     const experimental =
       this.interactiveWriteProfile && experimentalVisible()
         ? adaptInteractiveKnowledgeReads(
-            this.interactiveWriteProfile.buildOwnTools(`interactive_${sessionId}`),
+            this.interactiveWriteProfile
+              .buildOwnTools(`interactive_${sessionId}`)
+              .filter((tool) => !RUN_LOOP_WRITE_TOOLS.has(tool.name)),
             this.tools,
             this.documentPort.supportsKnowledgeAliases === true,
           )
         : [];
+    const taskTools = this.taskTools?.(sessionId) ?? [];
     // The broader profile shares annotation consumption with loop/brief writes.
     // Preserve those handles so their provenance tracker sees every memory read.
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
@@ -1520,6 +1516,7 @@ export class AgentService {
       ...this.tools,
       ...memory.filter((tool) => !experimentalNames.has(tool.name)),
       ...experimental,
+      ...taskTools,
     ];
     // A voice answer is spoken, never rendered, so the Timeline the citation
     // tools populate has no viewer. Withholding them removes several model
@@ -1749,7 +1746,7 @@ export class AgentService {
 
   /**
    * Return one older, complete-turn page of the visible transcript. Live
-   * history wins over the last persisted turn snapshot; anchored seed messages
+   * history wins over the last persisted turn snapshot; hidden seed messages
    * are removed here so every client consumes the exact same visible indices.
    */
   async listConversationMessages(
@@ -1789,18 +1786,7 @@ export class AgentService {
     };
   }
 
-  /** Permanently remove a stored conversation. */
-  /**
-   * True when a conversation exists as a live session or a stored record.
-   * The talk-back opener uses this to spot a brief's dead thread pointer
-   * (the user deleted the thread's conversation) and mint a replacement.
-   */
-  async conversationExists(id: string): Promise<boolean> {
-    if (this.sessions.has(id)) return true;
-    if (!this.store) return false;
-    return (await this.store.load(id)) !== null;
-  }
-
+  /** Permanently remove a stored conversation. The Morning brief conversation is permanent. */
   async deleteConversation(id: string): Promise<boolean> {
     if (!this.store) return false;
     if (
@@ -1809,6 +1795,25 @@ export class AgentService {
       this.deepResearchActive.has(id) ||
       this.resumeCreationTails.has(id) ||
       this.conversationPersistenceCounts.has(id)
+    ) {
+      throw new AgentError(
+        "session_busy",
+        "conversation is still processing or deletion is already in progress",
+      );
+    }
+    // A live session carries its origin; only a stored one is read, and a
+    // stored one has no session to evict, so the read delays nothing.
+    const live = this.sessions.get(id);
+    const origin = live ? live.meta.origin : (await this.store.load(id))?.origin;
+    if (origin?.kind === "daily_brief")
+      throw new AgentError(
+        "conversation_permanent",
+        "the Morning brief conversation cannot be deleted",
+      );
+    if (
+      this.answerDeleteLocks.has(id) ||
+      this.resumeCreationTails.has(id) ||
+      this.sessions.get(id) !== live
     ) {
       throw new AgentError(
         "session_busy",
@@ -1926,52 +1931,6 @@ export class AgentService {
   }
 
   /**
-   * Create (and persist immediately) an anchored thread conversation,
-   * seeded with the creating run's folded transcript. No live session is
-   * started — the first resume builds one on the anchored-thread profile.
-   * The record is written before anything references it, so a crash
-   * between "thread created" and "anchor row stamped" leaves only an
-   * orphan conversation, never a dangling pointer.
-   */
-  async createAnchoredThread(
-    callerId: CallerId,
-    input: CreateAnchoredThreadInput,
-  ): Promise<string> {
-    if (!this.store) {
-      throw new AgentError("anchored_thread_unavailable", "no conversation store configured");
-    }
-    const profile = this.anchoredThreadProfile;
-    if (!profile) {
-      throw new AgentError("anchored_thread_unavailable", "the Briefs feature is not active");
-    }
-    const backend = profile.resolveBackend();
-    if (!backend) {
-      throw new AgentError(
-        "anchored_thread_unavailable",
-        "no background-agent model is assigned for anchored threads",
-      );
-    }
-    const id = this.sessionIdGen();
-    const now = new Date().toISOString();
-    const record: ConversationRecord = {
-      id,
-      callerId,
-      model: backend.model,
-      backend: backend.name,
-      createdAt: now,
-      updatedAt: now,
-      title: input.title,
-      pinned: false,
-      origin: { ...input.origin, seedMessageCount: input.initialHistory.length },
-      messages: slimPersistedHistory(input.initialHistory),
-    };
-    await this.saveConversationRecord(record);
-    const anchor = `brief ${input.origin.briefId}`;
-    log.info(`anchored thread ${id} created for ${anchor} (run ${input.origin.runId})`);
-    return id;
-  }
-
-  /**
    * Pin or unpin a conversation. Updates a live in-memory session's meta
    * (so a subsequent turn-end save preserves the flag) and the persisted
    * record. Returns false only when neither a live session nor a stored
@@ -1992,6 +1951,183 @@ export class AgentService {
     } finally {
       this.answerDeleteLocks.delete(id);
     }
+  }
+
+  /**
+   * Append the day's morning brief to the standing Morning brief
+   * conversation, creating that conversation on first use.
+   *
+   * The brief is a system-authored assistant message: no turn runs and no
+   * prompt is hidden. A live session on the thread is evicted first so the
+   * next reply resumes from the stored record, which now ends with the
+   * brief; a session mid-turn refuses, and the morning run retries later.
+   * The thread's origin records where each brief sits, which is what scopes
+   * a reply's model context to the latest day.
+   */
+  async appendMorningBrief(input: {
+    day: string;
+    runId: string;
+    text: string;
+    notify: boolean;
+  }): Promise<{ conversationId: string; messageId: string }> {
+    if (!this.store) {
+      throw new AgentError("agent_unconfigured", "no conversation store configured");
+    }
+    const run = this.dailyBriefConversationTail.then(() => this.appendMorningBriefUnlocked(input));
+    this.dailyBriefConversationTail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async appendMorningBriefUnlocked(input: {
+    day: string;
+    runId: string;
+    text: string;
+    notify: boolean;
+  }): Promise<{ conversationId: string; messageId: string }> {
+    const existing = (await this.store!.list()).find(
+      (summary) => summary.origin?.kind === "daily_brief",
+    );
+    const id = existing?.id ?? this.sessionIdGen();
+    const written = await this.withResumeGate(id, () =>
+      this.writeMorningBrief(id, existing !== undefined, `mb_${crypto.randomUUID()}`, input),
+    );
+    const messageId = written.messageId;
+    if (!written.appended) return { conversationId: id, messageId };
+    try {
+      const arrival = await this.readState?.agentContentArrived(id, { messageId });
+      if (input.notify && arrival?.notify)
+        this.notifyConversationUnread(id, MORNING_BRIEF_TITLE, input.text);
+    } catch (err) {
+      log.warn(`read-state update failed for the morning brief: ${(err as Error).message ?? err}`);
+    }
+    log.info(`morning brief for ${input.day} appended to conversation ${id}`);
+    return { conversationId: id, messageId };
+  }
+
+  private async writeMorningBrief(
+    id: string,
+    exists: boolean,
+    messageId: string,
+    input: { day: string; runId: string; text: string },
+  ): Promise<{ messageId: string; appended: boolean }> {
+    const store = this.store!;
+    // A day already in the thread is never appended again: a morning run that
+    // stopped between appending and recording the send finds its message here.
+    const stored = exists ? await store.load(id) : null;
+    const already =
+      stored?.origin?.kind === "daily_brief"
+        ? stored.origin.briefs.find((ref) => ref.day === input.day)
+        : undefined;
+    if (already) return { messageId: already.messageId, appended: false };
+    const live = this.sessions.get(id);
+    if (live) {
+      if (live.session.busy || this.conversationPersistenceCounts.has(id)) {
+        throw new AgentError(
+          "session_busy",
+          "the Morning brief conversation is in the middle of a turn",
+        );
+      }
+      await this.evictSession(id);
+    }
+    const now = new Date().toISOString();
+    await this.enqueueConversationMutation(id, async () => {
+      const record = exists ? await store.load(id) : null;
+      const messages: ChatMessage[] = [
+        ...(record?.messages ?? []),
+        { role: "assistant", parts: [{ kind: "text", text: input.text }] },
+      ];
+      const priorBriefs = record?.origin?.kind === "daily_brief" ? record.origin.briefs : [];
+      const origin: DailyBriefConversationOrigin = {
+        kind: "daily_brief",
+        runId: input.runId,
+        briefs: [
+          ...priorBriefs,
+          { day: input.day, messageIndex: messages.length - 1, messageId, sentAt: now },
+        ].slice(-DAILY_BRIEF_REF_LIMIT),
+      };
+      const backend = record ? null : this.backendFactory("agent");
+      // A new day is a fresh model context, so an earlier context-exhaustion
+      // lock no longer applies; the thread is never left read-only.
+      await store.save({
+        id,
+        callerId: record?.callerId ?? MORNING_BRIEF_CALLER_ID,
+        model: record?.model ?? backend?.model ?? "",
+        backend: record?.backend ?? backend?.name ?? "",
+        createdAt: record?.createdAt ?? now,
+        updatedAt: now,
+        title: MORNING_BRIEF_TITLE,
+        pinned: record ? record.pinned : true,
+        origin,
+        messages,
+      });
+    });
+    return { messageId, appended: true };
+  }
+
+  /**
+   * Replace one morning brief's text with a notice, because a source it drew
+   * on was deleted. The stored transcript and the conversation's searchable
+   * copy both lose the text; the thread and the brief's place in it stay.
+   * Returns false when the brief is not in the thread.
+   */
+  async redactMorningBrief(conversationId: string, messageId: string): Promise<boolean> {
+    if (!this.store) return false;
+    const store = this.store;
+    const redacted = await this.withResumeGate(conversationId, async () => {
+      const live = this.sessions.get(conversationId);
+      if (live) {
+        if (live.session.busy || this.conversationPersistenceCounts.has(conversationId))
+          throw new AgentError("session_busy", "the Morning brief conversation is in a turn");
+        await this.evictSession(conversationId);
+      }
+      return this.enqueueConversationMutation(conversationId, async () => {
+        const record = await store.load(conversationId);
+        if (record?.origin?.kind !== "daily_brief") return false;
+        const ref = record.origin.briefs.find((brief) => brief.messageId === messageId);
+        const message = ref ? record.messages[ref.messageIndex] : undefined;
+        if (!ref || !message || message.role !== "assistant") return false;
+        const messages = [...record.messages];
+        messages[ref.messageIndex] = {
+          role: "assistant",
+          parts: [{ kind: "text", text: MORNING_BRIEF_REDACTED_TEXT }],
+        };
+        await store.save({ ...record, messages, updatedAt: new Date().toISOString() });
+        return true;
+      });
+    });
+    if (redacted) {
+      try {
+        this.onTurnComplete?.(conversationId);
+      } catch (err) {
+        log.warn(
+          `re-indexing ${conversationId} after a redaction failed: ${(err as Error).message ?? err}`,
+        );
+      }
+      log.info(`morning brief ${messageId} redacted after a source it cited was deleted`);
+    }
+    return redacted;
+  }
+
+  /**
+   * The Morning brief conversation's model view: the latest brief and what
+   * followed it. The brief is a system-authored assistant message, so a
+   * short user line introduces it — providers expect a conversation to open
+   * on a user message.
+   */
+  private dailyBriefView(sessionId: string, history: ReadonlyArray<ChatMessage>): ChatMessage[] {
+    const latest = latestDailyBrief(this.sessions.get(sessionId)?.meta.origin);
+    if (!latest) return [...history];
+    // The recorded index is where the brief was appended; should the history
+    // no longer reach it, the latest assistant message stands in rather than
+    // the whole thread.
+    const start =
+      latest.messageIndex < history.length
+        ? latest.messageIndex
+        : Math.max(0, history.map((m) => m.role).lastIndexOf("assistant"));
+    return [
+      { role: "user", parts: [{ kind: "text", text: `(This morning's brief, ${latest.day}.)` }] },
+      ...history.slice(start),
+    ];
   }
 
   /**
@@ -2809,14 +2945,13 @@ export class AgentService {
     }
     try {
       await this.persistConversation(sessionId, live.callerId, live.meta, arrivingMessageId);
-      // No origin-anchored conversation writes back into the corpus.
-      // Brief threads are seeded by the Cognition Steward's own run
-      // transcript, which is already the corpus's. A
-      // watch-firing thread is held back for a different reason: a watch
+      // A watch-firing thread does not write back into the corpus: a watch
       // that matches documents would match the conversation it just
       // produced about them, firing again on its own output. The cost is
-      // that replies typed in these threads are not searchable later.
-      if (live.meta.origin) return;
+      // that replies typed there are not searchable later. The Morning brief
+      // conversation is indexed like any chat, so what the user says about
+      // their mornings is evidence for the preferences they state there.
+      if (live.meta.origin?.kind === "watch_firing") return;
       try {
         this.onTurnComplete?.(sessionId);
       } catch (err) {
@@ -3350,11 +3485,6 @@ export class AgentService {
     // the operator's own message — leaves nothing to read, and the
     // conversation stays as it was. Asking whether the agent has *ever* spoken
     // here would answer yes for every conversation that has had one reply.
-    //
-    // (A thread created wholesale from an existing transcript —
-    // `createAnchoredThread` — writes its record directly and is deliberately
-    // not covered: the operator is looking at the artefact it was spawned
-    // from.)
     const last = messages[messages.length - 1];
     if (last !== undefined && endsWithAgentContent(messages)) {
       try {
@@ -3602,7 +3732,8 @@ export function paginateVisibleConversationMessages(
   ConversationMessagePage,
   "model" | "backend" | "origin" | "terminalFailure" | "lastTurnFailure"
 > {
-  const seedMessageCount = Math.min(messages.length, Math.max(0, origin?.seedMessageCount ?? 0));
+  const seed = origin?.kind === "watch_firing" ? (origin.seedMessageCount ?? 0) : 0;
+  const seedMessageCount = Math.min(messages.length, Math.max(0, seed));
   const visible = messages.slice(seedMessageCount);
   const safeLimit = Math.max(0, Math.floor(limit));
   const end = Math.min(
@@ -3788,6 +3919,7 @@ export const VETTED_ANSWER_FAILURE_CODES = new Set([
   "http_protocol_mismatch",
   "http_stream_error",
   "anthropic_api_error",
+  "anthropic_usage_limited",
   "anthropic_stream_error",
   "codex_binary_missing",
   "codex_unsupported_version",

@@ -16,8 +16,9 @@
  *    and soft-invalidates an annotation that lost its last grounding.
  *
  *  - CONSUMPTION PROVENANCE (`brain/storage/consumption-edges.ts`): the edges
- *    recording which briefs/loops were built on which annotation priors, and
- *    the teeth that re-examine a dependent once a prior it rested on dies.
+ *    recording which observations/loops were built on which annotation priors,
+ *    and the teeth that act once a prior a dependent rested on dies: a loop is
+ *    re-examined by a provenance recheck, an observation is dropped as stale.
  *
  * Three of the tests here are LIVELOCK probes. A background lane whose
  * progress marker only moves under a condition it does not control — an
@@ -676,7 +677,8 @@ const MULTI_DOC = note({
   content: `Hello Alex,\n\n${MULTI_QUOTE}\n\nRiverside Estate`,
 });
 
-const BRIEF_TITLE = "The studio calendar for May";
+const OBSERVATION_SUMMARY = "One rehearsal booking already sits on the studio calendar for May.";
+const LOOP_TITLE = "Plan the May schedule around the studio booking";
 const REPAIR_TEXT = "Re-checked after a supporting prior was retracted.";
 
 describe("Brain Bench — consumption provenance and the evidence firewall", () => {
@@ -687,7 +689,8 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
   let anchorDocId = "";
   let priorDocId = "";
   let priorAnnotationId = "";
-  let briefId = "";
+  let observationId = "";
+  let loopId = "";
 
   beforeAll(async () => {
     bench = await BrainBench.start({
@@ -726,25 +729,33 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
             },
             {
               docTitle: DEPENDENT_DOC.title,
-              plan: () => ({
+              plan: (ctx) => ({
                 calls: [
-                  call("brief_list", {}),
+                  call("observation_list", {}),
                   call("fetch_many", { documents: [{ documentId: priorDocId }] }),
                   // The read that makes the prior eligible to be declared.
                   call("annotation_search", { docId: priorDocId }),
-                  call("brief_create", {
-                    kind: "info",
-                    title: BRIEF_TITLE,
-                    description: "One rehearsal booking already sits on the studio calendar.",
+                  call("observation_note", {
+                    summary: OBSERVATION_SUMMARY,
                     citations: [priorDocId],
+                    claims: [{ docId: priorDocId, quote: PRIOR_QUOTE }],
+                    annotationDependencies: [
+                      { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
+                    ],
+                  }),
+                  call("open_loop_search", { query: "May schedule" }),
+                  call("open_loop_create", {
+                    title: LOOP_TITLE,
+                    description: "The studio booking constrains the May plan.",
                     confidence: 0.7,
-                    urgency: 0.3,
+                    importance: 0.4,
+                    docs: [ctx.subject, priorDocId],
                     annotationDependencies: [
                       { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
                     ],
                   }),
                 ],
-                finalText: "Raised one card resting on the recorded booking.",
+                finalText: "Noted one observation and one loop resting on the recorded booking.",
               }),
             },
             {
@@ -808,14 +819,10 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
             flavour: "feedback.provenance",
             plan: (ctx) => ({
               calls: [
-                call("brief_fetch", { id: ctx.subject }),
-                call("brief_update", {
-                  id: ctx.subject,
-                  description: REPAIR_TEXT,
-                  annotationDependencies: [],
-                }),
+                call("open_loop_fetch", { id: ctx.subject }),
+                call("open_loop_update", { id: ctx.subject, description: REPAIR_TEXT }),
               ],
-              finalText: "Repaired the card that rested on the dead prior.",
+              finalText: "Repaired the loop that rested on the dead prior.",
             }),
           },
         ],
@@ -890,38 +897,69 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
     priorAnnotationId = priors.annotations[0]!.id;
 
     await pushAndDrain([DEPENDENT_DOC]);
-    const briefs = (await bench.obs.briefs()).items.filter((b) => b.title === BRIEF_TITLE);
-    expect(briefs).toHaveLength(1);
-    briefId = briefs[0]!.id;
+    const observations = (await bench.obs.observations()).items.filter(
+      (o) => o.summary === OBSERVATION_SUMMARY,
+    );
+    expect(observations).toHaveLength(1);
+    observationId = observations[0]!.id;
+    const loops = await bench.obs.loopsMatching(LOOP_TITLE);
+    expect(loops).toHaveLength(1);
+    loopId = loops[0]!.id;
 
     const edges = bench.sql
       .prepare<
         [string],
-        { prior_store: string; prior_annotation_id: string; dependent_kind: string }
+        {
+          prior_store: string;
+          prior_annotation_id: string;
+          dependent_kind: string;
+          dependent_id: string;
+        }
       >(
-        `SELECT prior_store, prior_annotation_id, dependent_kind
-           FROM cognition_consumption_edges WHERE dependent_id = ?`,
+        `SELECT prior_store, prior_annotation_id, dependent_kind, dependent_id
+           FROM cognition_consumption_edges WHERE prior_annotation_id = ?
+          ORDER BY dependent_kind`,
       )
-      .all(briefId);
+      .all(priorAnnotationId);
     expect(edges).toEqual([
-      { prior_store: "doc", prior_annotation_id: priorAnnotationId, dependent_kind: "brief" },
+      {
+        prior_store: "doc",
+        prior_annotation_id: priorAnnotationId,
+        dependent_kind: "loop",
+        dependent_id: loopId,
+      },
+      {
+        prior_store: "doc",
+        prior_annotation_id: priorAnnotationId,
+        dependent_kind: "observation",
+        dependent_id: observationId,
+      },
     ]);
 
-    // The same edge, through the production read surface.
+    // The same edges, through the production read surface.
     const dependents = await bench.obs.dependents("doc", priorAnnotationId);
-    expect(dependents.items.map((d) => ({ kind: d.kind, id: d.id }))).toEqual([
-      { kind: "brief", id: briefId },
+    expect(
+      dependents.items
+        .map((d) => ({ kind: d.kind, id: d.id }))
+        .sort((a, b) => a.kind.localeCompare(b.kind)),
+    ).toEqual([
+      { kind: "loop", id: loopId },
+      { kind: "observation", id: observationId },
     ]);
   }, 180_000);
 
-  test("killing the prior enqueues a provenance recheck that repairs the dependent", async () => {
+  test("killing the prior drops the observation and enqueues a provenance recheck that repairs the loop", async () => {
     await pushAndDrain([KILLER_DOC]);
 
     // A retract is a hard delete; the edge deliberately survives it as the
     // claim-time signal that the prior was hard-retracted.
     expect(annotationById(priorAnnotationId)).toBeUndefined();
 
-    const key = `feedback:provenance:brief:${briefId}`;
+    // An observation is a short-lived note: the dead prior drops it, no run.
+    const dropped = await bench.obs.observation(observationId);
+    expect(dropped.observation).toMatchObject({ state: "dropped", closeReason: "stale" });
+
+    const key = `feedback:provenance:loop:${loopId}`;
     const recheck = await waitFor(
       () => `a provenance recheck run keyed ${key}`,
       () => runByDedupeKey(key) ?? null,
@@ -933,17 +971,17 @@ describe("Brain Bench — consumption provenance and the evidence firewall", () 
     expect(settled.status).toBe("completed");
 
     const prompt = await bench.obs.promptFor(recheck.id);
-    expect(prompt).toContain(`Provenance re-check for brief ${briefId}`);
+    expect(prompt).toContain(`Provenance re-check for loop ${loopId}`);
     expect(prompt).toContain(priorAnnotationId);
     // A hard-retracted prior has no claim text left to render.
     expect(prompt).toContain("(hard-retracted)");
 
-    const repaired = await bench.obs.brief(briefId);
-    expect(repaired.brief.description).toBe(REPAIR_TEXT);
+    const repaired = await bench.obs.loop(loopId);
+    expect(repaired.loop.description).toBe(REPAIR_TEXT);
 
     const calls = bench.puppetCalls.filter((c) => c.flavour === "feedback.provenance");
     expect(calls.length).toBeGreaterThan(0);
-    expect(calls[0]!.subject).toBe(briefId);
+    expect(calls[0]!.subject).toBe(loopId);
   }, 180_000);
 
   test("a changed document breaks the evidence and invalidates the annotation", async () => {

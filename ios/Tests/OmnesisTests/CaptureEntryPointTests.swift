@@ -44,8 +44,19 @@ final class CaptureEntryPointTests: XCTestCase {
         let captureKey = uiRoot.appendingPathComponent("Capture/CaptureView.swift")
         // Home installs the action the drawer calls; it draws no entry point of its own.
         let home = uiRoot.appendingPathComponent("HomeView.swift")
+        // Tasks are added by telling Omnesis, so the Tasks page's closing line
+        // links to the same capture. That line is its only use.
+        let tasks = uiRoot.appendingPathComponent("Tasks/TasksView.swift")
+        let tasksSource = try source(at: tasks)
+        XCTAssertTrue(tasksSource.contains("struct TaskCaptureHint"))
+        XCTAssertEqual(
+            tasksSource.components(separatedBy: "openCapture?()").count - 1,
+            2,
+            "The Tasks hint opens capture from its link and its accessibility action, nowhere else"
+        )
+        let allowed = Set([drawer, captureKey, home, tasks].map(\.standardizedFileURL))
         let actionOffenders = try files
-            .filter { $0.pathExtension == "swift" && $0 != drawer && $0 != captureKey && $0 != home }
+            .filter { $0.pathExtension == "swift" && !allowed.contains($0.standardizedFileURL) }
             .filter { try source(at: $0).contains("openCapture") }
             .map(\.lastPathComponent)
 

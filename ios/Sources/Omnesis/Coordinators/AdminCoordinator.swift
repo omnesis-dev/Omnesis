@@ -76,11 +76,11 @@ final class AdminCoordinator {
     private(set) var sourceUnitNameByType: [String: String] = [:]
     private(set) var statusSnapshot: StatusSnapshot?
     private(set) var indexStats: IndexStats?
-    /// Count of unread Briefs awaiting attention — drives the badge on
-    /// the drawer's Briefs entry. Refreshed on the same cadence the feed
-    /// is (when the menu opens); 0 whenever the feature is inactive or the
-    /// count read fails. In-app only — never an OS app-icon badge.
-    private(set) var briefsUnreadCount: Int = 0
+    /// Open tasks on today's page, for the device's local day — the number
+    /// the drawer's Tasks entry carries ("Tasks (4)"). 0 whenever the gateway
+    /// does not serve Tasks or the read fails. In-app only — never an OS
+    /// app-icon badge.
+    private(set) var tasksTodayCount: Int = 0
     /// Count of privacy decisions waiting on the owner — drives the badge on
     /// the drawer's Privacy entry. Refreshed when the menu opens; 0 whenever
     /// the count read fails or the app is unpaired. In-app only — never an OS
@@ -100,7 +100,7 @@ final class AdminCoordinator {
     private(set) var searchClient: SearchClient?
     private(set) var watchesClient: WatchesClient?
     @ObservationIgnored
-    private(set) var briefsClient: BriefsClient?
+    private(set) var tasksClient: TasksClient?
     @ObservationIgnored
     private(set) var privacyClient: PrivacyClient?
     @ObservationIgnored
@@ -236,10 +236,10 @@ final class AdminCoordinator {
         watchesClient
     }
 
-    /// Briefs client exposed to views — used by the Briefs feed tab.
-    /// `nil` until pairing completes.
-    var briefs: BriefsClient? {
-        briefsClient
+    /// Tasks client exposed to the Tasks screen. `nil` until pairing
+    /// completes.
+    var tasks: TasksClient? {
+        tasksClient
     }
 
     /// Privacy client exposed to the global policy, approval, and audit UI.
@@ -252,26 +252,31 @@ final class AdminCoordinator {
         accessClient
     }
 
-    /// Refresh `briefsUnreadCount` from `GET /briefs/count`. Called when
-    /// the menu drawer opens (the same refresh-on-open cadence as the
-    /// feed). A no-op that zeroes the badge when the feature is disabled
-    /// or unpaired; best-effort — any error (including the disabled-feature
-    /// 404) zeroes the badge rather than surfacing. The badge is opt-in
-    /// attention on a surface the user opened, never a notification.
-    func refreshBriefsUnreadCount() async {
-        guard statusSnapshot?.briefs?.enabled == true, let client = briefsClient else {
-            briefsUnreadCount = 0
-            return
-        }
-        do {
-            briefsUnreadCount = try await client.unreadCount()
-        } catch {
-            briefsUnreadCount = 0
+    /// Refresh `tasksTodayCount`. The Tasks screen passes the `counts` its
+    /// own read already carried, so a change made there shows in the menu
+    /// at once; the drawer opening and the app returning to the foreground
+    /// read `GET /tasks/counts` for the device's local day, because a note
+    /// can add tasks and midnight can move them while the screen is closed.
+    /// A gateway without Tasks, or a failed read, zeroes the count; without
+    /// a client (unpaired, a preview) there is nothing to change.
+    func refreshTasksTodayCount(from counts: TaskCounts? = nil) async {
+        if let counts {
+            tasksTodayCount = counts.today
+        } else if statusSnapshot?.tasks?.available != true {
+            tasksTodayCount = 0
+        } else if let client = tasksClient {
+            let day = TaskSchedule().day(Date())
+            do {
+                let page = try await client.counts(day: day)
+                tasksTodayCount = page.counts.today
+            } catch {
+                tasksTodayCount = 0
+            }
         }
     }
 
     /// Refresh `privacyPendingCount` from the gateway's ledgers, on the same
-    /// refresh-on-open cadence as the Briefs badge. `privacyPendingDecisionTotal`
+    /// refresh-on-open cadence as the Tasks badge. `privacyPendingDecisionTotal`
     /// carries how the number is composed and why. Requests for a standing
     /// watch only exist where the experimental surface that raises them does.
     /// Any failure zeroes the badge rather than surfacing.
@@ -323,7 +328,7 @@ final class AdminCoordinator {
         adminClient = admin
         searchClient = SearchClient(baseURL: pairing.url, token: pairing.token)
         watchesClient = WatchesClient(baseURL: pairing.url, token: pairing.token)
-        briefsClient = BriefsClient(baseURL: pairing.url, token: pairing.token)
+        tasksClient = TasksClient(baseURL: pairing.url, token: pairing.token)
         privacyClient = PrivacyClient(baseURL: pairing.url, token: pairing.token)
         accessClient = AccessClient(baseURL: pairing.url, token: pairing.token)
         let socket = DeviceSocket(gatewayUrl: pairing.url, token: pairing.token, capabilities: .ios(tlsMode: pairing.tlsMode))
@@ -367,10 +372,10 @@ final class AdminCoordinator {
         statusSnapshot = nil
         indexStats = nil
         watchesClient = nil
-        briefsClient = nil
+        tasksClient = nil
         privacyClient = nil
         accessClient = nil
-        briefsUnreadCount = 0
+        tasksTodayCount = 0
         privacyPendingCount = 0
         pendingAccessRequests = []
         // A read still in flight answers for the pairing just dropped.
@@ -1147,7 +1152,7 @@ extension AdminCoordinator {
         sourceUnitNameByType: [String: String] = [:],
         sourceBgColorByType: [String: String] = [:],
         sourceAccentColorByType: [String: String] = [:],
-        briefsUnreadCount: Int = 0,
+        tasksTodayCount: Int = 0,
         privacyPendingCount: Int = 0,
         pendingAccessRequests: [AccessPendingRequest] = [],
         localDeviceId: String? = nil,
@@ -1160,7 +1165,7 @@ extension AdminCoordinator {
         deviceNamesById = deviceNames
         self.statusSnapshot = statusSnapshot
         self.indexStats = indexStats
-        self.briefsUnreadCount = briefsUnreadCount
+        self.tasksTodayCount = tasksTodayCount
         self.privacyPendingCount = privacyPendingCount
         self.pendingAccessRequests = pendingAccessRequests
         self.localDeviceId = localDeviceId

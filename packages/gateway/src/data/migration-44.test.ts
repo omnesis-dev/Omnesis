@@ -18,6 +18,7 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -62,6 +63,7 @@ function stampedCount(d: Db): number {
 describe("migration 44 — reset dates_extracted_at for language-routed re-extraction", () => {
   test("an upgrading install re-enqueues every document", () => {
     runSchemaSetup(db);
+    createLegacyBriefTables(db);
     db.pragma("user_version = 43");
     insertDoc(db, "doc-a", "2026-01-02T03:04:05Z");
     insertDoc(db, "doc-b", "2026-01-02T03:04:05Z");

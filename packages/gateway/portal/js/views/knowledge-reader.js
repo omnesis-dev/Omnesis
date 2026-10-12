@@ -24,7 +24,7 @@ export const knowledgeKinds = [
   ["loop", "Loops"],
   ["doc_annotation", "Document notes"],
   ["person_annotation", "People notes"],
-  ["brief", "Briefs"],
+  ["observation", "Observations"],
 ];
 export const kindLabel = (kind) =>
   ({
@@ -33,7 +33,7 @@ export const kindLabel = (kind) =>
     loop: "Loop",
     doc_annotation: "Document note",
     person_annotation: "Person note",
-    brief: "Brief",
+    observation: "Observation",
   })[kind] ?? "Page";
 export const readable = (value) => String(value ?? "").replaceAll("_", " ");
 export const dateLabel = (value) =>

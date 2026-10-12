@@ -1638,8 +1638,8 @@ describe("entailment gate (firewall 5)", () => {
   /** A fake verifier returning a fixed verdict, recording what it was asked. */
   function fakeVerifier(
     label: "entailment" | "neutral" | "contradiction",
-  ): EntailCapability & { calls: Array<{ claim: string; evidence: string; context?: string }> } {
-    const calls: Array<{ claim: string; evidence: string; context?: string }> = [];
+  ): EntailCapability & { calls: Array<Parameters<EntailCapability["verify"]>[0]> } {
+    const calls: Array<Parameters<EntailCapability["verify"]>[0]> = [];
     return {
       calls,
       // eslint-disable-next-line @typescript-eslint/require-await
@@ -1720,6 +1720,8 @@ describe("entailment gate (firewall 5)", () => {
     // The gate judged the claim against the QUOTE, not the whole document.
     expect(verifier.calls).toEqual([
       {
+        assessment: "annotation_atomic",
+        signal: expect.any(AbortSignal),
         claim: "the deposit was sent",
         evidence: annotationEvidenceFrame([
           { quote: "we sent the deposit this morning", source: "we sent the deposit this morning" },

@@ -16,8 +16,8 @@ import type Database from "better-sqlite3";
 const operations: Record<string, [KnowledgeOwnerKind, "create" | "update"]> = {
   "cognition.openLoopCreate": ["loop", "create"],
   "cognition.openLoopUpdate": ["loop", "update"],
-  "cognition.briefCreate": ["brief", "create"],
-  "cognition.briefUpdate": ["brief", "update"],
+  "cognition.observationCreate": ["observation", "create"],
+  "cognition.observationTransition": ["observation", "update"],
   "cognition.annotationCreate": ["doc_annotation", "create"],
   "cognition.annotationCreateSuperseding": ["doc_annotation", "create"],
   "cognition.annotationUpdate": ["doc_annotation", "update"],

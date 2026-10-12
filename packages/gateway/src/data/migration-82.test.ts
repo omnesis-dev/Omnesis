@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { runSchemaSetup } from "./schema.js";
 import { runMigrations, MIGRATIONS } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 
 let db: Database.Database;
 
@@ -66,6 +67,7 @@ function seedFinishedLane(): void {
     "INSERT INTO cognition_engine_state (key, value) VALUES ('bootstrap_total_enqueued', '412')",
   ).run();
   db.exec("DROP TABLE cognition_coverage");
+  createLegacyBriefTables(db);
   db.exec(`PRAGMA user_version = ${PREVIOUS_SCHEMA_VERSION}`);
 }
 
@@ -88,6 +90,7 @@ describe("migration 82", () => {
     db.prepare(
       "INSERT INTO cognition_engine_state (key, value) VALUES ('bootstrap_state', 'running')",
     ).run();
+    createLegacyBriefTables(db);
     db.exec(`PRAGMA user_version = ${PREVIOUS_SCHEMA_VERSION}`);
     boot();
 

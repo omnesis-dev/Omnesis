@@ -2,11 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Storage-layer types for the Briefs / Cognition Steward feature: open loops,
- * briefs, the agent run queue, spend tracking, and the agent-notes blob.
+ * Storage-layer types for the Cognition Steward: open loops (the user's
+ * tasks), observations, the agent run queue, spend tracking, and the
+ * agent-notes blob.
  *
  * Naming note: "loop" is an overloaded word in this repo, so every symbol
- * here is prefixed `openLoop` / `brief` / `cognition` — never bare "loop".
+ * here is prefixed `openLoop` / `observation` / `cognition` — never bare "loop".
  *
  * Time discipline: no function in this module reads the wall clock on its
  * own. Every mutation takes an explicit `now` (unix ms), and services own
@@ -32,6 +33,40 @@ export const systemClock: Clock = () => Date.now();
  * agent's (or a feedback run's) judgment; `done` means resolved.
  */
 export type OpenLoopState = "open" | "snoozed" | "done" | "dismissed";
+
+/**
+ * Where a loop came from. `note` and `user` loops are the user's own tasks
+ * from the start; a `brain` loop is a suggestion until the user accepts it.
+ */
+export type TaskOrigin = "note" | "user" | "brain";
+
+/**
+ * When the user plans to do a task, separate from its deadline: a day
+ * (`YYYY-MM-DD`), a month (`YYYY-MM`) or `someday`.
+ */
+export type TaskSchedule = string;
+
+/**
+ * A change the Brain proposes to one of the user's own tasks. The task keeps
+ * its current values until the user confirms; an ignored proposal changes
+ * nothing.
+ */
+export interface ProposedTaskChange {
+  kind: "complete" | "strike" | "edit";
+  /** For `edit`: the proposed new values. */
+  fields?: {
+    title?: string;
+    description?: string;
+    deadline?: unknown | null;
+    scheduledFor?: TaskSchedule | null;
+  };
+  /** Why, in one sentence, citing what changed. */
+  reason: string;
+  /** Documents that support the proposal. */
+  evidence: string[];
+  runId: string;
+  proposedAt: number;
+}
 
 /**
  * A tracked open loop — an unfinished task, unresolved decision, or
@@ -78,6 +113,20 @@ export interface OpenLoopRow {
    * check is due `base·2^count` after `lastUpdate`, capped.
    */
   decayCheckCount: number;
+  origin: TaskOrigin;
+  /** The user accepted this Brain suggestion into their tasks. */
+  accepted: boolean;
+  scheduledFor: TaskSchedule | null;
+  proposedChange: ProposedTaskChange | null;
+  /** The user's note on how the task was completed. */
+  completionNote: string | null;
+  /** When the loop last moved to done or dismissed; null while open. */
+  resolvedAt: number | null;
+}
+
+/** True when the loop is one of the user's own tasks rather than a Brain suggestion. */
+export function isOwnedTask(loop: Pick<OpenLoopRow, "origin" | "accepted">): boolean {
+  return loop.origin !== "brain" || loop.accepted;
 }
 
 /**
@@ -126,88 +175,150 @@ export interface OpenLoopLedgerEntry {
   runId: string;
   at: number;
   note: string;
+  /** Structured task event, for entries written by a task mutation. */
+  event: TaskEvent | null;
+}
+
+/** What a task mutation did, and the values it replaced, for history and undo. */
+export interface TaskEvent {
+  kind:
+    | "created"
+    | "accepted"
+    | "refused"
+    | "migrated"
+    | "completed"
+    | "struck"
+    | "edited"
+    | "reopened"
+    | "proposal_confirmed"
+    | "proposal_kept"
+    | "undone";
+  /** Where the change was made. */
+  surface: "tasks" | "conversation" | "note" | "brain";
+  conversationId?: string;
+  from?: string | null;
+  to?: string | null;
+  note?: string;
+  /** The task fields before the change, restored by undo. */
+  before?: TaskSnapshot;
+  /** For `undone`: the ledger entry that was reverted. */
+  undoOf?: number;
+}
+
+/** The task fields a mutation can change. */
+export interface TaskSnapshot {
+  state: OpenLoopState;
+  title: string;
+  description: string;
+  deadline: unknown | null;
+  scheduledFor: TaskSchedule | null;
+  accepted: boolean;
+  completionNote: string | null;
+  proposedChange: ProposedTaskChange | null;
 }
 
 // ---------------------------------------------------------------------------
-// Briefs
+// Observations
 // ---------------------------------------------------------------------------
 
-export type BriefKind = "info" | "loop";
-
 /**
- * Brief lifecycle. The four `dismissed_*` states other than
- * `dismissed_snoozed` are terminal — those briefs never re-surface. A
- * snooze is the one sanctioned exit: the feedback run sets `nextShow`
- * and returns the brief to `unread`.
+ * Observation lifecycle. Any agent run may note an observation; the user
+ * never sees it directly. The morning brief run rechecks every live or held
+ * observation and either ships it (it appears in that morning's message),
+ * holds it (below the bar this morning; it stays eligible until its window
+ * closes and returns only when its scores change) or drops it with a reason.
+ * `shipped` and `dropped` are terminal: a shipped observation is never offered
+ * again, and the same subject becoming relevant later is a new observation.
  */
-export type BriefState =
-  | "unread"
-  | "read"
-  | "dismissed_snoozed"
-  | "dismissed_already_handled"
-  | "dismissed_acknowledged"
-  | "dismissed_not_relevant"
-  | "dismissed_wrong"
-  /**
-   * The agent withdrew the card: it became moot, was superseded, or its loop
-   * closed. The one terminal state that is NOT a user signal — every
-   * `dismissed_*` state records something the operator did, and reading this
-   * one as feedback would put an agent's own housekeeping into the
-   * calibration labels. Terminal, so it leaves the feed and every
-   * active-brief query by the same predicate the dismissals use, while the
-   * row survives as the record of what was surfaced.
-   */
-  | "retired";
+export type ObservationState = "live" | "held" | "shipped" | "dropped";
 
-/** The states a brief can never leave — the user's dismissals, plus the agent's own withdrawal. */
-export const TERMINAL_BRIEF_STATES: readonly BriefState[] = [
-  "dismissed_already_handled",
-  "dismissed_acknowledged",
-  "dismissed_not_relevant",
-  "dismissed_wrong",
-  "retired",
+export const OBSERVATION_STATES: readonly ObservationState[] = [
+  "live",
+  "held",
+  "shipped",
+  "dropped",
 ];
 
-export function isTerminalBriefState(state: BriefState): boolean {
-  return (TERMINAL_BRIEF_STATES as readonly string[]).includes(state);
+/** Why an observation closed or is waiting. */
+export type ObservationCloseReason =
+  /** Ranked below the decision bar this morning (state `held`). */
+  | "below_bar"
+  /** Its relevance window ended before it shipped. */
+  | "expired"
+  /** Cited evidence changed or disappeared after it was noted. */
+  | "stale"
+  /** Every related loop resolved, or a newer observation replaced it. */
+  | "superseded"
+  /** The decision model judged the user already knows it. */
+  | "already_known"
+  /** The entailment check rejected its claims at the morning recheck. */
+  | "unsupported"
+  /** The user asked not to see it, in a conversation. */
+  | "suppressed"
+  /** The noting agent withdrew it. */
+  | "withdrawn";
+
+export function isTerminalObservationState(state: ObservationState): boolean {
+  return state === "shipped" || state === "dropped";
 }
 
 /**
- * A brief — the Cognition Steward's decision to bring something to the user's
- * awareness via the feed.
+ * The decision model's judgement of one observation. Levels are the raw
+ * criterion indexes: `alreadyKnown` is a probability in [0,1], `consequence`
+ * 0..4 (nothing → money/legal/health cost), `timing` 0..3 (no deadline →
+ * today or tomorrow). A null level means the judgement was unavailable.
  */
-export interface BriefRow {
+export interface ObservationScores {
+  alreadyKnown: number | null;
+  consequence: number | null;
+  timing: number | null;
+  modelId: string | null;
+  at: number;
+}
+
+/** One asserted claim: a verbatim quote of a cited document. */
+export interface ObservationClaim {
+  docId: string;
+  quote: string;
+  /** Entailment verdict from the morning recheck; `unverified` until then. */
+  verification: "unverified" | "entailed" | "rejected";
+}
+
+export interface ObservationRow {
   id: string;
   createdByRun: string;
-  kind: BriefKind;
-  title: string;
-  /** Short, glanceable description (<30 words by contract). */
-  description: string;
-  /** Optional long-form context shown on scroll-down; null = none. */
-  body: string | null;
-  /** Cited document ids, in display order. */
-  citations: string[];
-  confidence: number;
-  urgency: number;
-  /** Unix ms after which the brief is no longer relevant; null = no bound. */
+  /** One-line statement of what was observed. */
+  summary: string;
+  /** Why it might matter to the user. */
+  why: string;
+  /** Every cited document is the user's own writing. */
+  userAuthored: boolean;
+  /** Start of the window in which it matters; null = from now. */
+  windowStart: number | null;
+  /** End of the window in which it matters; null = no bound. */
   relevantUntil: number | null;
-  /** Loops this brief is attached to (feedback propagates through these). */
+  citations: string[];
   relatedLoopIds: string[];
-  /** Display gate: null = can show immediately, else wait until then. */
-  nextShow: number | null;
-  /** Timestamp of the real-world event the brief concerns; ranking tiers. */
-  eventAt: number | null;
-  /** Free text the user typed on dismissal, if any. */
-  userFeedback: string | null;
-  state: BriefState;
+  claims: ObservationClaim[];
+  state: ObservationState;
+  closeReason: ObservationCloseReason | null;
+  /** Scores taken when the observation was noted. */
+  notedScores: ObservationScores | null;
+  /** Latest scores, from the most recent morning recheck. */
+  scores: ObservationScores | null;
+  /**
+   * When a same-day push would have fired had pushes been allowed: noted at
+   * the top consequence level with a deadline before the next morning brief.
+   */
+  wouldPushAt: number | null;
+  shippedAt: number | null;
+  shippedConversationId: string | null;
+  shippedMessageId: string | null;
+  /** What the user did about it, recorded by the tool that acted. */
+  userAction: string | null;
   createdAt: number;
   updatedAt: number;
-  /**
-   * The brief-anchored follow-up conversation ("talk back to the brief"),
-   * once one has been opened; null until then. Stamped exactly once — a
-   * brief has at most one thread.
-   */
-  threadConversationId: string | null;
+  closedAt: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,13 +342,13 @@ export const COGNITION_RUN_KIND_DEFINITIONS = [
     kind: "data",
     label: "Data",
     description:
-      "Reviews newly ingested or changed documents and evaluates matching watches, deciding what should update the brain's memory, loops, or briefs.",
+      "Reviews newly ingested or changed documents and evaluates matching watches, deciding what should update the brain's memory, loops, or observations.",
   },
   {
     kind: "daily",
     label: "Daily",
     description:
-      "Reviews a source's day of activity, looks ahead for upcoming commitments, or assembles the morning digest.",
+      "Reviews a source's day of activity, looks ahead for upcoming commitments, or writes the morning brief.",
   },
   {
     kind: "time_based",
@@ -248,8 +359,7 @@ export const COGNITION_RUN_KIND_DEFINITIONS = [
   {
     kind: "feedback",
     label: "Feedback",
-    description:
-      "Learns from brief feedback and rechecks loops or briefs whose supporting evidence has changed.",
+    description: "Rechecks loops or observations whose supporting evidence has changed.",
   },
   {
     kind: "synthesis",

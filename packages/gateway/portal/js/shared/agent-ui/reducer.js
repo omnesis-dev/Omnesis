@@ -48,12 +48,18 @@ export const initialState = () => ({
   // documents by semantic time.
   recordCitations: [],
   // Origin anchor when the loaded conversation did not start as a blank
-  // chat — a brief's talk-back (`{ kind: "brief", briefId, runId, brief?,
-  // seedMessageCount? }`) or a thread the agent opened when a watch fired (`{ kind:
-  // "watch_firing", firingId, runId, watchId, watch?, seedMessageCount? }`).
-  // The transcript pins the origin's snapshot card on top and the seeded
-  // prefix is hidden (see `visibleMessages`). Null for plain chats.
-  briefOrigin: null,
+  // chat — a thread the agent opened when a watch fired (`{ kind:
+  // "watch_firing", firingId, runId, watchId, watch?, seedMessageCount? }`),
+  // whose transcript pins the snapshot card on top and hides the seeded
+  // prefix (see `visibleMessages`), or the standing Morning brief
+  // conversation (`{ kind: "daily_brief", runId, briefs: [{ day,
+  // messageIndex, messageId }] }`), whose Timeline covers only the latest
+  // brief onward (see `timelineScopeStart`). Null for plain chats.
+  conversationOrigin: null,
+  // Absolute transcript index of the first loaded message: the history
+  // pages load newest first, so earlier pages lower it. Lets the Timeline
+  // scope compare page-local positions against the origin's indexes.
+  loadedMessageStart: 0,
   busy: false,
   // Durable, conversation-level context exhaustion. It is intentionally
   // outside `turns` so it never becomes model-visible transcript history.
@@ -152,7 +158,7 @@ export const EPHEMERAL_TOOLS = new Set([
   "trace_connections",
   "lookup_people",
   "lookup_document_by_url",
-  // The steward toolset, reachable from brief talk-back threads.
+  // The steward toolset, reachable from the Morning brief conversation.
   // Ephemeral in the INTERACTIVE conversation only: dropped from resumed
   // history here, rendered live as a self-dismissing generic action card
   // (parts.js EPHEMERAL_ACTION_TOOLS). The cognition page's run transcripts
@@ -163,11 +169,10 @@ export const EPHEMERAL_TOOLS = new Set([
   "open_loop_update",
   "open_loop_delete",
   "open_loop_ledger_append",
-  "brief_list",
-  "brief_fetch",
-  "brief_create",
-  "brief_update",
-  "brief_delete",
+  "observation_list",
+  "observation_note",
+  "observation_withdraw",
+  "observation_suppress",
   "temporal_annotation_add",
   "temporal_annotation_update",
   "temporal_annotation_delete",
@@ -263,9 +268,8 @@ function actsAsGate(tool) {
 }
 
 /**
- * The messages a user should see for a conversation. An anchored thread
- * (brief talk-back or a watch-firing thread) opens with the creating run's
- * folded transcript — agent context, not user content — so when the
+ * The messages a user should see for a conversation. A watch-firing
+ * thread opens with the creating run's folded transcript — agent context, not user content — so when the
  * origin declares a seed prefix AND carries the snapshot that visually
  * replaces it (the pinned context card), the prefix is dropped. Without
  * the snapshot (threads created before snapshots existed, or an origin
@@ -290,10 +294,48 @@ export function visibleMessages(messages, origin) {
  * precondition for hiding the seeded transcript prefix.
  */
 export function hasContextCard(origin) {
-  return (
-    (origin?.kind === "brief" && Boolean(origin.brief)) ||
-    (origin?.kind === "watch_firing" && Boolean(origin.watch))
-  );
+  return origin?.kind === "watch_firing" && Boolean(origin.watch);
+}
+
+/**
+ * Absolute transcript index the Timeline starts at. In the Morning brief
+ * conversation the citation Timeline covers the latest brief and the
+ * replies after it — earlier days stay readable in the transcript but do
+ * not crowd today's Timeline. Every other conversation's Timeline covers
+ * the whole transcript (0).
+ */
+export function timelineScopeStart(origin) {
+  if (origin?.kind !== "daily_brief" || !Array.isArray(origin.briefs)) return 0;
+  const latest = origin.briefs.at(-1);
+  return Number.isInteger(latest?.messageIndex) && latest.messageIndex > 0
+    ? latest.messageIndex
+    : 0;
+}
+
+/**
+ * Page-local indexes at which an assistant message starts its own turn,
+ * mapped to the brief it is: in the Morning brief conversation each day's
+ * brief is appended with no user message before it, so without a break it
+ * would merge into the previous day's last reply. `start` is the absolute
+ * index of the page's first message. Null for every other conversation.
+ */
+export function briefTurnBreaks(origin, start, length) {
+  if (origin?.kind !== "daily_brief" || !Array.isArray(origin.briefs)) return null;
+  const breaks = new Map();
+  for (const brief of origin.briefs) {
+    const local = brief?.messageIndex - start;
+    if (Number.isInteger(local) && local >= 0 && local < length) breaks.set(local, brief);
+  }
+  return breaks.size > 0 ? breaks : null;
+}
+
+/**
+ * The part of a loaded page of messages that feeds the Timeline. `start`
+ * is the absolute index of `messages[0]`.
+ */
+export function timelineMessages(messages, start, origin) {
+  const skip = timelineScopeStart(origin) - start;
+  return skip > 0 ? messages.slice(skip) : messages;
 }
 
 /** Prefix of the marker `formatTerminalErrorText` appends in `@omnesis/agent`. */
@@ -346,7 +388,10 @@ function anchoredMarkerIndex(text) {
  * them. Tool_result blocks land back on the matching tool part as
  * `result`/`durationMs`.
  */
-export function chatMessagesToTurns(messages, { includeEphemeralTools = false } = {}) {
+export function chatMessagesToTurns(
+  messages,
+  { includeEphemeralTools = false, turnBreaks = null } = {},
+) {
   const turns = [];
   let i = 0;
   let n = 0;
@@ -377,12 +422,26 @@ export function chatMessagesToTurns(messages, { includeEphemeralTools = false } 
       citationCount: 0,
     };
     const toolIndexById = new Map();
+    const turnStart = i;
+    // A turn opened by a Morning brief carries which brief it is, so the
+    // view can group the thread by day.
+    const brief = turnBreaks?.get(turnStart);
+    if (brief && typeof brief.day === "string") {
+      t.brief = {
+        day: brief.day,
+        messageId: brief.messageId,
+        sentAt: typeof brief.sentAt === "string" ? brief.sentAt : null,
+      };
+    }
     while (i < messages.length) {
       const cur = messages[i];
       if (!cur || !Array.isArray(cur.parts)) {
         i++;
         continue;
       }
+      // An assistant message that opens a turn on its own (a Morning brief,
+      // which no user message precedes) starts a new turn here.
+      if (i !== turnStart && turnBreaks?.has(i)) break;
       if (cur.role === "assistant") {
         for (const p of cur.parts) {
           if (!p || typeof p !== "object") continue;
@@ -2071,14 +2130,21 @@ export function reducer(state, action) {
           notFoundConvoId: null,
         };
       }
-      // A brief talk-back thread hides its folded run transcript — the
-      // brief card (state.briefOrigin) carries that context instead.
+      // A watch-firing thread hides its folded run transcript — the context
+      // card (state.conversationOrigin) carries that context instead.
       const origin = action.origin ?? null;
       const messages =
         action.messagesAreVisible === true
           ? action.messages
           : visibleMessages(action.messages, origin);
-      const turns = chatMessagesToTurns(messages);
+      // The loaded page is the transcript's tail.
+      const loadedMessageStart = Math.max(
+        0,
+        (action.messageCount ?? messages.length) - messages.length,
+      );
+      const turns = chatMessagesToTurns(messages, {
+        turnBreaks: briefTurnBreaks(origin, loadedMessageStart, messages.length),
+      });
       // `chatMessagesToTurns` treats stored history as complete by default, but
       // a busy runtime snapshot is still receiving text, tools, and sub-agent
       // lifecycle events; keep its renderer open until `agent.message.end`.
@@ -2121,9 +2187,11 @@ export function reducer(state, action) {
       }
       // Rebuild the annotation buckets + cited records from persisted tool
       // results so the side-panel Timeline works on resume the same way it
-      // does live. Only normal annotation tools create Timeline entries.
-      const trailAnnotations = trailAnnotationsFromMessages(messages);
-      const recordCitations = recordCitationsFromMessages(messages);
+      // does live. Only normal annotation tools create Timeline entries, and
+      // only from the messages the origin scopes the Timeline to.
+      const timelineSource = timelineMessages(messages, loadedMessageStart, origin);
+      const trailAnnotations = trailAnnotationsFromMessages(timelineSource);
+      const recordCitations = recordCitationsFromMessages(timelineSource);
       // Resumed history must NOT repopulate the plan panel — it is a
       // live in-flight progress surface, not persisted state. The
       // `chatMessagesToTurns` helper already filters plan tool_use
@@ -2139,7 +2207,8 @@ export function reducer(state, action) {
         citationsByDocId: byDoc,
         trailAnnotations,
         recordCitations,
-        briefOrigin: origin,
+        conversationOrigin: origin,
+        loadedMessageStart,
         busy,
         terminalFailure,
         messageNextCursor: action.messagePageInfo?.nextCursor ?? null,
@@ -2164,7 +2233,11 @@ export function reducer(state, action) {
       // prefix was removed server-side before paging.
       const messages = action.messages ?? [];
       const pageSignature = historyPageSignature(messages);
-      const unprefixedTurns = chatMessagesToTurns(messages);
+      // This page sits immediately before the loaded messages.
+      const pageStart = Math.max(0, state.loadedMessageStart - messages.length);
+      const unprefixedTurns = chatMessagesToTurns(messages, {
+        turnBreaks: briefTurnBreaks(state.conversationOrigin, pageStart, messages.length),
+      });
       const madeProgress =
         historyPageHasVisibleContent(unprefixedTurns) &&
         !state.loadedHistoryPageSignatures.includes(pageSignature);
@@ -2216,7 +2289,8 @@ export function reducer(state, action) {
         }
       }
 
-      const olderTrail = trailAnnotationsFromMessages(messages);
+      const olderTimeline = timelineMessages(messages, pageStart, state.conversationOrigin);
+      const olderTrail = trailAnnotationsFromMessages(olderTimeline);
       const byDoc = { ...(olderTrail.byDoc ?? {}) };
       for (const [documentId, current] of Object.entries(state.trailAnnotations?.byDoc ?? {})) {
         const older = byDoc[documentId];
@@ -2229,7 +2303,7 @@ export function reducer(state, action) {
           : current;
       }
       const recordByKey = new Map();
-      for (const event of [...recordCitationsFromMessages(messages), ...state.recordCitations]) {
+      for (const event of [...recordCitationsFromMessages(olderTimeline), ...state.recordCitations]) {
         // Map.set replaces the value without moving the key: chronological
         // first-arrival order is retained while the newer/current page wins
         // when the same record was cited again with fresher metadata.
@@ -2250,6 +2324,7 @@ export function reducer(state, action) {
         messagePagingTruncated: stoppedBeforeEnd,
         loadedHistoryPageKeys: [...state.loadedHistoryPageKeys, action.pageKey],
         loadedHistoryPageSignatures: [...state.loadedHistoryPageSignatures, pageSignature],
+        loadedMessageStart: pageStart,
       };
     }
     case "reset-conversation":
@@ -2263,7 +2338,8 @@ export function reducer(state, action) {
         citationsByDocId: new Map(),
         trailAnnotations: { byDoc: {} },
         recordCitations: [],
-        briefOrigin: null,
+        conversationOrigin: null,
+        loadedMessageStart: 0,
         busy: false,
         terminalFailure: null,
         messageNextCursor: null,
@@ -2285,7 +2361,8 @@ export function reducer(state, action) {
         citationsByDocId: new Map(),
         trailAnnotations: { byDoc: {} },
         recordCitations: [],
-        briefOrigin: null,
+        conversationOrigin: null,
+        loadedMessageStart: 0,
         busy: false,
         terminalFailure: null,
         messageNextCursor: null,

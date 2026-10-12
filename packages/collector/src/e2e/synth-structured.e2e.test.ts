@@ -30,8 +30,8 @@ describe("Synthetic providers — structured sources", () => {
       extraInference: { assignments: { "background-agent": "replay" } },
     });
     await harness.start();
-    const status = await harness.gatewayJson<{ briefs: { active: boolean } }>("/status");
-    expect(status.briefs.active).toBe(true);
+    const status = await harness.gatewayJson<{ brain: { active: boolean } }>("/status");
+    expect(status.brain.active).toBe(true);
     const ids = harness.getSourceIds().filter((id) => {
       const t = id.split(":")[0];
       return (

@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { cognitionAuthoredSqlExclusion } from "../cognition-authored.js";
 import { enqueueKnowledgeWork } from "./work.js";
+import { knowledgeWorkParkedSql } from "./work-retry.js";
 import {
   assertKnowledgeReconciliation,
   readKnowledgeCollectionRevision,
@@ -103,6 +104,11 @@ export function listKnowledgeDiscoveryBacklog(
     recentInventoryWindowMs?: number;
     /** Recent inventory belongs to the live allowance, not historical admission caps. */
     excludeRecentInventoryWindowMs?: number;
+    /**
+     * Oldest `source_created_at` admitted (ISO instant); older documents are
+     * beyond the history horizon. See `history-horizon.ts`.
+     */
+    notBefore?: string;
   },
 ): DiscoveryDocument[] {
   const exclusion = cognitionAuthoredSqlExclusion("d.source_id");
@@ -118,6 +124,7 @@ export function listKnowledgeDiscoveryBacklog(
     LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id
     WHERE COALESCE(r.deleted,0)=0 AND ${exclusion.sql || "1"} ${removalFence}
       ${options.sourceId === undefined ? "" : "AND d.source_id=?"}
+      ${options.notBefore === undefined ? "" : "AND d.source_created_at>=?"}
       ${options.recentInventoryWindowMs === undefined ? "" : `AND EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=d.id AND si.input_revision=d.content_hash AND julianday(d.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`}
       ${options.excludeRecentInventoryWindowMs === undefined ? "" : `AND NOT EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=d.id AND si.input_revision=d.content_hash AND julianday(d.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`}
       AND NOT EXISTS(SELECT 1 FROM knowledge_discovery_coverage c WHERE c.subject_id=d.id
@@ -125,11 +132,13 @@ export function listKnowledgeDiscoveryBacklog(
         AND (c.reconsider_at IS NULL OR c.reconsider_at>? OR (c.status='considered' AND c.retrieval_reconsidered=1)))
       AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='source' AND w.subject_id=d.id
         AND w.input_revision=${knowledgeSourceRevisionSql()} AND w.status IN ('pending','batched'))
+      AND NOT ${knowledgeWorkParkedSql("'source'", "d.id", knowledgeSourceRevisionSql())}
     ORDER BY d.source_created_at ${options.direction === "oldest-first" ? "ASC" : "DESC"},d.id LIMIT ?`,
     )
     .all(
       ...exclusion.params,
       ...(options.sourceId === undefined ? [] : [options.sourceId]),
+      ...(options.notBefore === undefined ? [] : [options.notBefore]),
       ...(options.recentInventoryWindowMs === undefined
         ? []
         : [options.recentInventoryWindowMs / 86_400_000]),

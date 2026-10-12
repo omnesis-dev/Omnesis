@@ -2,8 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { ContextualAssessmentError } from "../../inference/contextual-entailment.js";
-import { KnowledgeStorageError } from "./types.js";
-import type { Logger } from "@omnesis/core";
 
 type VerificationFailure = {
   category: "timeout" | "cancelled" | "rate_limited" | "protocol" | "unknown";
@@ -44,14 +42,4 @@ export function verificationFailure(error: unknown): VerificationFailure {
   if (error instanceof Error && Object.getOwnPropertyDescriptor(error, "status")?.value === 429)
     return { category: "rate_limited" };
   return { category: "unknown" };
-}
-
-export function briefVerificationUnavailable(error: unknown, log: Logger): KnowledgeStorageError {
-  const failure = verificationFailure(error);
-  log.warn("Brief verification unavailable; preserving existing brief", { ...failure });
-  const detail = failure.protocol ? `, protocol=${failure.protocol}` : "";
-  return new KnowledgeStorageError(
-    "claim_invalid",
-    `Brief verification is unavailable (category=${failure.category}${detail}); leave the existing brief unchanged and reconsider in a later run`,
-  );
 }

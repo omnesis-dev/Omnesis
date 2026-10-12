@@ -12,12 +12,18 @@ import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
 
 import { judgeKnowledge } from "./decision.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
-import { listKnowledgePlanningWork, type KnowledgeFrontierInput } from "./work.js";
+import {
+  listKnowledgePlanningWork,
+  type KnowledgeFrontierInput,
+  type KnowledgeWork,
+} from "./work.js";
 import {
   scheduleKnowledgeChange,
   planMaintenanceGroups,
   MaintenancePlanLimitError,
   type MaintenanceArc,
+  type MaintenanceGroup,
+  type MaintenanceSeed,
 } from "./planner.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
@@ -140,24 +146,25 @@ export class KnowledgeBatchPlanner {
     const arcs = (id: string) => this.context.arcs(id).map((arc) => arc.dependent);
     const roots = this.context.roots();
     const affinityKeys = candidateCoordinationKeys(this.context.deps.db);
-    let eligible = work;
+    const seed = (item: KnowledgeWork): MaintenanceSeed => ({
+      id: item.id,
+      revision: item.inputRevision,
+      changedAt: item.createdAt,
+      dueAt: item.dueAt,
+      tier: item.tier,
+      targets: [item.subjectKind === "source" ? sourceKey(item.subjectId) : item.subjectId],
+      coordinationKeys: affinityKeys(item.id),
+    });
+    // Work a failed batch left unfinished is planned alone below, so it can
+    // neither hold a fresh region's batch open nor ride in on its deadline.
+    let eligible = work.filter((item) => item.failures === 0);
     let groups: ReturnType<typeof planMaintenanceGroups> = [];
     while (eligible.length) {
       try {
-        groups = planMaintenanceGroups(
-          eligible.map((item) => ({
-            id: item.id,
-            revision: item.inputRevision,
-            changedAt: item.createdAt,
-            dueAt: item.dueAt,
-            tier: item.tier,
-            targets: [item.subjectKind === "source" ? sourceKey(item.subjectId) : item.subjectId],
-            coordinationKeys: affinityKeys(item.id),
-          })),
-          arcs,
-          roots,
-          { ...cfg, maxSeeds: cfg.maxSeeds * cfg.maxVisitedPerSeed },
-        );
+        groups = planMaintenanceGroups(eligible.map(seed), arcs, roots, {
+          ...cfg,
+          maxSeeds: cfg.maxSeeds * cfg.maxVisitedPerSeed,
+        });
         break;
       } catch (error) {
         if (!(error instanceof MaintenancePlanLimitError)) throw error;
@@ -170,94 +177,114 @@ export class KnowledgeBatchPlanner {
     }
     const initialRoot = this.context.initialRoot();
     let enqueued = 0;
-    for (const group of groups) {
-      if (group.dueAt > this.context.deps.clock()) continue;
-      if (
-        group.seeds.some((seed) => {
-          const item = byId.get(seed.id)!;
-          return (
-            item.subjectKind === "source" &&
-            !knowledgeSourceReadiness(this.context.deps, item.subjectId, item.inputChangedAt).ready
-          );
-        })
-      )
-        continue;
-      const seeds = group.seeds.slice(0, cfg.maxSeeds).map((seed) => byId.get(seed.id)!);
-      for (const seed of seeds)
-        if (seed.lastError)
-          await this.context.deps.writeGate["knowledge.enqueue"](seed, this.context.deps.clock());
-      const frontier: KnowledgeFrontierInput[] = [];
-      for (const seed of seeds) {
-        const item = this.context.frontier(
-          seed.subjectKind === "source" ? sourceKey(seed.subjectId) : seed.subjectId,
-          0,
-        );
-        if (item) frontier.push(item);
-      }
-      if (!frontier.length) continue;
-      const batchId = this.context.id("kb");
-      const runId = this.context.id("cog");
+    for (const group of groups)
+      if (await this.admit(group, group.seeds.slice(0, cfg.maxSeeds), byId, initialRoot))
+        enqueued++;
+    for (const item of work) {
+      if (item.failures === 0 || item.dueAt > this.context.deps.clock()) continue;
+      let solo: ReturnType<typeof planMaintenanceGroups>[number] | undefined;
       try {
-        // Ready urgent work inherits priority into the region owner even when
-        // its seed capacity is full and adoption must wait for that run.
-        const now = this.context.deps.clock();
-        const dueWork = group.seeds
-          .map((seed) => byId.get(seed.id)!)
-          .filter(
-            (item) =>
-              item.dueAt <= now &&
-              !["pending_content", "derivation"].includes(item.lastError ?? ""),
-          );
-        const witness =
-          dueWork.find((item) => item.tier === "immediate") ??
-          dueWork.find((item) => item.tier === "soon");
-        if (witness)
-          await this.context.deps.writeGate["knowledge.promoteBlockingBatches"](
-            {
-              work: {
-                id: witness.id,
-                generation: witness.generation,
-                inputRevision: witness.inputRevision,
-              },
-              regionNodeIds: group.nodes,
-            },
-            this.context.deps.clock(),
-          );
-        await this.context.deps.writeGate["knowledge.startBatch"](
+        solo = planMaintenanceGroups([seed(item)], arcs, roots, { ...cfg, maxSeeds: 1 })[0];
+      } catch (error) {
+        if (!(error instanceof MaintenancePlanLimitError)) throw error;
+        continue;
+      }
+      if (solo && (await this.admit(solo, solo.seeds, byId, initialRoot))) enqueued++;
+    }
+    return enqueued;
+  }
+
+  /** Start one batch for a due, ready group; false when it is not admitted now. */
+  private async admit(
+    group: MaintenanceGroup,
+    groupSeeds: readonly MaintenanceSeed[],
+    byId: ReadonlyMap<string, KnowledgeWork>,
+    initialRoot: string | null,
+  ): Promise<boolean> {
+    if (group.dueAt > this.context.deps.clock()) return false;
+    if (
+      group.seeds.some((seed) => {
+        const item = byId.get(seed.id)!;
+        return (
+          item.subjectKind === "source" &&
+          !knowledgeSourceReadiness(this.context.deps, item.subjectId, item.inputChangedAt).ready
+        );
+      })
+    )
+      return false;
+    const seeds = groupSeeds.map((seed) => byId.get(seed.id)!);
+    for (const seed of seeds)
+      if (seed.lastError)
+        await this.context.deps.writeGate["knowledge.enqueue"](seed, this.context.deps.clock());
+    const frontier: KnowledgeFrontierInput[] = [];
+    for (const seed of seeds) {
+      const item = this.context.frontier(
+        seed.subjectKind === "source" ? sourceKey(seed.subjectId) : seed.subjectId,
+        0,
+      );
+      if (item) frontier.push(item);
+    }
+    if (!frontier.length) return false;
+    const batchId = this.context.id("kb");
+    const runId = this.context.id("cog");
+    try {
+      // Ready urgent work inherits priority into the region owner even when
+      // its seed capacity is full and adoption must wait for that run.
+      const now = this.context.deps.clock();
+      const dueWork = group.seeds
+        .map((seed) => byId.get(seed.id)!)
+        .filter(
+          (item) =>
+            item.dueAt <= now && !["pending_content", "derivation"].includes(item.lastError ?? ""),
+        );
+      const witness =
+        dueWork.find((item) => item.tier === "immediate") ??
+        dueWork.find((item) => item.tier === "soon");
+      if (witness)
+        await this.context.deps.writeGate["knowledge.promoteBlockingBatches"](
           {
-            id: batchId,
-            runId,
-            tier: group.tier,
-            work: seeds.map((seed) => ({
-              id: seed.id,
-              generation: seed.generation,
-              inputRevision: seed.inputRevision,
-            })),
+            work: {
+              id: witness.id,
+              generation: witness.generation,
+              inputRevision: witness.inputRevision,
+            },
             regionNodeIds: group.nodes,
-            frontier,
-          },
-          {
-            id: runId,
-            kind: "synthesis",
-            payload: {
-              focus: "knowledge-maintenance",
-              batchId,
-              ...(initialRoot &&
-              seeds.some((seed) => seed.subjectKind === "node" && seed.subjectId === initialRoot)
-                ? { schedulingClass: "initial-root" }
-                : {}),
-            },
-            notBefore: group.dueAt,
           },
           this.context.deps.clock(),
         );
-        enqueued++;
-      } catch (err) {
-        if (err instanceof KnowledgeStorageError && err.code === "revision_conflict") continue;
-        throw err;
-      }
+      await this.context.deps.writeGate["knowledge.startBatch"](
+        {
+          id: batchId,
+          runId,
+          tier: group.tier,
+          work: seeds.map((seed) => ({
+            id: seed.id,
+            generation: seed.generation,
+            inputRevision: seed.inputRevision,
+          })),
+          regionNodeIds: group.nodes,
+          frontier,
+        },
+        {
+          id: runId,
+          kind: "synthesis",
+          payload: {
+            focus: "knowledge-maintenance",
+            batchId,
+            ...(initialRoot &&
+            seeds.some((seed) => seed.subjectKind === "node" && seed.subjectId === initialRoot)
+              ? { schedulingClass: "initial-root" }
+              : {}),
+          },
+          notBefore: group.dueAt,
+        },
+        this.context.deps.clock(),
+      );
+      return true;
+    } catch (err) {
+      if (err instanceof KnowledgeStorageError && err.code === "revision_conflict") return false;
+      throw err;
     }
-    return enqueued;
   }
 
   async adoptOverlappingWork(batchId: string): Promise<void> {
@@ -269,6 +296,13 @@ export class KnowledgeBatchPlanner {
       >("SELECT COUNT(*) AS count FROM knowledge_work WHERE batch_id=?")
       .get(batchId)!.count;
     if (existing >= cfg.maxSeeds) return;
+    // A retry of work a failed batch left unfinished stays alone.
+    if (
+      this.context.deps.db
+        .prepare("SELECT 1 FROM knowledge_work WHERE batch_id=? AND failures>0 LIMIT 1")
+        .get(batchId)
+    )
+      return;
     const owned = this.context.deps.db
       .prepare<[string], { node_id: string }>(
         "SELECT node_id FROM knowledge_batch_regions WHERE batch_id=?",
@@ -278,7 +312,7 @@ export class KnowledgeBatchPlanner {
     const work = listKnowledgePlanningWork(
       this.context.deps.db,
       cfg.maxSeeds * cfg.maxVisitedPerSeed,
-    );
+    ).filter((item) => item.failures === 0);
     if (!work.length) return;
     const affinityKeys = candidateCoordinationKeys(this.context.deps.db);
     const arcs = (id: string) => this.context.arcs(id).map((arc) => arc.dependent),

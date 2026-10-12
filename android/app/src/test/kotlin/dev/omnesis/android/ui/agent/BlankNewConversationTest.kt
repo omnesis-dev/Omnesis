@@ -3,7 +3,7 @@
 
 package dev.omnesis.android.ui.agent
 
-import dev.omnesis.android.transport.dto.BriefOriginSnapshot
+import dev.omnesis.android.transport.dto.WatchFiringOriginSnapshot
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -53,8 +53,8 @@ class BlankNewConversationTest {
             isBlankNewConversation(
                 blank.copy(
                     conversationOrigin = ConversationOrigin(
-                        kind = "brief",
-                        brief = BriefOriginSnapshot(title = "An invented brief", description = "Why."),
+                        kind = "watch_firing",
+                        watch = WatchFiringOriginSnapshot(name = "An invented watch", condition = "Why.", firedAt = 1L),
                         seedMessageCount = 2,
                     ),
                 ),

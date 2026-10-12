@@ -43,7 +43,7 @@ import {
 const log = createLogger("agent:anthropic");
 const UNKNOWN_MODEL_MAX_TOKENS = 4_096;
 export const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 256;
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { thinkingBudgetTokens } from "./thinking-budget.js";
 import {
@@ -254,7 +254,7 @@ export class AnthropicBackend implements ChatBackend {
     const tools: Tool[] = input.tools.map((h) => ({
       name: h.name,
       description: h.description,
-      input_schema: zodToJsonSchema(h.schema) as Tool["input_schema"],
+      input_schema: toolInputJsonSchema(h.schema) as Tool["input_schema"],
     }));
     const handles = new Map<string, ToolHandle>(input.tools.map((h) => [h.name, h]));
 
@@ -397,16 +397,21 @@ export class AnthropicBackend implements ChatBackend {
         log.warn(
           `request rejected for model=${this.model} iteration=${requestIteration} ${anthropicErrorMetadata(err)}`,
         );
-        // API rejected the request (rate-limit, auth, network). Surface as
-        // a typed agent.error so the portal renders an actionable message
-        // and the session shuts down cleanly.
+        // API rejected the request (rate-limit, auth, account limit, network).
+        // Surface as a typed agent.error so the portal renders an actionable
+        // message and the session shuts down cleanly.
+        const failureCode = contextExceeded
+          ? "context_window_exceeded"
+          : isAnthropicAccountLimitError(err)
+            ? "anthropic_usage_limited"
+            : "anthropic_api_error";
         const failureMessage = contextExceeded
           ? CONTEXT_WINDOW_EXCEEDED_MESSAGE
           : anthropicFailureMessage(err);
         yield wrapEvent("agent.error", {
           sessionId,
           messageId,
-          code: contextExceeded ? "context_window_exceeded" : "anthropic_api_error",
+          code: failureCode,
           message: failureMessage,
           provider: anthropicProviderFailure(err),
         });
@@ -417,7 +422,7 @@ export class AnthropicBackend implements ChatBackend {
           usage: totalUsage,
           context: contextAssessment,
           failure: {
-            code: contextExceeded ? "context_window_exceeded" : "anthropic_api_error",
+            code: failureCode,
             message: failureMessage,
             retryable: !contextExceeded,
             backend: this.name,
@@ -917,6 +922,27 @@ function isAnthropicContextWindowError(err: unknown): boolean {
   );
 }
 
+/** Which account ceiling an Anthropic refusal names, if any. */
+function anthropicAccountLimit(err: unknown): "usage" | "credit" | null {
+  const details = anthropicErrorDetails(err);
+  if (details.status !== 400 || details.type !== "invalid_request_error") return null;
+  if (/\breached your (?:specified )?API usage limits?\b/i.test(details.message)) return "usage";
+  if (/\bcredit balance is too low\b/i.test(details.message)) return "credit";
+  return null;
+}
+
+/**
+ * Whether Anthropic refused the request because the account cannot pay for
+ * it: the operator's API usage limit is reached, or the credit balance is
+ * spent. The API reports both as a 400 `invalid_request_error`, the status of a
+ * malformed body, but the payload was never judged and the same request
+ * succeeds once a person raises the limit or tops up the account. The code
+ * this classifies to is what lets callers tell the two apart.
+ */
+export function isAnthropicAccountLimitError(err: unknown): boolean {
+  return anthropicAccountLimit(err) !== null;
+}
+
 export function anthropicErrorMetadata(err: unknown): string {
   const details = anthropicErrorDetails(err);
   return [
@@ -944,6 +970,11 @@ export function anthropicProviderFailure(err: unknown): AgentProviderFailureDeta
 
 /** Operator-facing sentence for a rejected Anthropic request. */
 export function anthropicFailureMessage(err: unknown): string {
+  const limit = anthropicAccountLimit(err);
+  if (limit === "usage")
+    return "Anthropic refused the request: the account's API usage limit is reached.";
+  if (limit === "credit")
+    return "Anthropic refused the request: the account's credit balance is too low.";
   const { status } = anthropicErrorDetails(err);
   return status === undefined
     ? "Anthropic API request failed."

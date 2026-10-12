@@ -3,7 +3,7 @@
 
 import { KnowledgeStorageError } from "./types.js";
 
-export type ClaimReferenceKind = "source" | "wiki" | "loop" | "annotation" | "brief";
+export type ClaimReferenceKind = "source" | "wiki" | "loop" | "annotation";
 export type ClaimSelectorKind = "evidence" | "claim" | "field";
 
 export interface ClaimReference {
@@ -22,7 +22,7 @@ export const LOOP_FIELD_REFERENCE_GUIDANCE =
   "For loop field selectors, use the exact keys in knowledge_fetch's canonicalFields: current loops expose state, actors, involved, deadline, blockedBy, importance and confidence; retired snapshots can expose outcome and retiredAt instead. Narrative descriptions are not fields: read loop:<loopId> for whole-node context or loop:<loopId>#claim:<claimId> using an actual claim ID from knowledge_fetch(editing:true). A state field establishes the tracked state, not the truth of the loop's narrative.";
 
 const REFERENCE_SYNTAX_GUIDANCE =
-  "Use source:<documentId> for a whole fetched document; doc: and document: are not reference kinds. Whole-node forms are wiki:<pageId>, loop:<loopId>, annotation:<annotationId>, and brief:<briefId>. Selectors are source:<documentId>#evidence:<evidenceId>, wiki|loop|annotation|brief:<id>#claim:<claimId>, or loop:<loopId>#field:<fieldName>. Replace placeholders with exact IDs returned by tools; identifiers use 1–128 letters, digits, underscores or hyphens.";
+  "Use source:<documentId> for a whole fetched document; doc: and document: are not reference kinds. Whole-node forms are wiki:<pageId>, loop:<loopId> and annotation:<annotationId>. Selectors are source:<documentId>#evidence:<evidenceId>, wiki|loop|annotation:<id>#claim:<claimId>, or loop:<loopId>#field:<fieldName>. Replace placeholders with exact IDs returned by tools; identifiers use 1–128 letters, digits, underscores or hyphens.";
 
 function invalidReferenceSyntax(message: string): KnowledgeStorageError {
   // Syntax guidance is independent of whether an ID exists or is privacy-hidden.
@@ -32,7 +32,7 @@ function invalidReferenceSyntax(message: string): KnowledgeStorageError {
 /** Syntax only: existence, revisions and entailment belong to the write service. */
 export function parseClaimReference(raw: string): ClaimReference {
   const match =
-    /^(source|wiki|loop|annotation|brief):([A-Za-z0-9_-]{1,128})(?:#(evidence|claim|field):([A-Za-z0-9_-]{1,128}))?$/.exec(
+    /^(source|wiki|loop|annotation):([A-Za-z0-9_-]{1,128})(?:#(evidence|claim|field):([A-Za-z0-9_-]{1,128}))?$/.exec(
       raw,
     );
   if (!match || match[0] !== raw) throw invalidReferenceSyntax("Invalid claim reference syntax");

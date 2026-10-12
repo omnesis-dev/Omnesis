@@ -34,7 +34,7 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PushPin
@@ -79,12 +79,12 @@ import androidx.compose.ui.unit.sp
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
-import dev.omnesis.android.transport.dto.BriefsMenuEntry
 import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.ui.agent.AgentActionErrorBanner
 import dev.omnesis.android.ui.common.CursorPagingState
 import dev.omnesis.android.ui.common.ListPagingFooter
 import dev.omnesis.android.ui.common.PullToRefresh
+import dev.omnesis.android.ui.tasks.tasksMenuLabel
 
 /**
  * The app's primary navigation menu — the layer that sits *under* the app and is
@@ -123,10 +123,10 @@ fun MainMenuDrawer(
     onRefreshConversations: () -> Unit = {},
     onLoadMoreConversations: () -> Unit = {},
     experimental: Boolean = false,
-    /** Whether Briefs is hidden, ready, or visible but waiting for its model. */
-    briefsMenuEntry: BriefsMenuEntry = BriefsMenuEntry.HIDDEN,
-    onConfigureBackgroundAgent: () -> Unit = {},
-    briefsUnreadCount: Int = 0,
+    /** Whether the paired gateway serves the Tasks journal. */
+    tasksAvailable: Boolean = false,
+    /** Today's open tasks, named on the Tasks row as "Tasks (n)". */
+    tasksTodayCount: Int = 0,
     /** Privacy decisions waiting on the operator: held answers plus any watch requests. */
     privacyPendingCount: Int = 0,
     modifier: Modifier = Modifier,
@@ -183,29 +183,35 @@ fun MainMenuDrawer(
                 )
             }
 
-            // Omnesis Briefs — the proactive awareness feed. Experimental mode keeps the
-            // stored feed available even while its producer is waiting for a model. In that
-            // state the row still opens Briefs; only the separate warning opens the repair.
-            if (briefsMenuEntry != BriefsMenuEntry.HIDDEN) {
+            // Tasks — the user's journal. Every current gateway serves it, with or without a
+            // model, so it is never an experimental entry.
+            if (tasksAvailable) {
                 item {
                     MenuRow(
-                        id = "briefs",
-                        icon = Icons.Outlined.Inbox,
-                        label = "Briefs",
-                        active = currentRoute == "briefs",
-                        onClick = { onNavigate("briefs") },
-                        badge = briefsUnreadCount,
-                        warning = if (briefsMenuEntry == BriefsMenuEntry.NEEDS_ATTENTION) {
-                            MenuRowWarning(
-                                "Configure the Background agent model",
-                                onConfigureBackgroundAgent,
-                            )
-                        } else {
-                            null
-                        },
+                        id = "tasks",
+                        icon = Icons.Outlined.Checklist,
+                        label = tasksMenuLabel(tasksTodayCount),
+                        active = currentRoute == "tasks",
+                        onClick = { onNavigate("tasks") },
                     )
                 }
             }
+            // Tell Omnesis sits under Tasks: telling Omnesis is how a task is added.
+            item {
+                MenuRow(
+                    id = "tellOmnesis",
+                    icon = Icons.Outlined.Mic,
+                    label = "Tell Omnesis",
+                    active = currentRoute?.startsWith("capture") == true,
+                    onClick = onTellBrain,
+                    warning = if (queuedNotesNeedAttention) {
+                        MenuRowWarning("Show notes waiting to sync", onQueuedNotesWarning)
+                    } else {
+                        null
+                    },
+                )
+            }
+
             item {
                 MenuRow(
                     id = "sources",
@@ -224,36 +230,6 @@ fun MainMenuDrawer(
                     onClick = { onNavigate("people") },
                 )
             }
-            item {
-                MenuRow(
-                    id = "tellOmnesis",
-                    icon = Icons.Outlined.Mic,
-                    label = "Tell Omnesis",
-                    active = currentRoute?.startsWith("capture") == true,
-                    onClick = onTellBrain,
-                    warning = if (queuedNotesNeedAttention) {
-                        MenuRowWarning("Show notes waiting to sync", onQueuedNotesWarning)
-                    } else {
-                        null
-                    },
-                )
-            }
-
-            // Watches is the runtime: what is being watched for, and what it has
-            // said. Privacy is the record beside it: which integration asked, and
-            // what it is allowed to be told. They are the same subject read from
-            // two ends, so they remain adjacent.
-            if (experimental) {
-                item {
-                    MenuRow(
-                        id = "watches",
-                        icon = Icons.Outlined.Visibility,
-                        label = "Watches",
-                        active = currentRoute?.startsWith("watches") == true,
-                        onClick = { onNavigate("watches") },
-                    )
-                }
-            }
             // Privacy is a standard control surface, not an experimental one: an Answer
             // integration can require an operator decision in normal operation, and a
             // decision nobody can reach is a decision that never gets made.
@@ -271,6 +247,21 @@ fun MainMenuDrawer(
                         "$privacyPendingCount decisions waiting for you"
                     },
                 )
+            }
+
+            // Experimental rows come last. Watches is the runtime: what is being watched
+            // for, and what it has said; Audit, just above, is the record of which
+            // integration asked and what it is allowed to be told.
+            if (experimental) {
+                item {
+                    MenuRow(
+                        id = "watches",
+                        icon = Icons.Outlined.Visibility,
+                        label = "Watches",
+                        active = currentRoute?.startsWith("watches") == true,
+                        onClick = { onNavigate("watches") },
+                    )
+                }
             }
 
             // --- conversations section header ---
@@ -302,7 +293,11 @@ fun MainMenuDrawer(
                         pinned = c.pinned,
                         unread = c.unread,
                         onClick = { onResumeConversation(c.sessionId) },
-                        onDelete = { onDeleteConversation(c.sessionId) },
+                        onDelete = if (c.deletable) {
+                            { onDeleteConversation(c.sessionId) }
+                        } else {
+                            null
+                        },
                         onTogglePin = { onTogglePin(c.sessionId, !c.pinned) },
                     )
                 }
@@ -554,7 +549,8 @@ private fun ConversationDrawerRow(
     pinned: Boolean,
     unread: Boolean,
     onClick: () -> Unit,
-    onDelete: () -> Unit,
+    /** Null for a conversation the gateway will not delete, which leaves the item out. */
+    onDelete: (() -> Unit)?,
     onTogglePin: () -> Unit,
 ) {
     val colors = OmTheme.colors
@@ -616,14 +612,16 @@ private fun ConversationDrawerRow(
                     onTogglePin()
                 },
             )
-            DropdownMenuItem(
-                text = { Text("Delete", color = colors.danger) },
-                leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = colors.danger) },
-                onClick = {
-                    menuOpen = false
-                    onDelete()
-                },
-            )
+            if (onDelete != null) {
+                DropdownMenuItem(
+                    text = { Text("Delete", color = colors.danger) },
+                    leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = colors.danger) },
+                    onClick = {
+                        menuOpen = false
+                        onDelete()
+                    },
+                )
+            }
         }
     }
 }

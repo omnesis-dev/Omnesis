@@ -260,7 +260,7 @@ async function waitForEmailAlias(
 
 /**
  * Poll /people/merge-rules?kind=system until the named rule id shows
- * up. Guards against any brief lag between POST commit and the
+ * up. Guards against any short lag between POST commit and the
  * read-side index seeing the row.
  */
 async function waitForSystemRule(

@@ -16,6 +16,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { runSchemaSetup } from "../../packages/gateway/src/data/schema.js";
+import { createDatabase } from "../../packages/gateway/src/db.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
 import { createIndexDatabase } from "../../packages/gateway/src/indexer/db.js";
 import {
@@ -204,8 +205,8 @@ describe("seeded-state artifacts", () => {
   it("classifies every table in the current gateway and index schemas", () => {
     const root = mkdtempSync(join(tmpdir(), "omnesis-seeded-schema-"));
     temporaryDirectories.push(root);
-    const gateway = new Database(join(root, "omnesis.db"));
-    runSchemaSetup(gateway);
+    // The gateway's own opener: tables installed after migrations count too.
+    const gateway = createDatabase(join(root, "omnesis.db"));
     const index = createIndexDatabase(join(root, "index.db"), { skipWal: true });
 
     for (const database of [gateway, index]) {
@@ -215,15 +216,19 @@ describe("seeded-state artifacts", () => {
         )
         .pluck()
         .all();
-      expect(() => {
-        for (const table of tables) {
-          const columns = database
-            .prepare("SELECT name FROM pragma_table_info(?)")
-            .pluck()
-            .all(table);
+      const unclassified = tables.filter((table) => {
+        const columns = database
+          .prepare("SELECT name FROM pragma_table_info(?)")
+          .pluck()
+          .all(table);
+        try {
           seededStateTableSpec(table, columns);
+          return false;
+        } catch {
+          return true;
         }
-      }).not.toThrow();
+      });
+      expect(unclassified).toEqual([]);
       database.close();
     }
   });

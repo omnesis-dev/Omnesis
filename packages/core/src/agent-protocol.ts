@@ -40,6 +40,7 @@ export const KNOWN_AGENT_ERROR_CODES = [
   "context_window_exceeded",
   "output_truncated",
   "anthropic_api_error",
+  "anthropic_usage_limited",
   "anthropic_stream_error",
   "tool_threw",
   "unknown_tool",

@@ -8,6 +8,8 @@ import dev.omnesis.android.transport.dto.AgentToolResult
 import dev.omnesis.android.transport.dto.AgentTrailRecord
 import dev.omnesis.android.transport.dto.AssistantPart
 import dev.omnesis.android.transport.dto.ChatMessage
+import dev.omnesis.android.transport.dto.ConversationOrigin
+import dev.omnesis.android.transport.dto.DailyBriefMessageRef
 import dev.omnesis.android.transport.dto.UserPart
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -22,7 +24,33 @@ import kotlinx.serialization.json.JsonObject
  */
 object AgentTurnBuilder {
 
-    fun turns(messages: List<ChatMessage>, idPrefix: String = ""): List<AgentTurn> {
+    /** The id of the transcript turn a morning brief opens: stable across page loads. */
+    fun briefTurnId(brief: DailyBriefMessageRef): String = "brief-${brief.messageId}"
+
+    /**
+     * Where each morning brief starts a turn in a loaded page whose first message is the
+     * conversation's visible message [startIndex]. Empty outside the Morning brief conversation.
+     */
+    fun briefTurnBreaks(origin: ConversationOrigin?, startIndex: Int): Map<Int, DailyBriefMessageRef> {
+        if (origin?.isDailyBrief != true) return emptyMap()
+        return origin.briefs
+            .map { (it.messageIndex - startIndex) to it }
+            .filter { it.first >= 0 }
+            .toMap()
+    }
+
+
+    /**
+     * [breakBefore] maps a message index (into [messages]) to the morning brief it is: that
+     * assistant message starts a turn of its own even with no user message before it, and the
+     * turn takes the brief's [briefTurnId], so the Morning brief conversation can tell which
+     * turns open a day. Mirrors the iOS `AgentTurnBuilder.turns(from:breakBefore:)`.
+     */
+    fun turns(
+        messages: List<ChatMessage>,
+        idPrefix: String = "",
+        breakBefore: Map<Int, DailyBriefMessageRef> = emptyMap(),
+    ): List<AgentTurn> {
         val out = mutableListOf<AgentTurn>()
         var i = 0
         var n = 0
@@ -49,10 +77,12 @@ object AgentTurnBuilder {
                     var stopped: String? = null
                     var failure: AgentTurnFailure? = null
                     var reportArtifact: AgentReportArtifact? = null
-                    val assistantId = "${idPrefix}a-$n"
+                    val assistantId = breakBefore[i]?.let(::briefTurnId) ?: "${idPrefix}a-$n"
                     n++
                     val toolIndexById = mutableMapOf<String, Int>()
+                    val turnStart = i
                     fold@ while (i < messages.size) {
+                        if (i != turnStart && messages[i] is ChatMessage.Assistant && i in breakBefore) break@fold
                         when (val fm = messages[i]) {
                             is ChatMessage.Unknown -> break@fold
                             is ChatMessage.Assistant -> {
@@ -327,7 +357,11 @@ object AgentTurnBuilder {
     private fun annotateManyCount(args: JsonElement): Int =
         ((args as? JsonObject)?.get("annotations") as? JsonArray)?.size ?: 1
 
-    fun stateFrom(messages: List<ChatMessage>, idPrefix: String = ""): AgentChatState {
+    fun stateFrom(
+        messages: List<ChatMessage>,
+        idPrefix: String = "",
+        breakBefore: Map<Int, DailyBriefMessageRef> = emptyMap(),
+    ): AgentChatState {
         val cits = citations(messages, idPrefix).toMutableList()
         // Seed the Citations set from any persisted Deep Research `report_artifact` part.
         // A deep-research run cites via the merged artifact set, not via `annotate` tool pairs, so
@@ -339,7 +373,7 @@ object AgentTurnBuilder {
             if (seen.add(ref.documentId)) cits.add(AgentCitation(documentId = ref.documentId, ref = ref))
         }
         return AgentChatState(
-            turns = turns(messages, idPrefix),
+            turns = turns(messages, idPrefix, breakBefore),
             citations = cits,
             citationsByDocId = cits.mapIndexed { i, c -> c.documentId to i }.toMap(),
             records = records(messages),

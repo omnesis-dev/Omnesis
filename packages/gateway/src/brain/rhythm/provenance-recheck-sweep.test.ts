@@ -32,6 +32,8 @@ import {
 } from "../storage/engine-state.js";
 import { createDocAnnotation } from "../storage/annotations.js";
 import { recordConsumptionEdges } from "../storage/consumption-edges.js";
+import { createOpenLoop } from "../storage/open-loops.js";
+import { createObservation, getObservation } from "../storage/observations.js";
 import { provenanceRecheckDedupeKey } from "../run-payloads.js";
 import {
   reanchorProvenanceRecheckWatermark,
@@ -101,22 +103,33 @@ describe("provenance-recheck sweep", () => {
     db.prepare("UPDATE doc_annotations SET invalidated_at = ? WHERE id = ?").run(at, id);
   }
 
-  function seedBrief(id: string): void {
-    db.prepare(
-      `INSERT INTO briefs (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
-       VALUES (?, 'run_seed', 'info', 'Practice space update', 0.7, 0.4, ?, ?)`,
-    ).run(id, NOW - 10_000, NOW - 10_000);
+  function seedLoop(id: string): void {
+    createOpenLoop(
+      db,
+      {
+        id,
+        createdByRun: "run_seed",
+        title: "Practice space update",
+        confidence: 0.7,
+        importance: 0.4,
+      },
+      NOW - 10_000,
+    );
   }
 
-  function recordEdge(annoId: string, briefId: string): void {
+  function recordEdge(
+    annoId: string,
+    dependentId: string,
+    dependentKind: "loop" | "observation" = "loop",
+  ): void {
     recordConsumptionEdges(
       db,
       [
         {
           priorStore: "doc",
           priorAnnotationId: annoId,
-          dependentKind: "brief",
-          dependentId: briefId,
+          dependentKind,
+          dependentId,
           runId: "run_seed",
         },
       ],
@@ -130,8 +143,8 @@ describe("provenance-recheck sweep", () => {
 
   test("first pass anchors the watermark at now and enqueues nothing (no backfill)", async () => {
     seedAnno("anno_1");
-    seedBrief("brief_1");
-    recordEdge("anno_1", "brief_1");
+    seedLoop("loop_1");
+    recordEdge("anno_1", "loop_1");
     killAnno("anno_1", NOW - 5_000); // died BEFORE the knob went on
     const r = await runProvenanceRecheckSweepPass(deps(NOW));
     expect(r).toEqual({ fired: false, enqueued: 0 });
@@ -146,18 +159,18 @@ describe("provenance-recheck sweep", () => {
   test("a dead prior with a live dependent enqueues one folded feedback run", async () => {
     await runProvenanceRecheckSweepPass(deps(NOW)); // anchor
     seedAnno("anno_1");
-    seedBrief("brief_1");
-    recordEdge("anno_1", "brief_1");
+    seedLoop("loop_1");
+    recordEdge("anno_1", "loop_1");
     killAnno("anno_1", NOW + 100);
     const r = await runProvenanceRecheckSweepPass(deps(NOW + 1_000));
     expect(r).toEqual({ fired: true, enqueued: 1 });
     const runs = pendingRuns();
     expect(runs).toHaveLength(1);
     expect(runs[0]!.kind).toBe("feedback");
-    expect(runs[0]!.dedupeKey).toBe(provenanceRecheckDedupeKey("brief", "brief_1"));
+    expect(runs[0]!.dedupeKey).toBe(provenanceRecheckDedupeKey("loop", "loop_1"));
     expect(runs[0]!.payload).toEqual({
-      recheckDependentKind: "brief",
-      recheckDependentId: "brief_1",
+      recheckDependentKind: "loop",
+      recheckDependentId: "loop_1",
     });
     // Watermark advanced past the death: a replay pass finds nothing new.
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 2_000))).enqueued).toBe(0);
@@ -166,10 +179,10 @@ describe("provenance-recheck sweep", () => {
 
   test("N dead priors of ONE dependent fold into a single run; a pending run absorbs later deaths", async () => {
     await runProvenanceRecheckSweepPass(deps(NOW));
-    seedBrief("brief_1");
+    seedLoop("loop_1");
     for (const id of ["anno_1", "anno_2"]) {
       seedAnno(id);
-      recordEdge(id, "brief_1");
+      recordEdge(id, "loop_1");
     }
     killAnno("anno_1", NOW + 100);
     killAnno("anno_2", NOW + 200);
@@ -178,7 +191,7 @@ describe("provenance-recheck sweep", () => {
     // A third prior dies while the recheck is still pending: covered — no
     // second run (the prompt reads the dead set at claim time).
     seedAnno("anno_3");
-    recordEdge("anno_3", "brief_1");
+    recordEdge("anno_3", "loop_1");
     killAnno("anno_3", NOW + 1_500);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 2_000))).enqueued).toBe(0);
     expect(pendingRuns()).toHaveLength(1);
@@ -187,11 +200,32 @@ describe("provenance-recheck sweep", () => {
   test("a dependent that no longer exists is skipped entirely", async () => {
     await runProvenanceRecheckSweepPass(deps(NOW));
     seedAnno("anno_1");
-    recordEdge("anno_1", "brief_gone");
+    recordEdge("anno_1", "loop_gone");
     killAnno("anno_1", NOW + 100);
     const r = await runProvenanceRecheckSweepPass(deps(NOW + 1_000));
     expect(r).toEqual({ fired: false, enqueued: 0 });
     expect(pendingRuns()).toHaveLength(0);
+  });
+
+  test("a dead prior drops a dependent observation as stale instead of enqueuing a run", async () => {
+    await runProvenanceRecheckSweepPass(deps(NOW));
+    seedAnno("anno_1");
+    createObservation(
+      db,
+      { id: "obs_1", createdByRun: "run_seed", summary: "Practice space moved" },
+      NOW - 10_000,
+    );
+    recordEdge("anno_1", "obs_1", "observation");
+    killAnno("anno_1", NOW + 100);
+    const r = await runProvenanceRecheckSweepPass(deps(NOW + 1_000));
+    expect(r).toEqual({ fired: true, enqueued: 0 });
+    expect(pendingRuns()).toHaveLength(0);
+    expect(getObservation(db, "obs_1")).toMatchObject({ state: "dropped", closeReason: "stale" });
+    // The watermark moved past the death: a replay pass finds nothing.
+    expect(await runProvenanceRecheckSweepPass(deps(NOW + 2_000))).toEqual({
+      fired: false,
+      enqueued: 0,
+    });
   });
 
   test("the per-pass cap holds the watermark back so the remainder re-surfaces next pass", async () => {
@@ -199,10 +233,10 @@ describe("provenance-recheck sweep", () => {
     const total = PROVENANCE_RECHECK_MAX_PER_PASS + 2;
     for (let i = 0; i < total; i++) {
       const anno = `anno_${i}`;
-      const brief = `brief_${i}`;
+      const loop = `loop_${i}`;
       seedAnno(anno);
-      seedBrief(brief);
-      recordEdge(anno, brief);
+      seedLoop(loop);
+      recordEdge(anno, loop);
       killAnno(anno, NOW + 100 + i);
     }
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 1_000))).enqueued).toBe(
@@ -221,9 +255,9 @@ describe("provenance-recheck sweep", () => {
     const total = PROVENANCE_RECHECK_MAX_PER_PASS + 3;
     seedAnno("anno_1");
     for (let i = 0; i < total; i++) {
-      const brief = `brief_${i}`;
-      seedBrief(brief);
-      recordEdge("anno_1", brief);
+      const loop = `loop_${i}`;
+      seedLoop(loop);
+      recordEdge("anno_1", loop);
     }
     killAnno("anno_1", NOW + 100);
     // The soft cap overshoots to finish the group in one pass.
@@ -240,31 +274,31 @@ describe("provenance-recheck sweep", () => {
   test("an attempts-exhausted pending recheck is crash residue: cancelled, the next death enqueues fresh", async () => {
     await runProvenanceRecheckSweepPass(deps(NOW));
     seedAnno("anno_1");
-    seedBrief("brief_1");
-    recordEdge("anno_1", "brief_1");
+    seedLoop("loop_1");
+    recordEdge("anno_1", "loop_1");
     killAnno("anno_1", NOW + 100);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 1_000))).enqueued).toBe(1);
     // The pending run's attempts hit the drainer's cap without settling — the
     // drainer's `attempts < maxAttempts` claim predicate can never pick it up
-    // again, so counting it as coverage would shadow brief_1 forever.
+    // again, so counting it as coverage would shadow loop_1 forever.
     db.prepare("UPDATE cognition_runs SET attempts = ? WHERE kind = 'feedback'").run(
       DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
     );
     seedAnno("anno_2");
-    recordEdge("anno_2", "brief_1");
+    recordEdge("anno_2", "loop_1");
     killAnno("anno_2", NOW + 1_500);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 2_000))).enqueued).toBe(1);
     const runs = pendingRuns();
     expect(runs).toHaveLength(1); // the residue row is gone, not kept beside the new one
     expect(runs[0]!.attempts).toBe(0);
-    expect(runs[0]!.dedupeKey).toBe(provenanceRecheckDedupeKey("brief", "brief_1"));
+    expect(runs[0]!.dedupeKey).toBe(provenanceRecheckDedupeKey("loop", "loop_1"));
   });
 
   test("a pending recheck still under the attempts cap keeps covering its dependent", async () => {
     await runProvenanceRecheckSweepPass(deps(NOW));
     seedAnno("anno_1");
-    seedBrief("brief_1");
-    recordEdge("anno_1", "brief_1");
+    seedLoop("loop_1");
+    recordEdge("anno_1", "loop_1");
     killAnno("anno_1", NOW + 100);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 1_000))).enqueued).toBe(1);
     // One attempt short of the cap — the final attempt is still owed (it may
@@ -273,7 +307,7 @@ describe("provenance-recheck sweep", () => {
       DEFAULT_COGNITION_RUN_MAX_ATTEMPTS - 1,
     );
     seedAnno("anno_2");
-    recordEdge("anno_2", "brief_1");
+    recordEdge("anno_2", "loop_1");
     killAnno("anno_2", NOW + 1_500);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 2_000))).enqueued).toBe(0);
     const runs = pendingRuns();
@@ -283,15 +317,15 @@ describe("provenance-recheck sweep", () => {
 
   test("a death older than the recheck's claim is covered: no second run once it settles", async () => {
     await runProvenanceRecheckSweepPass(deps(NOW));
-    seedBrief("brief_1");
+    seedLoop("loop_1");
     seedAnno("anno_1");
-    recordEdge("anno_1", "brief_1");
+    recordEdge("anno_1", "loop_1");
     killAnno("anno_1", NOW + 100);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 1_000))).enqueued).toBe(1);
 
     // A second prior dies while the run is still queued behind other work…
     seedAnno("anno_2");
-    recordEdge("anno_2", "brief_1");
+    recordEdge("anno_2", "loop_1");
     killAnno("anno_2", NOW + 2_000);
     // …the run is then claimed and settles: its prompt re-derived the dead set
     // AT CLAIM TIME, so both deaths were in view.
@@ -305,9 +339,9 @@ describe("provenance-recheck sweep", () => {
 
   test("a death after the recheck's claim is uncovered: a second run is enqueued", async () => {
     await runProvenanceRecheckSweepPass(deps(NOW));
-    seedBrief("brief_1");
+    seedLoop("loop_1");
     seedAnno("anno_1");
-    recordEdge("anno_1", "brief_1");
+    recordEdge("anno_1", "loop_1");
     killAnno("anno_1", NOW + 100);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 1_000))).enqueued).toBe(1);
     claimDueCognitionRuns(db, { now: NOW + 2_000 });
@@ -315,19 +349,19 @@ describe("provenance-recheck sweep", () => {
 
     // This prior died AFTER the claim, so the settled run never saw it.
     seedAnno("anno_2");
-    recordEdge("anno_2", "brief_1");
+    recordEdge("anno_2", "loop_1");
     killAnno("anno_2", NOW + 3_000);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 4_000))).enqueued).toBe(1);
     const runs = pendingRuns();
     expect(runs).toHaveLength(1);
-    expect(runs[0]!.dedupeKey).toBe(provenanceRecheckDedupeKey("brief", "brief_1"));
+    expect(runs[0]!.dedupeKey).toBe(provenanceRecheckDedupeKey("loop", "loop_1"));
   });
 
   test("disable → re-enable: the re-anchored watermark skips off-window deaths but sees later ones", async () => {
     await runProvenanceRecheckSweepPass(deps(NOW)); // first enabled pass anchors
     seedAnno("anno_1");
-    seedBrief("brief_1");
-    recordEdge("anno_1", "brief_1");
+    seedLoop("loop_1");
+    recordEdge("anno_1", "loop_1");
     killAnno("anno_1", NOW + 100); // dies while the knob is OFF
     // Each disabled tick slides the watermark up to its own now.
     await reanchorProvenanceRecheckWatermark(deps(NOW + 1_000));
@@ -339,11 +373,11 @@ describe("provenance-recheck sweep", () => {
     expect(pendingRuns()).toHaveLength(0);
     // A death after re-enable is picked up normally.
     seedAnno("anno_2");
-    seedBrief("brief_2");
-    recordEdge("anno_2", "brief_2");
+    seedLoop("loop_2");
+    recordEdge("anno_2", "loop_2");
     killAnno("anno_2", NOW + 2_500);
     expect((await runProvenanceRecheckSweepPass(deps(NOW + 3_000))).enqueued).toBe(1);
-    expect(pendingRuns()[0]!.dedupeKey).toBe(provenanceRecheckDedupeKey("brief", "brief_2"));
+    expect(pendingRuns()[0]!.dedupeKey).toBe(provenanceRecheckDedupeKey("loop", "loop_2"));
   });
 
   test("the disabled-tick re-anchor is a no-op before the first enabled pass", async () => {

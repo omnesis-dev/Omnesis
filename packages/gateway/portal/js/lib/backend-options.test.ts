@@ -220,7 +220,7 @@ describe("buildModelPickerOptions", () => {
     expect(opts.some((option: { id?: string }) => option.id === "responses")).toBe(false);
   });
 
-  it.each(["privacy-reviewer", "entailment-verifier", "brief-judge", "ocr"])("offers advertised Codex models for %s", (role: string) => {
+  it.each(["privacy-reviewer", "entailment-verifier", "ocr"])("offers advertised Codex models for %s", (role: string) => {
     const opts = buildModelPickerOptions(overview({ inference: { codex: {
       type: "codex", configured: true, status: "ok", loggedIn: true,
       models: ["gpt-example-a"], modelRoles: { "gpt-example-a": [role] },
@@ -412,7 +412,7 @@ describe("buildModelPickerOptions — the Decision model", () => {
   });
 
   it("offers TypeSafe to no other capability", () => {
-    for (const role of ["embedder", "agent", "privacy-reviewer", "entailment-verifier", "watch-judge", "transcriber", "ocr", "background-agent", "brief-judge"]) {
+    for (const role of ["embedder", "agent", "privacy-reviewer", "entailment-verifier", "watch-judge", "transcriber", "ocr", "background-agent"]) {
       expect(isDecisionRole(role)).toBe(false);
       const kinds = buildModelPickerOptions(everything, role).map((o: { kind: string }) => o.kind);
       expect(kinds, role).not.toContain("typesafe");

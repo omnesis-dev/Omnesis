@@ -136,6 +136,7 @@
                 <li><a href="#people-and-reference-graphs">People and graphs</a></li>
                 <li><a href="#analytics">Analytics</a></li>
                 <li><a href="#the-agent">The agent</a></li>
+                <li><a href="#tasks">Tasks</a></li>
                 <li><a href="#where-your-data-lives">Where your data lives</a></li>
                 <li><a href="#help">Help and support</a></li>
                 <li><a href="#where-next">Where next</a></li>
@@ -541,9 +542,21 @@
           The agent is a chat interface over your data, running inside the gateway. It answers
           questions by searching documents, following trails, looking up people and querying
           analytics, and cites the documents it used. It never changes your documents; the only
-          thing it writes is its own memory, which cites its evidence. It starts working once you
-          assign a model to it, local or remote. See
+          things it writes are its own memory, which cites its evidence, and your tasks when you
+          ask. It starts working once you assign a model to it, local or remote. See
           <a href="/docs/agent">The agent</a>.
+        </p>
+
+        <h2 id="tasks">Tasks</h2>
+        <p>
+          Tasks are the things you mean to do, kept on the gateway and shown on the portal and in
+          the mobile apps as a bullet journal: today, this month, the future, and what waits on
+          someone else. A task has a planned time (a day, a month or someday) separate from any real
+          deadline, and every change to it is recorded with a receipt you can undo. You change tasks
+          directly, by asking the agent in a conversation, or by telling Omnesis in a note from the
+          portal, the apps or the CLI once a <code>background-agent</code> model is assigned to read
+          notes; notes that external agents add are saved but never acted on. Tasks need no model.
+          See <a href="/docs/apps#tasks">Tasks</a>.
         </p>
 
         <h2 id="where-your-data-lives">Where your data lives</h2>

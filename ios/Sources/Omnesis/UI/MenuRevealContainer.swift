@@ -380,7 +380,7 @@ private struct MenuRevealPreviewMenu: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
             Text("Omnesis").font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            ForEach(["Search", "Briefs", "Sources", "People"], id: \.self) { label in
+            ForEach(["Search", "Tasks", "Sources", "People"], id: \.self) { label in
                 Text(label).font(.system(size: 18)).foregroundStyle(Theme.textPrimary)
             }
             Spacer()

@@ -39,7 +39,6 @@ import dev.omnesis.android.transport.dto.AgentTrailEventRelated
 import dev.omnesis.android.transport.dto.AgentTrailRecord
 import dev.omnesis.android.transport.dto.AgentTrailRecordKeyField
 import dev.omnesis.android.transport.dto.AgentUsage
-import dev.omnesis.android.transport.dto.BriefOriginSnapshot
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.DeepResearchPlanItem
@@ -215,23 +214,8 @@ class AgentParityScreenshotTest {
     }
 
     // --- Anchored threads ---
-    // Nothing has been said in either of these yet, so the card is the whole screen: the
-    // gateway hid the folded run transcript that seeded the thread, leaving no visible turns.
-
-    private fun briefOriginState() = AgentCoordinator.UiState(
-        sessionId = "s_brief",
-        hasClient = true,
-        conversationOrigin = ConversationOrigin(
-            kind = "brief",
-            brief = BriefOriginSnapshot(
-                title = "Two invoices quote the same reference",
-                description = "Studio Northstar billed reference **NS-8841** twice, nine days apart.",
-                body = "The first landed on 12 March for GBP 1,240 and the second on 21 March " +
-                    "for the same amount. Neither mentions the other.",
-            ),
-            seedMessageCount = 2,
-        ),
-    )
+    // Nothing has been said in this one yet, so the card is the whole screen: the gateway hid
+    // the folded run transcript that seeded the thread, leaving no visible turns.
 
     private fun watchFiringOriginState() = AgentCoordinator.UiState(
         sessionId = "s_watch",
@@ -247,16 +231,6 @@ class AgentParityScreenshotTest {
             seedMessageCount = 1,
         ),
     )
-
-    @Test
-    fun agent_brief_origin_dark() = capture("agent_parity_brief_origin_dark", dark = true) {
-        agentContent(briefOriginState())()
-    }
-
-    @Test
-    fun agent_brief_origin_light() = capture("agent_parity_brief_origin_light", dark = false) {
-        agentContent(briefOriginState())()
-    }
 
     @Test
     fun agent_watch_firing_origin_dark() = capture("agent_parity_watch_firing_origin_dark", dark = true) {

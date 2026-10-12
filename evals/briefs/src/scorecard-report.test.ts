@@ -35,7 +35,7 @@ const METRICS: ScorecardMetrics = {
   loopRecall: 0.875,
   updateRecall: 1,
   silentCloseViolations: 0,
-  briefsPerDay: 5,
+  observationsPerDay: 5,
   tokensPerDay: 100_000,
   infraFailureRate: 0,
   malformedToolCallRate: 0.04,
@@ -50,7 +50,7 @@ const SNAKE: Record<string, number> = {
   loop_recall: 0.875,
   update_recall: 1,
   silent_close_violations: 0,
-  briefs_per_day: 5,
+  observations_per_day: 5,
   tokens_per_day: 100_000,
   infra_failure_rate: 0,
   malformed_tool_call_rate: 0.04,
@@ -92,7 +92,9 @@ describe("loadThresholds", () => {
 
   test("rejects unknown metrics, non-numeric values, and negative noise bands", () => {
     expect(() =>
-      loadThresholds(writeThresholds({ metrics: { briefs_per_day: { value: 1, noiseBand: 0 } } })),
+      loadThresholds(
+        writeThresholds({ metrics: { observations_per_day: { value: 1, noiseBand: 0 } } }),
+      ),
     ).toThrow(/not a gateable metric/);
     expect(() =>
       loadThresholds(
@@ -186,7 +188,7 @@ describe("formatLedgerRow / assembleScorecard", () => {
         loopArcsTracked: 7,
         updateTargets: 3,
         updatesLanded: 3,
-        briefsCreated: 5,
+        observationsNoted: 5,
         runsCompleted: 22,
         runsFailed: 0,
         dataRunsCompleted: 22,

@@ -6,6 +6,7 @@ import {
   prepareContextualWitnessRequest,
   parseContextualWitnessVerdict,
   contextualWitnessFailure,
+  contextualSchemaIssues,
 } from "./contextual-segments.js";
 import {
   contextualEntailmentFeedback,
@@ -151,6 +152,23 @@ it("preserves actionable negative feedback and content-free failure categories",
   );
 });
 
+it("names schema breaches by field path and issue code, never by content", () => {
+  const r = prepareContextualWitnessRequest(input);
+  const value = reply(r) as unknown as Record<string, Record<string, unknown>>;
+  value.contentInContext!.verdict = "partly supported by the amber panel";
+  value.placementSupport!.reason = "";
+  const text = JSON.stringify(value);
+  expect(contextualWitnessFailure(text, r)).toBe("assessment_schema");
+  const issues = contextualSchemaIssues(text, r);
+  expect(issues).toEqual([
+    "contentInContext.verdict:invalid_value",
+    "placementSupport.reason:too_small",
+  ]);
+  expect(issues.join(" ")).not.toContain("amber");
+  expect(contextualSchemaIssues(JSON.stringify(reply(r)), r)).toEqual([]);
+  expect(contextualSchemaIssues("bad", r)).toEqual([]);
+});
+
 it("rejects altered or missing correlation tokens without forgiving prefixes", () => {
   const request = prepareContextualWitnessRequest(input);
   for (const witnessSet of [
@@ -201,4 +219,20 @@ it("preserves interpretation fields without lending them handles or recursively 
   expect([...request.segments.values()].join("")).toBe(
     "A lens may be installed.A qualified reference " + "x".repeat(2200),
   );
+});
+it("accepts a witness list longer than sixteen when the claim combines many facts", () => {
+  const sessions = Array.from({ length: 18 }, (_, i) => `Booking confirmed for session ${i + 1}.`);
+  const r = prepareContextualWitnessRequest({
+    claim: "Eighteen sessions were booked.",
+    evidence: JSON.stringify({ evidenceParts: sessions }),
+    context: "Bookings this autumn.",
+  });
+  const ids = sessions.map((_, i) => `s${i}`);
+  expect(parseContextualWitnessVerdict(JSON.stringify(reply(r, ids)), r)).toBe("entailment");
+  const negative = reply(r, ids);
+  negative.contentInContext.verdict = "unsupported";
+  expect(parseContextualWitnessVerdict(JSON.stringify(negative), r)).toBe("neutral");
+  expect(contextualEntailmentFeedback(JSON.stringify(negative))).toEqual([
+    { check: "content_in_context", verdict: "unsupported", reason: "Scripted support." },
+  ]);
 });

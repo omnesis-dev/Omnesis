@@ -4,22 +4,23 @@ import { html } from "htm/preact";
 import { lazy } from "../lib/lazy.js";
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { loopDeadlineLabel } from "./knowledge-loop-library.js";
-export const BriefDetail = lazy(() => import("./cognition.js").then((module) => module.BriefDetail));
+export const ObservationDetail = lazy(() =>
+  import("./cognition-observations.js").then((module) => module.ObservationDetail),
+);
 export function libraryStatusOptions(kind) {
   return kind === "loop" ? [
     ["all", "All outcomes"], ["active", "Active"], ["resolved", "Resolved"],
     ["retired", "Retired"], ["open", "Open"], ["snoozed", "Snoozed"],
     ["done", "Done"], ["dismissed", "Dismissed"], ["decayed", "Decayed"], ["deleted", "Deleted"],
-  ] : kind === "brief" ? [
-    ["all", "All briefs"], ["unread", "Unread"], ["read", "Read"],
-    ["snoozed", "Snoozed"], ["dismissed", "Dismissed"],
+  ] : kind === "observation" ? [
+    ["all", "All observations"], ["open", "Open"], ["live", "Live"], ["held", "Held"],
+    ["shipped", "Shipped"], ["dropped", "Dropped"],
   ] : [];
 }
 export function libraryStateLabel(node) {
   const value = node.canonicalFields?.state;
   if (!value) return "";
-  const label = value === "dismissed_snoozed" ? "Snoozed"
-    : String(value).replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+  const label = String(value).replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
   return node.libraryType === "retired-loop" ? `Retired · ${label}` : label;
 }
 export function RetirementMetadata({ node }) {

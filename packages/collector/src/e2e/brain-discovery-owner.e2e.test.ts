@@ -28,7 +28,7 @@ let bench: BrainBench;
 let sourceId = "";
 let sourceRevision = "";
 let loopId = "";
-let briefId = "";
+let observationId = "";
 const nodeOffers: Array<{ kind: string; matchesLoop: boolean; validity: unknown }> = [];
 
 beforeAll(async () => {
@@ -36,7 +36,6 @@ beforeAll(async () => {
     experimental: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "ship-all",
     decision: {
       policy(request) {
         const purpose = Object.keys(request.questions)[0]!;
@@ -66,14 +65,11 @@ beforeAll(async () => {
                   importance: 0.6,
                   docs: [sourceId],
                 }),
-                call("brief_list", {}),
-                call("brief_create", {
-                  kind: "info",
-                  title: "Workshop preparation",
-                  description,
-                  confidence: 0.9,
-                  urgency: 0.3,
+                call("observation_list", {}),
+                call("observation_note", {
+                  summary: "Twelve workshop notebooks need preparing.",
                   citations: [sourceId],
+                  claims: [{ docId: sourceId, quote: description }],
                 }),
               ],
             };
@@ -84,21 +80,17 @@ beforeAll(async () => {
               matchesLoop: item.node.id === loopId,
               validity: item.node.validity,
             });
-          if (!item.node || ![loopId, briefId].includes(item.node.id))
-            return preserveCurrentOwner(item, ctx, steps);
-          const isBrief = item.node.id === briefId;
+          if (!item.node || item.node.id !== loopId) return preserveCurrentOwner(item, ctx, steps);
           return {
             calls: [
               call("knowledge_save", {
                 inputFingerprint: item.inputFingerprint,
                 node: {
                   id: item.node.id,
-                  kind: isBrief ? "brief" : "loop",
+                  kind: "loop",
                   ownerId: item.node.id,
                   title: item.node.title,
-                  markdown: isBrief
-                    ? `<claim id="outcome" refs="source:${sourceId}">## Description\n${description}\n\n## Body\n</claim>`
-                    : `<claim id="outcome" refs="source:${sourceId}">${description}</claim>`,
+                  markdown: `<claim id="outcome" refs="source:${sourceId}">${description}</claim>`,
                   expectedRevision: item.node.revision,
                   inputVersions: { [`source:${sourceId}`]: sourceRevision },
                 },
@@ -110,10 +102,8 @@ beforeAll(async () => {
           if (item.source?.title !== document.title) return [];
           const created = steps.find((step) => step.name === "open_loop_create");
           loopId = createdLoop.parse(structuredData(created?.result)).loop.id;
-          const brief = steps.find((step) => step.name === "brief_create");
-          briefId = z
-            .object({ brief: z.object({ id: z.string() }) })
-            .parse(structuredData(brief?.result)).brief.id;
+          const noted = steps.find((step) => step.name === "observation_note");
+          observationId = z.object({ id: z.string() }).parse(structuredData(noted?.result)).id;
           return [];
         },
       }),
@@ -180,21 +170,21 @@ it("automatically discovers a fresh canonical loop without explicit targets and 
       verification: "verified",
     }),
   ]);
-  const brief = await bench.harness.gatewayJson<{ claims: Array<{ verification: string }> }>(
-    `/admin/brain/knowledge/${encodeURIComponent(briefId)}`,
-  );
-  expect(brief.claims).toEqual([expect.objectContaining({ verification: "verified" })]);
+  // The observation noted in the same run is canonical too, but synthesis never
+  // rewrites what was observed: its node settles without a model turn.
+  const [observation] = (await bench.obs.observations()).items;
+  expect(observation).toMatchObject({ id: observationId, state: "live", citations: [documentId] });
+  expect(nodeOffers.some((node) => node.kind === "observation")).toBe(false);
   expect(
     steps!.some(
-      (step, index) =>
-        index > completedAt &&
+      (step) =>
         step.tool === "knowledge_save" &&
         typeof step.args.node === "object" &&
         step.args.node !== null &&
         "id" in step.args.node &&
-        step.args.node.id === briefId,
+        step.args.node.id === observationId,
     ),
-  ).toBe(true);
+  ).toBe(false);
   expect(await bench.obs.loopsMatching(title)).toHaveLength(1);
   // A first root with usable orientation must be offered despite a gate that
   // rejects every impact request. The puppet may legitimately keep it empty.

@@ -10,12 +10,17 @@ const BANDS = [
   { key: "deferred", color: "var(--warning)", label: "Deferred" },
   { key: "failed", color: "var(--danger)", label: "Needs retry" },
   { key: "pending", color: "var(--accent)", label: "Not reviewed" },
+  // Never reviewed and older than brain.bootstrap.horizon: not owed, so it is
+  // drawn muted and left out of the headline's denominator.
+  { key: "outOfScope", color: "var(--text-muted)", label: "Outside history horizon" },
 ];
 const PHASES = [
   { value: "interpretation", label: "Read evidence" },
   { value: "organization", label: "Connect context" },
 ];
 const fmt = (n) => n.toLocaleString();
+const OUT_OF_SCOPE_NOTE =
+  "older documents are outside the history horizon: they are not reviewed proactively, and stay searchable.";
 
 export function coverageTotals(months, phase) {
   const counts = Object.fromEntries(BANDS.map(({ key }) => [key, 0]));
@@ -53,12 +58,13 @@ export function CoverageColumns({ months, phase }) {
 export function KnowledgeHistoryTimeline({ timeline, loading, error, onRefresh, phase = "interpretation", onPhaseChange }) {
   const months = timeline?.mode === "knowledge" ? timeline.months ?? [] : [];
   const totals = coverageTotals(months, phase);
+  const inScope = totals.total - totals.outOfScope;
   const dated = months.filter((month) => month.month);
   return html`<section class="cognition-timeline" aria-label="Historical discovery coverage">
     <div class="tl-head">
       <div>
         <div class="debug-card-label">Your history, month by month</div>
-        <div class="tl-headline">${fmt(totals.considered)} of ${fmt(totals.total)} documents${" "}
+        <div class="tl-headline">${fmt(totals.considered)} of ${fmt(inScope)} documents${" "}
           ${phase === "interpretation" ? "read" : "reviewed for connections"}</div>
       </div>
       <${Segmented} options=${PHASES} value=${phase} onChange=${onPhaseChange} />
@@ -67,6 +73,7 @@ export function KnowledgeHistoryTimeline({ timeline, loading, error, onRefresh, 
       ${phase === "interpretation"
         ? "Has the brain read this evidence and considered what it means?"
         : "Has the brain considered how this evidence belongs with existing knowledge? A review need not create a wiki page."}
+      ${totals.outOfScope > 0 && ` ${fmt(totals.outOfScope)} ${OUT_OF_SCOPE_NOTE}`}
     </p>
     ${error && html`<p class="debug-error" role="alert">${error}</p>`}
     ${!timeline && loading ? html`<p role="status">Loading historical coverage…</p>`

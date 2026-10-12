@@ -13,13 +13,13 @@ production seam (the `background-agent` inference assignment).
 ## What the bench is for, and what it is not for
 
 It answers **"given a decision the steward made, did the machine do the right thing?"**
-It never asks "was that a good decision". Quality belongs to the scorecard / eval lane
-(`briefs-scorecard.ts`, `evals/briefs/`), which is deliberately separate — so improving a
-prompt can never redden correctness CI.
+It never asks "was that a good decision". Quality belongs to the scorecard / eval lane,
+which is deliberately separate — so improving a prompt can never redden correctness CI.
 
-Concretely: assert that a `brief_create` call produced a brief row with its claims,
-citations and related loops wired up. Do not assert that the steward _should_ have
-created a brief for that document.
+Concretely: assert that an `observation_note` call produced an observation row with its
+claims, citations, related loops and note-time scores wired up, and that the morning run
+shipped it into the Morning brief conversation. Do not assert that the steward _should_
+have noted that document.
 
 ## Anatomy of a test
 
@@ -142,14 +142,14 @@ cassette miss proves fail-open behavior rather than silently substituting an old
 A `PuppetBehavior` matches a run and supplies a plan. Every field present must match;
 the first matching behavior wins, so put specific entries before general ones.
 
-| field            | matches                                                            |
-| ---------------- | ------------------------------------------------------------------ |
-| `kind`           | the run kind (`data`, `sweep`, `verification`, …)                  |
-| `flavour`        | the flavour within a kind (see the table below)                    |
-| `subject`        | the run's subject, exactly (doc id, source id, sweep id, brief id) |
-| `docTitle`       | the **title of the fetched document** (data / bootstrap runs only) |
-| `attempt`        | only this attempt number — for scripting a retry differently       |
-| `promptContains` | a substring of the run prompt — the escape hatch for anything else |
+| field            | matches                                                             |
+| ---------------- | ------------------------------------------------------------------- |
+| `kind`           | the run kind (`data`, `sweep`, `verification`, …)                   |
+| `flavour`        | the flavour within a kind (see the table below)                     |
+| `subject`        | the run's subject, exactly (doc id, source id, sweep id, day, note) |
+| `docTitle`       | the **title of the fetched document** (data / bootstrap runs only)  |
+| `attempt`        | only this attempt number — for scripting a retry differently        |
+| `promptContains` | a substring of the run prompt — the escape hatch for anything else  |
 
 `plan` is a `PuppetPlan` or a function of the `RunContext`. Use the function form when the
 plan needs the run's subject (`ctx.subject` is the triggering document id on data runs).
@@ -165,7 +165,7 @@ result's `data`:
 
 ```ts
 ref("open_loop_create", "loop.id"); // the id the create just minted
-ref("brief_create", "brief.id");
+ref("observation_note", "id"); // the observation just noted
 ref("open_loop_search", "loops.0.id"); // a loop an EARLIER RUN created
 ref("annotate_durable", "id");
 ```
@@ -174,8 +174,32 @@ Plans execute strictly in order, and progress is counted per tool name, so a pla
 repeat a tool freely. A call that the gateway **rejects** still counts as executed — a
 gated write cannot spin forever.
 
-The four loop/brief write tools require `annotationDependencies`; the puppet supplies `[]`
+The loop and observation write tools (`open_loop_create`, `open_loop_update`,
+`observation_note`) require `annotationDependencies`; the puppet supplies `[]`
 automatically unless the plan sets it.
+
+### The note agent and the interactive agent
+
+The note agent's turn on a quick-capture note runs on the same `background-agent` seam but
+outside the cognition queue, so its prompt carries no run envelope. `readRunContext` reads
+it from its note block: kind and flavour `note`, `subject` = the note text, `detail` = the
+capture day. Match it with `{ flavour: "note", promptContains: "…" }`.
+
+A conversation turn — a reply in the Morning brief thread or an ordinary conversation —
+runs on the interactive `agent` role. `BrainBench.start({ agent: { behaviors } })` starts the
+conversation puppet (`conversation-puppet.ts`): each `ConversationBehavior` matches a
+substring of the user's latest message and runs a plan with the same `call`/`ref` rules,
+counting only the tool calls since that message. `bench.conversationCalls` records what the
+model was given (the latest message, the system prompt, the context window). With a
+`cassetteDir`, `agent: "replay"` serves the directory's `agent`-role cassettes instead.
+
+### Observation salience (the `decision` role)
+
+The morning recheck and `observation_note` ask the decision model three score questions
+about each observation (`consequence` 0–4, `timing` 0–3, `already_known` 0–1).
+`salienceDecisionPolicy([[marker, scores], …])` scripts them per observation by a marker in
+its summary, and answers every other decision request at its top level so the other gates
+pass. The gateway's own policy then ships, holds or drops; assert on its verdicts.
 
 ## Run flavours
 
@@ -184,15 +208,16 @@ automatically unless the plan sets it.
 | kind                 | flavours                                                                                                     |
 | -------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `data`               | `data.created`, `data.updated`, `data.deleted`                                                               |
-| `daily`              | `daily.digest`, `daily.source`, `daily.mayday`                                                               |
+| `daily`              | `daily.digest` (subject = the morning brief's day), `daily.source`, `daily.mayday`                           |
 | `time_based`         | `time_based.scheduled`, `time_based.decay`, `time_based.decay.gone`                                          |
-| `feedback`           | `feedback.dismissal`, `feedback.provenance`                                                                  |
+| `feedback`           | `feedback.provenance`                                                                                        |
 | `synthesis`          | `synthesis.noticing`, `synthesis.collision.loops`, `synthesis.collision.temporal`, `synthesis.contradiction` |
 | `sweep`              | `sweep` (subject = the sweep id)                                                                             |
 | `bootstrap`          | `bootstrap`, `bootstrap.deleted`                                                                             |
 | `verification`       | `verification` (subject = `doc` \| `person`), `verification.empty`                                           |
 | `merge_adjudication` | `merge_adjudication`, `merge_adjudication.settled`                                                           |
 | `notes_compaction`   | `notes_compaction`                                                                                           |
+| `note`               | `note` (no envelope: the note agent's turn; subject = the note text)                                         |
 
 The envelope (`Loop agent run <id> (kind: <kind>, attempt <n>).`) is written and parsed by
 one shared implementation in `@omnesis/core` (`cognition-envelope.ts`), so a run's identity
@@ -213,7 +238,7 @@ error and the run continues without the write. The shared read tools (`fetch_man
 typo'd arg surfaces as a wrong-looking result rather than an error.
 
 ```
-open_loop_search(query, limit?)               -> {loops: [{id, title, state, attachedBriefs, …}], retired}
+open_loop_search(query, limit?)               -> {loops: [{id, title, state, userTask, attachedObservations, …}], retired}
 open_loop_fetch(id)                           -> the loop (data IS the loop)
 open_loop_create(title, description?, confidence, importance, deadline?, actors?, involved?, docs?, blockedBy?)
                                               -> {loop: {id, …}}
@@ -221,15 +246,26 @@ open_loop_update(id, state?, confidence?, importance?, title?, description?, dea
                  actors?, involved?, docs?, blockedBy?, decayCheckPassed?)
                                               -> {loop}         # list fields REPLACE
 open_loop_ledger_append(id, note)             -> {loopId, runId, note}
-open_loop_delete(id)                          -> {loopId, deletedBriefIds}
+open_loop_delete(id)                          -> {loopId, deletedObservationIds}
+                                                 # a user's task: error user_task
+# On a user's task (userTask: true) a change to state/title/description/deadline needs
+# `reason` (else error reason_required) and is recorded as a PROPOSAL, not applied.
 
-brief_list()                                  -> {briefs: [...]}     # active states only
-brief_fetch(id)                               -> brief + assertedClaims
-brief_create(kind, title, description?, body?, citations?, confidence, urgency,
-             relevantUntil?, relatedLoopIds?, nextShow?, eventAt?, supersedes?,
-             assertedClaims?, force?)         -> {brief: {id, …}}
-brief_update(id, …, assertedClaims?)          -> {brief}             # claims REPLACE
-brief_delete(id)                              -> {briefId}
+observation_list()                            -> {observations: [...], recentlyShipped: [...]}
+observation_note(summary, why?, citations, claims?: [{docId, quote}], relatedLoopIds?,
+                 windowStart?, relevantUntil?, supersedes?)
+                                              -> {id, userAuthored, superseded, scores?}
+observation_withdraw(id)                      -> {id}
+morning_brief_send(text, omittedObservationIds?)  # the morning run only
+                                              -> {conversationId, shippedObservations}
+
+# Conversations and the note agent (not the steward):
+task_list(view? | query?)                     -> {today, tasks: [{id, title, state, yours, …}]}
+task_create(title, description?, scheduledFor?, deadline?)
+                                              -> {receipt, undoSeq, task}
+task_update(id, action, note?|reason?|to?|title?|description?|scheduledFor?|deadline?)
+task_undo(undoSeq)
+observation_suppress(id, reason)              # conversations, experimental mode
 
 annotate_durable(docId, claimType, claimText, evidenceDocId, evidenceQuote,
                  confidence, claimBasis, supersedes?, additionalEvidence?)   -> {id, …}
@@ -274,10 +310,12 @@ Contracts that surprised the first authors, so worth stating outright:
 - **Confidence is clamped by basis** (`quoted` 0.9 / `inferred` 0.7 / `synthesized` 0.55),
   with a 0.25 floor below which the write is refused outright. The clamp is reported back
   to the model as `confidenceCappedTo`.
-- **A structured refusal is an `ok` result, not an error** —
-  `brief.held_for_verification`, `brief.held_by_judge`, `*.conflict_candidates`,
+- **A structured refusal is an `ok` result, not an error** — `*.conflict_candidates`,
   `temporal_annotation.overlap_candidates`. It leaves no row, so the only way to observe it
   is the run's tool results (see Observation below).
+- **`observation_note` refuses a `relevantUntil` that has passed** on the cognition clock
+  (`invalid_args`), and in a maintenance run it must follow an `observation_list` (the
+  canonical fence's collection receipt).
 - **`annotationDependencies` may only name priors surfaced earlier in the SAME run**
   (by `annotation_search`, a prompt-inlined prior, or a write this run made). Anything
   else is `invalid_args`.
@@ -292,18 +330,15 @@ Contracts that surprised the first authors, so worth stating outright:
 
 ### Gated writes
 
-| gate                | applies to                             | rejection                                                                 |
-| ------------------- | -------------------------------------- | ------------------------------------------------------------------------- |
-| quote-in-document   | every annotation / brief claim         | `error` `evidence_not_found`                                              |
-| entailment          | annotations, brief claims, temporal    | Brief outage: structured `brief.held_for_verification`; memory fails open |
-| brief judge         | `brief_create` only                    | structured `brief.held_by_judge` (never an error) — fails closed          |
-| one-belief conflict | annotate/revise on the same claim type | structured `annotation.conflict_candidates`                               |
-| loop conflict       | `brief_create` with a related loop     | structured `brief.loop_conflict_candidates` (pass `force: true`)          |
-| authority           | any tool the run's workflow lacks      | the tool is **absent from the toolset** — the call never lands            |
+| gate                | applies to                                                 | rejection                                                             |
+| ------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| quote-in-document   | every annotation / observation claim                       | `error` `evidence_not_found`                                          |
+| entailment          | annotations, temporal; observations at the morning recheck | a rejected observation is dropped `unsupported`; an outage fails open |
+| one-belief conflict | annotate/revise on the same claim type                     | structured `annotation.conflict_candidates`                           |
+| authority           | any tool the run's workflow lacks                          | the tool is **absent from the toolset** — the call never lands        |
 
-Both gates are unassigned by default. Pass `entailment:` / `judge:` to
-`BrainBench.start` to drive their reject arms. A configured outage is tolerated
-for durable annotations and temporal memory, but a user-facing Brief is held.
+The entailment role is unassigned by default. Pass `entailment:` to `BrainBench.start`
+to drive its reject arm.
 
 ### The worth gate (the `decision` role)
 
@@ -340,7 +375,9 @@ transcripts() transcript(f) promptFor(runId) decisions()
 executedTools(runId)          <- every tool call a run made, WITH the gateway's answer
 runForDoc(docId) diffFor(runId)
 loops() loop(id) ledger(id) loopsMatching(marker) retiredLoops() productLoops() productLoop(id)
-briefs() brief(id) briefsMatching() feed() unreadCount() readBrief(id) dismissBrief(id, body)
+observations() observation(id) observationsMatching() wouldPush() observationOutcomes()
+morningBrief(day?) tasks(view) task(id) createTask() taskAction(id, body) undoTask(seq)
+tellNotes(day) conversations() conversation(id)
 docAnnotations(docId) personAnnotations(personId) dependents(store, id)
 timeIndex() temporalWindow({from,to}) timeIndexWindow({from,to})
 spend() mechanismSpend() coverage() calibration() notes() sweeps()
@@ -349,15 +386,15 @@ spend() mechanismSpend() coverage() calibration() notes() sweeps()
 **`obs.executedTools(runId)` is how you observe anything that leaves no row.** A structured
 refusal and an authority denial are both invisible in the stores by definition — the first
 was never written, the second never had a tool to call. Both appear here: the refusal as a
-`structured` result (`brief.held_by_judge`, `*.conflict_candidates`), the denial as an
+`structured` result (`*.conflict_candidates`), the denial as an
 `unknown_tool` error. `bench.puppetCalls` records only what the puppet EMITTED, so it can
 never show you either.
 
 **Shapes differ between surfaces on purpose — and sometimes between the LIST and DETAIL
 route of the same surface.** The admin loop _list_ echoes `docs`/`actors`/`involved` as raw
 id `string[]`, while the loop _detail_ route and `/loops` both enrich them into refs. The
-admin brief _list_ returns `citations: string[]`; the _detail_ route resolves them to
-`{id, title, sourceType}`; the product feed uses `{docId, title}`.
+admin observation _list_ returns `citations: string[]`; the _detail_ route resolves them to
+`{id, title, sourceType}`.
 `/admin/brain/time-index` serves the storage row (`precision`, unix-ms) while
 `/temporal/window` serves display items (ISO `start`/`endExclusive`, an `origin`). Check the
 route before trusting a type.
@@ -366,9 +403,11 @@ Ordering and limits that shape how a test must read:
 
 - `obs.ledger()` pages **newest-first**; the ledger inlined by `obs.loop()` is **oldest-first**.
 - Both temporal window routes cap a query at a **400-day span**; wider is a 400.
-- `dismissBrief` takes `{ reason }` from `not_relevant | wrong | already_handled |
-acknowledged | snoozed` — _not_ a `state`. `already_handled` is loop-kind only and
-  `acknowledged` info-kind only; the wrong pairing is a 400.
+- `obs.task(id).history` is **newest-first**; each event carries the `surface` it came
+  from (`tasks`, `conversation`, `note`, `brain`) and, from a conversation, its id.
+- `obs.taskAction()` and `obs.undoTask()` return the raw response, so a refusal's status is
+  assertable: a missing task is 404, an invalid command 400, a suggestion the user has not
+  accepted (`not_owned`) or an undo that is not the latest change 409.
 - `pulse.counts.queuedRuns` counts only runs whose `next_attempt_at <= now`, so a run
   sitting inside its debounce window is **not** in it — `upcomingRuns` carries that.
 - A pushed document is not a queue row yet: the waker buffers it in memory and enqueues it

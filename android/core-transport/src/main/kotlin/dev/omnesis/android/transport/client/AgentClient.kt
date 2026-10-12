@@ -8,10 +8,12 @@ import dev.omnesis.android.transport.dto.ConversationMessagePage
 import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.ConversationsResponse
 import dev.omnesis.android.transport.dto.CreateSessionResponse
+import dev.omnesis.android.transport.dto.DailyBriefItemsDto
 import dev.omnesis.android.transport.dto.ModelDisplay
 import dev.omnesis.android.transport.dto.SendMessageResponse
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.http.getJson
+import dev.omnesis.android.transport.http.getPrivateJson
 import dev.omnesis.android.transport.http.patchJson
 import dev.omnesis.android.transport.http.postJson
 import java.time.ZoneId
@@ -116,6 +118,14 @@ class AgentClient(private val http: GatewayHttp) {
     }
 
     suspend fun model(): ModelDisplay = http.getJson("agent/model")
+
+    /**
+     * `GET /agent/conversations/:id/briefs/:day` — what the Morning brief sent on [day]
+     * (`YYYY-MM-DD`) was based on. 404s when no brief was sent that day. Never cached: the
+     * tasks an item names change state after the brief is sent.
+     */
+    suspend fun dailyBriefItems(conversationId: String, day: String): DailyBriefItemsDto =
+        http.getPrivateJson(listOf("agent", "conversations", conversationId, "briefs", day))
 }
 
 /** Prompt/tool profile requested when a session is created or resumed. */

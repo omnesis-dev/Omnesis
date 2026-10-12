@@ -80,7 +80,7 @@ function loopToSummary(loop: OpenLoopRow): LoopSummary {
 }
 
 function loopToDetail(db: Db, loop: OpenLoopRow, now: number): LoopDetail {
-  const relatedLoops = listRelatedLoops(db, loop.id, now).map((l) => ({
+  const relatedLoops = listRelatedLoops(db, loop.id).map((l) => ({
     loopId: l.id,
     title: l.title,
     state: l.state,

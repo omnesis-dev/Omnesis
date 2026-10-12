@@ -5,7 +5,7 @@
 import SwiftUI
 
 /// The watch firing that made the agent open this conversation, rendered as
-/// a card pinned above it — the sibling of `BriefContextCard`.
+/// a card pinned above it.
 ///
 /// This thread arrives unprompted: the reader is dropped into a message
 /// they did not ask for, and the briefing that produced it is hidden (agent

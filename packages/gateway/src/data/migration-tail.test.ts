@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
+import { createLegacyBriefClaimsTables, createLegacyBriefTables } from "./legacy-brief-tables.js";
 import { LATEST_SCHEMA_VERSION } from "./migrations.js";
 import { retractAliasAssertions } from "./repositories/PersonAliasRepository.js";
 import type Database from "better-sqlite3";
@@ -59,7 +60,7 @@ const TAIL_VERSIONS = Array.from(
  */
 const WOUND_BACK = [
   172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
-  191, 192, 193, 194, 195, 196,
+  191, 192, 193, 194, 195, 196, 197, 198, 199,
 ];
 
 let dir: string;
@@ -126,6 +127,54 @@ function undoVocabulary(db: Db): void {
     db.exec("ALTER TABLE voice_note_transcriptions DROP COLUMN allow_vocabulary");
 }
 
+/** Undo migration 199: the note agent's queue did not exist yet. */
+function undoNoteAgent(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS note_agent_runs");
+  db.exec("DROP TABLE IF EXISTS note_agent_meta");
+}
+
+/** Undo migration 198: open loops without the task fields. */
+function undoTaskFields(db: Db): void {
+  db.exec("DROP INDEX IF EXISTS idx_open_loops_owned_schedule");
+  db.exec("DROP INDEX IF EXISTS idx_open_loops_suggested");
+  const loopColumns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('open_loops')")
+    .all()
+    .map((row) => row.name);
+  for (const column of [
+    "origin",
+    "accepted",
+    "scheduled_for",
+    "proposed_change_json",
+    "completion_note",
+    "resolved_at",
+  ])
+    if (loopColumns.includes(column)) db.exec(`ALTER TABLE open_loops DROP COLUMN ${column}`);
+  const ledgerColumns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('open_loop_ledger')")
+    .all()
+    .map((row) => row.name);
+  if (ledgerColumns.includes("event_json"))
+    db.exec("ALTER TABLE open_loop_ledger DROP COLUMN event_json");
+}
+
+/**
+ * Undo migration 197: the brief tables in the shape migrations 33, 43, 58
+ * and 89 left them. The knowledge tables are removed wholesale by
+ * {@link undoKnowledge}, so their kind constraint needs no inverse here.
+ */
+function undoObservations(db: Db): void {
+  createLegacyBriefTables(db);
+  createLegacyBriefClaimsTables(db);
+  const briefColumns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('briefs')")
+    .all()
+    .map((row) => row.name);
+  if (!briefColumns.includes("thread_conversation_id"))
+    db.exec("ALTER TABLE briefs ADD COLUMN thread_conversation_id TEXT");
+  if (!briefColumns.includes("read_at")) db.exec("ALTER TABLE briefs ADD COLUMN read_at INTEGER");
+}
+
 function undoKnowledge(db: Db): void {
   const fkWasOn =
     db.prepare<[], { foreign_keys: number }>("PRAGMA foreign_keys").get()?.foreign_keys === 1;
@@ -135,7 +184,7 @@ function undoKnowledge(db: Db): void {
       .prepare<
         [string],
         { name: string }
-      >("SELECT name FROM sqlite_master WHERE type=? AND (name GLOB 'knowledge_*' OR name GLOB 'mutable_list_knowledge_*')")
+      >("SELECT name FROM sqlite_master WHERE type=? AND (name GLOB 'knowledge_*' OR name GLOB 'mutable_list_knowledge_*' OR name GLOB 'temporal_epoch_*')")
       .all(type);
     for (const { name } of rows)
       db.exec(`DROP ${type.toUpperCase()} "${name.replaceAll('"', '""')}"`);
@@ -153,6 +202,9 @@ function undoKnowledge(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  undoNoteAgent(db);
+  undoTaskFields(db);
+  undoObservations(db);
   undoKnowledge(db);
   undoVocabulary(db);
   // `sources.account` is created by the head schema as well as by the
@@ -660,6 +712,41 @@ describe("an install several versions behind, upgrading", () => {
       expect(
         db.prepare("SELECT text, page_context FROM note_entries WHERE id = 'older-note'").get(),
       ).toEqual({ text: "Compare the examples.", page_context: null });
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("briefs are retired and older loops become Brain suggestions awaiting acceptance", () => {
+    seedOlderInstall((db) => {
+      db.prepare(
+        `INSERT INTO briefs (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
+         VALUES ('older-brief', 'run-older', 'update', 'Plan the workshop', 0.8, 0.4, 1000, 1000)`,
+      ).run();
+      db.prepare(
+        "INSERT INTO brief_citations (brief_id, position, doc_id) VALUES ('older-brief', 0, 'doc-older')",
+      ).run();
+      db.prepare(
+        `INSERT INTO open_loops (id, created_by_run, confidence, importance, title, created_at, last_update)
+         VALUES ('older-loop', 'run-older', 0.7, 0.5, 'Book the workshop room', 1000, 1000)`,
+      ).run();
+    });
+    const db = upgrade();
+    try {
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('briefs', 'brief_citations', 'brief_related_loops', 'brief_claims')",
+          )
+          .all(),
+      ).toEqual([]);
+      expect(
+        db.prepare("SELECT title, origin, accepted FROM open_loops WHERE id = 'older-loop'").get(),
+      ).toEqual({ title: "Book the workshop room", origin: "brain", accepted: 0 });
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name = 'note_agent_runs'").get(),
+      ).toEqual({ name: "note_agent_runs" });
+      expect(db.pragma("foreign_key_check")).toEqual([]);
     } finally {
       (db as unknown as Database.Database).close();
     }

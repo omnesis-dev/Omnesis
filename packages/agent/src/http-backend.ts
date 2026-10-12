@@ -14,7 +14,7 @@ import {
   type ToolResult,
 } from "@omnesis/core";
 
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { thinkingBudgetTokens } from "./thinking-budget.js";
 import { modelReasoningRequestFields } from "./model-reasoning-wire.js";
@@ -1434,7 +1434,7 @@ export function convertToolsToOpenAI(tools: ReadonlyArray<ToolHandle>): OpenAITo
     function: {
       name: h.name,
       description: h.description,
-      parameters: zodToJsonSchema(h.schema) as Record<string, unknown>,
+      parameters: toolInputJsonSchema(h.schema) as Record<string, unknown>,
     },
   }));
 }

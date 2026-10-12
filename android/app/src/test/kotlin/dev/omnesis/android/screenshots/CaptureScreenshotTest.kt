@@ -223,4 +223,32 @@ class CaptureScreenshotTest {
     fun capture_saving_dark() = capture("capture_saving_dark", dark = true) {
         Screen(CaptureUiState(text = "Order more filament for the printer", save = SaveState.Saving))
     }
+
+    // --- "Done + note" from a task's action fan: the same capture, completing the task ---
+
+    @Test
+    fun capture_task_note_listening_dark() = capture("capture_task_note_listening_dark", dark = true) {
+        CaptureContent(
+            state = CaptureUiState(text = "Paid by card", partialText = "at the front desk", speech = SpeechState.LISTENING),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionTaskTitle = "Pay the venue deposit",
+        )
+    }
+
+    @Test
+    fun capture_task_note_typing_light() = capture("capture_task_note_typing_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionTaskTitle = "Pay the venue deposit",
+        )
+    }
 }

@@ -141,7 +141,6 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
     embedder: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     decision: {
       policy: (request) =>
         Object.fromEntries(

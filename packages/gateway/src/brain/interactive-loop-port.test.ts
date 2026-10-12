@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDatabase } from "../db.js";
 import { appendOpenLoopLedger, createOpenLoop, updateOpenLoop } from "./storage/open-loops.js";
-import { createBrief } from "./storage/briefs.js";
+import { createObservation } from "./storage/observations.js";
 import { createGatewayLoopReadPort } from "./interactive-loop-port.js";
 import type Database from "better-sqlite3";
 
@@ -130,7 +130,7 @@ describe("interactive loop-read port", () => {
     },
   );
 
-  test("fetch attaches relatedLoops — active loops sharing a brief", async () => {
+  test("fetch attaches relatedLoops — active loops sharing an observation", async () => {
     const mk = (id: string): void => {
       createOpenLoop(
         db,
@@ -147,22 +147,19 @@ describe("interactive loop-read port", () => {
     };
     mk("olp_1");
     mk("olp_2");
-    createBrief(
+    createObservation(
       db,
       {
-        id: "brf_1",
+        id: "obs_1",
         createdByRun: "r",
-        kind: "loop",
-        title: "grouped work",
-        confidence: 0.8,
-        urgency: 0.4,
+        summary: "grouped work",
         relatedLoopIds: ["olp_1", "olp_2"],
       },
       NOW,
     );
     const detail = await createGatewayLoopReadPort(db).fetch("olp_1");
     expect(detail?.relatedLoops?.map((l) => l.loopId)).toEqual(["olp_2"]);
-    // A loop on no shared brief omits the field entirely.
+    // A loop on no shared observation omits the field entirely.
     mk("olp_lonely");
     expect((await createGatewayLoopReadPort(db).fetch("olp_lonely"))?.relatedLoops).toBeUndefined();
   });

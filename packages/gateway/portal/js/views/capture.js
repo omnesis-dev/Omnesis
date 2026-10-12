@@ -4,12 +4,20 @@
 // "Tell Omnesis" — the portal's quick-capture surface, the typed sibling of
 // the mobile capture screens. A note told here lands in the built-in
 // Omnesis Notes source as part of that day's note document, where it
-// becomes searchable; nothing replies. Type, tell, move on.
+// becomes searchable. When the gateway runs the note agent, it reads each
+// note and may add or change tasks; its receipt shows under the note.
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { navigate } from "../lib/router.js";
-import { createNote, deleteNoteEntry, getNotesHistory, patchNoteEntry } from "../api.js";
+import { createNote, deleteNoteEntry, getNotesHistory, getStatus, patchNoteEntry } from "../api.js";
+import { NoteAgentReceipt } from "../components/note-agent-receipt.js";
+import {
+  NOTE_AGENT_REFRESH_MS,
+  noteAgentActive,
+  noteAgentPending,
+  noteRefreshChanged,
+} from "../lib/note-agent.js";
 import { NOTE_DAY_RE, NOTES_HISTORY_PAGE_SIZE } from "../lib/notes.js";
 import { useCursorPage } from "../lib/use-cursor-page.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
@@ -80,10 +88,21 @@ export function CaptureView({ day, experimental = false } = {}) {
   // The request of the attempt that last failed. A retry with the same
   // text re-sends it unchanged, so its idempotency key holds.
   const pendingRef = useRef(null);
+  // Whether the gateway's note agent reads what is told here.
+  const [agentActive, setAgentActive] = useState(false);
 
   useEffect(() => {
     textareaRef.current?.focus();
-    return () => clearTimeout(confirmationTimer.current);
+    let live = true;
+    getStatus()
+      .then((status) => live && setAgentActive(noteAgentActive(status)))
+      .catch(() => {
+        // Without a status read the page simply omits the hint.
+      });
+    return () => {
+      live = false;
+      clearTimeout(confirmationTimer.current);
+    };
   }, []);
 
   const saving = phase === "saving";
@@ -129,8 +148,9 @@ export function CaptureView({ day, experimental = false } = {}) {
       <div class="capture-column">
         <p class="capture-lead">
           Say what Omnesis should remember — a thought, a fact, something to follow up on. It joins
-          your notes and becomes searchable; nothing replies.
+          your notes and becomes searchable${agentActive ? "." : "; nothing replies."}
         </p>
+        ${agentActive && html`<p class="capture-agent-hint">Omnesis will act on what you tell it</p>`}
         <form class="capture-composer" onSubmit=${tell}>
           <!-- Read-only rather than disabled while saving, so focus stays in the field for the next note. -->
           <textarea
@@ -312,6 +332,7 @@ function NoteRow({ entry, onChanged, onRemoved }) {
               <span>Transcribing on your gateway — this text is temporary and will be replaced.</span>
             </div>
           `}
+        <${NoteAgentReceipt} agent=${entry.agent} />
         ${entry.updatedAt && entry.updatedAt !== entry.capturedAt &&
           entry.updatedAt !== entry.transcribedAt &&
           // The row already files under a day header — a relative
@@ -487,28 +508,33 @@ function NoteHistory({ seedDay, lastCapture, experimental }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedDay, page.items, page.loading]);
 
-  // Voice notes still waiting on the gateway's transcript: re-read the first
-  // page while any is shown and swap in the transcribed version, so the text
-  // changes in place without a reload. Pending notes are fresh captures, so
-  // the first page holds them.
-  const pendingIds = page.items
-    .filter((item) => item?.transcription === "pending")
-    .map((item) => item.id);
+  // Notes the gateway is still working on — a voice note waiting on its
+  // transcript, or a note the note agent has yet to read: re-read the first
+  // page while any is shown and swap in the newer copy, so the text and the
+  // receipt change in place without a reload. Pending notes are fresh
+  // captures, so the first page holds them. The agent settles in seconds,
+  // so its wait polls faster than a transcript's.
+  const pendingItems = page.items.filter(
+    (item) => item?.transcription === "pending" || noteAgentPending(item?.agent),
+  );
+  const pendingIds = pendingItems.map((item) => item.id);
+  const agentReading = pendingItems.some((item) => noteAgentPending(item?.agent));
   useVisiblePoll(
     async () => {
       if (pendingIds.length === 0) return;
       try {
         const payload = await getNotesHistory({ limit: NOTES_HISTORY_PAGE_SIZE, day: seedDay });
+        const current = new Map(page.items.map((item) => [item?.id, item]));
         for (const entry of payload?.entries ?? []) {
-          if (pendingIds.includes(entry.id) && entry.transcription !== "pending") {
+          if (pendingIds.includes(entry.id) && noteRefreshChanged(current.get(entry.id), entry)) {
             page.replaceItem(entry.id, entry);
           }
         }
       } catch {
-        // The next tick tries again; the row keeps saying it is transcribing.
+        // The next tick tries again; the row keeps its pending line.
       }
     },
-    PENDING_REFRESH_MS,
+    agentReading ? NOTE_AGENT_REFRESH_MS : PENDING_REFRESH_MS,
     { enabled: pendingIds.length > 0 },
   );
 

@@ -7,6 +7,8 @@ import { OPEN_LOOP_SOURCE_ID, OPEN_LOOP_DOCUMENT_TYPE } from "../open-loop-sourc
 import { knowledgeOwnerReadPredicate } from "./storage-fence.js";
 import { KNOWLEDGE_SOURCE_ID, KNOWLEDGE_DOCUMENT_TYPE } from "./source-meta.js";
 import { listKnowledgeDecisionsForWork, readDecisionSubjectRef } from "./decision-query.js";
+import { knowledgeSourceRevisionSql } from "./source-revision.js";
+import { KNOWLEDGE_WORK_PARKED } from "./work-retry.js";
 import type { MaintenanceTier } from "./planner.js";
 import type { KnowledgeWorkReason } from "./work.js";
 import type Database from "better-sqlite3";
@@ -14,7 +16,10 @@ import type Database from "better-sqlite3";
 export interface PendingKnowledgeWorkOptions {
   reason: KnowledgeWorkReason;
   tier: MaintenanceTier;
-  /** Exact grouped last_error; omitted means the NULL/scheduled group. */
+  /**
+   * Exact grouped last_error; omitted means the NULL/scheduled group.
+   * `parked` lists work parked at its subject's current input revision.
+   */
   readiness?: string | null;
   limit?: number;
   cursor?: string;
@@ -40,6 +45,36 @@ export function createKnowledgePendingReadIndexes(db: Database.Database): void {
     db.exec(
       "CREATE INDEX IF NOT EXISTS knowledge_work_pending_group ON knowledge_work(status,reason,tier,last_error,due_at,id)",
     );
+}
+
+/** A parked row is current until its subject reaches a new input revision. */
+const PARKED_AT_CURRENT_REVISION = `CASE w.subject_kind
+  WHEN 'source' THEN EXISTS(SELECT 1 FROM documents pd WHERE pd.id=w.subject_id AND ${knowledgeSourceRevisionSql("pd")}=w.input_revision)
+  ELSE EXISTS(SELECT 1 FROM knowledge_nodes pn WHERE pn.id=w.subject_id AND CAST(pn.revision AS TEXT)=w.input_revision) END`;
+
+/**
+ * Counts of work parked at its subject's current input revision, grouped as
+ * the pending-work view addresses them (`readiness=parked`).
+ */
+export function readParkedKnowledgeWorkSummary(db: Database.Database) {
+  return db
+    .prepare<
+      [string],
+      {
+        subjectKind: "source" | "node";
+        reason: KnowledgeWorkReason;
+        tier: MaintenanceTier;
+        count: number;
+        maxFailures: number;
+        oldestParkedAt: number;
+      }
+    >(
+      `SELECT w.subject_kind AS subjectKind,w.reason,w.tier,COUNT(*) AS count,MAX(w.failures) AS maxFailures,
+      MIN(w.updated_at) AS oldestParkedAt FROM knowledge_work w
+      WHERE w.status='deferred' AND w.last_error=? AND ${PARKED_AT_CURRENT_REVISION}
+      GROUP BY w.subject_kind,w.reason,w.tier ORDER BY w.subject_kind,w.reason,w.tier`,
+    )
+    .all(KNOWLEDGE_WORK_PARKED);
 }
 
 /** A live, privacy-fenced group view; a work link is recorded association, not inferred causation. */
@@ -78,6 +113,7 @@ export function readPendingKnowledgeWork(
       AND NOT EXISTS(SELECT 1 FROM knowledge_cascade_jobs j WHERE j.kind='purge' AND j.target_kind='source' AND j.target_id=d.id))`;
     const nodeFence = `EXISTS(SELECT 1 FROM knowledge_nodes n WHERE n.id=w.subject_id) AND ${knowledgeOwnerReadPredicate(db, "w.subject_id")}`;
     const values: Record<string, string | number | null> = {
+      status: readiness === KNOWLEDGE_WORK_PARKED ? "deferred" : "pending",
       reason: options.reason,
       tier: options.tier,
       readiness,
@@ -96,7 +132,8 @@ export function readPendingKnowledgeWork(
     const rows = db
       .prepare<Record<string, string | number | null>, Row>(
         `SELECT w.id,w.subject_id AS subjectId,w.subject_kind AS subjectKind,w.reason,w.tier,w.due_at AS dueAt,w.last_error AS readiness,w.input_revision AS inputRevision,w.generation FROM knowledge_work w
-      WHERE w.status='pending' AND w.reason=@reason AND w.tier=@tier AND w.last_error IS @readiness
+      WHERE w.status=@status AND w.reason=@reason AND w.tier=@tier AND w.last_error IS @readiness
+      ${readiness === KNOWLEDGE_WORK_PARKED ? `AND ${PARKED_AT_CURRENT_REVISION}` : ""}
       AND ((w.subject_kind='source' AND ${sourceFence}) OR (w.subject_kind='node' AND (${nodeFence})))
       ${cursor ? "AND (w.due_at>@afterAt OR (w.due_at=@afterAt AND w.id>@afterId))" : ""}
       ORDER BY w.due_at,w.id LIMIT @limit`,

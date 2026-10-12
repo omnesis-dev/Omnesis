@@ -4,7 +4,7 @@
 /**
  * Retract the cognitive state grounded on documents that no longer exist.
  *
- * Annotations, brief claims and open loops quote their evidence verbatim, so a
+ * Annotations, observations and open loops quote their evidence verbatim, so a
  * deleted document leaves behind both a dangling reference and a copy of the
  * content that was removed. Every path that deletes documents runs this, which
  * is why it is one function rather than a sequence each caller repeats — a
@@ -25,9 +25,9 @@
 
 import { hasAnyTemporalAnnotations } from "../enrichment/temporal-annotations/storage.js";
 import {
-  hasAnyBriefClaims,
   hasAnyCognitionCoverage,
   hasAnyDocAnnotations,
+  hasAnyObservations,
   hasAnyOpenLoops,
   hasAnyPersonAnnotations,
 } from "./index.js";
@@ -40,10 +40,9 @@ export interface CognitiveStateCascadeOps {
   cascadeAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
   cascadePersonAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
   cascadeTemporalAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
-  cascadeBriefClaimPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
   cascadeOpenLoopPrivacyDelete(
     deletedDocIds: readonly string[],
-  ): Promise<{ deletedLoopIds: string[]; deletedBriefIds: string[] }>;
+  ): Promise<{ deletedLoopIds: string[]; deletedObservationIds: string[] }>;
   retractOrphanCognitionCoverage(): Promise<number>;
 }
 
@@ -85,12 +84,10 @@ export async function purgeCognitiveStateForDocs(
   // A temporal annotation may embed content derived from a cited document.
   if (hasAnyTemporalAnnotations(db))
     await ops.cascadeTemporalAnnotationPrivacyDelete(deletedDocIds);
-  // A brief claim's evidence quote is the cited document's content verbatim.
-  if (hasAnyBriefClaims(db)) await ops.cascadeBriefClaimPrivacyDelete(deletedDocIds);
-
-  // Loops built on the removed documents, and the briefs attached to them.
-  // The writer removes each loop, its attached briefs and its mirror together.
-  if (hasAnyOpenLoops(db)) {
+  // Loops and observations built on the removed documents, and the
+  // observations attached to those loops. The writer removes each loop, its
+  // observations and its mirror together.
+  if (hasAnyOpenLoops(db) || hasAnyObservations(db)) {
     await ops.cascadeOpenLoopPrivacyDelete(deletedDocIds);
   }
 }

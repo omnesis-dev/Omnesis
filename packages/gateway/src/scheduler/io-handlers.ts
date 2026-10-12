@@ -141,7 +141,8 @@ export const ioHandlers = {
   // population the backlog counts, so it rides the same worker for the same
   // reason: on a real corpus it takes seconds, and on the main handle those
   // seconds are the event loop.
-  "io.knowledgeDiscoveryByMonth": (db: Db) => knowledgeDiscoveryByMonth(db),
+  "io.knowledgeDiscoveryByMonth": (db: Db, notBefore: string) =>
+    knowledgeDiscoveryByMonth(db, notBefore),
   "io.bootstrapCorpusByMonth": (db: Db, recencyFloor: string, todayIso: string) =>
     bootstrapCorpusByMonth(db, recencyFloor, todayIso),
   "io.bootstrapBacklog": (db: Db, recencyFloor: string) => ({

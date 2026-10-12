@@ -6,6 +6,8 @@ import type { EntailVerdict } from "@omnesis/core";
 
 export const CONTEXTUAL_VERDICT_MAX_TOKENS = 2048;
 export const CONTEXTUAL_EVIDENCE_MAX_BYTES = 262144;
+/** Authorized segments one request may carry; a witness list is bounded by the same budget, since a claim combining many facts cites many segments. */
+export const CONTEXTUAL_MAX_SEGMENTS = 1024;
 const MAX_RESPONSE_CHARS = 32768;
 const assessmentFields = {
   reason: z.string().trim().min(1).max(4096),
@@ -180,9 +182,9 @@ export function contextualEntailmentFeedback(text: string): Array<{
       z
         .union([
           contentSchema,
-          contentSchema
-            .omit({ evidenceQuotes: true })
-            .extend({ evidenceSegments: z.array(z.string().min(1).max(32)).max(16) }),
+          contentSchema.omit({ evidenceQuotes: true }).extend({
+            evidenceSegments: z.array(z.string().min(1).max(32)).max(CONTEXTUAL_MAX_SEGMENTS),
+          }),
         ])
         .safeParse(envelope.contentInContext),
     ],
@@ -191,9 +193,9 @@ export function contextualEntailmentFeedback(text: string): Array<{
       z
         .union([
           placementSchema,
-          placementSchema
-            .omit({ evidenceQuotes: true })
-            .extend({ evidenceSegments: z.array(z.string().min(1).max(32)).max(16) }),
+          placementSchema.omit({ evidenceQuotes: true }).extend({
+            evidenceSegments: z.array(z.string().min(1).max(32)).max(CONTEXTUAL_MAX_SEGMENTS),
+          }),
         ])
         .safeParse(envelope.placementSupport),
     ],
@@ -225,8 +227,12 @@ export class ContextualAssessmentError extends Error {
   constructor(
     readonly category: ContextualAssessmentFailure,
     readonly modelId: string,
+    /** Schema field paths and issue codes only (`contentInContext.reason:too_big`). */
+    readonly issues: readonly string[] = [],
   ) {
-    super(`Contextual entailment assessment unavailable: ${category}`);
+    super(
+      `Contextual entailment assessment unavailable: ${category}${issues.length ? ` (${issues.join(", ")})` : ""}`,
+    );
     this.name = "ContextualAssessmentError";
   }
 }

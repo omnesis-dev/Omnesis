@@ -101,7 +101,7 @@ struct WatchesView: View {
                     firingSeq: WatchFiringKey.seq(in: firingKey, forWatch: watchId)
                 ),
             ]
-        case .brief, .privacyApproval, .accessAuthorization, .agentAnswer, .sourcePermission:
+        case .privacyApproval, .accessAuthorization, .agentAnswer, .sourcePermission, .task:
             // Not ours — HomeView routes each push to its owning section, and
             // that section consumes it.
             break

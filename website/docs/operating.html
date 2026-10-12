@@ -520,6 +520,17 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
               </tr>
               <tr>
+                <td><code>background-agent</code></td>
+                <td>
+                  Reads each note you capture with Tell Omnesis from the portal, the apps or the CLI
+                  and acts on it: adds or updates tasks, remembers stated facts, answers a question
+                  (see
+                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>). It
+                  takes the same chat models as <code>agent</code> and is never assigned
+                  automatically. Without it, notes are saved and indexed but not acted on.
+                </td>
+              </tr>
+              <tr>
                 <td><code>privacy-reviewer</code></td>
                 <td>
                   Reviews every Answer result (<code>/answer</code> and MCP Answer) against your

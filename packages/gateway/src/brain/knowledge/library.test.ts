@@ -37,9 +37,9 @@ function wiki(id: string, kind = "wiki") {
     "INSERT INTO knowledge_nodes(id,kind,owner_id,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at) VALUES(?,?,NULL,?,'text','text',1,1,'hash','current','{}','{}',1,10)",
   ).run(id, kind, id);
 }
-function brief(id: string, state = "unread") {
+function observation(id: string, state = "live") {
   db.prepare(
-    "INSERT INTO briefs(id,created_by_run,kind,title,description,confidence,urgency,state,created_at,updated_at) VALUES(?,'fixture','notice',?,'Brief description',0.8,0.2,?,1,10)",
+    "INSERT INTO observations(id,created_by_run,summary,why,state,created_at,updated_at) VALUES(?,'fixture',?,'Observation rationale',?,1,10)",
   ).run(id, id, state);
 }
 it("pages one canonical library including unmirrored owners and retired-only traces without duplicates", () => {
@@ -47,10 +47,10 @@ it("pages one canonical library including unmirrored owners and retired-only tra
   loop("loop-resolved", "done");
   retired("loop-resolved");
   retired("loop-gone");
-  brief("brief-unread");
+  observation("observation-live");
   wiki("wiki-page");
   wiki("loop-active", "loop");
-  wiki("brief-unread", "brief");
+  wiki("observation-live", "observation");
   const ids: string[] = [];
   let cursor: string | undefined;
   do {
@@ -77,28 +77,41 @@ it("pages one canonical library including unmirrored owners and retired-only tra
     readKnowledgeLibraryRetirement(db, "retired-loop:loop-gone").canonicalFields,
   ).toMatchObject({ retired: true, originalLoopId: "loop-gone", recurrenceCount: 3 });
 });
-it("filters brief states before paging and rejects cross-filter or stale cursors", () => {
-  brief("one");
-  brief("two");
-  brief("dismissed", "dismissed_acknowledged");
-  brief("snoozed", "dismissed_snoozed");
+it("filters observation states before paging and rejects cross-filter or stale cursors", () => {
+  observation("one");
+  observation("two");
+  observation("held", "held");
+  observation("dropped", "dropped");
+  observation("shipped", "shipped");
   expect(
-    readKnowledgeLibrary(db, { kind: "brief", status: "snoozed" }).items.map((x) => x.id),
-  ).toEqual(["snoozed"]);
+    readKnowledgeLibrary(db, { kind: "observation", status: "dropped" }).items.map((x) => x.id),
+  ).toEqual(["dropped"]);
   expect(
-    readKnowledgeLibrary(db, { kind: "brief", status: "dismissed" }).items.map((x) => x.id),
-  ).toEqual(["dismissed"]);
-  const first = readKnowledgeLibrary(db, { kind: "brief", status: "unread", limit: 1 });
+    readKnowledgeLibrary(db, { kind: "observation", status: "shipped" }).items.map((x) => x.id),
+  ).toEqual(["shipped"]);
+  expect(
+    readKnowledgeLibrary(db, { kind: "observation", status: "open" })
+      .items.map((x) => x.id)
+      .sort(),
+  ).toEqual(["held", "one", "two"]);
+  expect(() => readKnowledgeLibrary(db, { kind: "observation", status: "unread" })).toThrow(
+    "Invalid Library status",
+  );
+  const first = readKnowledgeLibrary(db, { kind: "observation", status: "live", limit: 1 });
   expect(first.items).toHaveLength(1);
   expect(first.pageInfo.hasMore).toBe(true);
   expect(() =>
-    readKnowledgeLibrary(db, { kind: "brief", status: "read", cursor: first.pageInfo.nextCursor! }),
+    readKnowledgeLibrary(db, {
+      kind: "observation",
+      status: "held",
+      cursor: first.pageInfo.nextCursor!,
+    }),
   ).toThrow("Invalid pagination cursor");
-  db.prepare("UPDATE briefs SET state='read' WHERE id='one'").run();
+  db.prepare("UPDATE observations SET state='held' WHERE id='one'").run();
   expect(() =>
     readKnowledgeLibrary(db, {
-      kind: "brief",
-      status: "unread",
+      kind: "observation",
+      status: "live",
       cursor: first.pageInfo.nextCursor!,
     }),
   ).toThrow("list changed");
@@ -149,10 +162,10 @@ it("invalidates paging on wiki edits, retirement-only changes and journaled anno
   );
 });
 
-it.each(["loop", "brief"] as const)(
+it.each(["loop", "observation"] as const)(
   "preserves stored and dynamic %s mirror freshness without classifying unmirrored owners",
   (kind) => {
-    const create = kind === "loop" ? loop : brief;
+    const create = kind === "loop" ? loop : observation;
     create("mirrored");
     create("unmirrored");
     wiki("mirrored", kind);

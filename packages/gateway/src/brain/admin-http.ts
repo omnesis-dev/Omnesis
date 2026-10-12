@@ -6,7 +6,7 @@
  *
  * Resource-specific route registration lives in:
  * - `admin-http-loop-routes.ts`
- * - `admin-http-brief-routes.ts`
+ * - `admin-http-observation-routes.ts`
  * - `admin-http-run-routes.ts`
  * - `admin-http-transcript-routes.ts`
  * - `admin-http-list-routes.ts`
@@ -20,7 +20,7 @@
 import { NotFoundError } from "../http/errors.js";
 import { KnowledgeQueryService } from "./knowledge/query-service.js";
 import { mountKnowledgeAdminRoutes } from "./knowledge/admin-routes.js";
-import { mountCognitionBriefAdminRoutes } from "./admin-http-brief-routes.js";
+import { mountCognitionObservationAdminRoutes } from "./admin-http-observation-routes.js";
 import { mountCognitionListAdminRoutes } from "./admin-http-list-routes.js";
 import { mountCognitionLoopAdminRoutes } from "./admin-http-loop-routes.js";
 import { mountCognitionRunAdminRoutes } from "./admin-http-run-routes.js";
@@ -145,13 +145,14 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
         )
       : undefined;
 
-  const knowledgeTimelineProbe = io?.knowledgeDiscoveryByMonth
-    ? new CachedScanProbe(
-        () => query.knowledgeDiscoveryTimeline(io, now),
-        BOOTSTRAP_TIMELINE_TTL_MS,
-        now,
-      )
-    : undefined;
+  const knowledgeTimelineProbe =
+    getSettings && io?.knowledgeDiscoveryByMonth
+      ? new CachedScanProbe(
+          () => query.knowledgeDiscoveryTimeline(io, { now, horizonMs: getSettings().horizonMs }),
+          BOOTSTRAP_TIMELINE_TTL_MS,
+          now,
+        )
+      : undefined;
 
   mountCognitionListAdminRoutes(context, {
     clock: opts.clock,
@@ -166,7 +167,7 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
   mountCognitionLoopAdminRoutes(context);
   mountCognitionRunAdminRoutes(context);
   mountCognitionTranscriptAdminRoutes(context);
-  mountCognitionBriefAdminRoutes(context);
+  mountCognitionObservationAdminRoutes(context);
   if (opts.sweeps) {
     mountCognitionSweepAdminRoutes(context, {
       db: opts.db,

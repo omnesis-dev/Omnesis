@@ -1,0 +1,7 @@
+# Golden cassette: the morning run composes the day's brief and sends it once.
+# The send is live, so the real tool appends the message to the Morning brief
+# conversation and ships the morning's ranked observations.
+{"afterMs": 0, "event": {"type": "agent.message.start", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "role": "assistant"}}}
+{"afterMs": 0, "event": {"type": "agent.tool.start", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "toolCallId": "tc-send", "tool": "morning_brief_send", "args": {"text": "**Today**\n- Nothing on the calendar.\n\n**Worth your attention**\n- The harvest fair stand is held only until you send the deposit."}}}}
+{"afterMs": 0, "event": {"type": "agent.text.delta", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "delta": "Sent the morning brief."}}}
+{"afterMs": 0, "event": {"type": "agent.message.end", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "stopReason": "end_turn"}}}

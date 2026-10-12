@@ -17,24 +17,33 @@ export const OmnesisSparkle = html`
   </svg>
 `;
 
-// Consumption provenance for one annotation: the briefs/loops the agent
+// Where a dependent output opens: an observation in the Observations
+// inspector, a loop in the Library.
+export function dependentHref(dependent) {
+  const id = encodeURIComponent(dependent.id);
+  return dependent.kind === "observation"
+    ? `/portal/debug/cognition/observations/${id}`
+    : `/portal/debug/cognition/knowledge/${id}?kind=loop`;
+}
+
+// Consumption provenance for one annotation: the observations/loops the agent
 // built on this prior (served inline on the annotations payload). Rendered
 // as a native <details> disclosure — stateless, so the list stays a pure
 // component — with each dependent linking into the cognition debug view.
 function DependentsDisclosure({ label, dependents, children }) {
   return html`
     <details class="meta-annotation-dependents">
-      <summary title="Briefs/loops the agent built while this prior was in front of it — if this prior dies, they are re-examined">
+      <summary title="Observations/loops the agent built while this prior was in front of it — if this prior dies, they are re-examined">
         ${label}
       </summary>
       ${dependents.map((d) => html`
         <a
           key=${`${d.kind}:${d.id}`}
           class="meta-annotation-dependent"
-          href=${`/portal/debug/cognition/${d.kind === "brief" ? "briefs" : "knowledge"}/${encodeURIComponent(d.id)}${d.kind === "brief" ? "" : "?kind=loop"}`}
+          href=${dependentHref(d)}
           style="display:block;"
         >
-          ${d.kind === "loop" && html`<${KnowledgeIcon} kind="loop" />`}${d.kind}: ${d.title || d.id}
+          <${KnowledgeIcon} kind=${d.kind} />${d.kind}: ${d.title || d.id}
         </a>
       `)}
       ${children}
@@ -66,7 +75,7 @@ function AnnotationDependents({ annotation, store }) {
       class="meta-annotation-dependents"
       onToggle=${(event) => setOpen(event.currentTarget.open)}
     >
-      <summary title="Briefs/loops the agent built while this prior was in front of it — if this prior dies, they are re-examined">
+      <summary title="Observations/loops the agent built while this prior was in front of it — if this prior dies, they are re-examined">
         ${label}
       </summary>
       ${page.loading && html`<div class="debug-loading">Loading…</div>`}
@@ -77,10 +86,10 @@ function AnnotationDependents({ annotation, store }) {
         <a
           key=${`${d.kind}:${d.id}`}
           class="meta-annotation-dependent"
-          href=${`/portal/debug/cognition/${d.kind === "brief" ? "briefs" : "knowledge"}/${encodeURIComponent(d.id)}${d.kind === "brief" ? "" : "?kind=loop"}`}
+          href=${dependentHref(d)}
           style="display:block;"
         >
-          ${d.kind === "loop" && html`<${KnowledgeIcon} kind="loop" />`}${d.kind}: ${d.title || d.id}
+          <${KnowledgeIcon} kind=${d.kind} />${d.kind}: ${d.title || d.id}
         </a>
       `)}
       <${LoadMore}
@@ -104,7 +113,7 @@ function AnnotationDependents({ annotation, store }) {
  * evidence) and, when the entailment verifier stamped the row, its
  * verification state with the recency of the last check. Rows carrying
  * consumption provenance (`dependents`) get a disclosure listing the
- * briefs/loops built on them.
+ * observations/loops built on them.
  */
 export function AnnotationList({ annotations = [], store }) {
   return html`${(annotations ?? []).map((a) => html`

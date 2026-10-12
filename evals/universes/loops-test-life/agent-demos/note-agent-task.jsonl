@@ -1,0 +1,7 @@
+# Golden cassette: the note agent reads one quick-capture note and adds the task
+# it asks for. Both calls are live; the receipt is the closing text.
+{"afterMs": 0, "event": {"type": "agent.message.start", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "role": "assistant"}}}
+{"afterMs": 0, "event": {"type": "agent.tool.start", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "toolCallId": "tc-list", "tool": "task_list", "args": {"query": "bike insurance"}}}}
+{"afterMs": 0, "event": {"type": "agent.tool.start", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "toolCallId": "tc-create", "tool": "task_create", "args": {"title": "Renew the bike insurance", "scheduledFor": "someday"}}}}
+{"afterMs": 0, "event": {"type": "agent.text.delta", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "delta": "Added a task to renew the bike insurance."}}}
+{"afterMs": 0, "event": {"type": "agent.message.end", "payload": {"sessionId": "$SESSION", "messageId": "$MSG", "stopReason": "end_turn"}}}

@@ -24,7 +24,7 @@ import type { KnowledgeOwnerKind } from "./owner-adapters.js";
 
 function ownerKind(tool: string, args: unknown): KnowledgeOwnerKind | undefined {
   if (tool.startsWith("open_loop_")) return "loop";
-  if (tool.startsWith("brief_")) return "brief";
+  if (tool.startsWith("observation_")) return "observation";
   if (tool === "annotation_search")
     return args &&
       typeof args === "object" &&
@@ -37,18 +37,18 @@ function ownerKind(tool: string, args: unknown): KnowledgeOwnerKind | undefined 
   if (tool.startsWith("annotation_") || tool === "annotate_durable") return "doc_annotation";
   return undefined;
 }
-const reconciliationReads = new Set(["open_loop_search", "brief_list", "annotation_search"]);
-const ownerReads = new Set([...reconciliationReads, "open_loop_fetch", "brief_fetch"]);
+const reconciliationReads = new Set(["open_loop_search", "observation_list", "annotation_search"]);
+const ownerReads = new Set([...reconciliationReads, "open_loop_fetch"]);
 const creates = new Set([
   "open_loop_create",
-  "brief_create",
+  "observation_note",
   "annotate_durable",
   "annotate_person",
 ]);
 function returnedOwnerIds(result: ToolResult): string[] {
   if (result.kind !== "structured" || !result.data || typeof result.data !== "object") return [];
   const data = result.data as Record<string, unknown>;
-  const rows = data.loops ?? data.briefs ?? data.annotations ?? [data];
+  const rows = data.loops ?? data.observations ?? data.annotations ?? [data];
   if (!Array.isArray(rows)) return [];
   return rows.flatMap((row: unknown) =>
     row && typeof row === "object" && "id" in row && typeof row.id === "string" ? [row.id] : [],
@@ -176,7 +176,7 @@ export function buildMaintenanceCanonicalTools(
                 "revision_conflict",
                 "Search or list the existing owners before creating one; annotations require annotation_search for the same subject.",
               );
-            // Exact loop/brief mutations reconcile the fetched owner, not an
+            // Exact loop/observation mutations reconcile the fetched owner, not an
             // earlier global list. Keep collection guards for creation and all
             // annotation edits, whose subject/profile context is collective.
             if (
@@ -184,18 +184,6 @@ export function buildMaintenanceCanonicalTools(
               (creates.has(tool.name) || kind === "doc_annotation" || kind === "person_annotation")
             )
               fence.collections = [{ ...receipt }];
-            if (tool.name === "brief_create" && args && typeof args === "object") {
-              const input = args as Record<string, unknown>;
-              fence.briefCreateGuard = {
-                loopIds: Array.isArray(input.relatedLoopIds)
-                  ? input.relatedLoopIds.filter((id): id is string => typeof id === "string")
-                  : [],
-                supersedes: Array.isArray(input.supersedes)
-                  ? input.supersedes.filter((id): id is string => typeof id === "string")
-                  : [],
-                force: input.force === true,
-              };
-            }
           }
           // Reject already-stale inventories before any asynchronous model work.
           // The writer repeats this check atomically to cover changes during awaits.

@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { runSchemaSetup } from "./schema.js";
 import { runMigrations } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 
 let db: Database.Database;
 
@@ -73,6 +74,9 @@ function seedLegacyInstall(version: number): void {
     `INSERT INTO loop_agent_spend (day, runs, prompt_tokens, completion_tokens)
      VALUES ('2026-01-01', 9, 4321, 765)`,
   ).run();
+  // Migration 33 created the brief tables; every install past it has them
+  // until migration 197 retires them.
+  if (version >= 33) createLegacyBriefTables(db);
   db.exec(`PRAGMA user_version = ${version}`);
 }
 

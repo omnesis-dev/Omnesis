@@ -6,7 +6,7 @@
  *
  * When the operator, reviewing their own corpus, spots a data-quality issue or
  * inconsistency on some entity (a mis-parsed document, a spurious loop, a bad
- * brief, a wrong temporal annotation, a weird agent run), they file a short
+ * observation, a wrong temporal annotation, a weird agent run), they file a short
  * free-text note against that entity from the portal or the mobile apps. These
  * notes are read back by the engineer (via `omnesis dev-annotations`) — NOT by
  * the Omnesis agent — to drive code / prompt / config changes. The whole
@@ -39,7 +39,7 @@ export const DEV_ANNOTATION_TARGET_TYPES = [
   "temporal_annotation",
   "open_loop",
   "retired_loop",
-  "brief",
+  "observation",
   "agent_run",
   "agent_notes",
   "conversation",

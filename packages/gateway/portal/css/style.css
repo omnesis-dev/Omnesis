@@ -4,6 +4,8 @@
 @import url("debug-shell.css");
 @import url("knowledge.css");
 @import url("knowledge-maintenance.css");
+@import url("tasks.css");
+@import url("brief-thread.css");
 @import url("../js/shared/agent-ui/styles.css");
 
 /* Omnesis Portal — Dark Theme Design System */
@@ -11502,6 +11504,25 @@ div.source-activity-popover-link:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* The decision model's three observation judgements, side by side. */
+.cognition-date-input {
+  margin-left: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.cognition-observation-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Detail field rows. */
 .cognition-field {
   display: grid;
@@ -11592,7 +11613,7 @@ div.source-activity-popover-link:hover {
   color: var(--text-secondary);
 }
 
-/* Inline sub-entity rows in a detail pane (a loop's briefs / checks). */
+/* Inline sub-entity rows in a detail pane (a loop's observations / checks). */
 .cognition-inline-row {
   display: flex;
   gap: 10px;
@@ -15672,10 +15693,10 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   50%      { opacity: 0.55; transform: scale(0.85); }
 }
 
-/* ─── Brief talk-back context card ──────────────────────────────────
-   The brief a thread replies to, pinned above the conversation. Reads
-   as an artifact (bordered, filled card), not a chat bubble. */
-.agent-brief-card {
+/* ─── Conversation context card ─────────────────────────────────────
+   What opened a thread (a watch firing), pinned above the conversation.
+   Reads as an artifact (bordered, filled card), not a chat bubble. */
+.agent-context-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -15685,22 +15706,22 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   flex-direction: column;
   gap: 8px;
 }
-.agent-brief-card-link {
+.agent-context-card-link {
   color: inherit;
   cursor: pointer;
   text-decoration: none;
   transition: background 0.15s, border-color 0.15s;
 }
-.agent-brief-card-link:hover {
+.agent-context-card-link:hover {
   background: var(--bg-tertiary);
   border-color: var(--accent);
   text-decoration: none;
 }
-.agent-brief-card-link:focus-visible {
+.agent-context-card-link:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.agent-brief-card-kicker {
+.agent-context-card-kicker {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -15710,46 +15731,25 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   text-transform: uppercase;
   color: var(--accent);
 }
-.agent-brief-card-open {
+.agent-context-card-open {
   margin-left: auto;
   font-size: 11px;
   letter-spacing: 0;
   text-transform: none;
 }
-.agent-brief-card-title {
+.agent-context-card-title {
   font-size: 17px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.3;
 }
-.agent-brief-card-description {
+.agent-context-card-description {
   font-size: 13.5px;
   color: var(--text-secondary);
   line-height: 1.5;
 }
-.agent-brief-card-description p,
-.agent-brief-card-body p {
+.agent-context-card-description p {
   margin: 0 0 6px;
-}
-.agent-brief-card-body {
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.55;
-  border-top: 1px solid var(--border-light);
-  padding-top: 10px;
-}
-.agent-brief-card-toggle {
-  align-self: flex-start;
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  cursor: pointer;
-}
-.agent-brief-card-toggle:hover {
-  color: var(--accent-hover);
 }
 
 /* ─── Graph debugger view ───────────────────────────────────────────── */
@@ -18418,6 +18418,91 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   gap: 6px;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* The note agent's receipt under a Tell Omnesis note. */
+.capture-agent-hint {
+  margin: -6px 0 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.note-agent {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.note-agent-reading,
+.note-agent-failed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.note-agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: note-agent-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes note-agent-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-agent-dot { animation: none; }
+}
+
+.note-agent-receipt {
+  border-left-color: var(--accent);
+}
+
+.note-agent-text {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.note-agent-changes {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-agent-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.note-agent-change.undone > a,
+.note-agent-change.undone > span:first-child {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.note-agent-undo {
+  padding: 1px 8px;
+}
+
+.note-agent-undone {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.note-agent-error {
+  margin-top: 4px;
+  color: var(--danger);
 }
 
 /* A voice note whose gateway transcript is still to come. */

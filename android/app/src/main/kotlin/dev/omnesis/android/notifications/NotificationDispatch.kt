@@ -40,7 +40,7 @@ internal enum class NotificationRenderOutcome(val shouldConfirm: Boolean) {
 }
 
 internal fun knownNotificationKind(kind: String): Boolean = kind in setOf(
-    "diagnostic", "agent-answer", "conversation", "brief", "watch", "needs-auth", "privacy-approval",
+    "diagnostic", "agent-answer", "conversation", "watch", "needs-auth", "privacy-approval",
     "source-permission",
     "access-authorization",
 )
@@ -59,10 +59,6 @@ internal fun notificationAction(
             (route?.string("conversationId") ?: notification.targetId)
                 .takeIf(::validNotificationId)?.let {
                 ClaimedPushAction(notification.kind, NotificationTarget.AgentConversation(it))
-            }
-        "brief" ->
-            notification.targetId.takeIf(::validNotificationId)?.let {
-                ClaimedPushAction(notification.kind, NotificationTarget.App)
             }
         "watch" -> {
             val watchId = route?.string("watchId")

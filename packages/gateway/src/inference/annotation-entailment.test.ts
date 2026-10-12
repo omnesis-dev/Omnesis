@@ -8,6 +8,7 @@ import {
   annotationEntailmentFailures,
   annotationEntailmentPrompt,
   parseAnnotationEntailment,
+  uncoveredClaimWords,
 } from "./annotation-entailment.js";
 
 const claim = "The mosaic is green; the plinth is square.";
@@ -268,6 +269,14 @@ it("retains an exact evidence and context prefix across changed candidate claims
     claim: secondClaim,
   });
   expect(first.slice(0, payloadStart)).toContain("untrusted");
+});
+
+it("names the claim words no span covers, and nothing for unreadable or complete output", () => {
+  expect(uncoveredClaimWords(JSON.stringify(response([row("The mosaic")])), claim)).toEqual(
+    claim.split(/\s+/u).slice(2),
+  );
+  expect(uncoveredClaimWords(JSON.stringify(response()), claim)).toEqual([]);
+  expect(uncoveredClaimWords('{"coverage":', claim)).toEqual([]);
 });
 
 describe("closed annotation diagnostics", () => {

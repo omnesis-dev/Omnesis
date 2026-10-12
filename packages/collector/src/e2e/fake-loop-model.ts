@@ -4,14 +4,14 @@
 /**
  * The scripted loop-model server — a deterministic fake OpenAI-compatible
  * chat-completions server that stands in for the `background-agent` model
- * in the Briefs reconcile instrument (the scripted half of its
+ * in the Brain reconcile instrument (the scripted half of its
  * instrument validation).
  *
  * Unlike the config-level ReplayBackend (which replays transcripts and
  * never invokes tools), this server emits real `tool_calls`, so the
  * gateway's run driver executes the REAL tool layer end-to-end: fetch the
  * triggering document, reconcile via `open_loop_search`, then mutate
- * loops/briefs through the write gate — a scripted run leaves genuine
+ * loops/observations through the write gate — a scripted run leaves genuine
  * rows behind.
  *
  * The script is not a canned transcript: each request derives the next
@@ -122,116 +122,6 @@ export function parseRunPrompt(prompt: string): RunPromptMeta {
   };
 }
 
-/** Parsed shape of a feedback-run prompt (brief, state, loops, snooze). */
-export interface FeedbackPromptMeta {
-  briefId: string;
-  briefTitle: string;
-  state: string;
-  relatedLoopIds: string[];
-  /** The user-picked re-surface time, when the dismissal chose one. */
-  snoozeUntil: string | null;
-}
-
-/** Parse the feedback run prompt's brief id, dismissal state, and loop ids. */
-export function parseFeedbackPrompt(prompt: string): FeedbackPromptMeta | null {
-  const reacted = /The user reacted to brief (\S+) \("([^"]*)"\)/.exec(prompt);
-  const state = /Its state is now: (\S+)\./.exec(prompt);
-  if (!reacted || !state) return null;
-  const related = /Related loops: ([^\n]+) \(brief_fetch/.exec(prompt);
-  const relatedLoopIds =
-    related?.[1]
-      ?.split(",")
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0) ?? [];
-  const snooze = /The user picked when it should re-surface: (\S+)\./.exec(prompt);
-  return {
-    briefId: reacted[1]!,
-    briefTitle: reacted[2]!,
-    state: state[1]!,
-    relatedLoopIds,
-    snoozeUntil: snooze?.[1] ?? null,
-  };
-}
-
-/**
- * How the scripted server reacts to feedback runs. `correct` implements the
- * documented example reactions for the two loop-mutating dismissal states;
- * `saboteur` plants the wrong verb for each (already_handled -> the loop is
- * DELETED, erasing a fulfilled obligation's record; not_relevant -> the
- * feedback is ignored and the unwanted loop stays open).
- */
-export type FeedbackPolicy = "correct" | "saboteur";
-
-/** The ordered tool plan for one feedback run under a policy. */
-function feedbackPlanFor(
-  fb: FeedbackPromptMeta,
-  policy: FeedbackPolicy,
-  evidence: string[] = [],
-): Array<{ name: string; args: Record<string, unknown> }> | { finalText: string } {
-  if (fb.state === "dismissed_already_handled") {
-    if (policy === "saboteur") {
-      // Wrong verb: the fulfilled obligation's record is erased.
-      return fb.relatedLoopIds.map((id) => ({ name: "open_loop_delete", args: { id } }));
-    }
-    return fb.relatedLoopIds.flatMap((id) => [
-      {
-        name: "open_loop_ledger_append",
-        args: { id, note: "User dismissed the brief as already handled; closing as done." },
-      },
-      { name: "open_loop_update", args: { id, state: "done" } },
-    ]);
-  }
-  if (fb.state === "dismissed_not_relevant") {
-    if (policy === "saboteur") {
-      // The signal is ignored: the unwanted loop stays open.
-      return { finalText: "Feedback noted; leaving the loops as they are." };
-    }
-    return fb.relatedLoopIds.map((id) => ({ name: "open_loop_delete", args: { id } }));
-  }
-  if (fb.state === "dismissed_wrong") {
-    if (policy === "saboteur") {
-      // Wrong verb: a misread obligation is closed as done, fabricating a
-      // fulfilment that never happened.
-      return fb.relatedLoopIds.map((id) => ({
-        name: "open_loop_update",
-        args: { id, state: "done" },
-      }));
-    }
-    return fb.relatedLoopIds.map((id) => ({ name: "open_loop_delete", args: { id } }));
-  }
-  if (fb.state === "dismissed_snoozed") {
-    if (policy === "saboteur") {
-      // Snooze means later, not never: deleting the loops erases them.
-      return fb.relatedLoopIds.map((id) => ({ name: "open_loop_delete", args: { id } }));
-    }
-    return [
-      {
-        name: "brief_update",
-        args: { id: fb.briefId, ...(fb.snoozeUntil ? { nextShow: fb.snoozeUntil } : {}) },
-      },
-    ];
-  }
-  if (fb.state === "dismissed_acknowledged") {
-    if (policy === "saboteur") {
-      // Invents bookkeeping for a no-action FYI.
-      return [
-        {
-          name: "open_loop_create",
-          args: {
-            title: `Follow up: ${fb.briefTitle}`,
-            description: "Tracking the acknowledged notice.",
-            docs: evidence,
-            confidence: 0.6,
-            importance: 0.5,
-          },
-        },
-      ];
-    }
-    return [{ name: "brief_delete", args: { id: fb.briefId } }];
-  }
-  return { finalText: `No scripted reaction for state "${fb.state}". Done.` };
-}
-
 // ── the scripted decision ───────────────────────────────────────────────────
 
 export type NextTurn =
@@ -243,7 +133,8 @@ interface SearchLoopHit {
   title: string;
   state: string;
   docs?: string[];
-  attachedBriefs: Array<{ id: string; state: string }>;
+  /** Open (live/held) observations attached to the loop. */
+  attachedObservations: Array<{ id: string; state: string }>;
 }
 
 function structuredData(result: unknown): Record<string, unknown> | null {
@@ -294,18 +185,15 @@ function planFor(
   }
 
   if (action.kind === "inform") {
-    // Awareness only: a standalone info brief, no loop and no loop search.
+    // Awareness only: a standalone observation, no loop and no loop search.
     return [
-      { name: "brief_list", args: {} },
+      { name: "observation_list", args: {} },
       {
-        name: "brief_create",
+        name: "observation_note",
         args: {
-          kind: "info",
-          title: action.briefTitle,
-          description: "Worth knowing; nothing to act on.",
+          summary: action.observation,
+          why: "Worth knowing; nothing to act on.",
           citations: [docId],
-          confidence: 0.9,
-          urgency: 0.3,
         },
       },
     ];
@@ -340,23 +228,23 @@ function planFor(
   );
   if (action.kind === "commit" && alreadyOwned) {
     const reconciled = [{ name: "open_loop_search", args: { query: action.searchQuery } }];
-    if (alreadyOwned.attachedBriefs.length || ["done", "dismissed"].includes(alreadyOwned.state))
+    if (
+      alreadyOwned.attachedObservations.length ||
+      ["done", "dismissed"].includes(alreadyOwned.state)
+    )
       return reconciled;
     // A previous attempt may have committed the loop but stopped before its
-    // brief. Finish that plan without repeating even a planted duplicate mint.
+    // observation. Finish that plan without repeating even a planted duplicate mint.
     return [
       ...reconciled,
-      { name: "brief_list", args: {} },
+      { name: "observation_list", args: {} },
       {
-        name: "brief_create",
+        name: "observation_note",
         args: {
-          kind: "loop",
-          title: action.briefTitle,
-          description: "Needs your attention.",
+          summary: action.observation,
+          why: "Needs your attention.",
           citations: [docId],
           relatedLoopIds: [alreadyOwned.id],
-          confidence: 0.9,
-          urgency: 0.5,
         },
       },
     ];
@@ -389,16 +277,14 @@ function planFor(
           docs: [docId],
         },
       },
+      { name: "observation_list", args: {} },
       {
-        name: "brief_create",
+        name: "observation_note",
         args: {
-          kind: "loop",
-          title: action.briefTitle,
-          description: "Needs your attention.",
+          summary: action.observation,
+          why: "Needs your attention.",
           citations: [docId],
           relatedLoopIds: loopId ? [loopId] : [],
-          confidence: 0.9,
-          urgency: 0.5,
         },
       },
     ];
@@ -406,12 +292,15 @@ function planFor(
 
   if (action.kind === "schedule") {
     // Reconsideration must adopt a dated commitment already represented by a
-    // loop and its brief; its scheduled follow-up belongs to that same owner.
-    if (matched && (matched.attachedBriefs.length || ["done", "dismissed"].includes(matched.state)))
+    // loop and its observation; its scheduled follow-up belongs to that same owner.
+    if (
+      matched &&
+      (matched.attachedObservations.length || ["done", "dismissed"].includes(matched.state))
+    )
       return [{ name: "open_loop_search", args: { query: action.searchQuery } }];
     // A fresh dated commitment: reconcile (no match exists in the arc), then
-    // track it as a loop and create a brief HELD until the scheduled day,
-    // plus a re-verify run tied to the loop. loopId is read from the create
+    // track it as a loop and note an observation windowed on the scheduled
+    // day, plus a re-verify run tied to the loop. loopId is read from the create
     // step's result once it lands (same seam as the commit plan).
     const create = steps.find((s) => s.name === "open_loop_create");
     const loopId = matched?.id ?? createdLoopId(create);
@@ -431,25 +320,23 @@ function planFor(
               },
             },
           ]),
+      { name: "observation_list", args: {} },
       {
-        name: "brief_create",
+        name: "observation_note",
         args: {
-          kind: "loop",
-          title: action.briefTitle,
-          description: "Surfaces on the scheduled day.",
+          summary: action.observation,
+          why: "Matters on the scheduled day.",
           citations: [docId],
           relatedLoopIds: loopId ? [loopId] : [],
-          confidence: 0.9,
-          urgency: 0.5,
-          nextShow: action.nextShow,
-          eventAt: action.eventAt,
+          windowStart: action.windowStart,
+          relevantUntil: action.relevantUntil,
         },
       },
       {
         name: "schedule_agent_run",
         args: {
           when: action.scheduleWhen,
-          prompt: `Re-verify the dated to-do "${action.loopTitle}" is not already done before its brief surfaces on ${action.eventAt}.`,
+          prompt: `Re-verify the dated to-do "${action.loopTitle}" is not already done before ${action.relevantUntil}.`,
           ...(loopId ? { loopId } : {}),
         },
       },
@@ -468,7 +355,7 @@ function planFor(
 
   if (action.kind === "retract") {
     // The obligation never belonged to the user: delete the loop outright
-    // (attached briefs cascade). done would fabricate a fulfilment.
+    // (attached observations cascade). done would fabricate a fulfilment.
     if (!matched) {
       return { finalText: `No loop matching ${action.marker} to retract. Done.` };
     }
@@ -481,7 +368,7 @@ function planFor(
   if (action.kind === "resolvedCommit") {
     // An obligation whose fulfilment already synced: close a matching open
     // loop if one exists, else track it as created-and-immediately-done.
-    // No brief either way — nothing needs the user. The create's loop id is
+    // No observation either way — nothing needs the user. The create's loop id is
     // read from the executed step's result once it lands (plan order
     // guarantees the id-bearing calls are only emitted after the create).
     if (matched) {
@@ -535,55 +422,31 @@ function planFor(
   }
 
   if (action.ambiguous) {
-    const activeBrief = matched.attachedBriefs.find(
-      (brief) => brief.state === "unread" || brief.state === "read",
-    );
-    const snoozedBrief = matched.attachedBriefs.find(
-      (brief) => brief.state === "dismissed_snoozed",
-    );
-    const confirmation = {
-      title: action.confirmBriefTitle ?? `Confirm completion of ${action.marker}`,
-      description: "Please confirm this is fully handled.",
-      citations: [docId],
-      relatedLoopIds: [matched.id],
-      confidence: 0.6,
-      urgency: 0.6,
-    };
+    // The confirmation replaces whatever the loop already raised, so the
+    // morning brief carries one current item for it.
+    const supersedes = matched.attachedObservations.map((o) => o.id);
     return [
       { name: "open_loop_search", args: { query: action.searchQuery } },
-      activeBrief
-        ? { name: "brief_update", args: { id: activeBrief.id, ...confirmation } }
-        : {
-            name: "brief_create",
-            args: {
-              kind: "loop",
-              ...confirmation,
-              ...(snoozedBrief ? { supersedes: [snoozedBrief.id] } : {}),
-            },
-          },
+      { name: "observation_list", args: {} },
+      {
+        name: "observation_note",
+        args: {
+          summary: action.confirmObservation ?? `Confirm completion of ${action.marker}`,
+          why: "Please confirm this is fully handled.",
+          citations: [docId],
+          relatedLoopIds: [matched.id],
+          ...(supersedes.length ? { supersedes } : {}),
+        },
+      },
       { name: "open_loop_ledger_append", args: { id: matched.id, note: action.ledgerNote } },
     ];
   }
 
-  // Closing a loop can itself dismiss its awareness brief. Use the mutation's
-  // actual returned state instead of trying to delete an already settled card
-  // that the active-only brief inventory correctly no longer returns.
-  const updated = steps.find(
-    (step) =>
-      step.name === "open_loop_update" &&
-      typeof step.args === "object" &&
-      step.args !== null &&
-      "id" in step.args &&
-      step.args.id === matched.id,
-  );
-  const updatedLoop = structuredData(updated?.result)?.loop as SearchLoopHit | undefined;
-  const activeBriefIds = (updatedLoop?.attachedBriefs ?? matched.attachedBriefs)
-    .filter((b) => b.state === "unread" || b.state === "read" || b.state === "dismissed_snoozed")
-    .map((b) => b.id);
+  // Closing the loop drops its open observations in the same cascade, so a
+  // clear resolution needs nothing beyond the state change and the note.
   return [
     { name: "open_loop_search", args: { query: action.searchQuery } },
     { name: "open_loop_update", args: { id: matched.id, state: "done" } },
-    ...activeBriefIds.map((id) => ({ name: "brief_delete", args: { id } })),
     { name: "open_loop_ledger_append", args: { id: matched.id, note: action.ledgerNote } },
   ];
 }
@@ -678,8 +541,6 @@ function maintenanceTurn(
           calls.push({ tool: "open_loop_fetch", args: { id: call.args.id } });
           continue;
         }
-        if (call.name.startsWith("brief_") && call.name !== "brief_list")
-          calls.push({ tool: "brief_list", args: {} });
         if (
           ["open_loop_update", "open_loop_delete", "open_loop_ledger_append"].includes(call.name) &&
           typeof call.args.id === "string"
@@ -687,9 +548,7 @@ function maintenanceTurn(
           calls.push({ tool: "open_loop_fetch", args: { id: call.args.id } });
         calls.push({
           tool: call.name,
-          args: ["open_loop_create", "open_loop_update", "brief_create", "brief_update"].includes(
-            call.name,
-          )
+          args: ["open_loop_create", "open_loop_update", "observation_note"].includes(call.name)
             ? { annotationDependencies: [], ...call.args }
             : call.args,
         });
@@ -706,34 +565,11 @@ function maintenanceTurn(
 export function decideNextTurn(
   messages: readonly WireMessage[],
   behaviors: ReadonlyMap<string, ArcDocBehavior>,
-  feedbackPolicy: FeedbackPolicy = "correct",
 ): NextTurn {
   const prompt = messages.find((m) => m.role === "user")?.content ?? "";
   const meta = parseRunPrompt(prompt);
   const maintenance = maintenanceTurn(messages, behaviors);
   if (maintenance) return maintenance;
-
-  if (meta.kind === "feedback") {
-    const fb = parseFeedbackPrompt(prompt);
-    if (!fb) return { kind: "final", text: "Malformed feedback prompt; refusing to act." };
-    const steps = collectToolSteps(messages);
-    let evidence: string[] = [];
-    if (feedbackPolicy === "saboteur" && fb.state === "dismissed_acknowledged") {
-      const fetched = steps.find((step) => step.name === "brief_fetch");
-      if (!fetched) return { kind: "tool", name: "brief_fetch", args: { id: fb.briefId } };
-      const citations = structuredData(fetched.result)?.citations;
-      if (
-        !Array.isArray(citations) ||
-        !citations.length ||
-        citations.some((id) => typeof id !== "string")
-      )
-        return { kind: "final", text: "The acknowledged brief has no usable source evidence." };
-      evidence = citations;
-    }
-    const plan = feedbackPlanFor(fb, feedbackPolicy, evidence);
-    if (!Array.isArray(plan)) return { kind: "final", text: plan.finalText };
-    return emitNextPlanned(plan, collectToolSteps(messages));
-  }
 
   if (meta.kind !== "data") {
     return { kind: "final", text: `No scripted behavior for run kind "${meta.kind}". Done.` };
@@ -769,7 +605,7 @@ export function decideNextTurn(
 /**
  * Emit the first planned call not yet present in the executed steps.
  * Calls are matched by name, and by `id`/`documentId` argument when one
- * is present (brief_delete runs once per attached brief).
+ * is present (so repeated calls on different loops each run once).
  */
 function emitNextPlanned(
   plan: ReadonlyArray<{ name: string; args: Record<string, unknown> }>,
@@ -784,12 +620,7 @@ function emitNextPlanned(
       return (s.args as { id?: unknown } | null)?.id === wantId;
     });
     if (idx === -1) {
-      const args = [
-        "open_loop_create",
-        "open_loop_update",
-        "brief_create",
-        "brief_update",
-      ].includes(call.name)
+      const args = ["open_loop_create", "open_loop_update", "observation_note"].includes(call.name)
         ? { annotationDependencies: [], ...call.args }
         : call.args;
       return { kind: "tool", name: call.name, args };
@@ -824,8 +655,6 @@ export interface ScriptedLoopModelServer {
 export interface ScriptedLoopModelOptions {
   behaviors: ReadonlyMap<string, ArcDocBehavior>;
   modelId?: string;
-  /** Feedback-run policy (defaults to the correct reactions). */
-  feedbackPolicy?: FeedbackPolicy;
 }
 
 async function readBody(req: import("node:http").IncomingMessage): Promise<string> {
@@ -876,11 +705,7 @@ export async function startScriptedLoopModelServer(
           return;
         }
 
-        const turn = decideNextTurn(
-          body.messages,
-          opts.behaviors,
-          opts.feedbackPolicy ?? "correct",
-        );
+        const turn = decideNextTurn(body.messages, opts.behaviors);
         const prompt = body.messages.find((m) => m.role === "user")?.content ?? "";
         const meta = parseRunPrompt(prompt);
         const steps = collectToolSteps(body.messages);

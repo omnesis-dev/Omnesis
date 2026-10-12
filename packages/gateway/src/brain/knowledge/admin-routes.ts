@@ -20,7 +20,7 @@ export function mountKnowledgeAdminRoutes(
       "loop",
       "doc_annotation",
       "person_annotation",
-      "brief",
+      "observation",
     ] as const);
     const limit = limitParam(c.req.query("limit"), "limit", 30, 100);
     return c.json({ items: query.list({ kind, afterId: c.req.query("afterId"), limit }) });
@@ -31,7 +31,7 @@ export function mountKnowledgeAdminRoutes(
       "wiki",
       "root",
       "loop",
-      "brief",
+      "observation",
       "doc_annotation",
       "person_annotation",
     ] as const);

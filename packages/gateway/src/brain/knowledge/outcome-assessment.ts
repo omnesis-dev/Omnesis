@@ -129,10 +129,7 @@ export function recordOutcomeAssessmentAttempt(
   now: number,
 ): void {
   db.transaction(() => {
-    if (
-      (input.fence.kind ?? "loop") !== "loop" ||
-      outcomeWriteConflict(db, input.fence.ownerId, input.fence)
-    )
+    if (outcomeWriteConflict(db, input.fence.ownerId, input.fence))
       throw new KnowledgeStorageError(
         "revision_conflict",
         "Outcome assessment inputs changed; read the current outcome and evidence.",

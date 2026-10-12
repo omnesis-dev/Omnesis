@@ -28,11 +28,11 @@
  */
 
 import {
-  BRIEF_JUDGE_SPEND_MECHANISM,
   WATCH_FIRING_OPENING_SPEND_MECHANISM,
   DEEP_RESEARCH_OTHER_STAGE_MECHANISM,
   ENTAILMENT_GATE_SPEND_MECHANISM,
   INTERACTIVE_SPEND_MECHANISM,
+  NOTE_AGENT_SPEND_MECHANISM,
   SUBAGENT_SPEND_MECHANISM,
   deepResearchSpendMechanism,
 } from "../../agent/spend-recorder.js";
@@ -49,6 +49,7 @@ import {
 } from "../run-payloads.js";
 import { WORTH_GATE_SPEND_MECHANISM } from "../worth-gate/gate.js";
 import { RECORD_CHECK_SPEND_MECHANISM } from "../record-check/rubric.js";
+import { OBSERVATION_SALIENCE_SPEND_MECHANISM } from "../observations/salience.js";
 import { MENTION_WORTH_GATE_SPEND_MECHANISM } from "../../enrichment/dates/config.js";
 import type { CognitionRunKind } from "../storage/types.js";
 
@@ -100,9 +101,13 @@ const WORKFLOWS = {
   "source-bootstrap": { label: "Source catch-up", queueKind: "bootstrap", version: 1 },
   "daily-source-review": { label: "Daily source review", queueKind: "daily", version: 1 },
   "daily-lookahead": { label: "Day-ahead review", queueKind: "daily", version: 1 },
-  "morning-digest": { label: "Morning digest", queueKind: "daily", version: 1 },
+  // Version 2: ranks observations and sends one conversation message instead
+  // of composing a brief card.
+  "morning-digest": { label: "Morning brief", queueKind: "daily", version: 2 },
   "time-reaction": { label: "Time reaction", queueKind: "time_based", version: 1 },
   "loop-decay-check": { label: "Loop decay check", queueKind: "time_based", version: 1 },
+  // Nothing produces it any more: brief dismissals enqueued it. Kept because
+  // its id is persisted in spend and attribution rows.
   "feedback-learning": { label: "Feedback learning", queueKind: "feedback", version: 1 },
   "provenance-recheck": { label: "Provenance recheck", queueKind: "feedback", version: 1 },
   "knowledge-maintenance": { label: "Knowledge maintenance", queueKind: "synthesis", version: 1 },
@@ -261,11 +266,12 @@ const NON_WORKFLOW_MECHANISM_LABELS: Readonly<Record<string, string>> = {
   [INTERACTIVE_SPEND_MECHANISM]: "Interactive chat",
   [SUBAGENT_SPEND_MECHANISM]: "Interactive sub-agent",
   [ENTAILMENT_GATE_SPEND_MECHANISM]: "Evidence verifier",
-  [BRIEF_JUDGE_SPEND_MECHANISM]: "Brief gate",
   [WORTH_GATE_SPEND_MECHANISM]: "Decision model · worth gate",
   [RECORD_CHECK_SPEND_MECHANISM]: "Decision model · record check",
+  [OBSERVATION_SALIENCE_SPEND_MECHANISM]: "Decision model · observation salience",
   [MENTION_WORTH_GATE_SPEND_MECHANISM]: "Decision model · mention worth gate",
   [WATCH_FIRING_OPENING_SPEND_MECHANISM]: "Watch opening message",
+  [NOTE_AGENT_SPEND_MECHANISM]: "Note agent",
   [deepResearchSpendMechanism("research-planner")]: "Deep Research · planner",
   [deepResearchSpendMechanism("history-sweep")]: "Deep Research · history sweep",
   [deepResearchSpendMechanism("source-digest")]: "Deep Research · source digest",

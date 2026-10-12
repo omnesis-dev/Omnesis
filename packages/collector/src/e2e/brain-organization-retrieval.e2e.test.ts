@@ -28,7 +28,6 @@ it("reconsiders a joint decision once actual index publication fills its late se
     experimental: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     extraInference: { backends: { publication: { type: "http", url: embedder.url } } },
     brain: {
       bootstrap: { enabled: false },

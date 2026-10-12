@@ -13,7 +13,11 @@ import {
   deleteOpenLoop,
   updateOpenLoop,
 } from "../storage/open-loops.js";
-import { createBrief, getBrief, updateBrief, setBriefState } from "../storage/briefs.js";
+import {
+  createObservation,
+  getObservation,
+  transitionObservation,
+} from "../storage/observations.js";
 import {
   createKnowledgeTables,
   getKnowledgeNode,
@@ -70,21 +74,18 @@ function loop() {
     1,
   );
 }
-it.each(["loop", "brief", "doc_annotation", "person_annotation"] as const)(
+it.each(["loop", "observation", "doc_annotation", "person_annotation"] as const)(
   "materializes a fresh %s owner by canonical identity without a periodic sweep",
   (kind) => {
     if (kind === "loop") loop();
-    else if (kind === "brief")
-      createBrief(
+    else if (kind === "observation")
+      createObservation(
         db,
         {
           id: "task",
           createdByRun: "run",
-          kind: "info",
-          title: "Workshop",
-          description: "Workshop Friday.",
-          confidence: 0.7,
-          urgency: 0.3,
+          summary: "Workshop",
+          why: "Workshop Friday.",
           citations: ["evidence"],
         },
         1,
@@ -115,23 +116,20 @@ it.each(["loop", "brief", "doc_annotation", "person_annotation"] as const)(
 
 it("does not materialize tombstoned owners or ambiguous canonical identities", () => {
   loop();
-  createBrief(
+  createObservation(
     db,
     {
       id: "task",
       createdByRun: "run",
-      kind: "info",
-      title: "Workshop",
-      description: "Workshop Friday.",
-      confidence: 0.7,
-      urgency: 0.3,
+      summary: "Workshop",
+      why: "Workshop Friday.",
       citations: ["evidence"],
     },
     1,
   );
   expect(() => materializeKnowledgeOwner(db, "task", 2)).toThrow("ambiguous");
   expect(getKnowledgeNode(db, "task")).toBeNull();
-  db.prepare("DELETE FROM briefs WHERE id='task'").run();
+  db.prepare("DELETE FROM observations WHERE id='task'").run();
   db.prepare("INSERT INTO knowledge_node_tombstones(id,deleted_at) VALUES('task',2)").run();
   expect(materializeKnowledgeOwner(db, "task", 3)).toBeNull();
 });
@@ -187,31 +185,28 @@ it("owner saves preserve operational fields, strip only the legacy prose project
     ),
   ).toThrow("Canonical owner changed");
 });
-it("keeps brief description and body distinct", () => {
-  createBrief(
+it("accepts proof maintenance on an observation but refuses rewriting what was observed", () => {
+  createObservation(
     db,
     {
-      id: "brief",
+      id: "notice",
       createdByRun: "run",
-      kind: "info",
-      title: "Workshop",
-      description: "Prepare materials.",
-      body: "Workshop Friday.",
-      confidence: 0.7,
-      urgency: 0.3,
+      summary: "Workshop",
+      why: "Prepare materials.",
       citations: ["evidence"],
     },
     1,
   );
-  const result = convertKnowledgeOwner(db, "brief", "brief", 2);
-  const owner = readKnowledgeOwner(db, "brief", "brief");
+  const result = convertKnowledgeOwner(db, "observation", "notice", 2);
+  const owner = readKnowledgeOwner(db, "observation", "notice");
+  expect(owner.markdown).toBe("Workshop\n\nWhy it matters: Prepare materials.");
   saveOwnedKnowledgeNode(
     db,
     {
       node: {
-        id: "brief",
-        ownerId: "brief",
-        kind: "brief",
+        id: "notice",
+        ownerId: "notice",
+        kind: "observation",
         title: owner.title,
         markdown: result.node.markdown,
         expectedRevision: 1,
@@ -221,64 +216,58 @@ it("keeps brief description and body distinct", () => {
     },
     3,
   );
-  expect(getBrief(db, "brief")).toMatchObject({
-    description: "Prepare materials.",
-    body: "Workshop Friday.",
-    state: "unread",
-  });
-});
-it("preserves a dismissed snapshot, retains privacy purge, and resumes a snoozed owner when reactivated", () => {
-  createBrief(
-    db,
-    {
-      id: "snapshot",
-      createdByRun: "run",
-      kind: "info",
-      title: "Workshop update",
-      description: "Workshop Friday.",
-      confidence: 0.7,
-      urgency: 0.3,
-      citations: ["evidence"],
-    },
-    1,
-  );
-  convertKnowledgeOwner(db, "brief", "snapshot", 2);
-  installKnowledgeOwnerTriggers(db);
-  setBriefState(db, "snapshot", "dismissed_snoozed", 3);
-  advanceKnowledgeOwnerSync(db, 10, 4);
-  const snapshot = getKnowledgeNode(db, "snapshot")!;
-  expect(snapshot.metadata.activity).toBe("historical");
-  const owner = readKnowledgeOwner(db, "brief", "snapshot");
+  const saved = getKnowledgeNode(db, "notice")!;
   expect(() =>
     saveOwnedKnowledgeNode(
       db,
       {
         node: {
-          id: owner.id,
-          ownerId: owner.id,
-          kind: "brief",
+          id: "notice",
+          ownerId: "notice",
+          kind: "observation",
           title: owner.title,
-          markdown: snapshot.markdown.replace("Friday", "Saturday"),
-          expectedRevision: snapshot.revision,
+          markdown: saved.markdown.replace("Prepare", "Skip"),
+          expectedRevision: saved.revision,
           inputVersions: { "source:evidence": "v1" },
         },
         ownerVersion: owner.versionFingerprint,
       },
-      5,
+      4,
     ),
-  ).toThrow("Historical brief snapshots");
-  expect(getKnowledgeNode(db, "snapshot")?.markdown).toBe(snapshot.markdown);
-  updateBrief(db, "snapshot", { nextShow: null }, 6);
-  advanceKnowledgeOwnerSync(db, 10, 7);
+  ).toThrow("Observations cannot be rewritten");
+  expect(getKnowledgeNode(db, "notice")?.markdown).toBe(saved.markdown);
+  expect(getObservation(db, "notice")).toMatchObject({
+    summary: "Workshop",
+    why: "Prepare materials.",
+    state: "live",
+  });
+});
+it("marks a closed observation historical and still privacy-purges it", () => {
+  createObservation(
+    db,
+    {
+      id: "snapshot",
+      createdByRun: "run",
+      summary: "Workshop update",
+      why: "Workshop Friday.",
+      citations: ["evidence"],
+    },
+    1,
+  );
+  convertKnowledgeOwner(db, "observation", "snapshot", 2);
   expect(getKnowledgeNode(db, "snapshot")?.metadata.activity).toBe("active");
-  setBriefState(db, "snapshot", "dismissed_acknowledged", 8);
-  advanceKnowledgeOwnerSync(db, 10, 9);
+  installKnowledgeOwnerTriggers(db);
+  expect(transitionObservation(db, "snapshot", { state: "dropped", reason: "expired" }, 3)).toBe(
+    true,
+  );
+  advanceKnowledgeOwnerSync(db, 10, 4);
+  expect(getKnowledgeNode(db, "snapshot")?.metadata.activity).toBe("historical");
   purgeKnowledgeBySource(db, "evidence", 10);
   while (advanceKnowledgeCascade(db, 100, 10).pending) {
     /* bounded batches */
   }
   expect(getKnowledgeNode(db, "snapshot")).toBeNull();
-  expect(getBrief(db, "snapshot")).toBeNull();
+  expect(getObservation(db, "snapshot")).toBeNull();
 });
 it("reconciles canonical state changes, preserves tags, and prevents adapter self-triggering", () => {
   loop();
@@ -416,20 +405,17 @@ it.each([false, true])(
     ).toBeUndefined();
   },
 );
-it("yields during attached-brief privacy cleanup instead of deleting arbitrary fanout in one step", () => {
+it("yields during attached-observation privacy cleanup instead of deleting arbitrary fanout in one step", () => {
   loop();
   convertKnowledgeOwner(db, "loop", "task", 2);
   for (let i = 0; i < 120; i++)
-    createBrief(
+    createObservation(
       db,
       {
         id: `notice-${i}`,
         createdByRun: "run",
-        kind: "info",
-        title: "Workshop",
-        description: "Prepare materials.",
-        confidence: 0.7,
-        urgency: 0.3,
+        summary: "Workshop",
+        why: "Prepare materials.",
         relatedLoopIds: ["task"],
         citations: ["evidence"],
       },
@@ -437,17 +423,18 @@ it("yields during attached-brief privacy cleanup instead of deleting arbitrary f
     );
   installKnowledgeOwnerTriggers(db);
   purgeKnowledgeBySource(db, "evidence", 4);
-  const remaining = db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM briefs").get()!
-    .count;
+  const remaining = db
+    .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM observations")
+    .get()!.count;
   expect(remaining).toBeGreaterThan(0);
   expect(remaining).toBeLessThan(120);
   while (advanceKnowledgeCascade(db, 10, 5).pending) {
     /* bounded fixture drain */
   }
-  expect(db.prepare("SELECT COUNT(*) AS count FROM briefs").get()).toEqual({ count: 0 });
+  expect(db.prepare("SELECT COUNT(*) AS count FROM observations").get()).toEqual({ count: 0 });
 });
 it.each(["doc_annotation", "person_annotation"])(
-  "withdraws %s without privacy-deleting its dependent brief",
+  "withdraws %s without privacy-deleting its dependent observation",
   (kind) => {
     const table = kind === "doc_annotation" ? "doc_annotations" : "person_annotations";
     const subject = kind === "doc_annotation" ? "doc_id" : "person_id";
@@ -455,16 +442,13 @@ it.each(["doc_annotation", "person_annotation"])(
       `INSERT INTO ${table}(id,${subject},claim_type,claim_text,evidence_doc_id,evidence_quote,confidence,created_by_run,created_at) VALUES('prior','evidence','schedule','Workshop Friday.','evidence','Workshop Friday.',0.7,'run',1)`,
     ).run();
     convertKnowledgeOwner(db, kind as "doc_annotation" | "person_annotation", "prior", 2);
-    createBrief(
+    createObservation(
       db,
       {
         id: "notice",
         createdByRun: "run",
-        kind: "info",
-        title: "Workshop",
-        description: "Workshop Friday.",
-        confidence: 0.7,
-        urgency: 0.3,
+        summary: "Workshop",
+        why: "Workshop Friday.",
         citations: ["evidence"],
       },
       2,
@@ -474,7 +458,7 @@ it.each(["doc_annotation", "person_annotation"])(
       {
         id: "notice",
         ownerId: "notice",
-        kind: "brief",
+        kind: "observation",
         title: "Workshop",
         markdown: '<claim id="date" refs="annotation:prior#claim:legacy">Workshop Friday.</claim>',
         expectedRevision: 0,
@@ -486,7 +470,7 @@ it.each(["doc_annotation", "person_annotation"])(
     expect(
       withdrawKnowledgeOwner(db, kind as "doc_annotation" | "person_annotation", "prior", 4),
     ).toBe(true);
-    expect(getBrief(db, "notice")).not.toBeNull();
+    expect(getObservation(db, "notice")).not.toBeNull();
     expect(getKnowledgeNode(db, "notice")?.validity).toBe("stale");
     expect(getKnowledgeNode(db, "prior")?.canonicalFields.withdrawn).toBe(true);
     expect(
@@ -496,7 +480,7 @@ it.each(["doc_annotation", "person_annotation"])(
     while (advanceKnowledgeCascade(db, 10, 6).pending) {
       /* bounded fixture drain */
     }
-    expect(getBrief(db, "notice")).toBeNull();
+    expect(getObservation(db, "notice")).toBeNull();
   },
 );
 it("rejects canonical owner identity collisions without overwriting another synthesis kind", () => {

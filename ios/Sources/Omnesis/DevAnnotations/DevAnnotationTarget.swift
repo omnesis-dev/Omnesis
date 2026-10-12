@@ -27,10 +27,6 @@ public struct DevAnnotationTarget: Equatable, Sendable {
         .init(type: "document", id: id, label: label ?? "Document \(id)")
     }
 
-    public static func brief(_ id: String, label: String? = nil) -> DevAnnotationTarget {
-        .init(type: "brief", id: id, label: label ?? "Brief \(id)")
-    }
-
     public static func openLoop(_ id: String, label: String? = nil) -> DevAnnotationTarget {
         .init(type: "open_loop", id: id, label: label ?? "Loop \(id)")
     }

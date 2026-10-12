@@ -1507,7 +1507,7 @@ export class DocumentService {
       verificationState: string | null;
       lastVerifiedAt: string | null;
       dependentCount: number;
-      dependents?: Array<{ kind: "brief" | "loop"; id: string; title: string }>;
+      dependents?: Array<{ kind: "observation" | "loop"; id: string; title: string }>;
       sortCreatedAt: number;
     }>;
     hasMore: boolean;

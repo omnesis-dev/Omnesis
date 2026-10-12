@@ -33,6 +33,7 @@ import {
   PlanPanel,
   WorkingIndicator,
 } from "../components/agent/parts.js";
+import { BriefThread } from "../components/agent/brief-thread.js";
 import {
   reducer,
   initialState,
@@ -40,6 +41,7 @@ import {
   hasContextCard,
 } from "./agent-reducer.js";
 import { navigate, replaceRoute, replaceUrl } from "../lib/router.js";
+import { canDeleteConversation } from "../lib/sidebar-conversations.js";
 import {
   conversationAgentTarget,
   freshAgentTarget,
@@ -48,7 +50,6 @@ import {
   resolveAgentReturnTarget,
   writeAgentReturnState,
 } from "../lib/agent-return-policy.js";
-import { renderMarkdown } from "../lib/markdown.js";
 import { getAgentModel } from "../api.js";
 import { AgentCloudInferenceRecovery, cloudInferenceRecovery } from "./agent-cloud-inference.js";
 import { ProviderIcon } from "../components/provider-icon.js";
@@ -175,8 +176,8 @@ export function shouldReplaceLandingUrl(pathname) {
 // reconcile there avoids a spurious 404 that would surface the "Conversation
 // not found" banner over an otherwise-empty hero composer.
 //
-// `turnCount > 0` alone isn't a reliable signal: a talk-back thread opened
-// from a brief or watch firing carries a seeded prefix
+// `turnCount > 0` alone isn't a reliable signal: a thread opened from a
+// watch firing carries a seeded prefix
 // that's hidden from `turns` until the user's first reply (see
 // `visibleMessages`), so a real, already-persisted conversation can also
 // have zero visible turns. `convoId` (the route's addressed conversation)
@@ -1037,6 +1038,9 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
 
   const cloudRecovery = cloudInferenceRecovery(state);
   const isHero = state.turns.length === 0 && !state.terminalFailure;
+  // The Morning brief conversation reads by day: separators, brief headers,
+  // what each brief was based on, and earlier days folded.
+  const isBriefThread = state.conversationOrigin?.kind === "daily_brief";
   return html`
     <div class=${`agent-page${isHero ? " agent-page-hero" : ""}`}>
       <div class=${`agent-layout${isHero ? " agent-layout-hero" : ""}`}>
@@ -1083,7 +1087,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
             : null}
           ${state.turns.length === 0 &&
           !state.terminalFailure &&
-          !hasContextCard(state.briefOrigin)
+          !hasContextCard(state.conversationOrigin)
             ? html`
               <div class="agent-hero">
                 <span class="agent-hero-mark" aria-hidden="true"></span>
@@ -1104,13 +1108,10 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
             `
             : html`
               <div class="agent-conversation" ref=${conversationRef} onScroll=${handleConversationScroll}>
-                ${state.briefOrigin?.brief
-                  ? html`<${BriefContextCard} snapshot=${state.briefOrigin.brief} />`
-                  : null}
-                ${state.briefOrigin?.watch
+                ${state.conversationOrigin?.watch
                   ? html`<${WatchFiringContextCard}
-                      snapshot=${state.briefOrigin.watch}
-                      watchId=${state.briefOrigin.watchId} />`
+                      snapshot=${state.conversationOrigin.watch}
+                      watchId=${state.conversationOrigin.watchId} />`
                   : null}
                 <${LoadMore}
                   hasMore=${!state.busy && Boolean(state.messageNextCursor)}
@@ -1119,9 +1120,16 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                   onLoadMore=${loadEarlierMessages}
                   label="Load earlier messages"
                 />
-                ${state.turns.map((turn) => html`
-                  <${MessageBubble} key=${turn.id} turn=${turn} citations=${state.citations} dispatch=${dispatch} />
-                `)}
+                ${isBriefThread
+                  ? html`<${BriefThread}
+                      key=${state.sessionId}
+                      conversationId=${state.sessionId}
+                      turns=${state.turns}
+                      citations=${state.citations}
+                      dispatch=${dispatch} />`
+                  : state.turns.map((turn) => html`
+                      <${MessageBubble} key=${turn.id} turn=${turn} citations=${state.citations} dispatch=${dispatch} />
+                    `)}
                 <${WorkingIndicator}
                   active=${workingIndicatorActive(state)}
                   rev=${workingIndicatorRev(state)} />
@@ -1143,6 +1151,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                     onSubmit=${send}
                     onCancel=${cancel}
                     experimental=${experimental}
+                    placeholder=${isBriefThread ? "Reply about today's brief…" : null}
                   />`}
             `}
         </section>
@@ -1197,13 +1206,15 @@ function ConversationsRail({ collapsed, onToggle, conversations, activeId, onSel
                     <span>·</span>
                     <span>${c.messageCount} msg</span>
                   </div>
-                  <button
-                    class="agent-rail-item-delete"
-                    onClick=${(e) => { e.stopPropagation(); if (confirm("Delete this conversation?")) onDelete(c.id); }}
-                    title="Delete"
-                    aria-label="Delete">
-                    ×
-                  </button>
+                  ${canDeleteConversation(c)
+                    ? html`<button
+                        class="agent-rail-item-delete"
+                        onClick=${(e) => { e.stopPropagation(); if (confirm("Delete this conversation?")) onDelete(c.id); }}
+                        title="Delete"
+                        aria-label="Delete">
+                        ×
+                      </button>`
+                    : null}
                 </div>
               `)}
           </div>
@@ -1225,17 +1236,11 @@ function fmtRelative(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-// The brief a talk-back thread replies to, pinned above the messages.
-// Content is the snapshot stamped at thread creation — it survives the
-// brief's expiry/dismissal, and the folded run transcript it visually
-// replaces is hidden by `visibleMessages`. The long-form body folds
-// behind "Show details" so re-anchoring stays a glance. Mirrors iOS's
-// BriefContextCard.
 // The watch firing that made the agent open this conversation, pinned
 // above the messages. This thread arrives unprompted, and the briefing
 // that produced its first message is hidden — the card is what answers
-// "why am I reading this". Snapshot semantics as above: stamped at thread
-// creation, so it survives the watch being renamed or deleted. Mirrors
+// "why am I reading this". The snapshot is stamped at thread creation, so
+// it survives the watch being renamed or deleted. Mirrors
 // iOS's WatchFiringContextCard.
 export function WatchFiringContextCard({ snapshot, watchId }) {
   const firedAt = new Date(snapshot.firedAt);
@@ -1248,63 +1253,31 @@ export function WatchFiringContextCard({ snapshot, watchId }) {
     navigate(href);
   }
   const content = html`
-    <div class="agent-brief-card-kicker">
+    <div class="agent-context-card-kicker">
       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M8 2a4 4 0 0 0-4 4c0 2.5-1 3.5-1 3.5h10S12 8.5 12 6a4 4 0 0 0-4-4Z" />
         <path d="M6.5 12a1.5 1.5 0 0 0 3 0" />
       </svg>
       <span>Watch fired</span>
-      ${href ? html`<span class="agent-brief-card-open" aria-hidden="true">View watch ›</span>` : null}
+      ${href ? html`<span class="agent-context-card-open" aria-hidden="true">View watch ›</span>` : null}
     </div>
-    <div class="agent-brief-card-title">${snapshot.name}</div>
-    <div class="agent-brief-card-description">
+    <div class="agent-context-card-title">${snapshot.name}</div>
+    <div class="agent-context-card-description">
       <!-- A heading, not a sentence stem: the condition is quoted verbatim
            in the operator's own words, often first person. -->
       <strong>Watching for</strong> ${snapshot.condition}
     </div>
-    <div class="agent-brief-card-description">
+    <div class="agent-context-card-description">
       <code>${Number.isNaN(firedAt.getTime()) ? "" : firedAt.toLocaleString()}</code>
     </div>
   `;
-  if (!href) return html`<div class="agent-brief-card">${content}</div>`;
+  if (!href) return html`<div class="agent-context-card">${content}</div>`;
   return html`
-    <a class="agent-brief-card agent-brief-card-link"
+    <a class="agent-context-card agent-context-card-link"
        href=${href}
        onClick=${onClick}>
       ${content}
     </a>
-  `;
-}
-
-function BriefContextCard({ snapshot }) {
-  const [bodyOpen, setBodyOpen] = useState(false);
-  const hasBody = typeof snapshot.body === "string" && snapshot.body.length > 0;
-  return html`
-    <div class="agent-brief-card">
-      <div class="agent-brief-card-kicker">
-        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="6" width="10" height="7" rx="1" />
-          <path d="M4.5 4h7 M6 2h4" />
-        </svg>
-        <span>Brief</span>
-      </div>
-      <div class="agent-brief-card-title">${snapshot.title}</div>
-      <div class="agent-brief-card-description"
-           dangerouslySetInnerHTML=${{ __html: renderMarkdown(snapshot.description || "") }} />
-      ${hasBody
-        ? html`
-          ${bodyOpen
-            ? html`<div class="agent-brief-card-body"
-                dangerouslySetInnerHTML=${{ __html: renderMarkdown(snapshot.body) }} />`
-            : null}
-          <button type="button" class="agent-brief-card-toggle"
-                  onClick=${() => setBodyOpen((v) => !v)}>
-            ${bodyOpen ? "Hide details" : "Show details"}
-          </button>
-        `
-        : null}
-    </div>
   `;
 }

@@ -47,7 +47,7 @@ it("binds identical words to their placement without changing unscoped-record fi
   const markdown = '<claim id="fact" refs="source:a">A fact.</claim>';
   const claim = parseClaimMarkup(markdown).claims[0]!;
   const original = knowledgeClaimFingerprint(claim, { "source:a": "v1" });
-  expect(knowledgeClaimContexts({ kind: "brief", title: "Outcome", markdown }).size).toBe(0);
+  expect(knowledgeClaimContexts({ kind: "observation", title: "Outcome", markdown }).size).toBe(0);
   expect(
     knowledgeClaimFingerprint(
       claim,

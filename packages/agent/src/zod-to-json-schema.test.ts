@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { toolInputJsonSchema, zodToJsonSchema } from "./zod-to-json-schema.js";
 
 describe("zodToJsonSchema", () => {
   it("converts a flat object with required + optional fields", () => {
@@ -181,5 +181,45 @@ describe("zodToJsonSchema", () => {
       maxItems: 2,
       items: { anyOf: [{ type: "string" }, { type: "number" }], description: "a label or amount" },
     });
+  });
+});
+
+describe("toolInputJsonSchema", () => {
+  it("advertises a union of object shapes as one object", () => {
+    const schema = z.union([
+      z.object({ id: z.string(), ref: z.string() }).strict(),
+      z
+        .object({ id: z.string(), refs: z.array(z.string()), limit: z.number().optional() })
+        .strict(),
+    ]);
+    expect(toolInputJsonSchema(schema)).toEqual({
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        ref: { type: "string" },
+        refs: { type: "array", items: { type: "string" } },
+        limit: { type: "number" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    });
+  });
+
+  it("combines a discriminator and loosens conflicting fields", () => {
+    const schema = z.union([
+      z.object({ kind: z.literal("one"), value: z.string() }).strict(),
+      z.object({ kind: z.literal("two"), value: z.number() }).strict(),
+    ]);
+    expect(toolInputJsonSchema(schema)).toEqual({
+      type: "object",
+      properties: { kind: { type: "string", enum: ["one", "two"] }, value: {} },
+      required: ["kind", "value"],
+      additionalProperties: false,
+    });
+  });
+
+  it("leaves an object schema as it is", () => {
+    const schema = z.object({ q: z.string() }).strict();
+    expect(toolInputJsonSchema(schema)).toEqual(zodToJsonSchema(schema));
   });
 });

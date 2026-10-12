@@ -18,7 +18,6 @@ import dev.omnesis.android.access.accessAuthorizationIdentity
 import dev.omnesis.android.access.accessAuthorizationPairingMatches
 import dev.omnesis.android.notes.PendingNote
 import dev.omnesis.android.session.SessionManager
-import dev.omnesis.android.transport.dto.BriefsMenuEntry
 import dev.omnesis.android.notifications.FcmPushManager
 import dev.omnesis.android.notifications.NotificationLaunchBus
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
@@ -32,12 +31,19 @@ import dev.omnesis.android.ui.devannotate.DevAnnotationTarget
 import dev.omnesis.android.ui.privacy.PrivacyResolutionBus
 import dev.omnesis.android.ui.privacy.PrivacySubscriptionResolutionBus
 import dev.omnesis.android.ui.search.SearchLaunchBus
+import dev.omnesis.android.ui.tasks.TaskCountsStore
+import dev.omnesis.android.ui.tasks.TaskFocusBus
 import dev.omnesis.android.transport.client.PRIVACY_APPROVALS_PAGE_MAX
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 import javax.inject.Inject
 
 /**
@@ -60,6 +66,8 @@ class HomeViewModel @Inject constructor(
     private val permissionHealth: PermissionHealthCoordinator,
     private val sourceCatalog: SourceCatalog,
     private val accessPendingRequests: AccessPendingRequests,
+    private val taskCounts: TaskCountsStore,
+    private val taskFocus: TaskFocusBus,
     phoneSetupGate: PhoneSetupGate,
     privacyResolutionBus: PrivacyResolutionBus,
     privacySubscriptionResolutionBus: PrivacySubscriptionResolutionBus,
@@ -104,26 +112,38 @@ class HomeViewModel @Inject constructor(
         )
     }
 
-    /** What the menu shows for Briefs, from the paired gateway's feature gate. */
-    val briefsMenuEntry: StateFlow<BriefsMenuEntry> = session.briefsMenuEntry
-
-    private val _briefsUnreadCount = MutableStateFlow(0)
+    /** Whether the menu offers Tasks: the paired gateway reports `tasks.available`. */
+    val tasksAvailable: StateFlow<Boolean> = session.tasksAvailable
 
     /**
-     * Unread briefs awaiting attention, for the menu badge. Refreshed when the menu is
-     * revealed — the same refresh-on-open cadence as the conversation list, since nothing
-     * pushes this. Best-effort: a failure zeroes the badge rather than showing a stale
-     * count or an error on a surface that is only a hint.
+     * Today's open tasks, for the menu's "Tasks (n)". The Tasks screen keeps it current while
+     * it is open; [refreshTasksCount] reads it when the menu is revealed and on becoming active.
      */
-    val briefsUnreadCount: StateFlow<Int> = _briefsUnreadCount.asStateFlow()
+    val tasksTodayCount: StateFlow<Int> = taskCounts.counts
+        .map { it.today }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, taskCounts.counts.value.today)
 
-    fun refreshBriefsUnreadCount() {
+    private var tasksCountGeneration = 0L
+
+    /**
+     * Read `GET /tasks/counts` for the phone's local day. Best-effort like the privacy badge:
+     * a failed read keeps the last count, and a gateway without Tasks counts nothing.
+     */
+    fun refreshTasksCount() {
+        val generation = ++tasksCountGeneration
+        if (!tasksAvailable.value) {
+            taskCounts.clear()
+            return
+        }
         viewModelScope.launch {
-            _briefsUnreadCount.value = runCatching {
-                session.session?.briefs?.unreadCount() ?: 0
-            }.getOrDefault(0)
+            val counts = session.session?.tasks?.let { attempt { it.counts(LocalDate.now().toString()) } }
+            if (generation != tasksCountGeneration || counts == null) return@launch
+            taskCounts.publish(counts.counts)
         }
     }
+
+    /** Ask the Tasks screen to show [taskId] with its details open (a brief's task chip). */
+    fun focusTask(taskId: String) = taskFocus.post(taskId)
 
     /** Refresh feature readiness so model changes made by any client reach the drawer. */
     fun refreshGatewayStatus() {
@@ -160,6 +180,7 @@ class HomeViewModel @Inject constructor(
         pendingApprovalPresentation.beginForeground()
         refreshPrivacyPending(offerPendingApproval = !explicitLaunchPending)
         refreshAccessPending()
+        refreshTasksCount()
     }
 
     /**
@@ -286,6 +307,8 @@ class HomeViewModel @Inject constructor(
         // A decision made anywhere in the app changes what the menu badge counts.
         viewModelScope.launch { privacyResolutionBus.resolved.collect { refreshPrivacyPending() } }
         viewModelScope.launch { privacySubscriptionResolutionBus.changed.collect { refreshPrivacyPending() } }
+        // Tasks appearing or going (a status read, a re-pair) changes what the menu can count.
+        viewModelScope.launch { tasksAvailable.drop(1).collect { refreshTasksCount() } }
     }
 
     fun retryPendingNotes() {
@@ -314,8 +337,7 @@ class HomeViewModel @Inject constructor(
 
     fun newConversation() = coordinator.newConversation()
 
-    fun resumeConversation(id: String, autoSend: String? = null) =
-        coordinator.resumeConversation(id, autoSend)
+    fun resumeConversation(id: String) = coordinator.resumeConversation(id)
 
     fun deleteConversation(id: String) = coordinator.deleteConversation(id)
 

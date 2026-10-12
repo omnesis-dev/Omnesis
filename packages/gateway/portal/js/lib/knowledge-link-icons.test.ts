@@ -35,10 +35,11 @@ it("recognizes only local canonical navigation paths for private metadata hydrat
   expect(knowledgeIconHtml({ kind: "root" })).toContain("kn-link-icon--wiki");
 });
 
-it("uses the same decorative glyphs for brief and canonical annotation links", () => {
-  const brief = knowledgeIconHtml({ reference: "brief:brief_invented" });
-  expect(brief).toContain('<circle cx="12" cy="12" r="10"/>');
-  expect(brief).toContain('aria-hidden="true"');
+it("uses the same decorative glyphs for observation and canonical annotation nodes", () => {
+  const observation = knowledgeIconHtml({ kind: "observation" });
+  expect(observation).toContain("kn-link-icon--observation");
+  expect(observation).toContain('<circle cx="12" cy="12" r="3"/>');
+  expect(observation).toContain('aria-hidden="true"');
   const person = knowledgeIconHtml({ kind: "person_annotation" });
   const document = knowledgeIconHtml({ kind: "doc_annotation" });
   expect(person).toContain("kn-link-icon-badge--user");
@@ -60,13 +61,9 @@ it("hydrates exact annotation kinds without guessing ownership from an identifie
     metadata,
   );
   expect(knowledgeIconHtml({ reference, ...metadata })).toContain("kn-link-icon-badge--user");
-  expect(knowledgeLinkReference("/portal/debug/cognition/briefs/brief_invented")).toBe(
-    "brief:brief_invented",
-  );
   expect(knowledgeLinkReference("/portal/debug/cognition/loops/loop_invented")).toBe(
     "loop:loop_invented",
   );
-  expect(knowledgeLinkReference("brief_invented")).toBe("brief:brief_invented");
   expect(knowledgeLinkReference("anno_invented")).toBe("annotation:anno_invented");
-  expect(knowledgeLinkReference("https://example.org/portal/debug/cognition/briefs/private")).toBeNull();
+  expect(knowledgeLinkReference("https://example.org/portal/debug/cognition/loops/private")).toBeNull();
 });

@@ -42,7 +42,7 @@ import {
   type ToolResult,
 } from "@omnesis/core";
 
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { isOpenAIApiEndpoint, modelReasoningRequestFields } from "./model-reasoning-wire.js";
 import {
@@ -1072,7 +1072,7 @@ export function convertToolsToResponses(tools: ReadonlyArray<ToolHandle>): Respo
     type: "function" as const,
     name: h.name,
     description: h.description,
-    parameters: zodToJsonSchema(h.schema) as Record<string, unknown>,
+    parameters: toolInputJsonSchema(h.schema) as Record<string, unknown>,
   }));
 }
 

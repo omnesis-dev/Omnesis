@@ -23,7 +23,6 @@ describe("claim references", () => {
     ["loop:loop_1#field:state", "loop", "loop_1", "field", "state"],
     ["loop:loop_1#claim:reason", "loop", "loop_1", "claim", "reason"],
     ["annotation:a1#claim:c1", "annotation", "a1", "claim", "c1"],
-    ["brief:b1#claim:c1", "brief", "b1", "claim", "c1"],
   ])("parses %s", (raw, kind, id, selectorKind, selectorId) => {
     expect(parseClaimReference(raw!)).toEqual({
       raw,
@@ -47,7 +46,9 @@ describe("claim references", () => {
     "source:x%22",
     "wiki:x#field:state",
     "source:x#claim:c",
-    "brief:x#evidence:e",
+    "annotation:x#evidence:e",
+    "brief:b1#claim:c1",
+    "observation:o1",
     "person:x",
     "wiki:",
     "wiki:x#claim:",

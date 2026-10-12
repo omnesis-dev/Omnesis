@@ -33,9 +33,12 @@ import { directWriteGate } from "../../write-gate.js";
 import { CognitionRunDriver } from "../run-driver.js";
 import { FsCognitionTranscriptStore } from "../transcripts.js";
 import { getOpenLoop, listOpenLoopLedger, listOpenLoops } from "../storage/open-loops.js";
-import { createBrief, getBrief, listBriefs } from "../storage/briefs.js";
-import { claimDueCognitionRuns } from "../storage/run-queue.js";
-import { dismissBriefAndEnqueueFeedback } from "../feedback.js";
+import {
+  createObservation,
+  getObservation,
+  transitionObservation,
+} from "../storage/observations.js";
+import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { resolveBrainSettings } from "../config.js";
 import { RecordCheck } from "../record-check/check.js";
 import { buildCognitionRunPrompt } from "./prompts.js";
@@ -234,7 +237,7 @@ describe("assembled Cognition Steward through the real driver", () => {
   }
 
   test("maintenance identity reads only current readable sources owned by its batch", async () => {
-    const { loopId } = await seedLoopWithBrief();
+    const loopId = await seedLoop();
     for (const id of ["original", "reply", "unrelated"]) {
       db.prepare(
         `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,metadata,source_created_at,source_updated_at,ingested_at,updated_at)
@@ -535,11 +538,9 @@ describe("assembled Cognition Steward through the real driver", () => {
     "open_loop_update",
     "open_loop_ledger_append",
     "open_loop_delete",
-    "brief_list",
-    "brief_fetch",
-    "brief_create",
-    "brief_update",
-    "brief_delete",
+    "observation_list",
+    "observation_note",
+    "observation_withdraw",
     "notes_append",
     "notes_rewrite",
     "notes_edit",
@@ -617,20 +618,21 @@ describe("assembled Cognition Steward through the real driver", () => {
     // are absent from the assembled toolset, so the model cannot call them
     // however its prompt drifts.
 
-    // A morning digest composes one card and nothing beneath it.
+    // A morning digest sends one message and writes nothing beneath it; its
+    // one write (morning_brief_send) is added by the runtime, not the toolset.
     const digest = new Set(
       buildCognitionToolset(
         toolsetDeps,
         claimed({ id: "run_dg", kind: "daily", payload: { digest: true, date: "2026-01-02" } }),
       ).map((t) => t.name),
     );
-    expect(digest).toContain("brief_create");
-    expect(digest).toContain("brief_update");
+    expect(digest).not.toContain("observation_note");
+    expect(digest).not.toContain("observation_withdraw");
     expect(digest).not.toContain("open_loop_create");
     expect(digest).not.toContain("annotate_durable");
     // Reads stay broad — narrowing writes must not blind the run.
     expect(digest).toContain("search_many");
-    expect(digest).toContain("brief_list");
+    expect(digest).toContain("observation_list");
 
     // A per-source daily review rides the same queue kind and keeps the
     // default authority, so the split is by workflow and not by kind.
@@ -645,19 +647,19 @@ describe("assembled Cognition Steward through the real driver", () => {
       ).map((t) => t.name),
     );
     expect(review).toContain("open_loop_create");
-    expect(review).toContain("brief_create");
+    expect(review).toContain("observation_note");
 
     // Re-grounding maintains annotation memory and cannot mint an
     // interruption. (The annotation verbs themselves only exist when
     // annotations are enabled, which this fixture leaves off — what matters
-    // here is that the brief/loop verbs are gone.)
+    // here is that the observation/loop verbs are gone.)
     const regrounding = new Set(
       buildCognitionToolset(
         toolsetDeps,
         claimed({ id: "run_v", kind: "verification", payload: {} }),
       ).map((t) => t.name),
     );
-    expect(regrounding).not.toContain("brief_create");
+    expect(regrounding).not.toContain("observation_note");
     expect(regrounding).not.toContain("open_loop_create");
     expect(regrounding).not.toContain("notes_append");
     expect(regrounding).toContain("search_many");
@@ -724,11 +726,11 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(childNames).toContain("search_many");
     expect(childNames).toContain("open_loop_search");
     expect(childNames).toContain("open_loop_fetch");
-    expect(childNames).toContain("brief_list");
+    expect(childNames).toContain("observation_list");
   });
 
-  /** Seed one open loop with one attached confirm brief via scripted tools. */
-  async function seedLoopWithBrief(): Promise<{ loopId: string; briefId: string }> {
+  /** Seed one open loop via the scripted open_loop_create tool. */
+  async function seedLoop(): Promise<string> {
     await makeDriver(
       toolCallingBackend([
         {
@@ -741,118 +743,52 @@ describe("assembled Cognition Steward through the real driver", () => {
             annotationDependencies: [],
           }),
         },
-        {
-          tool: "brief_create",
-          args: (prior) => {
-            const loop = structuredData(prior[0]!).loop as { id: string };
-            return {
-              kind: "loop",
-              title: "Studio booking looks handled — confirm?",
-              confidence: 0.8,
-              urgency: 0.5,
-              relatedLoopIds: [loop.id],
-              annotationDependencies: [],
-            };
-          },
-        },
       ]),
     ).execute(claimed({ id: "run_seed" }));
     const loops = listOpenLoops(db);
-    const briefs = listBriefs(db);
     expect(loops).toHaveLength(1);
-    expect(briefs).toHaveLength(1);
-    return { loopId: loops[0]!.id, briefId: briefs[0]!.id };
+    return loops[0]!.id;
   }
 
-  test("snooze round-trip through the real driver: dismissal hides the brief, the feedback run honours the picked time, the brief returns to unread", async () => {
-    const { briefId } = await seedLoopWithBrief();
-    const until = NOW + 86_400_000;
-
-    // The user snoozes ("tomorrow"): synchronous flip + feedback-run enqueue.
-    const res = dismissBriefAndEnqueueFeedback(
+  test("deleting a loop through the real driver deletes its open observations; a shipped one stays without the loop edge", async () => {
+    const loopId = await seedLoop();
+    createObservation(
       db,
-      { briefId, reason: "snoozed", snoozeUntil: until, feedbackRunId: "run_fb" },
+      {
+        id: "obs_open",
+        createdByRun: "run_seed",
+        summary: "Studio booking still unconfirmed",
+        relatedLoopIds: [loopId],
+      },
       NOW,
     );
-    expect(res.outcome).toBe("dismissed");
-    // Invisible now: dismissed_snoozed is outside the feed's unread/read selection.
-    expect(getBrief(db, briefId)?.state).toBe("dismissed_snoozed");
-
-    // Claim the run the way the drainer does; its prompt carries the signal.
-    const [run] = claimDueCognitionRuns(db, { now: NOW });
-    expect(run).toMatchObject({ id: "run_fb", kind: "feedback" });
-    const prompt = buildCognitionRunPrompt(run!, promptDeps());
-    expect(prompt).toContain("dismissed_snoozed");
-    expect(prompt).toContain(new Date(until).toISOString());
-
-    // The feedback run honours the picked time via brief_update; the
-    // engine returns the brief to unread with next_show gating display.
-    const outcome = await makeDriver(
-      toolCallingBackend([
-        {
-          tool: "brief_update",
-          args: () => ({
-            id: briefId,
-            nextShow: new Date(until).toISOString(),
-            annotationDependencies: [],
-          }),
-        },
-      ]),
-    ).execute(run!);
-    expect(outcome.ok).toBe(true);
-    const after = getBrief(db, briefId)!;
-    expect(after.state).toBe("unread");
-    expect(after.nextShow).toBe(until);
-  });
-
-  test("already-handled through the real driver: the feedback run closes the related loop; its non-terminal briefs cascade, the dismissed one stays terminal", async () => {
-    const { loopId, briefId } = await seedLoopWithBrief();
-    // A second, still-unread brief on the same loop — cascade fodder.
-    await makeDriver(
-      toolCallingBackend([
-        {
-          tool: "brief_create",
-          args: () => ({
-            kind: "loop",
-            title: "Reminder: studio booking still open",
-            confidence: 0.7,
-            urgency: 0.4,
-            relatedLoopIds: [loopId],
-            // Deliberate sibling on one loop — cascade fodder for the
-            // retract assertion below; bypass the one-card-per-loop guard.
-            force: true,
-            annotationDependencies: [],
-          }),
-        },
-      ]),
-    ).execute(claimed({ id: "run_seed2" }));
-    const siblingId = listBriefs(db).find((b) => b.id !== briefId)!.id;
-
-    const res = dismissBriefAndEnqueueFeedback(
+    createObservation(
       db,
-      { briefId, reason: "already_handled", feedbackRunId: "run_fb", feedback: null },
+      {
+        id: "obs_shipped",
+        createdByRun: "run_seed",
+        summary: "Studio booking request sent",
+        relatedLoopIds: [loopId],
+      },
       NOW,
     );
-    expect(res.outcome).toBe("dismissed");
+    transitionObservation(
+      db,
+      "obs_shipped",
+      { state: "shipped", shipped: { conversationId: "conv_1", messageId: "msg_1" } },
+      NOW,
+    );
 
-    const [run] = claimDueCognitionRuns(db, { now: NOW });
-    const prompt = buildCognitionRunPrompt(run!, promptDeps());
-    expect(prompt).toContain("dismissed_already_handled");
-
-    // The feedback run closes (deletes) the related loop.
     const outcome = await makeDriver(
       toolCallingBackend([{ tool: "open_loop_delete", args: () => ({ id: loopId }) }]),
-    ).execute(run!);
+    ).execute(claimed({ id: "run_close" }));
     expect(outcome.ok).toBe(true);
 
-    // Loop gone; the unread sibling cascaded away with it; the dismissed
-    // brief survives in its terminal state (never re-surfaces) with no
-    // dangling loop edges.
     expect(getOpenLoop(db, loopId)).toBeNull();
-    expect(getBrief(db, siblingId)).toBeNull();
-    const terminal = getBrief(db, briefId)!;
-    expect(terminal.state).toBe("dismissed_already_handled");
-    expect(terminal.relatedLoopIds).toEqual([]);
+    expect(getObservation(db, "obs_open")).toBeNull();
+    const shipped = getObservation(db, "obs_shipped")!;
+    expect(shipped.state).toBe("shipped");
+    expect(shipped.relatedLoopIds).toEqual([]);
   });
 
   test("tool errors don't fail the run: an invalid scripted call surfaces as an error result the model can react to", async () => {
@@ -867,68 +803,6 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(outcome.ok).toBe(true); // the TURN completed; the tool refused
     expect(invoked[0]).toMatchObject({ kind: "error", code: "invalid_args" });
     expect(listOpenLoops(db)).toHaveLength(0);
-  });
-
-  // The wiring test the unit tests cannot stand in for: a lane resolved in
-  // run-payloads and a gate honoured in brief-judge prove nothing unless the
-  // lane actually travels from the claimed run into brief_create.
-  test("the run's lane reaches brief_create — a digest never consults the judge, a datum run always does", async () => {
-    const judged: string[] = [];
-    const judgingDeps: CognitionToolsetDeps = {
-      ...toolsetDeps,
-      getBriefJudge: () => ({
-        judge: async (candidate) => {
-          judged.push(candidate.lane ?? "(none)");
-          return { decision: "hold" as const, reason: "held by the stub" };
-        },
-      }),
-    };
-    const create = async (run: ClaimedCognitionRun) => {
-      const tool = buildCognitionToolset(judgingDeps, run).find((t) => t.name === "brief_create")!;
-      return tool.invoke(
-        {
-          kind: "info",
-          title: "t",
-          description: "d",
-          confidence: 0.5,
-          urgency: 0.5,
-          annotationDependencies: [],
-        },
-        { sessionId: "S", messageId: "M" },
-      );
-    };
-
-    const digest = await create(
-      claimed({ id: "run_digest", kind: "daily", payload: { digest: true, date: "2026-07-02" } }),
-    );
-    expect(judged).toEqual([]);
-    expect((structuredData(digest)["brief"] as { id?: string }).id).toBeTypeOf("string");
-
-    const datum = await create(claimed({ id: "run_datum", kind: "data" }));
-    expect(judged).toEqual(["reactive"]);
-    expect(structuredData(datum)["reason"]).toBe("held by the stub");
-
-    const mayDay = await create(
-      claimed({ id: "run_mayday", kind: "daily", payload: { mayDay: true, date: "2026-07-02" } }),
-    );
-    expect(judged).toEqual(["reactive", "lookahead"]);
-    expect(structuredData(mayDay)["reason"]).toBe("held by the stub");
-
-    await create(
-      claimed({
-        id: "run_sched",
-        kind: "time_based",
-        payload: { prompt: "re-verify before it surfaces", loopId: "loop_x" },
-      }),
-    );
-    await create(
-      claimed({
-        id: "run_notice",
-        kind: "synthesis",
-        payload: { focus: "noticing", date: "2026-07-02" },
-      }),
-    );
-    expect(judged).toEqual(["reactive", "lookahead", "dated_reminder", "noticing"]);
   });
 });
 
@@ -980,22 +854,34 @@ describe("createCognitionRuntime prompt wiring", () => {
       expect(query).toHaveBeenCalledTimes(1);
       expect(await rt.preflight!(claimed({}))).toBe("continue");
       expect(query).toHaveBeenCalledTimes(1);
-      createBrief(
+      createObservation(
         db,
         {
           id: "digest-input",
           createdByRun: "seed",
-          kind: "info",
-          title: "Calibration schedule changed",
-          description: "Inspect the revised schedule.",
-          confidence: 0.8,
-          urgency: 0.4,
+          summary: "Calibration schedule changed",
+          why: "Inspect the revised schedule.",
         },
         NOW,
       );
+      replaceMorningBriefItems(db, "2026-07-02", "run_recheck", ["digest-input"]);
       expect(await rt.preflight!(digest)).toBe("continue");
       query.mockRejectedValue(new Error("unavailable"));
       expect(await rt.preflight!(digest)).toBe("defer");
+      // A day whose brief was already sent settles without reading anything.
+      query.mockClear();
+      markMorningBriefSent(
+        db,
+        {
+          day: "2026-07-02",
+          runId: "run_digest",
+          conversationId: "conv_daily",
+          messageId: "msg_daily",
+        },
+        NOW,
+      );
+      expect(await rt.preflight!(digest)).toBe("complete");
+      expect(query).not.toHaveBeenCalled();
     } finally {
       query.mockRestore();
     }

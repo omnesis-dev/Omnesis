@@ -11,7 +11,8 @@ import { parseCognitionRunEnvelope, type TemporalItem, type TemporalKind } from 
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { createOpenLoop, updateOpenLoop, appendOpenLoopLedger } from "../storage/open-loops.js";
 import { retireLoop } from "../storage/retired-loops.js";
-import { createBrief, setBriefState, updateBrief } from "../storage/briefs.js";
+import { createObservation } from "../storage/observations.js";
+import { replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { resolveBrainSettings } from "../config.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { WIKI_AUTHORING_GUIDANCE } from "../knowledge/wiki-authoring.js";
@@ -39,7 +40,7 @@ import {
   buildCognitionWorkflowInstructions,
   fenceSafe,
   buildCognitionSystemPrompt,
-  cognitionRunCarriesBriefRules,
+  cognitionRunCarriesObservationRules,
 } from "./prompts.js";
 import type Database from "better-sqlite3";
 import type { ClaimedCognitionRun } from "../storage/types.js";
@@ -351,7 +352,7 @@ describe("Cognition Steward run prompts", () => {
     expect(addressedDataSteeringMode('{"addressedToAgent":true}', true)).toBe("with_annotations");
   });
 
-  test("routes shared brief rules by run capability rather than prompt copy", () => {
+  test("routes shared observation rules by run capability rather than prompt copy", () => {
     for (const kind of [
       "data",
       "daily",
@@ -361,7 +362,7 @@ describe("Cognition Steward run prompts", () => {
       "sweep",
       "bootstrap",
     ] as const) {
-      expect(cognitionRunCarriesBriefRules(kind), kind).toBe(true);
+      expect(cognitionRunCarriesObservationRules({ kind, payload: {} }), kind).toBe(true);
     }
     for (const kind of [
       "verification",
@@ -369,8 +370,15 @@ describe("Cognition Steward run prompts", () => {
       "notes_compaction",
       "subscription_compile",
     ] as const) {
-      expect(cognitionRunCarriesBriefRules(kind), kind).toBe(false);
+      expect(cognitionRunCarriesObservationRules({ kind, payload: {} }), kind).toBe(false);
     }
+    // The morning brief composes from ranked observations; it notes none itself.
+    expect(
+      cognitionRunCarriesObservationRules({
+        kind: "daily",
+        payload: { digest: true, date: "2026-07-02" },
+      }),
+    ).toBe(false);
   });
 
   /** Insert a source doc and return its internal id. */
@@ -436,9 +444,9 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("Links supply neither evidence nor automatic closure");
     expect(prompt).not.toContain("stays ONE loop");
     expect(prompt).toContain("fetch_many");
-    expect(prompt).toContain("every factual statement from the title, description, and body");
-    expect(prompt).toContain("factual premises embedded in advice");
-    expect(prompt).toContain("correcting the claim list alone does not correct the card");
+    expect(prompt).toContain("every factual statement in the summary and why");
+    expect(prompt).toContain("premises embedded in advice");
+    expect(prompt).toContain("Pass the verbatim quotes that establish the observation as claims");
   });
 
   test("a data run receives its source projection and is told not to duplicate it", () => {
@@ -861,7 +869,7 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("notes_rewrite");
     expect(prompt).toContain("notes_edit");
     expect(prompt).toContain("Never invent content");
-    // A notes-maintenance lane cannot brief, so it carries no CoVe hop.
+    // A notes-maintenance lane cannot note observations, so it carries no CoVe hop.
     expect(prompt).not.toContain("chain-of-verification");
     expect(prompt).not.toContain("assertedClaims");
   });
@@ -907,8 +915,8 @@ describe("Cognition Steward run prompts", () => {
       );
       expect(staticPrefix(dataA)).toBe(staticPrefix(dataB));
       expect(staticPrefix(dataA)).toContain("Your goal is to MAINTAIN the open loops");
-      expect(staticPrefix(dataA)).toContain("How a brief reads — the house style.");
-      expect(staticPrefix(dataA)).toContain("Verify before you brief");
+      expect(staticPrefix(dataA)).toContain("How an observation is written.");
+      expect(staticPrefix(dataA)).toContain("Verify before you note");
 
       const bootA = buildCognitionRunPrompt(
         claimed({ id: "run_c", kind: "bootstrap", payload: { docId: docA, datumAt: NOW } }),
@@ -921,7 +929,7 @@ describe("Cognition Steward run prompts", () => {
       expect(staticPrefix(bootA)).toBe(staticPrefix(bootB));
       expect(staticPrefix(bootA)).toContain("RETROSPECTIVE BOOTSTRAP");
       expect(staticPrefix(bootA)).toContain("Backfill discipline");
-      expect(staticPrefix(bootA)).toContain("Verify before you brief");
+      expect(staticPrefix(bootA)).toContain("Verify before you note");
 
       // Nothing volatile leaks into the prefix.
       for (const prompt of [dataA, dataB, bootA, bootB]) {
@@ -1015,7 +1023,7 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("1 day old");
     expect(prompt).toContain("finish without creating anything");
     // No instruction to fetch the deleted datum (the CoVe envelope's generic
-    // fetch_many mention is about a draft brief's evidence, not this doc).
+    // fetch_many mention is about a draft observation's evidence, not this doc).
     expect(prompt).toContain("Do not try to fetch it");
     expect(prompt).not.toContain("Fetch its content");
   });
@@ -1038,7 +1046,7 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("2026-07-01");
     expect(prompt).toContain("2026-07-02");
     expect(prompt).toContain("nothing is inlined here");
-    expect(prompt).toContain("do NOT create briefs whose relevance has already passed");
+    expect(prompt).toContain("do NOT note observations whose relevance has already passed");
   });
 
   test("a daily prompt delta-primes the source's own loops without inlining raw source content", () => {
@@ -1227,7 +1235,7 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("2026-07-02");
     expect(prompt).toContain("ORIGINATE");
     expect(prompt).toContain("Second axis — awareness"); // the awareness rule is inherent here
-    expect(prompt).toContain("AT MOST ONE `info` brief");
+    expect(prompt).toContain("note AT MOST ONE observation");
     expect(prompt).toContain("All tracked loops"); // the synthesis delta-prime
   });
 
@@ -1243,7 +1251,7 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("person:p1");
     expect(prompt).toContain("loop_a");
     expect(prompt).toContain("CANDIDATE relationship");
-    expect(prompt).toContain("related_loop_ids");
+    expect(prompt).toContain("note ONE observation");
   });
 
   test("a time-overlap collision prompt inlines the live entries and demands re-grounding", () => {
@@ -1391,7 +1399,7 @@ describe("Cognition Steward run prompts", () => {
     });
     expect(a.startsWith(common)).toBe(true);
     expect(b.startsWith(common)).toBe(true);
-    expect(common).toContain("Verify before you brief");
+    expect(common).toContain("Verify before you note");
     expect(common).toContain("knowledge_next_frontier");
     for (const dynamic of [
       "cache-first",
@@ -1452,13 +1460,10 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("pendingClaimIdsOmitted");
     expect(prompt).toContain("does not settle untouched claims");
     expect(prompt).toContain("Your notes file is currently empty.");
+    expect(prompt).toContain("How an observation is written.");
     expect(prompt).toContain(
-      "An informative new future plan may merit awareness without an immediate task",
+      "TIME: windowStart when it only matters later, relevantUntil when it stops mattering",
     );
-    expect(prompt).toContain(
-      "A window that has not elapsed does not justify chasing completion now",
-    );
-    expect(prompt).toContain("set nextShow to that review time");
   });
 
   test.each([
@@ -1466,7 +1471,7 @@ describe("Cognition Steward run prompts", () => {
     { focus: "knowledge-maintenance", batchId: "batch_root", schedulingClass: "initial-root" },
     { focus: "knowledge-maintenance", batchId: "batch_joint", organizationCohortId: "cohort" },
   ])(
-    "maintenance leads with frontier goals and one editorial contract before brief-only rules: %j",
+    "maintenance leads with frontier goals and one editorial contract before observation-only rules: %j",
     (payload) => {
       const prompt = buildCognitionRunPrompt(claimed({ kind: "synthesis", payload }), deps());
       expect(prompt.startsWith("Maintain the evidence-backed synthesis graph")).toBe(true);
@@ -1497,10 +1502,10 @@ describe("Cognition Steward run prompts", () => {
       );
       expect(prompt.split(WIKI_AUTHORING_GUIDANCE)).toHaveLength(2);
       expect(prompt.indexOf(WIKI_AUTHORING_GUIDANCE)).toBeLessThan(prompt.indexOf("Current time:"));
-      const briefScope = prompt.indexOf("apply only when writing a brief");
-      expect(briefScope).toBeGreaterThan(prompt.indexOf(WIKI_AUTHORING_GUIDANCE));
-      expect(briefScope).toBeLessThan(prompt.indexOf("How a brief reads — the house style."));
-      expect(prompt).toContain("Verify before you brief");
+      const observationScope = prompt.indexOf("apply only when noting an observation");
+      expect(observationScope).toBeGreaterThan(prompt.indexOf(WIKI_AUTHORING_GUIDANCE));
+      expect(observationScope).toBeLessThan(prompt.indexOf("How an observation is written."));
+      expect(prompt).toContain("Verify before you note");
       expect(parseCognitionRunEnvelope(prompt)?.runId).toBe("run_7");
     },
   );
@@ -1523,7 +1528,7 @@ describe("Cognition Steward run prompts", () => {
           })
         : run;
     const prompt = buildCognitionRunPrompt(actualRun, deps());
-    expect(prompt).toContain("even when the source adds no new request, wiki or brief");
+    expect(prompt).toContain("even when the source adds no new request, wiki or observation");
     expect(prompt).toContain("bounded open_loop_search for the same outcome");
     expect(prompt).toContain("preserving independently outstanding scope");
     expect(prompt).toContain(
@@ -1939,7 +1944,7 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("supersedes:");
     expect(prompt).toContain("annotation_retract");
     // Maintenance-only scope: verification never fabricates user-facing output.
-    expect(prompt).toContain("do not create loops or briefs");
+    expect(prompt).toContain("do not create loops or observations");
   });
 
   test("a person-store verification prompt routes to the person tools", () => {
@@ -2005,41 +2010,39 @@ describe("Cognition Steward run prompts", () => {
 
   test("digest preflight distinguishes an empty packet from actual editorial inputs", () => {
     const horizon = { items: [], timeZone: "UTC", truncated: false };
-    const read = () => readDigestInputs(db, NOW, deps().cfg, horizon);
+    const read = (day = "2026-07-02") => readDigestInputs(db, NOW, deps().cfg, horizon, day);
     expect(read().hasInputs).toBe(false);
-    createBrief(
+    createObservation(
       db,
       {
         id: "editorial-input",
         createdByRun: "seed",
-        kind: "info",
-        title: "Laboratory calibration changed",
-        description: "The review moved.",
-        confidence: 0.8,
-        urgency: 0.4,
+        summary: "Laboratory calibration changed",
+        why: "The review moved.",
       },
       NOW - 1000,
     );
+    // An observation the morning recheck did not rank is not an input.
+    expect(read().hasInputs).toBe(false);
+    replaceMorningBriefItems(db, "2026-07-02", "run_recheck", ["editorial-input"]);
     expect(read().hasInputs).toBe(true);
-    expect(read().overnightLines.join(" ")).toContain("Laboratory calibration changed");
-    const old = readDigestInputs(db, NOW + 400 * 86_400_000, deps().cfg, horizon);
-    expect(old.hasInputs).toBe(false);
+    expect(read().itemLines.join(" ")).toContain("Laboratory calibration changed");
+    // Ranked items belong to their own day only.
+    expect(read("2026-07-03").hasInputs).toBe(false);
   });
 
-  test("a digest run injects the horizon, overnight briefs, and the editorial contract", () => {
-    createBrief(
+  test("a digest run injects the horizon, the ranked observations, and the editorial contract", () => {
+    createObservation(
       db,
       {
-        id: "brf_overnight",
+        id: "obs_overnight",
         createdByRun: "run_seed",
-        kind: "loop",
-        title: "Reply owed to the landlord survey",
-        description: "d",
-        confidence: 0.7,
-        urgency: 0.5,
+        summary: "Reply owed to the landlord survey",
+        why: "The survey closes this week.",
       },
       NOW - 3_600_000,
     );
+    replaceMorningBriefItems(db, "2026-07-02", "run_recheck", ["obs_overnight"]);
     const prompt = buildCognitionRunPrompt(
       claimed({ kind: "daily", payload: { digest: true, date: "2026-07-02" } }),
       {
@@ -2058,12 +2061,11 @@ describe("Cognition Steward run prompts", () => {
         },
       },
     );
-    expect(prompt).toContain("Morning digest for 2026-07-02");
-    expect(prompt).toContain("EXACTLY ONE brief");
+    expect(prompt).toContain("Morning brief for 2026-07-02");
+    expect(prompt).toContain("morning_brief_send, exactly once");
     expect(prompt).toContain("Parking permit renewal window closes");
-    expect(prompt).toContain("Reply owed to the landlord survey");
-    expect(prompt).toContain('title starts with "Morning brief"');
-    expect(prompt).toContain("relevant_until");
+    expect(prompt).toContain("[obs_overnight] Reply owed to the landlord survey");
+    expect(prompt).toContain("omittedObservationIds");
   });
 
   // The digest is told the facts are already gathered and not to re-derive the
@@ -2160,14 +2162,14 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).not.toContain("14:00–15:00");
   });
 
-  test("a digest whose inputs disappeared after preflight cannot request an all-clear card", () => {
+  test("a digest whose inputs disappeared after preflight cannot send an all-clear message", () => {
     const prompt = buildCognitionRunPrompt(
       claimed({ kind: "daily", payload: { digest: true, date: "2026-07-02" } }),
       deps(),
     );
-    expect(prompt).toContain("No editorial inputs are available");
-    expect(prompt).toContain("Finish without creating or updating a brief");
-    expect(prompt).not.toContain("Compose EXACTLY ONE");
+    expect(prompt).toContain("There is nothing to say today");
+    expect(prompt).toContain("Finish without sending anything");
+    expect(prompt).not.toContain("morning_brief_send");
   });
 
   test("a sweep run carries the operator's steering verbatim inside the standard guardrails", () => {
@@ -2396,68 +2398,13 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("re-check loop loop_9 the day before its deadline");
   });
 
-  test("a feedback prompt carries the brief's state, free text, related loops, and the example reactions", () => {
-    createOpenLoop(
-      db,
-      { id: "loop_1", createdByRun: "r", title: "t", confidence: 0.5, importance: 0.5 },
-      NOW,
-    );
-    createBrief(
-      db,
-      {
-        id: "brief_1",
-        createdByRun: "r",
-        kind: "loop",
-        title: "Reply pending",
-        confidence: 0.5,
-        urgency: 0.5,
-        relatedLoopIds: ["loop_1"],
-      },
-      NOW,
-    );
-    setBriefState(db, "brief_1", "dismissed_wrong", NOW);
-    updateBrief(db, "brief_1", { userFeedback: "this was my colleague, not me" }, NOW);
-
-    const prompt = buildCognitionRunPrompt(
-      claimed({ kind: "feedback", payload: { briefId: "brief_1" } }),
-      deps(),
-    );
-    expect(prompt).toContain("brief_1");
-    expect(prompt).toContain("dismissed_wrong");
-    expect(prompt).toContain("this was my colleague, not me");
-    expect(prompt).toContain("loop_1");
-  });
-
-  test("a snooze feedback prompt carries the user-picked re-surface time; one without stays silent on it", () => {
-    createBrief(
-      db,
-      { id: "brief_s", createdByRun: "r", kind: "info", title: "t", confidence: 0.5, urgency: 0.5 },
-      NOW,
-    );
-    db.prepare("UPDATE briefs SET state = 'dismissed_snoozed' WHERE id = ?").run("brief_s");
-
-    const until = Date.parse("2026-07-03T09:00:00.000Z");
-    const withTime = buildCognitionRunPrompt(
-      claimed({ kind: "feedback", payload: { briefId: "brief_s", snoozeUntil: until } }),
-      deps(),
-    );
-    expect(withTime).toContain("2026-07-03T09:00:00.000Z");
-    expect(withTime).toContain("Honour that time");
-
-    const withoutTime = buildCognitionRunPrompt(
-      claimed({ kind: "feedback", payload: { briefId: "brief_s" } }),
-      deps(),
-    );
-    expect(withoutTime).not.toContain("Honour that time");
-  });
-
-  test("a feedback run for a since-deleted brief degrades gracefully", () => {
+  test("a feedback run without a provenance re-check payload degrades to a no-op finish", () => {
     const prompt = buildCognitionRunPrompt(
       claimed({ kind: "feedback", payload: { briefId: "brief_gone" } }),
       deps(),
     );
-    expect(prompt).toContain("no longer exists");
-    expect(prompt).toContain("finish without creating anything");
+    expect(prompt).toContain("carries no provenance re-check");
+    expect(prompt).toContain("finish with a one-line note");
   });
 });
 
@@ -2621,7 +2568,7 @@ describe("provenance-recheck + multi-evidence prompt flavours", () => {
     cleanupDb(path);
   });
 
-  function seedDeadPriorFor(kind: "brief" | "loop", dependentId: string): void {
+  function seedDeadPriorFor(dependentId: string): void {
     createDocAnnotation(
       db,
       {
@@ -2644,7 +2591,7 @@ describe("provenance-recheck + multi-evidence prompt flavours", () => {
         {
           priorStore: "doc",
           priorAnnotationId: "anno_dead",
-          dependentKind: kind,
+          dependentKind: "loop",
           dependentId,
           runId: "run_seed",
         },
@@ -2653,47 +2600,13 @@ describe("provenance-recheck + multi-evidence prompt flavours", () => {
     );
   }
 
-  test("a recheck payload routes the feedback kind to the provenance prompt with the dead priors", () => {
-    createBrief(
-      db,
-      {
-        id: "brief_1",
-        createdByRun: "run_seed",
-        kind: "info",
-        title: "Rehearsal night reminder",
-        citations: [],
-        confidence: 0.7,
-        urgency: 0.4,
-        relatedLoopIds: [],
-      },
-      NOW - 800,
-    );
-    seedDeadPriorFor("brief", "brief_1");
-    const prompt = buildCognitionRunPrompt(
-      claimed({
-        kind: "feedback",
-        payload: { recheckDependentKind: "brief", recheckDependentId: "brief_1" },
-      }),
-      deps(),
-    );
-    expect(prompt).toContain("Provenance re-check");
-    expect(prompt).toContain("brief_1");
-    expect(prompt).toContain("anno_dead");
-    expect(prompt).toContain("the rehearsal is on Tuesdays");
-    // Repair verbs routed to the brief surface.
-    expect(prompt).toContain("brief_fetch");
-    expect(prompt).toContain("brief_update");
-    // The dismissal-feedback guidance does not leak into the recheck variant.
-    expect(prompt).not.toContain("example reactions");
-  });
-
-  test("a loop dependent routes to the loop repair verbs", () => {
+  function seedLoop(id: string, title: string): void {
     createOpenLoop(
       db,
       {
-        id: "loop_1",
+        id,
         createdByRun: "run_seed",
-        title: "Book the rehearsal room",
+        title,
         confidence: 0.7,
         importance: 0.5,
         actors: [],
@@ -2703,7 +2616,11 @@ describe("provenance-recheck + multi-evidence prompt flavours", () => {
       },
       NOW - 800,
     );
-    seedDeadPriorFor("loop", "loop_1");
+  }
+
+  test("a recheck payload routes the feedback kind to the provenance prompt with the dead priors", () => {
+    seedLoop("loop_1", "Book the rehearsal room");
+    seedDeadPriorFor("loop_1");
     const prompt = buildCognitionRunPrompt(
       claimed({
         kind: "feedback",
@@ -2711,35 +2628,38 @@ describe("provenance-recheck + multi-evidence prompt flavours", () => {
       }),
       deps(),
     );
+    expect(prompt).toContain("Provenance re-check");
+    expect(prompt).toContain("loop_1");
+    expect(prompt).toContain("anno_dead");
+    expect(prompt).toContain("the rehearsal is on Tuesdays");
     expect(prompt).toContain("open_loop_fetch");
     expect(prompt).toContain("open_loop_update");
   });
 
+  test("a recheck payload naming a non-loop dependent is not a re-check", () => {
+    const prompt = buildCognitionRunPrompt(
+      claimed({
+        kind: "feedback",
+        payload: { recheckDependentKind: "brief", recheckDependentId: "brief_1" },
+      }),
+      deps(),
+    );
+    expect(prompt).not.toContain("Provenance re-check");
+    expect(prompt).toContain("carries no provenance re-check");
+  });
+
   test("a vanished dependent (or an all-live prior set) degrades to a no-op finish", () => {
-    seedDeadPriorFor("brief", "brief_gone");
+    seedDeadPriorFor("loop_gone");
     const gone = buildCognitionRunPrompt(
       claimed({
         kind: "feedback",
-        payload: { recheckDependentKind: "brief", recheckDependentId: "brief_gone" },
+        payload: { recheckDependentKind: "loop", recheckDependentId: "loop_gone" },
       }),
       deps(),
     );
     expect(gone).toContain("no longer exists");
     // All priors alive again (repaired before the run claimed): no-op.
-    createBrief(
-      db,
-      {
-        id: "brief_2",
-        createdByRun: "run_seed",
-        kind: "info",
-        title: "Second card",
-        citations: [],
-        confidence: 0.7,
-        urgency: 0.4,
-        relatedLoopIds: [],
-      },
-      NOW - 800,
-    );
+    seedLoop("loop_2", "Second rehearsal booking");
     db.prepare("UPDATE doc_annotations SET invalidated_at = NULL WHERE id = 'anno_dead'").run();
     recordConsumptionEdges(
       db,
@@ -2747,8 +2667,8 @@ describe("provenance-recheck + multi-evidence prompt flavours", () => {
         {
           priorStore: "doc",
           priorAnnotationId: "anno_dead",
-          dependentKind: "brief",
-          dependentId: "brief_2",
+          dependentKind: "loop",
+          dependentId: "loop_2",
           runId: "run_seed",
         },
       ],
@@ -2757,7 +2677,7 @@ describe("provenance-recheck + multi-evidence prompt flavours", () => {
     const allLive = buildCognitionRunPrompt(
       claimed({
         kind: "feedback",
-        payload: { recheckDependentKind: "brief", recheckDependentId: "brief_2" },
+        payload: { recheckDependentKind: "loop", recheckDependentId: "loop_2" },
       }),
       deps(),
     );
@@ -2944,8 +2864,8 @@ describe("merge-adjudication run prompts", () => {
     expect(prompt).toContain('"merge"');
     expect(prompt).toContain('"distinct"');
     expect(prompt).toContain('"unsure"');
-    // This lane never creates briefs, so the chain-of-verification envelope
-    // appended to brief-capable lanes must be absent.
+    // This lane never notes observations, so the chain-of-verification envelope
+    // appended to observation-capable lanes must be absent.
     expect(prompt).not.toContain("assertedClaims");
     expect(prompt).not.toContain("chain-of-verification");
   });

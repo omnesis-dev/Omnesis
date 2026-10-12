@@ -4,6 +4,7 @@
 import { createKnowledgePendingReadIndexes } from "./pending-work-query.js";
 import { createKnowledgeBatchReadIndexes } from "./batch-query.js";
 import { installKnowledgeReconciliationTriggers } from "./reconciliation.js";
+import { createKnowledgeRetryIndexes } from "./work-retry.js";
 import type Database from "better-sqlite3";
 
 /** Work records retain identities and revisions, never copies of source or generated prose. */
@@ -255,6 +256,12 @@ export function createKnowledgeWorkTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS knowledge_candidate_decision_work_owner ON knowledge_candidate_decision_work(work_id);`);
   })();
+  const workColumns = db.prepare<[], { name: string }>("PRAGMA table_info(knowledge_work)").all();
+  // Failed batch attempts charged to this obligation; carried to successors at
+  // the same input revision and reset by a new one.
+  if (!workColumns.some((column) => column.name === "failures"))
+    db.exec("ALTER TABLE knowledge_work ADD COLUMN failures INTEGER NOT NULL DEFAULT 0");
+  createKnowledgeRetryIndexes(db);
   createKnowledgeBatchReadIndexes(db);
   createKnowledgePendingReadIndexes(db);
   installKnowledgeReconciliationTriggers(db);

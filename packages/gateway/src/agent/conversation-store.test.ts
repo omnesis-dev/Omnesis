@@ -9,15 +9,17 @@ import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { FsConversationStore, deriveTitle, type ConversationRecord } from "./conversation-store.js";
-import { originUsesAnchoredThreadProfile } from "./conversation-retention.js";
+import { originIsPermanent } from "./conversation-retention.js";
 
 import type { ChatMessage } from "@omnesis/agent";
 
-describe("anchored-thread retention classification", () => {
-  it("reserves the non-expiring profile for brief threads only", () => {
-    expect(originUsesAnchoredThreadProfile({ kind: "brief" })).toBe(true);
-    expect(originUsesAnchoredThreadProfile({ kind: "temporal_annotation" })).toBe(false);
-    expect(originUsesAnchoredThreadProfile({ kind: "time_index_entry" })).toBe(false);
+describe("permanent-origin retention classification", () => {
+  it("keeps only the Morning brief conversation out of retention", () => {
+    expect(originIsPermanent({ kind: "daily_brief", runId: "run_1", briefs: [] })).toBe(true);
+    expect(originIsPermanent({ kind: "watch_firing", firingId: "f", runId: "r" })).toBe(false);
+    expect(originIsPermanent({ kind: "brief", runId: "run_1" })).toBe(false);
+    expect(originIsPermanent(null)).toBe(false);
+    expect(originIsPermanent(["daily_brief"])).toBe(false);
   });
 });
 
@@ -299,7 +301,7 @@ describe("FsConversationStore", () => {
     expect(await s.load("s_one")).toBeNull();
   });
 
-  it("retention discovery is bounded and excludes fresh, pinned, and anchored records", async () => {
+  it("retention discovery is bounded and excludes fresh, pinned, and Morning brief records", async () => {
     const s = fresh();
     await s.save(rec({ id: "old", updatedAt: "2026-01-01T00:00:00.000Z" }));
     await s.save(
@@ -313,9 +315,9 @@ describe("FsConversationStore", () => {
     await s.save(rec({ id: "pinned", updatedAt: "2026-01-01T00:00:00.000Z", pinned: true }));
     await s.save(
       rec({
-        id: "anchored",
+        id: "morning-brief",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        origin: { kind: "brief", briefId: "brief_example", runId: "run_example" },
+        origin: { kind: "daily_brief", runId: "run_example", briefs: [] },
       }),
     );
     const page = await s.listRetentionCandidates(Date.parse("2026-02-01T00:00:00.000Z"), 10);
@@ -434,15 +436,17 @@ describe("conversation origin", () => {
     return new FsConversationStore(join(d, "conversations"));
   }
   const origin = {
-    kind: "brief",
-    briefId: "brief_1",
+    kind: "daily_brief",
     runId: "run_1",
-    brief: {
-      title: "Return the borrowed projector",
-      description: "The projector goes back to the AV desk this week.",
-      body: "Borrowed for the demo on 2026-07-02; the AV desk closes at 17:00.",
-    },
-    seedMessageCount: 2,
+    briefs: [
+      { day: "2026-07-01", messageIndex: 0, messageId: "msg_brief_1" },
+      {
+        day: "2026-07-02",
+        messageIndex: 2,
+        messageId: "msg_brief_2",
+        sentAt: "2026-07-02T06:02:40.055Z",
+      },
+    ],
   } as const;
 
   it("round-trips through save/load, the summary list, and the rebuilt index", async () => {
@@ -454,16 +458,16 @@ describe("conversation origin", () => {
       backend: "b",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:05.000Z",
-      title: "Return the borrowed projector",
+      title: "Morning brief",
       pinned: false,
-      origin,
+      origin: { ...origin, briefs: [...origin.briefs] },
       messages: [{ role: "user", parts: [{ kind: "text", text: "ctx" }] }],
     });
     expect((await s.load("s_thread"))!.origin).toEqual(origin);
-    // Summaries carry ONLY the anchor — never the embedded brief
-    // snapshot (its long-form body would otherwise ship in every list
-    // row and be re-persisted on every index rewrite).
-    const anchor = { kind: "brief", briefId: "brief_1", runId: "run_1" };
+    // Summaries carry ONLY the anchor — never the brief index, which
+    // would otherwise ship in every list row and be re-persisted on every
+    // index rewrite.
+    const anchor = { kind: "daily_brief", runId: "run_1", briefs: [] };
     expect((await s.list()).find((c) => c.id === "s_thread")!.origin).toEqual(anchor);
     // A second store instance rebuilds the summary index from files —
     // the anchor must survive that path too.
@@ -489,13 +493,13 @@ describe("conversation origin", () => {
       string,
       unknown
     >;
-    raw.origin = { kind: "unknown-kind", briefId: 42 };
+    raw.origin = { kind: "unknown-kind", runId: 42 };
     await writeFile(join(dir, "s_bad.json"), JSON.stringify(raw), "utf8");
     const loaded = await s.load("s_bad");
     expect(loaded!.origin).toBeUndefined();
   });
 
-  it("malformed snapshot extras are dropped while the anchor survives", async () => {
+  it("malformed brief references are dropped while the anchor survives", async () => {
     const s = fresh2();
     const dir = (s as unknown as { dir: string }).dir;
     await s.save({
@@ -507,25 +511,75 @@ describe("conversation origin", () => {
       updatedAt: "2026-01-01T00:00:05.000Z",
       title: "t",
       pinned: false,
-      origin: { kind: "brief", briefId: "brief_1", runId: "run_1" },
+      origin: { kind: "daily_brief", runId: "run_1", briefs: [] },
       messages: [{ role: "user", parts: [{ kind: "text", text: "x" }] }],
     });
     const raw = JSON.parse(await readFile(join(dir, "s_partial.json"), "utf8")) as Record<
       string,
       unknown
     >;
-    // A snapshot missing its required strings and a negative seed count
-    // must both read as absent — not poison the whole origin.
+    // Each malformed reference reads as absent — none poisons the origin.
     raw.origin = {
-      kind: "brief",
-      briefId: "brief_1",
+      kind: "daily_brief",
       runId: "run_1",
-      brief: { title: 42 },
-      seedMessageCount: -3,
+      briefs: [
+        { day: "2026-07-01", messageIndex: 0, messageId: "msg_ok" },
+        { day: "2026-07-02", messageIndex: -1, messageId: "msg_negative" },
+        { day: 42, messageIndex: 1, messageId: "msg_bad_day" },
+        { day: "2026-07-03", messageIndex: 1.5, messageId: "msg_fraction" },
+        "not-a-ref",
+        // A reference with a malformed send time keeps its place without one.
+        { day: "2026-07-04", messageIndex: 2, messageId: "msg_bad_sent", sentAt: 7 },
+      ],
     };
     await writeFile(join(dir, "s_partial.json"), JSON.stringify(raw), "utf8");
     const loaded = await s.load("s_partial");
-    expect(loaded!.origin).toEqual({ kind: "brief", briefId: "brief_1", runId: "run_1" });
+    expect(loaded!.origin).toEqual({
+      kind: "daily_brief",
+      runId: "run_1",
+      briefs: [
+        { day: "2026-07-01", messageIndex: 0, messageId: "msg_ok" },
+        { day: "2026-07-04", messageIndex: 2, messageId: "msg_bad_sent" },
+      ],
+    });
+  });
+
+  it("malformed watch-firing extras are dropped while the anchor survives", async () => {
+    const s = fresh2();
+    const dir = (s as unknown as { dir: string }).dir;
+    await s.save({
+      id: "s_watch",
+      callerId: "token:A",
+      model: "m",
+      backend: "b",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:05.000Z",
+      title: "t",
+      pinned: false,
+      messages: [{ role: "user", parts: [{ kind: "text", text: "x" }] }],
+    });
+    const raw = JSON.parse(await readFile(join(dir, "s_watch.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    // A snapshot missing its required strings and a negative seed count
+    // must both read as absent — not poison the whole origin.
+    raw.origin = {
+      kind: "watch_firing",
+      firingId: "firing_1",
+      runId: "firing_1",
+      watchId: "watch_1",
+      watch: { name: 42 },
+      seedMessageCount: -3,
+    };
+    await writeFile(join(dir, "s_watch.json"), JSON.stringify(raw), "utf8");
+    const loaded = await s.load("s_watch");
+    expect(loaded!.origin).toEqual({
+      kind: "watch_firing",
+      firingId: "firing_1",
+      runId: "firing_1",
+      watchId: "watch_1",
+    });
   });
 });
 

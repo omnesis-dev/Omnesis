@@ -445,33 +445,43 @@ describe("writeGateFromScheduler", () => {
       },
       now,
     );
-    await gate.createBrief(
+    await gate.createOpenLoop(
       {
-        id: "brief_doc_worker",
-        createdByRun: "run_brief_doc",
-        kind: "info",
-        title: "Rehearsal schedule",
+        id: "loop_doc_worker",
+        createdByRun: "run_loop_doc",
+        title: "Confirm the rehearsal schedule",
         confidence: 0.8,
-        urgency: 0.4,
+        importance: 0.4,
       },
       {
         priors: [{ priorStore: "doc", priorAnnotationId: "anno_worker" }],
-        runId: "run_brief_doc",
+        runId: "run_loop_doc",
       },
       now,
     );
-    await gate.createBrief(
+    await gate.createOpenLoop(
       {
-        id: "brief_person_worker",
-        createdByRun: "run_brief_person",
-        kind: "info",
-        title: "Rehearsal coordinator",
+        id: "loop_person_worker",
+        createdByRun: "run_loop_person",
+        title: "Ask the rehearsal coordinator",
         confidence: 0.8,
-        urgency: 0.4,
+        importance: 0.4,
       },
       {
         priors: [{ priorStore: "person", priorAnnotationId: "panno_worker" }],
-        runId: "run_brief_person",
+        runId: "run_loop_person",
+      },
+      now,
+    );
+    await gate.createObservation(
+      {
+        id: "obs_doc_worker",
+        createdByRun: "run_obs_doc",
+        summary: "The rehearsal is on Tuesday",
+      },
+      {
+        priors: [{ priorStore: "doc", priorAnnotationId: "anno_worker" }],
+        runId: "run_obs_doc",
       },
       now,
     );
@@ -497,9 +507,16 @@ describe("writeGateFromScheduler", () => {
           .all()
           .map((row) => row.dedupe_key),
       ).toEqual([
-        "feedback:provenance:brief:brief_doc_worker",
-        "feedback:provenance:brief:brief_person_worker",
+        "feedback:provenance:loop:loop_doc_worker",
+        "feedback:provenance:loop:loop_person_worker",
       ]);
+      // An observation resting on a retracted prior is dropped as stale
+      // rather than rechecked.
+      expect(
+        readDb
+          .prepare("SELECT state, close_reason FROM observations WHERE id = 'obs_doc_worker'")
+          .get(),
+      ).toEqual({ state: "dropped", close_reason: "stale" });
     } finally {
       readDb.close();
     }

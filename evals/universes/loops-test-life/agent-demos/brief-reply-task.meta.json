@@ -1,0 +1,4 @@
+{
+  "triggers": ["The harvest fair deposit is paid"],
+  "role": "agent"
+}

@@ -2,16 +2,16 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Migration 56: create the `brief_claims` sidecar table — per-brief atomic
+ * Migration 58: create the `brief_claims` sidecar table — per-brief atomic
  * asserted claims, each bound to its evidence document + verbatim quote.
  *
- * A DB upgraded from before v56 carries the briefs tables without the
- * sidecar (v55 was the previous shape change). This exercises that exact
- * upgrade path — pinned at v55 with a brief row present — through
- * `runMigrations`, and asserts the table appears with its brief_id and
- * evidence_doc_id indexes, that the fresh-install shape and the upgraded
- * shape match column-for-column, and that replaying the migration is a
- * no-op.
+ * A DB upgraded from before v58 carries the briefs tables without the
+ * sidecar. This exercises that exact upgrade path — pinned at v57 with a
+ * brief row present — through the migration chain up to v196 (migration 197
+ * retires every brief table), and asserts the table appears with its
+ * brief_id and evidence_doc_id indexes, that a fresh replay and the upgraded
+ * shape match column-for-column, that replaying the migration is a no-op,
+ * and that the full chain leaves no brief table behind.
  *
  * All fixture data is invented — never corpus-derived.
  */
@@ -21,7 +21,22 @@ import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { runSchemaSetup } from "./schema.js";
 import { MIGRATIONS, runMigrations, LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
+
+/** The chain as it stood before migration 197 retired the brief tables. */
+const BEFORE_OBSERVATIONS = MIGRATIONS.filter((m) => m.version < 197);
+
+function migrateToBeforeObservations(d: Db): void {
+  runMigrations(d, { log: createLogger("test"), migrations: BEFORE_OBSERVATIONS });
+}
+
+/** A fresh install replayed through the chain up to v196. */
+function freshBeforeObservations(d: Db): void {
+  runSchemaSetup(d);
+  d.pragma("user_version = 0");
+  migrateToBeforeObservations(d);
+}
 
 let db: Db;
 
@@ -51,12 +66,13 @@ function tableExists(d: Db, table: string): boolean {
 }
 
 /**
- * Recreate a genuine pre-56 DB: head-shape `runSchemaSetup` creates the
- * sidecar, so it is dropped again; one brief row seeded; pinned at v55.
+ * Recreate a genuine pre-58 DB: the head schema plus the brief tables as
+ * migration 33 created them, without the sidecar; one brief row seeded;
+ * pinned at v57.
  */
-function seedPre56(): void {
+function seedPre58(): void {
   runSchemaSetup(db);
-  db.exec("DROP TABLE brief_claims");
+  createLegacyBriefTables(db);
   db.prepare(
     `INSERT INTO briefs (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
      VALUES ('brf_pre', 'run_seed', 'info', 'Studio booking moved to Saturday', 0.7, 0.4, 1000, 1000)`,
@@ -65,18 +81,18 @@ function seedPre56(): void {
 }
 
 describe("migration 58 — brief_claims sidecar", () => {
-  test("head version is 58 and the migration slot exists", () => {
-    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(56);
+  test("the migration slot exists below head", () => {
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThan(58);
     expect(MIGRATIONS.find((m) => m.version === 58)).toBeDefined();
   });
 
-  test("upgrading a pre-56 DB creates the table + indexes; existing briefs untouched", () => {
-    seedPre56();
+  test("upgrading a pre-58 DB creates the table + indexes; existing briefs untouched", () => {
+    seedPre58();
     expect(tableExists(db, "brief_claims")).toBe(false);
 
     expect(() => {
       runSchemaSetup(db);
-      runMigrations(db, { log: createLogger("test") });
+      migrateToBeforeObservations(db);
     }).not.toThrow();
 
     expect(tableExists(db, "brief_claims")).toBe(true);
@@ -92,12 +108,16 @@ describe("migration 58 — brief_claims sidecar", () => {
     expect(indexes).toContain("idx_brief_claims_evidence");
     const brief = db.prepare<[], { title: string }>("SELECT title FROM briefs").get();
     expect(brief?.title).toBe("Studio booking moved to Saturday");
+    expect(db.pragma("user_version", { simple: true })).toBe(196);
+
+    runMigrations(db, { log: createLogger("test") });
+    expect(tableExists(db, "brief_claims")).toBe(false);
+    expect(tableExists(db, "briefs")).toBe(false);
     expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);
   });
 
   test("verification_state is nullable (null = written with no verifier configured)", () => {
-    runSchemaSetup(db);
-    runMigrations(db, { log: createLogger("test") });
+    freshBeforeObservations(db);
     db.prepare(
       `INSERT INTO briefs (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
        VALUES ('brf_1', 'run_seed', 'info', 'Studio booking moved to Saturday', 0.7, 0.4, 1000, 1000)`,
@@ -120,9 +140,8 @@ describe("migration 58 — brief_claims sidecar", () => {
   });
 
   test("the upgraded table matches the fresh-install shape column-for-column", () => {
-    // Fresh install: schema setup + migrations over an empty DB.
-    runSchemaSetup(db);
-    runMigrations(db, { log: createLogger("test") });
+    // Fresh install: the whole chain replayed over an empty DB up to v196.
+    freshBeforeObservations(db);
     const freshColumns = columns(db, "brief_claims");
     expect(freshColumns).toEqual([
       "id",
@@ -141,28 +160,28 @@ describe("migration 58 — brief_claims sidecar", () => {
     const upgraded = new Database(":memory:") as unknown as Db;
     try {
       runSchemaSetup(upgraded);
-      upgraded.exec("DROP TABLE brief_claims");
+      createLegacyBriefTables(upgraded);
       upgraded.pragma("user_version = 57");
       runSchemaSetup(upgraded);
-      runMigrations(upgraded, { log: createLogger("test") });
+      migrateToBeforeObservations(upgraded);
       expect(columns(upgraded, "brief_claims")).toEqual(freshColumns);
     } finally {
       upgraded.close();
     }
   });
 
-  test("replaying v56's up() over an already-migrated DB with rows is a no-op", () => {
-    seedPre56();
+  test("replaying v58's up() over an already-migrated DB with rows is a no-op", () => {
+    seedPre58();
     runSchemaSetup(db);
-    runMigrations(db, { log: createLogger("test") });
+    migrateToBeforeObservations(db);
     db.prepare(
       `INSERT INTO brief_claims (id, brief_id, claim_text, evidence_doc_id, evidence_quote, claim_basis, confidence, verification_state, created_at)
        VALUES ('bclaim_1', 'brf_pre', 'the booking moved to Saturday', 'doc_ev', 'moved our session to Saturday morning', 'quoted', 0.8, 'verified', 2000)`,
     ).run();
 
-    const v56 = MIGRATIONS.find((m) => m.version === 58);
-    expect(v56).toBeDefined();
-    expect(() => v56!.up(db)).not.toThrow();
+    const v58 = MIGRATIONS.find((m) => m.version === 58);
+    expect(v58).toBeDefined();
+    expect(() => v58!.up(db)).not.toThrow();
     const row = db
       .prepare<
         [],

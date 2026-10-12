@@ -10,7 +10,7 @@
  * one-belief-per-(subject, claimType) invariant, the entailment gate in all
  * three of its arms (reject / accept / unassigned), the supersession and
  * revise/retract lifecycles, the multi-evidence sidecar, and the consumption
- * edges that record which brief was built on which prior.
+ * edges that record which observation was built on which prior.
  *
  * Two gateways, split only where the entailment policy has to differ: the
  * first leaves the `entailment-verifier` role unassigned (the state every
@@ -495,14 +495,17 @@ describe("annotations with the entailment role unassigned", () => {
                   // The prior was written by an EARLIER run, so only this read
                   // can put it in front of the model this run.
                   call("annotation_search", { docId: priorDocId }),
-                  call("brief_list", {}),
-                  call("brief_create", {
-                    kind: "info",
-                    title: "Cedar Grove Supplies review needs attendees",
-                    description: "The review is due next month and needs names from your side.",
+                  call("observation_list", {}),
+                  call("observation_note", {
+                    summary: "Cedar Grove Supplies needs your account review attendees.",
+                    why: "The review is due before month end and needs names from your side.",
                     citations: [ctx.subject],
-                    confidence: 0.8,
-                    urgency: 0.4,
+                    claims: [
+                      {
+                        docId: ctx.subject,
+                        quote: "Please confirm who is attending the account review from your side.",
+                      },
+                    ],
                     annotationDependencies: [
                       { store: "doc", annotationId: ref("annotation_search", "annotations.0.id") },
                     ],
@@ -819,13 +822,13 @@ describe("annotations with the entailment role unassigned", () => {
     const surfaced = structured(search!).annotations as Array<{ id: string }>;
     expect(surfaced.map((a) => a.id)).toEqual([priorId]);
 
-    const [briefResult] = resultsOf(calls, "brief_create");
-    expect(briefResult!.kind).toBe("structured");
-    const briefId = (structured(briefResult!).brief as { id: string }).id;
+    const [observationResult] = resultsOf(calls, "observation_note");
+    expect(observationResult!.kind).toBe("structured");
+    const observationId = structured(observationResult!).id as string;
 
     const dependents = await bench.obs.dependents("doc", priorId);
     expect(dependents.items).toHaveLength(1);
-    expect(dependents.items[0]).toMatchObject({ kind: "brief", id: briefId, runId });
+    expect(dependents.items[0]).toMatchObject({ kind: "observation", id: observationId, runId });
 
     const edges = bench.sql
       .prepare<
@@ -837,7 +840,12 @@ describe("annotations with the entailment role unassigned", () => {
       )
       .all(priorId);
     expect(edges).toEqual([
-      { prior_store: "doc", dependent_kind: "brief", dependent_id: briefId, run_id: runId },
+      {
+        prior_store: "doc",
+        dependent_kind: "observation",
+        dependent_id: observationId,
+        run_id: runId,
+      },
     ]);
 
     // And the per-entity read route reports the same dependency.

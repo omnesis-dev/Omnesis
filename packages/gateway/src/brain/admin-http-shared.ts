@@ -6,13 +6,17 @@ import { BadRequestError, StalePageCursorError } from "../http/errors.js";
 import { decodePageCursor, encodePageCursor } from "../http/pagination-cursor.js";
 import { decodeRunTrigger } from "./run-payload-view.js";
 import { runScopeLoopId } from "./run-payloads.js";
-import { FEED_TIER, type FeedTier } from "./ranking.js";
 import type {
   CognitionAdminDocumentRef,
   CognitionAdminQueryService,
   RunActivityReader,
 } from "./cognition-admin-query-service.js";
-import type { BriefRow, CognitionRunRow, OpenLoopRow, RetiredLoopRow } from "./storage/types.js";
+import type {
+  CognitionRunRow,
+  ObservationRow,
+  OpenLoopRow,
+  RetiredLoopRow,
+} from "./storage/types.js";
 import type { CognitionTranscriptRef } from "./transcripts.js";
 import type { CognitionDecisionRecord } from "./storage/decisions.js";
 import type { RouteApp } from "../http/routes/types.js";
@@ -23,21 +27,13 @@ export interface CognitionAdminRouteContext {
   requireActive(): void;
   /**
    * Read-only history stays servable while the Brain is visible but not
-   * running (experimental on, no model assigned): past loops, runs, briefs
+   * running (experimental on, no model assigned): past loops, runs, observations
    * and spend are audit history, not live engine state. Hidden entirely
    * only when the feature is not visible at all.
    */
   requireVisible(): void;
   now(): number;
 }
-
-export const FEED_TIER_LABEL: Record<FeedTier, string> = {
-  [FEED_TIER.nextHour]: "next-hour",
-  [FEED_TIER.today]: "today",
-  [FEED_TIER.dueLoop]: "due-loop",
-  [FEED_TIER.otherLoop]: "other-loop",
-  [FEED_TIER.ambientInfo]: "ambient-info",
-};
 
 export const iso = (ms: number | null): string | null =>
   ms === null ? null : new Date(ms).toISOString();
@@ -140,36 +136,33 @@ export function loopDto(loop: OpenLoopRow) {
   };
 }
 
-export function briefSummaryDto(brief: BriefRow) {
+export function observationFullDto(
+  observation: ObservationRow,
+  citations?: CognitionAdminDocumentRef[],
+) {
   return {
-    id: brief.id,
-    kind: brief.kind,
-    state: brief.state,
-    title: brief.title,
-    createdAt: iso(brief.createdAt),
-  };
-}
-
-export function briefFullDto(brief: BriefRow, citations?: CognitionAdminDocumentRef[]) {
-  return {
-    id: brief.id,
-    createdByRun: brief.createdByRun,
-    kind: brief.kind,
-    state: brief.state,
-    title: brief.title,
-    description: brief.description,
-    body: brief.body,
-    citations: citations ?? brief.citations,
-    relatedLoopIds: brief.relatedLoopIds,
-    confidence: brief.confidence,
-    urgency: brief.urgency,
-    relevantUntil: iso(brief.relevantUntil),
-    nextShow: iso(brief.nextShow),
-    eventAt: iso(brief.eventAt),
-    userFeedback: brief.userFeedback,
-    createdAt: iso(brief.createdAt),
-    updatedAt: iso(brief.updatedAt),
-    threadConversationId: brief.threadConversationId,
+    id: observation.id,
+    createdByRun: observation.createdByRun,
+    state: observation.state,
+    closeReason: observation.closeReason,
+    summary: observation.summary,
+    why: observation.why,
+    userAuthored: observation.userAuthored,
+    windowStart: iso(observation.windowStart),
+    relevantUntil: iso(observation.relevantUntil),
+    citations: citations ?? observation.citations,
+    relatedLoopIds: observation.relatedLoopIds,
+    claims: observation.claims,
+    notedScores: observation.notedScores,
+    scores: observation.scores,
+    wouldPushAt: iso(observation.wouldPushAt),
+    shippedAt: iso(observation.shippedAt),
+    shippedConversationId: observation.shippedConversationId,
+    shippedMessageId: observation.shippedMessageId,
+    userAction: observation.userAction,
+    createdAt: iso(observation.createdAt),
+    updatedAt: iso(observation.updatedAt),
+    closedAt: iso(observation.closedAt),
   };
 }
 

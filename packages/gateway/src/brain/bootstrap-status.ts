@@ -61,6 +61,8 @@ export interface BootstrapSettingsView {
   maxRunsPerDay: number;
   maxRuns: number;
   batchSize: number;
+  /** How far back historical review reaches; see `knowledge/history-horizon.ts`. */
+  horizonMs: number;
   recencyWindowMs: number;
   /** Optional daily window the lane may buy work in; absent means always. */
   activeHours?: { from: string; to: string };
@@ -502,9 +504,9 @@ export class CachedScanProbe<T extends { computedAt: number }> {
  * the whole gate so the module stays testable with a two-line fake.
  */
 export interface BootstrapTimelineReader {
-  knowledgeDiscoveryByMonth?: () => Promise<
-    import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]
-  >;
+  knowledgeDiscoveryByMonth?: (
+    notBefore: string,
+  ) => Promise<import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]>;
   bootstrapCorpusByMonth(
     recencyFloor: string,
     todayIso: string,

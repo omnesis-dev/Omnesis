@@ -2,16 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
+import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
+import type {
+  ProposedTaskChange,
+  ObservationClaim,
+  ObservationScores,
+} from "../brain/storage/types.js";
 import type { ConversationEvidenceProjection } from "../sources/omnesis-chat/evidence-projection.js";
-import {
-  assertPersonProfileReceipt,
-  getPersonAnnotation as getWithdrawalPersonAnnotation,
-  type PersonProfileBudget,
-} from "../brain/storage/person-annotations.js";
-import {
-  captureCanonicalEnrollment,
-  enrollCanonicalMutation,
-} from "../brain/knowledge/canonical-enrollment.js";
 
 import {
   type SyncIssue,
@@ -33,11 +30,6 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
-import {
-  preparePendingSourcePage,
-  acknowledgePendingSourcePage,
-  type PreparePendingSourcePage,
-} from "../data/repositories/PendingSourcePageRepository.js";
 
 /**
  * Single source of truth for every writer op the worker can dispatch.
@@ -60,7 +52,6 @@ import {
  */
 
 import type Database from "better-sqlite3";
-import { advanceOccWatermark } from "../data/occ-materialized.js";
 import { beginLinkDeclarationUpdate, finishLinkDeclarationUpdate } from "../data/list-revisions.js";
 type Db = Database.Database;
 
@@ -70,6 +61,23 @@ type Db = Database.Database;
 const NEAR_DUP_DF_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import { claimDueNote, enqueueNewNotes, finishNoteRun } from "../brain/note-agent/storage.js";
+import { advanceOccWatermark } from "../data/occ-materialized.js";
+import {
+  preparePendingSourcePage,
+  acknowledgePendingSourcePage,
+  type PreparePendingSourcePage,
+} from "../data/repositories/PendingSourcePageRepository.js";
+import {
+  captureCanonicalEnrollment,
+  enrollCanonicalMutation,
+} from "../brain/knowledge/canonical-enrollment.js";
+import {
+  assertPersonProfileReceipt,
+  getPersonAnnotation as getWithdrawalPersonAnnotation,
+  type PersonProfileBudget,
+} from "../brain/storage/person-annotations.js";
+import { applyTaskCommand, proposeTaskChange, type TaskCommand } from "../brain/storage/tasks.js";
 import { KnowledgeStorageError } from "../brain/knowledge/types.js";
 import { assertStoredTemporalMutationScope } from "../brain/knowledge/temporal-scope-fence.js";
 import {
@@ -82,7 +90,6 @@ import {
   refreshKnowledgeReconciliationReceipt,
   type KnowledgeReconciliationReceipt,
 } from "../brain/knowledge/reconciliation.js";
-import { findActiveBriefsForLoops } from "../brain/storage/briefs.js";
 import { replaceSourceSyncIssues } from "../data/repositories/SourceSyncIssueRepository.js";
 import { promoteSourceWireContract } from "../data/repositories/SourceWireContractRepository.js";
 import { knowledgeWriterHandlers } from "../brain/knowledge/writer.js";
@@ -467,27 +474,26 @@ import {
   rewriteOpenLoopPeople,
   appendOpenLoopLedger,
   deleteOpenLoop,
-  createBrief,
-  updateBrief,
-  retractBriefsForResolvedLoop,
-  retireBrief,
-  markBriefRead,
-  setBriefThreadConversation,
-  restampBriefThreadConversation,
-  resurfaceDueSnoozedBriefs,
+  createObservation,
+  transitionObservation,
+  recordObservationScores,
+  recordObservationClaims,
+  expireObservations,
+  dropObservationsForResolvedLoop,
+  setObservationUserAction,
+  pruneClosedObservations,
+  replaceMorningBriefItems,
+  markMorningBriefSent,
   writeCognitionNotes,
   appendCognitionNotes,
   editCognitionNotes,
   wipeCognitionNotes,
-  dismissBriefAndEnqueueFeedback,
   createDocAnnotation,
   createDocAnnotationSuperseding,
   supersedeDocAnnotationBy,
   updateDocAnnotation,
   invalidateAnnotationsForDoc,
   cascadeAnnotationPrivacyDelete,
-  invalidateBriefClaimsForDoc,
-  cascadeBriefClaimPrivacyDelete,
   createPersonAnnotation,
   createPersonAnnotationSuperseding,
   supersedePersonAnnotationBy,
@@ -506,9 +512,8 @@ import {
   type RecordSettledCognitionRunInput,
   type CreateOpenLoopInput,
   type UpdateOpenLoopInput,
-  type CreateBriefInput,
-  type UpdateBriefInput,
-  type DismissBriefInput,
+  type CreateObservationInput,
+  type ObservationTransition,
   type CreateDocAnnotationInput,
   type UpdateDocAnnotationPatch,
   type CreatePersonAnnotationInput,
@@ -646,20 +651,6 @@ function guardedCanonicalMutation(
   try {
     const value = db.transaction(() => {
       assertKnowledgeCanonicalFence(db, fence);
-      const briefGuard = fence.briefCreateGuard;
-      if (operation === "cognition.briefCreate" && briefGuard && !briefGuard.force) {
-        const now = args.at(-1);
-        if (typeof now !== "number") throw new Error("Brief creation requires a timestamp");
-        if (
-          findActiveBriefsForLoops(db, briefGuard.loopIds, now).some(
-            (brief) => !briefGuard.supersedes.includes(brief.id),
-          )
-        )
-          throw new KnowledgeStorageError(
-            "revision_conflict",
-            "An active brief now covers this loop. Read brief_list again and reconcile before creating another.",
-          );
-      }
       const enrollment = captureCanonicalEnrollment(db, operation, args);
       const result = handler(db, ...args);
       assertStoredTemporalMutationScope(db, fence.temporalScope, operation, args);
@@ -1543,7 +1534,9 @@ export const writerHandlers = {
     loopId: string,
     entry: { runId: string; note: string },
     now: number,
-  ): void => appendOpenLoopLedger(db, loopId, entry, now),
+  ): void => {
+    appendOpenLoopLedger(db, loopId, entry, now);
+  },
   // The write-gated delete records a consolidation trace (the agent-issued
   // `open_loop_delete` path); the storage default is trace-free.
   "cognition.openLoopDelete": (db: Db, id: string, now: number) =>
@@ -1584,10 +1577,6 @@ export const writerHandlers = {
     invalidateAnnotationsForDoc(db, docId, now),
   "cognition.annotationPrivacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
     cascadeAnnotationPrivacyDelete(db, deletedDocIds),
-  "cognition.briefClaimInvalidate": (db: Db, docId: string, now: number): number =>
-    invalidateBriefClaimsForDoc(db, docId, now),
-  "cognition.briefClaimPrivacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
-    cascadeBriefClaimPrivacyDelete(db, deletedDocIds),
   "cognition.personAnnotationCreate": (
     db: Db,
     input: CreatePersonAnnotationInput,
@@ -1776,41 +1765,62 @@ export const writerHandlers = {
   },
   "temporalAnnotations.privacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
     cascadeTemporalAnnotationPrivacyDelete(db, deletedDocIds),
-  "cognition.briefCreate": (
+  "cognition.observationCreate": (
     db: Db,
-    input: CreateBriefInput,
+    input: CreateObservationInput,
     dependencies: ConsumptionDependencyContext,
     now: number,
   ) =>
-    mutateWithConsumptionDependencies(db, dependencies, "brief", input.id, now, () =>
-      createBrief(db, input, now),
+    mutateWithConsumptionDependencies(db, dependencies, "observation", input.id, now, () =>
+      createObservation(db, input, now),
     ),
-  "cognition.briefUpdate": (
+  "cognition.observationTransition": (
     db: Db,
     id: string,
-    input: UpdateBriefInput,
-    dependencies: ConsumptionDependencyContext,
+    transition: ObservationTransition,
     now: number,
-  ) =>
-    mutateWithConsumptionDependencies(db, dependencies, "brief", id, now, () =>
-      updateBrief(db, id, input, now),
-    ),
-  "cognition.briefRetire": (db: Db, id: string, now: number) => retireBrief(db, id, now),
-  "cognition.briefRetractForLoop": (db: Db, loopId: string, now: number) =>
-    retractBriefsForResolvedLoop(db, loopId, now),
-  "cognition.briefDismiss": (db: Db, input: DismissBriefInput, now: number) =>
-    dismissBriefAndEnqueueFeedback(db, input, now),
-  "cognition.briefMarkRead": (db: Db, id: string, now: number) => markBriefRead(db, id, now),
-  "cognition.briefSetThread": (db: Db, id: string, conversationId: string, now: number) =>
-    setBriefThreadConversation(db, id, conversationId, now),
-  "cognition.briefRestampThread": (
+  ): boolean => transitionObservation(db, id, transition, now),
+  "cognition.observationScores": (db: Db, id: string, scores: ObservationScores, now: number) =>
+    recordObservationScores(db, id, scores, now),
+  "cognition.observationClaims": (
     db: Db,
     id: string,
-    deadId: string,
-    conversationId: string,
+    claims: readonly ObservationClaim[],
     now: number,
-  ) => restampBriefThreadConversation(db, id, deadId, conversationId, now),
-  "cognition.snoozeResurface": (db: Db, now: number): number => resurfaceDueSnoozedBriefs(db, now),
+  ) => recordObservationClaims(db, id, claims, now),
+  "cognition.observationExpire": (db: Db, now: number): string[] => expireObservations(db, now),
+  "cognition.observationDropForLoop": (db: Db, loopId: string, now: number): string[] =>
+    dropObservationsForResolvedLoop(db, loopId, now),
+  "cognition.observationUserAction": (db: Db, id: string, userAction: string, now: number) =>
+    setObservationUserAction(db, id, userAction, now),
+  "noteAgent.enqueue": (db: Db, now: number) => enqueueNewNotes(db, now),
+  "cognition.morningBriefItemsClear": (db: Db, messageId: string) =>
+    clearMorningBriefMessageItems(db, messageId),
+  "noteAgent.claim": (db: Db, now: number) => claimDueNote(db, now),
+  "noteAgent.finish": (
+    db: Db,
+    entryId: string,
+    attempt: number,
+    outcome: Parameters<typeof finishNoteRun>[3],
+    now: number,
+  ) => finishNoteRun(db, entryId, attempt, outcome, now),
+  "cognition.taskCommand": (db: Db, command: TaskCommand, now: number) =>
+    applyTaskCommand(db, command, now),
+  "cognition.taskPropose": (db: Db, loopId: string, proposal: ProposedTaskChange, now: number) =>
+    proposeTaskChange(db, loopId, proposal, now),
+  "cognition.observationPrune": (db: Db, olderThan: number, now: number) =>
+    pruneClosedObservations(db, olderThan, now),
+  "cognition.morningBriefItems": (
+    db: Db,
+    day: string,
+    runId: string,
+    observationIds: readonly string[],
+  ): boolean => replaceMorningBriefItems(db, day, runId, observationIds),
+  "cognition.morningBriefSent": (
+    db: Db,
+    input: { day: string; runId: string; conversationId: string; messageId: string },
+    now: number,
+  ) => markMorningBriefSent(db, input, now),
   "cognition.notesWrite": (db: Db, content: string, opts: { maxBytes: number; now: number }) =>
     writeCognitionNotes(db, content, opts),
   "cognition.notesAppend": (db: Db, text: string, opts: { maxBytes: number; now: number }) =>

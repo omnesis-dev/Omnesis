@@ -52,13 +52,11 @@ import {
 } from "./storage/engine-state.js";
 import { cognitionSpendDay } from "./storage/spend.js";
 import { countRunArtifacts } from "./storage/sweep-tally.js";
-import { newestBriefForRun } from "./storage/briefs.js";
 import { cognitiveWorkflowIdForRun, cognitiveWorkflowVersion } from "./cognition/workflows.js";
 import { documentSourceId } from "./storage/coverage.js";
 import {
   parseCognitionBootstrapRunPayload,
   parseCognitionDataRunPayload,
-  parseCognitionDigestRunPayload,
   parseCognitionSweepRunPayload,
 } from "./run-payloads.js";
 import { systemClock, type Clock, type ClaimedCognitionRun } from "./storage/types.js";
@@ -110,15 +108,6 @@ export function cognitionRunBackoffMs(
 
 export interface CognitionDrainerOpts {
   db: Db;
-  /**
-   * The digest push tier, wired when the Briefs feature is active and
-   * APNs is available. Read live per completion — the knob flips without
-   * a restart.
-   */
-  digestPush?: {
-    getEnabled: () => boolean;
-    send: (brief: import("./storage/types.js").BriefRow, day: string) => Promise<void>;
-  };
   writeGate: WriteGate;
   driver: CognitionRunDriver;
   transcripts: FsCognitionTranscriptStore;
@@ -128,7 +117,8 @@ export interface CognitionDrainerOpts {
   /**
    * The day's spend ceiling, re-read per tick. Exhausted parks the drain: a
    * parked run resumes tomorrow, where failing it would burn its attempt
-   * budget and eventually strand it in the terminal state.
+   * budget and eventually strand it in the terminal state. The day's morning
+   * brief is exempt — it is still claimed while every other run stays parked.
    */
   getBudgetVerdict: () => CognitionBudgetVerdict;
   /**
@@ -550,17 +540,6 @@ export function createCognitionDrainerTasks(
       }
       await recordCoverage("processed");
       await recordSweepTally(false);
-      // The push tier: a completed digest run that minted its card sends
-      // the day's one notification. Never throws (sendDigestPush's
-      // contract); a push failure must not fail the run.
-      if (opts.digestPush) {
-        const digest = parseCognitionDigestRunPayload(run.payload);
-        if (digest && opts.digestPush.getEnabled()) {
-          const brief = newestBriefForRun(opts.db, run.id);
-          if (brief) await opts.digestPush.send(brief, digest.date);
-          else log.info(`digest run ${run.id} completed without a brief — no push`);
-        }
-      }
       await foldIntoBreaker({ providerScoped: false }, now);
       return "completed";
     }
@@ -666,12 +645,12 @@ export function createCognitionDrainerTasks(
       // The day's ceiling, checked before claiming rather than before
       // executing: an already-claimed run has burned an attempt, so parking at
       // the claim boundary leaves the queue exactly where it was. Read fresh so
-      // raising the limit resumes work without a restart.
+      // raising the limit resumes work without a restart. While it is spent the
+      // drain still claims the morning brief: background maintenance can spend
+      // the day's budget before the brief is due, and the brief is one run a
+      // day, so exempting it bounds the overrun while the user still gets it.
       const budget = opts.getBudgetVerdict();
-      if (budget.exhausted) {
-        log.info(`cognition paused — ${budget.reason}`);
-        return { kind: "done", value: { idle: true } };
-      }
+      if (budget.exhausted) log.info(`cognition paused — ${budget.reason}`);
       // Checked at the same boundary as the budget, and for the same reason:
       // an already-claimed run has burned an attempt, so declining to claim is
       // the only pause that leaves the queue exactly where it was.
@@ -724,10 +703,10 @@ export function createCognitionDrainerTasks(
             ctx.shouldYield() ||
             failedAdmission ||
             !opts.isEnabled() ||
-            opts.getBudgetVerdict().exhausted ||
             breakerIsOpen(breaker, clock())
           )
             break;
+          const morningBriefOnly = opts.getBudgetVerdict().exhausted;
           if (active.size >= limit || [...active.values()].some((entry) => !entry.parallel)) {
             await Promise.race([...active.values()].map((entry) => entry.task));
             continue;
@@ -739,6 +718,7 @@ export function createCognitionDrainerTasks(
               maxAttempts,
               excludeIds: [...new Set([...visited, ...active.keys()])],
               parallelOnly: active.size > 0,
+              ...(morningBriefOnly ? { morningBriefOnly } : {}),
             }),
           );
           const run = claimed[0];

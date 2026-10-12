@@ -82,16 +82,15 @@ const SCHEDULE_HELP = {
 };
 
 /**
- * What each counter column means, carried as that column's tooltip. "Held" and
+ * What each counter column means, carried as that column's tooltip. "Noted" and
  * "Updated" in particular are not guessable from the label alone.
  */
 const COUNTERS = [
   { key: "runs", label: "Runs", help: "Scheduled passes that have finished, successful or not." },
-  { key: "briefs", label: "Briefs", help: "Cards this sweep wrote that reached your feed." },
   {
-    key: "held",
-    label: "Held",
-    help: "Cards it wrote that were refused before reaching you, because they did not clear the bar for interrupting you. A number climbing here means this sweep is mostly producing noise.",
+    key: "observations",
+    label: "Noted",
+    help: "Observations it noted for the morning brief. The morning run decides which ones reach you.",
   },
   { key: "loops", label: "Opened", help: "Commitments it started tracking for the first time." },
   {
@@ -113,10 +112,8 @@ function counterValue(key, stats) {
   switch (key) {
     case "runs":
       return String(stats.runs);
-    case "briefs":
-      return String(stats.briefsCreated);
-    case "held":
-      return String(stats.briefsHeld);
+    case "observations":
+      return String(stats.observationsNoted);
     case "loops":
       return String(stats.loopsCreated);
     case "updated":

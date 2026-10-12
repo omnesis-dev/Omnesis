@@ -3,7 +3,7 @@
 
 import { enqueueCognitionRun } from "../storage/run-queue.js";
 import { createKnowledgeBatch, enqueueKnowledgeWork, type KnowledgeFrontierInput } from "./work.js";
-import { abandonKnowledgeBatch } from "./work-lifecycle.js";
+import { abandonKnowledgeBatch, type AbandonKnowledgeBatchInput } from "./work-lifecycle.js";
 import {
   createOrganizationCohort,
   type completeOrganizationCohort,
@@ -140,7 +140,7 @@ export function completeOrganizationBatch(
 
 export function abandonOrganizationBatch(
   db: Database.Database,
-  input: { batchId: string; notBefore: number },
+  input: AbandonKnowledgeBatchInput,
   now: number,
 ): boolean {
   return db.transaction(() => {

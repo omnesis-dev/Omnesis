@@ -8,11 +8,11 @@
  * fresh install and an upgrading one converge on the same shape from a
  * single source of DDL truth.
  *
- * Array-valued loop/brief fields (actors, involved, docs, blocked_by,
+ * Array-valued loop/observation fields (actors, involved, docs, blocked_by,
  * citations, related_loop_ids) that a cascade, the deletion invariant, or
  * a by-value reconcile scan must look up BY VALUE live in join tables
- * (`open_loop_docs`, `open_loop_people`, `brief_citations`,
- * `brief_related_loops`) so those scans are indexed. Arrays nothing
+ * (`open_loop_docs`, `open_loop_people`, `observation_citations`,
+ * `observation_related_loops`) so those scans are indexed. Arrays nothing
  * queries by value stay JSON columns.
  */
 
@@ -43,7 +43,13 @@ export function createBriefsStorageTables(db: Db): void {
       created_at INTEGER NOT NULL,
       last_update INTEGER NOT NULL,
       last_decay_check INTEGER,
-      decay_check_count INTEGER NOT NULL DEFAULT 0
+      decay_check_count INTEGER NOT NULL DEFAULT 0,
+      origin TEXT NOT NULL DEFAULT 'brain',
+      accepted INTEGER NOT NULL DEFAULT 0,
+      scheduled_for TEXT,
+      proposed_change_json TEXT,
+      completion_note TEXT,
+      resolved_at INTEGER
     )
   `);
   // Decay-engine scan: stale loops by state + last_update.
@@ -116,87 +122,122 @@ export function createBriefsStorageTables(db: Db): void {
       loop_id TEXT NOT NULL REFERENCES open_loops(id) ON DELETE CASCADE,
       run_id TEXT NOT NULL,
       at INTEGER NOT NULL,
-      note TEXT NOT NULL
+      note TEXT NOT NULL,
+      event_json TEXT
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_open_loop_ledger_loop ON open_loop_ledger(loop_id, seq)");
+  createTaskIndexes(db);
 
+  // Observations: private notes any agent run makes for the next morning
+  // brief. The morning run ships, holds or drops each one.
   db.exec(`
-    CREATE TABLE IF NOT EXISTS briefs (
+    CREATE TABLE IF NOT EXISTS observations (
       id TEXT PRIMARY KEY,
       created_by_run TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      body TEXT,
-      confidence REAL NOT NULL,
-      urgency REAL NOT NULL,
+      summary TEXT NOT NULL,
+      why TEXT NOT NULL DEFAULT '',
+      user_authored INTEGER NOT NULL DEFAULT 0,
+      window_start INTEGER,
       relevant_until INTEGER,
-      next_show INTEGER,
-      event_at INTEGER,
-      user_feedback TEXT,
-      state TEXT NOT NULL DEFAULT 'unread',
-      read_at INTEGER,
+      claims_json TEXT NOT NULL DEFAULT '[]',
+      state TEXT NOT NULL DEFAULT 'live'
+        CHECK(state IN ('live','held','shipped','dropped')),
+      close_reason TEXT,
+      noted_scores_json TEXT,
+      scores_json TEXT,
+      would_push_at INTEGER,
+      shipped_at INTEGER,
+      shipped_conversation_id TEXT,
+      shipped_message_id TEXT,
+      user_action TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      thread_conversation_id TEXT
+      closed_at INTEGER
     )
   `);
-  // Feed selection: `state IN ('unread','read') AND next_show ≤ now`.
-  db.exec("CREATE INDEX IF NOT EXISTS idx_briefs_state_next_show ON briefs(state, next_show)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_briefs_created_page ON briefs(created_at DESC, id DESC)");
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_briefs_state_created_page ON briefs(state, created_at DESC, id DESC)",
-  );
   db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_briefs_active_created_page
-      ON briefs(created_at DESC, id DESC)
-      WHERE state IN ('unread', 'read');
-    CREATE INDEX IF NOT EXISTS idx_briefs_dismissed_created_page
-      ON briefs(created_at DESC, id DESC)
-      WHERE state IN (
-        'dismissed_already_handled',
-        'dismissed_acknowledged',
-        'dismissed_not_relevant',
-        'dismissed_wrong'
-      );
+    CREATE INDEX IF NOT EXISTS idx_observations_open
+      ON observations(created_at, id) WHERE state IN ('live','held');
+    CREATE INDEX IF NOT EXISTS idx_observations_created_page
+      ON observations(created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_observations_closed
+      ON observations(closed_at) WHERE closed_at IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_observations_would_push
+      ON observations(would_push_at) WHERE would_push_at IS NOT NULL;
   `);
-  const briefColumns = db
-    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('briefs')")
-    .all()
-    .map((row) => row.name);
-  // Existing databases gain read_at in the numbered migration, which runs
-  // after this idempotent schema setup pass.
-  if (briefColumns.includes("read_at")) {
-    db.exec("CREATE INDEX IF NOT EXISTS idx_briefs_read_snapshot ON briefs(read_at DESC)");
-  }
-
   // citations[] normalized for the privacy-delete cascade (indexed
-  // "which briefs cite this document"). `position` preserves display order.
+  // "which observations cite this document"). `position` keeps cited order.
   db.exec(`
-    CREATE TABLE IF NOT EXISTS brief_citations (
-      brief_id TEXT NOT NULL REFERENCES briefs(id) ON DELETE CASCADE,
+    CREATE TABLE IF NOT EXISTS observation_citations (
+      observation_id TEXT NOT NULL REFERENCES observations(id) ON DELETE CASCADE,
       position INTEGER NOT NULL,
       doc_id TEXT NOT NULL,
-      PRIMARY KEY (brief_id, position)
-    )
-  `);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_brief_citations_doc ON brief_citations(doc_id)");
-
-  // related_loop_ids[] normalized for the deletion invariant (deleting a
-  // loop deletes its attached non-terminal briefs). Deliberately no FK
-  // to open_loops — a bare FK cascade would drop only the EDGE and leave
-  // the brief orphaned; `deleteOpenLoop` enforces the real invariant.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS brief_related_loops (
-      brief_id TEXT NOT NULL REFERENCES briefs(id) ON DELETE CASCADE,
-      loop_id TEXT NOT NULL,
-      PRIMARY KEY (brief_id, loop_id)
+      PRIMARY KEY (observation_id, position)
     )
   `);
   db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_brief_related_loops_loop ON brief_related_loops(loop_id)",
+    "CREATE INDEX IF NOT EXISTS idx_observation_citations_doc ON observation_citations(doc_id)",
   );
+  // Deliberately no FK to open_loops: deleting a loop deletes its open
+  // observations through `deleteOpenLoop`, which an edge cascade would not.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS observation_related_loops (
+      observation_id TEXT NOT NULL REFERENCES observations(id) ON DELETE CASCADE,
+      loop_id TEXT NOT NULL,
+      PRIMARY KEY (observation_id, loop_id)
+    )
+  `);
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_observation_related_loops_loop ON observation_related_loops(loop_id)",
+  );
+  // The ranked observations chosen for one morning's brief, written by the
+  // morning recheck and stamped with the conversation message that carried
+  // them. Replies that refer to "the second item" resolve through this list.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS morning_brief_items (
+      day TEXT NOT NULL,
+      rank INTEGER NOT NULL,
+      observation_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      conversation_id TEXT,
+      message_id TEXT,
+      PRIMARY KEY (day, rank)
+    )
+  `);
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_morning_brief_items_message ON morning_brief_items(message_id)",
+  );
+  // One row per sent morning brief: at most one message a day.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS morning_briefs (
+      day TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      item_count INTEGER NOT NULL,
+      sent_at INTEGER NOT NULL
+    )
+  `);
+  // What remains of a closed observation once its retention window passes:
+  // enough to calibrate the decision bar and review the "would have pushed"
+  // log, without the cited text or evidence links.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS observation_outcomes (
+      id TEXT PRIMARY KEY,
+      topic TEXT NOT NULL,
+      source_kinds_json TEXT NOT NULL DEFAULT '[]',
+      state TEXT NOT NULL,
+      close_reason TEXT,
+      noted_scores_json TEXT,
+      scores_json TEXT,
+      would_push_at INTEGER,
+      user_action TEXT,
+      created_at INTEGER NOT NULL,
+      closed_at INTEGER,
+      pruned_at INTEGER NOT NULL
+    )
+  `);
 
   // The Agent Run Queue — a durable outbox:
   // in-flight rows stay `pending` with bumped attempts; a crash mid-run
@@ -297,7 +338,7 @@ export function createBriefsStorageTables(db: Db): void {
   // work (`datum-intake`, `daily-source-review`, `noticing`, …; see
   // `brain/cognition/workflows.ts`), a `deep-research:<specialist>` stage,
   // `interactive` / `subagent`, or an evaluator (`entailment-gate`,
-  // `brief-judge`). The table is append-only and survives run-row pruning, so
+  // `observation-salience`). The table is append-only and survives run-row pruning, so
   // an id is never renamed in place — that would split one workload's history
   // across two buckets. `model_id` is the resolved backend's model id ('' when
   // unknown). The cache columns are
@@ -385,4 +426,25 @@ export function createBriefsStorageTables(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_retired_loops_page ON retired_loops(retired_at DESC, id DESC)",
   );
+}
+
+/**
+ * Indexes the Tasks views read through: the user's own loops by schedule,
+ * and Brain suggestions awaiting a decision. Guarded on the columns, which an
+ * older database gains in migration 198 after this setup pass.
+ */
+export function createTaskIndexes(db: Db): void {
+  const columns = db
+    .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('open_loops')")
+    .all()
+    .map((c) => c.name);
+  if (!columns.includes("scheduled_for")) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_open_loops_owned_schedule
+      ON open_loops(scheduled_for, last_update DESC)
+      WHERE origin != 'brain' OR accepted = 1;
+    CREATE INDEX IF NOT EXISTS idx_open_loops_suggested
+      ON open_loops(last_update DESC, id DESC)
+      WHERE origin = 'brain' AND accepted = 0 AND state = 'open';
+  `);
 }

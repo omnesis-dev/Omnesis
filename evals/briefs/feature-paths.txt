@@ -1,4 +1,5 @@
-# Feature-subtree allowlist for the Briefs / Cognition Steward feature.
+# Feature-subtree allowlist for the Cognition Steward feature: the Brain, the
+# morning brief, Tasks and the note agent.
 #
 # One path per line; a trailing "/" marks a directory prefix, otherwise the
 # entry matches that exact file (or anything under it as a directory). Lines
@@ -25,9 +26,24 @@ packages/collector/src/e2e/briefs-backtest-bridge.test.ts
 packages/collector/src/e2e/briefs-backtest.e2e.test.ts
 packages/collector/src/e2e/fake-loop-model.ts
 packages/collector/src/e2e/fake-loop-model.test.ts
-ios/Sources/Omnesis/Transport/BriefsClient.swift
-ios/Sources/Omnesis/UI/Briefs/
-ios/Tests/OmnesisTests/BriefsClientTests.swift
-ios/Tests/OmnesisTests/BriefsFeedStateTests.swift
-ios/Tests/OmnesisTests/BriefsFeedContractDecodeTests.swift
-ios/Tests/OmnesisTests/Fixtures/briefs-feed-contract.json
+packages/collector/src/e2e/brain-morning-brief.e2e.test.ts
+packages/collector/src/e2e/brain-note-agent.e2e.test.ts
+packages/collector/src/e2e/brain-tasks.e2e.test.ts
+packages/gateway/portal/js/views/tasks.js
+packages/gateway/portal/js/lib/tasks-model.js
+packages/gateway/portal/js/lib/tasks-model.test.ts
+packages/gateway/portal/js/lib/note-agent.js
+packages/gateway/portal/js/lib/note-agent.test.ts
+packages/gateway/portal/js/components/note-agent-receipt.js
+packages/gateway/portal/css/tasks.css
+ios/Sources/Omnesis/Transport/TasksClient.swift
+ios/Sources/Omnesis/Tasks/
+ios/Sources/Omnesis/UI/Tasks/
+ios/Tests/OmnesisTests/TasksClientTests.swift
+ios/Tests/OmnesisTests/TasksLogicTests.swift
+android/core-transport/src/main/kotlin/dev/omnesis/android/transport/client/TasksClient.kt
+android/core-transport/src/main/kotlin/dev/omnesis/android/transport/dto/Tasks.kt
+android/core-transport/src/test/kotlin/dev/omnesis/android/transport/client/TasksClientTest.kt
+android/core-transport/src/test/kotlin/dev/omnesis/android/transport/dto/TasksDecodeTest.kt
+android/app/src/main/kotlin/dev/omnesis/android/ui/tasks/
+android/app/src/test/kotlin/dev/omnesis/android/ui/tasks/

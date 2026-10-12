@@ -19,7 +19,7 @@ import {
   buildBuiltinTools,
   renderAnalyticsRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,
-  zodToJsonSchema,
+  toolInputJsonSchema,
   type ReadOnlyRetrievalPlaybookInput,
   type ToolHandle,
   type ToolContext,
@@ -243,7 +243,7 @@ export class DirectMcpService {
     });
     this.byName = new Map(selected);
     this.toolsManifest = selected.map(([name, handle]) => {
-      const inputSchema = zodToJsonSchema(handle.schema) as Record<string, unknown>;
+      const inputSchema = toolInputJsonSchema(handle.schema) as Record<string, unknown>;
       if (name === "fetch_many") constrainFetchManyManifest(inputSchema);
       injectDirectGroupingParams(inputSchema);
       return {

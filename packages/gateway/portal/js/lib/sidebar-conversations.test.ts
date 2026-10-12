@@ -4,7 +4,19 @@
 import { describe, expect, test, vi } from "vitest";
 
 // @ts-expect-error — portal modules are plain JS.
-import { deleteSidebarConversation } from "./sidebar-conversations.js";
+import { canDeleteConversation, deleteSidebarConversation } from "./sidebar-conversations.js";
+
+describe("canDeleteConversation", () => {
+  test("offers Delete for every conversation except the standing Morning brief", () => {
+    expect(canDeleteConversation({ id: "s_plain" })).toBe(true);
+    expect(
+      canDeleteConversation({ id: "s_watch", origin: { kind: "watch_firing", firingId: "f", runId: "f", watchId: "w" } }),
+    ).toBe(true);
+    expect(
+      canDeleteConversation({ id: "s_morning", origin: { kind: "daily_brief", runId: "run_1", briefs: [] } }),
+    ).toBe(false);
+  });
+});
 
 describe("deleteSidebarConversation", () => {
   test("removes a conversation before the authoritative deletion settles", async () => {

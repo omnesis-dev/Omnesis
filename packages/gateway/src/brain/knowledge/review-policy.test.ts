@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createLogger, type DecisionCapability } from "@omnesis/core";
 import { createBriefsStorageTables } from "../storage/schema.js";
-import { createBrief } from "../storage/briefs.js";
+import { createObservation } from "../storage/observations.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { resolveBrainSettings } from "../config.js";
 import { createKnowledgeTables, getKnowledgeNode, saveKnowledgeNode } from "./storage.js";
@@ -16,7 +16,7 @@ import { KnowledgeUpkeep } from "./engine-upkeep.js";
 import { scheduleKnowledgeReview } from "./work-lifecycle.js";
 import { directKnowledgeGate } from "./writer.js";
 import { decideKnowledgeReview, knowledgeReviewSignals } from "./review-policy.js";
-import { isHistoricalKnowledgeBrief } from "./owner-maintenance.js";
+import { isHistoricalKnowledgeOwner } from "./owner-maintenance.js";
 
 let db: Database.Database;
 const now = Date.parse("2027-03-10T12:00:00Z");
@@ -198,30 +198,28 @@ it("forces the maximum-interval backstop and falls back to review on unavailable
     { subject_id: "uncertain" },
   ]);
 });
-it.each(["dismissed_acknowledged", "dismissed_snoozed", "retired", "expired"])(
-  "preserves %s brief snapshots and excludes them from active reviews",
+it.each(["live", "shipped", "dropped", "expired"] as const)(
+  "preserves a %s observation unrewritten and excludes it from active reviews",
   async (state) => {
-    createBrief(
+    createObservation(
       db,
       {
-        id: "brief",
+        id: "observation",
         createdByRun: "run",
-        kind: "info",
-        title: "Workshop update",
-        description: "A past update",
-        confidence: 0.8,
-        urgency: 0.2,
+        summary: "Workshop update",
+        why: "A past update",
         ...(state === "expired" ? { relevantUntil: now - 1 } : {}),
       },
       now - cfg.maxReviewIntervalMs * 2,
     );
-    if (state !== "expired") db.prepare("UPDATE briefs SET state=? WHERE id='brief'").run(state);
-    const node = convertKnowledgeOwner(db, "brief", "brief", now).node;
-    expect(isHistoricalKnowledgeBrief(db, node, now)).toBe(true);
-    expect(node.metadata.activity).toBe("historical");
+    if (state === "shipped" || state === "dropped")
+      db.prepare("UPDATE observations SET state=? WHERE id='observation'").run(state);
+    const node = convertKnowledgeOwner(db, "observation", "observation", now).node;
+    expect(isHistoricalKnowledgeOwner(db, node, now)).toBe(true);
+    expect(node.metadata.activity).toBe(state === "live" ? "active" : "historical");
     await upkeep(2).reviews();
     expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_work").get()).toEqual({ n: 0 });
-    expect(getKnowledgeNode(db, "brief")?.markdown).toBe(node.markdown);
+    expect(getKnowledgeNode(db, "observation")?.markdown).toBe(node.markdown);
   },
 );
 

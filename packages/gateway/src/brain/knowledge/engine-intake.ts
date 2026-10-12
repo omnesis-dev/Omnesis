@@ -11,7 +11,8 @@ import { bootstrapWindowOpen } from "../bootstrap-window.js";
 import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
 import { getKnowledgeDependencies, getKnowledgeNode, listKnowledgeChanges } from "./storage.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
-import { historicalKnowledgeAdmissions } from "./work.js";
+import { hasHistoricalKnowledgeWorkBeyond, historicalKnowledgeAdmissions } from "./work.js";
+import { historyHorizonFloor } from "./history-horizon.js";
 import { KNOWLEDGE_DISCOVERY_POLICY, listKnowledgeDiscoveryBacklog } from "./discovery.js";
 import { judgeKnowledge } from "./decision.js";
 import { scheduleKnowledgeChange, type MaintenanceArc } from "./planner.js";
@@ -240,7 +241,7 @@ export class KnowledgeIntake {
     }
   }
 
-  private async recentInventory(): Promise<void> {
+  private async recentInventory(notBefore: string): Promise<void> {
     const { deps } = this.context;
     if (!hasSourceInventoryTables(deps.db)) return;
     const cfg = deps.getSettings().knowledge;
@@ -273,6 +274,7 @@ export class KnowledgeIntake {
         sourceId,
         direction: "recent-first",
         recentInventoryWindowMs: cfg.recentWindowMs,
+        notBefore,
         limit: 1,
         now: deps.clock(),
       });
@@ -306,10 +308,21 @@ export class KnowledgeIntake {
   }
 
   async bootstrap(): Promise<void> {
-    await this.recentInventory();
     const settings = this.context.deps.getSettings(),
       cfg = settings.knowledge,
       backfill = settings.bootstrap;
+    // One floor for the whole pass, recomputed every tick: documents age past
+    // it while they wait, and the operator can move it without a restart.
+    const notBefore = historyHorizonFloor(this.context.deps.clock(), backfill.horizonMs);
+    // Retired whether or not admission is open: pausing must not leave work
+    // the horizon already excludes queued for the moment it resumes.
+    if (hasHistoricalKnowledgeWorkBeyond(this.context.deps.db, notBefore)) {
+      const retired = await this.context.deps.writeGate["knowledge.retireBeyondHorizon"](notBefore);
+      this.context.deps.log.info(
+        `Retired ${retired} pending historical work item(s) dated before the history horizon (${notBefore})`,
+      );
+    }
+    await this.recentInventory(notBefore);
     if (
       !backfill.enabled ||
       !bootstrapWindowOpen(backfill.activeHours, this.context.deps.clock()) ||
@@ -379,6 +392,7 @@ export class KnowledgeIntake {
           phase: "organization",
           sourceId: source.source_id,
           direction: backfill.direction,
+          notBefore,
           ...(hasInventory ? { excludeRecentInventoryWindowMs: cfg.recentWindowMs } : {}),
           limit: 1,
           now: this.context.deps.clock(),

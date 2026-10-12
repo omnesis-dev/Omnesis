@@ -20,6 +20,7 @@ import {
   logout,
   apiFetch,
   getStatus,
+  getTaskCounts,
   listPrivacyApprovals,
   listSubscriptionApprovals,
 } from "./api.js";
@@ -30,10 +31,12 @@ import { DevAnnotationComposer } from "./components/dev-annotation-composer.js";
 import { LoadMore } from "./components/load-more.js";
 import { useCursorPage } from "./lib/use-cursor-page.js";
 import { useVisiblePoll } from "./lib/use-visible-poll.js";
-import { deleteSidebarConversation } from "./lib/sidebar-conversations.js";
+import { canDeleteConversation, deleteSidebarConversation } from "./lib/sidebar-conversations.js";
 import { releaseUpdateFromStatus } from "./lib/release-update.js";
 import { FleetHostUpdate } from "./components/fleet-host-update.js";
 import { TestInstanceCard } from "./components/test-instance-card.js";
+import { countLabel, localDay } from "./lib/tasks-model.js";
+import { onTaskCounts } from "./lib/task-counts.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -49,6 +52,7 @@ const WatchesView = lazy(() => import("./views/watches.js").then((m) => m.Watche
 const AgentView = lazy(() => import("./views/agent.js").then((m) => m.AgentView));
 const BrowserNotesApprovalView = lazy(() => import("./views/browser-notes.js").then((m) => m.BrowserNotesApprovalView));
 const CaptureView = lazy(() => import("./views/capture.js").then((m) => m.CaptureView));
+const TasksView = lazy(() => import("./views/tasks.js").then((m) => m.TasksView));
 
 const CONVERSATION_PAGE_SIZE = 50;
 // How often a visible tab re-reads the conversation list, so a conversation
@@ -63,6 +67,9 @@ const PRIVACY_PENDING_POLL_MS = 60_000;
 // `/status` is cache-backed and this keeps a release found by the gateway
 // visible without requiring the operator to reload the portal.
 const RELEASE_STATUS_POLL_MS = 60_000;
+// How often a visible tab re-counts today's open tasks for the nav, so a task
+// added by voice or by the agent shows without the operator navigating.
+const TASK_COUNT_POLL_MS = 60_000;
 
 /**
  * Top-level error boundary. Preact 10 doesn't ship a dedicated
@@ -163,13 +170,15 @@ function LoginView({ reason } = {}) {
 
 // Experimental destinations still appear only when the gateway runs in
 // experimental mode. Privacy is a standard control surface because an Answer
-// integration can require an operator decision in normal operation.
+// integration can require an operator decision in normal operation. Tasks
+// appear once /status says the gateway serves them (`tasks.available`).
 const NAV_ITEMS = [
   { view: "agent", href: "/portal/agent", label: "Ask", icon: "agent", isNewConvo: true },
   { view: "search", href: "/portal/search", label: "Search", icon: "search" },
   { view: "sources", href: "/portal/sources", label: "Sources", icon: "sources" },
   { view: "people", href: "/portal/people", label: "People", icon: "people" },
   { view: "capture", href: "/portal/capture", label: "Tell Omnesis", icon: "capture" },
+  { view: "tasks", href: "/portal/tasks", label: "Tasks", icon: "tasks", requiresTasks: true },
   { view: "watches", href: "/portal/watches", label: "Watches", icon: "watches", experimental: true },
   { view: "privacy", href: "/portal/audit", label: "Audit", icon: "privacy" },
   { view: "debug", href: "/portal/debug", label: "Debug", icon: "debug" },
@@ -200,6 +209,8 @@ const ICONS = {
   // iOS (`square.and.pencil`) and Android (`Edit`) New-conversation rows. The
   // pencil-on-document is the universal "start a new chat" affordance.
   agent: html`<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.874a2 2 0 0 1 .506-.852z"/></svg>`,
+  // Tasks — a checklist (Lucide `list-checks`).
+  tasks: html`<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>`,
   debug: html`<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M3 4l2.5 2.5M13 4l-2.5 2.5"/><rect x="4" y="6" width="8" height="7" rx="2"/><path d="M2 9h2M12 9h2M2 12h2M12 12h2"/></svg>`,
 };
 
@@ -273,6 +284,8 @@ function App() {
   // false until the /status read resolves, so the affordance never flashes in.
   const [developer, setDeveloper] = useState(false);
   const [testInstance, setTestInstance] = useState(null);
+  // Whether the gateway serves Tasks (`/status` → `tasks.available`).
+  const [tasksAvailable, setTasksAvailable] = useState(false);
   // Withhold demo-sensitive cards until the gateway has declared its mode.
   const [demo, setDemo] = useState(null);
   // A passive, gateway-owned release result. Null before the first successful
@@ -314,6 +327,37 @@ function App() {
   useEffect(() => { refreshPendingDecisions(); }, [experimental]);
   useVisiblePoll(refreshPendingDecisions, PRIVACY_PENDING_POLL_MS);
 
+  // Today's open tasks, shown on the Tasks nav item as "Tasks (n)". Read
+  // from `/tasks/counts` on arrival, on every navigation and on an interval;
+  // the Tasks view also hands over the counts each of its reads returns, so
+  // completing a task there moves the number at once.
+  const [openTasksToday, setOpenTasksToday] = useState(0);
+  const taskCountGeneration = useRef(0);
+
+  async function refreshTaskCount() {
+    if (!tasksAvailable) return;
+    const generation = ++taskCountGeneration.current;
+    try {
+      const result = await getTaskCounts(localDay());
+      if (generation !== taskCountGeneration.current) return;
+      setOpenTasksToday(result?.counts?.today ?? 0);
+    } catch {
+      // A count is not worth surfacing an error over; the next tick retries.
+    }
+  }
+
+  useEffect(() => { refreshTaskCount(); }, [tasksAvailable, route.view, route.taskView]);
+  useVisiblePoll(refreshTaskCount, TASK_COUNT_POLL_MS, { enabled: tasksAvailable });
+  useEffect(
+    () =>
+      onTaskCounts((counts) => {
+        // A view's own read is newer than any count request still in flight.
+        taskCountGeneration.current += 1;
+        setOpenTasksToday(counts.today ?? 0);
+      }),
+    [],
+  );
+
   async function refreshGatewayStatus() {
     const generation = ++statusRequestGeneration.current;
     try {
@@ -323,6 +367,7 @@ function App() {
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
       setTestInstance(status?.testInstance ?? null);
+      setTasksAvailable(status?.tasks?.available === true);
       const nextReleaseUpdate = releaseUpdateFromStatus(status);
       setReleaseUpdate((current) =>
         current?.currentVersion === nextReleaseUpdate?.currentVersion &&
@@ -584,7 +629,9 @@ function App() {
         ${demo === false && html`<${TestInstanceCard} instance=${testInstance} />`}
 
         <nav class="sidebar-nav" aria-label="Main navigation">
-          ${NAV_ITEMS.filter((item) => !item.experimental || experimental).map((item) => {
+          ${NAV_ITEMS.filter(
+            (item) => (!item.experimental || experimental) && (!item.requiresTasks || tasksAvailable),
+          ).map((item) => {
             // "Ask" (the agent landing) is special: it navigates AND
             // dispatches the fresh-session event, so clicking it from
             // inside an existing conversation drops back to a hero
@@ -606,7 +653,9 @@ function App() {
                 }}
               >
                 <span class="sidebar-icon">${ICONS[item.icon]}</span>
-                <span class="sidebar-label">${item.label}</span>
+                <span class="sidebar-label"
+                  >${item.view === "tasks" ? countLabel(item.label, openTasksToday) : item.label}</span
+                >
                 ${pending > 0
                   ? html`<span class="sidebar-badge" aria-hidden="true">${pending > 99 ? "99+" : pending}</span
                       ><span class="sr-only">${pending} ${pending === 1 ? "decision" : "decisions"} waiting for you. </span>`
@@ -682,20 +731,22 @@ function App() {
                             ${PIN_ICON}
                             <span>${c.pinned ? "Unpin" : "Pin"}</span>
                           </button>
-                          <button
-                            class="sidebar-convo-menu-item destructive"
-                            type="button"
-                            role="menuitem"
-                            onClick=${(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteConvo(c.id); }}
-                          >
-                            <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                              <path d="M3 4h10"/>
-                              <path d="M5 4V2.5h6V4"/>
-                              <path d="M4.5 4l.5 9.5h6l.5-9.5"/>
-                              <path d="M6.5 6.5v5M9.5 6.5v5"/>
-                            </svg>
-                            <span>Delete</span>
-                          </button>
+                          ${canDeleteConversation(c)
+                            ? html`<button
+                                class="sidebar-convo-menu-item destructive"
+                                type="button"
+                                role="menuitem"
+                                onClick=${(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteConvo(c.id); }}
+                              >
+                                <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                  <path d="M3 4h10"/>
+                                  <path d="M5 4V2.5h6V4"/>
+                                  <path d="M4.5 4l.5 9.5h6l.5-9.5"/>
+                                  <path d="M6.5 6.5v5M9.5 6.5v5"/>
+                                </svg>
+                                <span>Delete</span>
+                              </button>`
+                            : null}
                         </div>
                       `
                       : null}
@@ -748,6 +799,8 @@ function App() {
           ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} feature="find" />`
           : route.view === "browser-notes"
           ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} />`
+          : route.view === "tasks"
+          ? html`<${TasksView} taskView=${route.taskView} focusTaskId=${route.focusTaskId ?? null} experimental=${experimental} />`
           : route.view === "capture"
           ? html`<${CaptureView} day=${route.day ?? null} experimental=${experimental} />`
           : route.view === "privacy"

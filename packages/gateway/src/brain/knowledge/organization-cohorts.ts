@@ -10,6 +10,7 @@ import { KNOWLEDGE_SOURCE_ID, KNOWLEDGE_DOCUMENT_TYPE } from "./source-meta.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery-policy.js";
 import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
+import { knowledgeWorkParkedSql } from "./work-retry.js";
 import type Database from "better-sqlite3";
 
 export const ORGANIZATION_REASON_CODES = [
@@ -180,6 +181,7 @@ export function selectOrganizationCohort(
     LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id
     WHERE v.phase='organization' AND v.policy_version=? AND v.status='considered'
     AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='source' AND w.subject_id=d.id AND w.status IN ('pending','batched'))
+    AND NOT ${knowledgeWorkParkedSql("'source'", "d.id", knowledgeSourceRevisionSql())}
     AND COALESCE(r.deleted,0)=0
     AND d.source_id NOT IN (?,?)
     ${metadata ? "AND COALESCE(json_extract(d.metadata,'$.documentType'),'') NOT IN (?,?)" : ""}

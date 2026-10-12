@@ -11,7 +11,6 @@ import {
   getPersonProfileFingerprint,
 } from "../storage/person-annotations.js";
 import { createOpenLoop, getOpenLoop } from "../storage/open-loops.js";
-import { createBrief } from "../storage/briefs.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { captureKnowledgeCanonicalFence } from "./canonical-fence.js";
@@ -151,33 +150,14 @@ it("keeps an edited, already offered owner unresolved until knowledge_save", () 
     db.prepare("SELECT operation FROM knowledge_owner_changes WHERE owner_id='task'").get(),
   ).toEqual({ operation: "update" });
 });
-it.each(["brief", "doc_annotation", "person_annotation"] as const)(
+it.each(["doc_annotation", "person_annotation"] as const)(
   "enrolls newly persisted %s owners without a model-provided target",
   (kind) => {
     const operation =
-      kind === "brief"
-        ? "cognition.briefCreate"
-        : kind === "doc_annotation"
-          ? "cognition.annotationCreate"
-          : "cognition.personAnnotationCreate";
+      kind === "doc_annotation" ? "cognition.annotationCreate" : "cognition.personAnnotationCreate";
     const candidate = captureCanonicalEnrollment(db, operation, [{ id: "owner" }]);
     db.transaction(() => {
-      if (kind === "brief")
-        createBrief(
-          db,
-          {
-            id: "owner",
-            createdByRun: "run",
-            title: "Workshop materials",
-            description: "Bring notebooks.",
-            kind: "info",
-            confidence: 0.8,
-            urgency: 0.3,
-            citations: ["evidence"],
-          },
-          10,
-        );
-      else {
+      {
         const table = kind === "doc_annotation" ? "doc_annotations" : "person_annotations";
         const subject = kind === "doc_annotation" ? "doc_id" : "person_id";
         db.prepare(
@@ -284,4 +264,33 @@ it("enrolls person create, revise and supersession with the explicit clock befor
   expect(
     db.prepare("SELECT invalidated_at FROM person_annotations WHERE id=?").get(fact.id),
   ).toEqual({ invalidated_at: 30 });
+});
+it("enrolls a noted observation so the same turn can supersede or withdraw it", () => {
+  const noted = writerHandlers["knowledge.canonicalMutation"](
+    db,
+    captureKnowledgeCanonicalFence(db, run),
+    "cognition.observationCreate",
+    [
+      { id: "obs_1", createdByRun: "run", summary: "Bring notebooks.", citations: ["evidence"] },
+      dependencies,
+      10,
+    ],
+  );
+  expect(noted).toMatchObject({ ok: true });
+  if (!noted.ok) throw new Error("unreachable");
+  const owner = noted.owners.find((o) => o.kind === "observation" && o.id === "obs_1");
+  expect(owner?.version).toEqual(expect.any(String));
+  expect(getKnowledgeNode(db, "obs_1")).toMatchObject({ kind: "observation" });
+  expect(hints()).toEqual([{ source_id: "evidence", node_id: "obs_1" }]);
+
+  // A withdrawal fenced on the version the create returned is admitted.
+  const fence = captureKnowledgeCanonicalFence(db, run, { id: "obs_1" }, "observation_withdraw");
+  fence.owners = [owner!];
+  expect(
+    writerHandlers["knowledge.canonicalMutation"](db, fence, "cognition.observationTransition", [
+      "obs_1",
+      { state: "dropped", reason: "withdrawn" },
+      11,
+    ]),
+  ).toMatchObject({ ok: true, value: true });
 });

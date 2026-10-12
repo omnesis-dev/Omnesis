@@ -13,6 +13,7 @@ const GROUPS = [
       brain("knowledge", "Library"),
       { key: "calendar", label: "Timeline" },
       brain("runs", "Agent runs"),
+      brain("observations", "Observations"),
       brain("maintenance", "Maintenance"),
       brain("bootstrap", "Discovery"),
       brain("calibration", "Confidence & feedback"),
@@ -45,7 +46,7 @@ export function debugNavigation(experimental, tab, cognitionTab) {
     ...group,
     items: group.items.filter((item) => !item.experimental || experimental),
   })).filter((group) => group.items.length);
-  const requested = cognitionTab === "memory" ? "notes" : ["loops", "briefs"].includes(cognitionTab) ? "knowledge" : cognitionTab === "scheduled" ? "runs" : cognitionTab || "runs";
+  const requested = cognitionTab === "memory" ? "notes" : cognitionTab === "loops" ? "knowledge" : cognitionTab === "scheduled" ? "runs" : cognitionTab || "runs";
   const section = GROUPS.some((group) =>
     group.items.some((item) => item.key === `cognition/${requested}`),
   )

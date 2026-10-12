@@ -73,7 +73,9 @@ function AgentFailureCodes({ failure, className = "agent-msg-error-codes" }) {
   </span>`;
 }
 
-export function MessageBubble({ turn, citations, dispatch }) {
+// `header` and `footer` are optional slots around the message — the Morning
+// brief thread puts its brief header above a brief and its sources below it.
+export function MessageBubble({ turn, citations, dispatch, header = null, footer = null }) {
   const count = turn.role === "assistant" ? (turn.citationCount ?? 0) : 0;
   // Pre-compute citation-pill coalescing: every consecutive run of
   // pending annotate tool parts collapses into ONE pill rendered at the
@@ -84,6 +86,7 @@ export function MessageBubble({ turn, citations, dispatch }) {
   const pillRuns = computeCitationPillRuns(turn.parts ?? []);
   return html`
     <div class=${`agent-msg agent-msg-${turn.role}`}>
+      ${header}
       <div class="agent-msg-body">
         ${turn.parts.map((part, i) =>
           // A thinking part is "live" only while it is the trailing part of
@@ -116,6 +119,7 @@ export function MessageBubble({ turn, citations, dispatch }) {
       ${count > 0
         ? html`<div class="agent-msg-footer"><${CitationCountChip} count=${count} /></div>`
         : null}
+      ${footer}
     </div>
   `;
 }
@@ -422,11 +426,10 @@ const EPHEMERAL_ACTION_TOOLS = new Set([
   "open_loop_update",
   "open_loop_delete",
   "open_loop_ledger_append",
-  "brief_list",
-  "brief_fetch",
-  "brief_create",
-  "brief_update",
-  "brief_delete",
+  "observation_list",
+  "observation_note",
+  "observation_withdraw",
+  "observation_suppress",
   "temporal_annotation_add",
   "temporal_annotation_update",
   "temporal_annotation_delete",
@@ -1280,9 +1283,14 @@ function ToolCallChip({ call }) {
   `;
 }
 
-function prettyToolName(tool) {
+export function prettyToolName(tool) {
   switch (tool) {
     case "trace_connections": return "Trace connections";
+    // Task tools change the owner's journal, so they stay visible as chips.
+    case "task_list":         return "Check tasks";
+    case "task_create":       return "Add a task";
+    case "task_update":       return "Update a task";
+    case "task_undo":         return "Undo a task change";
     default:                  return tool;
   }
 }
@@ -1649,7 +1657,7 @@ const SLASH_ICONS = {
  * character so the empty state stays uncluttered. When the slash menu is
  * open, Enter selects the highlighted command instead of sending.
  */
-export function Composer({ disabled, onSubmit, onCancel, busy, variant = "default", autoFocus = false, experimental = false }) {
+export function Composer({ disabled, onSubmit, onCancel, busy, variant = "default", autoFocus = false, experimental = false, placeholder = null }) {
   const [text, setText] = useState("");
   // The armed per-message command (a SLASH_COMMANDS descriptor) or null.
   // Cleared after each send so the next message is an ordinary turn unless
@@ -1744,7 +1752,7 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
         ref=${taRef}
         name="text"
         class="agent-composer-input"
-        placeholder=${busy ? "Working…" : (variant === "hero" ? "Ask Omnesis" : "Ask Omnesis…")}
+        placeholder=${busy ? "Working…" : (placeholder ?? (variant === "hero" ? "Ask Omnesis" : "Ask Omnesis…"))}
         disabled=${disabled}
         value=${text}
         onInput=${(e) => setText(e.target.value)}

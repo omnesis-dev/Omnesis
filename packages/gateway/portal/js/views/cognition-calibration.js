@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Calibration — the measurement-only reliability panel on the Cognition
-// debug page. Renders, per confidence-carrying artifact family (briefs,
-// doc annotations, person annotations), the 10-bin reliability table the
+// debug page. Renders, per confidence-carrying artifact family (doc
+// annotations, person annotations), the 10-bin reliability table the
 // gateway computes from recorded outcome signals, plus the
 // family's ECE and label-class counts. Strictly read-only: nothing here (or
 // anywhere) mutates a confidence or recalibrates from these numbers — the
@@ -21,7 +21,6 @@ import { getCognitionCalibration } from "../api.js";
 /** Human label for a family key; unknown keys render as themselves. */
 export function familyDisplayName(family) {
   const names = {
-    brief: "Briefs",
     "doc-annotation": "Document notes",
     "person-annotation": "People notes",
   };
@@ -149,7 +148,7 @@ export function CalibrationTab() {
     <div>
       <p class="debug-sub" style="margin: 0 0 16px;">
         This read-only report compares how confident the brain was with later verification and
-        feedback on briefs and annotations. It does not train the brain or change its decisions.
+        feedback on annotations. It does not train the brain or change its decisions.
         Verification and feedback are signals, not independent proof of correctness; wiki claims
         are not included.
       </p>

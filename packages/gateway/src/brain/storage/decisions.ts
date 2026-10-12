@@ -34,9 +34,10 @@ export type DecisionVerdict = "pass" | "skip" | "unavailable";
 
 /**
  * What a decision was asked for: `worth-gate` judges a run's document before
- * the run, `record-check` a record a run is about to save.
+ * the run, `record-check` a record a run is about to save, and
+ * `observation-salience` whether an observation belongs in a morning brief.
  */
-export type DecisionPurpose = "worth-gate" | "record-check";
+export type DecisionPurpose = "worth-gate" | "record-check" | "observation-salience";
 
 export interface CognitionDecisionRecord {
   /** Optional exact input snapshot, stored separately under its full privacy ancestry. */

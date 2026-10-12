@@ -35,10 +35,10 @@ data class StatusSnapshot(
      */
     val developer: Boolean = false,
     /**
-     * The Omnesis Briefs feature gate. Absent on a gateway that predates the field, which
-     * reads as "no feature" rather than as a fault.
+     * The Tasks gate. Absent on a gateway that predates Tasks, which reads as "no Tasks
+     * screen" rather than as a fault.
      */
-    val briefs: BriefsStatusDto? = null,
+    val tasks: TasksStatusDto? = null,
     /**
      * The gateway-dictation gate. Absent on a gateway that predates
      * the field, which reads as inactive: notes keep only the phone's transcript.
@@ -87,44 +87,19 @@ data class Whoami(
 )
 
 /**
- * Whether the paired gateway offers Omnesis Briefs, and if not, whether the thing in the
- * way is something the operator can fix.
- *
- * [enabled] and [modelAssigned] are read as the two separate questions they answer — can
- * the feed be fetched, and is the model what stands in the way — rather than either being
- * inferred from the other.
+ * Whether the paired gateway serves the Tasks journal (`tasks` on `GET /status`). Tasks work
+ * on every install, with or without a model, so this is never gated on experimental mode.
  */
 @Serializable
-data class BriefsStatusDto(
-    /** The operator switched Briefs on. */
-    val enabled: Boolean = false,
-    /** A background-agent model is assigned and its backend can actually run. */
-    val modelAssigned: Boolean = false,
-    /** The engine runs and the routes answer: [enabled] AND a runnable model. */
-    val active: Boolean = false,
+data class TasksStatusDto(
+    /** The `/tasks` routes answer. */
+    val available: Boolean = false,
+    /**
+     * A Tell Omnesis note is read by an agent turn that can add and change tasks, so the
+     * capture surface may say that Omnesis will act on it.
+     */
+    val noteAgent: Boolean = false,
 )
-
-/** What the navigation menu shows for Briefs, derived from [BriefsStatusDto]. */
-enum class BriefsMenuEntry {
-    /** No entry: the feature is off, so the routes would only ever 404. */
-    HIDDEN,
-
-    /** A normal destination — the engine runs and the feed answers. */
-    AVAILABLE,
-
-    /** Switched on, but its background-agent model is unassigned or cannot run. */
-    NEEDS_ATTENTION,
-    ;
-
-    companion object {
-        fun from(status: BriefsStatusDto?): BriefsMenuEntry = when {
-            status == null -> HIDDEN
-            status.active -> AVAILABLE
-            status.enabled && !status.modelAssigned -> NEEDS_ATTENTION
-            else -> HIDDEN
-        }
-    }
-}
 
 /**
  * Whether dictation audio from this app goes to the gateway's transcriber

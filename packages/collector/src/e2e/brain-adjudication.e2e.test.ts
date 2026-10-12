@@ -356,12 +356,9 @@ describe("merge adjudication", () => {
                   confidence: 0.8,
                   importance: 0.5,
                 }),
-                call("brief_create", {
-                  kind: "info",
-                  title: "Two identities may be one person",
-                  description: "Raised from the adjudication lane.",
-                  confidence: 0.8,
-                  urgency: 0.3,
+                call("observation_note", {
+                  summary: "Two identities may be one person.",
+                  why: "Raised from the adjudication lane.",
                 }),
                 call("merge_adjudicate", { verdict: "unsure", reason: UNSURE_REASON }),
               ],
@@ -511,20 +508,20 @@ describe("merge adjudication", () => {
     );
     const calls = await bench.obs.executedTools(run.id);
 
-    // Both loop/brief writes were never present to be called: the runtime
+    // Both loop/observation writes were never present to be called: the runtime
     // filters the toolset by the workflow's declared authority, so the model
     // gets an unknown-tool answer rather than a refusal from the tool itself.
     const [loopResult] = resultsOf(calls, "open_loop_create");
     expect(loopResult!.kind).toBe("error");
     expect(loopResult!.code).toBe("unknown_tool");
     expect(String(loopResult!.message)).toContain("open_loop_create");
-    const [briefResult] = resultsOf(calls, "brief_create");
-    expect(briefResult!.kind).toBe("error");
-    expect(briefResult!.code).toBe("unknown_tool");
+    const [observationResult] = resultsOf(calls, "observation_note");
+    expect(observationResult!.kind).toBe("error");
+    expect(observationResult!.code).toBe("unknown_tool");
 
     // Nothing was written by either attempt.
     expect((await bench.obs.loops()).items).toHaveLength(0);
-    expect((await bench.obs.briefs()).items).toHaveLength(0);
+    expect((await bench.obs.observations()).items).toHaveLength(0);
 
     // The one granted verb still worked, so the denial is authority, not a
     // broken run.
@@ -826,12 +823,9 @@ describe("agent notes and their background compaction", () => {
               calls: [
                 // Not granted to this lane: curation must not become an
                 // interruption.
-                call("brief_create", {
-                  kind: "info",
-                  title: "Notes were getting long",
-                  description: "Raised from the compaction lane.",
-                  confidence: 0.8,
-                  urgency: 0.2,
+                call("observation_note", {
+                  summary: "Notes were getting long.",
+                  why: "Raised from the compaction lane.",
                 }),
                 call("notes_rewrite", { text: COMPACTED_NOTES }),
               ],
@@ -925,13 +919,13 @@ describe("agent notes and their background compaction", () => {
     const run = await runByDedupeKey(bench, "notes_compaction", "notes-compaction");
     const calls = await bench.obs.executedTools(run.id);
 
-    const [briefResult] = resultsOf(calls, "brief_create");
-    expect(briefResult).toBeDefined();
-    expect(briefResult!.kind).toBe("error");
-    expect(briefResult!.code).toBe("unknown_tool");
-    expect(String(briefResult!.message)).toContain("brief_create");
+    const [observationResult] = resultsOf(calls, "observation_note");
+    expect(observationResult).toBeDefined();
+    expect(observationResult!.kind).toBe("error");
+    expect(observationResult!.code).toBe("unknown_tool");
+    expect(String(observationResult!.message)).toContain("observation_note");
 
-    expect((await bench.obs.briefs()).items).toHaveLength(0);
+    expect((await bench.obs.observations()).items).toHaveLength(0);
     expect((await bench.obs.loops()).items).toHaveLength(0);
     // The granted verb in the same run worked, so the denial is authority.
     expect(resultsOf(calls, "notes_rewrite")[0]!.kind).toBe("structured");

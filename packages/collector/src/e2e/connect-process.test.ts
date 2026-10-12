@@ -88,7 +88,7 @@ describe("spawned connect process cleanup", () => {
     await terminateConnect(running);
 
     expect(isAlive(running.child.pid!)).toBe(false);
-    // Group teardown waits for signalable members. An orphan can briefly
+    // Group teardown waits for signalable members. An orphan can momentarily
     // remain observable by PID while its exit is being reaped by the OS.
     // Require actual PID disappearance, with the same bounded observation
     // used by the subprocess-reaper descendant tests.

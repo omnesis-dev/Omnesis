@@ -264,10 +264,9 @@ test("retired loop routes preserve identity in the knowledge library", () => {
 });
 
 
-test("brief deep links preserve identity in the unified library", () => {
-  expect(route("/portal/debug/cognition/briefs/brief%2Ffixture")).toEqual({
-    view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: "brief/fixture",
-    redirectTo: "/portal/debug/cognition/knowledge/brief%2Ffixture?kind=brief",
+test("observation deep links address the Observations inspector", () => {
+  expect(route("/portal/debug/cognition/observations/obs%2Ffixture")).toEqual({
+    view: "debug", tab: "cognition", cognitionTab: "observations", cognitionId: "obs/fixture",
   });
-  expect(route("/portal/debug/cognition/briefs").redirectTo).toBe("/portal/debug/cognition/knowledge?kind=brief");
 });
+

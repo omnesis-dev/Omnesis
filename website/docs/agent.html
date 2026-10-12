@@ -30,13 +30,13 @@
 
     <meta
       name="description"
-      content="The built-in Omnesis chat agent: what it does, memory, sandboxing, conversations, time zones, model choice, and standing instructions."
+      content="The built-in Omnesis chat agent: what it does, memory, tasks, sandboxing, conversations, time zones, model choice, and standing instructions."
     />
     <link rel="canonical" href="https://omnesis.dev/docs/agent" />
     <meta property="og:title" content="The agent — Omnesis Docs" />
     <meta
       property="og:description"
-      content="The built-in Omnesis chat agent: what it does, memory, sandboxing, conversations, time zones, model choice, and standing instructions."
+      content="The built-in Omnesis chat agent: what it does, memory, tasks, sandboxing, conversations, time zones, model choice, and standing instructions."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -133,6 +133,7 @@
               <ul class="side-sub">
                 <li><a href="#what-it-does">What it does</a></li>
                 <li><a href="#memory">Memory</a></li>
+                <li><a href="#tasks">Tasks</a></li>
                 <li><a href="#sandboxed-by-design">Sandboxed by design</a></li>
                 <li><a href="#conversations">Conversations</a></li>
                 <li><a href="#times-and-time-zones">Times and time zones</a></li>
@@ -159,9 +160,9 @@
         <p class="docs-lead">
           Omnesis has a built-in chat agent that runs inside the gateway. Ask it a question about
           your indexed data and it answers with citations to the source documents. This page is for
-          anyone who chats with it: what it can do, what it remembers, how it is contained, and how
-          to choose the model it runs on. To let an outside AI tool such as Claude, ChatGPT or Codex
-          read your data, see <a href="/docs/connect">Agents &amp; MCP</a>.
+          anyone who chats with it: what it can do, what it remembers, how it keeps your tasks, how
+          it is contained, and how to choose the model it runs on. To let an outside AI tool such as
+          Claude, ChatGPT or Codex read your data, see <a href="/docs/connect">Agents &amp; MCP</a>.
         </p>
 
         <h2 id="what-it-does">What it does</h2>
@@ -239,10 +240,29 @@
           Deleting a conversation also removes the annotations that cite it.
         </p>
 
+        <h2 id="tasks">Tasks</h2>
+        <p>
+          In any conversation, the agent works with your <a href="/docs/apps#tasks">Tasks</a> when
+          you ask it to. It can list them, add one, complete, move, strike or edit one, and undo a
+          change it made: “move the dentist call to next week”, “I sent the invoice, tick it off”.
+          It states each change in one line, such as <em>Moved to 2026-10-19: Call the dentist</em>,
+          and the change is recorded in the task's history as made in that conversation, where
+          <strong>Undo</strong> in the Tasks view also reverses it. It changes a task only when you
+          ask; a question about your tasks gets an answer, not an edit.
+        </p>
+        <p>
+          With a model assigned to the <code>background-agent</code> role, notes you capture with
+          Tell Omnesis from the portal, the apps or the CLI are also read and acted on, each by one
+          short agent turn of its own. Reading starts the first time such a model is assigned; notes
+          captured while it is later unassigned are read once it is assigned again. Notes that
+          external agents add, and notes taken in the browser extension, are never acted on. See
+          <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>.
+        </p>
+
         <h2 id="sandboxed-by-design">Sandboxed by design</h2>
         <p>
-          The agent reads your documents and writes only its own memory. Its retrieval tools
-          (search, documents, trails, people, SQL) read and never change anything:
+          The agent reads your documents and writes only its own memory and your tasks. Its
+          retrieval tools (search, documents, trails, people, SQL) read and never change anything:
         </p>
         <ul>
           <li>There is no shell and no filesystem access.</li>

@@ -278,6 +278,15 @@ describe("agentFailureScope", () => {
     expect(agentFailureScope({ code: "tool_iteration_cap" })).toBe("request");
   });
 
+  it("an Anthropic account limit is the environment despite its 400", () => {
+    expect(agentFailureScope({ code: "anthropic_usage_limited", provider: { status: 400 } })).toBe(
+      "provider",
+    );
+    expect(agentFailureScope({ code: "anthropic_api_error", provider: { status: 400 } })).toBe(
+      "request",
+    );
+  });
+
   it("a failure that never reached a status is the environment", () => {
     // A dead socket or a deadline means nothing about the payload was ever
     // adjudicated, so blaming the payload would be a guess.

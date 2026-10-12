@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Loop
@@ -691,11 +692,11 @@ private fun prettyToolName(tool: String): String = when (tool) {
     "open_loop_update" -> "Update loop"
     "open_loop_delete" -> "Delete loop"
     "open_loop_ledger_append" -> "Note on loop"
-    "brief_list" -> "List briefs"
-    "brief_fetch" -> "Open brief"
-    "brief_create" -> "Create brief"
-    "brief_update" -> "Update brief"
-    "brief_delete" -> "Withdraw brief"
+    "task_list" -> "Check tasks"
+    "task_create" -> "Add a task"
+    "task_update" -> "Update a task"
+    "task_undo" -> "Undo a task change"
+    "observation_suppress" -> "Mute a brief item"
     "notes_append" -> "Append notes"
     "notes_rewrite" -> "Rewrite notes"
     "schedule_agent_run" -> "Schedule follow-up"
@@ -714,8 +715,8 @@ private fun toolIcon(tool: String): ImageVector = when (tool) {
     "search_loops", "fetch_loop", "list_loops",
     "open_loop_search", "open_loop_fetch", "open_loop_create", "open_loop_update",
     "open_loop_delete", "open_loop_ledger_append" -> Icons.Outlined.Loop
-    "brief_list", "brief_fetch", "brief_create", "brief_update", "brief_delete",
-    "notes_append", "notes_rewrite" -> Icons.Outlined.Description
+    "task_list", "task_create", "task_update", "task_undo" -> Icons.Outlined.Checklist
+    "observation_suppress", "notes_append", "notes_rewrite" -> Icons.Outlined.Description
     "schedule_agent_run" -> Icons.Outlined.CalendarMonth
     "entity_context" -> Icons.Outlined.Hub
     "conversation_memory_evidence", "annotation_search",

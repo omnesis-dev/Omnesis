@@ -30,7 +30,7 @@ export function knowledgeIconHtml({ kind, sourceId, reference } = {}) {
   const annotation = type === "doc_annotation" || type === "person_annotation";
   let glyph =
     annotation ? knowledgeIconGlyphs.annotation :
-    ["wiki", "loop", "brief", "annotation"].includes(type) ? knowledgeIconGlyphs[type] : null;
+    ["wiki", "loop", "observation", "annotation"].includes(type) ? knowledgeIconGlyphs[type] : null;
   if (annotation) {
     const badge = type === "person_annotation" ? "user" : "file";
     glyph += `<circle cx="19" cy="19" r="7" fill="var(--bg-primary, white)" stroke="none"/><svg x="13" y="13" width="12" height="12" viewBox="0 0 24 24" class="kn-link-icon-badge kn-link-icon-badge--${badge}">${knowledgeIconGlyphs[badge]}</svg>`;
@@ -61,21 +61,21 @@ export function knowledgeReferenceMetadata(reference, references = {}) {
 /** Resolve typed and canonical portal links without treating remote URLs as private references. */
 export function knowledgeLinkReference(value) {
   // A bare canonical page ID is local navigation, not a relative filesystem URL.
-  const bare = /^(wiki|loop|root|brief|anno|panno)_[A-Za-z0-9_-]+(?:#(?:claim|field):[A-Za-z0-9_-]+)?$/.exec(
+  const bare = /^(wiki|loop|root|anno|panno)_[A-Za-z0-9_-]+(?:#(?:claim|field):[A-Za-z0-9_-]+)?$/.exec(
     value ?? "",
   );
   if (bare) return `${bare[1] === "root" ? "wiki" : ["anno", "panno"].includes(bare[1]) ? "annotation" : bare[1]}:${value}`;
   if (
-    /^(source|wiki|loop|annotation|brief):[^#]+(?:#(?:claim|field|evidence):.+)?$/.test(value ?? "")
+    /^(source|wiki|loop|annotation):[^#]+(?:#(?:claim|field|evidence):.+)?$/.test(value ?? "")
   )
     return value;
-  const match = /^\/portal\/(doc|debug\/cognition\/(?:knowledge|briefs|loops))\/([^/?#]+)(?:\?[^#]*)?(?:#.*)?$/.exec(
+  const match = /^\/portal\/(doc|debug\/cognition\/(?:knowledge|loops))\/([^/?#]+)(?:\?[^#]*)?(?:#.*)?$/.exec(
     value ?? "",
   );
   if (!match) return null;
   try {
     const id = decodeURIComponent(match[2]);
-    const type = match[1] === "doc" ? "source" : match[1].endsWith("/briefs") ? "brief" : match[1].endsWith("/loops") ? "loop" : "node";
+    const type = match[1] === "doc" ? "source" : match[1].endsWith("/loops") ? "loop" : "node";
     return `${type}:${id}`;
   } catch {
     return null;

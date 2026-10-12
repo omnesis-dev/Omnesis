@@ -55,7 +55,7 @@ import {
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE } from "./turn-outcome.js";
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
+import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 
 const execFileAsync = promisify(execFile);
 const log = createLogger("agent:claude-code");
@@ -630,7 +630,10 @@ class ClaudeCodeTurn {
         return;
       }
       case "tool_progress":
-        this.violation("Claude Code reported progress on a tool Omnesis does not run.");
+        // The CLI reports progress on any long-running call, Omnesis' own
+        // included; only progress on a call Omnesis did not run is foreign.
+        if (!this.omnesisToolUseIds.has(progressCallId(message)))
+          this.violation("Claude Code reported progress on a tool Omnesis does not run.");
         return;
       case "user":
         this.checkToolResults(message);
@@ -1392,7 +1395,7 @@ export function convertToolsToMcp(
   return tools.map((h) => ({
     name: h.name,
     description: h.description,
-    inputSchema: zodToJsonSchema(h.schema),
+    inputSchema: toolInputJsonSchema(h.schema),
   }));
 }
 
@@ -1591,6 +1594,16 @@ function sessionLoadedItsOwn(response: Record<string, unknown> | null): string |
     if (!Array.isArray(value) || value.length > 0) return key;
   }
   return null;
+}
+
+/**
+ * The tool call a `tool_progress` message reports on. The CLI's heartbeat for
+ * a call running past 30 seconds carries the call's id suffixed
+ * `-heartbeat-<n>`, so it is read back to the call it belongs to.
+ */
+function progressCallId(message: Record<string, unknown>): string {
+  const id = stringField(message, "tool_use_id") ?? "";
+  return message.heartbeat === true ? id.replace(/-heartbeat-\d+$/, "") : id;
 }
 
 function stringField(

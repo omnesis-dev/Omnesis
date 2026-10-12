@@ -284,14 +284,12 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
             importance: 0.7,
             docs: [ctx.subject],
           }),
-          call("brief_list", {}),
-          call("brief_create", {
-            kind: "info",
-            title: `Rehearsal hold expires ${MARK_GRANTED}`,
-            description: "The studio releases the hold unless the slot is confirmed.",
+          call("observation_list", {}),
+          call("observation_note", {
+            summary: `The rehearsal hold expires unless the slot is confirmed ${MARK_GRANTED}`,
+            why: "The studio releases the hold unless the slot is confirmed.",
             citations: [ctx.subject],
-            confidence: 0.85,
-            urgency: 0.6,
+            claims: [{ docId: ctx.subject, quote: GRANT_QUOTE }],
           }),
           call("annotation_search", { docId: ctx.subject }),
           call("annotate_durable", {
@@ -307,7 +305,7 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
         finalText: "Tracked the rehearsal hold.",
       }),
     },
-    // morning-digest: authority is `brief` only.
+    // morning-digest: authority is the morning brief only.
     {
       flavour: "daily.digest",
       plan: () => ({
@@ -317,15 +315,11 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
             confidence: 0.8,
             importance: 0.5,
           }),
-          call("brief_create", {
-            kind: "info",
-            title: `Morning read ${MARK_DIGEST}`,
-            description: "One card composed by the digest pass.",
-            confidence: 0.8,
-            urgency: 0.4,
+          call("morning_brief_send", {
+            text: `**Worth your attention**\n\n- Confirm the rehearsal slot before Friday. ${MARK_DIGEST}`,
           }),
         ],
-        finalText: "Digest composed.",
+        finalText: "Morning brief sent.",
       }),
     },
     // memory-regrounding (`verification`): annotations only.
@@ -333,12 +327,11 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       flavour: "verification",
       plan: () => ({
         calls: [
-          call("brief_create", {
-            kind: "info",
-            title: `Verification tried to raise a card ${MARK_VERIFY}`,
-            description: "A re-grounding pass must not interrupt the user.",
-            confidence: 0.8,
-            urgency: 0.4,
+          call("observation_note", {
+            summary: `Verification tried to note an observation ${MARK_VERIFY}`,
+            why: "A re-grounding pass must not interrupt the user.",
+            citations: [grantDocId],
+            claims: [{ docId: grantDocId, quote: GRANT_QUOTE }],
           }),
           call("annotation_revise", { id: grantAnnotationId, confidence: 0.45 }),
         ],
@@ -432,6 +425,9 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
         knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         bootstrap: { enabled: false },
       },
+      // The morning brief is appended to a conversation, which needs the
+      // interactive role assigned; no conversation turn runs here.
+      agent: { behaviors: [] },
     });
     await bench.drainUntilQuiet();
   }, 300_000);
@@ -452,8 +448,9 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
       })),
     );
     expect(loops, JSON.stringify(tools)).toHaveLength(1);
-    const briefs = await bench.obs.briefsMatching(MARK_GRANTED);
-    expect(briefs).toHaveLength(1);
+    const observations = await bench.obs.observationsMatching(MARK_GRANTED);
+    expect(observations).toHaveLength(1);
+    expect(observations[0]!.state).toBe("live");
     const annotations = await bench.obs.docAnnotations(grantDocId);
     expect(annotations.annotations).toHaveLength(1);
     grantAnnotationId = annotations.annotations[0]!.id;
@@ -468,10 +465,13 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
 
   test("a morning digest cannot create a loop — the tool is not in its toolset", async () => {
     const now = Date.now();
+    const day = todayIso(now);
+    // The live observation the granted run noted is the morning's editorial
+    // input; without one the run would settle in preflight with no model turn.
     const runId = bench.seedRun({
       id: `run_${randomUUID()}`,
       kind: "daily",
-      payload: { digest: true, date: todayIso(now) },
+      payload: { digest: true, date: day },
       dedupeKey: `daily:digest:probe-${now}`,
     });
     await waitSettled(bench, [runId]);
@@ -483,11 +483,15 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     const calls = await toolOutcomes(bench, runId);
     expect(calls).toContainEqual({ tool: "open_loop_create", kind: "error", code: "unknown_tool" });
     // …while the artifact the digest IS authorized over went through.
-    expect(calls.find((c) => c.tool === "brief_create")?.kind).toBe("structured");
-    expect(await bench.obs.briefsMatching(MARK_DIGEST)).toHaveLength(1);
+    expect(calls.find((c) => c.tool === "morning_brief_send")?.kind).toBe("structured");
+    const brief = await bench.obs.morningBrief(day);
+    expect(brief.sent).toMatchObject({ day, runId });
+    expect(brief.items.map((item) => item.observation?.summary)).toEqual([
+      expect.stringContaining(MARK_GRANTED),
+    ]);
   }, 180_000);
 
-  test("a re-grounding pass cannot create a brief, but can revise its annotations", async () => {
+  test("a re-grounding pass cannot note an observation, but can revise its annotations", async () => {
     expect(grantAnnotationId).not.toBe("");
     const runId = bench.seedRun({
       id: `run_${randomUUID()}`,
@@ -498,9 +502,9 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
     await waitSettled(bench, [runId]);
 
     expect(runRow(bench, runId)!.status).toBe("completed");
-    expect(await bench.obs.briefsMatching(MARK_VERIFY)).toEqual([]);
+    expect(await bench.obs.observationsMatching(MARK_VERIFY)).toEqual([]);
     const calls = await toolOutcomes(bench, runId);
-    expect(calls).toContainEqual({ tool: "brief_create", kind: "error", code: "unknown_tool" });
+    expect(calls).toContainEqual({ tool: "observation_note", kind: "error", code: "unknown_tool" });
     expect(calls.find((c) => c.tool === "annotation_revise")?.kind).toBe("structured");
 
     const after = await bench.obs.docAnnotations(grantDocId);
@@ -684,7 +688,9 @@ describe("brain engine — authority, re-claim, folding, ordering", () => {
         {
           id: ids.feedback,
           kind: "feedback",
-          payload: { briefId: `brief_${randomUUID()}` },
+          // A provenance recheck for a loop that no longer exists: the
+          // current feedback variant, settled without touching anything.
+          payload: { recheckDependentKind: "loop", recheckDependentId: `loop_${randomUUID()}` },
           nextAttemptAt: now - 1_000,
         },
       ],
@@ -846,11 +852,11 @@ describe("brain engine — the experimental gate off", () => {
     const status = await bench.obs.status();
     // A model IS assigned — the only thing missing is the experimental switch,
     // so this is the gate talking, not a misconfiguration.
-    expect(status.briefs.modelAssigned).toBe(true);
-    expect(status.briefs.enabled).toBe(false);
-    expect(status.briefs.active).toBe(false);
+    expect(status.brain.modelAssigned).toBe(true);
+    expect(status.brain.enabled).toBe(false);
+    expect(status.brain.active).toBe(false);
 
-    expect(await bench.obs.statusOf("/briefs/feed")).toBe(404);
+    expect(await bench.obs.statusOf("/admin/brain/observations")).toBe(404);
     expect(await bench.obs.statusOf("/admin/brain/loops")).toBe(404);
     expect(await bench.obs.statusOf("/admin/brain/runs")).toBe(404);
 
@@ -1186,9 +1192,9 @@ describe("brain engine — failure, backpressure and the budget", () => {
 
     // The gateway is alive and says why it is idle.
     const off = await bench.obs.status();
-    expect(off.briefs.modelAssigned).toBe(false);
-    expect(off.briefs.active).toBe(false);
-    expect(off.briefs.reason).toBeTruthy();
+    expect(off.brain.modelAssigned).toBe(false);
+    expect(off.brain.active).toBe(false);
+    expect(off.brain.reason).toBeTruthy();
 
     // Restoring the assignment admits the still-due row once, without a retry.
     await bench.patchConfig({
@@ -1196,7 +1202,7 @@ describe("brain engine — failure, backpressure and the budget", () => {
     });
     await waitFor(
       () => "the engine to come back",
-      async () => ((await bench.obs.status()).briefs.active ? true : null),
+      async () => ((await bench.obs.status()).brain.active ? true : null),
       60_000,
       200,
     );
@@ -1311,10 +1317,10 @@ const STAND_DOC = email({
 });
 
 const COLLIDE_MORNING = `Re-verify the sound check window (${MARK_COLLIDE}).`;
-const COLLIDE_EVENING = `Refresh the sound check brief before the evening slot (${MARK_COLLIDE}).`;
+const COLLIDE_EVENING = `Refresh the sound check notes before the evening slot (${MARK_COLLIDE}).`;
 const COLLIDE_LATE = `Confirm the crew list was closed out (${MARK_COLLIDE}).`;
 const STAND_MORNING = `Re-verify the catering headcount (${MARK_STAND}).`;
-const STAND_EVENING = `Refresh the catering brief before the evening (${MARK_STAND}).`;
+const STAND_EVENING = `Refresh the catering notes before the evening (${MARK_STAND}).`;
 
 describe("brain engine — a scheduled check that collides with a pending one", () => {
   let bench: BrainBench;

@@ -247,7 +247,7 @@ the portal reads the gateway-computed result.
 - `transcriber`, `ocr`, and `embedder` are exclusive single-purpose roles matched
   by name families.
 - Generative models serve every text role: `agent`, `privacy-reviewer`,
-  `background-agent`, `watch-judge`, `entailment-verifier`, and `brief-judge`. The latter five
+  `background-agent`, `watch-judge`, and `entailment-verifier`. The latter four
   deliberately offer exactly the models the Agent capability does, so a model
   that can hold a conversation can also be assigned to any of the bounded
   passes.

@@ -37,7 +37,7 @@ let server: ScriptedLoopModelServer | undefined;
 let snapshotPath: string;
 let priorEnv: Record<string, string | undefined> = {};
 
-/** Env the spawned mirror needs: briefs active + fast cadences + the clock. */
+/** Env the spawned mirror needs: the Brain active + fast cadences + the clock. */
 const MIRROR_ENV: Record<string, string> = {
   OMNESIS_BRIEFS_VIRTUAL_CLOCK: "1",
   OMNESIS_COGNITION_WAKER_INTERVAL_MS: "100",
@@ -93,7 +93,7 @@ function seedSnapshot(): void {
   db.close();
 }
 
-describe("briefs backtest bridge (virtual clock + mirror replay)", () => {
+describe("brain backtest bridge (virtual clock + mirror replay)", () => {
   beforeAll(async () => {
     snapshotPath = `/tmp/omnesis-test-snapshot-${randomUUID()}.db`;
     seedSnapshot();
@@ -135,10 +135,10 @@ describe("briefs backtest bridge (virtual clock + mirror replay)", () => {
     const h = harness!;
 
     const status = (await h.gatewayJson("/status")) as {
-      briefs?: { active: boolean; modelAssigned: boolean };
+      brain?: { active: boolean; modelAssigned: boolean };
     };
-    expect(status.briefs?.modelAssigned).toBe(true);
-    expect(status.briefs?.active).toBe(true);
+    expect(status.brain?.modelAssigned).toBe(true);
+    expect(status.brain?.active).toBe(true);
 
     const clock = (await h.gatewayJson("/admin/brain/clock")) as {
       virtual: boolean;

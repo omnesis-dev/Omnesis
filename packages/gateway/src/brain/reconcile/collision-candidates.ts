@@ -21,15 +21,15 @@
  *
  * A candidate is only a HINT. The generative `synthesis` run it seeds
  * re-reads the member loops' source documents and decides whether the
- * relation is real and worth a brief — over-produce cheaply here, ground
- * against atoms there. Deterministic (bounded SQL + JS grouping, no model
- * call), mirroring `identity-candidates.ts`. Candidates already covered by an
- * active brief that spans them are dropped, so a relation the user is already
- * seeing is never re-proposed.
+ * relation is real and worth an observation — over-produce cheaply here,
+ * ground against atoms there. Deterministic (bounded SQL + JS grouping, no
+ * model call), mirroring `identity-candidates.ts`. Candidates already covered
+ * by an open or recently shown observation that spans them are dropped, so a
+ * relation the user is already being told about is never re-proposed.
  */
 
 import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
-import { deadlineDueDay } from "../ranking.js";
+import { deadlineDueDay } from "../deadlines.js";
 import { SYNTHESIS_DEDUPE_PREFIX } from "../run-payloads.js";
 import type Database from "better-sqlite3";
 
@@ -38,8 +38,11 @@ type Db = Database.Database;
 /** The loop states a collision may be found among — never resolved loops. */
 const CANDIDATE_STATES: readonly string[] = ["open", "snoozed"];
 
-/** The brief states that still count as "the user is already seeing this". */
-const ACTIVE_BRIEF_STATES: readonly string[] = ["unread", "read", "dismissed_snoozed"];
+/** Observation states that still count as "the user is being told about this". */
+const COVERING_OBSERVATION_STATES: readonly string[] = ["live", "held", "shipped"];
+
+/** How long a shipped observation keeps covering its loops. */
+const SHIPPED_COVER_MS = 14 * 86_400_000;
 
 /**
  * Cap on how many loops one collision group carries into a judge run. A
@@ -67,6 +70,8 @@ export interface FindCollisionCandidatesOptions {
   limit: number;
   /** Self person id, excluded from the `person` signal (on nearly everything). */
   selfPersonId: string | null;
+  /** Decision clock; a shipped observation covers its loops for two weeks after it. */
+  now: number;
 }
 
 interface LoopMeta {
@@ -95,7 +100,7 @@ export function findCollisionCandidates(
   db: Db,
   opts: FindCollisionCandidatesOptions,
 ): CollisionCandidate[] {
-  const { limit, selfPersonId } = opts;
+  const { limit, selfPersonId, now } = opts;
   if (limit <= 0) return [];
 
   // The candidate loop set, with the two signals we group by that live on the
@@ -191,19 +196,20 @@ export function findCollisionCandidates(
   }
   if (merged.size === 0) return [];
 
-  // Drop candidates already covered by an active brief that spans them — a
-  // relation the user is already seeing must not be re-proposed. A brief
-  // covers a candidate when its related-loop set is a SUPERSET of the group.
-  const activeBriefLoopSets = loadActiveBriefLoopSets(db);
+  // Drop candidates already covered by an observation that spans them — a
+  // relation the user is being told about must not be re-proposed. An
+  // observation covers a candidate when its related-loop set is a SUPERSET
+  // of the group.
+  const coveringLoopSets = loadCoveringObservationLoopSets(db, now);
   const isCovered = (loopIds: readonly string[]): boolean =>
-    activeBriefLoopSets.some((briefSet) => loopIds.every((id) => briefSet.has(id)));
+    coveringLoopSets.some((set) => loopIds.every((id) => set.has(id)));
 
   // Negative-verdict memory: a set the judge already settled (a completed
   // collision run exists for it) is not re-proposed unless one of its loops was
   // touched since — so a "no real relationship" verdict isn't paid for every
   // sweep, and a false collision on a high-importance shared contact can't
   // perpetually starve genuine lower-ranked ones. A POSITIVE verdict is instead
-  // caught by `isCovered` (it left an active brief spanning the set).
+  // caught by `isCovered` (it left an observation spanning the set).
   const judgedAt = loadSettledCollisionRunTimes(db);
   const isJudgedAndUnchanged = (loopIds: readonly string[]): boolean => {
     const at = judgedAt.get(loopIds.join(","));
@@ -251,26 +257,27 @@ function loadSettledCollisionRunTimes(db: Db): Map<string, number> {
   return map;
 }
 
-/** Related-loop sets of every active (still-showable) brief. */
-function loadActiveBriefLoopSets(db: Db): Array<Set<string>> {
+/** Related-loop sets of every open observation, and of those shown recently. */
+function loadCoveringObservationLoopSets(db: Db, now: number): Array<Set<string>> {
   const rows = db
-    .prepare<string[], { brief_id: string; loop_id: string }>(
-      `SELECT brl.brief_id, brl.loop_id
-         FROM brief_related_loops brl
-         JOIN briefs b ON b.id = brl.brief_id
-        WHERE b.state IN (${inClause(ACTIVE_BRIEF_STATES.length)})`,
+    .prepare<Array<string | number>, { observation_id: string; loop_id: string }>(
+      `SELECT orl.observation_id, orl.loop_id
+         FROM observation_related_loops orl
+         JOIN observations o ON o.id = orl.observation_id
+        WHERE o.state IN (${inClause(COVERING_OBSERVATION_STATES.length)})
+          AND (o.state != 'shipped' OR o.shipped_at >= ?)`,
     )
-    .all(...ACTIVE_BRIEF_STATES);
-  const byBrief = new Map<string, Set<string>>();
+    .all(...COVERING_OBSERVATION_STATES, now - SHIPPED_COVER_MS);
+  const byObservation = new Map<string, Set<string>>();
   for (const r of rows) {
-    let set = byBrief.get(r.brief_id);
+    let set = byObservation.get(r.observation_id);
     if (!set) {
       set = new Set();
-      byBrief.set(r.brief_id, set);
+      byObservation.set(r.observation_id, set);
     }
     set.add(r.loop_id);
   }
-  return [...byBrief.values()];
+  return [...byObservation.values()];
 }
 
 /**

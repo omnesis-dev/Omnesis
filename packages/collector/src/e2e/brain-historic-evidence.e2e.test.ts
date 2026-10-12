@@ -95,7 +95,6 @@ beforeAll(async () => {
     embedder: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",
@@ -220,7 +219,7 @@ beforeAll(async () => {
                     ? versions()
                     : Object.fromEntries(
                         Object.entries(item.inputVersions).filter(([ref]) =>
-                          /^(source|wiki|loop|annotation|brief):/.test(ref),
+                          /^(source|wiki|loop|annotation|observation):/.test(ref),
                         ),
                       ),
                 },

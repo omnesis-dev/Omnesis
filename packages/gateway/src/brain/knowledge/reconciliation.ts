@@ -29,10 +29,9 @@ export function installKnowledgeReconciliationTriggers(db: Database.Database): v
     ["loop", "open_loop_ledger"],
     ["loop", "retired_loops"],
     ["loop", "knowledge_retired_loop_sources"],
-    ["brief", "briefs"],
-    ["brief", "brief_citations"],
-    ["brief", "brief_related_loops"],
-    ["brief", "brief_claims"],
+    ["observation", "observations"],
+    ["observation", "observation_citations"],
+    ["observation", "observation_related_loops"],
     ["doc_annotation", "doc_annotations"],
     ["doc_annotation", "doc_annotation_evidence"],
     ["person_annotation", "person_annotations"],
@@ -48,7 +47,7 @@ export function installKnowledgeReconciliationTriggers(db: Database.Database): v
   ];
   for (const collection of [
     "loop",
-    "brief",
+    "observation",
     "doc_annotation",
     "person_annotation",
     "wiki",
@@ -117,8 +116,8 @@ const COLLECTION_REPAIR: Record<KnowledgeCollection, string> = {
     'Repeat knowledge_list({kind:"wiki"}) without afterId and knowledge_candidates({}) without status or afterId before publishing a distinct scope.',
   wiki: 'For proposal/publication, call knowledge_list({kind:"wiki"}) without afterId and knowledge_candidates({}) without status or afterId; page candidates until the intended candidate is returned. For an existing wiki revision, call knowledge_fetch({id:targetId,editing:true}). For a candidate decision, read that candidate through knowledge_candidates again.',
   loop: "Repeat open_loop_search for the intended subject; read the target through open_loop_fetch before revising it.",
-  brief:
-    "Repeat brief_list for the relevant records; read the target through brief_fetch before revising it.",
+  observation:
+    "Repeat observation_list for the relevant records before noting or withdrawing an observation.",
   doc_annotation:
     "Repeat annotation_search({docId:targetDocumentId}) for the exact document being annotated and review the returned annotations.",
   person_annotation:

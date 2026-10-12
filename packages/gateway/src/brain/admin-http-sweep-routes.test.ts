@@ -72,7 +72,7 @@ const list = async (): Promise<{
     at: string;
     anchorExplicit: boolean;
     steeringPrompt: string;
-    stats: { runs: number; briefsCreated: number; briefsHeld: number };
+    stats: { runs: number; observationsNoted: number; loopsCreated: number };
   }[];
   issues: { id: string; message: string }[];
   directory: string;
@@ -166,7 +166,7 @@ describe("GET /admin/brain/sweeps", () => {
     expect(body.laneEnabled).toBe(true);
     expect(body.items.map((i) => i.id)).toEqual(SYSTEM_SWEEPS.map((s) => s.id));
     expect(body.items.every((i) => i.origin === "system" && i.hasSystemVersion)).toBe(true);
-    expect(body.items[0].stats).toMatchObject({ runs: 0, briefsCreated: 0, briefsHeld: 0 });
+    expect(body.items[0].stats).toMatchObject({ runs: 0, observationsNoted: 0, loopsCreated: 0 });
     expect(body.directory).toBe(join(configDir, "sweeps"));
     expect(body.issues).toEqual([]);
   });
@@ -174,11 +174,17 @@ describe("GET /admin/brain/sweeps", () => {
   test("joins each sweep to its durable tally", async () => {
     recordSweepTally(
       db,
-      { sweepId: "weekly-finances", runs: 3, briefsCreated: 2, briefsHeld: 1, promptTokens: 900 },
+      {
+        sweepId: "weekly-finances",
+        runs: 3,
+        observationsNoted: 2,
+        loopsCreated: 1,
+        promptTokens: 900,
+      },
       1_700_000_000_000,
     );
     const s = await byId("weekly-finances");
-    expect(s!.stats).toMatchObject({ runs: 3, briefsCreated: 2, briefsHeld: 1 });
+    expect(s!.stats).toMatchObject({ runs: 3, observationsNoted: 2, loopsCreated: 1 });
   });
 
   test("reports an unreadable file without dropping the rest of the set", async () => {
@@ -289,7 +295,7 @@ describe("writes", () => {
   });
 
   test("a sweep's tally outlives the sweep — that history is the point of keeping one", async () => {
-    recordSweepTally(db, { sweepId: "mine", runs: 5, briefsCreated: 2 }, 1_700_000_000_000);
+    recordSweepTally(db, { sweepId: "mine", runs: 5, observationsNoted: 2 }, 1_700_000_000_000);
     await req("PUT", "/admin/brain/sweeps/mine", {
       body: { cadenceHours: 168, steeringPrompt: "Prose." },
     });
@@ -299,7 +305,7 @@ describe("writes", () => {
     await req("PUT", "/admin/brain/sweeps/mine", {
       body: { cadenceHours: 168, steeringPrompt: "Prose again." },
     });
-    expect((await byId("mine"))!.stats).toMatchObject({ runs: 5, briefsCreated: 2 });
+    expect((await byId("mine"))!.stats).toMatchObject({ runs: 5, observationsNoted: 2 });
   });
 
   test("PUT on a system id layers over it — omitted fields keep tracking the shipped sweep", async () => {

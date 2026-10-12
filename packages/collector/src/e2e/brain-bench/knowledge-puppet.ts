@@ -4,6 +4,7 @@
 /** A deterministic model policy for the real maintenance-tool protocol. No gateway state is mocked. */
 import { z } from "zod";
 import {
+  call,
   emitNextPlanned,
   structuredData,
   type NextTurn,
@@ -27,6 +28,7 @@ const itemSchema = z
         content: z.string(),
         contentHash: z.string(),
         sourceRevision: z.string().optional(),
+        contentTruncated: z.boolean().optional(),
       })
       .optional(),
     node: z
@@ -90,6 +92,18 @@ export interface KnowledgePuppetPolicy {
   expectedRefusals?: (item: PuppetKnowledgeItem) => readonly { tool: string; code: string }[];
   /** A source may discover existing nodes that had no dependency edge when it arrived. */
   targets?: (item: PuppetKnowledgeItem, steps: readonly ToolStep[]) => string[];
+  /**
+   * Offered items the model leaves unfinished, as a model does with an input
+   * it judges too large for this run. The puppet works the rest of the
+   * frontier and ends its turn once only these remain.
+   */
+  leavePending?: (item: PuppetKnowledgeItem) => boolean;
+}
+
+const MAX_SOURCE_REREADS = 2;
+function isSourceReadRefusal(step: ToolStep): boolean {
+  const result = step.result as { kind?: unknown; code?: unknown } | null;
+  return result?.kind === "error" && result.code === "source_read_required";
 }
 
 export function knowledgePuppet(
@@ -155,15 +169,30 @@ export function knowledgePuppet(
       };
     }
     let after = frontierAt + 1;
+    const left = frontier.items.filter((item) => policy.leavePending?.(item));
     for (const offeredItem of frontier.items) {
+      if (left.includes(offeredItem)) continue;
       let item = offeredItem;
       const since = steps.slice(after);
+      // The tool contract: a `source_read_required` refusal names the read to
+      // perform before retrying. Read receipts are conservatively dropped on
+      // any privacy erasure in the run, including the run's own loop delete.
+      const readRefusals = item.source
+        ? since.filter(
+            (step) =>
+              step.name === "knowledge_discovery_complete" &&
+              step.args?.id === item.id &&
+              isSourceReadRefusal(step),
+          )
+        : [];
+      const rereading = readRefusals.length > 0 && readRefusals.length <= MAX_SOURCE_REREADS;
       const settledAt = since.findIndex((step) => {
         if (item.source)
           return (
             step.name === "knowledge_discovery_complete" &&
             step.args?.id === item.id &&
-            step.args?.inputFingerprint === item.inputFingerprint
+            step.args?.inputFingerprint === item.inputFingerprint &&
+            !(rereading && isSourceReadRefusal(step))
           );
         const node = step.args?.node;
         const saved = z
@@ -193,6 +222,11 @@ export function knowledgePuppet(
             step.result === null ||
             (typeof step.result === "object" &&
               (step.result as { kind?: unknown }).kind === "error" &&
+              !(
+                rereading &&
+                step.name === "knowledge_discovery_complete" &&
+                isSourceReadRefusal(step)
+              ) &&
               ((step.name === "knowledge_save" && !item.source) ||
                 step.name === "knowledge_discovery_complete" ||
                 !policy
@@ -211,6 +245,33 @@ export function knowledgePuppet(
       if (settledAt >= 0) {
         after += settledAt + 1;
         continue;
+      }
+      if (rereading && item.source) {
+        const refusedAt = since.lastIndexOf(readRefusals.at(-1)!);
+        const reread = since
+          .slice(refusedAt + 1)
+          .some(
+            (step) =>
+              step.name === "fetch_many" &&
+              JSON.stringify(step.args?.documents) ===
+                JSON.stringify([{ documentId: item.source!.id }]) &&
+              (step.result as { kind?: unknown } | null)?.kind === "document.batch",
+          );
+        if (!reread)
+          return {
+            kind: "tool",
+            name: "fetch_many",
+            args: { documents: [{ documentId: item.source.id }] },
+          };
+        return {
+          kind: "tool",
+          name: "knowledge_discovery_complete",
+          args: {
+            id: item.id,
+            inputFingerprint: item.inputFingerprint,
+            targets: policy.targets?.(item, since) ?? [],
+          },
+        };
       }
       if (item.fetchRequired?.kind === "source" && item.source) {
         const ref = `source:${item.source.id}`;
@@ -263,7 +324,15 @@ export function knowledgePuppet(
       // can hand fresh evidence to this run after its joint cohort was created.
       const cohortMember =
         !!item.source && !!frontier.organization?.sourceIds.includes(item.source.id);
-      const plan = cohortMember ? { calls: [] } : policy.plan(item, ctx, steps);
+      // Completing a member still needs a full read of its current revision
+      // when the frontier offered only an excerpt.
+      const plan = cohortMember
+        ? {
+            calls: item.source?.contentTruncated
+              ? [call("fetch_many", { documents: [{ documentId: item.source.id }] })]
+              : [],
+          }
+        : policy.plan(item, ctx, steps);
       const planSteps = item.fetchRequired
         ? since.filter(
             (step) =>
@@ -305,6 +374,11 @@ export function knowledgePuppet(
         text: `Scripted synthesis plan did not save offered node ${item.id}; preserve unfinished maintenance.`,
       };
     }
+    if (left.length && left.length === frontier.items.length)
+      return {
+        kind: "final",
+        text: "Left the remaining offered inputs pending for a later run.",
+      };
     return { kind: "tool", name: "knowledge_next_frontier", args: {} };
   };
 }

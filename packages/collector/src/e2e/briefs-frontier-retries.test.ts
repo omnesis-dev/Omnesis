@@ -8,7 +8,7 @@ function recovered(): ExecutedTool[] {
   const item = (version: number) => ({
     id: "overview",
     inputFingerprint: `f${version}`,
-    inputVersions: { "orientation:brief": version },
+    inputVersions: { "orientation:root": version },
     node: { revision: 8 },
   });
   const read = (version: number, done = false): ExecutedTool => ({
@@ -72,7 +72,7 @@ test.each([
     steps[3]!.args.node = {
       id: "overview",
       expectedRevision: 8,
-      inputVersions: { "orientation:brief": 1 },
+      inputVersions: { "orientation:root": 1 },
     };
   if (fault === "no completion") steps.pop();
   if (fault === "structured refusal")

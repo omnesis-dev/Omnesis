@@ -3,15 +3,17 @@
 
 /**
  * Migration 89 adds the read-snapshot marker and complete tuple indexes used
- * by the growing-list keysets. The current DDL supplies them to fresh
- * installs; this suite drives the migration against the physical shape an
- * upgrading install carries.
+ * by the growing-list keysets. This suite drives the migration against the
+ * physical shape an upgrading install carries, replaying the chain up to
+ * v196: migration 197 later retires every brief table, which the last test
+ * checks against the full chain.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import Database from "better-sqlite3";
 import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from "./migrations.js";
 import { runSchemaSetup } from "./schema.js";
+import { createLegacyBriefTables } from "./legacy-brief-tables.js";
 import type { Db } from "./types.js";
 
 let db: Db;
@@ -28,8 +30,12 @@ function columns(table: string): string[] {
     .map((row) => row.name);
 }
 
+/** The chain as it stood before migration 197 retired the brief tables. */
+const BEFORE_OBSERVATIONS = MIGRATIONS.filter((m) => m.version < 197);
+
 function seedPre89Install(): void {
   runSchemaSetup(db);
+  createLegacyBriefTables(db);
   db.prepare(
     `INSERT INTO briefs (
        id, created_by_run, kind, title, confidence, urgency, state, created_at, updated_at
@@ -43,7 +49,6 @@ function seedPre89Install(): void {
     DROP INDEX IF EXISTS idx_cognition_runs_scheduled_page;
     DROP INDEX IF EXISTS idx_open_loops_importance_page;
     DROP INDEX IF EXISTS idx_retired_loops_page;
-    ALTER TABLE briefs DROP COLUMN read_at;
     PRAGMA user_version = 88;
   `);
 }
@@ -60,7 +65,7 @@ describe("migration 89", () => {
     seedPre89Install();
     expect(columns("briefs")).not.toContain("read_at");
 
-    runMigrations(db);
+    runMigrations(db, { migrations: BEFORE_OBSERVATIONS });
 
     expect(columns("briefs")).toContain("read_at");
     expect(
@@ -71,12 +76,12 @@ describe("migration 89", () => {
         >("SELECT state, read_at FROM briefs WHERE id = 'brf_northstar'")
         .get(),
     ).toEqual({ state: "read", read_at: null });
-    expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);
+    expect(db.pragma("user_version", { simple: true })).toBe(196);
   });
 
   test("creates every complete keyset index and is idempotent", () => {
     seedPre89Install();
-    runMigrations(db);
+    runMigrations(db, { migrations: BEFORE_OBSERVATIONS });
 
     const expected = [
       "idx_briefs_read_snapshot",
@@ -103,5 +108,20 @@ describe("migration 89", () => {
       >("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN (?, ?, ?, ?, ?, ?)")
       .all(...expected);
     expect(after).toHaveLength(expected.length);
+  });
+
+  test("the full chain carries the upgraded install past the brief tables", () => {
+    seedPre89Install();
+    runMigrations(db);
+
+    expect(
+      db
+        .prepare<
+          [],
+          { name: string }
+        >("SELECT name FROM sqlite_master WHERE name GLOB 'brief*' OR name GLOB 'idx_brief*' ORDER BY name")
+        .all(),
+    ).toEqual([]);
+    expect(db.pragma("user_version", { simple: true })).toBe(LATEST_SCHEMA_VERSION);
   });
 });

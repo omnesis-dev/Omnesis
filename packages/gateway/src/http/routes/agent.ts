@@ -73,6 +73,7 @@ import type { CorpusAuthorization } from "../../access/corpus-authorization.js";
 import type { DeviceAnswerScope } from "../../access/device-answer-scope.js";
 import type { ToolCaller } from "@omnesis/agent";
 import type { ConversationReader } from "../../agent/conversation-reader.js";
+import type { DailyBriefDetailReader } from "../../agent/daily-brief-detail.js";
 import type { AnswerService } from "../../privacy/answer-service.js";
 import type { PrivacyReviewer } from "../../privacy/reviewer.js";
 import type { PrivacyAdminService } from "../../privacy/admin-service.js";
@@ -168,6 +169,16 @@ const agentBodyLimit = bodyLimit({
   },
 });
 
+const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** A real `YYYY-MM-DD` calendar day. */
+function isCalendarDay(value: string | undefined): value is string {
+  const m = value ? DAY_RE.exec(value) : null;
+  if (!m) return false;
+  const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return date.toISOString().slice(0, 10) === value;
+}
+
 export interface AgentRoutesDeps {
   /** Undefined when the agent harness isn't enabled; inference and mutation routes 503. */
   agentService?: AgentService;
@@ -180,6 +191,11 @@ export interface AgentRoutesDeps {
   deviceAnswerScope?: (deviceId: string, tokenId: string) => DeviceAnswerScope;
   /** Durable conversation reads remain available when inference is unavailable. */
   conversationReader?: ConversationReader;
+  /**
+   * What a morning brief in the Morning brief conversation was based on.
+   * Supplied where the Brain runs; absent, a brief reads as based on nothing.
+   */
+  dailyBriefDetail?: DailyBriefDetailReader;
   /**
    * Per-conversation read state, so the list can say which conversations hold
    * something the operator has not seen and any surface can say it has been
@@ -626,6 +642,34 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     });
   });
 
+  // What one morning brief in the Morning brief conversation was based on:
+  // the observations it shipped, in its order, with their sources and tasks.
+  app.get("/agent/conversations/:id/briefs/:day", scope.admin(), async (c) => {
+    const service = requireConversationReader();
+    callerOf(c);
+    const id = c.req.param("id");
+    const day = c.req.param("day");
+    if (!id) throw new BadRequestError("conversation id required");
+    if (!isCalendarDay(day)) throw new BadRequestError("day must be YYYY-MM-DD");
+    const rec = await service.loadConversation(id);
+    if (!rec) throw new NotFoundError(`no conversation ${id}`);
+    if (rec.origin?.kind !== "daily_brief")
+      throw new NotFoundError(`conversation ${id} is not the Morning brief conversation`);
+    const ref = rec.origin.briefs.find((brief) => brief.day === day);
+    if (!ref) throw new NotFoundError(`no morning brief was sent on ${day}`);
+    const detail = deps.dailyBriefDetail?.({ day, messageId: ref.messageId }) ?? {
+      sentAt: null,
+      items: [],
+    };
+    const sentAt = detail.sentAt ?? ref.sentAt;
+    return c.json({
+      day,
+      messageId: ref.messageId,
+      ...(sentAt ? { sentAt } : {}),
+      items: detail.items,
+    });
+  });
+
   app.patch(
     "/agent/conversations/:id",
     scope.admin(),
@@ -932,7 +976,8 @@ export function mapAnswerError(err: unknown): Error {
   }
   if (err instanceof AgentError) {
     if (err.code === "session_not_found") return new NotFoundError(err.message);
-    if (err.code === "session_busy") return new ConflictError(err.message);
+    if (err.code === "session_busy" || err.code === "conversation_permanent")
+      return new ConflictError(err.message);
     if (err.code.startsWith("answer_")) return new BadGatewayError(err.message);
   }
   return mapAgentError(err);

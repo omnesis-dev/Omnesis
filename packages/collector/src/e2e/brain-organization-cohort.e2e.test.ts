@@ -56,7 +56,6 @@ beforeAll(async () => {
     experimental: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",

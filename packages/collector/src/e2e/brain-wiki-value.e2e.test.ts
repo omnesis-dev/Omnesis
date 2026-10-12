@@ -186,7 +186,6 @@ it("enforces the actual wiki draft verdict before entailment, retains the candid
     embedder: true,
     syncSources: false,
     entailment: () => "entailment",
-    judge: "hold-all",
     decision: {
       policy: (request) => {
         const state = request.state as {

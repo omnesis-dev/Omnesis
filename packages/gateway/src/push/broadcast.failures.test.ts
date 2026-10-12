@@ -77,11 +77,11 @@ function broadcaster(
 }
 
 const message = {
-  kind: "brief" as const,
-  title: "Fictional brief",
+  kind: "conversation" as const,
+  title: "Fictional update",
   body: "An invented summary is ready.",
-  data: { briefId: "brief-fictional" },
-  collapseId: "brief:fictional",
+  data: { conversationId: "conversation-fictional" },
+  collapseId: "conversation:fictional",
 };
 
 describe("PushBroadcaster carrier failures", () => {

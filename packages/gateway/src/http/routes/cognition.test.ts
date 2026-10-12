@@ -19,8 +19,8 @@ import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { recordCognitionSpend } from "../../brain/storage/spend.js";
-import { createBrief, setBriefState } from "../../brain/storage/briefs.js";
 import { createDocAnnotation } from "../../brain/storage/annotations.js";
+import { createObservation } from "../../brain/storage/observations.js";
 import { recordConsumptionEdges } from "../../brain/storage/consumption-edges.js";
 import type { FamilyCalibrationReport } from "../../brain/calibration.js";
 import type Database from "better-sqlite3";
@@ -166,35 +166,39 @@ describe("GET /admin/cognition/calibration", () => {
     families: FamilyCalibrationReport[];
   }
 
-  test("answers ungated with all three families; labeled briefs show up binned", async () => {
-    createBrief(
+  test("answers ungated with both families; labeled annotations show up binned", async () => {
+    createDocAnnotation(
       db,
       {
-        id: "b-1",
+        id: "anno_labeled",
+        docId: "doc_subject",
+        claimType: "deadline",
+        claimText: "the marathon entry form closes Friday",
+        evidenceDocId: "doc_ev",
+        evidenceQuote: "entries close Friday",
+        confidence: 0.95,
+        claimBasis: "quoted",
         createdByRun: "run-fixture",
-        kind: "info",
-        title: "Marathon entry form deadline approaching",
-        confidence: 0.9,
-        urgency: 0.5,
       },
       Date.now(),
     );
-    setBriefState(db, "b-1", "dismissed_wrong", Date.now());
+    // A superseded annotation is a weak incorrect verdict.
+    db.prepare("UPDATE doc_annotations SET superseded_by = ?, invalidated_at = ? WHERE id = ?").run(
+      "anno_successor",
+      Date.now(),
+      "anno_labeled",
+    );
 
     const res = await get("/admin/cognition/calibration");
     expect(res.status).toBe(200);
     const body = (await res.json()) as CalibrationBody;
     expect(body.sinceDays).toBeNull();
-    expect(body.families.map((f) => f.family)).toEqual([
-      "brief",
-      "doc-annotation",
-      "person-annotation",
-    ]);
-    const briefs = body.families[0]!;
-    expect(briefs.labeled).toBe(1);
-    expect(briefs.incorrect).toBe(1);
-    expect(briefs.bins).toHaveLength(10);
-    expect(briefs.bins[9]!.n).toBe(1);
+    expect(body.families.map((f) => f.family)).toEqual(["doc-annotation", "person-annotation"]);
+    const docs = body.families[0]!;
+    expect(docs.labeled).toBe(1);
+    expect(docs.incorrect).toBe(1);
+    expect(docs.bins).toHaveLength(10);
+    expect(docs.bins[9]!.n).toBe(1);
     // Empty families report cleanly — no division by zero anywhere.
     expect(body.families[1]!.ece).toBeNull();
   });
@@ -239,10 +243,11 @@ describe("GET /admin/cognition/annotations/:store/:id/dependents", () => {
       },
       1_000,
     );
-    db.prepare(
-      `INSERT INTO briefs (id, created_by_run, kind, title, confidence, urgency, created_at, updated_at)
-       VALUES ('brief_1', 'run_seed', 'info', 'Practice day changed', 0.7, 0.4, 1000, 1000)`,
-    ).run();
+    createObservation(
+      db,
+      { id: "obs_1", createdByRun: "run_seed", summary: "Practice day changed" },
+      1_000,
+    );
     db.prepare(
       `INSERT INTO open_loops (id, created_by_run, state, confidence, importance, title, created_at, last_update)
        VALUES ('loop_1', 'run_seed', 'open', 0.7, 0.5, 'Confirm the new practice day', 1000, 1000)`,
@@ -253,8 +258,8 @@ describe("GET /admin/cognition/annotations/:store/:id/dependents", () => {
         {
           priorStore: "doc",
           priorAnnotationId: "anno_1",
-          dependentKind: "brief",
-          dependentId: "brief_1",
+          dependentKind: "observation",
+          dependentId: "obs_1",
           runId: "run_x",
         },
         {
@@ -267,8 +272,8 @@ describe("GET /admin/cognition/annotations/:store/:id/dependents", () => {
         {
           priorStore: "doc",
           priorAnnotationId: "anno_1",
-          dependentKind: "brief",
-          dependentId: "brief_gone",
+          dependentKind: "observation",
+          dependentId: "obs_gone",
           runId: "run_x",
         },
       ],
@@ -281,10 +286,10 @@ describe("GET /admin/cognition/annotations/:store/:id/dependents", () => {
     const res = await get("/admin/cognition/annotations/doc/anno_1/dependents");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: Array<Record<string, unknown>> };
-    // The dangling brief_gone edge is filtered; both live dependents surface.
+    // The dangling obs_gone edge is filtered; both live dependents surface.
     expect(body.items.map((i) => [i.kind, i.id, i.title])).toEqual([
-      ["brief", "brief_1", "Practice day changed"],
       ["loop", "loop_1", "Confirm the new practice day"],
+      ["observation", "obs_1", "Practice day changed"],
     ]);
     expect(body.items[0]).toMatchObject({
       runId: "run_x",
@@ -322,7 +327,7 @@ describe("GET /admin/cognition/annotations/:store/:id/dependents", () => {
       await get(`/admin/cognition/annotations/doc/anno_1/dependents?limit=1&cursor=${cursor}`)
     ).json()) as { items: Array<{ id: string }>; pageInfo: { hasMore: boolean } };
     expect(new Set([...first.items, ...second.items].map((item) => item.id))).toEqual(
-      new Set(["brief_1", "loop_1"]),
+      new Set(["obs_1", "loop_1"]),
     );
     expect(second.pageInfo.hasMore).toBe(false);
     expect(

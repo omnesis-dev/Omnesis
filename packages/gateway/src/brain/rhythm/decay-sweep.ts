@@ -39,7 +39,7 @@ import {
   readCognitionDecaySweptVersion,
 } from "../storage/engine-state.js";
 import { listDecayCandidateLoops, type DecayCandidateLoop } from "../storage/open-loops.js";
-import { deadlineDueDay } from "../ranking.js";
+import { deadlineDueDay } from "../deadlines.js";
 import { listPendingCognitionDedupeKeys } from "../storage/run-queue.js";
 import type Database from "better-sqlite3";
 import type { Logger } from "@omnesis/core";

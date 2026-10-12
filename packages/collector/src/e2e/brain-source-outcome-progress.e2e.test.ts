@@ -97,7 +97,7 @@ test("source progress survives a later-ingested older request without reopening 
                 call("open_loop_search", { query: "Juniper spectrometer" }),
                 call("open_loop_fetch", { id: ref("open_loop_search", "loops.0.id") }),
                 call("fetch_many", { documents: [{ documentId: progressId }] }),
-                call("brief_list", {}),
+                call("observation_list", {}),
               ],
               finalText:
                 "The later completion evidence already covers calibration; packing remains on the existing outcome.",
@@ -123,7 +123,7 @@ test("source progress survives a later-ingested older request without reopening 
     expect((await bench.obs.ledger(loops[0]!.id)).items.map((entry) => entry.note)).toContain(
       "Calibration completed; packing remains. The kit outcome is still open.",
     );
-    expect((await bench.obs.briefs()).items).toHaveLength(0);
+    expect((await bench.obs.observations()).items).toHaveLength(0);
     const run = await bench.obs.interpretationForSource(olderId!);
     const steps = await bench.obs.executedTools(run.id);
     expect(
@@ -136,7 +136,7 @@ test("source progress survives a later-ingested older request without reopening 
     ).toBe(true);
     expect(
       steps.some((step) =>
-        ["open_loop_create", "open_loop_update", "brief_create"].includes(step.tool),
+        ["open_loop_create", "open_loop_update", "observation_note"].includes(step.tool),
       ),
     ).toBe(false);
   } finally {

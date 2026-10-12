@@ -779,6 +779,10 @@ private func prettyToolName(_ tool: String) -> String {
     case "fetch_loop": "Open loop"
     case "list_loops": "List loops"
     case "entity_context": "Gather context"
+    case "task_list": "Check tasks"
+    case "task_create": "Add a task"
+    case "task_update": "Update a task"
+    case "task_undo": "Undo a task change"
     default: tool
     }
 }
@@ -791,6 +795,7 @@ private func toolSymbol(_ tool: String) -> String {
     case "run_sql": "tablecells"
     case "search_loops", "fetch_loop", "list_loops": "arrow.triangle.2.circlepath"
     case "entity_context": "point.3.connected.trianglepath.dotted"
+    case "task_list", "task_create", "task_update", "task_undo": "checklist"
     default: "wrench.and.screwdriver"
     }
 }

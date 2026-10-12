@@ -5,8 +5,6 @@ import { createHash } from "node:crypto";
 import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
 import { readKnowledgeSourceRevision } from "../knowledge/source-revision.js";
 import { KnowledgeStorageError } from "../knowledge/types.js";
-import { getBrief } from "./briefs.js";
-import { listLiveBriefClaims } from "./brief-claims.js";
 import { getOpenLoop } from "./open-loops.js";
 import type { OutcomeAssessmentReceipt } from "../knowledge/outcome-assessment.js";
 import type Database from "better-sqlite3";
@@ -16,7 +14,6 @@ export type OutcomeWriteConflict = "outcome_changed" | "evidence_changed";
 
 /** Trusted snapshot taken before the outcome judge reads its proposed mutation. */
 export interface OutcomeWriteFence {
-  kind?: "loop" | "brief";
   assessment?: OutcomeAssessmentReceipt;
   actorRoles?: Array<{ id: string; is_self: boolean | null }>;
   ownerId: string;
@@ -29,19 +26,9 @@ export interface OutcomeWriteFence {
   }>;
 }
 
-function ownerFingerprint(
-  db: Database.Database,
-  id: string,
-  kind: "loop" | "brief" = "loop",
-): string {
+function ownerFingerprint(db: Database.Database, id: string): string {
   return createHash("sha256")
-    .update(
-      JSON.stringify(
-        kind === "brief"
-          ? { brief: getBrief(db, id), claims: listLiveBriefClaims(db, id) }
-          : getOpenLoop(db, id),
-      ),
-    )
+    .update(JSON.stringify(getOpenLoop(db, id)))
     .digest("hex");
 }
 
@@ -82,7 +69,6 @@ export function captureOutcomeWriteFence(
   db: Database.Database,
   id: string,
   sourceIds: readonly string[],
-  kind: "loop" | "brief" = "loop",
 ): OutcomeWriteFence {
   const ids = [...new Set(sourceIds)];
   if (ids.length > MAX_SOURCES)
@@ -94,8 +80,7 @@ export function captureOutcomeWriteFence(
     const contextFingerprint = ids.length ? sourceContextFingerprints(db) : undefined;
     return {
       ownerId: id,
-      ...(kind === "brief" ? { kind } : {}),
-      ownerFingerprint: ownerFingerprint(db, id, kind),
+      ownerFingerprint: ownerFingerprint(db, id),
       sources: ids.map((sourceId) => ({
         id: sourceId,
         hash: evidenceHash(db, sourceId),
@@ -112,7 +97,7 @@ export function outcomeWriteConflict(
   id: string,
   fence: OutcomeWriteFence,
 ): OutcomeWriteConflict | null {
-  if (fence.ownerId !== id || ownerFingerprint(db, id, fence.kind) !== fence.ownerFingerprint)
+  if (fence.ownerId !== id || ownerFingerprint(db, id) !== fence.ownerFingerprint)
     return "outcome_changed";
   if ((fence.actorRoles?.length ?? 0) > 100) return "outcome_changed";
   if (fence.actorRoles?.length) {

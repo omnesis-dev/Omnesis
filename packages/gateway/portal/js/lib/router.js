@@ -3,6 +3,7 @@
 
 import { DEBUG_TAB_KEYS, DEFAULT_DEBUG_TAB } from "./debug-tabs.js";
 import { NOTE_DAY_RE } from "./notes.js";
+import { TASK_VIEW_KEYS } from "./tasks-model.js";
 import {
   SETTINGS_TAB_KEYS,
   DEFAULT_SETTINGS_TAB,
@@ -120,6 +121,16 @@ export function parseRoute() {
 
   if (path === "/portal/browser-notes" || path === "/portal/browser-notes/") {
     return { view: "browser-notes", requestId: new URLSearchParams(location.search).get("request") };
+  }
+
+  // /portal/tasks[/<view>] — the bullet-journal Tasks view; the optional
+  // segment addresses one of its tabs (today when absent or unknown), and
+  // `?task=<id>` opens one task, as a link from the Morning brief does.
+  const tasksMatch = path.match(/^\/portal\/tasks(?:\/([a-z]+))?\/?$/);
+  if (tasksMatch) {
+    const taskView = TASK_VIEW_KEYS.includes(tasksMatch[1]) ? tasksMatch[1] : "today";
+    const focusTaskId = new URLSearchParams(location.search).get("task");
+    return { view: "tasks", taskView, ...(focusTaskId ? { focusTaskId } : {}) };
   }
 
   if (path === "/portal/capture" || path === "/portal/capture/") {
@@ -458,7 +469,7 @@ export function parseRoute() {
   // Cognition debug sub-area (experimental): the read-only Cognition Steward
   // cognitive-state inspector. `/portal/debug/cognition[/<section>[/<id>]]`.
   // Nested one level deeper than the other Debug tabs (overview / loops /
-  // runs / briefs / memory rail sections, most with an optional
+  // runs / observations / memory rail sections, most with an optional
   // selected-entity id for the master-detail right pane; "scheduled" is a
   // legacy alias the view resolves to runs), so it needs its own matcher
   // ahead of the single-segment `debugMatch` below (which would otherwise
@@ -482,10 +493,10 @@ export function parseRoute() {
     return { view: "debug", tab: "cognition", cognitionTab: "runs", cognitionId: null,
       redirectTo: "/portal/debug/cognition/runs" };
   }
-  if (["loops", "briefs"].includes(cognitionMatch?.[1])) {
+  if (cognitionMatch?.[1] === "loops") {
     const id = cognitionMatch[2] ? decodePathSegment(cognitionMatch[2]) : null;
     return { view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: id,
-      redirectTo: `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=${cognitionMatch[1] === "briefs" ? "brief" : "loop"}` };
+      redirectTo: `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop` };
   }
   if (cognitionMatch) {
     return {

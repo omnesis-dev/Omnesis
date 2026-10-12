@@ -3,7 +3,7 @@
 
 /**
  * Calibration measurement — a READ-ONLY reliability report over the
- * confidence-carrying cognition artifacts (briefs, doc annotations, person
+ * confidence-carrying cognition artifacts (doc annotations and person
  * annotations), binning each family's stated confidence against the
  * ground-truth error signals the system already collects.
  *
@@ -18,29 +18,6 @@
  * `correct`, `incorrect`, or `excluded` (no truth signal). Only `correct` /
  * `incorrect` artifacts enter the reliability bins and the ECE. Rules are
  * ordered; the FIRST match wins.
- *
- * ### Briefs (`briefs.state` + developer annotations)
- *  1. A `dev_annotations` row targeting the brief (`target_type='brief'`)
- *     → `operator_flagged`, **incorrect**. A brief-targeted flag addresses
- *     the artifact itself, so it is a truth verdict. Open or resolved —
- *     resolving a dev annotation closes the engineer's worklist item, it
- *     does not retract the operator's observation that the artifact was
- *     wrong.
- *  2. `state='dismissed_wrong'` → `dismissed_wrong`, **incorrect** — the
- *     user's explicit "this is untrue" verdict.
- *  3. `state='dismissed_not_relevant'` → `dismissed_not_relevant`,
- *     **excluded** — irrelevant is NOT untrue; counting it against
- *     truth-calibration would punish correct-but-unwanted briefs.
- *  4. `state='dismissed_acknowledged'` → `acknowledged`, weak **correct** —
- *     the user saw the brief and accepted it as stated.
- *  5. `state='dismissed_already_handled'` → `already_handled`, weak
- *     **correct** — relevant and true, just already dealt with. (Weakest of
- *     the positives: the engine's resolved-loop cascade also writes this
- *     state, so it mixes user and engine judgment.)
- *  6. `state='read'` → `kept_read`, weak **correct** — seen and kept in the
- *     feed without complaint.
- *  7. `state='unread'` or `'dismissed_snoozed'` → `unlabeled`, **excluded**
- *     — no verdict yet (snooze defers, it does not judge).
  *
  * ### Doc / person annotations (verification + supersession stamps)
  *  1. (doc annotations only) A `dev_annotations` row targeting the
@@ -84,7 +61,7 @@
  * and GROUP BY (class, bin) returns COUNT(*) + SUM(confidence) per cell. The
  * report therefore reads O(classes × bins) rows no matter how large the
  * corpus — a full-history request never materializes per-artifact rows on the
- * gateway request thread. The pure {@link labelBrief} / {@link labelAnnotation}
+ * gateway request thread. The pure {@link labelAnnotation}
  * functions are the executable specification of the same rules; a parity test
  * (calibration.test.ts) holds the SQL mirror and the spec to identical
  * reports over a randomized corpus.
@@ -102,7 +79,7 @@ import type Database from "better-sqlite3";
 
 type Db = Database.Database;
 
-export const CALIBRATION_FAMILIES = ["brief", "doc-annotation", "person-annotation"] as const;
+export const CALIBRATION_FAMILIES = ["doc-annotation", "person-annotation"] as const;
 
 export type CalibrationFamily = (typeof CALIBRATION_FAMILIES)[number];
 
@@ -159,49 +136,6 @@ export interface CalibrationReport {
 // ---------------------------------------------------------------------------
 // Label rules — pure, one artifact in, one label out
 // ---------------------------------------------------------------------------
-
-/**
- * Every class the brief rules can emit, with its verdict. Single source of
- * truth for verdicts: {@link labelBrief} and the grouped-row fold both read it.
- */
-const BRIEF_CLASS_VERDICTS = {
-  operator_flagged: "incorrect",
-  dismissed_wrong: "incorrect",
-  dismissed_not_relevant: "excluded",
-  acknowledged: "correct",
-  already_handled: "correct",
-  kept_read: "correct",
-  unlabeled: "excluded",
-} as const satisfies Record<string, CalibrationVerdict>;
-
-type BriefLabelClass = keyof typeof BRIEF_CLASS_VERDICTS;
-
-function briefLabelClass(state: string, operatorFlagged: boolean): BriefLabelClass {
-  if (operatorFlagged) return "operator_flagged";
-  switch (state) {
-    case "dismissed_wrong":
-      return "dismissed_wrong";
-    case "dismissed_not_relevant":
-      return "dismissed_not_relevant";
-    case "dismissed_acknowledged":
-      return "acknowledged";
-    case "dismissed_already_handled":
-      return "already_handled";
-    case "read":
-      return "kept_read";
-    default:
-      // `unread`, `dismissed_snoozed`, `retired` (the agent's own withdrawal,
-      // which is not a user signal and must not read as one), and anything
-      // unrecognized.
-      return "unlabeled";
-  }
-}
-
-/** Apply the brief label rules (see module doc, "Briefs"). */
-export function labelBrief(state: string, operatorFlagged: boolean): CalibrationLabel {
-  const labelClass = briefLabelClass(state, operatorFlagged);
-  return { labelClass, verdict: BRIEF_CLASS_VERDICTS[labelClass] };
-}
 
 /**
  * Every class the annotation rules can emit, with its verdict. Single source
@@ -348,7 +282,7 @@ export interface CalibrationReportOptions {
   sinceDays?: number;
   /**
    * The wall-clock instant (unix ms) — stamps the report and anchors the
-   * `sinceDays` window. Always injected (briefs clock discipline: no module
+   * `sinceDays` window. Always injected (Brain clock discipline: no module
    * here reads the wall clock on its own).
    */
   now: number;
@@ -371,32 +305,6 @@ interface GroupedLabelRow {
   bin: number;
   n: number;
   confidence_sum: number;
-}
-
-/** SQL CASE mirroring {@link briefLabelClass} — kept in lockstep by the parity test. */
-const BRIEF_LABEL_CASE_SQL = `CASE
-  WHEN EXISTS(SELECT 1 FROM dev_annotations da
-               WHERE da.target_type = 'brief' AND da.target_id = b.id) THEN 'operator_flagged'
-  WHEN b.state = 'dismissed_wrong' THEN 'dismissed_wrong'
-  WHEN b.state = 'dismissed_not_relevant' THEN 'dismissed_not_relevant'
-  WHEN b.state = 'dismissed_acknowledged' THEN 'acknowledged'
-  WHEN b.state = 'dismissed_already_handled' THEN 'already_handled'
-  WHEN b.state = 'read' THEN 'kept_read'
-  ELSE 'unlabeled'
-END`;
-
-function loadBriefGroups(db: Db, sinceMs: number | null): GroupedLabelRow[] {
-  return db
-    .prepare<unknown[], GroupedLabelRow>(
-      `SELECT ${BRIEF_LABEL_CASE_SQL} AS label_class,
-              ${binExprSql("b.confidence")} AS bin,
-              COUNT(*) AS n,
-              SUM(b.confidence) AS confidence_sum
-         FROM briefs b
-        ${sinceMs !== null ? "WHERE b.created_at >= ?" : ""}
-        GROUP BY label_class, bin`,
-    )
-    .all(...(sinceMs !== null ? [sinceMs] : []));
 }
 
 /**
@@ -498,8 +406,6 @@ export function computeCalibrationReport(
   const wanted = opts.family ? [opts.family] : CALIBRATION_FAMILIES;
   const families = wanted.map((family) => {
     switch (family) {
-      case "brief":
-        return foldGroupedRows(family, loadBriefGroups(db, sinceMs), BRIEF_CLASS_VERDICTS);
       case "doc-annotation":
         return foldGroupedRows(
           family,

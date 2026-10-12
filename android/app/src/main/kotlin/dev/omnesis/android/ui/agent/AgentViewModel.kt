@@ -62,4 +62,7 @@ class AgentViewModel @Inject constructor(
     fun ackConversationActionError() = coordinator.ackConversationActionError()
 
     fun flushEphemeralTail(toolCallId: String) = coordinator.flushEphemeralTail(toolCallId)
+
+    /** What a morning brief was based on. */
+    suspend fun dailyBriefItems(conversationId: String, day: String) = coordinator.dailyBriefItems(conversationId, day)
 }

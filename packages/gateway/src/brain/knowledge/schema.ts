@@ -10,7 +10,7 @@ export function createKnowledgeTables(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS knowledge_nodes (
       id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL CHECK(kind IN ('wiki','root','loop','doc_annotation','person_annotation','brief')),
+      kind TEXT NOT NULL CHECK(kind IN ('wiki','root','loop','doc_annotation','person_annotation','observation')),
       owner_id TEXT,
       title TEXT NOT NULL,
       markdown TEXT NOT NULL,

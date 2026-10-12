@@ -68,6 +68,9 @@ export const CONFIG_DEFAULTS = {
       maxReviewsPerTick: 16,
       maxReviewInterval: "30d",
       checkpointLead: "1d",
+      retryBackoff: "1h",
+      retryBackoffCap: "1d",
+      maxFailedAttempts: 5,
     },
     // Omnesis Brain / Cognition Steward (experimental). Runtime resolution lives in
     // packages/gateway/src/brain/config.ts; a cross-check test there keeps
@@ -113,7 +116,15 @@ export const CONFIG_DEFAULTS = {
     },
     reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
     provenanceRecheck: { enabled: true },
+    // Ignored; kept so existing configs still parse.
     judge: { enabled: true },
+    observations: {
+      retentionDays: 90,
+      alreadyKnownMax: 0.6,
+      minConsequence: 2,
+      minTimelyConsequence: 1,
+      timelyLevel: 2,
+    },
     // Bounded: one run per candidate, re-run only on re-detection. Like every
     // producer here it needs the brain gate to run at all.
     mergeAdjudication: { enabled: true },
@@ -124,6 +135,7 @@ export const CONFIG_DEFAULTS = {
       maxRunsPerDay: 200,
       maxRuns: 1000000,
       batchSize: 100,
+      horizon: "90d",
     },
     sweepsEnabled: true,
   },

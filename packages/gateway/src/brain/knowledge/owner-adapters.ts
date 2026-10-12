@@ -3,7 +3,7 @@
 
 import { assertNever } from "@omnesis/core";
 import { getOpenLoop, updateOpenLoop } from "../storage/open-loops.js";
-import { getBrief, updateBrief } from "../storage/briefs.js";
+import { getObservation } from "../storage/observations.js";
 import {
   getDocAnnotation,
   listDocAnnotationEvidence,
@@ -14,7 +14,7 @@ import {
   listPersonAnnotationEvidence,
 } from "../storage/person-annotations.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
-import { historicalBriefFields } from "./owner-maintenance.js";
+import { historicalObservationFields } from "./owner-maintenance.js";
 import { parseClaimMarkup } from "./claims.js";
 import { getKnowledgeNode, saveKnowledgeNode } from "./storage.js";
 import { isKnowledgeOwnerReadable } from "./storage-fence.js";
@@ -131,23 +131,24 @@ export function readKnowledgeOwner(
         row,
       );
     }
-    case "brief": {
-      const row = getBrief(db, id);
+    case "observation": {
+      const row = getObservation(db, id);
       if (!row) break;
       return snapshot(
         kind,
         id,
-        row.title,
-        `## Description\n${row.description}\n\n## Body\n${row.body ?? ""}`,
+        row.summary,
+        observationMarkdown(row.summary, row.why),
         {
           state: row.state,
-          kind: row.kind,
-          urgency: row.urgency,
+          closeReason: row.closeReason,
+          windowStart: row.windowStart,
           relevantUntil: row.relevantUntil,
-          nextShow: row.nextShow,
-          eventAt: row.eventAt,
           relatedLoopIds: row.relatedLoopIds,
-          userFeedback: row.userFeedback,
+          userAuthored: row.userAuthored,
+          scores: row.scores,
+          wouldPushAt: row.wouldPushAt,
+          shippedAt: row.shippedAt,
         },
         row.citations,
         row,
@@ -245,14 +246,15 @@ export function saveOwnedKnowledgeNode(
         "claim_invalid",
         "Person profile text changes require canonical annotation tools: read the complete profile with annotation_search, then use person_annotation_revise or annotate_person with supersedes. Fetch the updated owner before saving unchanged prose with claim proof markup.",
       );
+    // Observations are notes for one morning brief: evidence changes drop or
+    // rescore them; synthesis never rewrites what was observed.
     if (
-      proposed.kind === "brief" &&
-      historicalBriefFields(owner.canonicalFields, now) &&
+      proposed.kind === "observation" &&
       (plain !== owner.markdown || proposed.title !== owner.title)
     )
       throw new KnowledgeStorageError(
         "revision_conflict",
-        "Historical brief snapshots cannot be rewritten by synthesis",
+        "Observations cannot be rewritten by synthesis; note a new observation instead",
       );
     if (
       proposed.kind === "loop" &&
@@ -263,15 +265,6 @@ export function saveOwnedKnowledgeNode(
         "revision_conflict",
         "Retired outcome snapshots cannot be rewritten by synthesis",
       );
-    let briefParts: RegExpExecArray | null = null;
-    if (proposed.kind === "brief") {
-      briefParts = /^## Description\n([\s\S]*?)\n\n## Body\n([\s\S]*)$/.exec(plain);
-      if (!briefParts)
-        throw new KnowledgeStorageError(
-          "claim_invalid",
-          "Brief prose must preserve Description and Body sections",
-        );
-    }
     const result = saveKnowledgeNode(
       db,
       { ...proposed, canonicalFields: owner.canonicalFields },
@@ -295,17 +288,9 @@ export function saveOwnedKnowledgeNode(
               now,
             );
             break;
-          case "brief":
-            updated = updateBrief(
-              db,
-              owner.id,
-              {
-                title: proposed.title,
-                description: briefParts![1]!.trim(),
-                body: briefParts![2]!.trim() || null,
-              },
-              now,
-            );
+          case "observation":
+            // Prose changes were refused above; only proof maintenance reaches here.
+            updated = true;
             break;
           case "doc_annotation":
             updated = updateDocAnnotation(
@@ -385,7 +370,7 @@ export function materializeKnowledgeOwner(
   if (!isKnowledgeOwnerReadable(db, ownerId)) return null;
   const owners: Array<[KnowledgeOwnerKind, string]> = [
     ["loop", "open_loops"],
-    ["brief", "briefs"],
+    ["observation", "observations"],
     ["doc_annotation", "doc_annotations"],
     ["person_annotation", "person_annotations"],
   ];
@@ -474,10 +459,15 @@ export function buildLegacyOwnerKnowledge(
       uncertainty: 1,
       activity:
         (kind === "loop" && owner.canonicalFields.state !== "open") ||
-        (kind === "brief" && historicalBriefFields(owner.canonicalFields, now)) ||
+        (kind === "observation" && historicalObservationFields(owner.canonicalFields, now)) ||
         owner.canonicalFields.invalidatedAt != null
           ? "historical"
           : "active",
     },
   };
+}
+
+/** The prose of an observation's synthesis node. */
+export function observationMarkdown(summary: string, why: string): string {
+  return why.trim() ? `${summary}\n\nWhy it matters: ${why}` : summary;
 }

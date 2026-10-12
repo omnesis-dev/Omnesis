@@ -35,7 +35,7 @@ describe("shouldReconcileSession", () => {
   });
 
   it("reconciles a talk-back thread with zero visible turns, since it's addressed by URL", () => {
-    // A brief/annotation/watch-firing reply thread hides its seeded prefix
+    // A watch-firing thread hides its seeded prefix
     // from `turns` until the user's first reply, but it's still a real,
     // already-persisted conversation reached via its own convoId.
     expect(shouldReconcileSession("s-talkback", 0, "s-talkback")).toBe(true);

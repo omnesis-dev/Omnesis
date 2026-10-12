@@ -19,13 +19,16 @@ function cleanupDb(path: string): void {
 }
 
 const EXPECTED_TABLES = [
-  "brief_citations",
-  "brief_related_loops",
-  "briefs",
   "cognition_notes",
   "cognition_runs",
   "cognition_spend",
   "cognition_spend_daily",
+  "morning_brief_items",
+  "morning_briefs",
+  "observation_citations",
+  "observation_outcomes",
+  "observation_related_loops",
+  "observations",
   "open_loop_docs",
   "open_loop_ledger",
   "open_loop_people",
@@ -33,7 +36,7 @@ const EXPECTED_TABLES = [
   "retired_loops",
 ];
 
-describe("briefs storage schema", () => {
+describe("cognition storage schema", () => {
   let path: string;
   let db: Db;
   beforeEach(() => {
@@ -110,32 +113,15 @@ describe("briefs storage schema", () => {
     const cases: Array<{ query: string; params: Array<string | number>; index: string }> = [
       {
         query:
-          "SELECT * FROM briefs INDEXED BY idx_briefs_created_page WHERE (created_at, id) < (?, ?) ORDER BY created_at DESC, id DESC LIMIT ?",
-        params: [2000, "brf_cursor", 51],
-        index: "idx_briefs_created_page",
-      },
-      {
-        query: "SELECT MAX(read_at) FROM briefs",
-        params: [],
-        index: "idx_briefs_read_snapshot",
+          "SELECT * FROM observations INDEXED BY idx_observations_created_page WHERE (created_at, id) < (?, ?) ORDER BY created_at DESC, id DESC LIMIT ?",
+        params: [2000, "obs_cursor", 51],
+        index: "idx_observations_created_page",
       },
       {
         query:
-          "SELECT * FROM briefs INDEXED BY idx_briefs_state_created_page WHERE state = ? AND (created_at, id) < (?, ?) ORDER BY created_at DESC, id DESC LIMIT ?",
-        params: ["read", 2000, "brf_cursor", 51],
-        index: "idx_briefs_state_created_page",
-      },
-      {
-        query:
-          "SELECT * FROM briefs INDEXED BY idx_briefs_active_created_page WHERE state IN ('unread', 'read') AND (created_at, id) < (?, ?) ORDER BY created_at DESC, id DESC LIMIT ?",
-        params: [2000, "brf_cursor", 51],
-        index: "idx_briefs_active_created_page",
-      },
-      {
-        query:
-          "SELECT * FROM briefs INDEXED BY idx_briefs_dismissed_created_page WHERE state IN ('dismissed_already_handled', 'dismissed_acknowledged', 'dismissed_not_relevant', 'dismissed_wrong') AND (created_at, id) < (?, ?) ORDER BY created_at DESC, id DESC LIMIT ?",
-        params: [2000, "brf_cursor", 51],
-        index: "idx_briefs_dismissed_created_page",
+          "SELECT * FROM observations INDEXED BY idx_observations_open WHERE state IN ('live','held') ORDER BY created_at ASC, id ASC LIMIT ?",
+        params: [500],
+        index: "idx_observations_open",
       },
       {
         query:

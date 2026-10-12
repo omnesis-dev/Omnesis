@@ -14,6 +14,7 @@ import { getKnowledgeNode } from "./storage.js";
 import { knowledgeReviewSignals, decideKnowledgeReview } from "./review-policy.js";
 import { WIKI_EDITORIAL_GROWTH_SQL } from "./wiki-review-signals.js";
 import { isHistoricalKnowledgeOwner } from "./owner-maintenance.js";
+import { knowledgeWorkParkedSql } from "./work-retry.js";
 import { judgeKnowledge } from "./decision.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
@@ -46,18 +47,29 @@ export class KnowledgeUpkeep {
   }
 
   async recover(): Promise<void> {
+    const cfg = this.deps.getSettings().knowledge;
     const rows = this.deps.db
-      .prepare<[number], { id: string }>(
-        `SELECT b.id FROM knowledge_batches b
+      .prepare<[number], { id: string; failed: number }>(
+        `SELECT b.id,COALESCE(r.status='failed',0) AS failed FROM knowledge_batches b
       LEFT JOIN cognition_runs r ON r.id=b.run_id WHERE b.status IN ('pending','running','deferred')
       AND (r.id IS NULL OR r.status IN ('completed','failed')) ORDER BY b.created_at LIMIT ?`,
       )
-      .all(this.deps.getSettings().knowledge.maxSeeds);
+      .all(cfg.maxSeeds);
     for (const row of rows)
       await this.deps.writeGate["knowledge.abandonBatch"](
         {
           batchId: row.id,
-          notBefore: this.deps.clock() + this.deps.getSettings().knowledge.soonDelayMs,
+          notBefore: this.deps.clock() + cfg.soonDelayMs,
+          // A run that exhausted its attempts adjudicated the work it was offered.
+          ...(row.failed
+            ? {
+                failure: {
+                  backoffMs: cfg.retryBackoffMs,
+                  backoffCapMs: cfg.retryBackoffCapMs,
+                  maxFailedAttempts: cfg.maxFailedAttempts,
+                },
+              }
+            : {}),
         },
         this.deps.clock(),
       );
@@ -66,7 +78,7 @@ export class KnowledgeUpkeep {
   async convert(): Promise<void> {
     const kinds: Array<[KnowledgeOwnerKind, string]> = [
       ["loop", "open_loops"],
-      ["brief", "briefs"],
+      ["observation", "observations"],
       ["doc_annotation", "doc_annotations"],
       ["person_annotation", "person_annotations"],
     ];
@@ -159,9 +171,6 @@ export class KnowledgeUpkeep {
     const hasLoops = !!this.deps.db
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_loops'")
       .get();
-    const hasBriefs = !!this.deps.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='briefs'")
-      .get();
     const importance = hasLoops
       ? "COALESCE(l.importance,json_extract(n.metadata_json,'$.importance'),0)"
       : "COALESCE(json_extract(n.fields_json,'$.importance'),json_extract(n.metadata_json,'$.importance'),0)";
@@ -170,13 +179,6 @@ export class KnowledgeUpkeep {
       ? "CASE WHEN l.state='open' THEN CAST(strftime('%s',COALESCE(json_extract(l.deadline_json,'$.date'),CASE WHEN json_type(l.deadline_json)='text' THEN json_extract(l.deadline_json,'$') END)) AS REAL)*1000 END"
       : "NULL";
     const ownerCheckpoint = `CASE WHEN (${loopDeadline})-${cfg.checkpointLeadMs}>COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),0) THEN (${loopDeadline})-${cfg.checkpointLeadMs} ELSE ${maximum} END`;
-    const briefState = hasBriefs
-      ? "COALESCE(b.state,json_extract(n.fields_json,'$.state'))"
-      : "json_extract(n.fields_json,'$.state')";
-    const briefUntil = hasBriefs
-      ? "CASE WHEN b.id IS NOT NULL THEN b.relevant_until ELSE json_extract(n.fields_json,'$.relevantUntil') END"
-      : "json_extract(n.fields_json,'$.relevantUntil')";
-    const historicalBrief = `(n.kind='brief' AND (${briefState} LIKE 'dismissed_%' OR ${briefState} IN ('retired','archived','expired') OR ${briefUntil}<=${now}))`;
     const hasRetiredLoops = !!this.deps.db
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='retired_loops'")
       .get();
@@ -218,6 +220,10 @@ export class KnowledgeUpkeep {
       AND COALESCE(c.verifier,'')!=CASE WHEN n.kind IN ('wiki','root','loop') THEN @contextualVerifier ELSE @annotationVerifier END))`;
     const requiredPolicyDue = `(${policyDue} OR ${proofPolicyDue})`;
     const due = `MIN(COALESCE(json_extract(n.metadata_json,'$.nextReviewAt'),${last}+(${defaultDelay})),${maximum},${checkpointDue},${ownerCheckpoint},${editorialDue},CASE WHEN ${requiredPolicyDue} THEN 0 ELSE ${maximum} END)`;
+    // A node a source discovery has just created or changed is that batch's
+    // to inspect once the source settles. Reviewing it in a batch of its own
+    // would reserve the region the discovery still has to append, and the
+    // discovery would be abandoned and its source interpreted again.
     const rows = this.deps.db
       .prepare<
         {
@@ -232,10 +238,14 @@ export class KnowledgeUpkeep {
         `SELECT n.id,${policyDue} AS policy_review,${proofPolicyDue} AS proof_policy_review,${due} AS review_due FROM knowledge_nodes n
       ${hasLoops ? "LEFT JOIN open_loops l ON n.kind='loop' AND l.id=COALESCE(n.owner_id,n.id)" : ""}
       LEFT JOIN knowledge_outcome_assessments oa ON n.kind='loop' AND oa.owner_id=COALESCE(n.owner_id,n.id) AND oa.status='pass'
-      ${hasBriefs ? "LEFT JOIN briefs b ON n.kind='brief' AND b.id=COALESCE(n.owner_id,n.id)" : ""}
-      WHERE (n.kind!='root' OR ${proofPolicyDue}) AND NOT (${historicalLoop}) AND NOT (${retiredAnnotations}) AND NOT COALESCE(${historicalBrief},0) AND COALESCE(json_extract(n.fields_json,'$.withdrawn'),0)!=1 AND review_due<=@now
+      WHERE (n.kind!='root' OR ${proofPolicyDue}) AND NOT (${historicalLoop}) AND NOT (${retiredAnnotations}) AND n.kind!='observation' AND COALESCE(json_extract(n.fields_json,'$.withdrawn'),0)!=1 AND review_due<=@now
       AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='node' AND w.subject_id=n.id AND w.status IN ('pending','batched'))
+      AND NOT ${knowledgeWorkParkedSql("'node'", "n.id", "CAST(n.revision AS TEXT)", "'review'")}
       AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='node' AND w.subject_id=n.id AND w.reason='review' AND w.status='completed' AND w.updated_at>${now - retryAfter})
+      AND NOT EXISTS(SELECT 1 FROM knowledge_discovery_targets t
+        JOIN knowledge_batch_regions r ON r.node_id='source:'||t.source_id
+        JOIN knowledge_batches b ON b.id=r.batch_id AND b.status NOT IN ('completed','abandoned')
+        WHERE t.node_id=n.id)
       ORDER BY CASE WHEN ${maximum}<=${now} THEN 0 ELSE 1 END,review_due,n.id LIMIT @limit`,
       )
       .all({

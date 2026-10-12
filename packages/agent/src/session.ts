@@ -81,6 +81,13 @@ export interface SessionOptions {
    */
   initialHistory?: ReadonlyArray<ChatMessage>;
   /**
+   * The part of the stored history the model sees on each turn. The full
+   * history is still kept and persisted; only the backend's view narrows.
+   * Called once per turn, so a view that depends on later appends stays
+   * current. Omitted, the model sees the whole history.
+   */
+  historyView?: (history: ReadonlyArray<ChatMessage>) => ChatMessage[];
+  /**
    * IANA zone of the caller who opened this session, as their client
    * reported it. Rides every {@link ToolContext} so time-aware tools resolve
    * "today" against the user's calendar rather than the host machine's.
@@ -146,6 +153,7 @@ export class AgentSession {
   private readonly subscribers = new Set<Subscriber>();
 
   private history: ChatMessage[] = [];
+  private readonly historyView: SessionOptions["historyView"];
   private citations = new Map<string, Citation>();
   private currentTurn: TurnState | null = null;
 
@@ -161,6 +169,7 @@ export class AgentSession {
     this.reasoning = opts.reasoning;
     this.rateLimitPatience = opts.rateLimitPatience;
     this.promptCacheKey = opts.promptCacheKey;
+    this.historyView = opts.historyView;
     if (opts.initialHistory && opts.initialHistory.length > 0) {
       // Defensive copy: the caller may keep mutating its own copy
       // (we never do, but the API contract says we own the seed).
@@ -482,7 +491,7 @@ export class AgentSession {
             )
             .slice(-16),
         });
-        const priorHistory = [...this.history];
+        const priorHistory = this.historyView ? this.historyView(this.history) : [...this.history];
         // Append user turn to canonical history before asking the backend to
         // build its stream so even a synchronous backend-construction throw
         // leaves a coherent transcript. The backend still receives the

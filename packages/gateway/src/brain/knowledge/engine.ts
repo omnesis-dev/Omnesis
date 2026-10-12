@@ -48,6 +48,7 @@ import {
   type RecoverableNavigation,
 } from "./navigation-recovery.js";
 import { KnowledgeUpkeep } from "./engine-upkeep.js";
+import { isolatedKnowledgeRetry } from "./work-retry.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeService } from "./service.js";
 import type { KnowledgeWriteGate } from "./writer.js";
@@ -435,8 +436,18 @@ export class KnowledgeEngine {
       let offeredSources = 0;
       let remainingChars =
         cfg.maxFrontierChars - JSON.stringify({ batchId, done: false, items: [] }).length;
+      // On a retry, inputs not yet offered come first, so an input an earlier
+      // attempt left pending cannot hold the offer window and starve the rest
+      // of the batch. A first attempt keeps the stable order it is working in.
+      const retrying =
+        (this.deps.db
+          .prepare<[string], { attempts: number }>("SELECT attempts FROM cognition_runs WHERE id=?")
+          .get(runId)?.attempts ?? 0) > 1;
       for (const item of unresolved
         .filter((row) => row.depth === depth)
+        .sort((a, b) =>
+          retrying ? Number(a.status === "offered") - Number(b.status === "offered") : 0,
+        )
         .slice(0, cfg.maxFrontierNodes)) {
         // Bound the presented source chunk, not batch membership or independent regions.
         // Complete reads and per-source settlement need room within the run tool budget.
@@ -515,16 +526,19 @@ export class KnowledgeEngine {
             .get(batchId, item.nodeId.startsWith("source:") ? item.nodeId.slice(7) : item.nodeId);
           // An agent already selected these repair targets while interpreting a
           // source. Do not let a second, cheaper gate discard that explicit work.
+          // A selection stays outstanding until the page next changes, so it
+          // survives its source's batch being abandoned after the source settled.
           const isDiscoveryTarget =
             !source &&
             !!this.deps.db
               .prepare(
                 `SELECT 1 FROM knowledge_discovery_targets t
-             JOIN knowledge_frontier f ON f.node_id='source:'||t.source_id AND f.batch_id=?
              JOIN documents d ON d.id=t.source_id AND ${knowledgeSourceRevisionSql()}=t.source_revision
-             WHERE t.node_id=? LIMIT 1`,
+             WHERE t.node_id=? AND (
+               EXISTS(SELECT 1 FROM knowledge_frontier f WHERE f.node_id='source:'||t.source_id AND f.batch_id=?)
+               OR t.created_at>=(SELECT n.updated_at FROM knowledge_nodes n WHERE n.id=t.node_id)) LIMIT 1`,
               )
-              .get(batchId, item.nodeId);
+              .get(item.nodeId, batchId);
           const rootOrientation = node?.kind === "root" ? this.orientation() : undefined;
           const isInitialRoot =
             !!rootOrientation &&
@@ -802,6 +816,10 @@ export class KnowledgeEngine {
       .filter((arc) => !roots.has(arc.dependent))
       .flatMap((arc) => {
         const node = getKnowledgeNode(this.deps.db, arc.dependent);
+        // A dependent a failed batch could not finish keeps its obligation in
+        // its own isolated retry, or is parked; repeating it here would hold
+        // this batch open on the same input.
+        if (node && isolatedKnowledgeRetry(this.deps.db, node.id, node.revision)) return [];
         const refs = getKnowledgeDependencies(this.deps.db, arc.dependent).filter(
           (dep) =>
             dep.relation !== "context" &&

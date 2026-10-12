@@ -112,7 +112,6 @@ export async function runSweepEnqueuePass(
           date: day,
           steeringPrompt: sweep.steeringPrompt,
           origin: sweep.origin,
-          ...(sweep.briefLane !== undefined ? { briefLane: sweep.briefLane } : {}),
           ...(sweep.temporalAnnotationPrimeDays !== undefined
             ? { temporalAnnotationPrimeDays: sweep.temporalAnnotationPrimeDays }
             : {}),

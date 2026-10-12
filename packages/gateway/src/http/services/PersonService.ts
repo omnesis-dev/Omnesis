@@ -400,7 +400,7 @@ export class PersonService {
       verificationState: string | null;
       lastVerifiedAt: string | null;
       dependentCount: number;
-      dependents?: Array<{ kind: "brief" | "loop"; id: string; title: string }>;
+      dependents?: Array<{ kind: "observation" | "loop"; id: string; title: string }>;
       sortAt: number;
     }>;
     hasMore: boolean;

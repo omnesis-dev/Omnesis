@@ -12,10 +12,8 @@ import {
   markTemporalAnnotationsRefilePresented,
 } from "../../enrichment/temporal-annotations/storage.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
-import { createBriefClaimsTables } from "../storage/brief-claims.js";
 import { createOpenLoop, getOpenLoop } from "../storage/open-loops.js";
 import { createDecisionPayloadTables } from "../decision-payload.js";
-import { createBrief, getBrief } from "../storage/briefs.js";
 import { resolveBrainSettings } from "../config.js";
 import { withGrantedMutationsOnly } from "../steward/runtime.js";
 import { makeOutcomeAssessment, persistOutcomeAssessment } from "./outcome-assessment.js";
@@ -40,7 +38,6 @@ beforeEach(() => {
     "CREATE TABLE documents(id TEXT PRIMARY KEY,content TEXT,content_hash TEXT); INSERT INTO documents VALUES('evidence','Workshop Friday.','v1')",
   );
   createBriefsStorageTables(db);
-  createBriefClaimsTables(db);
   createKnowledgeTables(db);
   service = new KnowledgeService({
     db,
@@ -145,9 +142,7 @@ it("exposes only owner-specific saves within narrowed artifact grants, without w
     scoped,
     run("daily", { digest: true, date: "2026-01-02" }),
   );
-  expect(digest.filter((entry) => entry.mutates).map((entry) => entry.name)).toEqual([
-    "brief_synthesis_save",
-  ]);
+  expect(digest.filter((entry) => entry.mutates).map((entry) => entry.name)).toEqual([]);
   const memory = withGrantedMutationsOnly(scoped, run("verification", {}));
   expect(
     memory
@@ -162,28 +157,27 @@ it("exposes only owner-specific saves within narrowed artifact grants, without w
   expect(broad.some((entry) => entry.name.endsWith("_synthesis_save"))).toBe(false);
 });
 it("binds scoped saves to an existing canonical owner and rejects kind or field escalation", async () => {
-  createBrief(
+  createOpenLoop(
     db,
     {
       id: "notice",
       createdByRun: "run",
-      kind: "info",
       title: "Workshop",
       description: "Workshop Friday.",
+      state: "open",
+      importance: 0.5,
       confidence: 0.7,
-      urgency: 0.3,
-      citations: ["evidence"],
+      docs: ["evidence"],
     },
     1,
   );
   const tool = buildKnowledgeTools(service, { runId: "run", scopedOwnersOnly: true }).find(
-    (entry) => entry.name === "brief_synthesis_save",
+    (entry) => entry.name === "loop_synthesis_save",
   )!;
   const input = {
     id: "notice",
     title: "Workshop",
-    markdown:
-      '<claim id="date" refs="source:evidence">## Description\nWorkshop Friday.\n\n## Body\n</claim>',
+    markdown: '<claim id="date" refs="source:evidence">Workshop Friday.</claim>',
     expectedRevision: 0,
     inputVersions: { "source:evidence": "v1" },
   };
@@ -198,12 +192,23 @@ it("binds scoped saves to an existing canonical owner and rejects kind or field 
     kind: "error",
     code: "reference_invalid",
   });
-  const state = getBrief(db, "notice")!.state;
   expect(await tool.invoke(input, context)).toMatchObject({ kind: "structured" });
-  expect(getKnowledgeNode(db, "notice")).toMatchObject({ kind: "brief", ownerId: "notice" });
+  expect(getKnowledgeNode(db, "notice")).toMatchObject({ kind: "loop", ownerId: "notice" });
   expect(getKnowledgeNode(db, "notice")?.markdown).toContain("<claim");
-  expect(getBrief(db, "notice")?.description).toBe("Workshop Friday.");
-  expect(getBrief(db, "notice")?.state).toBe(state);
+  expect(getOpenLoop(db, "notice")).toMatchObject({
+    description: "Workshop Friday.",
+    state: "open",
+  });
+});
+it("offers no scoped synthesis save for observations", () => {
+  const names = buildKnowledgeTools(service, { runId: "run", scopedOwnersOnly: true }).map(
+    (entry) => entry.name,
+  );
+  expect(names.filter((name) => name.endsWith("_synthesis_save")).sort()).toEqual([
+    "doc_annotation_synthesis_save",
+    "loop_synthesis_save",
+    "person_annotation_synthesis_save",
+  ]);
 });
 
 it("rejects missing and blank maintenance fingerprints before consulting the engine", async () => {

@@ -361,10 +361,6 @@ struct HomeView: View {
             settingsDestination = .models(initialRole: nil)
             withAnimation(MenuReveal.openCloseAnimation) { menuOpen = false }
         }
-        .environment(\.openBackgroundAgentModelSettings) {
-            settingsDestination = .models(initialRole: "background-agent")
-            withAnimation(MenuReveal.openCloseAnimation) { menuOpen = false }
-        }
         .sheet(item: $settingsDestination, onDismiss: sheetDidDismiss) { destination in
             SettingsView(initialDestination: destination)
                 .environment(store)
@@ -408,6 +404,9 @@ struct HomeView: View {
                 store.phoneSetup.appDidEnterBackground()
             case .active where sceneWasBackgrounded:
                 sceneWasBackgrounded = false
+                // Today's page may have changed while away — a note turned
+                // into tasks, or the day itself rolled over.
+                Task { await store.refreshTasksTodayCount() }
                 if store.relayPushConsentRequest != nil {
                     requestDeferred(.relayConsent)
                 }
@@ -416,32 +415,16 @@ struct HomeView: View {
                 break
             }
         }
-        // Lets a brief's "Ask the agent" button jump into the talk-back
-        // conversation: flip to the Agent section FIRST (the drawer's
-        // conversation rows use the same ordering — resuming from a
+        // Lets a section jump into a conversation (a task's history names the
+        // conversation that changed it): flip to the Agent section FIRST (the
+        // drawer's conversation rows use the same ordering — resuming from a
         // non-Agent section would load the transcript off-screen), then
-        // resume the thread. A non-nil `autoSendText` (the mic
-        // shortcut's dictated question) is sent as the user's first
-        // message once the resume lands, so the agent starts answering
-        // the moment the user arrives.
-        .environment(\.openAgentConversation) { conversationId, autoSendText in
+        // resume the thread.
+        .environment(\.openAgentConversation) { conversationId in
             invalidateAutomaticForegroundWork()
             selection = .agent
             withAnimation(MenuReveal.openCloseAnimation) { menuOpen = false }
-            Task {
-                await store.agent.resumeConversation(id: conversationId)
-                // Send only if the resume actually LANDED on this thread.
-                // The surface adopts the target id optimistically (before the
-                // transcript loads), so `sessionId == conversationId` alone is
-                // true even for a resume that then failed — gate on the
-                // absence of a fatal error too, or the dictated question would
-                // post into a thread that never loaded.
-                if let autoSendText,
-                   store.agent.sessionId == conversationId,
-                   store.agent.fatalError == nil {
-                    await store.agent.send(text: autoSendText)
-                }
-            }
+            Task { await store.agent.resumeConversation(id: conversationId) }
         }
         // Quick-capture seam: the drawer opens the surface through this
         // action; the Lock Screen / Control Center control lands in
@@ -754,7 +737,9 @@ struct HomeView: View {
         // target lands even while that mirror is unresolved; against a gateway
         // without the routes it renders its own fetch error.
         case .privacy: PrivacyView(menuOpen: $menuOpen)
-        case .briefs: BriefsView(menuOpen: $menuOpen)
+        // Available on every gateway that serves /tasks; the drawer row is
+        // what reads the /status gate.
+        case .tasks: TasksView(menuOpen: $menuOpen)
         // Ungated here even though the drawer row that browses to it is
         // experimental: a push deep-link must land while the app's mirror of
         // /status is unresolved, so the section has to mount to consume the

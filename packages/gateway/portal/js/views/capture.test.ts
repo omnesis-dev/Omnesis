@@ -6,19 +6,23 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { createNote, deleteNoteEntry, getNotesHistory, getNotesProvenance, patchNoteEntry } = vi.hoisted(() => ({
+const { createNote, deleteNoteEntry, getNotesHistory, getNotesProvenance, getStatus, patchNoteEntry, undoTask } = vi.hoisted(() => ({
   createNote: vi.fn(),
   deleteNoteEntry: vi.fn(),
   getNotesHistory: vi.fn(),
   getNotesProvenance: vi.fn(),
+  getStatus: vi.fn(),
   patchNoteEntry: vi.fn(),
+  undoTask: vi.fn(),
 }));
 vi.mock("../api.js", () => ({
   createNote,
   deleteNoteEntry,
   getNotesHistory,
   getNotesProvenance,
+  getStatus,
   patchNoteEntry,
+  undoTask,
 }));
 
 // @ts-expect-error — portal is plain JS without sibling declarations.
@@ -78,6 +82,9 @@ beforeEach(async () => {
   patchNoteEntry.mockReset();
   getNotesHistory.mockReset();
   getNotesProvenance.mockReset();
+  getStatus.mockReset();
+  getStatus.mockResolvedValue({ tasks: { available: true, noteAgent: false } });
+  undoTask.mockReset();
   getNotesProvenance.mockResolvedValue({ mentions: [], annotations: [], loops: [] });
   getNotesHistory.mockResolvedValue({ entries: [], pageInfo: { hasMore: false } });
   await act(async () => {
@@ -734,5 +741,105 @@ describe("note history", () => {
     await click("Delete", host.querySelector(".confirm-modal-backdrop") as unknown as ParentNode);
     expect(noteTexts()).toEqual(["First note"]);
     expect(noteItems()[0].querySelector('[role="alert"]')?.textContent).toMatch(/Couldn't delete/);
+  });
+});
+
+describe("the note agent's receipts", () => {
+  async function mountWith(entries: unknown[], status = { tasks: { available: true, noteAgent: true } }) {
+    getStatus.mockResolvedValue(status);
+    getNotesHistory.mockResolvedValue({ entries, pageInfo: { hasMore: false } });
+    await act(async () => {
+      render(null, host);
+      render(h(CaptureView, {}), host);
+    });
+    await act(async () => {});
+  }
+
+  const doneNote = noteEntry({
+    id: "note-done",
+    text: "Call the vet about the booster on Friday",
+    agent: {
+      state: "done",
+      receipt: {
+        text: "Added a task for Friday.",
+        changes: [
+          { text: "Added: Call the vet about the booster", taskId: "loop_a", undoSeq: 41 },
+          { text: "Noted the clinic's new hours", taskId: null, undoSeq: null },
+        ],
+      },
+    },
+  });
+
+  test("the hint shows only when the gateway runs the note agent", async () => {
+    await mountWith([], { tasks: { available: true, noteAgent: false } });
+    expect(host.querySelector(".capture-agent-hint")).toBeNull();
+    await mountWith([]);
+    expect(host.querySelector(".capture-agent-hint")?.textContent).toBe("Omnesis will act on what you tell it");
+  });
+
+  test("a done note shows its receipt, task links and Undo", async () => {
+    await mountWith([doneNote]);
+    const receipt = host.querySelector(".note-agent-receipt")!;
+    expect(receipt.querySelector(".note-agent-text")?.textContent).toBe("Added a task for Friday.");
+    const changes = Array.from(receipt.querySelectorAll(".note-agent-change"));
+    expect(changes).toHaveLength(2);
+    expect(changes[0].querySelector("a")?.getAttribute("href")).toBe("/portal/tasks");
+    expect(changes[0].querySelector(".note-agent-undo")).not.toBeNull();
+    expect(changes[1].querySelector("a")).toBeNull();
+    expect(changes[1].querySelector(".note-agent-undo")).toBeNull();
+  });
+
+  test("Undo reverts the change, marks it undone and toasts the gateway's receipt", async () => {
+    undoTask.mockResolvedValueOnce({ task: null, receipt: { text: "Removed: Call the vet about the booster", undoSeq: null } });
+    await mountWith([doneNote]);
+    await act(async () => {
+      (host.querySelector(".note-agent-undo") as HTMLButtonElement).click();
+    });
+    await act(async () => {});
+    expect(undoTask).toHaveBeenCalledWith(41);
+    expect(host.querySelector(".note-agent-change.undone .note-agent-undone")?.textContent).toBe("Undone");
+    expect(host.querySelector(".note-agent-receipt .toast")?.textContent).toBe("Removed: Call the vet about the booster");
+  });
+
+  test("an Undo refused because a later change exists says so", async () => {
+    undoTask.mockRejectedValueOnce(Object.assign(new Error("conflict"), { status: 409 }));
+    await mountWith([doneNote]);
+    await act(async () => {
+      (host.querySelector(".note-agent-undo") as HTMLButtonElement).click();
+    });
+    await act(async () => {});
+    expect(host.querySelector(".note-agent-error")?.textContent).toBe(
+      "A later change to this task has to be undone first.",
+    );
+    expect(host.querySelector(".note-agent-change.undone")).toBeNull();
+  });
+
+  test("failed reads quietly and skipped shows nothing", async () => {
+    await mountWith([
+      noteEntry({ id: "failed", agent: { state: "failed", receipt: null } }),
+      noteEntry({ id: "skipped", text: "Second", agent: { state: "skipped", receipt: { text: "Nothing to do.", changes: [] } } }),
+    ]);
+    const rows = noteItems();
+    expect(rows[0].querySelector(".note-agent-failed")?.textContent?.trim()).toBe("Omnesis couldn't act on this note.");
+    expect(rows[1].querySelector(".note-agent")).toBeNull();
+  });
+
+  test("a note being read refreshes every five seconds until its receipt arrives", async () => {
+    vi.useFakeTimers();
+    const reading = noteEntry({ id: "note-done", agent: { state: "running", receipt: null } });
+    await mountWith([reading]);
+    expect(host.querySelector(".note-agent-reading")?.textContent?.trim()).toBe("Omnesis is reading this…");
+    getNotesHistory.mockResolvedValue({ entries: [doneNote], pageInfo: { hasMore: false } });
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    await act(async () => {});
+    expect(host.querySelector(".note-agent-reading")).toBeNull();
+    expect(host.querySelector(".note-agent-text")?.textContent).toBe("Added a task for Friday.");
+    const calls = getNotesHistory.mock.calls.length;
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(getNotesHistory.mock.calls.length).toBe(calls);
   });
 });

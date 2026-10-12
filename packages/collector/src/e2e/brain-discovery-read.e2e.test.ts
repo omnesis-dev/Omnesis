@@ -39,7 +39,6 @@ it("accepts complete paginated reads and requires both phases before durably com
     experimental: true,
     syncSources: false,
     entailment: "accept-all",
-    judge: "hold-all",
     decision: {
       policy: (request) =>
         Object.fromEntries(

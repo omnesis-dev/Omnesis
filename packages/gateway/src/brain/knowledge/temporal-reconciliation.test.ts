@@ -89,7 +89,6 @@ function toolsFor(
         getNotesMaxBytes: () => 8192,
         clock: () => 100,
         runId,
-        briefLane: "reactive",
         log,
         idGen: () => `temporal-${++sequence}`,
         ...(options.verifier

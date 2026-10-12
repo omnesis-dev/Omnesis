@@ -14,8 +14,9 @@
  * reconciles the surface against the rows it summarises, never against a
  * hand-written expectation of the surface alone.
  *
- * Two gateways. The first runs a scripted day of mixed activity (three datum
- * runs, a snooze, a scheduled follow-up, a dismissal) and is read through
+ * Two gateways. The first runs a scripted day of mixed activity (three source
+ * interpretations, a snooze, a scheduled follow-up, a withdrawn observation, a
+ * provenance recheck) and is read through
  * every operator surface in turn, ending with a retention sweep that must take
  * the transcripts and leave the run rows. The second is deliberately bare —
  * no ambient corpus, one document, one run — because a whole-state snapshot
@@ -223,27 +224,16 @@ describe("Brain Bench — the operator surface", () => {
                     confidence: 0.9,
                     claimBasis: "quoted",
                   }),
-                  call("brief_list", {}),
-                  call("brief_create", {
-                    kind: "loop",
-                    title: `Invoice CG-8821 is due (${INVOICE_MARKER})`,
-                    description: "The balance is payable at the end of the month.",
+                  call("observation_list", {}),
+                  call("observation_note", {
+                    summary: `Invoice CG-8821 is due at the end of the month (${INVOICE_MARKER}).`,
+                    why: "The balance is payable at the end of the month.",
                     citations: [ctx.subject],
                     relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                    confidence: 0.9,
-                    urgency: 0.6,
-                    assertedClaims: [
-                      {
-                        claimText: INVOICE_CLAIM,
-                        evidenceDocId: ctx.subject,
-                        evidenceQuote: INVOICE_QUOTE,
-                        claimBasis: "quoted",
-                        confidence: 0.9,
-                      },
-                    ],
+                    claims: [{ docId: ctx.subject, quote: INVOICE_QUOTE }],
                   }),
                 ],
-                finalText: "Tracked the invoice balance and raised a card for it.",
+                finalText: "Tracked the invoice balance and noted it for the morning brief.",
               })),
             },
             {
@@ -265,14 +255,24 @@ describe("Brain Bench — the operator surface", () => {
                     id: ref("open_loop_create", "loop.id"),
                     state: "snoozed",
                   }),
-                  call("brief_list", {}),
-                  call("brief_create", {
-                    kind: "info",
-                    title: `Rehearsal room held until Friday (${ROOM_MARKER})`,
-                    description: "Nothing to do until the hold lapses.",
+                  call("observation_list", {}),
+                  call("observation_note", {
+                    summary: `The rehearsal room is held until Friday (${ROOM_MARKER}).`,
                     citations: [ctx.subject],
-                    confidence: 0.8,
-                    urgency: 0.3,
+                    claims: [
+                      {
+                        docId: ctx.subject,
+                        quote: "The rehearsal room is held for the winter showcase until Friday.",
+                      },
+                    ],
+                  }),
+                  // Withdrawn on reflection: it separates the open observations
+                  // from the total for the pulse reconciliation below. The list
+                  // read is the canonical receipt the withdrawal revises.
+                  call("observation_list", {}),
+                  call("observation_withdraw", { id: ref("observation_note", "id") }),
+                  call("notes_append", {
+                    text: `Lesson (${ROOM_MARKER}): a room hold with no action is not worth a morning brief.`,
                   }),
                   // A run parked in the future: pending, but not due, so it
                   // separates `upcomingRuns` from `queuedRuns`.
@@ -297,15 +297,8 @@ describe("Brain Bench — the operator surface", () => {
         }),
         behaviors: [
           {
-            flavour: "feedback.dismissal",
-            plan: {
-              calls: [
-                call("notes_append", {
-                  text: `Lesson (${ROOM_MARKER}): a room hold with no action is not worth a card.`,
-                }),
-              ],
-              finalText: "Recorded the not-relevant lesson.",
-            },
+            flavour: "feedback.provenance",
+            plan: { calls: [], finalText: "Every prior is live; nothing to re-examine." },
           },
         ],
       },
@@ -355,19 +348,23 @@ describe("Brain Bench — the operator surface", () => {
     for (const id of [invoiceDocId, roomDocId])
       expect((await bench.obs.runsForSource(id)).length).toBeGreaterThanOrEqual(2);
 
-    // The room card is the one the operator throws away — it is the stimulus
-    // for the feedback run, and it makes `unreadBriefs` differ from
-    // `totalBriefs` for the pulse reconciliation below.
-    const roomBrief = (await bench.obs.briefsMatching(ROOM_MARKER))[0];
-    expect(roomBrief).toBeDefined();
-    const dismissal = await bench.obs.dismissBrief(roomBrief!.id, { reason: "not_relevant" });
-    expect(dismissal.state).toBe("dismissed_not_relevant");
-    await bench.drainUntilQuiet();
-
     const loops = await bench.obs.loops();
     expect(loops.items.map((l) => l.state).sort()).toEqual(["open", "snoozed"]);
-    expect((await bench.obs.briefs()).items).toHaveLength(2);
+    const observations = (await bench.obs.observations()).items;
+    expect(observations.map((o) => o.state).sort()).toEqual(["dropped", "live"]);
     expect(await bench.obs.notes()).toContain(ROOM_MARKER);
+
+    // A provenance recheck over the room loop: the feedback workflow the day
+    // reads through every surface below. Its priors are all live, so the run
+    // has nothing to repair.
+    const roomLoop = loops.items.find((l) => l.title.includes(ROOM_MARKER))!;
+    bench.seedRun({
+      id: "obs-provenance-recheck",
+      kind: "feedback",
+      payload: { recheckDependentKind: "loop", recheckDependentId: roomLoop.id },
+      dedupeKey: `feedback:provenance:loop:${roomLoop.id}`,
+    });
+    await bench.drainUntilQuiet();
   }, 180_000);
 
   test("the pulse reconciles, field by field, with the rows it summarises", async () => {
@@ -415,12 +412,12 @@ describe("Brain Bench — the operator surface", () => {
     expect(pulse.counts.snoozedLoops).toBe(1);
     expect(pulse.counts.totalLoops).toBe(2);
 
-    expect(pulse.counts.unreadBriefs).toBe(
-      one("SELECT COUNT(*) AS n FROM briefs WHERE state='unread'"),
+    expect(pulse.counts.openObservations).toBe(
+      one("SELECT COUNT(*) AS n FROM observations WHERE state IN ('live','held')"),
     );
-    expect(pulse.counts.totalBriefs).toBe(one("SELECT COUNT(*) AS n FROM briefs"));
-    expect(pulse.counts.unreadBriefs).toBe(1);
-    expect(pulse.counts.totalBriefs).toBe(2);
+    expect(pulse.counts.totalObservations).toBe(one("SELECT COUNT(*) AS n FROM observations"));
+    expect(pulse.counts.openObservations).toBe(1);
+    expect(pulse.counts.totalObservations).toBe(2);
 
     expect(pulse.counts.failedRuns24h).toBe(
       one(
@@ -449,7 +446,7 @@ describe("Brain Bench — the operator surface", () => {
     );
     for (const revisit of page.items.filter((item) => item.runId !== decision.runId)) {
       // Existing derived owners may be explicitly re-reviewed after the source;
-      // the repeat must never recreate a loop, annotation, brief or ledger entry.
+      // the repeat must never recreate a loop, annotation, observation or ledger entry.
       for (const action of revisit.actions) {
         expect(action.tool).toBe("knowledge_save");
         expect(action.ok).toBe(true);
@@ -473,15 +470,21 @@ describe("Brain Bench — the operator surface", () => {
       "open_loop_create",
       "open_loop_ledger_append",
       "annotate_durable",
-      "brief_create",
+      "observation_note",
     ]);
-    // Canonical creation also offers derived owner mirrors for maintenance.
+    // Canonical creation also offers the loop and annotation mirrors for
+    // maintenance; maintenance settles an observation without a model turn.
     // Those saves are real mutations and must remain visible in the audit.
     expect(decision.actions.slice(4).map((a) => a.tool)).toEqual([
       "knowledge_save",
       "knowledge_save",
-      "knowledge_save",
     ]);
+    expect(
+      decision.actions
+        .slice(4)
+        .map((a) => a.detail.split(" ").slice(0, 2).join(" "))
+        .sort(),
+    ).toEqual(["save doc_annotation", "save loop"]);
     expect(decision.actions.every((a) => a.ok)).toBe(true);
     expect(decision.actions[0]!.detail).toContain(INVOICE_MARKER);
     // `open_loop_search` is research, not a decision.
@@ -550,7 +553,7 @@ describe("Brain Bench — the operator surface", () => {
     const started = transcript.events
       .filter((e) => e.type === "agent.tool.start")
       .map((e) => (e.payload as { tool: string }).tool);
-    expect(started).toContain("brief_create");
+    expect(started).toContain("observation_note");
     expect(transcript.events.filter((e) => e.type === "agent.tool.result")).toHaveLength(
       started.length,
     );
@@ -584,7 +587,7 @@ describe("Brain Bench — the operator surface", () => {
     // The workflow ids are the real vocabulary, not the queue kinds.
     const workflows = new Set(attributed.map((a) => a.workflow_id));
     expect(workflows.has("knowledge-maintenance")).toBe(true);
-    expect(workflows.has("feedback-learning")).toBe(true);
+    expect(workflows.has("provenance-recheck")).toBe(true);
     expect(workflows.has("unrecognized")).toBe(false);
     // A queue kind is not a workflow id — `data` must never leak through.
     expect(workflows.has("data")).toBe(false);
@@ -694,7 +697,7 @@ describe("Brain Bench — the operator surface", () => {
     const transcript = await runCli(bench, ["brain", "transcript", invoiceRun.id]);
     expect(transcript.exitCode, transcript.stderr).toBe(0);
     expect(transcript.stdout).toContain(`Loop agent run ${invoiceRun.id}`);
-    expect(transcript.stdout).toContain("brief_create");
+    expect(transcript.stdout).toContain("observation_note");
     expect(transcript.stdout).toContain(
       "Balance of four hundred and eighty due by the end of the month.",
     );
@@ -834,27 +837,16 @@ describe("Brain Bench — the golden snapshot", () => {
                       confidence: 0.9,
                       claimBasis: "quoted",
                     }),
-                    call("brief_list", {}),
-                    call("brief_create", {
-                      kind: "loop",
-                      title: "Hall booking balance is coming due",
-                      description: "The final balance is due fourteen days before the date.",
+                    call("observation_list", {}),
+                    call("observation_note", {
+                      summary: "The hall booking balance is coming due.",
+                      why: "The final balance is due fourteen days before the date.",
                       citations: [ctx.subject],
                       relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                      confidence: 0.9,
-                      urgency: 0.5,
-                      assertedClaims: [
-                        {
-                          claimText: GOLDEN_CLAIM,
-                          evidenceDocId: ctx.subject,
-                          evidenceQuote: GOLDEN_QUOTE,
-                          claimBasis: "quoted",
-                          confidence: 0.9,
-                        },
-                      ],
+                      claims: [{ docId: ctx.subject, quote: GOLDEN_QUOTE }],
                     }),
                   ],
-                  finalText: "Tracked the hall balance and raised a card.",
+                  finalText: "Tracked the hall balance and noted it for the morning brief.",
                 }),
               ),
             },
@@ -906,7 +898,7 @@ describe("Brain Bench — the golden snapshot", () => {
     // Guard rails before the golden, so a diff is read as "the arc changed"
     // rather than "the golden is stale in some unnamed way".
     expect(snapshot.loops).toHaveLength(1);
-    expect(snapshot.briefs).toHaveLength(1);
+    expect(snapshot.observations).toHaveLength(1);
     expect(snapshot.docAnnotations).toHaveLength(1);
     // The source-interpretation run, plus the decay revisit it earned.
     expect(snapshot.runs).toHaveLength(2);

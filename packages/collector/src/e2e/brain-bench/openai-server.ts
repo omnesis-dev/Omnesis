@@ -3,8 +3,8 @@
 
 /**
  * The minimal OpenAI-compatible chat server the bench's scripted model
- * roles are built on (the puppet steward, the entailment verifier, the
- * brief judge).
+ * roles are built on (the puppet steward, the conversation puppet, the
+ * entailment verifier).
  *
  * Only non-streamed completions are served: a `stream: true` request is
  * answered with a request-shape 400, which `HttpChatBackend`'s resilience

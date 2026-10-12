@@ -37,6 +37,7 @@ export const DATA_THREAD_DEDUPE_PREFIX = "data:thread:";
 export const DAILY_SOURCE_DEDUPE_PREFIX = "daily:source:";
 export const MAY_DAY_DEDUPE_PREFIX = "daily:mayday:";
 export const DIGEST_DEDUPE_PREFIX = "daily:digest:";
+/** Historical: feedback runs enqueued by brief dismissals, read back for display only. */
 export const FEEDBACK_DEDUPE_PREFIX = "feedback:brief:";
 
 /** Fold key for `data` runs: at most one pending run per document. */
@@ -216,9 +217,9 @@ export function parseCognitionMayDayRunPayload(payload: unknown): CognitionMayDa
 
 /**
  * The morning-digest flavour of a `daily` run — the once-a-morning pass
- * that composes ONE "Morning brief" card from the substrates (temporal
- * horizon, due/overdue loops, overnight briefs). Enqueued by its own
- * boundary at `brain.digest.hour`, after the overnight batches settle.
+ * that rechecks and ranks the open observations and sends the day's one
+ * morning brief message. Enqueued by its own boundary at
+ * `brain.digest.hour`, after the overnight batches settle.
  */
 export const cognitionDigestRunPayloadSchema = z
   .object({
@@ -293,11 +294,8 @@ export function parseCognitionTimeBasedRunPayload(
 }
 
 /**
- * `feedback` runs carry the dismissed brief's id; the run's prompt
- * builder loads the brief's live state (dismissal reason, free text,
- * related loops) at claim time. A snooze dismissal where the user picked
- * a concrete re-surface time also carries that time — it is a one-shot
- * user signal, not brief state, so it rides in the payload.
+ * `feedback` runs that carry a brief id. None are enqueued; stored rows are
+ * parsed only so the run inspector and spend attribution can name them.
  */
 export const cognitionFeedbackRunPayloadSchema = z
   .object({
@@ -316,28 +314,17 @@ export function parseCognitionFeedbackRunPayload(
   return res.success ? res.data : null;
 }
 
-/**
- * Fold key for a brief's feedback run: at most one pending per brief. A
- * re-dismissal while the previous dismissal's run is still pending folds
- * into it — the newest signal wins, and the prompt builder reads the
- * brief's live state at claim time anyway.
- */
-export function feedbackRunDedupeKey(briefId: string): string {
-  return `${FEEDBACK_DEDUPE_PREFIX}${briefId}`;
-}
-
 // ── provenance recheck — a `feedback` payload variant ──────────────────────
 
 export const PROVENANCE_RECHECK_DEDUPE_PREFIX = "feedback:provenance:";
 
 /**
- * Fold key for a dependent's provenance recheck: at most one pending per
- * brief/loop. This is the anti-stampede fold — N priors dying while a
+ * Fold key for a loop's provenance recheck: at most one pending per loop. This is the anti-stampede fold — N priors dying while a
  * dependent's recheck is pending collapse into the one run, and the prompt
  * builder reads the dependent's consumed priors (and their liveness) at
  * claim time, so the folded run always judges the full current dead set.
  */
-export function provenanceRecheckDedupeKey(kind: "brief" | "loop", dependentId: string): string {
+export function provenanceRecheckDedupeKey(kind: "loop", dependentId: string): string {
   return `${PROVENANCE_RECHECK_DEDUPE_PREFIX}${kind}:${dependentId}`;
 }
 
@@ -354,7 +341,7 @@ export function provenanceRecheckDedupeKey(kind: "brief" | "loop", dependentId: 
  */
 export const cognitionProvenanceRecheckPayloadSchema = z
   .object({
-    recheckDependentKind: z.enum(["brief", "loop"]),
+    recheckDependentKind: z.literal("loop"),
     recheckDependentId: z.string().min(1),
     recheckGeneration: z.string().uuid().optional(),
   })
@@ -519,11 +506,6 @@ export function sweepDedupeKey(sweepId: string, day: string): string {
  * `origin` is optional because runs enqueued before sweeps had an origin are
  * still claimable; the prompt builder and the inspector both treat an absent
  * value as `system`, which is what every such run was.
- *
- * `briefLane` is the editorial charter a SYSTEM sweep may declare (see
- * `CognitionBriefLane`), snapshotted like the steering so a mid-run edit
- * cannot widen the bar an in-flight run faces. Absent means the strict
- * reactive bar, which is what every operator-authored sweep gets.
  */
 export const cognitionSweepRunPayloadSchema = z.preprocess(
   (input) => {
@@ -534,6 +516,8 @@ export const cognitionSweepRunPayloadSchema = z.preprocess(
       value.temporalAnnotationPrimeDays = value.timeIndexPrimeDays;
     }
     delete value.timeIndexPrimeDays;
+    // A queued run may still carry a `briefLane`, which nothing reads.
+    delete value.briefLane;
     return value;
   },
   z
@@ -542,7 +526,6 @@ export const cognitionSweepRunPayloadSchema = z.preprocess(
       date: z.string().min(1),
       steeringPrompt: z.string().min(1),
       origin: z.enum(["system", "user"]).optional(),
-      briefLane: z.enum(["lookahead", "noticing"]).optional(),
       temporalAnnotationPrimeDays: z.number().int().positive().optional(),
     })
     .strict(),
@@ -780,100 +763,4 @@ export function parseCognitionBootstrapRunPayload(
 ): CognitionBootstrapRunPayload | null {
   const res = cognitionBootstrapRunPayloadSchema.safeParse(payload);
   return res.success ? res.data : null;
-}
-
-// ---------------------------------------------------------------------------
-// Brief lane — the editorial axis the push bar is calibrated on.
-// ---------------------------------------------------------------------------
-
-/**
- * Which editorial lane a run's briefs belong to.
- *
- * The push bar (`brief-judge.ts`) asks "does this earn an interrupt?", and the
- * four gates that answer it are written for a REACTIVE card: one that fires
- * because a datum arrived. Three lanes are not reactive, and for each of them
- * one gate contradicts the very instruction that commissioned the card:
- *
- *   - `digest` — the once-a-morning composition. Scheduled, capped at one card
- *     a day, and the only brief that pushes. "Does this tell the user
- *     something new" is the wrong question to ask of a daily summary.
- *   - `lookahead` — the day-ahead sweep, whose steering orders it to write
- *     informative briefs preparing the user: what, when, with whom. Its
- *     product IS restating today with context, which the awareness gate reads
- *     as an echo.
- *   - `dated_reminder` — a `schedule_agent_run` check resurfacing a dated item
- *     on its day, which `DATED_REMINDER_RULE` asks for precisely because the
- *     user's own to-do app may not remind them.
- *   - `noticing` — the synthesis awareness pass, chartered to surface patterns
- *     with no action attached, which the consequence gate reads as costless.
- *
- * Everything else is `reactive` and faces all four gates.
- */
-export type CognitionBriefLane =
-  | "digest"
-  | "lookahead"
-  | "dated_reminder"
-  | "noticing"
-  | "reactive";
-
-/**
- * The lane every run kind resolves to before its payload is consulted. Keyed
- * by the full `CognitionRunKind` union so a newly added kind must state its
- * lane here rather than inheriting one by omission. The four kinds mapped to
- * `null` fan out to more than one lane and are resolved from their payload
- * below.
- */
-const LANE_BY_KIND: Record<CognitionRunKind, CognitionBriefLane | null> = {
-  data: "reactive",
-  daily: null,
-  time_based: null,
-  synthesis: null,
-  feedback: "reactive",
-  sweep: null,
-  bootstrap: "reactive",
-  verification: "reactive",
-  merge_adjudication: "reactive",
-  notes_compaction: "reactive",
-  subscription_compile: "reactive",
-};
-
-/**
- * Resolve a claimed run's brief lane from its kind and payload flavour.
- *
- * Every fallback is `reactive`, the strict bar: an unrecognized kind (the
- * run-queue row's `kind` is an unchecked cast, so a corrupt or forward-compat
- * row can carry one) or a payload that fails its schema faces the full four
- * gates rather than a laxer subset. A lane is only ever widened by a payload
- * that positively parses.
- */
-export function cognitionBriefLane(run: { kind: string; payload: unknown }): CognitionBriefLane {
-  const byKind = LANE_BY_KIND[run.kind as CognitionRunKind];
-  if (byKind !== undefined && byKind !== null) return byKind;
-  switch (run.kind) {
-    case "daily":
-      if (parseCognitionDigestRunPayload(run.payload)) return "digest";
-      // Historical: the day-ahead pass was a `daily` flavour before it became
-      // a sweep, and settled rows of that shape are still read back.
-      return parseCognitionMayDayRunPayload(run.payload) ? "lookahead" : "reactive";
-    case "sweep":
-      // Only a system sweep can carry a lane, and only while its prose is the
-      // prose the lane was granted for; everything else faces all four gates.
-      return parseCognitionSweepRunPayload(run.payload)?.briefLane ?? "reactive";
-    case "time_based": {
-      // A scheduled check earns the preparation bar only when it is what
-      // DATED_REMINDER_RULE describes — a re-verification tied to a specific
-      // loop, on the day that loop's item comes due. A loop-less
-      // `schedule_agent_run` is a free-form follow-up the agent wrote for
-      // itself, and letting that reach the laxer bar would hand it a way to
-      // route around the echo check by scheduling its own card.
-      const scheduled = parseCognitionTimeBasedRunPayload(run.payload);
-      return scheduled?.loopId !== undefined ? "dated_reminder" : "reactive";
-    }
-    case "synthesis":
-      return parseCognitionSynthesisRunPayload(run.payload)?.focus === "noticing"
-        ? "noticing"
-        : "reactive";
-    default:
-      return "reactive";
-  }
 }

@@ -3,7 +3,7 @@
 
 /**
  * Tests for the cross-loop collision finder: person / doc / deadline-day
- * collisions, merge across signals, self exclusion, the active-brief coverage
+ * collisions, merge across signals, self exclusion, the observation coverage
  * filter, ranking + limit, and the sweep producer that seeds `synthesis`
  * collision runs. Fixture data invented.
  */
@@ -15,7 +15,7 @@ import { createLogger, type TemporalPrecision } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop, updateOpenLoop } from "../storage/open-loops.js";
-import { createBrief } from "../storage/briefs.js";
+import { createObservation, transitionObservation } from "../storage/observations.js";
 import { listCognitionRuns } from "../storage/run-queue.js";
 import {
   synthesisCollisionDedupeKey,
@@ -75,7 +75,7 @@ function loop(db: Db, id: string, opts: LoopOpts = {}): void {
   );
 }
 
-/** Record a settled (completed, no-brief) collision-judge run for a loop set. */
+/** Record a settled (completed, no-observation) collision-judge run for a loop set. */
 function markJudged(db: Db, loopIds: string[], completedAt: number): void {
   db.prepare(
     `INSERT INTO cognition_runs
@@ -86,6 +86,10 @@ function markJudged(db: Db, loopIds: string[], completedAt: number): void {
     synthesisCollisionDedupeKey(collisionDedupeSuffix(loopIds)),
     completedAt,
   );
+}
+
+function observe(db: Db, id: string, relatedLoopIds: string[]): void {
+  createObservation(db, { id, createdByRun: "r", summary: "these relate", relatedLoopIds }, NOW);
 }
 
 describe("findCollisionCandidates", () => {
@@ -102,9 +106,9 @@ describe("findCollisionCandidates", () => {
 
   test("no collision below two loops or with no shared key", () => {
     loop(db, "L1", { actors: ["p1"], docs: ["d1"] });
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null })).toEqual([]);
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toEqual([]);
     loop(db, "L2", { actors: ["p2"], docs: ["d2"] }); // disjoint
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null })).toEqual([]);
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toEqual([]);
   });
 
   test("a shared person, doc, or deadline-day each yields a collision", () => {
@@ -114,7 +118,7 @@ describe("findCollisionCandidates", () => {
     loop(db, "D2", { docs: ["shared-doc"] });
     loop(db, "T1", { deadline: { type: "by", date: "2026-08-01" } });
     loop(db, "T2", { deadline: { type: "on_day", date: "2026-08-01" } });
-    const cands = findCollisionCandidates(db, { limit: 10, selfPersonId: null });
+    const cands = findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW });
     const byTag = new Map(cands.map((c) => [c.matchedBy.join("|"), c.loopIds]));
     expect(byTag.get("person:shared-person")).toEqual(["P1", "P2"]);
     expect(byTag.get("doc:shared-doc")).toEqual(["D1", "D2"]);
@@ -124,7 +128,7 @@ describe("findCollisionCandidates", () => {
   test("a pair colliding on several signals merges into one candidate carrying all tags", () => {
     loop(db, "L1", { actors: ["p1"], docs: ["d1"] });
     loop(db, "L2", { actors: ["p1"], docs: ["d1"] });
-    const cands = findCollisionCandidates(db, { limit: 10, selfPersonId: null });
+    const cands = findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW });
     expect(cands).toHaveLength(1);
     expect(cands[0]!.loopIds).toEqual(["L1", "L2"]);
     expect(cands[0]!.matchedBy).toEqual(["doc:d1", "person:p1"]);
@@ -133,33 +137,55 @@ describe("findCollisionCandidates", () => {
   test("self is excluded from the person signal", () => {
     loop(db, "L1", { actors: ["self"] });
     loop(db, "L2", { actors: ["self"] });
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: "self" })).toEqual([]);
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: "self", now: NOW })).toEqual([]);
     // but a non-self shared person still collides
     loop(db, "L3", { actors: ["self", "friend"] });
     loop(db, "L4", { actors: ["self", "friend"] });
-    const cands = findCollisionCandidates(db, { limit: 10, selfPersonId: "self" });
+    const cands = findCollisionCandidates(db, { limit: 10, selfPersonId: "self", now: NOW });
     expect(cands.map((c) => c.loopIds)).toContainEqual(["L3", "L4"]);
     expect(cands.every((c) => !c.matchedBy.includes("person:self"))).toBe(true);
   });
 
-  test("a candidate already spanned by an active brief is suppressed", () => {
+  test("a candidate already spanned by an open observation is suppressed", () => {
     loop(db, "L1", { actors: ["p1"] });
     loop(db, "L2", { actors: ["p1"] });
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null })).toHaveLength(1);
-    createBrief(
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toHaveLength(
+      1,
+    );
+    observe(db, "obs_1", ["L1", "L2"]);
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toEqual([]);
+    // A held observation still covers its loops.
+    transitionObservation(db, "obs_1", { state: "held" }, NOW + 1);
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toEqual([]);
+  });
+
+  test("a shipped observation covers its loops for 14 days, a dropped one not at all", () => {
+    loop(db, "L1", { actors: ["p1"] });
+    loop(db, "L2", { actors: ["p1"] });
+    observe(db, "obs_shipped", ["L1", "L2"]);
+    transitionObservation(
       db,
-      {
-        id: "brief_1",
-        createdByRun: "r",
-        kind: "loop",
-        title: "these relate",
-        confidence: 0.8,
-        urgency: 0.5,
-        relatedLoopIds: ["L1", "L2"],
-      },
+      "obs_shipped",
+      { state: "shipped", shipped: { conversationId: "conv_1", messageId: "msg_1" } },
       NOW,
     );
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null })).toEqual([]);
+    const day = 86_400_000;
+    expect(
+      findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW + 13 * day }),
+    ).toEqual([]);
+    expect(
+      findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW + 15 * day }),
+    ).toHaveLength(1);
+
+    loop(db, "L3", { actors: ["p3"] });
+    loop(db, "L4", { actors: ["p3"] });
+    observe(db, "obs_dropped", ["L3", "L4"]);
+    transitionObservation(db, "obs_dropped", { state: "dropped", reason: "stale" }, NOW);
+    expect(
+      findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW }).map(
+        (c) => c.loopIds,
+      ),
+    ).toEqual([["L3", "L4"]]);
   });
 
   test("ranks by max member importance and honours the limit", () => {
@@ -167,7 +193,7 @@ describe("findCollisionCandidates", () => {
     loop(db, "A2", { actors: ["pa"], importance: 0.3 });
     loop(db, "B1", { actors: ["pb"], importance: 0.9 });
     loop(db, "B2", { actors: ["pb"], importance: 0.1 });
-    const top = findCollisionCandidates(db, { limit: 1, selfPersonId: null });
+    const top = findCollisionCandidates(db, { limit: 1, selfPersonId: null, now: NOW });
     expect(top).toHaveLength(1);
     expect(top[0]!.loopIds).toEqual(["B1", "B2"]); // max importance 0.9 wins
     expect(top[0]!.score).toBe(0.9);
@@ -176,47 +202,39 @@ describe("findCollisionCandidates", () => {
   test("a non-positive limit returns nothing", () => {
     loop(db, "L1", { actors: ["p1"] });
     loop(db, "L2", { actors: ["p1"] });
-    expect(findCollisionCandidates(db, { limit: 0, selfPersonId: null })).toEqual([]);
+    expect(findCollisionCandidates(db, { limit: 0, selfPersonId: null, now: NOW })).toEqual([]);
   });
 
   test("a group larger than the member cap keeps the highest-importance members", () => {
     for (let i = 1; i <= 9; i++) loop(db, `G${i}`, { actors: ["shared"], importance: i / 10 });
-    const cands = findCollisionCandidates(db, { limit: 10, selfPersonId: null });
+    const cands = findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW });
     expect(cands).toHaveLength(1);
     expect(cands[0]!.loopIds).toHaveLength(8); // MAX_GROUP_MEMBERS
     expect(cands[0]!.loopIds).not.toContain("G1"); // the lowest-importance loop is dropped
   });
 
-  test("an active brief that is a strict SUPERSET of a candidate suppresses it", () => {
+  test("an open observation that is a strict SUPERSET of a candidate suppresses it", () => {
     loop(db, "L1", { actors: ["p1"] });
     loop(db, "L2", { actors: ["p1"] });
     loop(db, "L3", { importance: 0.9 }); // an unrelated third loop
-    createBrief(
-      db,
-      {
-        id: "brief_1",
-        createdByRun: "r",
-        kind: "loop",
-        title: "spans three",
-        confidence: 0.8,
-        urgency: 0.5,
-        relatedLoopIds: ["L1", "L2", "L3"],
-      },
-      NOW,
-    );
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null })).toEqual([]);
+    observe(db, "obs_1", ["L1", "L2", "L3"]);
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toEqual([]);
   });
 
-  test("a set the judge already settled (no brief) is not re-proposed until a member is touched", () => {
+  test("a set the judge already settled (no observation) is not re-proposed until a member is touched", () => {
     loop(db, "L1", { actors: ["p1"] });
     loop(db, "L2", { actors: ["p1"] });
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null })).toHaveLength(1);
-    // The judge ran and created no brief (a negative verdict), after the loops.
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toHaveLength(
+      1,
+    );
+    // The judge ran and noted no observation (a negative verdict), after the loops.
     markJudged(db, ["L1", "L2"], NOW + 1000);
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null })).toEqual([]);
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toEqual([]);
     // A member is touched afterwards → new evidence → the set is re-proposed.
     updateOpenLoop(db, "L1", { importance: 0.6 }, NOW + 2000);
-    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null })).toHaveLength(1);
+    expect(findCollisionCandidates(db, { limit: 10, selfPersonId: null, now: NOW })).toHaveLength(
+      1,
+    );
   });
 });
 

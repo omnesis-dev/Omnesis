@@ -20,15 +20,19 @@ import {
 } from "../../data/repositories/SourceInventoryRepository.js";
 import { DERIVATION_STAGES } from "../../domain/DocumentDerivation.js";
 import { createTemporalAnnotationTables } from "../../enrichment/temporal-annotations/storage.js";
-import { createBrief, setBriefState, getBrief } from "../storage/briefs.js";
+import {
+  createObservation,
+  getObservation,
+  transitionObservation,
+} from "../storage/observations.js";
 import { createAnnotationStorageTables } from "../storage/annotations.js";
 import { createPersonAnnotationStorageTables } from "../storage/person-annotations.js";
 import { retireLoop } from "../storage/retired-loops.js";
 import { createOpenLoop, updateOpenLoop, getOpenLoop } from "../storage/open-loops.js";
 import { resolveBrainSettings } from "../config.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
-import { createBriefClaimsTables } from "../storage/brief-claims.js";
 import { OMNESIS_CHAT_SOURCE_ID } from "../../sources/omnesis-chat/ids.js";
+import { writerHandlers } from "../../scheduler/writer-handlers.js";
 import { makeOutcomeAssessment, recordOutcomeAssessmentAttempt } from "./outcome-assessment.js";
 import { convertKnowledgeOwner } from "./owner-adapters.js";
 import { installKnowledgeOwnerTriggers } from "./owner-triggers.js";
@@ -38,6 +42,7 @@ import { readKnowledgeDecisionAudit } from "./decision-query.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { directKnowledgeGate } from "./writer.js";
+import { captureKnowledgeCanonicalFence } from "./canonical-fence.js";
 import { setKnowledgeLink } from "./links.js";
 import { CONTEXTUAL_VERIFIER } from "./claim-context.js";
 import { KnowledgeService } from "./service.js";
@@ -73,7 +78,6 @@ beforeEach(() => {
     `CREATE TABLE documents(id TEXT PRIMARY KEY,source_id TEXT NOT NULL,content_hash TEXT NOT NULL,content TEXT NOT NULL,title TEXT NOT NULL,source_created_at TEXT,source_updated_at TEXT)`,
   );
   createBriefsStorageTables(db);
-  createBriefClaimsTables(db);
   createTemporalAnnotationTables(db);
   createKnowledgeTables(db);
   createKnowledgeWorkTables(db);
@@ -442,7 +446,7 @@ describe("knowledge coordinator", () => {
       source(`prolific-${index}`, "v1", "Archived workshop record.", now - (40 + index) * 86400000);
       db.prepare("UPDATE documents SET source_id='alpha' WHERE id=?").run(`prolific-${index}`);
     }
-    source("quiet", "v1", "Archived workshop record.", now - 100 * 86400000);
+    source("quiet", "v1", "Archived workshop record.", now - 80 * 86400000);
     db.prepare("UPDATE documents SET source_id='zeta' WHERE id='quiet'").run();
     db.exec("DELETE FROM knowledge_changes");
     await engine.tick();
@@ -509,6 +513,102 @@ describe("knowledge coordinator", () => {
     expect(
       db.prepare("SELECT 1 FROM knowledge_work WHERE reason='discovery'").get(),
     ).toBeUndefined();
+  });
+
+  it("admits only history dated within its horizon, by the document's own date", async () => {
+    settings = resolveBrainSettings({
+      bootstrap: {
+        enabled: true,
+        batchSize: 10,
+        maxRuns: 50,
+        maxRunsPerDay: 50,
+        backlogTarget: 20,
+      },
+      knowledge: { bootstrapBatchSize: 10 },
+    });
+    expect(settings.bootstrap.horizonMs).toBe(90 * 86400000);
+    db.prepare(
+      "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+    ).run(String(now));
+    for (const [id, days] of [
+      ["within-30", 30],
+      ["within-89", 89],
+      ["beyond-91", 91],
+      ["beyond-400", 400],
+    ] as const)
+      source(id, "v1", "Archived workshop record.", now - days * 86400000);
+    db.exec("DELETE FROM knowledge_changes");
+    const admitted = () =>
+      db
+        .prepare(
+          "SELECT subject_id FROM knowledge_work WHERE reason='discovery' ORDER BY subject_id",
+        )
+        .all();
+    await engine.tick();
+    await engine.tick();
+    expect(admitted()).toEqual([{ subject_id: "within-30" }, { subject_id: "within-89" }]);
+    // Raising the horizon is live: the next pass reaches further back.
+    settings = resolveBrainSettings({
+      bootstrap: {
+        enabled: true,
+        batchSize: 10,
+        maxRuns: 50,
+        maxRunsPerDay: 50,
+        backlogTarget: 20,
+        horizon: "1y",
+      },
+      knowledge: { bootstrapBatchSize: 10 },
+    });
+    await engine.tick();
+    expect(admitted()).toEqual([
+      { subject_id: "beyond-91" },
+      { subject_id: "within-30" },
+      { subject_id: "within-89" },
+    ]);
+  });
+
+  it("retires pending historical work the horizon excludes, even while admission is paused", async () => {
+    settings = resolveBrainSettings({ bootstrap: { enabled: false, horizon: "60d" } });
+    source("aged-out", "v1", "Archived workshop record.", now - 75 * 86400000);
+    source("in-scope", "v1", "Archived workshop record.", now - 20 * 86400000);
+    source("live-edit", "v1", "Archived workshop record.", now - 75 * 86400000);
+    db.exec("DELETE FROM knowledge_changes");
+    for (const [id, reason] of [
+      ["aged-out", "discovery"],
+      ["in-scope", "discovery"],
+      ["live-edit", "change"],
+    ] as const)
+      await writeGate["knowledge.enqueue"](
+        {
+          id: `kw-${id}`,
+          subjectId: id,
+          subjectKind: "source",
+          reason,
+          inputRevision: "v1",
+          tier: "routine",
+          dueAt: now + 86400000,
+        },
+        now,
+      );
+    const counted = db
+      .prepare<
+        [],
+        { count: number }
+      >("SELECT SUM(count) AS count FROM knowledge_historical_admissions")
+      .get()!.count;
+    await engine.tick();
+    await engine.tick();
+    expect(
+      db.prepare("SELECT subject_id,reason FROM knowledge_work ORDER BY subject_id").all(),
+    ).toEqual([
+      { subject_id: "in-scope", reason: "discovery" },
+      // Reactive work is never historical admission, whatever its date.
+      { subject_id: "live-edit", reason: "change" },
+    ]);
+    // Retirement does not refund admission already counted against the caps.
+    expect(
+      db.prepare("SELECT SUM(count) AS count FROM knowledge_historical_admissions").get(),
+    ).toEqual({ count: counted });
   });
 
   it("fills a same-source historical daily allowance without advancing semantic time", async () => {
@@ -2506,7 +2606,7 @@ describe("explicit initial inventory admission", () => {
   }
   it("admits recent inventory newest-first while old inventory waits for historical consent", async () => {
     createSourceInventoryTables(db);
-    inventorySource("old", Date.parse("2020-01-01T00:00:00Z"));
+    inventorySource("old", now - 60 * 86_400_000);
     inventorySource("recent-older", now - 10 * 86_400_000);
     inventorySource("recent-newer", now - 86_400_000);
     await engine.tick();
@@ -2536,6 +2636,17 @@ describe("explicit initial inventory admission", () => {
     expect(
       db.prepare("SELECT SUM(count) AS count FROM knowledge_historical_admissions").get(),
     ).toEqual({ count: 1 });
+  });
+  it("does not admit recent inventory dated before the history horizon", async () => {
+    createSourceInventoryTables(db);
+    settings = resolveBrainSettings({ bootstrap: { enabled: false, horizon: "7d" } });
+    inventorySource("inside", now - 2 * 86_400_000);
+    inventorySource("beyond", now - 10 * 86_400_000);
+    await engine.tick();
+    await engine.tick();
+    expect(
+      db.prepare("SELECT subject_id FROM knowledge_work WHERE subject_kind='source'").all(),
+    ).toEqual([{ subject_id: "inside" }]);
   });
   it("keeps old late arrivals and edits reactive while an initial import remains partial", async () => {
     createSourceInventoryTables(db);
@@ -2692,36 +2803,31 @@ it("keeps untouched eligible claims pending after a partial page save", async ()
   ).toEqual({ status: "unchanged" });
 });
 
-it("traverses lost support through a historical brief without rewriting its snapshot", async () => {
+it("never offers an observation for repair when its evidence changes, and leaves it unrewritten", async () => {
   source();
-  createBrief(
+  createObservation(
     db,
     {
-      id: "past-brief",
+      id: "past-observation",
       createdByRun: "fixture",
-      kind: "info",
-      title: "Workshop",
-      description: "The workshop is on Friday.",
-      confidence: 0.7,
-      urgency: 0.3,
+      summary: "The workshop is on Friday.",
       citations: ["input"],
     },
     now,
   );
-  convertKnowledgeOwner(db, "brief", "past-brief", now);
+  convertKnowledgeOwner(db, "observation", "past-observation", now);
   await service.save({
-    id: "past-brief",
-    ownerId: "past-brief",
-    kind: "brief",
-    title: "Workshop",
-    markdown:
-      '<claim id="fact" refs="source:input">## Description\nThe workshop is on Friday.\n\n## Body\n</claim>',
+    id: "past-observation",
+    ownerId: "past-observation",
+    kind: "observation",
+    title: "The workshop is on Friday.",
+    markdown: '<claim id="fact" refs="source:input">The workshop is on Friday.</claim>',
     expectedRevision: 1,
     inputVersions: { "source:input": "v1" },
   });
-  await wiki("durable", "brief:past-brief#claim:fact", "The workshop is on Friday.");
-  setBriefState(db, "past-brief", "dismissed_already_handled", now);
-  const snapshot = getBrief(db, "past-brief")!;
+  await wiki("durable", "source:input", "The workshop is on Friday.");
+  transitionObservation(db, "past-observation", { state: "shipped" }, now);
+  const snapshot = getObservation(db, "past-observation")!;
   db.exec("DELETE FROM knowledge_changes");
   source("input", "v2", "The workshop is on Saturday.");
   await engine.tick();
@@ -2730,15 +2836,11 @@ it("traverses lost support through a historical brief without rewriting its snap
   await engine.completeSource(batch.id, batch.runId, discovery.id, discovery.inputFingerprint);
   const offered = await engine.next(batch.id, batch.runId);
   expect(offered.items.map((item) => item.id)).toContain("durable");
-  expect(offered.items.map((item) => item.id)).not.toContain("past-brief");
-  expect(
-    listKnowledgeFrontier(db, batch.id).find((item) => item.nodeId === "past-brief")?.status,
-  ).toBe("skipped");
-  expect(service.reference("brief:past-brief#claim:fact")).toMatchObject({
-    stale: true,
-    verified: false,
-  });
-  expect(getBrief(db, "past-brief")).toEqual(snapshot);
+  expect(offered.items.map((item) => item.id)).not.toContain("past-observation");
+  expect(getObservation(db, "past-observation")).toEqual(snapshot);
+  expect(getKnowledgeNode(db, "past-observation")?.markdown).toBe(
+    '<claim id="fact" refs="source:input">The workshop is on Friday.</claim>',
+  );
 });
 
 describe("durable discovery input context", () => {
@@ -3648,3 +3750,45 @@ it.each(["open", "done", "missing"] as const)(
     expect(decisionStates).not.toContainEqual(expect.objectContaining({ id: "loop-proof-policy" }));
   },
 );
+
+it("leaves an owner a source discovery just created to that discovery, not a review of its own", async () => {
+  settings = resolveBrainSettings({
+    bootstrap: { enabled: false },
+    knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
+  });
+  installKnowledgeOwnerTriggers(db);
+  source("input", "v1", "Please confirm the rehearsal slot before Friday.");
+  await engine.tick();
+  const batch = batchFor("input");
+  const offered = (await engine.next(batch.id, batch.runId)).items.find((item) => item.source)!;
+  expect(
+    writerHandlers["knowledge.canonicalMutation"](
+      db,
+      captureKnowledgeCanonicalFence(db, { batchId: batch.id, runId: batch.runId }),
+      "cognition.openLoopCreate",
+      [
+        {
+          id: "rehearsal",
+          createdByRun: batch.runId,
+          title: "Confirm the rehearsal slot",
+          description: "Please confirm the rehearsal slot before Friday.",
+          confidence: 0.9,
+          importance: 0.7,
+          docs: ["input"],
+        },
+        { runId: batch.runId, priors: [] },
+        now,
+      ],
+    ),
+  ).toMatchObject({ ok: true });
+  // The loop is due for review at once, and a scheduler tick runs while the
+  // discovery that created it is still in flight.
+  await engine.tick();
+  expect(
+    db.prepare("SELECT 1 FROM knowledge_work WHERE subject_id='rehearsal'").get(),
+  ).toBeUndefined();
+  await engine.completeSource(batch.id, batch.runId, offered.id, offered.inputFingerprint);
+  const view = await engine.next(batch.id, batch.runId);
+  expect(view.interrupted).toBeUndefined();
+  expect(view.items.map((item) => item.id)).toEqual(["rehearsal"]);
+});

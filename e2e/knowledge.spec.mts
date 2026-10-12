@@ -9,7 +9,7 @@ import {
   createOpenLoop,
   appendOpenLoopLedger,
 } from "../packages/gateway/src/brain/storage/open-loops.js";
-import { createBrief } from "../packages/gateway/src/brain/storage/briefs.js";
+import { createObservation } from "../packages/gateway/src/brain/storage/observations.js";
 import {
   recordSettledCognitionRun,
   enqueueCognitionRun,
@@ -771,9 +771,8 @@ test("brain navigation remains usable across its existing sections", async ({ pa
   await page.goto(url(`${route}?kind=loop&view=retired`));
   await expect(page.getByRole("combobox", { name: "Loop status" })).toHaveValue("retired");
   await expect(page.getByRole("navigation", { name: "Outcome views" })).toHaveCount(0);
-  await page.goto(url("/portal/debug/cognition/briefs"));
-  await expect(page).toHaveURL(/knowledge\?kind=brief$/);
-  await expect(page.getByRole("combobox", { name: "Brief status" })).toHaveValue("all");
+  await page.goto(url(`${route}?kind=observation`));
+  await expect(page.getByRole("combobox", { name: "Observation status" })).toHaveValue("all");
   for (const section of [
     "data",
     "sql",
@@ -913,17 +912,13 @@ test("populated operational readers preserve mobile navigation", async ({ page }
         },
         now,
       );
-      createBrief(
+      createObservation(
         db,
         {
-          id: "browser-workshop-brief",
+          id: "browser-workshop-observation",
           createdByRun: "browser-review-run",
-          kind: "loop",
-          title: "Workshop preparation",
-          description: "Materials are the remaining preparation step.",
-          body: "## Next step\n\nGather paper and pencils for the workshop.",
-          confidence: 0.9,
-          urgency: 0.5,
+          summary: "Workshop preparation: gather paper and pencils.",
+          why: "Materials are the remaining preparation step.",
           relatedLoopIds: ["browser-materials-loop"],
         },
         now,
@@ -939,15 +934,16 @@ test("populated operational readers preserve mobile navigation", async ({ page }
   await allEntries.getByRole("link", { name: /Workshop preparation/ }).click();
   await expect(page.getByRole("combobox", { name: "Knowledge type" })).toHaveValue("");
   await expect(page).toHaveURL(
-    (value) => value.searchParams.get("entryKind") === "brief" && !value.searchParams.has("kind"),
+    (value) =>
+      value.searchParams.get("entryKind") === "observation" && !value.searchParams.has("kind"),
   );
-  await expect(page.locator(".kn-reading-pane")).toContainText("Gather paper and pencils");
+  await expect(page.locator(".kn-reading-pane")).toContainText("gather paper and pencils");
   await allEntries.getByRole("link", { name: /Prepare name cards/ }).click();
   await expect(page.getByRole("combobox", { name: "Knowledge type" })).toHaveValue("");
   await expect(page.getByRole("region", { name: "Loop details" })).toBeVisible();
   for (const [section, id] of [
     ["loops", "browser-materials-loop"],
-    ["briefs", "browser-workshop-brief"],
+    ["observations", "browser-workshop-observation"],
     ["runs", "browser-review-run"],
   ]) {
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -975,7 +971,7 @@ test("populated operational readers preserve mobile navigation", async ({ page }
       await expect(page.locator(".kn-loop-activity")).toContainText("Workshop preparation");
       await expect(page.locator(".kn-loop-activity")).toContainText("Scheduled checks (1)");
     }
-    if (section === "briefs")
+    if (section === "observations")
       await expect(page.locator(".cognition-content")).toContainText(
         "Materials are the remaining preparation step.",
       );
@@ -989,7 +985,7 @@ test("populated operational readers preserve mobile navigation", async ({ page }
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(
       page.getByRole("link", {
-        name: new RegExp(`Back to ${["loops", "briefs"].includes(section) ? "library" : section}$`),
+        name: new RegExp(`Back to ${section === "loops" ? "library" : section}$`),
       }),
     ).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -1002,12 +998,12 @@ test("populated operational readers preserve mobile navigation", async ({ page }
     });
     await page
       .getByRole("link", {
-        name: new RegExp(`Back to ${["loops", "briefs"].includes(section) ? "library" : section}$`),
+        name: new RegExp(`Back to ${section === "loops" ? "library" : section}$`),
       })
       .click();
     await expect(page).toHaveURL(
-      ["loops", "briefs"].includes(section)
-        ? new RegExp(`/cognition/knowledge(?:\\?kind=${section === "briefs" ? "brief" : "loop"})?$`)
+      section === "loops"
+        ? /\/cognition\/knowledge(?:\?kind=loop)?$/
         : new RegExp(`/cognition/${section}$`),
     );
     if (section === "loops") {

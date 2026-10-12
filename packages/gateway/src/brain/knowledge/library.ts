@@ -19,7 +19,7 @@ export interface KnowledgeLibraryOptions {
 interface LibraryRow {
   id: string;
   kind: KnowledgeNodeKind;
-  libraryType: "knowledge" | "loop" | "brief" | "retired-loop";
+  libraryType: "knowledge" | "loop" | "observation" | "retired-loop";
   title: string;
   plainText: string;
   updatedAt: number;
@@ -30,15 +30,15 @@ interface LibraryRow {
 function librarySql(db: Database.Database): string {
   return `
     SELECT n.id,n.kind,'knowledge' AS libraryType,n.title,n.plain_text AS plainText,n.updated_at AS updatedAt,n.validity,n.fields_json AS canonicalFields,NULL AS state
-    FROM knowledge_nodes n WHERE n.kind NOT IN ('loop','brief') AND ${knowledgeOwnerReadPredicate(db, "n.id")}
+    FROM knowledge_nodes n WHERE n.kind NOT IN ('loop','observation') AND ${knowledgeOwnerReadPredicate(db, "n.id")}
     UNION ALL
     SELECT l.id,'loop','loop',l.title,l.description,l.last_update,NULL,
       json_object('state',l.state,'importance',l.importance,'deadline',json(l.deadline_json),'createdAt',l.created_at,'retiredAt',r.retired_at,'recurrenceCount',r.recurrence_count,'cadenceDays',r.cadence_days),l.state
     FROM open_loops l LEFT JOIN retired_loops r ON r.id=l.id WHERE ${knowledgeOwnerReadPredicate(db, "l.id")}
     UNION ALL
-    SELECT b.id,'brief','brief',b.title,b.description,b.updated_at,NULL,
-      json_object('state',b.state,'briefKind',b.kind,'createdAt',b.created_at,'confidence',b.confidence,'urgency',b.urgency,'relevantUntil',b.relevant_until,'nextShow',b.next_show,'eventAt',b.event_at,'readAt',b.read_at),b.state
-    FROM briefs b WHERE ${knowledgeOwnerReadPredicate(db, "b.id")}
+    SELECT o.id,'observation','observation',o.summary,o.why,o.updated_at,NULL,
+      json_object('state',o.state,'closeReason',o.close_reason,'createdAt',o.created_at,'createdByRun',o.created_by_run,'userAuthored',json(CASE WHEN o.user_authored=1 THEN 'true' ELSE 'false' END),'windowStart',o.window_start,'relevantUntil',o.relevant_until,'notedScores',json(o.noted_scores_json),'scores',json(o.scores_json),'wouldPushAt',o.would_push_at,'shippedAt',o.shipped_at,'shippedConversationId',o.shipped_conversation_id,'shippedMessageId',o.shipped_message_id,'userAction',o.user_action,'closedAt',o.closed_at),o.state
+    FROM observations o WHERE ${knowledgeOwnerReadPredicate(db, "o.id")}
     UNION ALL
     SELECT 'retired-loop:'||r.id,'loop','retired-loop',r.title,r.description,r.retired_at,NULL,
       json_object('retired',json('true'),'originalLoopId',r.id,'state',r.outcome,'importance',r.importance,'deadline',json(r.deadline_json),'createdAt',r.created_at,'retiredAt',r.retired_at,'recurrenceCount',r.recurrence_count,'cadenceDays',r.cadence_days,'actors',json(r.actors_json),'involved',json(r.involved_json)),r.outcome
@@ -56,10 +56,9 @@ function statusPredicate(kind: KnowledgeNodeKind | undefined, status: string | u
     if (["open", "snoozed", "done", "dismissed", "decayed", "deleted"].includes(status))
       return "state=@status";
   }
-  if (kind === "brief") {
-    if (status === "dismissed") return "state LIKE 'dismissed_%' AND state!='dismissed_snoozed'";
-    if (status === "snoozed") return "state='dismissed_snoozed'";
-    if (["unread", "read", "snoozed"].includes(status)) return "state=@status";
+  if (kind === "observation") {
+    if (status === "open") return "state IN ('live','held')";
+    if (["live", "held", "shipped", "dropped"].includes(status)) return "state=@status";
   }
   throw new BadRequestError("Invalid Library status for this kind");
 }
@@ -120,7 +119,7 @@ export function readKnowledgeLibrary(db: Database.Database, options: KnowledgeLi
       const value = { ...item(row), subjectRef: readKnowledgeSubjectRef(db, row.id, row.kind) };
       // Canonical cards retain their synthesis freshness without manufacturing
       // a freshness verdict for owners that have never had a mirror.
-      if (row.libraryType === "loop" || row.libraryType === "brief")
+      if (row.libraryType === "loop" || row.libraryType === "observation")
         value.validity = mirrorValidity.get(row.id, row.kind)?.validity ?? null;
       if (value.validity !== null && knowledgeNodeFence(db, row.id).stale) value.validity = "stale";
       return value;

@@ -19,19 +19,6 @@ export { createCognitionCoverageTable, hasAnyCognitionCoverage } from "./storage
 // table, but the predicates they serve are this module's, so the DDL does too —
 // and schema setup and the migration call the same definition.
 export { createBootstrapMarkerIndexes } from "./storage/bootstrap.js";
-// Brief-claims sidecar — the per-brief atomic asserted claims. What crosses
-// the module boundary: the DDL (schema setup + migration 58), the
-// evidence-doc lifecycle ops the write gate dispatches (content-change
-// invalidation + the privacy cascade), and the existence guard the
-// DocumentService privacy-delete seam reads. The set writes ride inside the
-// brief create/update writer ops (storage/briefs.ts) and the
-// feature-internal readers import the submodule directly.
-export {
-  createBriefClaimsTables,
-  invalidateBriefClaimsForDoc,
-  cascadeBriefClaimPrivacyDelete,
-  hasAnyBriefClaims,
-} from "./storage/brief-claims.js";
 // Durable doc-annotation store — DDL + write/read ops. Some are consumed
 // by the write gate (single-writer), the rest read directly at prompt-build
 // and invalidation time; `listLiveAnnotationsForDoc` also backs the
@@ -54,7 +41,7 @@ export {
   type DocAnnotationRow,
   type AnnotationInvalidationResult,
 } from "./storage/annotations.js";
-// Consumption provenance — which briefs/loops were built on which annotation
+// Consumption provenance — which observations/loops were built on which annotation
 // priors. The DDL crosses the module boundary (schema setup + migration 59);
 // The mutation helper is consumed by the write gate so dependent writes and
 // their edges share one transaction; reads stay feature-internal imports.
@@ -88,7 +75,7 @@ export {
   type UpdatePersonAnnotationPatch,
   type PersonAnnotationRow,
 } from "./storage/person-annotations.js";
-// Open-loop / brief / notes write ops, consumed by the write gate (the
+// Open-loop / observation / notes write ops, consumed by the write gate (the
 // Cognition Steward's tools mutate through it — single-writer invariant).
 export {
   cascadeOpenLoopPrivacyDelete,
@@ -104,18 +91,24 @@ export {
   type DeleteOpenLoopResult,
 } from "./storage/open-loops.js";
 export {
-  createBrief,
-  updateBrief,
-  retractBriefsForResolvedLoop,
-  retireBrief,
-  markBriefRead,
-  setBriefThreadConversation,
-  restampBriefThreadConversation,
-  resurfaceDueSnoozedBriefs,
-  type CreateBriefInput,
-  type UpdateBriefInput,
-  type MarkBriefReadResult,
-} from "./storage/briefs.js";
+  createObservation,
+  transitionObservation,
+  recordObservationScores,
+  recordObservationClaims,
+  expireObservations,
+  dropObservationsForResolvedLoop,
+  setObservationUserAction,
+  pruneClosedObservations,
+  hasAnyObservations,
+  type CreateObservationInput,
+  type ObservationTransition,
+  type PruneObservationsResult,
+} from "./storage/observations.js";
+export {
+  replaceMorningBriefItems,
+  markMorningBriefSent,
+  type MarkMorningBriefSentResult,
+} from "./storage/morning-brief-items.js";
 export {
   writeCognitionNotes,
   appendCognitionNotes,
@@ -124,14 +117,7 @@ export {
   type AppendCognitionNotesResult,
   type EditCognitionNotesResult,
 } from "./storage/notes.js";
-// Dismissal (state flip + feedback-run enqueue, atomic) — consumed by the
-// write gate; the HTTP dismiss route is its only production caller.
-export {
-  dismissBriefAndEnqueueFeedback,
-  type DismissBriefInput,
-  type DismissBriefResult,
-} from "./feedback.js";
-export type { OpenLoopRow, BriefRow } from "./storage/types.js";
+export type { OpenLoopRow, ObservationRow } from "./storage/types.js";
 export { OPEN_LOOP_SOURCE_ID, OPEN_LOOP_PROVIDER_ID } from "./open-loop-source/source-meta.js";
 // NOTE: `cognition-authored.js` is deliberately NOT re-exported here. Its
 // consumers are the watch runtime and the retrieval layer

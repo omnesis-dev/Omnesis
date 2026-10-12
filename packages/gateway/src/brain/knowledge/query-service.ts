@@ -4,6 +4,7 @@
 import { NotFoundError } from "../../http/errors.js";
 import { readRetrievalReconsiderationStatus } from "./retrieval-reconsideration.js";
 import {
+  readParkedKnowledgeWorkSummary,
   readPendingKnowledgeWork,
   type PendingKnowledgeWorkOptions,
 } from "./pending-work-query.js";
@@ -92,6 +93,9 @@ export class KnowledgeQueryService {
           "SELECT status,tier,reason,last_error AS readiness,COUNT(*) AS count,MIN(due_at) AS nextDueAt FROM knowledge_work GROUP BY status,tier,reason,last_error",
         )
         .all(),
+      // Work a failed batch could not finish within its retry cap; it waits
+      // for a new input revision. List it with pending-work readiness=parked.
+      parked: readParkedKnowledgeWorkSummary(this.db),
       coverage: this.db
         .prepare(
           "SELECT phase,policy_version AS policyVersion,status,COUNT(*) AS count FROM knowledge_discovery_coverage GROUP BY phase,policy_version,status",

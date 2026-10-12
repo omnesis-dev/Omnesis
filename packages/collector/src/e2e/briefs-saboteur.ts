@@ -20,11 +20,11 @@
  *    requests treated as fresh open obligations (`resolution_recall`
  *    must fall);
  *  - **silent close of an ambiguous resolution** — the partial lease
- *    fulfilment is treated as unambiguous: the loop is closed and its
- *    briefs deleted instead of attaching a confirmation brief
- *    (`silent_close_violations` must count it);
+ *    fulfilment is treated as unambiguous: the loop is closed instead of
+ *    noting a confirmation observation (`silent_close_violations` must
+ *    count it);
  *  - **unjustified loop** — the boring no-action email is escalated into
- *    a loop + brief (`loop_precision` must fall);
+ *    a loop + observation (`loop_precision` must fall);
  *  - **ignored update** — a venue option for the decision thread is read
  *    and dropped, leaving no trace on the loop (`update_recall` must
  *    fall);
@@ -55,25 +55,20 @@ export const SABOTEUR_DEFECTS = {
   /**
    * Arcs whose tracked obligation is never resolved: the invoice loop the
    * duplicate-mint leaves open, the long-horizon contract loop its chaser
-   * leaves open, BOTH out-of-order arcs treated as fresh demands (open
-   * loops for already-settled obligations), and the already-handled
-   * dismissal whose loop the feedback saboteur DELETES instead of closing
-   * as done (no done record remains to observe).
+   * leaves open, and BOTH out-of-order arcs treated as fresh demands (open
+   * loops for already-settled obligations).
    */
-  skippedResolutions: 5,
-  /** Ambiguous resolutions closed silently instead of confirm-briefed. */
+  skippedResolutions: 4,
+  /** Ambiguous resolutions closed silently instead of raising a confirmation. */
   silentClosures: 1,
   /**
    * Loops left standing for datums/arcs whose gold expects none: the
-   * boring no-action email escalated into a loop + brief; the mistaken
-   * (retracted) purchase-order loop closed as `done` — the wrong verb
-   * fabricates a fulfilment record for an obligation that never belonged
-   * to the user; the not-relevant dismissal the feedback saboteur ignores,
-   * leaving the unwanted loop open; the wrong dismissal it closes as done
-   * (fabricating a fulfilment for a misread); and the acknowledged info
-   * brief it answers by minting a follow-up loop nobody asked for.
+   * boring no-action email escalated into a loop + observation, and the
+   * mistaken (retracted) purchase-order loop closed as `done` — the wrong
+   * verb fabricates a fulfilment record for an obligation that never
+   * belonged to the user.
    */
-  unjustifiedLoops: 5,
+  unjustifiedLoops: 2,
   /** Relevant later datums whose run leaves no trace on the tracked loop. */
   ignoredUpdates: 1,
   /**
@@ -83,15 +78,6 @@ export const SABOTEUR_DEFECTS = {
    * bait's own loop is never tracked.
    */
   wrongMerges: 2,
-  /**
-   * Tracked loops the feedback saboteur ERASES with the wrong verb: the
-   * already-handled dismissal deletes its loop instead of marking it done,
-   * and the snoozed dismissal deletes its loop ("later" read as "never"),
-   * so arcs that expect a tracked loop end with none. Planted by the
-   * scripted server's `feedbackPolicy: "saboteur"`, not by this table
-   * (feedback runs carry no document title to key on).
-   */
-  vanishedLoops: 2,
 } as const;
 
 /**
@@ -116,13 +102,13 @@ export function saboteurBehaviors(set: ArcSet): Map<string, ArcDocBehavior> {
       marker: invoiceMarker,
       forceCreate: true,
       loopTitle: `Chase the ${invoiceMarker} payment`,
-      briefTitle: `Follow up on ${invoiceMarker}`,
+      observation: `Follow up on ${invoiceMarker}`,
       searchQuery: `invoice ${invoiceMarker}`,
     },
   });
 
   // Defect 3: the ambiguous lease fulfilment is closed silently — no
-  // confirmation brief, attached briefs deleted.
+  // confirmation observation; the close drops its open observations.
   const lease = arcById(set, "request");
   swap("request", 1, {
     onCreated: {
@@ -148,12 +134,12 @@ export function saboteurBehaviors(set: ArcSet): Map<string, ArcDocBehavior> {
       marker: depositMarker,
       forceCreate: true,
       loopTitle: `Wire the deposit (${depositMarker})`,
-      briefTitle: `Deposit reminder (${depositMarker})`,
+      observation: `Deposit reminder (${depositMarker})`,
       searchQuery: depositMarker,
     },
   });
 
-  // Defect 4: the no-action email becomes a loop + brief.
+  // Defect 4: the no-action email becomes a loop + observation.
   const boring = arcById(set, "distractor-boring");
   const boringTitle = boring.steps[0]!.doc.title;
   swap("distractor-boring", 0, {
@@ -161,7 +147,7 @@ export function saboteurBehaviors(set: ArcSet): Map<string, ArcDocBehavior> {
       kind: "commit",
       marker: boringTitle,
       loopTitle: `Reply to: ${boringTitle}`,
-      briefTitle: `Reply needed: ${boringTitle}`,
+      observation: `Reply needed: ${boringTitle}`,
       searchQuery: boringTitle,
     },
   });
@@ -176,13 +162,13 @@ export function saboteurBehaviors(set: ArcSet): Map<string, ArcDocBehavior> {
       marker: rentalMarker,
       forceCreate: true,
       loopTitle: `Pick up the marquee (${rentalMarker})`,
-      briefTitle: `Marquee (${rentalMarker}) reminder`,
+      observation: `Marquee (${rentalMarker}) reminder`,
       searchQuery: rentalMarker,
     },
   });
 
   // Defect 5 (skipped resolution #2): the late-syncing payment request is
-  // treated as a fresh obligation — an OPEN loop + brief for an already-
+  // treated as a fresh obligation — an OPEN loop + observation for an already-
   // settled registration, instead of recognizing the earlier confirmation.
   const outOfOrder = arcById(set, "out-of-order");
   const regMarker = outOfOrder.marker!;
@@ -191,7 +177,7 @@ export function saboteurBehaviors(set: ArcSet): Map<string, ArcDocBehavior> {
       kind: "commit",
       marker: regMarker,
       loopTitle: `Pay registration ${regMarker}`,
-      briefTitle: `Registration ${regMarker} needs payment`,
+      observation: `Registration ${regMarker} needs payment`,
       searchQuery: `registration ${regMarker}`,
     },
   });
@@ -206,7 +192,7 @@ export function saboteurBehaviors(set: ArcSet): Map<string, ArcDocBehavior> {
       kind: "commit",
       marker: waiverMarker,
       loopTitle: `Send waiver ${waiverMarker}`,
-      briefTitle: `Waiver ${waiverMarker} outstanding`,
+      observation: `Waiver ${waiverMarker} outstanding`,
       searchQuery: `waiver ${waiverMarker}`,
     },
   });
@@ -221,7 +207,7 @@ export function saboteurBehaviors(set: ArcSet): Map<string, ArcDocBehavior> {
       marker: contractMarker,
       forceCreate: true,
       loopTitle: `Chase the ${contractMarker} signature`,
-      briefTitle: `Contract ${contractMarker} follow-up`,
+      observation: `Contract ${contractMarker} follow-up`,
       searchQuery: `contract ${contractMarker}`,
     },
   });
@@ -284,7 +270,7 @@ export function saboteurBehaviors(set: ArcSet): Map<string, ArcDocBehavior> {
       marker: headcountMarker,
       forceCreate: true,
       loopTitle: `Send the number (${headcountMarker}) they are waiting on`,
-      briefTitle: `Someone is chasing a number (${headcountMarker})`,
+      observation: `Someone is chasing a number (${headcountMarker})`,
       searchQuery: `headcount ${headcountMarker}`,
     },
   });

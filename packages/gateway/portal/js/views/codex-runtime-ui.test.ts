@@ -234,22 +234,22 @@ describe("Codex runtime update UI", () => {
     expect(host.textContent).toContain("No other capability was changed.");
   });
 
-  it("selects an advertised Codex model for the brief judge", async () => {
-    const judgeTitle = ["Brief", "Judge"].join(" ");
+  it("selects an advertised Codex model for the entailment verifier", async () => {
+    const judgeTitle = ["Entailment", "Verifier"].join(" ");
     const judgeOverview = {
       ...overview,
-      capabilities: [{ role: "brief-judge", title: judgeTitle }],
+      capabilities: [{ role: "entailment-verifier", title: judgeTitle }],
       presets: [],
       catalog: [],
       inference: {
         ...overview.inference,
         backends: {},
-        codex: { ...overview.inference.codex, configured: true, loggedIn: true, status: "ok", models: ["fixture-judge"], modelRoles: { "fixture-judge": ["brief-judge"] } },
+        codex: { ...overview.inference.codex, configured: true, loggedIn: true, status: "ok", models: ["fixture-judge"], modelRoles: { "fixture-judge": ["entailment-verifier"] } },
       },
     };
     const onPickCodex = vi.fn();
     await act(async () => render(h(ModelConfigModal, {
-      role: "brief-judge",
+      role: "entailment-verifier",
       capTitle: judgeTitle,
       onPickCodex,
       overview: judgeOverview,

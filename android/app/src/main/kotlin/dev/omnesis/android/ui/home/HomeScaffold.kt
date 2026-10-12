@@ -47,12 +47,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import dev.omnesis.android.transport.dto.BriefsMenuEntry
 import dev.omnesis.android.ui.agent.AgentScreen
 import dev.omnesis.android.access.AccessAuthorizationPairingIdentity
 import dev.omnesis.android.ui.access.AccessAuthorizationScreen
 import dev.omnesis.android.ui.access.AccessPendingRequestBanner
-import dev.omnesis.android.ui.briefs.BriefsScreen
 import dev.omnesis.android.ui.common.GlobalHealthWarningBanner
 import dev.omnesis.android.ui.common.NotificationSetupIssue
 import dev.omnesis.android.ui.common.showsNotificationIssueGlobally
@@ -86,6 +84,7 @@ import dev.omnesis.android.ui.watches.WatchesScreen
 import dev.omnesis.android.ui.privacy.PrivacyScreen
 import dev.omnesis.android.ui.privacy.PrivacySubscriptionApprovalScreen
 import dev.omnesis.android.ui.search.SearchScreen
+import dev.omnesis.android.ui.tasks.TasksScreen
 import dev.omnesis.android.ui.settings.SettingsScreen
 import dev.omnesis.android.setup.flow.PhoneSetupEntry
 import dev.omnesis.android.ui.phonesetup.PhoneSetupScreen
@@ -110,8 +109,8 @@ fun HomeScaffold(
     val connection by vm.connection.collectAsStateWithLifecycle()
     val agentState by vm.agentState.collectAsStateWithLifecycle()
     val experimental by vm.experimentalEnabled.collectAsStateWithLifecycle()
-    val briefsMenuEntry by vm.briefsMenuEntry.collectAsStateWithLifecycle()
-    val briefsUnread by vm.briefsUnreadCount.collectAsStateWithLifecycle()
+    val tasksAvailable by vm.tasksAvailable.collectAsStateWithLifecycle()
+    val tasksTodayCount by vm.tasksTodayCount.collectAsStateWithLifecycle()
     val privacyPending by vm.privacyPendingCount.collectAsStateWithLifecycle()
     val pendingApprovalToPresent by vm.pendingApprovalToPresent.collectAsStateWithLifecycle()
     val captureRequest by vm.captureRequest.collectAsStateWithLifecycle()
@@ -170,7 +169,6 @@ fun HomeScaffold(
 
     var drawerOpen by remember { mutableStateOf(false) }
     var pendingSheetOpen by remember { mutableStateOf(false) }
-    var requestedModelPickerRole by rememberSaveable { mutableStateOf<String?>(null) }
     var focusedSourcePermissionId by rememberSaveable { mutableStateOf<String?>(null) }
     var focusedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var attentionNow by remember { mutableStateOf(Instant.now()) }
@@ -203,8 +201,8 @@ fun HomeScaffold(
         // neither is pushed, so revealing the menu is the moment to ask.
         vm.refreshConversations()
         vm.refreshGatewayStatus()
-        vm.refreshBriefsUnreadCount()
         vm.refreshPrivacyPending()
+        vm.refreshTasksCount()
     }
     fun closeDrawer() {
         drawerOpen = false
@@ -246,11 +244,6 @@ fun HomeScaffold(
     // Reachable from the agent's first-run "no model assigned" state. Preserve Settings as
     // the Models screen's parent so both toolbar and system Back return to the expected place.
     val openModels: () -> Unit = {
-        requestedModelPickerRole = null
-        openSettingsChild(MODELS_ROUTE)
-    }
-    val configureBackgroundAgent: () -> Unit = {
-        requestedModelPickerRole = "background-agent"
         openSettingsChild(MODELS_ROUTE)
     }
     val openPrivacyExchange: (String, String) -> Unit = { conversationId, taskId ->
@@ -523,9 +516,8 @@ fun HomeScaffold(
                 onRefreshConversations = { vm.refreshConversations() },
                 onLoadMoreConversations = { vm.loadMoreConversations() },
                 experimental = experimental,
-                briefsMenuEntry = briefsMenuEntry,
-                onConfigureBackgroundAgent = configureBackgroundAgent,
-                briefsUnreadCount = briefsUnread,
+                tasksAvailable = tasksAvailable,
+                tasksTodayCount = tasksTodayCount,
                 privacyPendingCount = privacyPending,
             )
         },
@@ -539,6 +531,10 @@ fun HomeScaffold(
                     onOpenWatch = { nav.navigate("watches/${Uri.encode(it)}") },
                     onOpenSettings = openSettings,
                     onOpenModels = openModels,
+                    onOpenTask = { taskId ->
+                        vm.focusTask(taskId)
+                        nav.navigate("tasks") { launchSingleTop = true }
+                    },
                 )
             }
             composable("search") {
@@ -665,27 +661,18 @@ fun HomeScaffold(
             composable(MODELS_ROUTE) {
                 ModelsScreen(
                     connection = connection,
-                    initialPickerRole = requestedModelPickerRole,
-                    onInitialPickerConsumed = { requestedModelPickerRole = null },
                     onBack = { nav.returnToSettings() },
                     onOpenSettings = { nav.returnToSettings() },
                     onOpenBackends = { nav.navigate("models/backends") },
                 )
             }
-            composable("briefs") {
-                BriefsScreen(
+            composable("tasks") {
+                TasksScreen(
                     onOpenMenu = { openDrawer() },
-                    // A dictated question arrives as the thread's first message, so the
-                    // user lands mid-answer rather than on an empty thread they must
-                    // retype into.
-                    onOpenConversation = { conversationId, autoSend ->
-                        vm.resumeConversation(conversationId, autoSend)
-                        bringAgentForward()
-                    },
                     onOpenSettings = openSettings,
-                    briefsMenuEntry = briefsMenuEntry,
-                    onConfigureBackgroundAgent = configureBackgroundAgent,
                     onOpenDocument = { nav.navigate("document/${Uri.encode(it)}") },
+                    onTellOmnesis = { openCapture(CaptureSurface.APP) },
+                    experimental = experimental,
                 )
             }
             composable("watches") {

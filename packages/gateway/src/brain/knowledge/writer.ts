@@ -38,6 +38,7 @@ import {
 } from "./storage.js";
 import {
   enqueueKnowledgeWork,
+  retireHistoricalKnowledgeWorkBeyond,
   createKnowledgeBatch,
   appendKnowledgeFrontier,
   appendKnowledgeBatchWork,
@@ -124,6 +125,7 @@ export const knowledgeWriterHandlers = {
   "knowledge.purge": purgeKnowledgeBySource,
   "knowledge.ackChanges": ackKnowledgeChanges,
   "knowledge.enqueue": enqueueKnowledgeWork,
+  "knowledge.retireBeyondHorizon": retireHistoricalKnowledgeWorkBeyond,
   "knowledge.startBatch": startKnowledgeBatch,
   "knowledge.appendFrontier": appendKnowledgeFrontier,
   "knowledge.frontierOutcome": setKnowledgeFrontierOutcome,
@@ -176,6 +178,7 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
     "knowledge.purge": (...args) => call("knowledge.purge", args),
     "knowledge.ackChanges": (...args) => call("knowledge.ackChanges", args),
     "knowledge.enqueue": (...args) => call("knowledge.enqueue", args),
+    "knowledge.retireBeyondHorizon": (...args) => call("knowledge.retireBeyondHorizon", args),
     "knowledge.classifyInitialRootBatches": (...args) =>
       call("knowledge.classifyInitialRootBatches", args),
     "knowledge.startBatch": (...args) => call("knowledge.startBatch", args),
@@ -224,6 +227,8 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.purge": async (...args) => purgeKnowledgeBySource(db, ...args),
     "knowledge.ackChanges": async (...args) => ackKnowledgeChanges(db, ...args),
     "knowledge.enqueue": async (...args) => enqueueKnowledgeWork(db, ...args),
+    "knowledge.retireBeyondHorizon": async (...args) =>
+      retireHistoricalKnowledgeWorkBeyond(db, ...args),
     "knowledge.classifyInitialRootBatches": async (...args) =>
       classifyInitialRootBatches(db, ...args),
     "knowledge.startBatch": async (...args) => startKnowledgeBatch(db, ...args),

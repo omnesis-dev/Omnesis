@@ -31,6 +31,9 @@ describe("resolveBrainSettings", () => {
         maxReviewsPerTick: 16,
         maxReviewIntervalMs: 2592000000,
         checkpointLeadMs: 86400000,
+        retryBackoffMs: 3600000,
+        retryBackoffCapMs: 86400000,
+        maxFailedAttempts: 5,
       },
       workerConcurrency: 4,
       conversationDebounceMs: 60 * 60 * 1000,
@@ -70,8 +73,14 @@ describe("resolveBrainSettings", () => {
       annotations: { enabled: true, recordCheck: "shadow" },
       reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
       provenanceRecheck: { enabled: true },
-      judge: { enabled: true },
       mergeAdjudication: { enabled: true },
+      observations: {
+        minConsequence: 2,
+        timelyLevel: 2,
+        minTimelyConsequence: 1,
+        alreadyKnownMax: 0.6,
+        retentionDays: 90,
+      },
       bootstrap: {
         enabled: true,
         direction: "recent-first",
@@ -79,6 +88,7 @@ describe("resolveBrainSettings", () => {
         maxRunsPerDay: 200,
         maxRuns: 1000000,
         batchSize: 100,
+        horizonMs: 90 * 24 * 60 * 60 * 1000,
       },
       sweepsEnabled: true,
       synthesisLookbackMs: 7 * 24 * 60 * 60 * 1000,
@@ -264,12 +274,12 @@ describe("CONFIG_DEFAULTS.brain cross-check against the live resolver", () => {
     expect(defAt("/brain/digest/push")).toBe(r.digest.push);
     expect(defAt("/brain/digest/hour")).toBe(r.digest.hour);
     expect(defAt("/brain/provenanceRecheck/enabled")).toBe(r.provenanceRecheck.enabled);
-    expect(defAt("/brain/judge/enabled")).toBe(r.judge.enabled);
     expect(defAt("/brain/mergeAdjudication/enabled")).toBe(r.mergeAdjudication.enabled);
     expect(defAt("/brain/sweepsEnabled")).toBe(r.sweepsEnabled);
     expect(defAt("/brain/bootstrap/enabled")).toBe(r.bootstrap.enabled);
     expect(defAt("/brain/bootstrap/maxRunsPerDay")).toBe(r.bootstrap.maxRunsPerDay);
     expect(defAt("/brain/bootstrap/maxRuns")).toBe(r.bootstrap.maxRuns);
+    expect(parseDuration(defAt("/brain/bootstrap/horizon") as string)).toBe(r.bootstrap.horizonMs);
   });
 });
 
@@ -364,14 +374,12 @@ describe("proactive-lane knobs (experimental prototypes)", () => {
     const r = resolveBrainSettings({
       digest: { enabled: false, push: false },
       provenanceRecheck: { enabled: false },
-      judge: { enabled: false },
       mergeAdjudication: { enabled: false },
       sweepsEnabled: false,
     });
     expect(r.digest.enabled).toBe(false);
     expect(r.digest.push).toBe(false);
     expect(r.provenanceRecheck.enabled).toBe(false);
-    expect(r.judge.enabled).toBe(false);
     expect(r.mergeAdjudication.enabled).toBe(false);
     expect(r.sweepsEnabled).toBe(false);
   });
@@ -421,9 +429,15 @@ describe("knowledge maintenance configuration", () => {
         checkpointLead: "1ms",
         recentWindowDays: 7,
         maxSeeds: 2,
+        retryBackoff: "3ms",
+        retryBackoffCap: "2ms",
+        maxFailedAttempts: 2,
       },
     });
     expect(resolved.knowledge).toMatchObject({
+      retryBackoffMs: 3,
+      retryBackoffCapMs: 3,
+      maxFailedAttempts: 2,
       soonDelayMs: 2,
       routineDelayMs: 2,
       maxReviewIntervalMs: 5,
@@ -436,6 +450,7 @@ describe("knowledge maintenance configuration", () => {
     { recentWindowDays: 0 },
     { recentWindowDays: 3651 },
     { maxSeeds: 0 },
+    { maxFailedAttempts: 0 },
     { maxVisitedPerSeed: 4097 },
     { cascadeBatchSize: 1001 },
     { rootMaxChars: 32001 },

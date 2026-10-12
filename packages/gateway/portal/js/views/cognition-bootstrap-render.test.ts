@@ -5,7 +5,7 @@
 // the module is untyped browser code, so type-checking is off here.
 //
 // Structural render test for the Bootstrap panel. Same headless
-// VNode-expansion harness as cognition-briefclaims.test.ts: no jsdom — each
+// VNode-expansion harness as cognition-doclist.test.ts: no jsdom — each
 // section renders to its preact VNode tree, function components are expanded
 // into a flat host-element list, and the output is asserted.
 //
@@ -626,6 +626,31 @@ describe("knowledge bootstrap milestones", () => {
     expect(text).toContain("empty queue does not establish");
     expect(text).not.toContain("Days to completion");
     expect(text).not.toContain("NaN");
+  });
+});
+
+describe("knowledge bootstrap history horizon", () => {
+  it("states how far back historical discovery reaches", async () => {
+    const { KnowledgeBootstrapPanel } = await import("./cognition-bootstrap.js");
+    const notBefore = "2026-07-16T12:00:00.000Z";
+    const nodes = expandToHostNodes(
+      KnowledgeBootstrapPanel({
+        status: {
+          mode: "knowledge",
+          state: "running",
+          reason: "Historical discovery enabled.",
+          settings: { enabled: true },
+          horizon: { horizonMs: 90 * 86_400_000, notBefore },
+          admission: { today: 0, total: 0, pending: 0, batched: 0, completed: 0 },
+          revisionCoverage: [],
+          conversion: [],
+        },
+      }),
+    );
+    const text = nodes.map((node) => node.text).join(" ").replace(/\s+/g, " ");
+    expect(text).toContain("History is admitted back to");
+    expect(text).toContain(new Date(notBefore).toLocaleDateString());
+    expect(text).toContain("brain.bootstrap.horizon");
   });
 });
 

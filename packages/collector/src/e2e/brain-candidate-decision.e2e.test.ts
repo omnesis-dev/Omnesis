@@ -35,7 +35,6 @@ test.each([1, 8])(
       syncSources: false,
       clock: "virtual",
       entailment: "accept-all",
-      judge: "hold-all",
       brain: {
         bootstrap: { enabled: false },
         derivationBarrier: "0s",

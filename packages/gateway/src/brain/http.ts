@@ -2,68 +2,37 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * HTTP surface of the Briefs feature. Mounted unconditionally (so the
- * gate flips live, like `/status`), but every route re-checks the
- * feature gate per request. Brief feed reads and user triage remain available
- * whenever experimental mode is enabled, even while the background agent is
- * parked. Agent-driven routes still 404 when the feature is not active.
+ * Product HTTP surface over open loops: `/loops*` list and detail reads.
+ * Mounted unconditionally (so the gate flips live, like `/status`), but
+ * every route re-checks the Brain's feature gate per request.
  *
- * Routes are `scope.admin()` like the rest of the agent surface. Two
- * groups: Briefs (the ranked feed GET, the cheap
- * unread-count GET for the drawer badge, the per-brief mark-read POST,
- * the dismiss POST, and the talk-back thread-open POST); and `/loops*` list +
- * detail reads. The time index — projections, mentions and annotations — is
+ * Routes are `scope.admin()` like the rest of the agent surface. The time index — projections, mentions and annotations — is
  * read through the ungated `/temporal/*` routes (`http/routes/temporal.ts`).
  * The other operator/debug surfaces over the same tables live in
  * admin-http.ts.
  */
 
-import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import { buildPage, clampLimit } from "@omnesis/types";
-import { validateJson } from "../http/validate.js";
 import { scope } from "../http/scope.js";
+import { NotFoundError, StalePageCursorError } from "../http/errors.js";
 import {
-  BadRequestError,
-  ConflictError,
-  NotFoundError,
-  StalePageCursorError,
-} from "../http/errors.js";
-import { BRIEF_DISMISS_REASONS } from "./feedback.js";
-import { buildBriefsFeed } from "./feed.js";
-import {
-  nextBriefFeedPageCursor,
   nextProductLoopPageCursor,
-  parseBriefFeedPageCursor,
   parseProductLoopFilter,
   parseProductLoopPageCursor,
   productLoopStates,
 } from "./product-pagination.js";
-import {
-  BriefNotFoundError,
-  TalkbackUnavailableError,
-  type BriefTalkbackPort,
-  type OpenThreadResult,
-} from "./talkback/talkback-service.js";
-import { briefReadSnapshot, countShowableUnreadBriefs } from "./storage/briefs.js";
 import { ProductLoopQueryService } from "./product-loop-query-service.js";
 import type Database from "better-sqlite3";
 import type { OpenLoopRow } from "./storage/types.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
-import type { DismissBriefInput, DismissBriefResult } from "./feedback.js";
-import type { MarkBriefReadResult } from "./storage/briefs.js";
 import type { RouteApp } from "../http/routes/types.js";
-
-const isoDateTime = z
-  .string()
-  .refine((s) => !Number.isNaN(Date.parse(s)), "must be an ISO 8601 date-time");
 
 const iso = (ms: number | null): string | null => (ms === null ? null : new Date(ms).toISOString());
 
 /**
  * A loop as the product surface serializes it — the user-meaningful
  * fields only. Engine bookkeeping (creating run, decay-check counters)
- * and the operator joins (linked docs, attached briefs, scheduled
+ * and the operator joins (linked docs, attached observations, scheduled
  * checks) stay on the /admin/brain surface. `deadline` passes through
  * as the agent-owned opaque JSON; clients parse the recommended
  * `{ type, date?, note? }` shape leniently. `importance` (0-1) is the
@@ -82,200 +51,19 @@ function loopDto(loop: OpenLoopRow) {
   };
 }
 
-/**
- * Actor refs for the Radar list — person refs enriched to `{ id, name }`
- * (a legacy raw ref matching no person keeps its raw value with
- * `name: null`), each flagged `isSelf` when it resolves to the user's own
- * person. `isSelf` is the signal the client groups on: a loop the user is
- * an actor on is "Your move"; one whose actors are all other people is
- * "Waiting on others". Only the server can compute it (it holds the
- * self-identity and merge graph), so it is resolved here.
- */
-/**
- * Body of POST /briefs/:id/dismiss — the dismiss modal's payload.
- * `snoozeUntil` (ISO 8601) is the user-picked re-surface time for the
- * "pick a time" / "later today" / "tomorrow" snooze choices; a snooze
- * without it means "the agent decides". Reason/kind pairing and
- * snoozeUntil-only-with-snoozed are enforced in the dismissal write.
- */
-const dismissBriefBody = z
-  .object({
-    reason: z.enum(BRIEF_DISMISS_REASONS as [string, ...string[]]),
-    feedback: z.string().max(4000).optional(),
-    snoozeUntil: isoDateTime.optional(),
-  })
-  .strict();
-
-export interface MountBriefsRoutesOpts {
-  /** Read handle for the feed's selection + ranking-signal queries. */
+export interface MountLoopRoutesOpts {
   db: Database.Database;
-  writeGate: {
-    dismissBrief(input: DismissBriefInput, now: number): Promise<DismissBriefResult>;
-    markBriefRead(id: string, now: number): Promise<MarkBriefReadResult>;
-  };
   /** Live feature-gate verdict; absent ⇒ the routes always 404. */
   getStatus?: (() => BriefsFeatureStatus) | undefined;
-  /**
-   * Decision clock. Defaults to the wall clock; the backtest mirror
-   * passes its virtual clock so feed selection/ranking and dismissal
-   * stamps live in replay time (a replay-expired brief would otherwise
-   * vanish from the feed the operator inspects).
-   */
+  /** Decision clock. Defaults to the wall clock; the backtest mirror passes its virtual clock. */
   clock?: (() => number) | undefined;
-  /**
-   * Live handle to the talk-back port; wired by bootBriefs when the
-   * feature is active. Absent/null ⇒ POST /briefs/:id/thread 404s like
-   * every other gated route.
-   */
-  getTalkback?: (() => BriefTalkbackPort | null) | undefined;
 }
 
-export function mountBriefsRoutes(app: RouteApp, opts: MountBriefsRoutesOpts): void {
+export function mountLoopRoutes(app: RouteApp, opts: MountLoopRoutesOpts): void {
   const productLoops = new ProductLoopQueryService(opts.db);
   const requireActive = (): void => {
     if (!opts.getStatus?.().active) throw new NotFoundError("Not found");
   };
-  const requireEnabled = (): void => {
-    if (!opts.getStatus?.().enabled) throw new NotFoundError("Not found");
-  };
-  const now = (): number => (opts.clock ?? Date.now)();
-
-  // The ranked feed the iOS Briefs page renders, first entry on top.
-  // Selection + ordering live in feed.ts / ranking.ts; timestamps
-  // serialize as ISO 8601; an empty array is the "no briefs to show"
-  // state (never padded).
-  app.get("/briefs/feed", scope.admin(), (c) => {
-    requireEnabled();
-    const limit = clampLimit(c.req.query("limit"), { default: 30, max: 100 });
-    const cursor = parseBriefFeedPageCursor(c.req.query("cursor"));
-    const snapshotNow = cursor?.snapshotNow ?? now();
-    const snapshotReadAt = cursor?.snapshotReadAt ?? briefReadSnapshot(opts.db);
-    const probe = buildBriefsFeed(opts.db, snapshotNow, {
-      readSnapshot: snapshotReadAt,
-      limit: limit + 1,
-      ...(cursor ? { after: cursor.after } : {}),
-    });
-    const hasMore = probe.length > limit;
-    const page = hasMore ? probe.slice(0, limit) : probe;
-    const last = page.at(-1);
-    const nextCursor =
-      hasMore && last
-        ? nextBriefFeedPageCursor(snapshotNow, snapshotReadAt, last.sortKey)
-        : undefined;
-    const briefs = page.map(({ brief, citations }) => ({
-      id: brief.id,
-      kind: brief.kind,
-      state: brief.state,
-      title: brief.title,
-      description: brief.description,
-      body: brief.body,
-      confidence: brief.confidence,
-      urgency: brief.urgency,
-      createdAt: iso(brief.createdAt),
-      eventAt: iso(brief.eventAt),
-      relevantUntil: iso(brief.relevantUntil),
-      citations,
-      threadConversationId: brief.threadConversationId,
-    }));
-    return c.json({
-      briefs,
-      pageInfo: buildPage([], { hasMore, limit, nextCursor }).pageInfo,
-    });
-  });
-
-  // The unread-count badge read for the iOS Briefs drawer entry: just the
-  // number of showable UNREAD briefs (the feed's showable subset minus
-  // already-read ones), so a client renders an "N awaiting" badge without
-  // fetching the full feed. Gated + scoped exactly like the feed — 404
-  // when experimental mode is disabled.
-  app.get("/briefs/count", scope.admin(), (c) => {
-    requireEnabled();
-    return c.json({ unread: countShowableUnreadBriefs(opts.db, now()) });
-  });
-
-  // Mark a brief seen (`unread` → `read`) — sent by the client per brief
-  // actually viewed, so `read` briefs sort last on return visits.
-  app.post("/briefs/:id/read", scope.admin(), async (c) => {
-    requireEnabled();
-    const result = await opts.writeGate.markBriefRead(c.req.param("id"), now());
-    switch (result.outcome) {
-      case "marked":
-      case "already_read":
-        return c.json({ ok: true, state: "read" });
-      case "not_found":
-        throw new NotFoundError("Brief not found");
-      case "not_markable":
-        throw new ConflictError(
-          `Brief is dismissed (${result.state}) — it is never shown, so it cannot be marked read`,
-        );
-    }
-  });
-
-  // Dismiss a brief: synchronously flip its dismissed_* state (durable on
-  // return) and enqueue the async feedback run the Cognition Steward reacts
-  // with. If its model is parked, that run remains pending until setup is fixed.
-  app.post("/briefs/:id/dismiss", scope.admin(), validateJson(dismissBriefBody), async (c) => {
-    requireEnabled();
-    const body = c.req.valid("json");
-    const result = await opts.writeGate.dismissBrief(
-      {
-        briefId: c.req.param("id"),
-        reason: body.reason as DismissBriefInput["reason"],
-        feedback: body.feedback ?? null,
-        snoozeUntil: body.snoozeUntil !== undefined ? Date.parse(body.snoozeUntil) : null,
-        feedbackRunId: randomUUID(),
-      },
-      now(),
-    );
-    switch (result.outcome) {
-      case "dismissed":
-        return c.json({ ok: true, state: result.state, feedbackRunId: result.feedbackRunId });
-      case "not_found":
-        throw new NotFoundError("Brief not found");
-      case "already_terminal":
-        throw new ConflictError(`Brief is already dismissed (${result.state})`);
-      case "invalid":
-        throw new BadRequestError(result.message);
-    }
-  });
-
-  // The brief thread-open flow: resolve the port, open, and map typed errors —
-  // unknown brief → 404, harness/model
-  // unavailable → 409. Callers derive the caller id with the same
-  // convention as the /agent routes, so the thread's per-caller session
-  // accounting lines up when it is later resumed.
-  const callerIdOf = (c: unknown): string => {
-    const auth = (c as { get(k: "auth"): { tokenId: string | null } }).get("auth");
-    return `token:${auth?.tokenId ?? "unknown"}`;
-  };
-  const openAnchoredThread = async (
-    open: (talkback: BriefTalkbackPort) => Promise<OpenThreadResult>,
-    notFound: { errorClass: new (message?: string) => Error; message: string },
-  ): Promise<OpenThreadResult> => {
-    requireActive();
-    const talkback = opts.getTalkback?.() ?? null;
-    if (!talkback) throw new NotFoundError("Not found");
-    try {
-      return await open(talkback);
-    } catch (err) {
-      if (err instanceof notFound.errorClass) throw new NotFoundError(notFound.message);
-      if (err instanceof TalkbackUnavailableError) throw new ConflictError(err.message);
-      throw err;
-    }
-  };
-
-  // Open (or return) the brief's follow-up thread — a conversation seeded
-  // with the creating run's transcript, on which the user talks back to
-  // the agent about this brief. Idempotent: one thread per brief, ever;
-  // clients then drive the normal /agent session flow with the returned
-  // conversation id.
-  app.post("/briefs/:id/thread", scope.admin(), async (c) => {
-    const result = await openAnchoredThread(
-      (talkback) => talkback.openThread(callerIdOf(c), c.req.param("id")),
-      { errorClass: BriefNotFoundError, message: "Brief not found" },
-    );
-    return c.json({ conversationId: result.conversationId, created: result.created });
-  });
 
   // The Radar screen list — importance-ranked (ties break by most-recently
   // updated, then id). `state=active|resolved` matches the two product tabs;

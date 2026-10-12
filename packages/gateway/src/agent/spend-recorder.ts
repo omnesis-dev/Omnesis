@@ -15,7 +15,7 @@
 
 import type { AgentUsage } from "@omnesis/core";
 
-/** User-driven chat turns (SSE/WS sessions, incl. anchored talk-back threads). */
+/** User-driven chat turns (SSE/WS sessions, the Morning brief thread included). */
 export const INTERACTIVE_SPEND_MECHANISM = "interactive";
 
 /** Ephemeral browser Find turns, with no durable conversation transcript. */
@@ -27,9 +27,6 @@ export const SUBAGENT_SPEND_MECHANISM = "subagent";
 /** The annotation write gate's atomic evidence-entailment check. */
 export const ENTAILMENT_GATE_SPEND_MECHANISM = "entailment-gate";
 
-/** The independent ship/hold judgement over a candidate brief. */
-export const BRIEF_JUDGE_SPEND_MECHANISM = "brief-judge";
-
 /**
  * The opening message the agent writes when a watch fires and hands the
  * operator a conversation instead of a bare notification.
@@ -40,6 +37,9 @@ export const BRIEF_JUDGE_SPEND_MECHANISM = "brief-judge";
  * that thread are ordinary interactive chat and record as such.
  */
 export const WATCH_FIRING_OPENING_SPEND_MECHANISM = "watch-firing-opening";
+
+/** The agent turn that reads each Tell Omnesis note and acts on it. */
+export const NOTE_AGENT_SPEND_MECHANISM = "note-agent";
 
 /**
  * The Deep Research stages that record their own mechanism. The planner and

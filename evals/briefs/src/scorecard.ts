@@ -123,7 +123,7 @@ async function main(): Promise<void> {
     backendLabel = args.script === "saboteur" ? "scripted-saboteur" : "scripted";
   }
 
-  // Every scorecard run dumps its observable end-state (loops, briefs,
+  // Every scorecard run dumps its observable end-state (loops, observations,
   // decisions, transcripts) into a git-ignored per-run dir — the raw
   // material for the Phase Two qualitative failure analysis.
   const runStamp = new Date().toISOString().replace(/[:.]/g, "-");

@@ -207,15 +207,6 @@ it("refuses a pass if the actor self role changes during judgment", async () => 
   });
 });
 
-it("refuses a brief-typed fence attached to a loop save", async () => {
-  const input = proposal();
-  const fence = captureOutcomeWriteFence(db, "task", ["source"]);
-  fence.kind = "brief";
-  await expect(service.save(input, undefined, undefined, fence)).rejects.toThrow(
-    "Outcome or supporting context changed",
-  );
-});
-
 it("binds the selected evidence packet as well as the complete source-version fence", () => {
   const proposed = outcomeProposal(getOpenLoop(db, "task")!);
   const sources = Array.from({ length: 9 }, (_, i) => ({ id: `source-${i}`, hash: `v-${i}` }));

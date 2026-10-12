@@ -133,7 +133,7 @@ export {
   type ClaudeCodeTurnRunner,
 } from "./claude-code-backend.js";
 
-export { zodToJsonSchema } from "./zod-to-json-schema.js";
+export { toolInputJsonSchema, zodToJsonSchema } from "./zod-to-json-schema.js";
 
 export {
   CORPUS_CONTENT_IS_DATA,

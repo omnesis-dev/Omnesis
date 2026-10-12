@@ -40,9 +40,11 @@ import {
   reanchorProvenanceRecheckWatermark,
   runProvenanceRecheckSweepPass,
   type ProvenanceRecheckSettings,
+  type ProvenanceRecheckSweepWriteOps,
 } from "./provenance-recheck-sweep.js";
 import { runReverificationSweepPass, type ReverificationSettings } from "./reverification-sweep.js";
 import { runSweepEnqueuePass } from "./sweep-enqueuer.js";
+import type { PruneObservationsResult } from "../storage/observations.js";
 import type { SweepDef } from "../sweeps/types.js";
 import type { Logger } from "@omnesis/core";
 import type Database from "better-sqlite3";
@@ -58,9 +60,9 @@ interface IdleResult {
 
 const isIdleResult = (r: IdleResult): boolean => r.idle;
 
-/** The write-gate slice the snooze-resurface pass mutates through. */
-export interface SnoozeResurfaceWriteOps {
-  resurfaceDueSnoozedBriefs(now: number): Promise<number>;
+/** The write-gate slice the observation retention pass mutates through. */
+export interface ObservationRetentionWriteOps {
+  pruneClosedObservations(olderThan: number, now: number): Promise<PruneObservationsResult>;
 }
 
 /** Cadence env override (test harnesses drive the ticks faster than prod). */
@@ -73,8 +75,9 @@ export interface CognitionRhythmOpts {
   db: Db;
   writeGate: DailyEnqueuerWriteOps &
     DecaySweepWriteOps &
-    SnoozeResurfaceWriteOps &
-    BootstrapEnqueuerWriteOps;
+    ObservationRetentionWriteOps &
+    BootstrapEnqueuerWriteOps &
+    ProvenanceRecheckSweepWriteOps;
   log: Logger;
   /** Live kill-switch — the Briefs feature-gate verdict, re-read per tick. */
   isEnabled: () => boolean;
@@ -107,8 +110,12 @@ export interface CognitionRhythmOpts {
   getDigestEnabled?: () => boolean;
   getDigestHour?: () => number;
   getDigestGraceMinutes?: () => number;
+  /** Days a closed observation is kept before it is reduced to an outcome record. */
+  getObservationRetentionDays?: () => number;
   /** Runs executing right now — the digest readiness barrier's live word. */
   getActiveRunCount?: () => number;
+  /** Whether the day's cognition budget is spent — the barrier stops waiting on a parked queue. */
+  isBudgetExhausted?: () => boolean;
   getSweeps?: () => readonly SweepDef[];
   /**
    * Retrospective bootstrap knobs — read live per tick. Absent (pure-
@@ -220,6 +227,7 @@ export function createCognitionRhythmTasks(
             getDigestHour: opts.getDigestHour ?? (() => 7),
             getGraceMinutes: opts.getDigestGraceMinutes ?? (() => 45),
             getActiveRunCount: opts.getActiveRunCount ?? (() => 0),
+            ...(opts.isBudgetExhausted ? { isBudgetExhausted: opts.isBudgetExhausted } : {}),
             // The digest is an editorial pass over the overnight work, so it
             // waits for the sweeps that declare themselves part of it — read
             // from the same resolved set the sweep enqueuer fires, and only
@@ -275,8 +283,8 @@ export function createCognitionRhythmTasks(
     },
   };
 
-  const snoozeResurfaceTask: PeriodicTask<unknown, IdleResult> = {
-    name: "cognition.snoozeResurface",
+  const observationRetentionTask: PeriodicTask<unknown, IdleResult> = {
+    name: "cognition.observationRetention",
     runner: "main",
     priority: "background",
     periodMs: intervalMs,
@@ -286,16 +294,20 @@ export function createCognitionRhythmTasks(
     initialArgs: undefined,
     isIdle: isIdleResult,
     async run(): Promise<TaskOutcome<unknown, IdleResult>> {
-      if (!opts.isEnabled()) return { kind: "done", value: { idle: true } };
+      const days = opts.getObservationRetentionDays?.();
+      if (days === undefined || !opts.isEnabled()) return { kind: "done", value: { idle: true } };
       try {
-        const resurfaced = await runWithPriority("background", () =>
-          opts.writeGate.resurfaceDueSnoozedBriefs(clock()),
+        const now = clock();
+        const result = await runWithPriority("background", () =>
+          opts.writeGate.pruneClosedObservations(now - days * 86_400_000, now),
         );
-        if (resurfaced > 0)
-          log.info(`snooze resurface: ${resurfaced} brief(s) returned to the feed`);
-        return { kind: "done", value: { idle: resurfaced === 0 } };
+        if (result.pruned > 0)
+          log.info(`observation retention: ${result.pruned} closed observation(s) pruned`);
+        return { kind: "done", value: { idle: result.pruned === 0 } };
       } catch (err) {
-        log.warn(`snooze resurface failed: ${err instanceof Error ? err.message : String(err)}`);
+        log.warn(
+          `observation retention failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
         return { kind: "done", value: { idle: false } };
       }
     },
@@ -595,7 +607,7 @@ export function createCognitionRhythmTasks(
     dailyTask,
     digestTask,
     decayTask,
-    snoozeResurfaceTask,
+    observationRetentionTask,
     synthesisTask,
     collisionTask,
     sweepTask,
@@ -623,11 +635,11 @@ export function createCognitionRhythmTasks(
       tracker: new StatelessTracker(),
       isDisabled: () => !opts.isEnabled(),
     }),
-    periodicJob(snoozeResurfaceTask, {
+    periodicJob(observationRetentionTask, {
       scheduler,
-      displayName: "Cognition Steward snooze resurface",
+      displayName: "Observation retention",
       description:
-        "Returns snoozed briefs to the feed when their user-picked re-surface time arrives — durable even if the async feedback run never runs.",
+        "Reduces observations closed longer ago than the retention window to small outcome records, keeping the decision bar's calibration history without the cited text.",
       category: "briefs",
       tracker: new StatelessTracker(),
       isDisabled: () => !opts.isEnabled(),
@@ -636,7 +648,7 @@ export function createCognitionRhythmTasks(
       scheduler,
       displayName: "Cognition Steward morning digest",
       description:
-        "Composes the once-a-morning digest brief after the overnight batches settle (readiness barrier + grace deadline). Off unless brain.digest.enabled.",
+        "Starts the once-a-morning brief run after the overnight batches settle (readiness barrier + grace deadline). Off unless brain.digest.enabled.",
       category: "briefs",
       tracker: new StatelessTracker(),
       isDisabled: () => !opts.isEnabled() || !(opts.getDigestEnabled?.() ?? false),

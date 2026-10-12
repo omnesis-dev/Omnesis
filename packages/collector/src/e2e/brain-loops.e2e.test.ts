@@ -8,7 +8,7 @@
  * invariant around it is a CASCADE rather than a row write: creating one
  * projects a searchable mirror document, reconciling onto one must not mint
  * a second, resolving one retires it into the consolidation store, deleting
- * one must take its brief, its join rows and its mirror with it, and the
+ * one must take its observations, its join rows and its mirror with it, and the
  * decay engine must schedule its own revisits without ever reaping a loop
  * itself.
  *
@@ -139,30 +139,30 @@ interface MirrorDocRow {
 const HOUR = 3_600_000;
 
 /**
- * Pull a `deletedBriefIds` list out of a run transcript's event stream. Tool
- * results are carried verbatim (sometimes as a JSON string), so the scan is
- * structural rather than keyed on an event type.
+ * Pull a `deletedObservationIds` list out of a run transcript's event stream.
+ * Tool results are carried verbatim (sometimes as a JSON string), so the scan
+ * is structural rather than keyed on an event type.
  */
-function findDeletedBriefIds(value: unknown): string[] | null {
+function findDeletedObservationIds(value: unknown): string[] | null {
   if (typeof value === "string") {
     try {
-      return findDeletedBriefIds(JSON.parse(value));
+      return findDeletedObservationIds(JSON.parse(value));
     } catch {
       return null;
     }
   }
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findDeletedBriefIds(item);
+      const found = findDeletedObservationIds(item);
       if (found) return found;
     }
     return null;
   }
   if (value !== null && typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    if (Array.isArray(obj.deletedBriefIds)) return obj.deletedBriefIds as string[];
+    if (Array.isArray(obj.deletedObservationIds)) return obj.deletedObservationIds as string[];
     for (const nested of Object.values(obj)) {
-      const found = findDeletedBriefIds(nested);
+      const found = findDeletedObservationIds(nested);
       if (found) return found;
     }
     return null;
@@ -290,15 +290,18 @@ describe("Brain Bench — open loops", () => {
                     id: ref("open_loop_create", "loop.id"),
                     note: `Review of the ${B} lease requested.`,
                   }),
-                  call("brief_list"),
-                  call("brief_create", {
-                    kind: "loop",
-                    title: `${B} lease needs your comments`,
-                    description: "Requested before Friday.",
+                  call("observation_list"),
+                  call("observation_note", {
+                    summary: `The ${B} lease needs your comments.`,
+                    why: "Requested before Friday.",
                     citations: [ctx.subject],
+                    claims: [
+                      {
+                        docId: ctx.subject,
+                        quote: "Whitfield Law needs your comments to close it out.",
+                      },
+                    ],
                     relatedLoopIds: [ref("open_loop_create", "loop.id")],
-                    confidence: 0.85,
-                    urgency: 0.6,
                   }),
                 ],
               }),
@@ -578,9 +581,9 @@ describe("Brain Bench — open loops", () => {
 
   // ── 3. silent close ────────────────────────────────────────────────────
 
-  test("a resolution document closes the loop with a note and no brief", async () => {
-    const briefsBefore = await bench.obs.briefs();
-    expect(briefsBefore.items).toHaveLength(0);
+  test("a resolution document closes the loop with a note and no observation", async () => {
+    const observationsBefore = await bench.obs.observations();
+    expect(observationsBefore.items).toHaveLength(0);
 
     const [a3Id] = await bench.pushAndSettle([A3]);
 
@@ -591,13 +594,12 @@ describe("Brain Bench — open loops", () => {
     const detail = await bench.obs.loop(loops[0]!.id);
     expect(detail.ledger).toHaveLength(3);
     expect(detail.ledger[2]!.note).toContain("closing without a card");
-    // Silence is the whole point: no card was raised, none attached.
-    expect(detail.briefs).toHaveLength(0);
-    expect((await bench.obs.briefs()).items).toHaveLength(0);
-    expect(await bench.obs.unreadCount()).toBe(0);
+    // Silence is the whole point: nothing was noted for a morning brief.
+    expect(detail.observations).toHaveLength(0);
+    expect((await bench.obs.observations()).items).toHaveLength(0);
 
     // Non-vacuous: the resolution run really executed and really resolved the
-    // loop — it simply wrote no brief while doing so.
+    // loop — it simply noted no observation while doing so.
     const resolvingRun = await bench.obs.interpretationForSource(a3Id!);
     expect(resolvingRun.kind).toBe("synthesis");
     expect(resolvingRun.status).toBe("completed");
@@ -626,16 +628,16 @@ describe("Brain Bench — open loops", () => {
 
   // ── 4. loop delete cascade ─────────────────────────────────────────────
 
-  test("deleting a loop clears its brief, its join rows and its mirror", async () => {
+  test("deleting a loop clears its observations, its join rows and its mirror", async () => {
     await bench.pushAndSettle([B1]);
 
     const created = await bench.obs.loopsMatching(B);
     expect(created).toHaveLength(1);
     const loopId = created[0]!.id;
-    const briefs = await bench.obs.briefsMatching(B);
-    expect(briefs).toHaveLength(1);
-    const briefId = briefs[0]!.id;
-    expect(briefs[0]!.relatedLoopIds).toEqual([loopId]);
+    const observations = await bench.obs.observationsMatching(B);
+    expect(observations).toHaveLength(1);
+    const observationId = observations[0]!.id;
+    expect(observations[0]!.relatedLoopIds).toEqual([loopId]);
     const mirrorId = mirrorOf(bench, loopId)?.id;
     expect(mirrorId).toBeDefined();
     // The positive control for the post-delete assertion below: the scoped
@@ -655,18 +657,18 @@ describe("Brain Bench — open loops", () => {
     expect(await bench.obs.loopsMatching(B)).toHaveLength(0);
     await expect(bench.obs.loop(loopId)).rejects.toThrow();
 
-    // … and so is the brief the engine-enforced invariant took with it.
-    expect(await bench.obs.briefsMatching(B)).toHaveLength(0);
-    const briefRow = bench.sql
-      .prepare<[string], { n: number }>("SELECT COUNT(*) AS n FROM briefs WHERE id = ?")
-      .get(briefId);
-    expect(briefRow?.n).toBe(0);
+    // … and so is the observation the engine-enforced invariant took with it.
+    expect(await bench.obs.observationsMatching(B)).toHaveLength(0);
+    const observationRow = bench.sql
+      .prepare<[string], { n: number }>("SELECT COUNT(*) AS n FROM observations WHERE id = ?")
+      .get(observationId);
+    expect(observationRow?.n).toBe(0);
     const citationRows = bench.sql
       .prepare<
         [string],
         { n: number }
-      >("SELECT COUNT(*) AS n FROM brief_citations WHERE brief_id = ?")
-      .get(briefId);
+      >("SELECT COUNT(*) AS n FROM observation_citations WHERE observation_id = ?")
+      .get(observationId);
     expect(citationRows?.n).toBe(0);
 
     // The tool reported the cascade it performed.
@@ -674,7 +676,7 @@ describe("Brain Bench — open loops", () => {
     expect(deleteRun).toBeDefined();
     const refs = await bench.obs.transcripts({ runId: deleteRun!.id });
     const { transcript } = await bench.obs.transcript(refs.items.at(-1)!.fileName);
-    expect(findDeletedBriefIds(transcript.events)).toEqual([briefId]);
+    expect(findDeletedObservationIds(transcript.events)).toEqual([observationId]);
 
     // Join rows and ledger went with it.
     expect(joinRowCount(bench, "open_loop_docs", loopId)).toBe(0);

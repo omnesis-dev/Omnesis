@@ -10,7 +10,7 @@ import {
   ephemeralResultArrived,
   EPHEMERAL_SLOT_HEIGHT,
 } from "./lifecycle.js";
-import { LOOP_GLYPH, BRIEF_GLYPH, CLOCK_GLYPH, DOC_GLYPH } from "./glyphs.js";
+import { LOOP_GLYPH, OBSERVATION_GLYPH, CLOCK_GLYPH, DOC_GLYPH } from "./glyphs.js";
 
 export function actionToolLabel(tool) {
   return (
@@ -21,11 +21,10 @@ export function actionToolLabel(tool) {
       open_loop_update: "Update loop",
       open_loop_delete: "Delete loop",
       open_loop_ledger_append: "Note on loop",
-      brief_list: "List briefs",
-      brief_fetch: "Open brief",
-      brief_create: "Create brief",
-      brief_update: "Update brief",
-      brief_delete: "Withdraw brief",
+      observation_list: "List observations",
+      observation_note: "Note observation",
+      observation_withdraw: "Withdraw observation",
+      observation_suppress: "Mute a brief item",
       temporal_query: "Query time",
       temporal_annotation_add: "Add temporal annotation",
       temporal_annotation_update: "Update temporal annotation",
@@ -56,7 +55,7 @@ export function actionToolLabel(tool) {
 function actionToolGlyph(tool) {
   if (tool.startsWith("open_loop_")) return LOOP_GLYPH;
   if (tool === "list_loops") return LOOP_GLYPH;
-  if (tool.startsWith("brief_")) return BRIEF_GLYPH;
+  if (tool.startsWith("observation_")) return OBSERVATION_GLYPH;
   if (
     tool === "temporal_query" ||
     tool.startsWith("temporal_annotation_") ||

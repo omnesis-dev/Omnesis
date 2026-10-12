@@ -116,12 +116,14 @@ function describeAction(tool: string, args: unknown): string {
     }
     case "open_loop_delete":
       return `delete loop ${id ?? ""}`.trim();
-    case "brief_create":
-      return `create brief ${label}`.trim();
-    case "brief_update":
-      return `update brief ${id ?? ""}`.trim();
-    case "brief_delete":
-      return `withdraw brief ${id ?? ""}`.trim();
+    case "observation_note": {
+      const summary = argString(args, "summary");
+      return `note observation${summary ? ` "${truncate(summary, 60)}"` : ""}`;
+    }
+    case "observation_withdraw":
+      return `withdraw observation ${id ?? ""}`.trim();
+    case "morning_brief_send":
+      return "send the morning brief";
     case "notes_append":
       return "append agent notes";
     case "notes_rewrite":

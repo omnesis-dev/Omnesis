@@ -17,7 +17,6 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { createDatabase } from "../db.js";
 import { createDevAnnotation } from "../dev-annotations/store.js";
-import { createBrief, setBriefState, markBriefRead } from "./storage/briefs.js";
 import {
   createDocAnnotation,
   supersedeDocAnnotationBy,
@@ -33,7 +32,6 @@ import {
   computeCalibrationReport,
   expectedCalibrationError,
   labelAnnotation,
-  labelBrief,
   CALIBRATION_FAMILIES,
 } from "./calibration.js";
 import type {
@@ -44,7 +42,6 @@ import type {
   FamilyCalibrationReport,
   LabeledSample,
 } from "./calibration.js";
-import type { BriefState } from "./storage/types.js";
 import type Database from "better-sqlite3";
 
 function testDbPath(): string {
@@ -57,21 +54,6 @@ function cleanupDb(path: string): void {
 }
 
 const NOW = new Date(2026, 5, 20, 12, 0, 0).getTime();
-
-function seedBrief(db: Db, id: string, confidence: number, createdAt: number = NOW): void {
-  createBrief(
-    db,
-    {
-      id,
-      createdByRun: "run-fixture",
-      kind: "info",
-      title: "Quarterly budget review scheduled",
-      confidence,
-      urgency: 0.4,
-    },
-    createdAt,
-  );
-}
 
 function seedDocAnnotation(
   db: Db,
@@ -130,61 +112,6 @@ function seedPersonAnnotation(
     opts.profileBudget,
   );
 }
-
-// ── Label rules — briefs ─────────────────────────────────────────────
-
-describe("labelBrief", () => {
-  test("a dev annotation targeting the brief → operator_flagged, incorrect", () => {
-    expect(labelBrief("read", true)).toEqual({
-      labelClass: "operator_flagged",
-      verdict: "incorrect",
-    });
-    // The operator's explicit flag beats any positive state.
-    expect(labelBrief("dismissed_acknowledged", true).verdict).toBe("incorrect");
-  });
-
-  test("dismissed_wrong → incorrect", () => {
-    expect(labelBrief("dismissed_wrong", false)).toEqual({
-      labelClass: "dismissed_wrong",
-      verdict: "incorrect",
-    });
-  });
-
-  test("dismissed_not_relevant → excluded (irrelevant is not untrue)", () => {
-    expect(labelBrief("dismissed_not_relevant", false)).toEqual({
-      labelClass: "dismissed_not_relevant",
-      verdict: "excluded",
-    });
-  });
-
-  test("dismissed_acknowledged → weak correct", () => {
-    expect(labelBrief("dismissed_acknowledged", false)).toEqual({
-      labelClass: "acknowledged",
-      verdict: "correct",
-    });
-  });
-
-  test("dismissed_already_handled → weak correct", () => {
-    expect(labelBrief("dismissed_already_handled", false)).toEqual({
-      labelClass: "already_handled",
-      verdict: "correct",
-    });
-  });
-
-  test("read (kept in the feed) → weak correct", () => {
-    expect(labelBrief("read", false)).toEqual({ labelClass: "kept_read", verdict: "correct" });
-  });
-
-  test("unread and snoozed carry no verdict yet → excluded", () => {
-    expect(labelBrief("unread", false)).toEqual({ labelClass: "unlabeled", verdict: "excluded" });
-    expect(labelBrief("dismissed_snoozed", false)).toEqual({
-      labelClass: "unlabeled",
-      verdict: "excluded",
-    });
-  });
-});
-
-// ── Label rules — annotations ────────────────────────────────────────
 
 describe("labelAnnotation", () => {
   const live = { verificationState: null, invalidatedAt: null, supersededBy: null };
@@ -339,42 +266,6 @@ describe("computeCalibrationReport", () => {
     }
   });
 
-  test("briefs: state signals label, not-relevant stays out of the truth bins", () => {
-    seedBrief(db, "b-wrong", 0.9);
-    setBriefState(db, "b-wrong", "dismissed_wrong", NOW);
-    seedBrief(db, "b-not-relevant", 0.9);
-    setBriefState(db, "b-not-relevant", "dismissed_not_relevant", NOW);
-    seedBrief(db, "b-read", 0.85);
-    markBriefRead(db, "b-read", NOW);
-    seedBrief(db, "b-ack", 0.65);
-    setBriefState(db, "b-ack", "dismissed_acknowledged", NOW);
-    seedBrief(db, "b-unread", 0.5);
-    seedBrief(db, "b-flagged", 0.95);
-    markBriefRead(db, "b-flagged", NOW);
-    createDevAnnotation(
-      db,
-      { id: "dev-1", targetType: "brief", targetId: "b-flagged", note: "this brief is wrong" },
-      NOW,
-    );
-
-    const [family] = computeCalibrationReport(db, { family: "brief", now: NOW }).families;
-    expect(family!.total).toBe(6);
-    // Truth-labeled: wrong + read + ack + flagged. Excluded: not-relevant, unread.
-    expect(family!.labeled).toBe(4);
-    expect(family!.correct).toBe(2);
-    expect(family!.incorrect).toBe(2);
-    expect(family!.classCounts).toEqual({
-      dismissed_wrong: 1,
-      dismissed_not_relevant: 1,
-      kept_read: 1,
-      acknowledged: 1,
-      unlabeled: 1,
-      operator_flagged: 1,
-    });
-    expect(family!.bins.reduce((acc, b) => acc + b.n, 0)).toBe(4);
-    expect(family!.ece).not.toBeNull();
-  });
-
   test("doc annotations: verification, supersession, drift, and subject-doc flags", () => {
     seedDocAnnotation(db, "a-verified", { verificationState: "verified", confidence: 0.8 });
     // 'failed' exists in the storage union but no writer stamps it — it must
@@ -413,7 +304,7 @@ describe("computeCalibrationReport", () => {
     expect(family!.bins.reduce((acc, b) => acc + b.n, 0)).toBe(2);
   });
 
-  test("a doc flag excludes the doc's annotations; a brief flag still counts incorrect", () => {
+  test("a doc flag excludes the doc's annotations from the truth bins", () => {
     seedDocAnnotation(db, "a-on-flagged-doc", {
       docId: "doc-noisy",
       verificationState: "verified",
@@ -423,22 +314,11 @@ describe("computeCalibrationReport", () => {
       { id: "dev-doc", targetType: "document", targetId: "doc-noisy", note: "duplicate ingest" },
       NOW,
     );
-    seedBrief(db, "b-flagged-artifact", 0.9);
-    createDevAnnotation(
-      db,
-      { id: "dev-brief", targetType: "brief", targetId: "b-flagged-artifact", note: "untrue" },
-      NOW,
-    );
-
     const report = computeCalibrationReport(db, { now: NOW });
-    const briefs = report.families.find((f) => f.family === "brief")!;
     const docs = report.families.find((f) => f.family === "doc-annotation")!;
     expect(docs.classCounts).toEqual({ subject_flagged: 1 });
     expect(docs.labeled).toBe(0);
     expect(docs.incorrect).toBe(0);
-    expect(briefs.classCounts).toEqual({ operator_flagged: 1 });
-    expect(briefs.labeled).toBe(1);
-    expect(briefs.incorrect).toBe(1);
   });
 
   test("person annotations: same rules, no operator-flag channel exists", () => {
@@ -497,13 +377,12 @@ describe("computeCalibrationReport", () => {
   });
 
   test("the report is measurement-only: computing it writes nothing", () => {
-    seedBrief(db, "b-1", 0.9);
-    setBriefState(db, "b-1", "dismissed_wrong", NOW);
+    seedDocAnnotation(db, "a-1", { confidence: 0.9, verificationState: "verified" });
     const before = db
       .prepare<
         [],
         { c: number }
-      >("SELECT (SELECT COUNT(*) FROM briefs) + (SELECT COUNT(*) FROM doc_annotations) + (SELECT COUNT(*) FROM person_annotations) + (SELECT COUNT(*) FROM dev_annotations) AS c")
+      >("SELECT (SELECT COUNT(*) FROM doc_annotations) + (SELECT COUNT(*) FROM person_annotations) + (SELECT COUNT(*) FROM dev_annotations) AS c")
       .get()!.c;
     const first = computeCalibrationReport(db, { now: NOW });
     const second = computeCalibrationReport(db, { now: NOW });
@@ -511,14 +390,17 @@ describe("computeCalibrationReport", () => {
       .prepare<
         [],
         { c: number }
-      >("SELECT (SELECT COUNT(*) FROM briefs) + (SELECT COUNT(*) FROM doc_annotations) + (SELECT COUNT(*) FROM person_annotations) + (SELECT COUNT(*) FROM dev_annotations) AS c")
+      >("SELECT (SELECT COUNT(*) FROM doc_annotations) + (SELECT COUNT(*) FROM person_annotations) + (SELECT COUNT(*) FROM dev_annotations) AS c")
       .get()!.c;
     expect(after).toBe(before);
     expect(second.families).toEqual(first.families);
     // The stated confidence is untouched.
     expect(
       db
-        .prepare<[], { confidence: number }>("SELECT confidence FROM briefs WHERE id = 'b-1'")
+        .prepare<
+          [],
+          { confidence: number }
+        >("SELECT confidence FROM doc_annotations WHERE id = 'a-1'")
         .get()!.confidence,
     ).toBe(0.9);
   });
@@ -538,8 +420,6 @@ function referenceReport(db: Db, opts: CalibrationReportOptions): CalibrationRep
   const wanted = opts.family ? [opts.family] : CALIBRATION_FAMILIES;
   const families = wanted.map((family) => {
     switch (family) {
-      case "brief":
-        return referenceFold(family, referenceBriefLabels(db, sinceMs));
       case "doc-annotation":
         return referenceFold(family, referenceAnnotationLabels(db, "doc_annotations", sinceMs));
       case "person-annotation":
@@ -547,25 +427,6 @@ function referenceReport(db: Db, opts: CalibrationReportOptions): CalibrationRep
     }
   });
   return { generatedAt: opts.now, sinceDays, families };
-}
-
-function referenceBriefLabels(
-  db: Db,
-  sinceMs: number | null,
-): Array<{ confidence: number; label: CalibrationLabel }> {
-  const rows = db
-    .prepare<unknown[], { confidence: number; state: string; flagged: number }>(
-      `SELECT b.confidence, b.state,
-              EXISTS(SELECT 1 FROM dev_annotations da
-                      WHERE da.target_type = 'brief' AND da.target_id = b.id) AS flagged
-         FROM briefs b
-        ${sinceMs !== null ? "WHERE b.created_at >= ?" : ""}`,
-    )
-    .all(...(sinceMs !== null ? [sinceMs] : []));
-  return rows.map((r) => ({
-    confidence: r.confidence,
-    label: labelBrief(r.state, r.flagged === 1),
-  }));
 }
 
 function referenceAnnotationLabels(
@@ -661,20 +522,11 @@ describe("SQL aggregation ↔ pure-labeler parity", () => {
     cleanupDb(path);
   });
 
-  const BRIEF_STATES: readonly BriefState[] = [
-    "unread",
-    "read",
-    "dismissed_snoozed",
-    "dismissed_already_handled",
-    "dismissed_acknowledged",
-    "dismissed_not_relevant",
-    "dismissed_wrong",
-  ];
   const VERIFICATION_STATES = [null, "unverified", "verified", "failed"] as const;
   const dayMs = 86_400_000;
 
   /**
-   * A few hundred randomized artifacts across all three families, hitting
+   * A few hundred randomized artifacts across both families, hitting
    * every label class (fixed seed → deterministic). Confidences are dyadic
    * (k/64) so per-bin sums are exact in floating point regardless of
    * summation order — SQL SUM() and the JS per-sample fold cannot diverge
@@ -685,21 +537,6 @@ describe("SQL aggregation ↔ pure-labeler parity", () => {
     const randInt = (n: number): number => Math.floor(rand() * n);
     const confidence = (): number => randInt(65) / 64;
     const createdAt = (): number => NOW - randInt(60) * dayMs;
-
-    for (let i = 0; i < 140; i++) {
-      const id = `b-rand-${i}`;
-      seedBrief(db, id, confidence(), createdAt());
-      const state = BRIEF_STATES[i % BRIEF_STATES.length]!;
-      if (state !== "unread") setBriefState(db, id, state, NOW);
-      // ~1 in 8 briefs gets an operator flag (plus one guaranteed).
-      if (i === 0 || randInt(8) === 0) {
-        createDevAnnotation(
-          db,
-          { id: `dev-b-${i}`, targetType: "brief", targetId: id, note: "flagged in review" },
-          NOW,
-        );
-      }
-    }
 
     for (let i = 0; i < 160; i++) {
       seedDocAnnotation(db, `a-rand-${i}`, {
@@ -773,7 +610,6 @@ describe("SQL aggregation ↔ pure-labeler parity", () => {
     const optionVariants: CalibrationReportOptions[] = [
       { now: NOW },
       { sinceDays: 30, now: NOW },
-      { family: "brief", now: NOW },
       { family: "doc-annotation", now: NOW },
       { family: "person-annotation", sinceDays: 14, now: NOW },
     ];
@@ -784,16 +620,7 @@ describe("SQL aggregation ↔ pure-labeler parity", () => {
 
   test("the randomized corpus actually exercises every label class", () => {
     seedRandomizedCorpus();
-    const [briefs, docs, people] = computeCalibrationReport(db, { now: NOW }).families;
-    expect(Object.keys(briefs!.classCounts).sort()).toEqual([
-      "acknowledged",
-      "already_handled",
-      "dismissed_not_relevant",
-      "dismissed_wrong",
-      "kept_read",
-      "operator_flagged",
-      "unlabeled",
-    ]);
+    const [docs, people] = computeCalibrationReport(db, { now: NOW }).families;
     expect(Object.keys(docs!.classCounts).sort()).toEqual([
       "drift_invalidated",
       "subject_flagged",

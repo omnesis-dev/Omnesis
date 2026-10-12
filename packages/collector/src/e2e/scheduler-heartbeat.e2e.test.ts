@@ -117,7 +117,7 @@ describe("Scheduler heartbeat (e2e-minimal universe)", () => {
     // its HTTP port up (health check passes, sync runs) *before* the
     // scheduler-backed jobs call `registry.registerAll(...)` during boot,
     // and the registry's cached snapshot refreshes on a 2s tick. So the
-    // endpoint can legitimately report an empty registry for a brief
+    // endpoint can legitimately report an empty registry for a short
     // window after the server is reachable — racing sync completion on a
     // loaded runner. Polling closes that race; a registry that genuinely
     // never populates still times out here and trips the assertion below.
@@ -192,7 +192,7 @@ describe("Scheduler heartbeat (e2e-minimal universe)", () => {
  * job. Scheduler-backed jobs register into the registry during gateway
  * boot, *after* the HTTP server starts listening — and the registry's
  * cached snapshot only refreshes every couple of seconds. A health-gated
- * harness can therefore observe an empty registry for a brief window
+ * harness can therefore observe an empty registry for a short window
  * right after boot. Polling removes that race while preserving the
  * regression net: if registration never happens, this times out with an
  * empty snapshot and the caller's assertion fails.

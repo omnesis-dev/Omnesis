@@ -84,9 +84,12 @@ export interface RunContext {
   attempt: number;
   /** The body markers that name this run's flavour and subject. */
   flavour: RunFlavour;
-  /** The run's subject, when its prompt names one (doc id, source id, sweep id, …). */
+  /**
+   * The run's subject, when its prompt names one (doc id, source id, sweep
+   * id, the morning brief's day, the text of a quick-capture note, …).
+   */
   subject: string | null;
-  /** Secondary subject: the brief title on feedback runs, the doc event on data runs. */
+  /** Secondary subject: the doc event on data runs, the capture day on note turns. */
   detail: string | null;
   prompt: string;
 }
@@ -101,7 +104,6 @@ export type RunFlavour =
   | "time_based.scheduled"
   | "time_based.decay"
   | "time_based.decay.gone"
-  | "feedback.dismissal"
   | "feedback.provenance"
   | "synthesis.knowledge"
   | "synthesis.noticing"
@@ -116,17 +118,39 @@ export type RunFlavour =
   | "merge_adjudication"
   | "merge_adjudication.settled"
   | "notes_compaction"
+  | "note"
   | "malformed"
   | "unknown";
 
 /**
+ * The note agent's turn: one quick-capture note, handed to the
+ * `background-agent` model outside the cognition queue, so its prompt has no
+ * run envelope. Its subject is the note text; its detail the capture day.
+ */
+function readNoteTurn(prompt: string): RunContext | null {
+  const day = /^The note was captured \S+(?: \([^)]*\))? on (\d{4}-\d{2}-\d{2})/m.exec(prompt);
+  const text = /^<note>\n([\s\S]*?)\n<\/note>$/m.exec(prompt);
+  if (!day || !text) return null;
+  return {
+    runId: "note",
+    kind: "note",
+    attempt: 1,
+    flavour: "note",
+    subject: text[1]!,
+    detail: day[1]!,
+    prompt,
+  };
+}
+
+/**
  * Identify a run from its prompt. The envelope's `kind` is authoritative;
  * the body markers name the flavour within a kind and the subject the
- * behavior table keys on.
+ * behavior table keys on. A note-agent turn carries no envelope and is
+ * recognised by its note block.
  */
 export function readRunContext(prompt: string): RunContext | null {
   const env = parseCognitionRunEnvelope(prompt);
-  if (!env) return null;
+  if (!env) return readNoteTurn(prompt);
   const base = { runId: env.runId, kind: env.kind, attempt: env.attempt, prompt };
   if (
     env.kind === "synthesis" &&
@@ -145,7 +169,7 @@ export function readRunContext(prompt: string): RunContext | null {
   if (deleted) return { ...base, flavour: "data.deleted", subject: deleted[1]!, detail: null };
 
   // daily
-  const digest = m(/^Morning digest for (\S+?)\./m);
+  const digest = m(/^Morning brief for (\d{4}-\d{2}-\d{2})\./m);
   if (digest) return { ...base, flavour: "daily.digest", subject: digest[1]!, detail: null };
   const dailySource = m(/^Daily batch review for source "([^"]+)"/m);
   if (dailySource)
@@ -170,15 +194,7 @@ export function readRunContext(prompt: string): RunContext | null {
     return { ...base, flavour: "time_based.decay.gone", subject: decayGone[1]!, detail: null };
 
   // feedback
-  const reacted = m(/^The user reacted to brief (\S+) \("([^"]*)"\)\. Its state is now: (\S+)\./m);
-  if (reacted)
-    return {
-      ...base,
-      flavour: "feedback.dismissal",
-      subject: reacted[1]!,
-      detail: reacted[2]!,
-    };
-  const provenance = m(/^Provenance re-check(?: for)? (brief|loop) (\S+)/m);
+  const provenance = m(/^Provenance re-check(?: for)? (loop) (\S+)/m);
   if (provenance)
     return {
       ...base,
@@ -290,7 +306,7 @@ export interface PuppetBehavior {
   kind?: string;
   /** Run flavour, more specific than kind. */
   flavour?: RunFlavour;
-  /** The run's subject, exactly (a source id, sweep id, brief id, doc id). */
+  /** The run's subject, exactly (a source id, sweep id, doc id, day, note text). */
   subject?: string;
   /** A substring the run prompt must contain — the escape hatch for anything unmodelled. */
   promptContains?: string;
@@ -394,16 +410,11 @@ const DOCUMENT_SUBJECT_FLAVOURS = new Set<RunFlavour>([
 ]);
 
 /**
- * The four loop/brief write tools require `annotationDependencies`; a plan
- * that declares no priors gets an explicit empty list rather than failing
- * argument validation.
+ * The loop and observation write tools require `annotationDependencies`; a
+ * plan that declares no priors gets an explicit empty list rather than
+ * failing argument validation.
  */
-const DEPENDENCY_TOOLS = new Set([
-  "open_loop_create",
-  "open_loop_update",
-  "brief_create",
-  "brief_update",
-]);
+const DEPENDENCY_TOOLS = new Set(["open_loop_create", "open_loop_update", "observation_note"]);
 
 function pickBehavior(
   behaviors: readonly PuppetBehavior[],

@@ -27,6 +27,8 @@ import {
 import { readKnowledgeSourceRevision } from "./source-revision.js";
 import { enqueueKnowledgeWork } from "./work.js";
 
+/** A history horizon floor older than every fixture: nothing is out of scope. */
+const ALL_HISTORY = "2000-01-01T00:00:00.000Z";
 let db: Database.Database;
 beforeEach(() => {
   db = new Database(":memory:");
@@ -159,9 +161,11 @@ it("keeps import provenance but reports only current semantic coverage and pendi
   );
   db.prepare("UPDATE documents SET source_updated_at='2026-02-02' WHERE id='capacity'").run();
   const phase = () =>
-    readKnowledgeInventoryStatus(db, 7 * 86_400_000).find((row) => row.phase === "organization")!;
+    readKnowledgeInventoryStatus(db, 7 * 86_400_000, ALL_HISTORY).find(
+      (row) => row.phase === "organization",
+    )!;
   expect(phase()).toMatchObject({ observed: 1, considered: 0, pending: 0, unconsidered: 1 });
-  expect(knowledgeDiscoveryByMonth(db)[0]!.organization).toMatchObject({
+  expect(knowledgeDiscoveryByMonth(db, ALL_HISTORY)[0]!.organization).toMatchObject({
     considered: 0,
     pending: 2,
   });
@@ -172,7 +176,7 @@ it("keeps import provenance but reports only current semantic coverage and pendi
   ).toEqual({ input_revision: "body-v1" });
   coverage("capacity");
   expect(phase()).toMatchObject({ observed: 1, considered: 1, unconsidered: 0 });
-  expect(knowledgeDiscoveryByMonth(db)[0]!.organization).toMatchObject({
+  expect(knowledgeDiscoveryByMonth(db, ALL_HISTORY)[0]!.organization).toMatchObject({
     considered: 1,
     pending: 1,
   });

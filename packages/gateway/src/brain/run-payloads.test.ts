@@ -4,8 +4,10 @@
 import { describe, test, expect } from "vitest";
 import { MAX_CHANGED_ADDRESSED_ENTRY_IDS } from "./addressed-entry-context.js";
 import {
-  cognitionBriefLane,
   parseCognitionDataRunPayload,
+  parseCognitionDigestRunPayload,
+  parseCognitionMayDayRunPayload,
+  parseCognitionSweepRunPayload,
   parseCognitionSynthesisRunPayload,
 } from "./run-payloads.js";
 import { decodeRunTrigger } from "./run-payload-view.js";
@@ -30,7 +32,6 @@ describe("maintenance continuation lineage", () => {
     const workflow = cognitiveWorkflowIdForRun("synthesis", payload);
     expect(workflow).toBe("knowledge-maintenance");
     expect(mutatingToolsFor(workflow).has("knowledge_save")).toBe(true);
-    expect(cognitionBriefLane({ kind: "synthesis", payload })).toBe("reactive");
   });
 
   test("lineage cannot grant authority to an invalid payload", () => {
@@ -47,98 +48,28 @@ describe("maintenance continuation lineage", () => {
   });
 });
 
-describe("cognitionBriefLane", () => {
-  test("a sweep faces the strict bar unless its payload carries a declared lane", () => {
-    const sweep = (payload: Record<string, unknown>) =>
-      cognitionBriefLane({
-        kind: "sweep",
-        payload: { sweepId: "x", date: "2026-08-11", steeringPrompt: "p", ...payload },
-      });
-    // The lane is a charter a SYSTEM sweep declares. Every operator-authored
-    // sweep — and any run whose payload predates the field — gets the four
-    // gates, so a sweep can never route around them by existing.
-    expect(sweep({})).toBe("reactive");
-    expect(sweep({ origin: "user" })).toBe("reactive");
-    expect(sweep({ briefLane: "lookahead" })).toBe("lookahead");
-    expect(sweep({ briefLane: "noticing" })).toBe("noticing");
-    // A lane the schema does not know fails the parse and falls to strict.
-    expect(sweep({ briefLane: "digest" })).toBe("reactive");
-  });
-
-  test("the daily flavours land in their own lanes (may-day rows are historical)", () => {
-    expect(
-      cognitionBriefLane({ kind: "daily", payload: { digest: true, date: "2026-08-11" } }),
-    ).toBe("digest");
-    expect(
-      cognitionBriefLane({ kind: "daily", payload: { mayDay: true, date: "2026-08-11" } }),
-    ).toBe("lookahead");
-    expect(
-      cognitionBriefLane({
-        kind: "daily",
-        payload: { sourceId: "gmail:a", dateFrom: "2026-08-10", dateTo: "2026-08-11" },
-      }),
-    ).toBe("reactive");
-  });
-
+describe("daily and sweep payload discrimination", () => {
   test("digest and may-day payloads never collide (they are discriminated, not shape-matched)", () => {
     // Both carry only `date` beyond their literal marker, so a schema that
-    // dropped the marker would silently route every may-day run as a digest —
-    // and a digest never faces the push bar.
-    expect(cognitionBriefLane({ kind: "daily", payload: { mayDay: true, date: "d" } })).not.toBe(
-      "digest",
-    );
-    expect(cognitionBriefLane({ kind: "daily", payload: { digest: true, date: "d" } })).not.toBe(
-      "lookahead",
-    );
+    // dropped the marker would silently route every may-day run as a digest.
+    expect(parseCognitionDigestRunPayload({ mayDay: true, date: "d" })).toBeNull();
+    expect(parseCognitionMayDayRunPayload({ digest: true, date: "d" })).toBeNull();
+    expect(parseCognitionDigestRunPayload({ digest: true, date: "d" })).toEqual({
+      digest: true,
+      date: "d",
+    });
+    expect(parseCognitionDigestRunPayload({ digest: "yes", date: "d" })).toBeNull();
   });
 
-  test("only a loop-scoped scheduled check is a dated reminder", () => {
-    expect(
-      cognitionBriefLane({
-        kind: "time_based",
-        payload: { prompt: "re-verify before it surfaces", loopId: "loop_1" },
-      }),
-    ).toBe("dated_reminder");
-    // A loop-less schedule_agent_run is a free-form follow-up the agent wrote
-    // for itself. Letting it reach the preparation bar would hand the agent a
-    // way around the echo check by scheduling its own card.
-    expect(
-      cognitionBriefLane({ kind: "time_based", payload: { prompt: "look at this later" } }),
-    ).toBe("reactive");
-    expect(
-      cognitionBriefLane({ kind: "time_based", payload: { decayCheckLoopId: "loop_1" } }),
-    ).toBe("reactive");
-  });
-
-  test("only the noticing focus is the awareness lane", () => {
-    expect(cognitionBriefLane({ kind: "synthesis", payload: { focus: "noticing" } })).toBe(
-      "noticing",
-    );
-    for (const focus of ["collision", "annotation-contradiction"]) {
-      expect(cognitionBriefLane({ kind: "synthesis", payload: { focus } })).toBe("reactive");
-    }
-  });
-
-  test("every kind that does not fan out is reactive — the strict bar", () => {
-    // Derived from the real union, so an eleventh run kind fails here rather
-    // than silently inheriting a lane.
-    const fanOut = new Set(["daily", "time_based", "synthesis"]);
-    for (const kind of COGNITION_RUN_KINDS.filter((k) => !fanOut.has(k))) {
-      expect(cognitionBriefLane({ kind, payload: {} }), kind).toBe("reactive");
-    }
-  });
-
-  test("a malformed or unknown payload falls back to reactive, never a laxer lane", () => {
-    // A corrupt row must not be able to widen a lane: every fallback is the
-    // strict bar, so the failure mode is an over-judged card, not an
-    // un-judged one.
-    expect(cognitionBriefLane({ kind: "daily", payload: null })).toBe("reactive");
-    expect(cognitionBriefLane({ kind: "daily", payload: { digest: "yes" } })).toBe("reactive");
-    expect(cognitionBriefLane({ kind: "time_based", payload: {} })).toBe("reactive");
-    expect(cognitionBriefLane({ kind: "synthesis", payload: { focus: "unknown" } })).toBe(
-      "reactive",
-    );
-    expect(cognitionBriefLane({ kind: "not-a-kind", payload: {} })).toBe("reactive");
+  test("a pending sweep run that still carries a retired editorial lane stays claimable", () => {
+    const base = { sweepId: "x", date: "2026-08-11", steeringPrompt: "p" };
+    expect(parseCognitionSweepRunPayload({ ...base, briefLane: "lookahead" })).toEqual(base);
+    expect(parseCognitionSweepRunPayload({ ...base, origin: "user" })).toEqual({
+      ...base,
+      origin: "user",
+    });
+    // Any other unknown key still fails the strict parse.
+    expect(parseCognitionSweepRunPayload({ ...base, surpriseKey: true })).toBeNull();
   });
 });
 

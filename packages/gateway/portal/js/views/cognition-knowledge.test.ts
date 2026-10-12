@@ -240,7 +240,7 @@ it("selects library entries without leaving the document or changing the library
   );
   expect(knowledgeSelectionHref(null, "wiki")).toBe("/portal/debug/cognition/knowledge?kind=wiki");
   expect(knowledgeSelectionHref("retired-loop:example", "loop", "retired")).toContain("?kind=loop&status=retired");
-  expect(knowledgeSelectionHref(null, "brief", "unread")).toBe("/portal/debug/cognition/knowledge?kind=brief&status=unread");
+  expect(knowledgeSelectionHref(null, "observation", "held")).toBe("/portal/debug/cognition/knowledge?kind=observation&status=held");
   const pushState = vi.fn(),
     dispatchEvent = vi.fn(),
     preventDefault = vi.fn();
@@ -256,8 +256,8 @@ it("selects library entries without leaving the document or changing the library
   expect(pushState).toHaveBeenCalledWith(null, "", href);
   expect(dispatchEvent).toHaveBeenCalledOnce();
 });
-it("keeps All selected while loop and brief cards supply canonical detail hints", () => {
-  for (const kind of ["loop", "brief"]) {
+it("keeps All selected while loop and observation cards supply canonical detail hints", () => {
+  for (const kind of ["loop", "observation"]) {
     const card = PageCard({ node: { ...node, id: "entry-fixture", kind, canonicalFields: {} }, kind: "" });
     const href = hosts(card).find((item) => item.type === "a").props.href;
     const url = new URL(href, "https://portal.example.org");
@@ -291,7 +291,7 @@ it("does not mistake an implicit automatic review policy for an unscheduled wiki
   const explicit = text(KnowledgeDetail({ node: { ...node, kind: "wiki", metadata: { nextReviewAt: 1700000000000 } } }));
   expect(explicit).toContain("Next review:");
   expect(explicit).not.toContain("Review timing: Automatic");
-  const historical = text(KnowledgeDetail({ node: { ...node, kind: "brief", metadata: {} }, activeTab: "advanced" }));
+  const historical = text(KnowledgeDetail({ node: { ...node, kind: "observation", metadata: {} }, activeTab: "advanced" }));
   expect(historical).toContain("No explicit review date");
   expect(historical).not.toContain("Review timing: Automatic");
 });

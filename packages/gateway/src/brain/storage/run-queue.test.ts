@@ -7,7 +7,12 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 import { createDatabase } from "../../db.js";
 import { pruneActivityRetentionBatch } from "../../activity-retention/store.js";
-import { notesCompactionRunDedupeKey, SCHEDULED_INSTRUCTION_MAX_CHARS } from "../run-payloads.js";
+import {
+  dailySourceRunDedupeKey,
+  digestRunDedupeKey,
+  notesCompactionRunDedupeKey,
+  SCHEDULED_INSTRUCTION_MAX_CHARS,
+} from "../run-payloads.js";
 import { DERIVATION_STAGES } from "../../domain/DocumentDerivation.js";
 import {
   cancelScheduledRunsForLoop,
@@ -293,6 +298,42 @@ describe("steward run queue", () => {
     expect(claimDueCognitionRuns(db, { now: 100, excludeIds: ["a", "b"] })).toEqual([]);
     expect(getCognitionRun(db, "a")?.attempts).toBe(1);
     expect(getCognitionRun(db, "b")?.attempts).toBe(1);
+  });
+
+  test("a morning-brief-only claim admits the day's brief and leaves every other run untouched", () => {
+    maintenanceRun("maintenance");
+    enqueueCognitionRun(
+      db,
+      { id: "reaction", kind: "data", payload: { docId: "doc_1", event: "created", datumAt: 100 } },
+      100,
+    );
+    enqueueCognitionRun(
+      db,
+      {
+        id: "source-review",
+        kind: "daily",
+        payload: { sourceId: "src_1", dateFrom: "2026-07-02", dateTo: "2026-07-03" },
+        dedupeKey: dailySourceRunDedupeKey("src_1", "2026-07-03"),
+      },
+      100,
+    );
+    expect(claimDueCognitionRuns(db, { now: 100, morningBriefOnly: true })).toEqual([]);
+
+    enqueueCognitionRun(
+      db,
+      {
+        id: "brief",
+        kind: "daily",
+        payload: { digest: true, date: "2026-07-03" },
+        dedupeKey: digestRunDedupeKey("2026-07-03"),
+      },
+      100,
+    );
+    expect(
+      claimDueCognitionRuns(db, { now: 100, morningBriefOnly: true }).map((r) => r.id),
+    ).toEqual(["brief"]);
+    for (const id of ["maintenance", "reaction", "source-review"])
+      expect(getCognitionRun(db, id)?.attempts, id).toBe(0);
   });
 
   test("completed bound batches can settle without becoming a serial barrier", () => {

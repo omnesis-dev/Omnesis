@@ -263,11 +263,11 @@ describe("PushAdminService", () => {
     const phone = createDevice(db, { name: "ledger-phone", kind: "ios" });
     enqueueNotification(db, {
       message: {
-        kind: "brief",
-        title: "Fictional brief",
+        kind: "conversation",
+        title: "Fictional conversation",
         body: "An invented summary is ready.",
-        data: { briefId: "brief-fictional" },
-        collapseId: "brief:fictional",
+        data: { conversationId: "conversation-fictional" },
+        collapseId: "conversation:fictional",
       },
       deviceIds: [phone.id],
       createdAt: 1_000,

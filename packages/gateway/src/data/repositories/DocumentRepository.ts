@@ -816,7 +816,7 @@ export function deleteDocuments(
 export function cascadeOpenLoopPrivacyDeleteWithMirrors(
   db: Db,
   deletedDocIds: readonly string[],
-): { deletedLoopIds: string[]; deletedBriefIds: string[] } {
+): { deletedLoopIds: string[]; deletedObservationIds: string[] } {
   return db.transaction(() => {
     const loopIds = listLoopIdsCitingDocs(db, deletedDocIds);
     if (loopIds.length > 0) {
@@ -995,8 +995,8 @@ export function deleteDocumentForUser(
   if (tombstone) {
     tombstoneDocuments(db, providerId, sourceId, allExternalIds, originalDocumentIds, streamId);
   }
-  // Privacy cascade into the Briefs / Cognition Steward feature: loops and briefs
-  // derived from a privacy-deleted document are deleted with it, and the
+  // Privacy cascade into the Brain: loops and observations derived from a
+  // privacy-deleted document are deleted with it, and the
   // cascaded loops' mirrored `open-loop` corpus docs (external id = loop
   // id) go too. No tombstones for those mirrors — nothing re-syncs them.
   const cascade = cascadeOpenLoopPrivacyDelete(db, deletedIds);
@@ -1648,11 +1648,13 @@ export function getDocumentSourceIds(db: Db, ids: string[]): Map<string, string>
 export interface DocumentTitleSource {
   title: string;
   sourceId: string;
+  /** The source's own creation time (`source_created_at`, ISO 8601). */
+  createdAt: string;
 }
 
 /**
- * Current `title` + `source_id` for each requested document id, as a Map
- * keyed by id. Documents that no longer exist are simply absent from the map
+ * Current `title`, `source_id` and source creation time for each requested
+ * document id, as a Map keyed by id. Documents that no longer exist are simply absent from the map
  * — the caller substitutes nulls for a stale reference (e.g. a deleted doc a
  * brief loop still links). A read-only projection over `documents(id)` (its
  * primary key), chunked under SQLite's per-statement parameter cap like
@@ -1671,12 +1673,16 @@ export function getDocumentTitlesAndSources(
     const rows = db
       .prepare<
         string[],
-        { id: string; title: string; source_id: string }
-      >(`SELECT id, title, source_id FROM documents WHERE id IN (${placeholders})`)
+        { id: string; title: string; source_id: string; source_created_at: string }
+      >(`SELECT id, title, source_id, source_created_at FROM documents WHERE id IN (${placeholders})`)
       .all(...chunk);
     for (const row of rows) {
       if (isKnowledgeDocumentReadable(db, row.id, row.source_id))
-        out.set(row.id, { title: row.title, sourceId: row.source_id });
+        out.set(row.id, {
+          title: row.title,
+          sourceId: row.source_id,
+          createdAt: row.source_created_at,
+        });
     }
   }
   return out;

@@ -2,22 +2,19 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Scripted stand-ins for the two gate roles that sit between the steward's
- * decision and the write landing.
+ * The scripted stand-in for the entailment gate that sits between the
+ * steward's decision and the write landing.
  *
- * Durable-memory entailment writes fail open in production, while user-facing
- * Brief writes fail closed when a configured verifier or judge is unavailable.
- * That distinction is also a testing hazard: with the roles unassigned
- * (as every pre-existing suite leaves them), the gates are permanently in
- * their pass arm and their reject arm is unreachable end-to-end. These
- * servers make the reject arm drivable, so a bench can assert BOTH that a
- * refused claim never persists and that an absent verifier still lets the
- * write through.
+ * Durable-memory entailment writes fail open in production, and so does the
+ * morning recheck of an observation's claims. That is also a testing hazard:
+ * with the role unassigned (as most suites leave it), the gate is
+ * permanently in its pass arm and its reject arm is unreachable end-to-end.
+ * This server makes the reject arm drivable, so a bench can assert BOTH that
+ * a refused claim never persists or ships and that an absent verifier still
+ * lets the write through.
  *
  * `entailment-verifier` is a completion role: it is handed the claim and
- * the evidence quote and answers with one of the three NLI labels.
- * `brief-judge` is a chat role: it is handed the candidate brief and
- * answers `VERDICT: SHIP` or `VERDICT: HOLD`.
+ * the evidence and answers with one of the three NLI labels.
  */
 
 import { z } from "zod";
@@ -69,12 +66,6 @@ export type EntailmentPolicy =
       assessment?: "annotation_atomic" | "answer_segments" | "contextual_segments";
       prompt: string;
     }) => EntailmentLabel);
-
-/** How the judge answers; `hold-all` empties the feed, `ship-all` never blocks. */
-export type JudgePolicy =
-  | "ship-all"
-  | "hold-all"
-  | ((input: { prompt: string }) => "ship" | "hold");
 
 /** One verdict served, for assertions about what the gate was asked. */
 export interface VerdictCall {
@@ -257,7 +248,7 @@ function parseEntailmentSubject(prompt: string): {
   return { claim, evidence };
 }
 
-/** Scripted positive witness mirrors the production brief frame's source text. */
+/** Scripted positive witness mirrors the production evidence frame's source text. */
 function evidenceWitness(evidence: string): string {
   try {
     const value = JSON.parse(evidence) as {
@@ -278,18 +269,12 @@ function evidenceWitness(evidence: string): string {
   return evidence.slice(0, 1024);
 }
 
-/**
- * Which gate to stand in for, and how it should answer.
- *
- * A discriminated union rather than two loose fields: pairing a role with the
- * other role's policy would type-check, then throw inside the request handler
- * — and a throwing verdict server answers 500, which BOTH gates treat as
- * unavailability and fail open. The bench would then pass while asserting the
- * pass arm of a gate it believed it had driven into reject.
- */
-export type VerdictServerOptions =
-  | { role: "entailment"; policy: EntailmentPolicy; modelId?: string }
-  | { role: "judge"; policy: JudgePolicy; modelId?: string };
+/** How the scripted entailment gate should answer. */
+export interface VerdictServerOptions {
+  role: "entailment";
+  policy: EntailmentPolicy;
+  modelId?: string;
+}
 
 export async function startVerdictServer(opts: VerdictServerOptions): Promise<VerdictServer> {
   const calls: VerdictCall[] = [];
@@ -302,75 +287,63 @@ export async function startVerdictServer(opts: VerdictServerOptions): Promise<Ve
       calls.push({ at: Date.now(), prompt, answer: `HTTP ${refusal.status}` });
       return { kind: "httpError" as const, ...refusal };
     }
-    if (opts.role === "entailment") {
-      const subject = parseEntailmentSubject(prompt);
-      const { policy } = opts;
-      const label: EntailmentLabel =
-        policy === "accept-all"
-          ? "entailment"
-          : policy === "reject-all"
-            ? "neutral"
-            : policy === "contradict-all"
-              ? "contradiction"
-              : policy({ ...subject, prompt });
-      const assessment = {
-        verdict:
-          label === "entailment"
-            ? "supported"
-            : label === "neutral"
-              ? "unsupported"
-              : "contradicted",
-        reason: "Scripted verdict; no model quality inference.",
-        evidenceQuotes: label === "entailment" ? [evidenceWitness(subject.evidence)] : [],
-      };
-      const segmentAssessment = {
-        verdict: assessment.verdict,
-        reason: assessment.reason,
-        evidenceSegments: label === "entailment" ? (subject.witnessIds?.slice(0, 1) ?? []) : [],
-      };
-      const answer =
-        subject.assessment === "answer_segments" || subject.assessment === "contextual_segments"
-          ? JSON.stringify({
-              witnessSet: subject.witnessSet,
-              contentInContext: segmentAssessment,
-              placementSupport: segmentAssessment,
-            })
-          : subject.assessment === "annotation_atomic"
-            ? JSON.stringify({
-                coverage: { verdict: "complete", reason: "Scripted coverage" },
-                assertions: [
-                  {
-                    ...assessment,
-                    id: "a1",
-                    spans: [{ text: subject.claim, occurrence: 0 }],
-                    candidate: {
-                      actor: null,
-                      action: null,
-                      target: null,
-                      stage: null,
-                      time: null,
-                      condition: null,
-                      quantifier: null,
-                    },
-                  },
-                ],
-                placementSupport: {
-                  verdict: "not_applicable",
-                  reason: "Scripted generic annotation",
-                  evidenceQuotes: [],
-                },
-              })
-            : subject.context !== undefined
-              ? JSON.stringify({ contentInContext: assessment, placementSupport: assessment })
-              : label.toUpperCase();
-      calls.push({ at: Date.now(), prompt, answer, ...subject });
-      return { kind: "text" as const, text: answer };
-    }
+    const subject = parseEntailmentSubject(prompt);
     const { policy } = opts;
-    const decision =
-      policy === "ship-all" ? "ship" : policy === "hold-all" ? "hold" : policy({ prompt });
-    const answer = `Reason: scripted bench verdict.\nVERDICT: ${decision.toUpperCase()}`;
-    calls.push({ at: Date.now(), prompt, answer });
+    const label: EntailmentLabel =
+      policy === "accept-all"
+        ? "entailment"
+        : policy === "reject-all"
+          ? "neutral"
+          : policy === "contradict-all"
+            ? "contradiction"
+            : policy({ ...subject, prompt });
+    const assessment = {
+      verdict:
+        label === "entailment" ? "supported" : label === "neutral" ? "unsupported" : "contradicted",
+      reason: "Scripted verdict; no model quality inference.",
+      evidenceQuotes: label === "entailment" ? [evidenceWitness(subject.evidence)] : [],
+    };
+    const segmentAssessment = {
+      verdict: assessment.verdict,
+      reason: assessment.reason,
+      evidenceSegments: label === "entailment" ? (subject.witnessIds?.slice(0, 1) ?? []) : [],
+    };
+    const answer =
+      subject.assessment === "answer_segments" || subject.assessment === "contextual_segments"
+        ? JSON.stringify({
+            witnessSet: subject.witnessSet,
+            contentInContext: segmentAssessment,
+            placementSupport: segmentAssessment,
+          })
+        : subject.assessment === "annotation_atomic"
+          ? JSON.stringify({
+              coverage: { verdict: "complete", reason: "Scripted coverage" },
+              assertions: [
+                {
+                  ...assessment,
+                  id: "a1",
+                  spans: [{ text: subject.claim, occurrence: 0 }],
+                  candidate: {
+                    actor: null,
+                    action: null,
+                    target: null,
+                    stage: null,
+                    time: null,
+                    condition: null,
+                    quantifier: null,
+                  },
+                },
+              ],
+              placementSupport: {
+                verdict: "not_applicable",
+                reason: "Scripted generic annotation",
+                evidenceQuotes: [],
+              },
+            })
+          : subject.context !== undefined
+            ? JSON.stringify({ contentInContext: assessment, placementSupport: assessment })
+            : label.toUpperCase();
+    calls.push({ at: Date.now(), prompt, answer, ...subject });
     return { kind: "text" as const, text: answer };
   };
 

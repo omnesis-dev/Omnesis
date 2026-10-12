@@ -10,7 +10,6 @@ import { createKnowledgeWorkTables } from "../brain/knowledge/work-schema.js";
 import { createNotificationQueueTables } from "../push/queue.js";
 import {
   createBriefsStorageTables,
-  createBriefClaimsTables,
   createAnnotationStorageTables,
   createPersonAnnotationStorageTables,
   createConsumptionEdgesTables,
@@ -24,6 +23,7 @@ import { createTemporalAnnotationTables } from "../enrichment/temporal-annotatio
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
 import { createNoteEntriesTables } from "../sources/omnesis-notes/storage.js";
 import { createVoiceNoteTables } from "../voice-notes/storage.js";
+import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createAgentMessagesTables } from "../sources/agent-conversations/storage.js";
 import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
@@ -1453,7 +1453,6 @@ function runSchemaSetupInTxn(db: Db): void {
   // Brief-claims sidecar: per-brief atomic asserted claims, each bound to
   // its evidence document + quote. FK on briefs(id), so it follows the
   // briefs DDL above.
-  createBriefClaimsTables(db);
   // Durable doc-annotation store — the abstract-graph substrate.
   createAnnotationStorageTables(db);
   // Durable person-annotation store — the person-keyed sibling.
@@ -1491,6 +1490,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // Voice notes waiting on the gateway's transcriber (after note_entries,
   // which their rows reference).
   createVoiceNoteTables(db);
+  createNoteAgentTables(db);
   // agent-conversations: the append-only ledger of turns a
   // harness plugin pushes, projected into per-day conversation documents.
   createAgentMessagesTables(db);

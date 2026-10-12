@@ -92,9 +92,7 @@ export function saveKnowledgeNode(
     assertPersonReviewFence(db, input);
     if (input.outcomeFence) {
       if (
-        (input.kind !== "loop" && input.kind !== "brief") ||
-        (input.outcomeFence.kind ?? "loop") !== input.kind ||
-        (input.kind !== "loop" && !!input.outcomeFence.assessment) ||
+        input.kind !== "loop" ||
         outcomeWriteConflict(db, input.ownerId ?? input.id, input.outcomeFence)
       )
         throw new KnowledgeStorageError(

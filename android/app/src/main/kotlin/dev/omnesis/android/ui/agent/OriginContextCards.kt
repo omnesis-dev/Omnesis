@@ -16,35 +16,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.omnesis.android.designsystem.components.MarkdownText
 import dev.omnesis.android.designsystem.theme.OmRadius
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
-import dev.omnesis.android.transport.dto.BriefOriginSnapshot
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.WatchFiringOriginSnapshot
 import dev.omnesis.android.ui.common.TimeFormat
@@ -52,7 +39,7 @@ import dev.omnesis.android.ui.common.TimeFormat
 /**
  * The card pinned above an anchored thread's messages, saying what the thread is a reply to.
  *
- * A brief thread or a watch-firing thread opens with the creating run's folded transcript —
+ * A watch-firing thread opens with the creating run's folded transcript —
  * the agent's own context, not something the user wrote — which the gateway hides. This card
  * takes its place, so the thread reads as a reply to a specific thing rather than as a chat
  * that mysteriously begins mid-conversation. Draws nothing for an origin this build does not
@@ -68,7 +55,6 @@ fun ConversationOriginCard(
     // must never disagree: hiding the prefix while drawing nothing leaves an empty screen.
     if (!hasContextCard(origin)) return
     when (origin?.kind) {
-        "brief" -> origin.brief?.let { BriefContextCard(it, modifier) }
         "watch_firing" -> origin.watch?.let { snapshot ->
             val watchId = origin.watchId?.takeIf(String::isNotBlank)
             WatchFiringContextCard(
@@ -171,68 +157,6 @@ private fun WatchFiringContextCard(
                 fontWeight = FontWeight.Medium,
                 color = c.textSecondary,
             )
-        }
-    }
-}
-
-@Composable
-private fun BriefContextCard(snapshot: BriefOriginSnapshot, modifier: Modifier = Modifier) {
-    val c = OmTheme.colors
-    // Collapsed by default: a brief's body can run long, and the thread below it is what the
-    // reader came for.
-    var bodyExpanded by rememberSaveable { mutableStateOf(false) }
-    val body = snapshot.body?.takeIf { it.isNotEmpty() }
-    // Announced as one card rather than as four loose nodes.
-    OriginCardFrame(modifier.semantics(mergeDescendants = true) {}) {
-        OriginCardKicker(Icons.Outlined.Description, "Brief")
-        Text(
-            snapshot.title,
-            fontSize = 20.sp,
-            lineHeight = 26.sp,
-            fontWeight = FontWeight.Bold,
-            color = c.textPrimary,
-        )
-        MarkdownText(
-            markdown = snapshot.description,
-            color = c.textPrimary,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        if (body != null) {
-            HorizontalDivider(color = c.borderLight)
-            if (bodyExpanded) {
-                MarkdownText(
-                    markdown = body,
-                    color = c.textPrimary,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            val toggleLabel = if (bodyExpanded) "Hide details" else "Show details"
-            Row(
-                modifier = Modifier
-                    .clickable { bodyExpanded = !bodyExpanded }
-                    .clearAndSetSemantics {
-                        contentDescription = if (bodyExpanded) {
-                            "Hide the brief's details"
-                        } else {
-                            "Show the brief's details"
-                        }
-                    },
-                horizontalArrangement = Arrangement.spacedBy(OmSpacing.xs),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    toggleLabel,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = c.accent,
-                )
-                Icon(
-                    if (bodyExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                    contentDescription = null,
-                    tint = c.accent,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
         }
     }
 }

@@ -607,6 +607,35 @@ describe("annotation-only atomic assessment", () => {
     expect(completer.prompts).toHaveLength(1);
     expect(usage).toHaveBeenCalledTimes(1);
   });
+  test("spans that leave claim words uncovered get one repair call naming those words", async () => {
+    const partial = JSON.parse(reply) as {
+      assertions: Array<{ spans: Array<{ text: string; occurrence: number }> }>;
+    };
+    const words = INPUT.claim.split(" ");
+    partial.assertions[0]!.spans = [{ text: words.slice(0, -1).join(" "), occurrence: 0 }];
+    const replies = [JSON.stringify(partial), reply];
+    const prompts: string[] = [];
+    const completer: EntailmentCompleter = {
+      modelId: "fake-judge",
+      // eslint-disable-next-line @typescript-eslint/require-await
+      complete: async (prompt) => {
+        prompts.push(prompt);
+        return { text: replies.shift() ?? JSON.stringify(partial), usage: null };
+      },
+      dispose: () => {},
+    };
+    expect((await judge(completer).verify(input)).label).toBe("entailment");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(`outside every assertion's spans: "fifth".`);
+    expect(prompts[1]!.endsWith(annotationEntailmentPrompt(input))).toBe(true);
+
+    const stubborn = fakeCompleter(JSON.stringify(partial));
+    await expect(judge(stubborn).verify(input)).rejects.toMatchObject({
+      name: "AnnotationAssessmentError",
+      annotationFailure: "coverage",
+    });
+    expect(stubborn.prompts).toHaveLength(2);
+  });
   test("MiniCheck refuses unsupported atomic assessment before paid inference", async () => {
     const completer = fakeCompleter("Yes");
     await expect(judge(completer, "minicheck").verify(input)).rejects.toThrow("unavailable");

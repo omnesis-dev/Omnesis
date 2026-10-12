@@ -13,9 +13,9 @@ import { AnnotationAssessmentError } from "../../inference/annotation-entailment
 import { ANNOTATION_CONTEXT_VERIFIER } from "../annotation-verification.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { createOpenLoop } from "../storage/open-loops.js";
+import { resolveBrainSettings } from "../config.js";
 import { KnowledgeReferenceReader } from "./reference-reader.js";
 import { CONTEXTUAL_VERIFIER } from "./claim-context.js";
-import { resolveBrainSettings } from "../config.js";
 import { KnowledgeService, type KnowledgeProposal } from "./service.js";
 import {
   createKnowledgeTables,
@@ -441,7 +441,7 @@ it("requires structural coverage on every new synthesis kind", async () => {
     "loop",
     "doc_annotation",
     "person_annotation",
-    "brief",
+    "observation",
   ] as const)
     await expect(
       service().save({ ...proposal(kind), kind, markdown: "An uncovered factual sentence." }),

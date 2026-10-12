@@ -81,7 +81,7 @@ const claimState = z
 const proposal = z
   .object({
     id,
-    kind: z.enum(["wiki", "root", "loop", "doc_annotation", "person_annotation", "brief"]),
+    kind: z.enum(["wiki", "root", "loop", "doc_annotation", "person_annotation"]),
     ownerId: id.nullable().optional(),
     title: z.string().min(1).max(1000),
     markdown: z.string().max(262144),
@@ -170,7 +170,6 @@ function tool<S extends z.ZodType>(
 }
 export const KNOWLEDGE_MUTATING_TOOLS = new Set([
   "loop_synthesis_save",
-  "brief_synthesis_save",
   "doc_annotation_synthesis_save",
   "person_annotation_synthesis_save",
   "knowledge_link",
@@ -364,7 +363,7 @@ export function buildKnowledgeTools(
       z
         .object({
           kind: z
-            .enum(["wiki", "root", "loop", "doc_annotation", "person_annotation", "brief"])
+            .enum(["wiki", "root", "loop", "doc_annotation", "person_annotation", "observation"])
             .optional(),
           afterId: id.optional(),
           limit: z.number().int().min(1).max(100).default(30),
@@ -397,7 +396,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_reference",
-      "Resolve one reference with {ref}, or batch up to 16 with {refs}. Batch results contain complete successful views or per-item errors; retry deferredRefs in another batch and oversized references singly. Only returned successful views grant read receipts. Resolve an exact claim or evidence reference and read its current version. For a fetched document use source:<documentId>, not doc: or document:. Optional selectors: source:<documentId>#evidence:<evidenceId>, wiki:<pageId>#claim:<claimId> (also loop, annotation or brief claims), or loop:<loopId>#field:<fieldName>. Use exact tool-returned IDs. knowledge_save retains this exact read revision for the current run, so you can omit its inputVersions entry. Explicit version overrides remain supported and are never silently refreshed. Scoped owner synthesis tools still require explicit versions. " +
+      "Resolve one reference with {ref}, or batch up to 16 with {refs}. Batch results contain complete successful views or per-item errors; retry deferredRefs in another batch and oversized references singly. Only returned successful views grant read receipts. Resolve an exact claim or evidence reference and read its current version. For a fetched document use source:<documentId>, not doc: or document:. Optional selectors: source:<documentId>#evidence:<evidenceId>, wiki:<pageId>#claim:<claimId> (also loop or annotation claims), or loop:<loopId>#field:<fieldName>. Use exact tool-returned IDs. knowledge_save retains this exact read revision for the current run, so you can omit its inputVersions entry. Explicit version overrides remain supported and are never silently refreshed. Scoped owner synthesis tools still require explicit versions. " +
         LOOP_FIELD_REFERENCE_GUIDANCE,
       z.union([
         z.object({ ref: z.string().min(1).max(1024) }).strict(),
@@ -518,7 +517,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_save",
-      `Replace the full synthesis page, preserving existing claim spans and stable IDs by default. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Inside those tags, use ordinary Markdown headings such as ## Heading, without an extra opening angle bracket. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. For brief nodes, preserve the ## Description and ## Body sections in markdown. New wikis require a reconciled candidate, top-level creationAssessment after library/candidate and relevant page reads, and claim support from at least two distinct current documents. Prefer enriching existing reusable scopes; one-document material belongs in a useful annotation or an unpublished candidate. Root is the compact overview itself and must fit its hard budget. Preserve canonical node.ownerId when revising an owned node. If omitted, an actual knowledge_fetch(editing:true) in this run can supply it only for the exact same id, kind and expectedRevision; explicit null or another owner is never repaired. Never infer or fabricate it. node.inputVersions is optional here: an actual knowledge_fetch(editing:true) lets unchanged claim trees retain their stored dependency versions; new or edited uses need knowledge_reference reads in this run or explicit exact versions. This never marks untouched claims reviewed. In maintenance, existing pages must match an offered frontier. Before revising an existing wiki, read knowledge_fetch({id:targetId,editing:true}) at node.expectedRevision. Neither the embedded frontier node nor an explicit inputFingerprint replaces this target read. After knowledge_next_frontier and then a complete knowledge_fetch(editing:true) for that exact node/revision, omit inputFingerprint to use this run’s bound read receipt. Otherwise include its exact fingerprint at the top level beside node. Explicit wrong or blank fingerprints are never corrected; changed authority requires refreshing the frontier and editing read. An offered review=true person annotation requires annotation_search({personId}) through every nextCursor first. Retention is assessed against the current whole profile; a refused retention must be corrected, consolidated or retracted through canonical person tools before saving. Ordinary proof refresh does not perform this editorial assessment. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      `Replace the full synthesis page, preserving existing claim spans and stable IDs by default. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Inside those tags, use ordinary Markdown headings such as ## Heading, without an extra opening angle bracket. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. New wikis require a reconciled candidate, top-level creationAssessment after library/candidate and relevant page reads, and claim support from at least two distinct current documents. Prefer enriching existing reusable scopes; one-document material belongs in a useful annotation or an unpublished candidate. Root is the compact overview itself and must fit its hard budget. Preserve canonical node.ownerId when revising an owned node. If omitted, an actual knowledge_fetch(editing:true) in this run can supply it only for the exact same id, kind and expectedRevision; explicit null or another owner is never repaired. Never infer or fabricate it. node.inputVersions is optional here: an actual knowledge_fetch(editing:true) lets unchanged claim trees retain their stored dependency versions; new or edited uses need knowledge_reference reads in this run or explicit exact versions. This never marks untouched claims reviewed. In maintenance, existing pages must match an offered frontier. Before revising an existing wiki, read knowledge_fetch({id:targetId,editing:true}) at node.expectedRevision. Neither the embedded frontier node nor an explicit inputFingerprint replaces this target read. After knowledge_next_frontier and then a complete knowledge_fetch(editing:true) for that exact node/revision, omit inputFingerprint to use this run’s bound read receipt. Otherwise include its exact fingerprint at the top level beside node. Explicit wrong or blank fingerprints are never corrected; changed authority requires refreshing the frontier and editing read. An offered review=true person annotation requires annotation_search({personId}) through every nextCursor first. Retention is assessed against the current whole profile; a refused retention must be corrected, consolidated or retracted through canonical person tools before saving. Ordinary proof refresh does not perform this editorial assessment. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
       z
         .object({
           node: proposal.extend({
@@ -627,6 +626,12 @@ export function buildKnowledgeTools(
             "Curation deferral requires an existing offered wiki review and no placementAssessment",
           );
         const node = dependencyReceipts.complete(input.node);
+        // Check the wiki read first: a candidate revision mistaken for a page
+        // revision needs the new-page guidance, not a fingerprint request.
+        let fence =
+          node.kind === "wiki" && reconciliation && node.expectedRevision > 0
+            ? reconciliation.nodeFence(node.id, node.expectedRevision)
+            : runFence;
         const inputFingerprint =
           context.batchId && context.engine && node.expectedRevision > 0
             ? frontierEditing.resolve(node, input.inputFingerprint)
@@ -647,10 +652,6 @@ export function buildKnowledgeTools(
             "revision_conflict",
             "Root changes require an exclusive root maintenance run",
           );
-        let fence =
-          node.kind === "wiki" && reconciliation && node.expectedRevision > 0
-            ? reconciliation.nodeFence(node.id, node.expectedRevision)
-            : runFence;
         if (node.kind === "root" && context.batchId && context.engine && placementReads && fence)
           fence = placementReads.orientationFence(fence);
         if (
@@ -955,7 +956,6 @@ export function buildKnowledgeTools(
   if (context.scopedOwnersOnly) {
     const owners = [
       ["loop_synthesis_save", "loop"],
-      ["brief_synthesis_save", "brief"],
       ["doc_annotation_synthesis_save", "doc_annotation"],
       ["person_annotation_synthesis_save", "person_annotation"],
     ] as const;
@@ -964,7 +964,7 @@ export function buildKnowledgeTools(
       ...owners.map(([name, kind]) =>
         tool(
           name,
-          `Revise tagged claims on an existing canonical ${kind}. The ID must name the existing owner; read its current synthesis revision with knowledge_fetch and current evidence versions with knowledge_reference. This changes prose only, preserving operational fields. Briefs must preserve ## Description and ## Body sections. It cannot create wiki pages or change another artifact kind.`,
+          `Revise tagged claims on an existing canonical ${kind}. The ID must name the existing owner; read its current synthesis revision with knowledge_fetch and current evidence versions with knowledge_reference. This changes prose only, preserving operational fields. It cannot create wiki pages or change another artifact kind.`,
           proposal.omit({ kind: true, ownerId: true }),
           true,
           async (input, signal) => {

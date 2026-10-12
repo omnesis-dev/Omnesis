@@ -21,21 +21,21 @@ function claim(markdown: string, id: string, parentId: string | null = null) {
   return { id, parentId, start, end };
 }
 describe("claim-aware Markdown", () => {
-  it("renders brief and typed annotation links with their shared decorative icons", () => {
+  it("renders loop and typed annotation links with their shared decorative icons", () => {
     const rendered = renderKnowledgeMarkdown(
-      "[Brief](brief:brief_invented) [Document note](annotation:anno_invented) [Person note](annotation:panno_invented)",
+      "[Outcome](loop:loop_invented) [Document note](annotation:anno_invented) [Person note](annotation:panno_invented)",
       [],
       {
         "annotation:anno_invented": { kind: "doc_annotation" },
         "annotation:panno_invented": { kind: "person_annotation" },
       },
     ).html;
-    expect(rendered).toContain('class="kn-link-icon kn-link-icon--brief"');
+    expect(rendered).toContain('class="kn-link-icon kn-link-icon--loop"');
     expect(rendered).toContain('class="kn-link-icon kn-link-icon--doc_annotation"');
     expect(rendered).toContain('class="kn-link-icon kn-link-icon--person_annotation"');
     expect(rendered).toContain('class="kn-link-icon-badge kn-link-icon-badge--file"');
     expect(rendered).toContain('class="kn-link-icon-badge kn-link-icon-badge--user"');
-    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/brief_invented?kind=brief"');
+    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/loop_invented?kind=loop"');
     expect(DOMPurify.sanitize).toHaveBeenLastCalledWith(
       expect.not.stringContaining("<svg"),
       expect.any(Object),

@@ -1348,10 +1348,9 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// (shake-to-annotate). Decoded leniently — an older gateway that omits the
     /// field reads as `false`, so the affordance stays hidden.
     public let developer: Bool
-    /// The Omnesis Briefs feature gate (experimental). `nil` from a
-    /// gateway that predates the feature — reads as inactive, so the
-    /// Briefs entry stays hidden.
-    public let briefs: BriefsStatus?
+    /// The Tasks surface. `nil` from a gateway that predates `/tasks`, which
+    /// keeps the Tasks entry hidden.
+    public let tasks: TasksStatus?
     /// The gateway dictation gate. `nil` from a gateway that
     /// predates it, which keeps every mic on the on-device recognizer.
     public let dictation: DictationStatus?
@@ -1365,7 +1364,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         latestActivityBySource: [String: LatestActivity]?,
         experimental: Bool = false,
         developer: Bool = false,
-        briefs: BriefsStatus? = nil,
+        tasks: TasksStatus? = nil,
         dictation: DictationStatus? = nil,
         transcriptionVocabulary: Bool = false
     ) {
@@ -1375,7 +1374,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.latestActivityBySource = latestActivityBySource
         self.experimental = experimental
         self.developer = developer
-        self.briefs = briefs
+        self.tasks = tasks
         self.dictation = dictation
         self.transcriptionVocabulary = transcriptionVocabulary
     }
@@ -1387,7 +1386,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         case latestActivityBySource
         case experimental
         case developer
-        case briefs
+        case tasks
         case dictation
         case transcriptionVocabulary
     }
@@ -1402,7 +1401,9 @@ public struct StatusSnapshot: Decodable, Sendable {
         )
         experimental = try c.decodeIfPresent(Bool.self, forKey: .experimental) ?? false
         developer = try c.decodeIfPresent(Bool.self, forKey: .developer) ?? false
-        briefs = try c.decodeIfPresent(BriefsStatus.self, forKey: .briefs)
+        // A shape this app cannot read reads as absent rather than failing
+        // the whole snapshot.
+        tasks = try? c.decodeIfPresent(TasksStatus.self, forKey: .tasks)
         // An experimental field: a shape this app cannot read reads as absent
         // rather than failing the whole snapshot.
         dictation = try? c.decodeIfPresent(DictationStatus.self, forKey: .dictation)

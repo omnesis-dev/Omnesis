@@ -32,12 +32,14 @@ import {
 } from "@omnesis/core";
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveAnthropicApiKey } from "../model-credentials.js";
+import { AnthropicTemperature, NO_THINKING, responseText } from "./anthropic-messages.js";
 import { prepareAnswerWitnessRequest, parseAnswerWitnessVerdict } from "./answer-entailment.js";
 import {
   annotationEntailmentPrompt,
   assessAnnotationEntailment,
   AnnotationAssessmentError,
   ANNOTATION_VERDICT_MAX_TOKENS,
+  uncoveredClaimWords,
 } from "./annotation-entailment.js";
 import { loadCompletionFromResolved, type LoadCompletionDeps } from "./completion-loader.js";
 import { LlamaCppCompleter } from "./llama-cpp-completer.js";
@@ -53,6 +55,7 @@ import {
 import {
   prepareContextualWitnessRequest,
   parseContextualWitnessVerdict,
+  contextualSchemaIssues,
   contextualWitnessFailure,
 } from "./contextual-segments.js";
 
@@ -271,9 +274,23 @@ export class LlmJudgeEntailmentVerifier implements EntailCapability {
               ? parseMinicheckLabel(text)
               : parseJudgeLabel(text);
       if (label !== null) return { label, raw: text.trim() };
-      // Atomic annotations use one assessment call; malformed output stays unverified.
-      if (annotation && "failure" in annotation)
+      if (annotation && "failure" in annotation) {
+        // Atomic annotations get one repair call only when the spans left claim
+        // words uncovered, a gap the engine can name exactly; any other
+        // malformed output stays unverified.
+        const missing =
+          annotation.failure === "coverage" && attempt === 0
+            ? uncoveredClaimWords(text, claim)
+            : [];
+        if (missing.length) {
+          attemptPrompt = [
+            `A prior response left these words of the claim outside every assertion's spans: ${missing.map((word) => JSON.stringify(word)).join(", ")}. Decompose the unchanged claim again so the spans together cover each of them, and reassess every assertion from the unchanged input below; do not preserve any prior verdict.`,
+            prompt,
+          ].join("\n\n");
+          continue;
+        }
         throw new AnnotationAssessmentError(annotation.failure, this.deps.completer.modelId);
+      }
       if (contextual) {
         const category = answerRequest
           ? "assessment_schema"
@@ -291,7 +308,13 @@ export class LlmJudgeEntailmentVerifier implements EntailCapability {
           input.signal?.throwIfAborted();
           continue;
         }
-        throw new ContextualAssessmentError(category, this.deps.completer.modelId);
+        throw new ContextualAssessmentError(
+          category,
+          this.deps.completer.modelId,
+          category === "assessment_schema" && contextualRequest
+            ? contextualSchemaIssues(text, contextualRequest)
+            : [],
+        );
       }
       throw new Error(
         `entailment verifier returned no parseable ${style === "minicheck" ? "Yes/No" : "label"} (model=${this.deps.completer.modelId}, ${text.length} chars)`,
@@ -325,21 +348,24 @@ function withoutUsage(provider: CompleteCapability): EntailmentCompleter {
  */
 function anthropicEntailmentCompleter(modelId: string, apiKey: string): EntailmentCompleter {
   const client = new Anthropic({ apiKey, timeout: 45_000, maxRetries: 1 });
+  const sampling = new AnthropicTemperature();
   return {
     modelId,
     complete: async (prompt, opts) => {
-      const response = await client.messages.create(
-        {
-          model: modelId,
-          max_tokens: opts?.maxTokens ?? 128,
-          temperature: opts?.temperature ?? 0,
-          messages: [{ role: "user", content: prompt }],
-        },
-        opts?.signal ? { signal: opts.signal } : undefined,
+      const request = {
+        model: modelId,
+        max_tokens: opts?.maxTokens ?? 128,
+        thinking: NO_THINKING,
+        messages: [{ role: "user" as const, content: prompt }],
+      };
+      const response = await sampling.send(opts?.temperature ?? 0, (temperature) =>
+        client.messages.create(
+          temperature === undefined ? request : { ...request, temperature },
+          opts?.signal ? { signal: opts.signal } : undefined,
+        ),
       );
-      const block = response.content[0];
       return {
-        text: block?.type === "text" ? block.text : "",
+        text: responseText(response),
         usage: {
           promptTokens:
             response.usage.input_tokens +

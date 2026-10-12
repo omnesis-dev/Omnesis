@@ -35,6 +35,7 @@
 
 import { cognitiveWorkflowVersion } from "../cognition/workflows.js";
 import {
+  DIGEST_DEDUPE_PREFIX,
   mergedInstructionSeparator,
   PROVENANCE_RECHECK_DEDUPE_PREFIX,
   SCHEDULED_INSTRUCTION_MAX_CHARS,
@@ -686,16 +687,25 @@ export function isParallelKnowledgeRun(db: Db, runId: string): boolean {
     .get(runId);
 }
 
-export function claimDueCognitionRuns(
-  db: Db,
-  opts: {
-    now: number;
-    limit?: number;
-    maxAttempts?: number;
-    excludeIds?: string[];
-    parallelOnly?: boolean;
-  },
-): ClaimedCognitionRun[] {
+/** Options for one claim admission. */
+export interface ClaimCognitionRunsOpts {
+  now: number;
+  limit?: number;
+  maxAttempts?: number;
+  excludeIds?: string[];
+  parallelOnly?: boolean;
+  /**
+   * Claim only the day's morning brief run. The drainer sets it while the
+   * daily cognition budget is spent: the brief is the one product of the day
+   * the user is waiting on, and its cost is bounded at one run a day.
+   */
+  morningBriefOnly?: boolean;
+}
+
+/** The morning brief run: the `daily` kind under the digest fold key. */
+const MORNING_BRIEF_RUN_SQL = `kind='daily' AND dedupe_key LIKE '${DIGEST_DEDUPE_PREFIX}%'`;
+
+export function claimDueCognitionRuns(db: Db, opts: ClaimCognitionRunsOpts): ClaimedCognitionRun[] {
   // One writer transaction covers history and every claim. Multi-run admissions
   // consume reservations sequentially, including repeated attempts of one run.
   return db
@@ -715,16 +725,7 @@ export function claimDueCognitionRuns(
     .immediate();
 }
 
-function claimOneCognitionRun(
-  db: Db,
-  opts: {
-    now: number;
-    limit?: number;
-    maxAttempts?: number;
-    excludeIds?: string[];
-    parallelOnly?: boolean;
-  },
-): ClaimedCognitionRun[] {
+function claimOneCognitionRun(db: Db, opts: ClaimCognitionRunsOpts): ClaimedCognitionRun[] {
   const limit = opts.limit ?? DEFAULT_COGNITION_RUN_CLAIM_LIMIT;
   const maxAttempts = opts.maxAttempts ?? DEFAULT_COGNITION_RUN_MAX_ATTEMPTS;
   const excluded = JSON.stringify(opts.excludeIds ?? []);
@@ -847,6 +848,7 @@ function claimOneCognitionRun(
            AND next_attempt_at <= ?
            AND attempts < ?
            AND id NOT IN (SELECT value FROM json_each(?))
+           ${opts.morningBriefOnly ? `AND ${MORNING_BRIEF_RUN_SQL}` : ""}
          ORDER BY ${rankSql}, next_attempt_at ASC
          LIMIT ?
        )

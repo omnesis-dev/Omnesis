@@ -98,11 +98,11 @@ describe("durable notification wake retry", () => {
     });
 
     await broadcaster.publish({
-      kind: "brief",
-      title: "Fictional maintenance brief",
+      kind: "conversation",
+      title: "Fictional maintenance update",
       body: "An invented update is ready.",
-      data: { briefId: "brief-maintenance-fictional" },
-      collapseId: "brief:maintenance-fictional",
+      data: { conversationId: "conversation-maintenance-fictional" },
+      collapseId: "conversation:maintenance-fictional",
     });
 
     for (
@@ -240,11 +240,11 @@ describe("durable notification wake retry", () => {
     });
 
     await broadcaster.publish({
-      kind: "brief",
-      title: "Fictional terminal brief",
+      kind: "conversation",
+      title: "Fictional terminal update",
       body: "An invented update is ready.",
-      data: { briefId: "brief-terminal-fictional" },
-      collapseId: "brief:terminal-fictional",
+      data: { conversationId: "conversation-terminal-fictional" },
+      collapseId: "conversation:terminal-fictional",
     });
     now += 1_000;
     await expect(broadcaster.retryDueWakes()).resolves.toEqual({ attempted: 0, succeeded: 0 });
@@ -280,11 +280,11 @@ describe("durable notification wake retry", () => {
     });
 
     const publishing = broadcaster.publish({
-      kind: "brief",
-      title: "Fictional in-flight brief",
+      kind: "conversation",
+      title: "Fictional in-flight update",
       body: "An invented update is ready.",
-      data: { briefId: "brief-in-flight-fictional" },
-      collapseId: "brief:in-flight-fictional",
+      data: { conversationId: "conversation-in-flight-fictional" },
+      collapseId: "conversation:in-flight-fictional",
     });
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
 
@@ -332,11 +332,11 @@ describe("durable notification wake retry", () => {
     });
 
     await broadcaster.publish({
-      kind: "brief",
-      title: "Fictional rotated-token brief",
+      kind: "conversation",
+      title: "Fictional rotated-token update",
       body: "An invented update is ready.",
-      data: { briefId: "brief-rotated-token-fictional" },
-      collapseId: "brief:rotated-token-fictional",
+      data: { conversationId: "conversation-rotated-token-fictional" },
+      collapseId: "conversation:rotated-token-fictional",
     });
     now += 10;
     await expect(broadcaster.retryDueWakes()).resolves.toEqual({ attempted: 1, succeeded: 1 });
@@ -362,11 +362,11 @@ describe("durable notification wake retry", () => {
     });
 
     await broadcaster.publish({
-      kind: "brief",
-      title: "Fictional socket brief",
+      kind: "conversation",
+      title: "Fictional socket update",
       body: "An invented update is ready.",
-      data: { briefId: "brief-socket-disconnect-fictional" },
-      collapseId: "brief:socket-disconnect-fictional",
+      data: { conversationId: "conversation-socket-disconnect-fictional" },
+      collapseId: "conversation:socket-disconnect-fictional",
     });
     expect(
       db
@@ -409,11 +409,11 @@ describe("durable notification wake retry", () => {
       now: () => now,
     });
     await broadcaster.publish({
-      kind: "brief",
-      title: "Fictional rate-limited brief",
+      kind: "conversation",
+      title: "Fictional rate-limited update",
       body: "An invented update is ready.",
-      data: { briefId: "brief-rate-limited-fictional" },
-      collapseId: "brief:rate-limited-fictional",
+      data: { conversationId: "conversation-rate-limited-fictional" },
+      collapseId: "conversation:rate-limited-fictional",
     });
     now += 300_000;
     await expect(broadcaster.retryDueWakes()).resolves.toEqual({ attempted: 0, succeeded: 0 });
@@ -455,11 +455,11 @@ describe("durable notification wake retry", () => {
     });
 
     const publishing = broadcaster.publish({
-      kind: "brief",
-      title: "Fictional rotated-relay brief",
+      kind: "conversation",
+      title: "Fictional rotated-relay update",
       body: "An invented update is ready.",
-      data: { briefId: "brief-rotated-relay-fictional" },
-      collapseId: "brief:rotated-relay-fictional",
+      data: { conversationId: "conversation-rotated-relay-fictional" },
+      collapseId: "conversation:rotated-relay-fictional",
     });
     await vi.waitFor(() => expect(relayWake).toHaveBeenCalledOnce());
     current = { ...current, relayCredential: "credential-new-fictional" };
@@ -483,11 +483,11 @@ describe("durable notification wake retry", () => {
     const db = setupDb();
     enqueueNotification(db, {
       message: {
-        kind: "brief",
-        title: "Fictional lease brief",
+        kind: "conversation",
+        title: "Fictional lease update",
         body: "An invented update is ready.",
-        data: { briefId: "brief-lease-fictional" },
-        collapseId: "brief:lease-fictional",
+        data: { conversationId: "conversation-lease-fictional" },
+        collapseId: "conversation:lease-fictional",
       },
       deviceIds: [deviceId],
       createdAt: 3_000,
@@ -537,11 +537,11 @@ describe("durable notification wake retry", () => {
     const db = setupDb();
     enqueueNotification(db, {
       message: {
-        kind: "brief",
-        title: "Fictional expiry brief",
+        kind: "conversation",
+        title: "Fictional expiry update",
         body: "An invented update is ready.",
-        data: { briefId: "brief-expiry-fictional" },
-        collapseId: "brief:expiry-fictional",
+        data: { conversationId: "conversation-expiry-fictional" },
+        collapseId: "conversation:expiry-fictional",
       },
       deviceIds: [deviceId],
       createdAt: 4_000,
@@ -590,11 +590,11 @@ describe("durable notification wake retry", () => {
     const db = setupDb();
     enqueueNotification(db, {
       message: {
-        kind: "brief",
-        title: "Fictional crash brief",
+        kind: "conversation",
+        title: "Fictional crash update",
         body: "An invented update is ready.",
-        data: { briefId: "brief-crash-fictional" },
-        collapseId: "brief:crash-fictional",
+        data: { conversationId: "conversation-crash-fictional" },
+        collapseId: "conversation:crash-fictional",
       },
       deviceIds: [deviceId],
       createdAt: 5_000,
@@ -629,11 +629,11 @@ describe("durable notification wake retry", () => {
     const db = setupDb();
     enqueueNotification(db, {
       message: {
-        kind: "brief",
-        title: "Fictional exhausted brief",
+        kind: "conversation",
+        title: "Fictional exhausted update",
         body: "An invented update is ready.",
-        data: { briefId: "brief-exhausted-fictional" },
-        collapseId: "brief:exhausted-fictional",
+        data: { conversationId: "conversation-exhausted-fictional" },
+        collapseId: "conversation:exhausted-fictional",
       },
       deviceIds: [deviceId],
       createdAt: 6_000,

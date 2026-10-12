@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { deleteOpenLoop } from "../storage/open-loops.js";
-import { deleteBriefsAttachedToLoops } from "../storage/briefs.js";
+import { deleteObservationsAttachedToLoops } from "../storage/observations.js";
 import { deleteDocAnnotation } from "../storage/annotations.js";
 import { deletePersonAnnotation } from "../storage/person-annotations.js";
 import type Database from "better-sqlite3";
@@ -18,14 +18,14 @@ export function purgeKnowledgeOwner(
   if (kind === "loop") {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_loops'").get())
       return;
-    deleteBriefsAttachedToLoops(db, [ownerId], { includeTerminal: true });
+    deleteObservationsAttachedToLoops(db, [ownerId], { includeClosed: true });
     deleteOpenLoop(db, ownerId, { retire: false });
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='retired_loops'").get())
       db.prepare("DELETE FROM retired_loops WHERE id=?").run(ownerId);
     // Preserve corpus mirror IDs until mirror.remove can delete their index chunks.
     // Immediate owner read fences hide them while bounded cleanup is pending.
-  } else if (kind === "brief") {
-    db.prepare("DELETE FROM briefs WHERE id=?").run(ownerId);
+  } else if (kind === "observation") {
+    db.prepare("DELETE FROM observations WHERE id=?").run(ownerId);
   } else if (kind === "doc_annotation") {
     deleteDocAnnotation(db, ownerId);
   } else if (kind === "person_annotation") {

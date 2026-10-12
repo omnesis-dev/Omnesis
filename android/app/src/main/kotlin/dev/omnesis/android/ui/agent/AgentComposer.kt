@@ -97,6 +97,8 @@ fun AgentComposer(
     requestFocus: Boolean = false,
     /** Changes when the coordinator explicitly replaces the local draft with a fresh composer. */
     composerGeneration: Long = 0,
+    /** What the empty composer says while it is ready; the Morning brief conversation names its brief. */
+    idlePlaceholder: String = DailyBriefCopy.DEFAULT_COMPOSER_PROMPT,
 ) {
     var text by rememberSaveable(composerGeneration) { mutableStateOf(initialText) }
     // Per-message local state — NOT view-model/coordinator state: an ephemeral
@@ -117,7 +119,7 @@ fun AgentComposer(
         !enabled -> "Connecting…"
         busy -> "Working…"
         armedCommand != null -> "Describe what to research…"
-        else -> "Ask Omnesis"
+        else -> idlePlaceholder
     }
 
     val canSend = enabled && !busy && text.trim().isNotEmpty()

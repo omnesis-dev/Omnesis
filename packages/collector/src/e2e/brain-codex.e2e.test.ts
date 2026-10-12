@@ -29,7 +29,6 @@ describe("Codex inference through the Brain engine", () => {
     bench = await BrainBench.start({
       experimental: true,
       brain: {
-        judge: { enabled: true },
         knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
       },
       extraInference: {
@@ -37,7 +36,6 @@ describe("Codex inference through the Brain engine", () => {
         assignments: {
           "background-agent": "codex/fixture-parent",
           "entailment-verifier": "codex/fixture-verifier",
-          "brief-judge": "codex/fixture-judge",
           ocr: "codex/fixture-ocr",
         },
       },
@@ -50,7 +48,7 @@ describe("Codex inference through the Brain engine", () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   }, 60_000);
 
-  test("persists accepted briefs and holds rejected ones while the Codex parent waits for Codex gates", async () => {
+  test("notes an observation, keeps a supported annotation and refuses an unsupported one while the Codex parent waits for its Codex verifier", async () => {
     const [docId] = await bench
       .pushAndSettle([
         email({
@@ -73,28 +71,27 @@ describe("Codex inference through the Brain engine", () => {
       });
     const run = await bench.obs.interpretationForSource(docId!);
     const calls = await bench.obs.executedTools(run.id);
-    const briefs = await bench.obs.briefsMatching("codex-bench-");
+    const diagnostics = JSON.stringify(
+      calls.map((call) => ({ tool: call.tool, result: call.result })),
+    );
+    const observations = await bench.obs.observationsMatching("codex-bench-");
     expect(
-      briefs.map((brief) => brief.title),
-      JSON.stringify(calls.map((call) => ({ tool: call.tool, result: call.result }))),
-    ).toEqual(["codex-bench-accepted"]);
+      observations.map((observation) => observation.summary),
+      diagnostics,
+    ).toEqual(["codex-bench-accepted: the workshop registration closes on Friday."]);
     expect(
       calls
-        .filter((call) => call.tool === "brief_list" || call.tool === "brief_create")
-        .map((call) => call.tool),
+        .filter((call) => call.tool.startsWith("observation_") || call.tool === "annotate_durable")
+        .map((call) => [call.tool, call.result?.resultType ?? call.result?.code]),
+      diagnostics,
     ).toEqual([
-      "brief_list",
-      "brief_create",
-      "brief_list",
-      "brief_create",
-      "brief_list",
-      "brief_create",
+      ["observation_list", "observation.list"],
+      ["observation_note", "observation.noted"],
+      ["annotate_durable", "annotation.created"],
+      ["annotate_durable", "evidence_does_not_entail_claim"],
     ]);
-    expect(
-      calls
-        .filter((call) => call.tool === "brief_create")
-        .map((call) => call.result?.resultType ?? call.result?.code),
-    ).toEqual(["brief.created", "brief.held_by_judge", "evidence_does_not_entail_claim"]);
+    const { annotations } = await bench.obs.docAnnotations(docId!);
+    expect(annotations.map((annotation) => annotation.claimType)).toEqual(["codex-bench-accepted"]);
     const events = readFileSync(logPath, "utf8")
       .trim()
       .split("\n")
@@ -125,8 +122,9 @@ describe("Codex inference through the Brain engine", () => {
     expect(parentStart).toBeGreaterThanOrEqual(0);
     expect(parentEnd).toBeGreaterThan(parentStart);
     const nested = events.slice(parentStart + 1, parentEnd);
-    expect(nested.some((event) => event.model === "fixture-verifier")).toBe(true);
-    expect(nested.some((event) => event.model === "fixture-judge")).toBe(true);
+    expect(
+      nested.filter((event) => event.model === "fixture-verifier").length,
+    ).toBeGreaterThanOrEqual(2);
   }, 120_000);
 
   test("recognizes an image through the spawned gateway's Codex OCR assignment", async () => {

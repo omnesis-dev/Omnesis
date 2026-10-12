@@ -63,7 +63,6 @@ describe("next generation brain progressive maintenance", () => {
       syncSources: false,
       embedder: true,
       entailment: "accept-all",
-      judge: "hold-all",
       decision: { policy: nextGenDecisionPolicy },
       behaviors: {
         dynamic: knowledgePuppet({

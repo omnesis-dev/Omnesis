@@ -47,8 +47,7 @@ interface SweepDto {
     failedRuns: number;
     promptTokens: number;
     completionTokens: number;
-    briefsCreated: number;
-    briefsHeld: number;
+    observationsNoted: number;
     loopsCreated: number;
     loopsTouched: number;
     annotationsCreated: number;
@@ -62,8 +61,7 @@ const EMPTY_STATS = {
   failedRuns: 0,
   promptTokens: 0,
   completionTokens: 0,
-  briefsCreated: 0,
-  briefsHeld: 0,
+  observationsNoted: 0,
   loopsCreated: 0,
   loopsTouched: 0,
   annotationsCreated: 0,
@@ -94,8 +92,7 @@ function sweepDto(
           failedRuns: tally.failedRuns,
           promptTokens: tally.promptTokens,
           completionTokens: tally.completionTokens,
-          briefsCreated: tally.briefsCreated,
-          briefsHeld: tally.briefsHeld,
+          observationsNoted: tally.observationsNoted,
           loopsCreated: tally.loopsCreated,
           loopsTouched: tally.loopsTouched,
           annotationsCreated: tally.annotationsCreated,

@@ -43,7 +43,9 @@ import { SchedulerQueueFullError, type SchedulerMetricsSnapshot } from "./schedu
 import { resolveRuntimeSettings } from "./runtime-settings.js";
 import { type SyncStatusRegistry } from "./sync-status.js";
 import { createCollectorDeviceResolver } from "./collector-device-resolver.js";
-import { mountBriefsRoutes } from "./brain/http.js";
+import { mountLoopRoutes } from "./brain/http.js";
+import { mountTaskRoutes } from "./brain/tasks/http.js";
+import { getNoteRuns } from "./brain/note-agent/storage.js";
 import { mountBrainAdminRoutes } from "./brain/admin-http.js";
 import { mountCognitionRoutes } from "./http/routes/cognition.js";
 import { mountTemporalRoutes } from "./http/routes/temporal.js";
@@ -405,11 +407,11 @@ export function createServer(
      * is not mounted and `/status` advertises it inactive.
      */
     getDictationStatus?: () => import("./dictation/index.js").DictationFeatureStatus;
+    getNoteAgentActive?: () => boolean;
+    /** The cascades that follow a task change (loop mirror, scheduled checks, observations). */
+    taskEffects?: import("./brain/tasks/service.js").TaskEffects;
     /** Receives the voice-note queue so the composition root can stop it on shutdown. */
     onVoiceNoteService?: (service: import("./voice-notes/index.js").VoiceNoteService) => void;
-    getBriefTalkback?: () =>
-      | import("./brain/talkback/talkback-service.js").BriefTalkbackPort
-      | null;
     /** Replay-only settable briefs decision clock (backtest mirror). */
     briefsClock?: import("./brain/virtual-clock.js").MutableClock;
     /**
@@ -1242,6 +1244,7 @@ export function createServer(
     getReleaseCheck: opts?.getReleaseCheck,
     getBriefsStatus: opts?.getBriefsStatus,
     getDictationStatus: opts?.getDictationStatus,
+    getNoteAgentActive: opts?.getNoteAgentActive,
     getTranscriptionVocabularyEnabled: () =>
       opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,
@@ -1712,6 +1715,7 @@ export function createServer(
     provenance: new NotesProvenanceService(db),
     runtime: getOmnesisNotesRuntime,
     pendingTranscriptions: (noteIds) => pendingVoiceNoteIds(db, noteIds),
+    noteAgentRuns: (noteIds) => getNoteRuns(db, noteIds),
   });
 
   // Voice notes: Tell Omnesis captures that arrive with their
@@ -1755,13 +1759,19 @@ export function createServer(
   opts?.onAgentConversationsRuntime?.(agentConversationsRuntime);
   mountAgentMessagesRoutes(app, { runtime: agentConversationsRuntime });
 
-  // /briefs/* + /loops* (experimental; feed/triage survive a parked background model).
-  mountBriefsRoutes(app, {
+  // /loops* (experimental; reads survive a parked background model).
+  mountLoopRoutes(app, {
     db,
-    writeGate: w,
     getStatus: opts?.getBriefsStatus,
     clock: opts?.briefsClock,
-    getTalkback: opts?.getBriefTalkback,
+  });
+
+  // /tasks* — the user's tasks. Available on every install.
+  mountTaskRoutes(app, {
+    db,
+    writeGate: w,
+    clock: opts?.briefsClock,
+    effects: opts?.taskEffects,
   });
 
   // /temporal/* — the time index the portal's Calendar reads. Not gated on

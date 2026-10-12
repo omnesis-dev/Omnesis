@@ -7,8 +7,6 @@ import { beforeEach, afterEach, it, expect } from "vitest";
 import { createLogger, type EntailCapability } from "@omnesis/core";
 import { createAnnotationStorageTables, createDocAnnotation } from "../storage/annotations.js";
 import { createConsumptionEdgesTables } from "../storage/consumption-edges.js";
-import { createBrief, getBrief } from "../storage/briefs.js";
-import { createBriefClaimsTables } from "../storage/brief-claims.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { directWriteGate, writeGateFromCall, type WriterCallFn } from "../../write-gate.js";
 import { buildAnnotationTools, buildCognitionOwnTools } from "../steward/tools.js";
@@ -176,7 +174,6 @@ it.each(["changed", "current", "missing-evidence"])(
           writeGate,
           clock: () => 10,
           runId: "run",
-          briefLane: "reactive",
           log: createLogger("test:canonical-fence"),
           searchPort: {
             search: (input) => Promise.resolve({ query: input.query, durationMs: 0, results: [] }),
@@ -589,79 +586,6 @@ it("rejects a fetched loop update after a ledger append at the same timestamp", 
     state: "open",
     last_update: 1,
   });
-});
-
-it("rejects a fetched brief replacement after only its live asserted claims changed", async () => {
-  createBriefClaimsTables(db);
-  createBrief(
-    db,
-    {
-      id: "brief",
-      createdByRun: "prior",
-      kind: "info",
-      title: "Workshop plan",
-      confidence: 0.8,
-      urgency: 0.5,
-      claims: [
-        {
-          id: "claim",
-          claimText: "The workshop begins Friday.",
-          evidenceDocId: "evidence",
-          evidenceQuote: "The workshop begins Friday.",
-          claimBasis: "quoted",
-          verificationState: "verified",
-          confidence: 0.8,
-        },
-      ],
-    },
-    1,
-  );
-  const tools = buildMaintenanceCanonicalTools(
-    db,
-    directWriteGate(db),
-    { batchId: "batch", runId: "run" },
-    (writeGate) =>
-      buildCognitionOwnTools({
-        db,
-        writeGate,
-        clock: () => 10,
-        runId: "run",
-        briefLane: "reactive",
-        log: createLogger("test:brief-reconciliation"),
-        searchPort: {
-          search: (input) => Promise.resolve({ query: input.query, durationMs: 0, results: [] }),
-        },
-        mirror: { refresh: () => Promise.resolve(), remove: () => Promise.resolve() },
-        getNotesMaxBytes: () => 8192,
-      }),
-    { clock: () => 10, parallel: true },
-  );
-  const before = getBrief(db, "brief");
-  expect(
-    await tools
-      .find((tool) => tool.name === "brief_fetch")!
-      .invoke({ id: "brief" }, parallelContext),
-  ).toMatchObject({ kind: "structured" });
-  db.prepare("UPDATE brief_claims SET claim_text=? WHERE id='claim'").run(
-    "The workshop was postponed.",
-  );
-  expect(getBrief(db, "brief")).toEqual(before);
-  expect(
-    await tools
-      .find((tool) => tool.name === "brief_update")!
-      .invoke(
-        {
-          id: "brief",
-          description: "Old workshop plan",
-          assertedClaims: [],
-          annotationDependencies: [],
-        },
-        parallelContext,
-      ),
-  ).toMatchObject({ kind: "error", code: "revision_conflict" });
-  expect(
-    db.prepare("SELECT claim_text,invalidated_at FROM brief_claims WHERE id='claim'").get(),
-  ).toEqual({ claim_text: "The workshop was postponed.", invalidated_at: null });
 });
 
 it("rejects an already stale loop inventory before entering the mutating tool", async () => {

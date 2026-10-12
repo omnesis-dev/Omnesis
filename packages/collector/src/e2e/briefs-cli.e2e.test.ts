@@ -5,13 +5,13 @@
  * Operator-CLI end-to-end coverage for `omnesis brain` (criterion 12):
  * loops list/show, run + transcript access, the per-datum decision
  * view, daily token spend, and the agent-notes print/wipe — all driven
- * as a child-process CLI against a spawned gateway with the Briefs
- * feature ACTIVE (experimental on + a `background-agent` assignment).
+ * as a child-process CLI against a spawned gateway with the Brain
+ * ACTIVE (experimental on + a `background-agent` assignment).
  *
- * The engine's own loop/brief creation is exercised by the scripted-
+ * The engine's own loop/observation creation is exercised by the scripted-
  * backend scorecard lane (S13); here the substrate is seeded directly —
  * loop/run/spend/notes rows into the gateway's SQLite store and
- * transcript JSON files into `<configDir>/briefs/transcripts/` — so the
+ * transcript JSON files into the gateway's transcript directory — so the
  * suite asserts the full HTTP + CLI read path deterministically. The
  * notes wipe is the one true mutation and goes through the gateway's
  * writer end-to-end.
@@ -66,7 +66,7 @@ describe("`omnesis brain` operator CLI (spawned gateway, feature active)", () =>
     // replay factory loads its fixture eagerly. A bare `replay` with no
     // fixture resolves to nothing, so give it a real (minimal) one. The
     // explicit gateway mode opens the feature surface.
-    fixtureDir = mkdtempSync(join(tmpdir(), "omnesis-briefs-cli-fixture-"));
+    fixtureDir = mkdtempSync(join(tmpdir(), "omnesis-brain-cli-fixture-"));
     fixturePath = join(fixtureDir, "fixture.jsonl");
     writeFileSync(
       fixturePath,
@@ -99,9 +99,9 @@ describe("`omnesis brain` operator CLI (spawned gateway, feature active)", () =>
 
   test("the gateway advertises the feature active on /status", async () => {
     const status = await harness.gatewayJson<{
-      briefs?: { active: boolean; modelAssigned: boolean; visible: boolean };
+      brain?: { active: boolean; modelAssigned: boolean; visible: boolean };
     }>("/status");
-    expect(status.briefs).toMatchObject({ active: true, modelAssigned: true, visible: true });
+    expect(status.brain).toMatchObject({ active: true, modelAssigned: true, visible: true });
   });
 
   test("`brain loops` lists seeded loops and honors --state", async () => {
@@ -123,13 +123,14 @@ describe("`omnesis brain` operator CLI (spawned gateway, feature active)", () =>
     expect(r.stdout).toContain(LOOP_DONE);
   });
 
-  test("`brain loop <id>` shows the ledger and attached briefs", async () => {
+  test("`brain loop <id>` shows the ledger and attached observations", async () => {
     const r = await runCli(harness, ["brain", "loop", LOOP_OPEN]);
     expect(r.exitCode, r.stderr).toBe(0);
     expect(r.stdout).toContain("Pay the Stellar Sound invoice");
     expect(r.stdout).toContain("Invoice spotted in the mail thread."); // ledger note
     expect(r.stdout).toContain(RUN_WITH_TRANSCRIPT); // ledger runId stamp
-    expect(r.stdout).toContain("brf_nudge_1"); // attached brief
+    expect(r.stdout).toContain("obs_nudge_1"); // attached observation
+    expect(r.stdout).toContain("An invoice arrived with no matching payment");
   });
 
   test("`brain runs` lists the seeded run; `brain run <id>` shows its transcript ref", async () => {
@@ -234,7 +235,7 @@ describe("`omnesis brain` operator CLI (spawned gateway, feature active)", () =>
 });
 
 /**
- * Seed the operator-readable substrate directly: loop/brief/run/spend/
+ * Seed the operator-readable substrate directly: loop/observation/run/spend/
  * notes rows into the gateway's store (short transaction; the gateway's
  * writer is idle apart from boot-time rhythm enqueues) and transcript
  * files where the gateway's transcript store reads them. Content is
@@ -274,13 +275,12 @@ function seedSubstrate(h: SyntheticE2EHarness): void {
       ).run(LOOP_OPEN, RUN_WITH_TRANSCRIPT, now - 30_000);
 
       db.prepare(
-        `INSERT INTO briefs (id, created_by_run, kind, title, description, confidence, urgency,
-           state, created_at, updated_at)
-         VALUES ('brf_nudge_1', ?, 'loop', 'An invoice arrived with no matching payment',
-           'Invoice 042 from Stellar Sound.', 0.85, 0.6, 'unread', ?, ?)`,
+        `INSERT INTO observations (id, created_by_run, summary, why, state, created_at, updated_at)
+         VALUES ('obs_nudge_1', ?, 'An invoice arrived with no matching payment',
+           'Invoice 042 from Stellar Sound.', 'live', ?, ?)`,
       ).run(RUN_WITH_TRANSCRIPT, now - 30_000, now - 30_000);
       db.prepare(
-        `INSERT INTO brief_related_loops (brief_id, loop_id) VALUES ('brf_nudge_1', ?)`,
+        `INSERT INTO observation_related_loops (observation_id, loop_id) VALUES ('obs_nudge_1', ?)`,
       ).run(LOOP_OPEN);
 
       db.prepare(
@@ -333,7 +333,7 @@ function seedSubstrate(h: SyntheticE2EHarness): void {
   }
 
   // Transcript files live on the filesystem (like logs), named
-  // `<finishedAt>-<runId>-a<attempt>.json` — see briefs/transcripts.ts.
+  // `<finishedAt>-<runId>-a<attempt>.json` — see brain/transcripts.ts.
   const dir = join(h.getConfigDir(), "briefs", "transcripts");
   mkdirSync(dir, { recursive: true });
   const finishedAt = now - 35_000;

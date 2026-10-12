@@ -44,7 +44,7 @@ enum ModelsPreviewData {
         CapabilityMeta(
             role: "background-agent",
             title: "Background agent",
-            description: "The model behind Omnesis Briefs: it runs headlessly to maintain open loops and surface briefs.",
+            description: "The model for everything Omnesis does headlessly: keeping tasks current and writing the morning brief.",
             icon: "bot",
             experimental: true,
             section: "cognition"
@@ -53,14 +53,6 @@ enum ModelsPreviewData {
             role: "entailment-verifier",
             title: "Entailment verifier",
             description: "Checks that a memory claim is supported by its quoted evidence before it persists.",
-            icon: "shield-check",
-            experimental: true,
-            section: "cognition"
-        ),
-        CapabilityMeta(
-            role: "brief-judge",
-            title: "Brief judge",
-            description: "Decides whether a candidate brief is worth interrupting you for.",
             icon: "shield-check",
             experimental: true,
             section: "cognition"

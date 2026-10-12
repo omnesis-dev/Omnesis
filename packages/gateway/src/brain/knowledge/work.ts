@@ -15,6 +15,7 @@ import { recordKnowledgeCoverage, type KnowledgeCoverageInput } from "./discover
 import { sourceHasDiscoveryObligation } from "./discovery-gate.js";
 import { assertKnowledgeDiscoveryComplete } from "./discovery-completion.js";
 import { KnowledgeStorageError } from "./types.js";
+import { KNOWLEDGE_WORK_PARKED } from "./work-retry.js";
 import type Database from "better-sqlite3";
 import type { MaintenanceTier } from "./planner.js";
 
@@ -38,12 +39,14 @@ export interface KnowledgeWork extends EnqueueKnowledgeWork {
   status: "pending" | "batched" | "completed" | "deferred";
   batchId: string | null;
   attempts: number;
+  /** Failed batch attempts charged at this input revision; see work-retry.ts. */
+  failures: number;
   lastError?: string | null;
 }
 
 const projection = `id, subject_id AS subjectId, subject_kind AS subjectKind, reason,
   input_revision AS inputRevision, input_changed_at AS inputChangedAt,generation, tier, due_at AS dueAt, created_at AS createdAt,
-  updated_at AS updatedAt, status, batch_id AS batchId, attempts,last_error AS lastError`;
+  updated_at AS updatedAt, status, batch_id AS batchId, attempts,failures,last_error AS lastError`;
 const ranks: Record<MaintenanceTier, number> = { immediate: 0, soon: 1, routine: 2 };
 
 export function getKnowledgeWork(db: Database.Database, id: string): KnowledgeWork | null {
@@ -130,6 +133,12 @@ export function enqueueKnowledgeWork(
           "Historical retry does not name its deferred predecessor",
         );
     }
+    // Parked work stays parked until its input revision changes; a new
+    // revision is ordinary fresh work.
+    if (!retryOf) {
+      const parked = findParkedKnowledgeWork(db, input);
+      if (parked) return parked;
+    }
     const pending = db
       .prepare<
         [string, string, string],
@@ -141,7 +150,7 @@ export function enqueueKnowledgeWork(
       const generation =
         pending.generation + (pending.inputRevision === input.inputRevision ? 0 : 1);
       db.prepare(
-        `UPDATE knowledge_work SET input_revision=?,input_changed_at=?,generation=?,tier=?,due_at=?,updated_at=?,last_error=? WHERE id=?`,
+        `UPDATE knowledge_work SET input_revision=?,input_changed_at=?,generation=?,tier=?,due_at=?,updated_at=?,last_error=?,failures=? WHERE id=?`,
       ).run(
         input.inputRevision,
         pending.inputRevision === input.inputRevision ? pending.inputChangedAt : now,
@@ -150,6 +159,7 @@ export function enqueueKnowledgeWork(
         Math.min(pending.dueAt, input.dueAt),
         now,
         input.readinessReason ?? null,
+        pending.inputRevision === input.inputRevision ? pending.failures : 0,
         pending.id,
       );
       return finish(getKnowledgeWork(db, pending.id)!);
@@ -196,6 +206,66 @@ export function enqueueKnowledgeWork(
     }
     return finish(getKnowledgeWork(db, input.id)!);
   })();
+}
+
+/** The parked row for this exact obligation and input revision, if any. */
+export function findParkedKnowledgeWork(
+  db: Database.Database,
+  input: Pick<EnqueueKnowledgeWork, "subjectKind" | "subjectId" | "reason" | "inputRevision">,
+): KnowledgeWork | null {
+  return (
+    db
+      .prepare<[string, string, string, string, string], KnowledgeWork>(
+        `SELECT ${projection} FROM knowledge_work WHERE status='deferred' AND last_error=?
+        AND subject_kind=? AND subject_id=? AND reason=? AND input_revision=? ORDER BY updated_at DESC,id LIMIT 1`,
+      )
+      .get(
+        KNOWLEDGE_WORK_PARKED,
+        input.subjectKind,
+        input.subjectId,
+        input.reason,
+        input.inputRevision,
+      ) ?? null
+  );
+}
+
+/**
+ * Pending historical source work whose document is older than the history
+ * horizon floor (`history-horizon.ts`). Read side of the retirement below, so
+ * the steady state costs one indexed probe and no writer call.
+ */
+export function hasHistoricalKnowledgeWorkBeyond(db: Database.Database, floor: string): boolean {
+  return !!db
+    .prepare<[string], { one: number }>(
+      `SELECT 1 AS one FROM knowledge_work w JOIN documents d ON d.id=w.subject_id
+      WHERE w.status='pending' AND w.subject_kind='source' AND w.reason IN ('discovery','upgrade')
+        AND d.source_created_at<? LIMIT 1`,
+    )
+    .get(floor);
+}
+
+const RETIRE_BATCH = 500;
+
+/**
+ * Retire pending historical source work beyond the history horizon: work
+ * admitted before the horizon was lowered, or whose document aged past the
+ * floor while it waited. Nothing was bought for it yet, so the row is removed
+ * rather than settled — no coverage is recorded, and the document reads as
+ * outside the horizon. Batched work is left to finish: its run may already
+ * have spent on it. The admission counters are not refunded, like every other
+ * removal of historical work. Idempotent. Each call retires at most
+ * RETIRE_BATCH rows, driven from the pending work rather than the corpus, so
+ * one writer op stays short; the next pass's probe picks up any remainder.
+ */
+export function retireHistoricalKnowledgeWorkBeyond(db: Database.Database, floor: string): number {
+  return db
+    .prepare<[string]>(
+      `DELETE FROM knowledge_work WHERE id IN (
+        SELECT w.id FROM knowledge_work w JOIN documents d ON d.id=w.subject_id
+        WHERE w.status='pending' AND w.subject_kind='source' AND w.reason IN ('discovery','upgrade')
+          AND d.source_created_at<? LIMIT ${RETIRE_BATCH})`,
+    )
+    .run(floor).changes;
 }
 
 /** Identity-free counters survive corpus erasure; deleting evidence never refunds consent limits. */

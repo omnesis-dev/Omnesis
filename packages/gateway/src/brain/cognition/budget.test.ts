@@ -57,7 +57,10 @@ describe("cognitionBudgetVerdict", () => {
       used: 1_100,
       limit: 1_000,
     });
-    if (verdict.exhausted) expect(verdict.reason).toMatch(/token budget/i);
+    if (verdict.exhausted) {
+      expect(verdict.reason).toMatch(/token budget/i);
+      expect(verdict.reason).toMatch(/morning brief still runs/);
+    }
   });
 
   it("pauses at the run ceiling independently of tokens", () => {
