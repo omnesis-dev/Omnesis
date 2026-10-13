@@ -548,6 +548,9 @@ describe("ephemeral read-only browser search", () => {
     expect(inputs[0]!.systemPrompt).toContain("Never ask a question");
     expect(inputs[0]!.systemPrompt).toContain('For a greeting such as "hi"');
     expect(inputs[0]!.systemPrompt).toContain("call present_browser_results with an empty array");
+    expect(inputs[0]!.systemPrompt).toContain("Write no prose by default.");
+    expect(inputs[0]!.systemPrompt).toContain("Do not narrate your research");
+    expect(inputs[0]!.systemPrompt).not.toContain("narrate in short plain-text paragraphs");
     expect(onResults).toHaveBeenCalledExactlyOnceWith([]);
     expect(search).not.toHaveBeenCalled();
     await service.dispose();
