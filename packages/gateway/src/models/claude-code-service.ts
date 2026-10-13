@@ -52,6 +52,8 @@ export interface ClaudeCodeServiceOptions {
   laneCapacity?: Partial<Record<ClaudeCodeLane, number>>;
   /** Current application sub-agent nesting cap; two further levels serve leaf inference. */
   getSubagentDepthCap?: () => number;
+  /** Further environment-variable prefixes passed to the CLI, for test doubles. */
+  passEnvPrefixes?: readonly string[];
 }
 
 /**
@@ -92,6 +94,7 @@ export class ClaudeCodeService {
       workspaceDir: join(opts.configDir, CLAUDE_CODE_WORKSPACE_DIR),
       command: opts.command,
       env: opts.env,
+      passEnvPrefixes: opts.passEnvPrefixes,
       logger: log.child("runtime"),
     });
     this.refreshTimeoutMs = opts.refreshTimeoutMs ?? DEFAULT_REFRESH_TIMEOUT_MS;

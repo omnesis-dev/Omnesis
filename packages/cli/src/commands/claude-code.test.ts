@@ -8,7 +8,6 @@ import {
   claudeCodeCommand,
   claudeCodeNextStep,
   runClaudeCodeAgentSetup,
-  runClaudeCodeRemove,
 } from "./claude-code.js";
 import type { ClaudeCodeBackendStatus } from "@omnesis/core";
 
@@ -91,20 +90,6 @@ test("agent setup surfaces the gateway's refusal unchanged", async () => {
   await expect(runClaudeCodeAgentSetup("sonnet", request as Request)).rejects.toBe(refusal);
 });
 
-test("remove clears assignments through the backend's DELETE route", async () => {
-  const request = vi.fn(() =>
-    Promise.resolve({
-      ok: true,
-      clearedAssignments: ["agent", "background-agent"],
-    }),
-  );
-
-  await expect(runClaudeCodeRemove(request as Request)).resolves.toMatchObject({
-    clearedAssignments: ["agent", "background-agent"],
-  });
-  expect(request).toHaveBeenCalledWith("/admin/inference/claude-code", { method: "DELETE" });
-});
-
 test("the command group offers no login or runtime update", () => {
   // Omnesis never installs the `claude` CLI or signs it in; the operator does
   // both on the gateway host.
@@ -112,6 +97,5 @@ test("the command group offers no login or runtime update", () => {
     "status",
     "refresh",
     "setup-agent",
-    "remove",
   ]);
 });

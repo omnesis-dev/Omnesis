@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +23,7 @@ import {
   buildClaudeCodeEnv,
   claudeCodeSessionArgs,
   claudeCodeUserContent,
+  findManagedPolicyConflict,
   isSupportedClaudeCodeVersion,
   parseClaudeCodeAuthStatus,
   parseClaudeCodeModels,
@@ -63,13 +72,19 @@ async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]>
   return out;
 }
 
-function setup(env: Record<string, string> = {}, idleTimeoutMs?: number) {
+function setup(
+  env: Record<string, string> = {},
+  idleTimeoutMs?: number,
+  managedSettingsDirs: string[] = [],
+) {
   const dir = scratch();
   const recordPath = join(dir, "record.jsonl");
   const runtime = new ClaudeCodeRuntime({
     workspaceDir: join(dir, "workspace"),
     command: fakeClaude,
     startupTimeoutMs: 5_000,
+    managedSettingsDirs,
+    passEnvPrefixes: ["OMNESIS_FAKE_CLAUDE_"],
     ...(idleTimeoutMs ? { idleTimeoutMs } : {}),
     env: {
       PATH: process.env.PATH,
@@ -124,7 +139,13 @@ describe("Claude Code session lockdown", () => {
     expect(value("--permission-mode")).toBe("dontAsk");
     expect(value("--permission-prompts")).toBe("none");
     expect(value("--allowedTools")).toBe("mcp__omnesis__*");
-    expect(JSON.parse(value("--settings"))).toEqual({ disableAllHooks: true });
+    expect(JSON.parse(value("--settings"))).toEqual({
+      disableAllHooks: true,
+      enabledPlugins: {
+        "cc-plugin-agents-md@builtin": false,
+        "cc-plugin-plugin-authoring@builtin": false,
+      },
+    });
     expect(JSON.parse(value("--mcp-config"))).toEqual({
       mcpServers: { omnesis: { type: "sdk", name: "omnesis" } },
     });
@@ -150,8 +171,26 @@ describe("Claude Code session lockdown", () => {
       ANTHROPIC_API_KEY: "secret",
       ANTHROPIC_AUTH_TOKEN: "secret",
       OMNESIS_TOKEN: "secret",
+      OMNESIS_FAKE_CLAUDE_SCENARIO: "text",
+      NODE_OPTIONS: "--require /tmp/x.js",
+      ANTHROPIC_BASE_URL: "https://proxy.example.com",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      ENABLE_CLAUDEAI_MCP_SERVERS: "true",
+      MCP_TIMEOUT: "1",
       CLAUDE_CODE_DISABLE_CLAUDE_MDS: "0",
     });
+    for (const key of [
+      "OMNESIS_FAKE_CLAUDE_SCENARIO",
+      "NODE_OPTIONS",
+      "ANTHROPIC_BASE_URL",
+      "CLAUDE_CODE_USE_BEDROCK",
+      "MCP_TIMEOUT",
+    ]) {
+      expect(env[key]).toBeUndefined();
+    }
+    expect(env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe("false");
+    expect(env.ENABLE_TOOL_SEARCH).toBe("false");
+    expect(env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe("1");
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.OMNESIS_TOKEN).toBeUndefined();
@@ -384,6 +423,20 @@ describe("Claude Code runtime against a scripted CLI", () => {
     ["foreign-server", "connects an MCP server Omnesis did not configure"],
     ["server-tool", "starts a server-side tool such as web search"],
     ["own-agents", "loads agents of its own"],
+    ["loaded-skills", "loads skills"],
+    ["user-plugin", "loads a plugin that is not built into it"],
+    ["own-commands", "loads slash commands of its own"],
+    ["no-init-lists", "answers initialize without its agent and command lists"],
+    ["bypass-mode", "starts outside dontAsk permission mode"],
+    ["api-key-helper", "takes credentials from an apiKeyHelper command"],
+    ["hook-event", "runs a hook"],
+    ["background-task", "starts a background task"],
+    ["hook-request", "asks Omnesis to run a hook callback"],
+    ["permission-request", "asks Omnesis for a tool permission"],
+    ["foreign-result", "reports a tool result Omnesis did not produce"],
+    ["unknown-block", "produces a block type Omnesis does not accept"],
+    ["stream-native-tool", "streams the start of a built-in tool call"],
+    ["unknown-omnesis-tool", "calls an mcp__omnesis__ tool Omnesis did not provide"],
   ])("fails closed, without retry, when the CLI %s (%s)", async (scenario) => {
     const { runtime, dir } = setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: scenario });
     const events = await collect(
@@ -401,20 +454,63 @@ describe("Claude Code runtime against a scripted CLI", () => {
     }
   });
 
-  it("answers a control request it never registered for with an error", async () => {
-    const { runtime, records } = setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: "hook-request" });
+  it("accepts a plugin built into the CLI that adds no tools", async () => {
+    const { runtime } = setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: "builtin-plugin" });
     const events = await collect(
-      new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input()),
+      new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input({ tools: [searchTool()] })),
     );
     expect(end(events).stopReason).toBe("end_turn");
-    const answer = records()
-      .flatMap((run) => run.received)
-      .find(
-        (frame) =>
-          frame.type === "control_response" &&
-          (frame.response as { request_id?: string }).request_id === "hook-1",
-      );
-    expect(answer?.response).toMatchObject({ subtype: "error" });
+  });
+
+  it("refuses to start Claude Code under a managed policy that runs commands", async () => {
+    const policyDir = scratch();
+    writeFileSync(
+      join(policyDir, "managed-settings.json"),
+      JSON.stringify({ hooks: { SessionStart: [] } }),
+    );
+    const { runtime, dir } = setup({}, undefined, [policyDir]);
+    const events = await collect(
+      new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input({ tools: [searchTool()] })),
+    );
+    expect(end(events).failure).toMatchObject({
+      code: "claude_code_managed_policy",
+      retryable: false,
+    });
+    expect(existsSync(join(dir, "record.jsonl.frames"))).toBe(false);
+    await expect(runtime.listModels()).rejects.toThrow(/managed policy/);
+  });
+
+  it("allows a managed policy that only restricts Claude Code", async () => {
+    const policyDir = scratch();
+    mkdirSync(join(policyDir, "managed-settings.d"));
+    writeFileSync(
+      join(policyDir, "managed-settings.d", "10-limits.json"),
+      JSON.stringify({ permissions: { deny: ["Bash"] } }),
+    );
+    expect(await findManagedPolicyConflict([policyDir])).toBeNull();
+    writeFileSync(join(policyDir, "managed-settings.d", "20-helper.json"), '{"apiKeyHelper":"x"}');
+    expect(await findManagedPolicyConflict([policyDir])).toMatch(/apiKeyHelper/);
+    writeFileSync(join(policyDir, "managed-settings.json"), "not json");
+    expect(await findManagedPolicyConflict([policyDir])).toMatch(/could not be read/);
+  });
+
+  it("never runs an Omnesis tool once the CLI has broken its session", async () => {
+    let invoked = 0;
+    const { runtime } = setup({ OMNESIS_FAKE_CLAUDE_SCENARIO: "native-then-call" });
+    const events = await collect(
+      new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(
+        input({
+          tools: [
+            tool("search", () => {
+              invoked += 1;
+              return { kind: "error", code: "x", message: "x" };
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(end(events).failure?.code).toBe("claude_code_native_tool_unavailable");
+    expect(invoked).toBe(0);
   });
 
   it("stops a turn whose CLI goes silent", async () => {

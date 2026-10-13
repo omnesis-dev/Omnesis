@@ -468,9 +468,9 @@
           <code>omnesis claude-code setup-agent &lt;model&gt;</code> checks the model against the
           signed-in CLI, enables remote inference and assigns the model to the agent, only while the
           agent role is unassigned. <code>omnesis claude-code status</code> shows the installation,
-          sign-in, plan and models; <code>omnesis claude-code remove</code> unassigns every role
-          that uses Claude Code and leaves Claude Code itself signed in. Claude receives the
-          conversation, the relevant Omnesis data and tool results. When a
+          sign-in, plan and models. Claude Code is listed among the backends whenever the CLI is
+          signed in; to stop using it, assign the roles that use it to another model. Claude
+          receives the conversation, the relevant Omnesis data and tool results. When a
           <code>claude</code> command is installed and the agent role is unassigned, an interactive
           install offers to set this up (see
           <a href="/docs/install#claude-code-offer">First run</a>).
@@ -482,11 +482,21 @@
           Code tool is removed, so the model has no shell, file, web search, web fetch or sub-agent
           tools. Omnesis loads none of your settings files, so plugins, hooks and MCP servers that
           settings enable stay off, and your <code>CLAUDE.md</code> files, auto memory, skills and
-          slash commands are not loaded either. Omnesis serves its own tools to the CLI in-process
-          over the CLI's control channel, denies every permission prompt, and does not let Claude
-          Code persist the session. Omnesis checks the session the CLI reports and fails the turn if
-          any tool outside Omnesis is offered or attempted. Each turn replays the conversation from
-          Omnesis' own transcript store.
+          slash commands are not loaded either; Claude Code's own built-in plugins are switched off.
+          Omnesis serves its own tools to the CLI in-process over the CLI's control channel, denies
+          every permission prompt, and does not let Claude Code persist the session. Omnesis checks
+          the session the CLI reports and fails the turn if any tool outside Omnesis is offered or
+          attempted, or if any skill, sub-agent, slash command or plugin from outside the CLI itself
+          was loaded, or if Claude Code runs a hook, a background task or any tool Omnesis did not
+          call. Each turn replays the conversation from Omnesis' own transcript store.
+        </p>
+        <p>
+          Managed policy settings that an administrator installs for Claude Code on the gateway host
+          apply whatever Omnesis asks for. When they make Claude Code run commands of its own
+          (hooks, credential helpers, a status line, plugins or environment variables), Omnesis
+          refuses to run Claude Code and says which settings are in the way. Settings a Claude for
+          Work organization manages from its admin console are not stored on the host, so Omnesis
+          cannot read them; the checks above still stop any tool they would add.
         </p>
 
         <h2 id="standing-instructions">Standing instructions</h2>

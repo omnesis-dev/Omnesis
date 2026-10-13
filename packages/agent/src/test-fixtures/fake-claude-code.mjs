@@ -11,8 +11,14 @@
  *   OMNESIS_FAKE_CLAUDE_LOGGED_IN  "0" reports a signed-out CLI
  *   OMNESIS_FAKE_CLAUDE_SCENARIO   text | tool | native-tool | server-tool |
  *                                  foreign-tools | foreign-server | no-init |
- *                                  untyped-init | own-agents | silent |
- *                                  hook-request | auth-error | hang | exit
+ *                                  untyped-init | own-agents | own-commands |
+ *                                  no-init-lists | loaded-skills | user-plugin |
+ *                                  builtin-plugin | bypass-mode | api-key-helper |
+ *                                  hook-event | background-task | hook-request |
+ *                                  permission-request | foreign-result |
+ *                                  unknown-block | stream-native-tool |
+ *                                  unknown-omnesis-tool | native-then-call |
+ *                                  silent | auth-error | hang | exit
  *   OMNESIS_FAKE_CLAUDE_LIST_MODELS "fail" answers list_models with an error
  *   OMNESIS_FAKE_CLAUDE_TOOL       tool the `tool` scenario calls (default: the first)
  *   OMNESIS_FAKE_CLAUDE_TOOL_ARGS  JSON arguments for the `tool` scenario
@@ -140,10 +146,13 @@ async function onInitialize(frame) {
     response: {
       subtype: "success",
       request_id: frame.request_id,
-      response: {
-        commands: [],
-        agents: scenario === "own-agents" ? [{ name: "reviewer", description: "x" }] : [],
-      },
+      response:
+        scenario === "no-init-lists"
+          ? {}
+          : {
+              commands: scenario === "own-commands" ? [{ name: "deploy", description: "x" }] : [],
+              agents: scenario === "own-agents" ? [{ name: "reviewer", description: "x" }] : [],
+            },
     },
   });
 }
@@ -172,18 +181,104 @@ async function runTurn() {
             scenario === "foreign-server"
               ? [...servers, { name: "files", status: "connected", source: "user" }]
               : servers,
+          permissionMode: scenario === "bypass-mode" ? "bypassPermissions" : "dontAsk",
+          apiKeySource: scenario === "api-key-helper" ? "apiKeyHelper" : "none",
+          slash_commands: [],
+          agents: [],
+          skills: scenario === "loaded-skills" ? ["review"] : [],
+          plugins:
+            scenario === "user-plugin"
+              ? [{ name: "helper", path: "/plugins/helper", source: "helper@example" }]
+              : scenario === "builtin-plugin"
+                ? [
+                    {
+                      name: "cc-plugin-example",
+                      path: "builtin",
+                      source: "cc-plugin-example@builtin",
+                    },
+                  ]
+                : [],
         }),
     model: "claude-fake",
   });
-  if (["foreign-tools", "foreign-server", "untyped-init", "silent"].includes(scenario)) return;
+  if (
+    [
+      "foreign-tools",
+      "foreign-server",
+      "untyped-init",
+      "loaded-skills",
+      "user-plugin",
+      "bypass-mode",
+      "api-key-helper",
+      "silent",
+    ].includes(scenario)
+  ) {
+    return;
+  }
 
-  if (scenario === "hook-request") {
-    // A request Omnesis never registered for; the answer is recorded.
+  if (scenario === "hook-request" || scenario === "permission-request") {
+    // Control requests that Omnesis never registered for.
     send({
       type: "control_request",
-      request_id: "hook-1",
-      request: { subtype: "hook_callback", callback_id: "unknown", input: {} },
+      request_id: "unexpected-1",
+      request:
+        scenario === "hook-request"
+          ? { subtype: "hook_callback", callback_id: "unknown", input: {} }
+          : { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls" } },
     });
+    return;
+  }
+
+  if (scenario === "hook-event" || scenario === "background-task") {
+    send({
+      type: "system",
+      subtype: scenario === "hook-event" ? "hook_started" : "task_started",
+      session_id: sessionId,
+    });
+    return;
+  }
+
+  if (scenario === "foreign-result") {
+    send({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "toolu_elsewhere", content: "listing" }],
+      },
+      session_id: sessionId,
+    });
+    return;
+  }
+
+  if (scenario === "unknown-block") {
+    assistant([{ type: "container_upload", file_id: "file_1" }]);
+    return;
+  }
+
+  if (scenario === "stream-native-tool") {
+    send({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "toolu_bash", name: "Bash", input: {} },
+      },
+      session_id: sessionId,
+    });
+    return;
+  }
+
+  if (scenario === "unknown-omnesis-tool") {
+    assistant([
+      { type: "tool_use", id: "toolu_x", name: "mcp__omnesis__delete_everything", input: {} },
+    ]);
+    return;
+  }
+
+  if (scenario === "native-then-call" && tools.length > 0) {
+    assistant([{ type: "tool_use", id: "toolu_native", name: "Bash", input: { command: "ls" } }]);
+    await mcp("tools/call", { name: tools[0].name, arguments: { query: "x" } });
+    return;
   }
 
   if (scenario === "server-tool") {

@@ -44,7 +44,6 @@ import {
   cancelCodexLogin,
   removeCodexBackend,
   refreshClaudeCodeBackend,
-  removeClaudeCodeBackend,
   rebuildIndex,
   getAdminConfig,
   patchAdminConfig,
@@ -199,7 +198,7 @@ export function claudeCodeBackendRow(overview) {
   return signedIn || cliBackendAssignments(overview, "claude-code").length > 0 ? claudeCode : null;
 }
 
-function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onRemoveClaudeCode, onTestBackend, testStates }) {
+function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onTestBackend, testStates }) {
   const inference = overview.inference;
   const httpBackends = Object.entries(inference.backends).filter(([, s]) => s.type === "http");
   const hasAnthropic = !!inference.backends.anthropic;
@@ -222,7 +221,6 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
   const claudeCode = claudeCodeBackendRow(overview);
   const claudeCodeBusy = !!claudeCode && (claudeCodeRefreshBusy || claudeCode.status === "probing");
   const claudeCodeAccount = claudeCodeAccountLabel(claudeCode?.account);
-  const claudeCodeAssigned = cliBackendAssignments(overview, "claude-code").length > 0;
 
   const testBtn = (key) => {
     const state = testStates[key] || "idle";
@@ -340,12 +338,6 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
               <div class="backend-item-actions">
                 <button class="btn-tiny" onClick=${onRefreshClaudeCode} disabled=${claudeCodeBusy}>${claudeCodeBusy ? "Checking…" : claudeCode.loggedIn ? "Refresh model list" : "Check status"}</button>
                 <button class="btn-tiny" onClick=${onConfigureClaudeCode} disabled=${claudeCodeBusy}>${claudeCode.loggedIn ? "Manage" : "Sign-in help"}</button>
-                <button
-                  class="btn-tiny danger"
-                  onClick=${onRemoveClaudeCode}
-                  disabled=${claudeCodeBusy || !claudeCodeAssigned}
-                  title=${claudeCodeAssigned ? "Stop using Claude Code for every capability" : "No capability uses Claude Code"}
-                >Remove</button>
               </div>
             </div>`
           : null}
@@ -722,26 +714,6 @@ export function ModelsView({ section }) {
     } finally {
       setClaudeCodeRefreshBusy(false);
     }
-  };
-
-  const onRemoveClaudeCode = () => {
-    setConfirmState({
-      title: "Remove Claude Code backend?",
-      body: "Roles assigned to Claude Code are unassigned. Claude Code itself stays signed in.",
-      confirmLabel: "Remove",
-      destructive: true,
-      onConfirm: async () => {
-        try {
-          const res = await removeClaudeCodeBackend();
-          const cleared = res?.clearedAssignments?.length ?? 0;
-          flashOk(cleared > 0 ? `Stopped using Claude Code for ${cleared} capabilit${cleared === 1 ? "y" : "ies"}.` : "Stopped using Claude Code.");
-          setShowClaudeCodeConfig(false);
-          await refresh();
-        } catch (e) {
-          flashErr(e?.message ?? String(e));
-        }
-      },
-    });
   };
 
   const onRefreshAnthropic = async () => {
@@ -1298,7 +1270,6 @@ export function ModelsView({ section }) {
             onUpdateCodexRuntime=${onUpdateCodexRuntime}
             onRemoveBackend=${onRemoveBackend}
             onRemoveCodex=${onRemoveCodex}
-            onRemoveClaudeCode=${onRemoveClaudeCode}
             onTestBackend=${onTestBackend}
           />`
         : null}
@@ -1332,7 +1303,6 @@ export function ModelsView({ section }) {
             onClose=${() => setShowClaudeCodeConfig(false)}
             onRefresh=${onRefreshClaudeCode}
             onSwitchModel=${assignClaudeCodeModel}
-            onRemove=${onRemoveClaudeCode}
           />`
         : null}
 

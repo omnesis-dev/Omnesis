@@ -240,26 +240,6 @@ describe("POST /admin/models/activate", () => {
     expect(unknown.status).toBe(400);
   });
 
-  test("removing Claude Code unassigns only its roles", async () => {
-    const patched = await configStore.patch({
-      inference: {
-        assignments: {
-          agent: "claude-code/sonnet",
-          "privacy-reviewer": "claude-code/haiku",
-          "background-agent": "codex/gpt-5.4",
-        },
-      },
-    });
-    if (!patched.ok) throw new Error("test config should be valid");
-    const res = await app.request("/admin/inference/claude-code", { method: "DELETE" });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { clearedAssignments: string[] };
-    expect(body.clearedAssignments.sort()).toEqual(["agent", "privacy-reviewer"]);
-    const assignments = configStore.get().inference?.assignments;
-    expect(assignments?.agent ?? null).toBeNull();
-    expect(assignments?.["background-agent"]).toBe("codex/gpt-5.4");
-  });
-
   test("atomically opts into remote inference and assigns an available Codex model", async () => {
     const cleared = await configStore.patch({
       inference: {

@@ -732,7 +732,7 @@ function ClaudeCodeSetup({ state, claudeCode, busy, onRefresh }) {
   </div>`;
 }
 
-function ClaudeCodeModelList({ overview, role, refreshing, switchingModel, onRefresh, onRemove, onPick, onBack }) {
+function ClaudeCodeModelList({ overview, role, refreshing, switchingModel, onRefresh, onPick, onBack }) {
   const [lastCheckedAt, setLastCheckedAt] = useState(null);
   const claudeCode = overview.inference?.claudeCode;
   const state = claudeCodeState(claudeCode);
@@ -772,7 +772,6 @@ function ClaudeCodeModelList({ overview, role, refreshing, switchingModel, onRef
                 </div>
                 <span class="picker-row-actions">
                   <button class="btn-tiny" onClick=${check} disabled=${busy}>${busy ? "Checking…" : "Refresh model list"}</button>
-                  ${onRemove ? html`<button class="btn-tiny danger" onClick=${onRemove} disabled=${busy}>Remove</button>` : null}
                 </span>
               </div>
               <${CliModelRows}
@@ -1077,7 +1076,7 @@ function useCliModelSwitch(overview, onSwitchModel) {
   return { switchRole, switchTitle, switchingModel, switchResult, beginSwitch, cancelSwitch: () => setSwitchRole(null), pick };
 }
 
-export function ClaudeCodeConfigModal({ overview, refreshing, onClose, onRefresh, onSwitchModel, onRemove }) {
+export function ClaudeCodeConfigModal({ overview, refreshing, onClose, onRefresh, onSwitchModel }) {
   const { switchRole, switchTitle, switchingModel, switchResult, beginSwitch, cancelSwitch, pick } = useCliModelSwitch(overview, onSwitchModel);
   const assigned = cliBackendAssignments(overview, "claude-code");
   const ready = isClaudeCodeReady(overview.inference?.claudeCode);
@@ -1103,7 +1102,6 @@ export function ClaudeCodeConfigModal({ overview, refreshing, onClose, onRefresh
         refreshing=${refreshing}
         switchingModel=${switchingModel}
         onRefresh=${onRefresh}
-        onRemove=${assigned.length > 0 ? onRemove : null}
         onPick=${pick}
         onBack=${switchRole ? cancelSwitch : null}
       />

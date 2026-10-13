@@ -34,7 +34,6 @@ vi.mock("../api.js", () => ({
   cancelCodexLogin: vi.fn(),
   removeCodexBackend: vi.fn(),
   refreshClaudeCodeBackend: vi.fn(),
-  removeClaudeCodeBackend: vi.fn(),
   rebuildIndex: vi.fn(),
   getAdminConfig: vi.fn(),
   patchAdminConfig: vi.fn(),

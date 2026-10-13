@@ -104,15 +104,6 @@ export function runClaudeCodeAgentSetup(
   });
 }
 
-/** Unassign every Claude Code role. The CLI's own login is left untouched. */
-export function runClaudeCodeRemove(
-  request: GatewayRequest,
-): Promise<{ clearedAssignments?: string[] }> {
-  return request<{ clearedAssignments?: string[] }>("/admin/inference/claude-code", {
-    method: "DELETE",
-  });
-}
-
 const statusCommand = defineCommand({
   meta: { name: "status", description: "Show Claude Code install, sign-in, and model status" },
   async run() {
@@ -155,29 +146,6 @@ const setupAgentCommand = defineCommand({
   },
 });
 
-const removeCommand = defineCommand({
-  meta: {
-    name: "remove",
-    description: "Clear every Claude Code assignment (Claude Code stays signed in)",
-  },
-  async run() {
-    const result = await runClaudeCodeRemove(gatewayJson);
-    if (isJSON) {
-      console.log(JSON.stringify(result, null, 2));
-      return;
-    }
-    const cleared = result.clearedAssignments ?? [];
-    console.log(
-      cleared.length
-        ? `${c.green}✔${c.reset} Cleared assignments: ${cleared.join(", ")}`
-        : `${c.green}✔${c.reset} No roles were assigned to Claude Code.`,
-    );
-    console.log(
-      `${c.dim}Claude Code itself stays signed in; run \`claude auth logout\` on the gateway host to sign it out.${c.reset}`,
-    );
-  },
-});
-
 export const claudeCodeCommand = defineCommand({
   meta: {
     name: "claude-code",
@@ -187,6 +155,5 @@ export const claudeCodeCommand = defineCommand({
     status: statusCommand,
     refresh: refreshCommand,
     "setup-agent": setupAgentCommand,
-    remove: removeCommand,
   },
 });

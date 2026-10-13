@@ -36,6 +36,7 @@ function service(
       configDir,
       command: opts.command ?? fakeClaude,
       env: { PATH: process.env.PATH, HOME: configDir, ...env },
+      passEnvPrefixes: ["OMNESIS_FAKE_CLAUDE_"],
       ...(opts.laneCapacity ? { laneCapacity: opts.laneCapacity } : {}),
     }),
   };
@@ -295,6 +296,7 @@ describe("ClaudeCodeService lanes", () => {
         OMNESIS_FAKE_CLAUDE_SCENARIO: "tool",
         OMNESIS_FAKE_CLAUDE_TOOL_ARGS: '{"query":"x"}',
       },
+      passEnvPrefixes: ["OMNESIS_FAKE_CLAUDE_"],
       getSubagentDepthCap: () => 0,
     });
     const depths: string[] = [];

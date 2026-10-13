@@ -1636,9 +1636,6 @@ export const removeCodexBackend = () =>
 export const refreshClaudeCodeBackend = () =>
   request("POST", "/admin/inference/claude-code/refresh");
 
-export const removeClaudeCodeBackend = () =>
-  request("DELETE", "/admin/inference/claude-code");
-
 export const getBrowserNotesAuthorization = (id) => request("GET", `/admin/browser-notes/authorizations/${encodeURIComponent(id)}`);
 export const approveBrowserNotesAuthorization = (id) => request("POST", `/admin/browser-notes/authorizations/${encodeURIComponent(id)}/approve`);
 

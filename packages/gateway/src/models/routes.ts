@@ -593,20 +593,10 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     const clearedAssignments = await clearAssignmentsFor(configStore, "codex");
     return c.json({ ...result, clearedAssignments });
   });
-
-  // Removing Claude Code only stops Omnesis using it: the CLI's login belongs
-  // to its owner, so it is left signed in.
-  app.delete("/admin/inference/claude-code", scope.admin(), async (c) => {
-    const clearedAssignments = await clearAssignmentsFor(configStore, "claude-code");
-    return c.json({ ok: true, clearedAssignments });
-  });
 }
 
 /** Unassign every role served by a built-in backend; returns the roles cleared. */
-async function clearAssignmentsFor(
-  configStore: ConfigStore,
-  backend: "codex" | "claude-code",
-): Promise<string[]> {
+async function clearAssignmentsFor(configStore: ConfigStore, backend: "codex"): Promise<string[]> {
   const assignments = configStore.get().inference?.assignments ?? {};
   const clearedAssignments: string[] = [];
   const patch: Partial<Record<CapabilityRole, null>> = {};

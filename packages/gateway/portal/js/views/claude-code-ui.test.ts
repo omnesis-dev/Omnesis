@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getModelsOverview: vi.fn(), getSystemInfo: vi.fn(), getCodexRuntimeUpdate: vi.fn(), getRecentModels: vi.fn(),
-  refreshClaudeCodeBackend: vi.fn(), removeClaudeCodeBackend: vi.fn(), patchAdminConfig: vi.fn(),
+  refreshClaudeCodeBackend: vi.fn(), patchAdminConfig: vi.fn(),
 }));
 vi.mock("../api.js", async (importOriginal) => ({ ...(await importOriginal()), ...api }));
 
@@ -62,7 +62,6 @@ describe("Claude Code portal UI", () => {
     api.getCodexRuntimeUpdate.mockReset().mockResolvedValue({ plan: { state: "up-to-date" } });
     api.getRecentModels.mockReset().mockResolvedValue({ entries: [] });
     api.refreshClaudeCodeBackend.mockReset().mockResolvedValue(ready);
-    api.removeClaudeCodeBackend.mockReset().mockResolvedValue({ ok: true, clearedAssignments: ["agent"] });
     api.patchAdminConfig.mockReset().mockResolvedValue({ ok: true });
   });
   afterEach(() => {
@@ -117,16 +116,13 @@ describe("Claude Code portal UI", () => {
 
   it("shows the connected CLI and switches one role's model", async () => {
     const onSwitchModel = vi.fn().mockResolvedValue(true);
-    const onRemove = vi.fn();
     await act(async () => render(h(ClaudeCodeConfigModal, {
       overview: overviewWith(ready, { agent: { kind: "claude-code", model: "sonnet" } }),
-      onRefresh: vi.fn(), onSwitchModel, onRemove,
+      onRefresh: vi.fn(), onSwitchModel,
     }), host));
     expect(host.textContent).toContain("Signed in with Claude Max");
     expect(host.textContent).toContain("CLI 2.1.300");
     expect(host.textContent).toContain("currently claude-sonnet-5");
-    await click("Remove");
-    expect(onRemove).toHaveBeenCalledOnce();
     await click(host.querySelector('button[aria-label="Switch Agent model"]'));
     expect(host.textContent).toContain("Choose a Claude Code model for Agent");
     expect(host.textContent).toContain("Current for Agent");
@@ -136,8 +132,9 @@ describe("Claude Code portal UI", () => {
     expect(host.querySelector(".cli-switch-result")?.textContent).toContain("Agent now uses opus.");
   });
 
-  it("offers no Remove when no capability uses Claude Code", async () => {
-    await act(async () => render(h(ClaudeCodeConfigModal, { overview: overviewWith(ready), onRefresh: vi.fn(), onRemove: vi.fn() }), host));
+  it("has no Remove: a signed-in CLI is always listed", async () => {
+    const assigned = overviewWith(ready, { agent: { kind: "claude-code", model: "sonnet" } });
+    await act(async () => render(h(ClaudeCodeConfigModal, { overview: assigned, onRefresh: vi.fn() }), host));
     expect(button("Remove")).toBeUndefined();
   });
 
@@ -149,19 +146,13 @@ describe("Claude Code portal UI", () => {
     expect(claudeCodeBackendRow(overviewWith(undefined))).toBeNull();
   });
 
-  it("stops using Claude Code from the Backends list after confirmation", async () => {
+  it("lists Claude Code in the Backends list without a Remove button", async () => {
     api.getModelsOverview.mockReset().mockResolvedValue(overviewWith(ready, { agent: { kind: "claude-code", model: "sonnet" } }));
     await act(async () => { render(h(ModelsView, { section: "backends" }), host); });
     await act(async () => { await Promise.resolve(); });
     const row = [...host.querySelectorAll(".backend-item")].find((item) => item.textContent.includes("Claude Code"));
     expect(row?.textContent).toContain("Signed in (Claude Max)");
-    await click([...row.querySelectorAll("button")].find((entry) => entry.textContent.trim() === "Remove"));
-    expect(host.textContent).toContain("Claude Code itself stays signed in.");
-    expect(api.removeClaudeCodeBackend).not.toHaveBeenCalled();
-    const confirm = [...host.querySelectorAll(".confirm-modal-backdrop button")].find((entry) => entry.textContent.trim() === "Remove");
-    await click(confirm);
-    expect(api.removeClaudeCodeBackend).toHaveBeenCalledOnce();
-    expect(host.textContent).toContain("Stopped using Claude Code for 1 capability.");
+    expect([...row.querySelectorAll("button")].map((entry) => entry.textContent.trim())).not.toContain("Remove");
   });
 
   it("refreshes Claude Code from the Backends list", async () => {

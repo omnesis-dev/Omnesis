@@ -27,7 +27,7 @@
 
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access, lstat, mkdir } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
@@ -107,7 +107,19 @@ const SAFE_CLAUDE_CODE_ENV_KEYS = new Set([
   "PATHEXT",
   "COMSPEC",
 ]);
-const SAFE_CLAUDE_CODE_ENV_PREFIXES = ["OMNESIS_FAKE_CLAUDE_"];
+
+/**
+ * Inline settings for every turn: no hooks, and Claude Code's own built-in
+ * plugins switched off. Those plugins contribute skills and context, never
+ * tools, and `verifySession` refuses any that would surface anyway.
+ */
+const CLAUDE_CODE_SETTINGS = Object.freeze({
+  disableAllHooks: true,
+  enabledPlugins: {
+    "cc-plugin-agents-md@builtin": false,
+    "cc-plugin-plugin-authoring@builtin": false,
+  },
+});
 
 /** Fixed settings that keep the operator's own Claude Code customizations out of a turn. */
 const ISOLATION_ENV: Readonly<Record<string, string>> = Object.freeze({
@@ -117,7 +129,81 @@ const ISOLATION_ENV: Readonly<Record<string, string>> = Object.freeze({
   CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "1",
   DISABLE_AUTOUPDATER: "1",
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  // claude.ai connectors, deferred tool loading and background tasks stay off
+  // even if a CLI release stops honouring the flags that already exclude them.
+  ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+  ENABLE_TOOL_SEARCH: "false",
+  CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
 });
+
+/**
+ * Claude Code's managed policy files. Their settings apply whatever flags a
+ * session passes, so Omnesis reads them before every turn.
+ */
+function defaultManagedSettingsDirs(): string[] {
+  switch (process.platform) {
+    case "darwin":
+      return ["/Library/Application Support/ClaudeCode"];
+    case "win32":
+      return [join(process.env.ProgramData ?? "C:\\ProgramData", "ClaudeCode")];
+    default:
+      return ["/etc/claude-code"];
+  }
+}
+
+/** Managed settings that make the CLI run commands of its own, outside any tool call. */
+const MANAGED_COMMAND_SETTINGS = [
+  "hooks",
+  "apiKeyHelper",
+  "awsAuthRefresh",
+  "awsCredentialExport",
+  "otelHeadersHelper",
+  "statusLine",
+  "enabledPlugins",
+  "env",
+] as const;
+
+/**
+ * Name the managed policy settings that would let Claude Code run commands
+ * Omnesis cannot see, or null when there are none. An unreadable policy file
+ * counts as one that sets them.
+ */
+export async function findManagedPolicyConflict(dirs: readonly string[]): Promise<string | null> {
+  for (const dir of dirs) {
+    const files = [join(dir, "managed-settings.json")];
+    try {
+      const dropIns = await readdir(join(dir, "managed-settings.d"));
+      files.push(
+        ...dropIns
+          .filter((f) => f.endsWith(".json"))
+          .map((f) => join(dir, "managed-settings.d", f)),
+      );
+    } catch {
+      /* no drop-in directory */
+    }
+    for (const file of files) {
+      let text: string;
+      try {
+        text = await readFile(file, "utf8");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+        return `Claude Code's managed policy file ${file} could not be read`;
+      }
+      let settings: Record<string, unknown> | null;
+      try {
+        settings = asRecord(JSON.parse(text));
+      } catch {
+        settings = null;
+      }
+      if (!settings) return `Claude Code's managed policy file ${file} could not be read`;
+      const found = MANAGED_COMMAND_SETTINGS.filter((key) => settings[key] !== undefined);
+      if (found.length > 0) {
+        return `Claude Code's managed policy (${file}) sets ${found.join(", ")}`;
+      }
+    }
+  }
+  return null;
+}
 
 /** Places the official installers put `claude`, for a gateway whose PATH lacks them. */
 function wellKnownClaudeCodePaths(home: string | undefined): string[] {
@@ -145,6 +231,10 @@ export interface ClaudeCodeRuntimeOptions {
    */
   idleTimeoutMs?: number;
   logger?: Logger;
+  /** Directories holding Claude Code's managed policy settings; the platform's by default. */
+  managedSettingsDirs?: readonly string[];
+  /** Further environment-variable prefixes passed to the CLI, for test doubles. */
+  passEnvPrefixes?: readonly string[];
 }
 
 export interface ClaudeCodeTurnOptions {
@@ -183,6 +273,8 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
   readonly workspaceDir: string;
   private readonly commandOverride: string | undefined;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly childEnv: NodeJS.ProcessEnv;
+  private readonly managedSettingsDirs: readonly string[];
   private readonly startupTimeoutMs: number;
   private readonly idleTimeoutMs: number;
   private readonly log: Logger;
@@ -192,6 +284,8 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     this.workspaceDir = opts.workspaceDir;
     this.commandOverride = opts.command?.trim() || undefined;
     this.env = opts.env ?? process.env;
+    this.childEnv = buildClaudeCodeEnv(this.env, opts.passEnvPrefixes);
+    this.managedSettingsDirs = opts.managedSettingsDirs ?? defaultManagedSettingsDirs();
     this.startupTimeoutMs = opts.startupTimeoutMs ?? 30_000;
     this.idleTimeoutMs = opts.idleTimeoutMs ?? 5 * 60_000;
     this.log = opts.logger ?? log;
@@ -225,7 +319,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     let output: string;
     try {
       const result = await execFileAsync(command, ["--version"], {
-        env: buildClaudeCodeEnv(this.env),
+        env: this.childEnv,
         timeout: timeoutMs,
         windowsHide: true,
       });
@@ -254,7 +348,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     let stdout: string;
     try {
       const result = await execFileAsync(command, ["auth", "status", "--json"], {
-        env: buildClaudeCodeEnv(this.env),
+        env: this.childEnv,
         timeout: timeoutMs,
         windowsHide: true,
       });
@@ -268,22 +362,48 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     return parseClaudeCodeAuthStatus(stdout);
   }
 
+  /**
+   * Refuse to start Claude Code where its managed policy would make it run
+   * commands of its own: those happen outside any tool call Omnesis can see.
+   */
+  async assertNoManagedPolicyConflict(): Promise<void> {
+    const conflict = await findManagedPolicyConflict(this.managedSettingsDirs);
+    if (conflict) {
+      throw new Error(
+        `${conflict}. Omnesis runs the agent on Claude Code only where its managed policy cannot run commands of its own; remove those settings or assign another backend.`,
+      );
+    }
+  }
+
   /** The CLI's model catalog, from a session that never sends a prompt. */
   async listModels(timeoutMs = 30_000): Promise<ClaudeCodeModelInfo[]> {
     await ensureWorkspace(this.workspaceDir);
     const command = await this.resolveCommand();
+    await this.assertNoManagedPolicyConflict();
+    let unexpected: string | null = null;
     const session = new ClaudeCodeProcess({
       command,
       args: claudeCodeSessionArgs({ hasTools: false }),
       cwd: this.workspaceDir,
-      env: buildClaudeCodeEnv(this.env),
+      env: this.childEnv,
       log: this.log,
       onMessage: () => {},
       onMcpMessage: () => Promise.resolve(undefined),
+      onUnexpectedRequest: (subtype) => {
+        unexpected = subtype;
+        session.kill();
+      },
     });
     session.start();
     try {
-      await withTimeout(session.request({ subtype: "initialize" }), timeoutMs, "initialize");
+      const initialized = await withTimeout(
+        session.request({ subtype: "initialize" }),
+        timeoutMs,
+        "initialize",
+      );
+      const loaded = sessionLoadedItsOwn(asRecord(initialized));
+      if (loaded) throw new Error(`Claude Code loaded ${loaded} of its own.`);
+      if (unexpected) throw new Error(`Claude Code sent an unexpected ${unexpected} request.`);
       const response = await withTimeout(
         session.request({ subtype: "list_models" }),
         timeoutMs,
@@ -304,6 +424,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     try {
       await ensureWorkspace(this.workspaceDir);
       command = await this.resolveCommand();
+      await this.assertNoManagedPolicyConflict();
     } catch (err) {
       yield* failedTurn(input, model, err);
       return;
@@ -335,10 +456,12 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
         effort: opts.effort,
       }),
       cwd: this.workspaceDir,
-      env: buildClaudeCodeEnv(this.env),
+      env: this.childEnv,
       log: this.log,
       onMessage: (message) => turn.onMessage(message),
       onMcpMessage: (message) => turn.onMcpMessage(message),
+      onUnexpectedRequest: (subtype) =>
+        turn.violation(`Claude Code sent a ${subtype} request Omnesis never registered for.`),
       onExit: (code, sig) => turn.onExit(code, sig),
     });
     turn.attach(session);
@@ -455,6 +578,9 @@ class ClaudeCodeTurn {
     this.handles = new Map(opts.input.tools.map((h) => [h.name, h]));
   }
 
+  /** `tool_use` ids of the Omnesis tool calls the model made this turn. */
+  private readonly omnesisToolUseIds = new Set<string>();
+
   attach(session: ClaudeCodeProcess): void {
     this.session = session;
     this.startupTimer = setTimeout(() => {
@@ -480,12 +606,10 @@ class ClaudeCodeTurn {
    */
   acceptInitialize(response: Record<string, unknown> | null): boolean {
     if (this.completed) return false;
-    for (const key of ["agents", "commands"] as const) {
-      const value = response?.[key];
-      if (Array.isArray(value) && value.length > 0) {
-        this.violation(`Claude Code loaded ${key} of its own; Omnesis refuses to run the turn.`);
-        return false;
-      }
+    const loaded = sessionLoadedItsOwn(response);
+    if (loaded) {
+      this.violation(`Claude Code loaded ${loaded} of its own; Omnesis refuses to run the turn.`);
+      return false;
     }
     return true;
   }
@@ -494,11 +618,22 @@ class ClaudeCodeTurn {
     if (this.completed) return;
     this.armIdleTimer();
     switch (message.type) {
-      case "system":
-        if (message.subtype === "init") {
+      case "system": {
+        const subtype = stringField(message, "subtype") ?? "";
+        if (subtype === "init") {
           clearTimeout(this.startupTimer);
           this.verifySession(message);
+        } else if (subtype.startsWith("hook_") || subtype.startsWith("task_")) {
+          // Hooks and background tasks run commands outside any tool call.
+          this.violation(`Claude Code ran work Omnesis did not ask for (${subtype}).`);
         }
+        return;
+      }
+      case "tool_progress":
+        this.violation("Claude Code reported progress on a tool Omnesis does not run.");
+        return;
+      case "user":
+        this.checkToolResults(message);
         return;
       case "stream_event":
         this.onStreamEvent(asRecord(message.event));
@@ -534,6 +669,37 @@ class ClaudeCodeTurn {
       );
       return;
     }
+    const permissionMode = init.permissionMode;
+    if (permissionMode !== undefined && permissionMode !== "dontAsk") {
+      this.violation(`Claude Code started in permission mode ${String(permissionMode)}.`);
+      return;
+    }
+    if (init.apiKeySource === "apiKeyHelper") {
+      this.violation("Claude Code took its credentials from a command of its own (apiKeyHelper).");
+      return;
+    }
+    // Skills, sub-agents and slash commands reach the model through tools it
+    // does not have, but a session that loaded any is not the one Omnesis
+    // configured. A plugin can only be one built into the CLI binary itself.
+    for (const field of ["skills", "agents", "slash_commands"] as const) {
+      const loaded = init[field];
+      if (loaded !== undefined && (!Array.isArray(loaded) || loaded.length > 0)) {
+        this.violation(`Claude Code loaded ${field.replace("_", " ")} Omnesis did not configure.`);
+        return;
+      }
+    }
+    if (init.plugins !== undefined) {
+      const plugins = Array.isArray(init.plugins) ? init.plugins.map(asRecord) : [null];
+      const external = plugins.find(
+        (plugin) => !stringField(plugin, "source")?.endsWith("@builtin"),
+      );
+      if (external !== undefined) {
+        this.violation(
+          `Claude Code loaded a plugin Omnesis did not configure (${stringField(external, "name") ?? "unnamed"}).`,
+        );
+        return;
+      }
+    }
     const servers = init.mcp_servers.map(asRecord);
     const foreignServer = servers.find(
       (server) =>
@@ -553,6 +719,13 @@ class ClaudeCodeTurn {
   private onStreamEvent(event: Record<string, unknown> | null): void {
     if (event?.type === "content_block_start") {
       this.checkToolUse(asRecord(event.content_block));
+      return;
+    }
+    if (event?.type === "message_start") {
+      const content = asRecord(event.message)?.content;
+      for (const block of Array.isArray(content) ? content.map(asRecord) : []) {
+        if (!this.checkToolUse(block)) return;
+      }
       return;
     }
     if (!event || event.type !== "content_block_delta") return;
@@ -587,24 +760,44 @@ class ClaudeCodeTurn {
   }
 
   /**
-   * Any tool use — client, server (web search) or MCP block — must name an
-   * Omnesis tool. Returns false after failing the turn.
+   * A model block must be text, thinking, or a `tool_use` of an Omnesis tool.
+   * Anything else — a built-in, server-side (web search) or MCP tool, a tool
+   * result Omnesis did not produce, or a block type this code does not know —
+   * fails the turn. Returns false after failing it.
    */
   private checkToolUse(block: Record<string, unknown> | null): boolean {
     const type = stringField(block, "type") ?? "";
-    if (!type.endsWith("tool_use")) return true;
+    if (type === "text" || type === "thinking" || type === "redacted_thinking") return true;
     const name = stringField(block, "name") ?? "";
     if (
       type === "tool_use" &&
-      this.handles.has(name.slice(TOOL_PREFIX.length)) &&
-      name.startsWith(TOOL_PREFIX)
+      name.startsWith(TOOL_PREFIX) &&
+      this.handles.has(name.slice(TOOL_PREFIX.length))
     ) {
+      const id = stringField(block, "id");
+      if (id) this.omnesisToolUseIds.add(id);
       return true;
     }
     this.violation(
-      `Claude Code attempted to use "${name || type}", which Omnesis does not provide.`,
+      type === "tool_use" || type.endsWith("_use")
+        ? `Claude Code attempted to use "${name || type}", which Omnesis does not provide.`
+        : `Claude Code produced a "${type || "untyped"}" block Omnesis does not accept.`,
     );
     return false;
+  }
+
+  /** Every tool result the CLI reports must answer an Omnesis tool call. */
+  private checkToolResults(message: Record<string, unknown>): void {
+    const content = asRecord(message.message)?.content;
+    if (!Array.isArray(content)) return;
+    for (const block of content.map(asRecord)) {
+      if (stringField(block, "type") !== "tool_result") continue;
+      const id = stringField(block, "tool_use_id");
+      if (!id || !this.omnesisToolUseIds.has(id)) {
+        this.violation("Claude Code reported the result of a tool Omnesis did not run.");
+        return;
+      }
+    }
   }
 
   private onResult(result: Record<string, unknown>): void {
@@ -774,7 +967,7 @@ class ClaudeCodeTurn {
   }
 
   /** A breach of the locked-down session: stop the CLI at once, without a grace period. */
-  private violation(message: string): void {
+  violation(message: string): void {
     if (this.completed) return;
     this.session?.kill();
     this.fail("claude_code_native_tool_unavailable", message);
@@ -852,6 +1045,8 @@ interface ClaudeCodeProcessOptions {
   onMessage(message: Record<string, unknown>): void;
   /** Answer one MCP JSON-RPC message for the in-process tool server. */
   onMcpMessage(message: Record<string, unknown>): Promise<Record<string, unknown> | undefined>;
+  /** A control request Omnesis never registered for: a hook, an elicitation, a permission prompt. */
+  onUnexpectedRequest?(subtype: string): void;
   onExit?(code: number | null, sig: NodeJS.Signals | null): void;
 }
 
@@ -1008,8 +1203,10 @@ class ClaudeCodeProcess {
             request_id: requestId,
             response: { behavior: "deny", message: "Only Omnesis tools are available." },
           });
+          this.opts.onUnexpectedRequest?.("can_use_tool");
           return;
         default:
+          this.opts.onUnexpectedRequest?.(String(request.subtype));
           throw new Error(`unsupported control request ${String(request.subtype)}`);
       }
     } catch (err) {
@@ -1067,7 +1264,7 @@ export function claudeCodeSessionArgs(opts: {
     "--setting-sources",
     "",
     "--settings",
-    JSON.stringify({ disableAllHooks: true }),
+    JSON.stringify(CLAUDE_CODE_SETTINGS),
     "--disable-slash-commands",
     // Belt and braces: refuses bypassPermissions and drops code-running tools
     // even if `--tools ""` ever stopped covering one.
@@ -1076,13 +1273,16 @@ export function claudeCodeSessionArgs(opts: {
   ];
 }
 
-export function buildClaudeCodeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function buildClaudeCodeEnv(
+  env: NodeJS.ProcessEnv,
+  passPrefixes: readonly string[] = [],
+): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) continue;
     if (
       SAFE_CLAUDE_CODE_ENV_KEYS.has(key) ||
-      SAFE_CLAUDE_CODE_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
+      passPrefixes.some((prefix) => key.startsWith(prefix))
     ) {
       childEnv[key] = value;
     }
@@ -1239,6 +1439,7 @@ function claudeCodeApiErrorCode(error: string): string {
 
 function claudeCodeErrorCode(message: string): string {
   if (isContextWindowError(message)) return "context_window_exceeded";
+  if (/managed policy/i.test(message)) return "claude_code_managed_policy";
   if (/not found|ENOENT/i.test(message)) return "claude_code_binary_missing";
   if (/too old|claude update/i.test(message)) return "claude_code_unsupported_version";
   if (/not logged in|login|unauthori[sz]ed|401|authentication/i.test(message)) {
@@ -1258,6 +1459,7 @@ function friendlyClaudeCodeError(
     case "claude_code_binary_missing":
       return "Claude Code was not found on the gateway host. Install it and sign in with `claude auth login`.";
     case "claude_code_unsupported_version":
+    case "claude_code_managed_policy":
       return conciseError(err);
     case "claude_code_not_authenticated":
       return "Claude Code is not signed in on the gateway host. Run `claude auth login` there, then refresh Models > Backends > Claude Code.";
@@ -1282,6 +1484,7 @@ const PERMANENT_FAILURES = new Set([
   "claude_code_binary_missing",
   "claude_code_unsupported_version",
   "claude_code_invalid_model",
+  "claude_code_managed_policy",
 ]);
 
 function isRetryableFailure(code: string): boolean {
@@ -1375,6 +1578,19 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+/**
+ * What a session's `initialize` answer says it loaded beyond what Omnesis
+ * asked for — `agents` or `commands` — or null. A missing or malformed list
+ * counts as loaded.
+ */
+function sessionLoadedItsOwn(response: Record<string, unknown> | null): string | null {
+  for (const key of ["agents", "commands"] as const) {
+    const value = response?.[key];
+    if (!Array.isArray(value) || value.length > 0) return key;
+  }
+  return null;
 }
 
 function stringField(
