@@ -664,6 +664,7 @@
         "extension/store/listing.md",
         "scripts/website-docs.test.mjs",
         "website/404.html",
+        "website/blog/bm25-search-speed.html",
         "website/blog/brain-prompt-caching.html",
         "website/blog/contextual-voice-vocabulary.html",
         "website/blog/index.html",
