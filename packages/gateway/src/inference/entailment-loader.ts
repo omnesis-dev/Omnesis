@@ -32,6 +32,7 @@ import {
 } from "@omnesis/core";
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveAnthropicApiKey } from "../model-credentials.js";
+import { AnthropicTemperature, NO_THINKING, responseText } from "./anthropic-messages.js";
 import { loadCompletionFromResolved, type LoadCompletionDeps } from "./completion-loader.js";
 import { LlamaCppCompleter } from "./llama-cpp-completer.js";
 import { HttpCompleter, type HttpCompletion } from "./http-completer.js";
@@ -218,18 +219,21 @@ function withoutUsage(provider: CompleteCapability): EntailmentCompleter {
  */
 function anthropicEntailmentCompleter(modelId: string, apiKey: string): EntailmentCompleter {
   const client = new Anthropic({ apiKey, timeout: 45_000, maxRetries: 1 });
+  const sampling = new AnthropicTemperature();
   return {
     modelId,
     complete: async (prompt, opts) => {
-      const response = await client.messages.create({
+      const request = {
         model: modelId,
         max_tokens: opts?.maxTokens ?? 128,
-        temperature: opts?.temperature ?? 0,
-        messages: [{ role: "user", content: prompt }],
-      });
-      const block = response.content[0];
+        thinking: NO_THINKING,
+        messages: [{ role: "user" as const, content: prompt }],
+      };
+      const response = await sampling.send(opts?.temperature ?? 0, (temperature) =>
+        client.messages.create(temperature === undefined ? request : { ...request, temperature }),
+      );
       return {
-        text: block?.type === "text" ? block.text : "",
+        text: responseText(response),
         usage: {
           promptTokens: response.usage.input_tokens,
           completionTokens: response.usage.output_tokens,

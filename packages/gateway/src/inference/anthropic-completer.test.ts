@@ -11,11 +11,31 @@ const mockCreate = vi.fn(() =>
   }),
 );
 
+const { MockAPIError } = vi.hoisted(() => ({
+  MockAPIError: class extends Error {
+    constructor(
+      readonly status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+}));
+
 vi.mock("@anthropic-ai/sdk", () => ({
   default: class MockAnthropic {
+    static APIError = MockAPIError;
     messages = { create: mockCreate };
   },
 }));
+
+const temperatureRejected = () =>
+  Promise.reject(
+    new MockAPIError(
+      400,
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"`temperature` is deprecated for this model."}}',
+    ),
+  );
 
 describe("AnthropicCompleter", () => {
   test("complete() calls messages.create with correct params", async () => {
@@ -27,6 +47,7 @@ describe("AnthropicCompleter", () => {
     expect(mockCreate).toHaveBeenCalledWith({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 100,
+      thinking: { type: "disabled" },
       temperature: 0.5,
       messages: [{ role: "user", content: "test prompt" }],
     });
@@ -43,6 +64,31 @@ describe("AnthropicCompleter", () => {
         temperature: 0.3,
       }),
     );
+  });
+
+  test("a model that rejects temperature is retried without it, and never sent it again", async () => {
+    mockCreate.mockClear();
+    mockCreate.mockImplementationOnce(temperatureRejected);
+    const provider = new AnthropicCompleter("claude-haiku-5-5", "test-key");
+
+    await expect(provider.complete("first", { temperature: 0 })).resolves.toBe(
+      "expanded keywords here",
+    );
+    await provider.complete("second");
+
+    const requests = mockCreate.mock.calls.map((call) => call[0] as Record<string, unknown>);
+    expect(requests.map((r) => "temperature" in r)).toEqual([true, false, false]);
+  });
+
+  test("other request errors are not retried", async () => {
+    mockCreate.mockClear();
+    mockCreate.mockImplementationOnce(() =>
+      Promise.reject(new MockAPIError(400, "max_tokens: must be at least 1")),
+    );
+    const provider = new AnthropicCompleter("claude-haiku-5-5", "test-key");
+
+    await expect(provider.complete("prompt", { temperature: 0 })).rejects.toThrow("max_tokens");
+    expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
   test("name is 'anthropic'", () => {
@@ -65,5 +111,19 @@ describe("AnthropicCompleter", () => {
     const provider = new AnthropicCompleter("claude-haiku-4-5-20251001", "test-key");
     const result = await provider.complete("test");
     expect(result).toBe("");
+  });
+
+  test("complete() reads the answer after a thinking block, joining every text block", async () => {
+    mockCreate.mockImplementationOnce(() =>
+      Promise.resolve({
+        content: [
+          { type: "thinking", thinking: "weighing it" },
+          { type: "text", text: "first " },
+          { type: "text", text: "second" },
+        ],
+      } as never),
+    );
+    const provider = new AnthropicCompleter("claude-haiku-5-5", "test-key");
+    await expect(provider.complete("prompt")).resolves.toBe("first second");
   });
 });
