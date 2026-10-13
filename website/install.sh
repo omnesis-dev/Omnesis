@@ -29,7 +29,7 @@
 #   9. On an interactive gateway install where a Codex command is already on
 #      PATH, offer to sign Omnesis into Codex and assign Luna to the agent.
 #      When the agent is still unassigned and a Claude Code command is on
-#      PATH, offer to assign Claude Code (Sonnet) instead, running the
+#      PATH, offer to assign Claude Code (Haiku) instead, running the
 #      operator's own `claude auth login` if it is signed out; Omnesis never
 #      handles Claude credentials.
 #  10. Print the next step (add a source), then the optional follow-ons a
@@ -204,7 +204,7 @@ NO_PROMPT="${OMNESIS_NO_PROMPT:-0}"
 # upgrade). The catalog, not this line, is what the question offers.
 EMBEDDER_ID="nomic-embed-text-v1.5.Q8_0"
 CODEX_AGENT_MODEL="gpt-5.6-luna"
-CLAUDE_CODE_AGENT_MODEL="sonnet"
+CLAUDE_CODE_AGENT_MODEL="haiku"
 
 # Default stays `source`: a checkout works from the first tagged release on,
 # with no dependency on a registry having the version. `--method auto` is the
@@ -3734,7 +3734,7 @@ ask_claude_code_agent_setup() {
   printf '  It also enables this gateway to use explicitly configured remote inference backends.\n' >/dev/tty
   CLAUDE_CODE_ASK_ATTEMPTS=0
   while [ "$CLAUDE_CODE_ASK_ATTEMPTS" -lt 5 ]; do
-    CLAUDE_CODE_ANSWER="$(ask_tty 'Set up the agent with Claude Code (Sonnet)? [y/N] ')"
+    CLAUDE_CODE_ANSWER="$(ask_tty 'Set up the agent with Claude Code (Haiku)? [y/N] ')"
     CLAUDE_CODE_ANSWER="$(printf '%s' "$CLAUDE_CODE_ANSWER" | tr '[:upper:]' '[:lower:]')"
     case "$CLAUDE_CODE_ANSWER" in
       y|yes) return 0 ;;

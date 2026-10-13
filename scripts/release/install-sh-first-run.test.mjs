@@ -793,7 +793,7 @@ describe("install.sh unattended Codex behavior", () => {
 describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
   const args = ["--no-tls", "--embedder", EMBED_IDS[0]];
   const baseEnv = { OMNESIS_TEST_KEYRING: "ready" };
-  const OFFER = ["Set up the agent with Claude Code", "(Sonnet)"].join(" ");
+  const OFFER = ["Set up the agent with Claude Code", "(Haiku)"].join(" ");
   // `setup-agent --help` is the version-skew probe, not an assignment.
   const claudeSetup = (calls) =>
     calls.some((call) => call.startsWith("claude-code setup-agent ") && !call.endsWith("--help"));
@@ -829,8 +829,8 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
     expect(run.status).toBe(0);
     expect(run.calls).toContain("claude-code refresh --json");
     expect(run.calls).not.toContain("system-claude auth login");
-    expect(run.calls).toContain("claude-code setup-agent sonnet");
-    expect(run.output).toContain(["Omnesis", "Agent is ready with Claude Code (sonnet)"].join(" "));
+    expect(run.calls).toContain("claude-code setup-agent haiku");
+    expect(run.output).toContain(["Omnesis", "Agent is ready with Claude Code (haiku)"].join(" "));
   });
 
   test("a signed-out Claude Code signs in with its own CLI, then is assigned", () => {
@@ -841,7 +841,7 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
     expect(run.output).toContain("Omnesis never handles your Claude credentials");
     expect(run.calls).toContain("system-claude auth login");
     expect(run.calls.filter((call) => call === "claude-code refresh --json")).toHaveLength(2);
-    expect(run.calls).toContain("claude-code setup-agent sonnet");
+    expect(run.calls).toContain("claude-code setup-agent haiku");
   });
 
   test("a sign-in that does not complete prints the manual steps and the install continues", () => {
@@ -855,7 +855,7 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
     expect(run.calls).toContain("system-claude auth login");
     expect(run.output).toContain("Claude Code is not signed in");
     expect(run.output).toContain("run: claude auth login");
-    expect(run.output).toContain("omnesis claude-code setup-agent sonnet");
+    expect(run.output).toContain("omnesis claude-code setup-agent haiku");
     expect(claudeSetup(run.calls)).toBe(false);
   });
 
@@ -899,7 +899,7 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
 
   test("a model unavailable to the account leaves the agent unassigned", () => {
     installClaudeSignal();
-    const run = runInstallerOnTty("claude-no-sonnet", args, ["y"], {
+    const run = runInstallerOnTty("claude-no-haiku", args, ["y"], {
       ...baseEnv,
       OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN: "1",
       OMNESIS_TEST_CLAUDE_CODE_READY_STATUS: JSON.stringify({
@@ -912,7 +912,7 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
     });
 
     expect(run.status).toBe(0);
-    expect(run.output).toContain("sonnet is not available");
+    expect(run.output).toContain("haiku is not available");
     expect(claudeSetup(run.calls)).toBe(false);
   });
 
@@ -951,7 +951,7 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
     expect(run.calls).toContain("claude-code refresh --json");
     expect(run.calls).not.toContain("system-claude auth login");
     expect(run.output).toContain("Could not read the gateway's Claude Code status");
-    expect(run.output).toContain("omnesis claude-code setup-agent sonnet");
+    expect(run.output).toContain("omnesis claude-code setup-agent haiku");
     expect(claudeSetup(run.calls)).toBe(false);
   });
 
@@ -987,7 +987,7 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
     });
 
     expect(run.status).toBe(0);
-    expect(run.calls.filter((call) => call === "claude-code setup-agent sonnet")).toHaveLength(1);
+    expect(run.calls.filter((call) => call === "claude-code setup-agent haiku")).toHaveLength(1);
     expect(run.output).toContain("agent assignment was not saved");
   });
 
@@ -1016,7 +1016,7 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
 
     expect(run.status).toBe(0);
     expect(run.calls.some((call) => call.startsWith("codex setup-agent gpt-"))).toBe(false);
-    expect(run.calls).toContain("claude-code setup-agent sonnet");
+    expect(run.calls).toContain("claude-code setup-agent haiku");
   });
 
   test("a failed Codex setup leaves the agent unassigned, so Claude Code is offered", () => {
@@ -1032,7 +1032,7 @@ describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
     expect(run.status).toBe(0);
     expect(run.calls).toContain("codex setup-agent gpt-5.6-luna");
     expect(run.output).toContain(OFFER);
-    expect(run.calls).toContain("claude-code setup-agent sonnet");
+    expect(run.calls).toContain("claude-code setup-agent haiku");
   });
 
   test("an older CLI without the command skips an offer it cannot complete", () => {
