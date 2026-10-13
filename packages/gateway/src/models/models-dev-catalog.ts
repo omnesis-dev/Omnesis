@@ -23,6 +23,7 @@ import {
   type ModelBehaviorValues,
   type ModelSettingsByRole,
   type CapabilityRole,
+  type ClaudeCodeBackendStatus,
   type CodexBackendStatus,
   type ResolvedAssignment,
 } from "@omnesis/core";
@@ -179,6 +180,8 @@ function assignmentId(resolved: ResolvedAssignment): string | null {
       return `local/${resolved.catalogId}`;
     case "codex":
       return `codex/${resolved.model}`;
+    case "claude-code":
+      return `claude-code/${resolved.model}`;
     case "disabled":
     case "unresolved":
     case "replay":
@@ -391,6 +394,8 @@ export class ModelsDevCatalog {
     const modelId = slash > 0 ? assignment.slice(slash + 1) : "";
     if (backend === "codex" && inference.codex)
       return this.controlsForCodex(modelId, inference.codex);
+    if (backend === "claude-code" && inference.claudeCode)
+      return this.controlsForClaudeCode(modelId, inference.claudeCode);
     const status = inference.backends[backend];
     const facts = this.controlsForBackend(backend, modelId, status?.url, status?.protocol);
     return status?.type === "http" ? facts : { ...facts, controls: [] };
@@ -413,6 +418,26 @@ export class ModelsDevCatalog {
         : {}),
       ...(detail ? { toolCall: true } : {}),
       logoUrl: "/model-logos/openai.svg",
+    };
+  }
+
+  private controlsForClaudeCode(modelId: string, status: ClaudeCodeBackendStatus): ModelControls {
+    const detail = status.modelDetails?.find((candidate) => candidate.id === modelId);
+    const values = detail?.supportedReasoningEfforts ?? [];
+    return {
+      providerId: "anthropic",
+      providerName: "Anthropic",
+      source: detail ? "provider" : "unknown",
+      reasoning: values.length > 0 ? true : null,
+      controls:
+        values.length > 0
+          ? [{ key: "reasoningEffort", type: "enum", label: "Effort", values }]
+          : [],
+      ...(detail
+        ? { modalities: { input: detail.inputModalities ?? ["text", "image"], output: ["text"] } }
+        : {}),
+      ...(detail ? { toolCall: true } : {}),
+      logoUrl: "/model-logos/anthropic.svg",
     };
   }
 
@@ -599,9 +624,16 @@ export class ModelsDevCatalog {
   }
 
   async logo(requested: string): Promise<Buffer> {
-    // Local Ollama has no model catalog entry; the cloud provider shares its brand glyph.
+    // Built-in subscription runtimes and local Ollama have no catalog entry of
+    // their own; each shares its provider's brand glyph.
     const logoProvider =
-      requested === "codex" ? "openai" : requested === "ollama" ? "ollama-cloud" : requested;
+      requested === "codex"
+        ? "openai"
+        : requested === "claude-code"
+          ? "anthropic"
+          : requested === "ollama"
+            ? "ollama-cloud"
+            : requested;
     const providerId = this.providerId(logoProvider);
     if (!providerId) throw new Error("unknown Models.dev provider");
     const inMemory = this.logoMemory.get(providerId);

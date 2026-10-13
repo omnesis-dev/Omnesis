@@ -33,6 +33,7 @@ import {
 
 import { zodToJsonSchema } from "./zod-to-json-schema.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
+import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import {
   childEventHooks,
   DEFAULT_MAX_TOOL_ITERATIONS,
@@ -44,7 +45,7 @@ import {
 } from "./backend.js";
 import { CODEX_RUNTIME_COMPAT, isSupportedCodexCliVersion } from "./codex-compat.js";
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE } from "./turn-outcome.js";
-import type { ChatBackend, ChatMessage, ToolCaller, ToolHandle, TurnInput } from "./backend.js";
+import type { ChatBackend, ToolCaller, ToolHandle, TurnInput } from "./backend.js";
 
 export { isSupportedCodexCliVersion } from "./codex-compat.js";
 
@@ -396,7 +397,7 @@ export class CodexAppServerRuntime {
         {
           threadId,
           input: [
-            { type: "text", text: renderCodexUserInput(input.history, input.userMessage) },
+            { type: "text", text: renderTranscriptUserInput(input.history, input.userMessage) },
             ...(input.images ?? []).map(({ url }) => ({ type: "image", url })),
           ],
           approvalPolicy: "never",
@@ -1037,37 +1038,6 @@ export function convertToolsToCodexDynamicTools(
   }));
 }
 
-export function renderCodexUserInput(
-  history: ReadonlyArray<ChatMessage>,
-  userMessage: string,
-): string {
-  if (history.length === 0) return userMessage;
-
-  const lines = ["Conversation so far:"];
-  for (const msg of history) {
-    if (msg.role === "user") {
-      for (const part of msg.parts) {
-        if (part.kind === "text") lines.push(`User: ${part.text}`);
-        if (part.kind === "tool_result") {
-          lines.push(`Tool result ${part.toolCallId}: ${serializeToolResultForModel(part.result)}`);
-        }
-      }
-    } else {
-      for (const part of msg.parts) {
-        if (part.kind === "text") lines.push(`Assistant: ${part.text}`);
-        if (part.kind === "thinking") lines.push(`Assistant reasoning summary: ${part.text}`);
-        if (part.kind === "tool_use") {
-          lines.push(`Assistant called ${part.tool}: ${safeJsonStringify(part.args)}`);
-        }
-      }
-    }
-  }
-  lines.push("");
-  lines.push("New user message:");
-  lines.push(userMessage);
-  return lines.join("\n");
-}
-
 export async function ensureCodexHome(codexHome: string): Promise<void> {
   await ensureCodexRuntimeDirs(codexHome, join(codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME));
 }
@@ -1601,12 +1571,4 @@ function stringField(
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === "number" ? value : undefined;
-}
-
-function safeJsonStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return JSON.stringify(safeJsonParse(String(value)));
-  }
 }

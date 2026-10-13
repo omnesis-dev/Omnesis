@@ -12,6 +12,7 @@ import {
   type CapabilityRole,
   type CapabilityVerdict,
   type CatalogEntry,
+  type ClaudeCodeBackendStatus,
   type CodexBackendStatus,
   type CodexLoginFlow,
   type CodexRuntimeUpdateSnapshot,
@@ -30,10 +31,10 @@ import { CodexRuntimeUpdateConflictError } from "./codex-runtime-updater.js";
 import { CodexRuntimeLifecycleConflictError } from "./codex-runtime-lifecycle.js";
 import { registerModelRoutes } from "./routes.js";
 import {
-  CodexAgentSetupConflictError,
-  setupCodexAgent,
-  type CodexAgentSetupResult,
-} from "./codex-agent-setup.js";
+  AgentSetupConflictError,
+  setupAgentAssignment,
+  type AgentSetupResult,
+} from "./agent-assignment-setup.js";
 import type { AppEnv } from "../http/routes/types.js";
 
 const DYNAMIC_ANTHROPIC_ENTRY: CatalogEntry = {
@@ -54,11 +55,12 @@ describe("POST /admin/models/activate", () => {
   let app: Hono<AppEnv>;
   let refreshAnthropicStatus: ReturnType<typeof vi.fn>;
   let refreshCodexStatus: ReturnType<typeof vi.fn<() => Promise<CodexBackendStatus>>>;
-  let setupCodexAgentHook: (model: string) => Promise<CodexAgentSetupResult>;
+  let setupCodexAgentHook: (model: string) => Promise<AgentSetupResult>;
   let getCodexRuntimeUpdate: ReturnType<typeof vi.fn>;
   let startCodexRuntimeUpdate: ReturnType<typeof vi.fn>;
   let cancelCodexRuntimeUpdate: ReturnType<typeof vi.fn>;
   let startCodexLogin: ReturnType<typeof vi.fn<() => Promise<CodexLoginFlow>>>;
+  let refreshClaudeCodeStatus: ReturnType<typeof vi.fn<() => Promise<ClaudeCodeBackendStatus>>>;
   let logoutCodex: ReturnType<
     typeof vi.fn<() => Promise<{ ok: true; status: CodexBackendStatus }>>
   >;
@@ -103,7 +105,21 @@ describe("POST /admin/models/activate", () => {
       loggedIn: true,
       models: ["gpt-5.6-luna"],
     }));
-    setupCodexAgentHook = (model) => setupCodexAgent(configStore, refreshCodexStatus, model);
+    refreshClaudeCodeStatus = vi.fn(async () => ({
+      type: "claude-code",
+      installed: true,
+      status: "ok",
+      loggedIn: true,
+      models: ["sonnet", "opus"],
+    }));
+    setupCodexAgentHook = (model) =>
+      setupAgentAssignment({
+        configStore,
+        backend: "codex",
+        label: "Codex",
+        refreshStatus: refreshCodexStatus,
+        model,
+      });
     const updateSnapshot: CodexRuntimeUpdateSnapshot = {
       plan: {
         state: "update-available",
@@ -170,12 +186,78 @@ describe("POST /admin/models/activate", () => {
       refreshAnthropicStatus,
       refreshCodexStatus,
       setupCodexAgent: (model) => setupCodexAgentHook(model),
+      refreshClaudeCodeStatus,
+      setupClaudeCodeAgent: (model) =>
+        setupAgentAssignment({
+          configStore,
+          backend: "claude-code",
+          label: "Claude Code",
+          refreshStatus: refreshClaudeCodeStatus,
+          model,
+        }),
       getCodexRuntimeUpdate,
       startCodexRuntimeUpdate,
       cancelCodexRuntimeUpdate,
       startCodexLogin,
       logoutCodex,
     });
+  });
+
+  test("refreshes Claude Code and assigns an unassigned agent to a listed model", async () => {
+    const refreshed = await app.request("/admin/inference/claude-code/refresh", { method: "POST" });
+    expect(refreshed.status).toBe(200);
+    expect(await refreshed.json()).toMatchObject({ type: "claude-code", status: "ok" });
+
+    const cleared = await configStore.patch({
+      inference: { allowRemoteInference: false, assignments: { agent: null } },
+    });
+    if (!cleared.ok) throw new Error("test config should be valid");
+    const res = await app.request("/admin/inference/claude-code/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "sonnet" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      assignment: "claude-code/sonnet",
+      allowRemoteInference: true,
+    });
+    expect(configStore.get().inference?.assignments?.agent).toBe("claude-code/sonnet");
+    expect(configStore.get().inference?.allowRemoteInference).toBe(true);
+
+    const again = await app.request("/admin/inference/claude-code/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "opus" }),
+    });
+    expect(again.status).toBe(409);
+    const unknown = await app.request("/admin/inference/claude-code/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "not-listed" }),
+    });
+    expect(unknown.status).toBe(400);
+  });
+
+  test("removing Claude Code unassigns only its roles", async () => {
+    const patched = await configStore.patch({
+      inference: {
+        assignments: {
+          agent: "claude-code/sonnet",
+          "privacy-reviewer": "claude-code/haiku",
+          "background-agent": "codex/gpt-5.4",
+        },
+      },
+    });
+    if (!patched.ok) throw new Error("test config should be valid");
+    const res = await app.request("/admin/inference/claude-code", { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { clearedAssignments: string[] };
+    expect(body.clearedAssignments.sort()).toEqual(["agent", "privacy-reviewer"]);
+    const assignments = configStore.get().inference?.assignments;
+    expect(assignments?.agent ?? null).toBeNull();
+    expect(assignments?.["background-agent"]).toBe("codex/gpt-5.4");
   });
 
   test("atomically opts into remote inference and assigns an available Codex model", async () => {
@@ -253,7 +335,7 @@ describe("POST /admin/models/activate", () => {
 
   test("reports lifecycle contention as a conflict", async () => {
     setupCodexAgentHook = async () => {
-      throw new CodexAgentSetupConflictError(
+      throw new AgentSetupConflictError(
         ["Another", "Codex lifecycle operation is in progress."].join(" "),
       );
     };

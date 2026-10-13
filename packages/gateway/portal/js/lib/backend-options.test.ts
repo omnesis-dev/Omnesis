@@ -9,6 +9,7 @@ import {
   isAnthropicConfigured,
   catalogProviderForBackend,
   isDecisionRole,
+  isClaudeCodeReady,
 } from "./backend-options.js";
 
 const PRESETS = [
@@ -333,6 +334,61 @@ describe("buildAddBackendOptions", () => {
       loggedIn: false,
       status: "unreachable",
     });
+  });
+});
+
+describe("Claude Code options", () => {
+  const signedIn = {
+    type: "claude-code",
+    installed: true,
+    status: "ok",
+    loggedIn: true,
+    models: ["sonnet", "opus", "haiku"],
+    modelRoles: { sonnet: ["agent", "background-agent"], opus: ["agent"], haiku: ["background-agent"] },
+  };
+
+  it("offers Claude Code next to Codex for roles its catalog serves", () => {
+    const opts = buildModelPickerOptions(
+      overview({
+        inference: {
+          backends: {},
+          codex: { type: "codex", configured: true, status: "ok", loggedIn: true, models: ["gpt-example-a"], modelRoles: { "gpt-example-a": ["agent"] } },
+          claudeCode: signedIn,
+        },
+      }),
+      "agent",
+    );
+    expect(opts.map((o: { kind: string }) => o.kind)).toEqual(["local", "preset", "preset", "codex", "claude-code", "anthropic", "add-custom"]);
+    expect(opts.find((o: { kind: string }) => o.kind === "claude-code")).toMatchObject({ configured: true, fitCount: 2, loggedIn: true });
+  });
+
+  it("leaves Claude Code out of the picker when it is missing, signed out, or serves no model for the role", () => {
+    const kinds = (claudeCode: unknown, role = "agent") =>
+      buildModelPickerOptions(overview({ inference: { backends: {}, claudeCode } }), role).map((o: { kind: string }) => o.kind);
+    expect(kinds({ ...signedIn, installed: false, status: "unreachable", models: [] })).not.toContain("claude-code");
+    expect(kinds({ ...signedIn, status: "unreachable", loggedIn: false, models: [], modelRoles: {} })).not.toContain("claude-code");
+    expect(kinds(signedIn, "embedder")).not.toContain("claude-code");
+  });
+
+  it("is always offered from Add backend, with its install and sign-in state", () => {
+    const missing = { type: "claude-code", installed: false, status: "unreachable", loggedIn: false, models: [] };
+    const opts = buildAddBackendOptions(overview({ inference: { backends: {}, claudeCode: missing } }));
+    expect(opts.map((o: { kind: string }) => o.kind)).toEqual(["preset", "preset", "anthropic", "claude-code", "add-custom"]);
+    expect(opts.find((o: { kind: string }) => o.kind === "claude-code")).toMatchObject({ configured: false, installed: false, loggedIn: false });
+    const ready = buildAddBackendOptions(overview({ inference: { backends: {}, claudeCode: signedIn } }));
+    expect(ready.find((o: { kind: string }) => o.kind === "claude-code")).toMatchObject({ configured: true, installed: true, fitCount: 3 });
+    expect(buildAddBackendOptions(overview()).map((o: { kind: string }) => o.kind)).not.toContain("claude-code");
+  });
+
+  it("is ready only when signed in with a catalog", () => {
+    expect(isClaudeCodeReady(signedIn)).toBe(true);
+    expect(isClaudeCodeReady({ ...signedIn, status: "probing" })).toBe(false);
+    expect(isClaudeCodeReady({ ...signedIn, loggedIn: false })).toBe(false);
+    expect(isClaudeCodeReady(undefined)).toBe(false);
+  });
+
+  it("is withheld from the Decision model", () => {
+    expect(buildModelPickerOptions(overview({ inference: { backends: {}, claudeCode: { ...signedIn, modelRoles: { sonnet: ["decision"] } } } }), "decision")).toEqual([{ kind: "typesafe" }]);
   });
 });
 

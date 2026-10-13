@@ -102,7 +102,6 @@ export {
   convertToolsToCodexDynamicTools,
   ensureCodexHome,
   parseCodexCliVersion,
-  renderCodexUserInput,
   resolveCodexRuntimeCommand,
   type CodexAppServerBackendOptions,
   type CodexAppServerRuntimeOptions,
@@ -125,6 +124,14 @@ export {
   reconcileMemberAuth,
   type CodexRuntimePoolOptions,
 } from "./codex-runtime-pool.js";
+
+export {
+  ClaudeCodeBackend,
+  ClaudeCodeRuntime,
+  type ClaudeCodeModelInfo,
+  type ClaudeCodeTurnOptions,
+  type ClaudeCodeTurnRunner,
+} from "./claude-code-backend.js";
 
 export { zodToJsonSchema } from "./zod-to-json-schema.js";
 

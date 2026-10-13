@@ -6,7 +6,8 @@
 //
 //   • ModelConfigModal   — "Choose a <capability> model": a grid of backend
 //                          options (Local, presets, custom HTTP backends,
-//                          Anthropic, + a custom backend — or TypeSafe alone
+//                          Codex, Claude Code, Anthropic, + a custom backend
+//                          — or TypeSafe alone
 //                          for the Decision model), each leading to the
 //                          model selection (configuring the backend inline
 //                          first when it isn't set up yet).
@@ -35,10 +36,11 @@ import {
   catalogProviderForBackend,
   TYPESAFE_DEFAULT_MODEL,
   isDecisionRole,
+  isClaudeCodeReady,
 } from "../lib/backend-options.js";
 import { formatBytes, fit } from "../lib/model-format.js";
 
-const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "replay", "typesafe"];
+const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "claude-code", "replay", "typesafe"];
 
 const plural = (n, noun) => `${n} ${noun}${n !== 1 ? "s" : ""}`;
 
@@ -82,6 +84,23 @@ export function codexRuntimeUpdatePresentation(update) {
   }
 }
 
+/** The model a role uses on a built-in CLI backend (`codex`, `claude-code`), or null. */
+export function assignedCliModel(assignment, kind) {
+  if (assignment?.kind === kind) return assignment.model;
+  if (typeof assignment === "string" && assignment.startsWith(`${kind}/`)) return assignment.slice(kind.length + 1);
+  return null;
+}
+
+/** Every role currently assigned to a built-in CLI backend, with its title and model. */
+export function cliBackendAssignments(overview, kind) {
+  return Object.entries(overview.inference?.assignments ?? {}).flatMap(([role, value]) => {
+    const model = assignedCliModel(value, kind);
+    if (model == null) return [];
+    const cap = (overview.capabilities ?? []).find((entry) => entry.role === role);
+    return [{ role, title: cap?.title ?? role, model }];
+  });
+}
+
 export function CodexRuntimePanel({ overview, update, loginPending = false, switchPending = false, onUpdate, onCancel, onSwitchRole, onDismissResult }) {
   const codex = overview.inference?.codex;
   const runtime = codex?.runtime;
@@ -95,13 +114,7 @@ export function CodexRuntimePanel({ overview, update, loginPending = false, swit
   const finishedSuccessfully = operation?.state === "complete";
   const failed = operation && ["failed", "rolled-back", "canceled"].includes(operation.state);
   const newModels = operation?.newModels ?? [];
-  const assigned = Object.entries(overview.inference?.assignments ?? {})
-    .filter(([, value]) => value?.kind === "codex" || (typeof value === "string" && value.startsWith("codex/")))
-    .map(([role, value]) => {
-      const model = typeof value === "string" ? value.slice("codex/".length) : value.model;
-      const cap = (overview.capabilities ?? []).find((entry) => entry.role === role);
-      return { role, title: cap?.title ?? role, model };
-    });
+  const assigned = cliBackendAssignments(overview, "codex");
 
   return html`
     <section class="codex-runtime-card">
@@ -254,6 +267,21 @@ function renderOption(opt, mode, onSelect) {
           : opt.loggedIn
           ? "Refresh model catalog"
           : "Needs login"}
+        muted=${!opt.configured && mode === "pick"}
+        onClick=${pick}
+      />`;
+    case "claude-code":
+      return html`<${BackendOptionCard}
+        key="claude-code"
+        providerId="claude-code"
+        title="Claude Code"
+        subtitle=${opt.configured
+          ? plural(opt.fitCount, "model")
+          : !opt.installed
+          ? "Use your Claude subscription"
+          : !opt.loggedIn
+          ? "Sign in on the gateway host"
+          : "Refresh model catalog"}
         muted=${!opt.configured && mode === "pick"}
         onClick=${pick}
       />`;
@@ -480,10 +508,62 @@ function AnthropicModelList({ role, overview, onPick, onBack }) {
   `;
 }
 
+// ── Built-in CLI backend pieces (Codex, Claude Code) ────────────────────────
+
+/** "Choose a <backend> model for <role>" banner over a role-scoped model list. */
+function CliModelTarget({ backendLabel, roleTitle, currentModel }) {
+  return html`<div class="cli-model-target">
+    <strong>Choose a ${backendLabel} model for ${roleTitle}</strong>
+    <span>Only ${roleTitle} will change.${currentModel ? ` Current model: ${currentModel}.` : ""}</span>
+  </div>`;
+}
+
+/**
+ * Searchable model rows for a CLI backend. With `onPick` each row offers
+ * "Use for <role>"; without it the list is informational.
+ */
+function CliModelRows({ backendLabel, models, currentModel, roleTitle, busy, switchingModel, onPick }) {
+  const [query, setQuery] = useState("");
+  const filtered = models.filter((m) => fuzzyMatchFields([m.id, m.name, m.description, m.resolvedModel], query));
+  return html`
+    <input class="picker-search" type="text" placeholder=${`Search ${backendLabel} models…`} value=${query} onInput=${(e) => setQuery(e.target.value)} autofocus />
+    ${filtered.map(
+      (model) => html`<div class="picker-row" key=${model.id}>
+        <div class="picker-row-info">
+          <div class="picker-row-name">${model.name ?? model.id}</div>
+          <div class="picker-row-meta">
+            <span>${model.id}</span>
+            ${model.resolvedModel && model.resolvedModel !== model.id ? html`<span>currently ${model.resolvedModel}</span>` : null}
+            ${model.recommended ? html`<span class="picker-tag good">Recommended</span>` : null}
+            ${model.description ? html`<span>${model.description}</span>` : null}
+          </div>
+        </div>
+        ${onPick
+          ? model.id === currentModel
+            ? html`<span class="picker-row-state">Current for ${roleTitle}</span>`
+            : html`<button class="btn-tiny" disabled=${busy} onClick=${() => onPick(model.id)}>${switchingModel === model.id ? "Switching…" : `Use for ${roleTitle}`}</button>`
+          : null}
+      </div>`,
+    )}
+    ${filtered.length === 0 ? html`<div class="picker-note">No matching ${backendLabel} models.</div>` : null}
+  `;
+}
+
+/** A CLI backend's model details, falling back to bare ids, scoped to a role when given. */
+function cliModelsForRole(status, role) {
+  const details = status?.modelDetails?.length
+    ? status.modelDetails
+    : (status?.models ?? []).map((id) => ({ id, name: id }));
+  return role ? details.filter((m) => status?.modelRoles?.[m.id]?.includes(role)) : details;
+}
+
+function roleTitleFor(overview, role) {
+  return role ? (overview.capabilities ?? []).find((entry) => entry.role === role)?.title ?? role : null;
+}
+
 // ── Codex model list + device login ─────────────────────────────────────────
 
 function CodexModelList({ overview, role, loginFlow, refreshing, runtimeUpdate, switchingModel, onStartLogin, onCancelLogin, onRefresh, onRuntimeUpdate, onCancelRuntimeUpdate, onDismissRuntimeResult, onSwitchRole, onRemove, onPick, onBack }) {
-  const [query, setQuery] = useState("");
   const [lastCheckedAt, setLastCheckedAt] = useState(null);
   const codex = overview.inference?.codex;
   const configured = codex?.status === "ok" && codex?.loggedIn === true;
@@ -496,22 +576,9 @@ function CodexModelList({ overview, role, loginFlow, refreshing, runtimeUpdate, 
     : codex?.refreshedAt
     ? `last checked ${new Date(codex.refreshedAt).toLocaleTimeString()}`
     : null;
-  const details = codex?.modelDetails?.length
-    ? codex.modelDetails
-    : (codex?.models ?? []).map((id) => ({ id, name: id }));
-  const roleDetails = role
-    ? details.filter((m) => codex?.modelRoles?.[m.id]?.includes(role))
-    : details;
-  const roleTitle = role
-    ? (overview.capabilities ?? []).find((entry) => entry.role === role)?.title ?? role
-    : null;
-  const assignment = role ? overview.inference?.assignments?.[role] : null;
-  const currentModel = assignment?.kind === "codex"
-    ? assignment.model
-    : typeof assignment === "string" && assignment.startsWith("codex/")
-    ? assignment.slice("codex/".length)
-    : null;
-  const filtered = roleDetails.filter((m) => fuzzyMatchFields([m.id, m.name, m.description], query));
+  const roleDetails = cliModelsForRole(codex, role);
+  const roleTitle = roleTitleFor(overview, role);
+  const currentModel = role ? assignedCliModel(overview.inference?.assignments?.[role], "codex") : null;
   const checkCodex = async () => {
     const ok = await onRefresh?.();
     if (ok !== false) setLastCheckedAt(new Date());
@@ -535,12 +602,7 @@ function CodexModelList({ overview, role, loginFlow, refreshing, runtimeUpdate, 
             switchPending=${switchingModel != null}
           />`
         : null}
-      ${roleTitle
-        ? html`<div class="codex-model-target">
-            <strong>Choose a Codex model for ${roleTitle}</strong>
-            <span>Only ${roleTitle} will change.${currentModel ? ` Current model: ${currentModel}.` : ""}</span>
-          </div>`
-        : null}
+      ${roleTitle ? html`<${CliModelTarget} backendLabel="Codex" roleTitle=${roleTitle} currentModel=${currentModel} />` : null}
       <div class="picker-scroll">
         ${configured
           ? html`<div class="picker-row">
@@ -598,28 +660,131 @@ function CodexModelList({ overview, role, loginFlow, refreshing, runtimeUpdate, 
           : null}
 
         ${configured
-          ? html`
-              <input class="picker-search" type="text" placeholder="Search Codex models…" value=${query} onInput=${(e) => setQuery(e.target.value)} autofocus />
-              ${filtered.map(
-                (model) => html`<div class="picker-row" key=${model.id}>
-                  <div class="picker-row-info">
-                    <div class="picker-row-name">${model.name ?? model.id}</div>
-                    <div class="picker-row-meta">
-                      <span>${model.id}</span>
-                      ${model.recommended ? html`<span class="picker-tag good">Recommended</span>` : null}
-                      ${model.description ? html`<span>${model.description}</span>` : null}
-                    </div>
-                  </div>
-                  ${onPick
-                    ? model.id === currentModel
-                      ? html`<span class="picker-row-state">Current for ${roleTitle}</span>`
-                      : html`<button class="btn-tiny" disabled=${busy} onClick=${() => onPick(model.id)}>${switchingModel === model.id ? "Switching…" : `Use for ${roleTitle}`}</button>`
-                    : null}
-                </div>`,
-              )}
-              ${filtered.length === 0 ? html`<div class="picker-note">No matching Codex models.</div>` : null}
-            `
+          ? html`<${CliModelRows}
+              backendLabel="Codex"
+              models=${roleDetails}
+              currentModel=${currentModel}
+              roleTitle=${roleTitle}
+              busy=${busy}
+              switchingModel=${switchingModel}
+              onPick=${onPick}
+            />`
           : null}
+      </div>
+    </div>
+  `;
+}
+
+// ── Claude Code model list ──────────────────────────────────────────────────
+
+const CLAUDE_CODE_INSTALL_URL = "https://claude.com/claude-code";
+const CLAUDE_CODE_LOGIN_COMMAND = "claude auth login";
+
+/** A readable label for how Claude Code is signed in, e.g. "Claude Max". */
+export function claudeCodeAccountLabel(account) {
+  const plan = account?.subscriptionType?.trim();
+  if (plan) return `Claude ${plan.charAt(0).toUpperCase()}${plan.slice(1)}`;
+  if (account?.authMethod === "oauth_token") return "long-lived token";
+  return null;
+}
+
+/**
+ * Which Claude Code pane to show: `ready` (signed in with a catalog),
+ * `checking` (a first refresh is in flight), `not-installed`, `signed-out`,
+ * or `unavailable` (signed in, but the catalog could not be read).
+ */
+export function claudeCodeState(claudeCode) {
+  if (isClaudeCodeReady(claudeCode)) return "ready";
+  if (claudeCode?.status === "probing") return "checking";
+  if (claudeCode?.installed !== true) return "not-installed";
+  if (claudeCode?.runtime?.supported === false) return "outdated";
+  if (claudeCode?.loggedIn !== true) return "signed-out";
+  return "unavailable";
+}
+
+function ClaudeCodeSetup({ state, claudeCode, busy, onRefresh }) {
+  const reason =
+    state === "unavailable" || state === "not-installed" ? (claudeCode?.reason ?? claudeCode?.runtime?.reason) : null;
+  return html`<div class="claude-code-setup" role="status">
+    ${state === "checking" ? html`<strong>Checking Claude Code on the gateway host…</strong>` : null}
+    ${state === "not-installed"
+      ? html`<strong>Claude Code is not installed on the gateway host</strong>
+          <ol>
+            <li>Install Claude Code on the machine that runs the gateway: <a href=${CLAUDE_CODE_INSTALL_URL} target="_blank" rel="noreferrer">claude.com/claude-code</a>.</li>
+            <li>Sign in there with <${CopyValue} text=${CLAUDE_CODE_LOGIN_COMMAND} title="Copy sign-in command" />.</li>
+            <li>Come back and check again.</li>
+          </ol>`
+      : null}
+    ${state === "outdated"
+      ? html`<strong>Claude Code ${claudeCode?.runtime?.version ?? ""} is too old for Omnesis</strong>
+          <p>On the gateway host, run <${CopyValue} text="claude update" title="Copy update command" />, then check again.</p>`
+      : null}
+    ${state === "signed-out"
+      ? html`<strong>Claude Code is not signed in</strong>
+          <p>On the gateway host, run <${CopyValue} text=${CLAUDE_CODE_LOGIN_COMMAND} title="Copy sign-in command" /> and complete the sign-in, then check again.</p>`
+      : null}
+    ${state === "unavailable" ? html`<strong>Claude Code is signed in but unavailable</strong>` : null}
+    ${reason ? html`<p class="claude-code-setup-note">${reason}</p>` : null}
+    <p class="claude-code-setup-note">Omnesis runs your installed Claude Code under its own sign-in. It never sees, stores or relays your Claude credentials.</p>
+    <div class="claude-code-setup-actions">
+      <button class="btn-tiny" onClick=${onRefresh} disabled=${busy}>${busy ? "Checking…" : "Check again"}</button>
+    </div>
+  </div>`;
+}
+
+function ClaudeCodeModelList({ overview, role, refreshing, switchingModel, onRefresh, onRemove, onPick, onBack }) {
+  const [lastCheckedAt, setLastCheckedAt] = useState(null);
+  const claudeCode = overview.inference?.claudeCode;
+  const state = claudeCodeState(claudeCode);
+  const busy = refreshing || claudeCode?.status === "probing" || switchingModel != null;
+  const models = cliModelsForRole(claudeCode, role);
+  const roleTitle = roleTitleFor(overview, role);
+  const currentModel = role ? assignedCliModel(overview.inference?.assignments?.[role], "claude-code") : null;
+  const account = claudeCodeAccountLabel(claudeCode?.account);
+  const checkedLabel = lastCheckedAt
+    ? "updated just now"
+    : claudeCode?.refreshedAt
+    ? `last checked ${new Date(claudeCode.refreshedAt).toLocaleTimeString()}`
+    : null;
+  const check = async () => {
+    const ok = await onRefresh?.();
+    if (ok !== false) setLastCheckedAt(new Date());
+  };
+
+  return html`
+    <div class="picker-pane">
+      <div class="picker-pane-head">
+        ${onBack ? html`<button type="button" class="btn-back" onClick=${onBack}>← Back</button>` : null}
+        <div class="picker-pane-title"><${ProviderIcon} providerId="claude-code" /> Claude Code</div>
+      </div>
+      ${roleTitle && state === "ready" ? html`<${CliModelTarget} backendLabel="Claude Code" roleTitle=${roleTitle} currentModel=${currentModel} />` : null}
+      <div class="picker-scroll">
+        ${state === "ready"
+          ? html`<div class="picker-row">
+                <div class="picker-row-info">
+                  <div class="picker-row-name">Claude Code is connected</div>
+                  <div class="picker-row-meta">
+                    <span>${account ? `Signed in with ${account}` : "Signed in"}</span>
+                    ${claudeCode.runtime?.version ? html`<span>CLI ${claudeCode.runtime.version}</span>` : null}
+                    <span>${plural(models.length, "model")} available</span>
+                    ${checkedLabel ? html`<span>${checkedLabel}</span>` : null}
+                  </div>
+                </div>
+                <span class="picker-row-actions">
+                  <button class="btn-tiny" onClick=${check} disabled=${busy}>${busy ? "Checking…" : "Refresh model list"}</button>
+                  ${onRemove ? html`<button class="btn-tiny danger" onClick=${onRemove} disabled=${busy}>Remove</button>` : null}
+                </span>
+              </div>
+              <${CliModelRows}
+                backendLabel="Claude Code"
+                models=${models}
+                currentModel=${currentModel}
+                roleTitle=${roleTitle}
+                busy=${busy}
+                switchingModel=${switchingModel}
+                onPick=${onPick}
+              />`
+          : html`<${ClaudeCodeSetup} state=${state} claudeCode=${claudeCode} busy=${busy} onRefresh=${check} />`}
       </div>
     </div>
   `;
@@ -805,8 +970,8 @@ function RecentModels({ role, onPick }) {
 
 // ── Choose-model flow ───────────────────────────────────────────────────────
 
-export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, onClose, onAddHttp, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickTypeSafe, onConfigureTypeSafeKey, onPickRecent, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
-  // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex" | "typesafe"
+export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, claudeCodeRefreshing, onClose, onAddHttp, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickClaudeCode, onRefreshClaudeCode, onPickTypeSafe, onConfigureTypeSafeKey, onPickRecent, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
+  // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex" | "claude-code" | "typesafe"
   // A decision role has one backend, so its picker opens on it directly.
   const [step, setStep] = useState(() => (isDecisionRole(role) ? { name: "typesafe" } : { name: "grid" }));
   const toGrid = () => setStep({ name: "grid" });
@@ -815,6 +980,7 @@ export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow
     if (opt.kind === "local") setStep({ name: "local" });
     else if (opt.kind === "anthropic") setStep({ name: "anthropic" });
     else if (opt.kind === "codex") setStep({ name: "codex" });
+    else if (opt.kind === "claude-code") setStep({ name: "claude-code" });
     else if (opt.kind === "typesafe") setStep({ name: "typesafe" });
     else if (opt.kind === "add-custom") setStep({ name: "http", preset: null });
     else if (opt.kind === "custom") setStep({ name: "select", backendKey: opt.id });
@@ -854,33 +1020,102 @@ export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow
       onPick=${onPickCodex}
       onBack=${toGrid}
     />`;
+  } else if (step.name === "claude-code") {
+    body = html`<${ClaudeCodeModelList}
+      overview=${overview}
+      role=${role}
+      refreshing=${claudeCodeRefreshing}
+      onRefresh=${onRefreshClaudeCode}
+      onPick=${onPickClaudeCode}
+      onBack=${toGrid}
+    />`;
   }
 
-  const size = step.name === "select" || step.name === "codex" ? "lg" : "md";
+  const size = ["select", "codex", "claude-code"].includes(step.name) ? "lg" : "md";
   return html`<${Modal} open onClose=${onClose} title=${/\bmodel$/i.test(capTitle) ? `Choose a ${capTitle}` : `Choose a ${capTitle} model`} size=${size}>${body}<//>`;
 }
 
-// ── Add-backend flow (configure only) ───────────────────────────────────────
+// ── Backend management modals ───────────────────────────────────────────────
 
-export function CodexConfigModal({ overview, loginFlow, refreshing, runtimeUpdate, onClose, onStartLogin, onCancelLogin, onRefresh, onRuntimeUpdate, onCancelRuntimeUpdate, onDismissRuntimeResult, onSwitchModel, onRemove }) {
+function CliSwitchResult({ result }) {
+  return html`<div class="cli-switch-result" role="status">
+    <strong>${result.title} now uses ${result.model}.</strong>
+    <div>No other capability was changed.</div>
+  </div>`;
+}
+
+/**
+ * Switch one role's model on a CLI backend from its management modal: tracks
+ * the role being switched, the model being saved, and the last success.
+ */
+function useCliModelSwitch(overview, onSwitchModel) {
   const [switchRole, setSwitchRole] = useState(null);
   const [switchingModel, setSwitchingModel] = useState(null);
   const [switchResult, setSwitchResult] = useState(null);
-  const switchTitle = switchRole
-    ? (overview.capabilities ?? []).find((entry) => entry.role === switchRole)?.title ?? switchRole
-    : null;
+  const switchTitle = roleTitleFor(overview, switchRole);
   const beginSwitch = (role) => {
     setSwitchResult(null);
     setSwitchRole(role);
   };
+  const pick = switchRole && onSwitchModel
+    ? async (model) => {
+        const targetRole = switchRole;
+        const targetTitle = switchTitle;
+        setSwitchingModel(model);
+        let ok;
+        try {
+          ok = await onSwitchModel(targetRole, model);
+        } finally {
+          setSwitchingModel(null);
+        }
+        if (ok !== false) {
+          setSwitchResult({ title: targetTitle, model });
+          setSwitchRole(null);
+        }
+      }
+    : null;
+  return { switchRole, switchTitle, switchingModel, switchResult, beginSwitch, cancelSwitch: () => setSwitchRole(null), pick };
+}
+
+export function ClaudeCodeConfigModal({ overview, refreshing, onClose, onRefresh, onSwitchModel, onRemove }) {
+  const { switchRole, switchTitle, switchingModel, switchResult, beginSwitch, cancelSwitch, pick } = useCliModelSwitch(overview, onSwitchModel);
+  const assigned = cliBackendAssignments(overview, "claude-code");
+  const ready = isClaudeCodeReady(overview.inference?.claudeCode);
   return html`
-    <${Modal} open onClose=${onClose} title=${switchTitle ? `Choose a Codex model for ${switchTitle}` : "Codex"} size="lg">
-      ${switchResult
-        ? html`<div class="codex-runtime-result codex-runtime-result--good" role="status">
-            <strong>${switchResult.title} now uses ${switchResult.model}.</strong>
-            <div>No other capability was changed.</div>
+    <${Modal} open onClose=${onClose} title=${switchTitle ? `Choose a Claude Code model for ${switchTitle}` : "Claude Code"} size="lg">
+      ${switchResult ? html`<${CliSwitchResult} result=${switchResult} />` : null}
+      ${!switchRole && ready && assigned.length > 0
+        ? html`<div class="claude-code-assignments">
+            ${assigned.map((entry) => html`<div class="picker-row" key=${entry.role}>
+              <div class="picker-row-info">
+                <div class="picker-row-name">${entry.title}</div>
+                <div class="picker-row-meta"><span>uses ${entry.model}</span></div>
+              </div>
+              ${onSwitchModel
+                ? html`<button class="btn-tiny" aria-label=${`Switch ${entry.title} model`} onClick=${() => beginSwitch(entry.role)}>Switch model</button>`
+                : null}
+            </div>`)}
           </div>`
         : null}
+      <${ClaudeCodeModelList}
+        overview=${overview}
+        role=${switchRole}
+        refreshing=${refreshing}
+        switchingModel=${switchingModel}
+        onRefresh=${onRefresh}
+        onRemove=${assigned.length > 0 ? onRemove : null}
+        onPick=${pick}
+        onBack=${switchRole ? cancelSwitch : null}
+      />
+    <//>
+  `;
+}
+
+export function CodexConfigModal({ overview, loginFlow, refreshing, runtimeUpdate, onClose, onStartLogin, onCancelLogin, onRefresh, onRuntimeUpdate, onCancelRuntimeUpdate, onDismissRuntimeResult, onSwitchModel, onRemove }) {
+  const { switchRole, switchTitle, switchingModel, switchResult, beginSwitch, pick } = useCliModelSwitch(overview, onSwitchModel);
+  return html`
+    <${Modal} open onClose=${onClose} title=${switchTitle ? `Choose a Codex model for ${switchTitle}` : "Codex"} size="lg">
+      ${switchResult ? html`<${CliSwitchResult} result=${switchResult} />` : null}
       <${CodexModelList}
         overview=${overview}
         loginFlow=${loginFlow}
@@ -895,23 +1130,7 @@ export function CodexConfigModal({ overview, loginFlow, refreshing, runtimeUpdat
         onSwitchRole=${beginSwitch}
         role=${switchRole}
         switchingModel=${switchingModel}
-        onPick=${switchRole && onSwitchModel
-          ? async (model) => {
-              const targetRole = switchRole;
-              const targetTitle = switchTitle;
-              setSwitchingModel(model);
-              let ok;
-              try {
-                ok = await onSwitchModel(targetRole, model);
-              } finally {
-                setSwitchingModel(null);
-              }
-              if (ok !== false) {
-                setSwitchResult({ title: targetTitle, model });
-                setSwitchRole(null);
-              }
-            }
-          : null}
+        onPick=${pick}
         onRemove=${onRemove}
         onBack=${null}
       />
@@ -919,7 +1138,7 @@ export function CodexConfigModal({ overview, loginFlow, refreshing, runtimeUpdat
   `;
 }
 
-export function AddBackendModal({ overview, onClose, onAddHttp, onConfigureAnthropic, onConfigureCodex }) {
+export function AddBackendModal({ overview, onClose, onAddHttp, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode }) {
   const [step, setStep] = useState({ name: "grid" });
 
   const onSelect = (opt) => {
@@ -928,6 +1147,9 @@ export function AddBackendModal({ overview, onClose, onAddHttp, onConfigureAnthr
       onClose();
     } else if (opt.kind === "codex") {
       onConfigureCodex();
+      onClose();
+    } else if (opt.kind === "claude-code") {
+      onConfigureClaudeCode();
       onClose();
     } else if (opt.kind === "add-custom") {
       setStep({ name: "http", preset: null });

@@ -583,12 +583,27 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             <code>agent</code>, <code>privacy-reviewer</code> and image-capable
             <code>ocr</code> roles from one login; it has no embedding or transcription models.
           </li>
+          <li>
+            <strong>Claude Code</strong>, assigned as <code>claude-code/&lt;model&gt;</code>, which
+            runs on a Claude subscription through the <code>claude</code> command installed and
+            signed in on the gateway host. Omnesis never signs it in: run
+            <code>claude auth login</code> on that host, then refresh the backend under
+            <strong>Settings → Models → Backends</strong> (<strong
+              >Add backend → Claude Code → Check again</strong
+            >
+            before it is listed), or with <code>omnesis claude-code refresh</code>.
+            <code>omnesis claude-code status</code> shows the installation, sign-in state and the
+            models the CLI offers. Claude Code serves the <code>agent</code>,
+            <code>privacy-reviewer</code> and image-capable <code>ocr</code> roles from one login;
+            it has no embedding or transcription models. Sign-in and isolation are covered in
+            <a href="/docs/agent#claude-code">The agent → Claude Code</a>.
+          </li>
         </ul>
         <div class="callout warn">
           <p>
-            By default inference stays on this machine: cloud backends, including Anthropic and
-            Codex, and HTTP backends that resolve to remote addresses require your permission. In
-            the portal, turn on <strong>Allow cloud inference</strong> under
+            By default inference stays on this machine: cloud backends, including Anthropic, Codex
+            and Claude Code, and HTTP backends that resolve to remote addresses require your
+            permission. In the portal, turn on <strong>Allow cloud inference</strong> under
             <strong>Settings → Models</strong> and confirm. Choosing a cloud model while this
             setting is off also asks for confirmation before saving the assignment. The permission
             applies to all configured remote inference backends on this gateway. Depending on their
@@ -709,8 +724,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <p>
           <code>omnesis model assign</code> covers every role, so the terminal and the portal's
           <strong>Settings → Models</strong> tab configure the same set. Assigning
-          <code>ocr</code> to a Codex model sends images and rasterised PDF pages to it, which needs
-          remote inference enabled.
+          <code>ocr</code> to a Codex or Claude Code model sends images and rasterised PDF pages to
+          it, which needs remote inference enabled.
         </p>
         <p>
           Changing the <code>embedder</code> re-embeds the corpus in the background while search
@@ -769,7 +784,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           settings it knows how to send to that provider's API. Reasoning settings are offered for
           OpenAI, Google, Mistral, Groq, Cerebras, Together, DeepSeek, NVIDIA, Moonshot AI and
           OpenRouter; which of the three kinds appear depends on the provider and the model. For
-          Codex, the effort levels come from the installed Codex runtime's own model list.
+          Codex, the effort levels come from the installed Codex runtime's own model list. For
+          Claude Code, they come from the installed CLI's catalog and are passed to it as
+          <code>claude --effort</code>.
         </p>
         <p>
           Anthropic, local GGUF and other OpenAI-compatible servers show no reasoning settings, and
@@ -943,6 +960,30 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>OMNESIS_CODEX_INFERENCE_POOL_SIZE</code> environment variables, which win) and
           restart the gateway. More slots use more memory, and every process shares the same ChatGPT
           allowance.
+        </p>
+
+        <h3 id="claude-code">Claude Code runtime and capacity</h3>
+        <p>
+          Omnesis does not install or update Claude Code. It needs Claude Code 2.1.259 or later and
+          finds the <code>claude</code> command on the gateway's <code>PATH</code> or where the
+          official installers put it: <code>~/.local/bin/claude</code>,
+          <code>~/.claude/local/claude</code>, <code>/opt/homebrew/bin/claude</code>,
+          <code>/usr/local/bin/claude</code> or <code>/usr/bin/claude</code>. Set
+          <code>OMNESIS_CLAUDE_CODE_COMMAND</code> to use a different executable. Update it with
+          Claude Code's own updater, <code>claude update</code>, then refresh the backend;
+          <code>omnesis update</code> does not touch it. Omnesis turns off the CLI's background
+          auto-updater inside its own turns.
+        </p>
+        <p>
+          Every Claude Code turn is its own process, admitted per lane: up to three conversation
+          turns at once, one background turn, and two single-shot calls such as privacy reviews and
+          OCR. The rest queue. A turn started from inside another turn's tool, such as a sub-agent,
+          is admitted on separate capacity for its nesting depth, so it never waits behind its
+          parent. Every process shares the same Claude subscription's usage limits.
+        </p>
+        <p>
+          When a role uses Claude Code, <code>omnesis doctor</code> reports
+          <code>models.claude-code</code>: whether the CLI is installed, supported and signed in.
         </p>
 
         <h2 id="troubleshooting">Troubleshooting</h2>
@@ -1211,7 +1252,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               </tr>
               <tr>
                 <td>
-                  <code>model</code>, <code>backend</code>, <code>codex</code>, <code>index</code>
+                  <code>model</code>, <code>backend</code>, <code>codex</code>,
+                  <code>claude-code</code>, <code>index</code>
                 </td>
                 <td>Assign models, add inference backends, rebuild the vector index</td>
                 <td><a href="#models">Models</a></td>

@@ -5,6 +5,7 @@ import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { patchAdminConfig } from "../api.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
+import { cloudProviderLabel } from "../lib/cloud-inference.js";
 
 /** Only the last failed turn can offer a retry; never replay an older message. */
 export function cloudInferenceRecovery(state) {
@@ -85,6 +86,6 @@ export function AgentCloudInferenceRecovery({ recovery, model, getConfig, onEnab
         : !ready ? html`<button class="btn-primary" disabled=${busy || agentBusy} onClick=${() => setOpen(true)}>Enable cloud inference…</button>` : null}
       <a class="btn-secondary" href="/portal/settings/models/agent">${ready ? "Model settings" : "Choose a local model"}</a>
     </div>
-    <${CloudInferenceConsentModal} open=${open} modelName=${model?.modelName} providerLabel=${model?.providerId === "codex" ? "OpenAI" : model?.providerLabel} busy=${busy} error=${error} onConfirm=${enable} onCancel=${() => setOpen(false)} />
+    <${CloudInferenceConsentModal} open=${open} modelName=${model?.modelName} providerLabel=${cloudProviderLabel(model?.providerId, model?.providerLabel)} busy=${busy} error=${error} onConfirm=${enable} onCancel=${() => setOpen(false)} />
   </div>`;
 }

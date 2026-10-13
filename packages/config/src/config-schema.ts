@@ -2828,7 +2828,7 @@ const brain = z
 // inference runs; assignments map capability slots to backend + model.
 // Assignment values use "backend/model" string format:
 //   "local/<catalogId>", "anthropic/<modelId>", "codex/<modelId>",
-//   "typesafe/<modelId>" (decision only), "<httpKey>/<model>", "replay"
+//   "claude-code/<model>", "typesafe/<modelId>" (decision only), "<httpKey>/<model>", "replay"
 //   (roles with a replay backend), or null (disabled).
 
 const httpBackendConfig = z
@@ -3020,9 +3020,14 @@ const dictationSettings = z
 const backendKey = z
   .string()
   .min(1)
-  .refine((k) => !["local", "anthropic", "codex", "replay"].includes(k) && !k.includes("/"), {
-    message: "Backend name cannot be 'local', 'anthropic', 'codex', 'replay', or contain '/'",
-  });
+  .refine(
+    (k) =>
+      !["local", "anthropic", "codex", "claude-code", "replay"].includes(k) && !k.includes("/"),
+    {
+      message:
+        "Backend name cannot be 'local', 'anthropic', 'codex', 'claude-code', 'replay', or contain '/'",
+    },
+  );
 
 const transcriptionVocabularySettings = z
   .object({

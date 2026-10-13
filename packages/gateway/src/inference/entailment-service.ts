@@ -47,6 +47,8 @@ function signatureOf(resolved: ResolvedAssignment, apiKey: string | undefined): 
       return `anthropic:${resolved.catalogId}:${resolved.available}:${resolved.allowRemoteInference}`;
     case "codex":
       return `codex:${resolved.model}:${resolved.available}:${resolved.allowRemoteInference}`;
+    case "claude-code":
+      return `claude-code:${resolved.model}:${resolved.available}:${resolved.allowRemoteInference}`;
     case "typesafe":
       return `typesafe:${resolved.model}:${resolved.available}`;
     case "disabled":

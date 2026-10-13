@@ -77,6 +77,7 @@ export const SUB_COMMANDS: SubCommandsDef = {
   model: () => import("./commands/model.js").then((m) => m.modelCommand),
   backend: () => import("./commands/backend.js").then((m) => m.backendCommand),
   codex: () => import("./commands/codex.js").then((m) => m.codexCommand),
+  "claude-code": () => import("./commands/claude-code.js").then((m) => m.claudeCodeCommand),
   index: () => import("./commands/index-group.js").then((m) => m.indexCommand),
   eval: () => import("./commands/eval-group.js").then((m) => m.evalCommand),
   backup: () => import("./commands/backup.js").then((m) => m.backupCommand),

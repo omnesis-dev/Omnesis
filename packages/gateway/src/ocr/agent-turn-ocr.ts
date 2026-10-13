@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { CodexCompleter } from "../inference/codex-completer.js";
+import { AgentTurnCompleter } from "../inference/agent-turn-completer.js";
 import { OCR_PROMPT } from "./http-vlm-ocr.js";
 import type { ChatBackend } from "@omnesis/agent";
 import type { OcrCapability, OcrResult } from "@omnesis/core";
 
-/** Stateless vision turns. The OCR service prepares images and rasterizes PDFs. */
-export class CodexOcr implements OcrCapability {
+/**
+ * Stateless vision turns on a subscription runtime (Codex, Claude Code). The
+ * OCR service prepares images and rasterizes PDFs.
+ */
+export class AgentTurnOcr implements OcrCapability {
   readonly name: string;
   readonly modelId: string;
-  private readonly completer: CodexCompleter;
+  private readonly completer: AgentTurnCompleter;
 
   constructor(opts: { backend: ChatBackend; timeoutMs?: number }) {
     this.modelId = opts.backend.model;
-    this.name = `codex-ocr:${this.modelId}`;
-    this.completer = new CodexCompleter({
+    this.name = `${opts.backend.name}-ocr:${this.modelId}`;
+    this.completer = new AgentTurnCompleter({
       backend: opts.backend,
       timeoutMs: opts.timeoutMs ?? 120_000,
     });

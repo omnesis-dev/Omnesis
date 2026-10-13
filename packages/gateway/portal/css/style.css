@@ -13584,7 +13584,8 @@ div.source-activity-popover-link:hover {
   animation: codex-runtime-spin 700ms linear infinite;
 }
 @keyframes codex-runtime-spin { to { transform: rotate(360deg); } }
-.codex-runtime-result {
+.codex-runtime-result,
+.cli-switch-result {
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -13594,13 +13595,14 @@ div.source-activity-popover-link:hover {
   font-size: 11.5px;
   line-height: 1.45;
 }
-.codex-runtime-result--good { border-color: rgba(63, 185, 80, 0.32); background: rgba(63, 185, 80, 0.07); }
+.codex-runtime-result--good,
+.cli-switch-result { border-color: rgba(63, 185, 80, 0.32); background: rgba(63, 185, 80, 0.07); }
 .codex-runtime-result--bad { border-color: rgba(248, 81, 73, 0.32); background: rgba(248, 81, 73, 0.07); }
 .codex-runtime-assignment { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .codex-runtime-actions { display: flex; justify-content: flex-end; }
 .codex-update-confirm p { margin: 0 0 10px; }
 .codex-update-confirm p:last-child { margin-bottom: 0; }
-.codex-model-target {
+.cli-model-target {
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -13611,7 +13613,27 @@ div.source-activity-popover-link:hover {
   font-size: 12px;
   color: var(--text-secondary);
 }
-.codex-model-target strong { color: var(--text-primary); }
+.cli-model-target strong { color: var(--text-primary); }
+
+/* Claude Code runs the operator's own CLI login, so a signed-out or missing
+   CLI is fixed on the gateway host; this panel carries those instructions. */
+.claude-code-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.claude-code-setup strong { color: var(--text-primary); }
+.claude-code-setup p { margin: 0; }
+.claude-code-setup ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.claude-code-setup-note { font-size: 11.5px; color: var(--text-muted); }
+.claude-code-setup-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.claude-code-assignments { display: flex; flex-direction: column; gap: 6px; }
 
 @media (prefers-reduced-motion: reduce) {
   .codex-runtime-spinner { animation: none; }

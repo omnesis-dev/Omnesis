@@ -7,7 +7,7 @@
  *
  * Backends:
  *   - `replay`                         → SyntheticOcr (tests/demos).
- *   - `codex`                         → CodexOcr (vision model).
+ *   - `codex`, `claude-code`          → AgentTurnOcr (vision model).
  *   - `http` (a declared backend)      → HttpVlmOcr (vLLM / llama-server).
  *   - `local` + `nativeRuntime`        → Apple Vision (macOS), Tesseract, or a
  *                                        llama.cpp vision GGUF subprocess.
@@ -19,7 +19,7 @@
  */
 
 import { createLogger, assertNever } from "@omnesis/core";
-import { CodexOcr } from "./codex-ocr.js";
+import { AgentTurnOcr } from "./agent-turn-ocr.js";
 import { SyntheticOcr } from "./synthetic-ocr.js";
 import { HttpVlmOcr, type FetchFn } from "./http-vlm-ocr.js";
 import { TesseractOcr, tesseractAvailable, type TesseractModuleLoader } from "./tesseract-ocr.js";
@@ -29,6 +29,7 @@ import {
   type VisionHelperRunner,
 } from "./apple-vision-ocr.js";
 import { GgufOcr, mtmdAvailable, type MtmdRunner } from "./gguf-ocr.js";
+import type { ClaudeCodeService } from "../models/claude-code-service.js";
 import type { CodexRuntimeService } from "../models/codex-runtime-service.js";
 import type { ResolvedAssignment, OcrCapability } from "@omnesis/core";
 
@@ -46,6 +47,8 @@ export interface LoadOcrDeps {
   /** Create a vision backend on the independent Codex completion lane. */
   codexRuntimeService?: Pick<CodexRuntimeService, "createBackend"> &
     Partial<Pick<CodexRuntimeService, "snapshot">>;
+  /** Create a vision backend on the independent Claude Code inference lane. */
+  claudeCodeService?: Pick<ClaudeCodeService, "createBackend">;
   /** Resolve the bearer token for an HTTP backend (registry owns the keys). */
   getBackendApiKey?: (backendKey: string) => string | undefined;
   /** Paths for the `gguf` runtime, from `inference.ocr.gguf`. */
@@ -131,7 +134,7 @@ export async function loadOcrFromResolved(
     }
     case "anthropic":
       log.warn(
-        "Anthropic is not wired as an OCR backend — assign a local runtime, HTTP vision backend, or Codex.",
+        "Anthropic is not wired as an OCR backend — assign a local runtime, HTTP vision backend, Codex or Claude Code.",
       );
       return null;
     case "codex":
@@ -149,8 +152,22 @@ export async function loadOcrFromResolved(
           ?.inputModalities?.includes("image") === false
       )
         return null;
-      return new CodexOcr({
+      return new AgentTurnOcr({
         backend: deps.codexRuntimeService.createBackend({
+          model: resolved.model,
+          lane: "inference",
+        }),
+      });
+    case "claude-code":
+      if (
+        !resolved.available ||
+        !resolved.allowRemoteInference ||
+        !resolved.model ||
+        !deps.claudeCodeService
+      )
+        return null;
+      return new AgentTurnOcr({
+        backend: deps.claudeCodeService.createBackend({
           model: resolved.model,
           lane: "inference",
         }),

@@ -956,22 +956,37 @@ Nothing in the test suite loads the stylesheet, so a rename is only half-checked
 
 - Examples: `packages/gateway/portal/js/views/sweeps.js` (the reference table), `packages/gateway/portal/js/views/policies/policy-library.js`, `packages/gateway/portal/js/views/policies/policy.js`
 
-### Nested Codex inference owns independent capacity
+### Nested subscription-runtime inference owns independent capacity
 
-Codex capability roles share a managed runtime service. Single-shot completions use
-`CodexCompleter`; OCR sends inline images through the same tool-free adapter. An
+Codex and Claude Code capability roles each share one runtime service per
+backend. Single-shot completions use `AgentTurnCompleter`, a fresh tool-free
+agent turn; `AgentTurnOcr` sends inline images through the same adapter. An
 inference turn consumes only the final answer, never progress commentary. Every
 loader respects `allowRemoteInference`, and cached provider signatures include it.
 
-Agent tools can request another model turn before their own turn completes. The
-runtime supervisor binds the parent lease at each tool invocation, routes nested
-turns to a separate bounded pool per depth, and admits active descendants while a
-runtime generation drains. A nested call must never queue behind its caller's
-occupied runtime. Disposal and auth reconciliation cover every generation pool.
+Agent tools can request another model turn before their own turn completes, and
+that nested call must never queue behind its caller's occupied capacity: the
+caller holds a slot while it waits, so sharing it could deadlock.
 
-- Completion adapter: `packages/gateway/src/inference/codex-completer.ts`
-- Runtime admission: `packages/gateway/src/models/codex-generation-supervisor.ts`
-- Capacity and model discovery: `packages/gateway/src/models/codex-runtime-service.ts`
+- **Codex.** The runtime supervisor binds the parent lease at each tool
+  invocation, routes nested turns to a separate bounded pool per depth, and
+  admits active descendants while a runtime generation drains. Disposal and auth
+  reconciliation cover every generation pool.
+- **Claude Code.** Every turn is its own `claude` process, admitted by
+  `ClaudeCodeService` on a semaphore for its lane (`interactive`, `background`,
+  `inference`). Each tool invocation runs inside an `AsyncLocalStorage` scope that
+  is open only while the tool call is in flight; a turn started inside an open
+  scope is nested one level deeper and is admitted on that depth's own semaphore
+  (the inference lane's capacity) instead of its lane's. Work a tool merely
+  schedules and that starts after the call settles counts as top-level again.
+  Depth is capped at the sub-agent nesting cap plus two, beyond which the turn
+  fails rather than queues.
+
+- Completion adapter: `packages/gateway/src/inference/agent-turn-completer.ts`
+- OCR adapter: `packages/gateway/src/ocr/agent-turn-ocr.ts`
+- Codex admission: `packages/gateway/src/models/codex-generation-supervisor.ts`
+- Codex capacity and model discovery: `packages/gateway/src/models/codex-runtime-service.ts`
+- Claude Code admission and status: `packages/gateway/src/models/claude-code-service.ts`
 
 ### `assertNever` for discriminated-union exhaustiveness
 

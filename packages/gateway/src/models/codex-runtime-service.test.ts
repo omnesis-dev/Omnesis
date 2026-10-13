@@ -10,7 +10,7 @@ import { CodexAppServerRuntime } from "@omnesis/agent";
 import { z } from "zod";
 import { CODEX_SUPPORTED_ROLES, type AgentEvent } from "@omnesis/core";
 import { ConfigStore } from "../config-store.js";
-import { CodexAgentSetupUnavailableError } from "./codex-agent-setup.js";
+import { AgentSetupUnavailableError } from "./agent-assignment-setup.js";
 import { CodexRuntimeLifecycleConflictError } from "./codex-runtime-lifecycle.js";
 import {
   CodexRuntimeService,
@@ -479,7 +479,7 @@ describe("CodexRuntimeService parsers", () => {
       const setup = service.setupAgent(configStore, "gpt-example-frontier");
       releaseList();
       await staleRefresh;
-      await expect(setup).rejects.toBeInstanceOf(CodexAgentSetupUnavailableError);
+      await expect(setup).rejects.toBeInstanceOf(AgentSetupUnavailableError);
       expect(configStore.get().inference?.assignments?.agent).toBeUndefined();
       expect(service.snapshot()).toMatchObject({ configured: false, loggedIn: false });
     } finally {

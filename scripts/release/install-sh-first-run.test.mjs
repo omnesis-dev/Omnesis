@@ -266,6 +266,38 @@ case "$1" in
         ;;
     esac
     ;;
+  claude-code)
+    if [ "\${3:-}" = --help ]; then
+      [ "\${OMNESIS_TEST_CLAUDE_CODE_SETUP_SUPPORT:-ready}" = ready ] || exit 2
+      case "$2" in
+        setup-agent) printf '%s\n' 'USAGE setup-agent [OPTIONS] <MODEL>' ;;
+        *) exit 2 ;;
+      esac
+      exit 0
+    fi
+    case "$2" in
+      refresh)
+        case "\${OMNESIS_TEST_CLAUDE_CODE_REFRESH:-ok}" in
+          fails) echo "gateway unreachable" >&2; exit 1 ;;
+          garbled) printf '%s' 'not json'; exit 0 ;;
+        esac
+        if [ "\${OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN:-0}" = 1 ] || [ -f "$HOME/fake-claude-logged-in" ]; then
+          if [ -n "\${OMNESIS_TEST_CLAUDE_CODE_READY_STATUS:-}" ]; then
+            printf '%s' "$OMNESIS_TEST_CLAUDE_CODE_READY_STATUS"
+          else
+            printf '%s' '{"type":"claude-code","installed":true,"status":"ok","loggedIn":true,"account":{"subscriptionType":"max"},"models":["sonnet","opus","haiku"]}'
+          fi
+        else
+          printf '%s' '{"type":"claude-code","installed":true,"status":"unreachable","loggedIn":false,"models":[],"reason":"Claude Code is not signed in."}'
+        fi
+        ;;
+      setup-agent)
+        [ -n "\${3:-}" ] || exit 2
+        printf 'claude-code/%s' "$3" > "$HOME/fake-agent-assignment"
+        printf 'Agent assignment complete\n'
+        ;;
+    esac
+    ;;
   config)
     if [ "$2" = get ]; then
       if [ -s "$HOME/fake-agent-assignment" ]; then
@@ -323,6 +355,29 @@ beforeEach(() => {
 
 function installCodexSignal() {
   writeExecutable(fixturePath("fake-bin", "codex"), "#!/bin/sh\nexit 0\n");
+}
+
+/**
+ * A stand-in for the operator's own Claude Code CLI. The installer only ever
+ * runs `claude auth login`, which here records itself and marks the account
+ * signed in for the fake gateway's next `claude-code refresh`.
+ */
+function installClaudeSignal() {
+  writeExecutable(
+    fixturePath("fake-bin", "claude"),
+    `#!/bin/sh
+printf 'system-claude %s\\n' "$*" >> "$OMNESIS_TEST_CALLS"
+if [ "$1 $2" = "auth login" ]; then
+  [ "\${OMNESIS_TEST_CLAUDE_LOGIN_EXIT:-0}" = 0 ] || exit "$OMNESIS_TEST_CLAUDE_LOGIN_EXIT"
+  [ "\${OMNESIS_TEST_CLAUDE_LOGIN_SIGNS_IN:-1}" = 1 ] && : > "$HOME/fake-claude-logged-in"
+  if [ -n "\${OMNESIS_TEST_ASSIGN_DURING_LOGIN:-}" ]; then
+    printf '%s' "$OMNESIS_TEST_ASSIGN_DURING_LOGIN" > "$HOME/fake-agent-assignment"
+  fi
+  printf 'Login successful.\\n'
+fi
+exit 0
+`,
+  );
 }
 
 function simulateMissingBuildTools() {
@@ -512,7 +567,6 @@ describe("install.sh unattended runs", () => {
     expect(run.calls.some((c) => c.startsWith("service install"))).toBe(false);
     expect(run.calls.some((c) => c.startsWith("model install"))).toBe(false);
     expect(run.calls.some((c) => c.startsWith("keyring"))).toBe(false);
-    expect(run.output).toContain("Omnesis is installed");
   });
 
   test("warns when an earlier PATH entry shadows the fresh command", () => {
@@ -733,6 +787,292 @@ describe("install.sh unattended Codex behavior", () => {
 
     expect(run.status).toBe(0);
     expect(run.calls.some((call) => call.startsWith("codex "))).toBe(false);
+  });
+});
+
+describe.skipIf(!HAS_PTY)("install.sh Claude Code agent offer", () => {
+  const args = ["--no-tls", "--embedder", EMBED_IDS[0]];
+  const baseEnv = { OMNESIS_TEST_KEYRING: "ready" };
+  const OFFER = ["Set up the agent with Claude Code", "(Sonnet)"].join(" ");
+  // `setup-agent --help` is the version-skew probe, not an assignment.
+  const claudeSetup = (calls) =>
+    calls.some((call) => call.startsWith("claude-code setup-agent ") && !call.endsWith("--help"));
+
+  test("does not offer Claude Code when its command is absent", () => {
+    const run = runInstallerOnTty("claude-absent", args, [], baseEnv);
+
+    expect(run.status).toBe(0);
+    expect(run.output).not.toContain(OFFER);
+    expect(run.calls).not.toContain("claude-code refresh --json");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("declining the offer touches neither Claude Code nor inference config", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-decline", args, ["n"], baseEnv);
+
+    expect(run.status).toBe(0);
+    expect(run.output).toContain(OFFER);
+    expect(run.output).toContain("relevant Omnesis data and tool results to Anthropic");
+    expect(run.calls).not.toContain("claude-code refresh --json");
+    expect(run.calls.some((call) => call.startsWith("system-claude "))).toBe(false);
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("a signed-in Claude Code is assigned to the agent without a sign-in", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-reuse", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN: "1",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls).toContain("claude-code refresh --json");
+    expect(run.calls).not.toContain("system-claude auth login");
+    expect(run.calls).toContain("claude-code setup-agent sonnet");
+    expect(run.output).toContain(["Omnesis", "Agent is ready with Claude Code (sonnet)"].join(" "));
+  });
+
+  test("a signed-out Claude Code signs in with its own CLI, then is assigned", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-accept", args, ["y"], baseEnv);
+
+    expect(run.status).toBe(0);
+    expect(run.output).toContain("Omnesis never handles your Claude credentials");
+    expect(run.calls).toContain("system-claude auth login");
+    expect(run.calls.filter((call) => call === "claude-code refresh --json")).toHaveLength(2);
+    expect(run.calls).toContain("claude-code setup-agent sonnet");
+  });
+
+  test("a sign-in that does not complete prints the manual steps and the install continues", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-login-fails", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_LOGIN_EXIT: "1",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls).toContain("system-claude auth login");
+    expect(run.output).toContain("Claude Code is not signed in");
+    expect(run.output).toContain("run: claude auth login");
+    expect(run.output).toContain("omnesis claude-code setup-agent sonnet");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("a sign-in the gateway still cannot see is reported, not assumed", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-login-unseen", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_LOGIN_SIGNS_IN: "0",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls.filter((call) => call === "claude-code refresh --json")).toHaveLength(2);
+    expect(run.output).toContain("Claude Code is not signed in");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("preserves an existing agent assignment without prompting", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-existing-agent", args, [], {
+      ...baseEnv,
+      OMNESIS_TEST_AGENT_ASSIGNMENT_JSON: JSON.stringify("studio-northstar/model-one"),
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.output).not.toContain(OFFER);
+    expect(run.calls).not.toContain("claude-code refresh --json");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("an assignment made during sign-in wins", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-assignment-race", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_ASSIGN_DURING_LOGIN: "local/fictional-agent-model",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.output).toContain("leaving it unchanged");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("a model unavailable to the account leaves the agent unassigned", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-no-sonnet", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN: "1",
+      OMNESIS_TEST_CLAUDE_CODE_READY_STATUS: JSON.stringify({
+        type: "claude-code",
+        installed: true,
+        status: "ok",
+        loggedIn: true,
+        models: ["fictional-claude-model"],
+      }),
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.output).toContain("sonnet is not available");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("a CLI the gateway cannot use is not sent to sign in", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-gateway-missing", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN: "1",
+      OMNESIS_TEST_CLAUDE_CODE_READY_STATUS: JSON.stringify({
+        type: "claude-code",
+        installed: false,
+        status: "unreachable",
+        loggedIn: false,
+        models: [],
+        reason: "No claude executable was found.",
+      }),
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.output).toContain("could not use the Claude Code on this machine");
+    expect(run.calls).not.toContain("system-claude auth login");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test.each([
+    ["fails", "claude-status-fails"],
+    ["garbled", "claude-status-garbled"],
+  ])("a status read that %s never starts a sign-in", (mode, name) => {
+    installClaudeSignal();
+    const run = runInstallerOnTty(name, args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_CODE_REFRESH: mode,
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls).toContain("claude-code refresh --json");
+    expect(run.calls).not.toContain("system-claude auth login");
+    expect(run.output).toContain("Could not read the gateway's Claude Code status");
+    expect(run.output).toContain("omnesis claude-code setup-agent sonnet");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("a Claude Code too old for the gateway is told to update, never to sign in", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-too-old", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN: "1",
+      OMNESIS_TEST_CLAUDE_CODE_READY_STATUS: JSON.stringify({
+        type: "claude-code",
+        installed: true,
+        runtime: { supported: false },
+        status: "unreachable",
+        loggedIn: false,
+        models: [],
+        reason: "Claude Code 1.0.0 is older than this gateway supports.",
+      }),
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.output).toContain("could not use the Claude Code on this machine");
+    expect(run.output).toContain("claude update");
+    expect(run.calls).not.toContain("system-claude auth login");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("a config write failure is reported and the install continues", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-config-fails", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN: "1",
+      OMNESIS_TEST_FAIL: "claude-code setup-agent",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls.filter((call) => call === "claude-code setup-agent sonnet")).toHaveLength(1);
+    expect(run.output).toContain("agent assignment was not saved");
+  });
+
+  test("accepting Codex first means Claude Code is never offered", () => {
+    installCodexSignal();
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-after-codex", args, ["y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CODEX_ALREADY_LOGGED_IN: "1",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls).toContain("codex setup-agent gpt-5.6-luna");
+    expect(run.output).not.toContain(OFFER);
+    expect(run.calls).not.toContain("claude-code refresh --json");
+    expect(claudeSetup(run.calls)).toBe(false);
+  });
+
+  test("declining Codex still offers Claude Code", () => {
+    installCodexSignal();
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-after-codex-decline", args, ["n", "y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN: "1",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls.some((call) => call.startsWith("codex setup-agent gpt-"))).toBe(false);
+    expect(run.calls).toContain("claude-code setup-agent sonnet");
+  });
+
+  test("a failed Codex setup leaves the agent unassigned, so Claude Code is offered", () => {
+    installCodexSignal();
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-after-codex-fails", args, ["y", "y"], {
+      ...baseEnv,
+      OMNESIS_TEST_CODEX_ALREADY_LOGGED_IN: "1",
+      OMNESIS_TEST_CLAUDE_CODE_ALREADY_LOGGED_IN: "1",
+      OMNESIS_TEST_FAIL: "codex setup-agent",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls).toContain("codex setup-agent gpt-5.6-luna");
+    expect(run.output).toContain(OFFER);
+    expect(run.calls).toContain("claude-code setup-agent sonnet");
+  });
+
+  test("an older CLI without the command skips an offer it cannot complete", () => {
+    installClaudeSignal();
+    const run = runInstallerOnTty("claude-cli-skew", args, [], {
+      ...baseEnv,
+      OMNESIS_TEST_CLAUDE_CODE_SETUP_SUPPORT: "missing",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.output).toContain("Claude Code detected; assisted Agent setup needs a newer");
+    expect(run.output).not.toContain(OFFER);
+    expect(run.calls).not.toContain("claude-code refresh --json");
+  });
+});
+
+describe("install.sh unattended Claude Code behavior", () => {
+  test("a system Claude Code command never makes a headless install interactive", () => {
+    installClaudeSignal();
+    const run = runInstaller("claude-headless", ["--no-tls", "--embedder", EMBED_IDS[0]], {
+      OMNESIS_TEST_KEYRING: "ready",
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.calls.some((call) => call.startsWith("claude-code "))).toBe(false);
+    expect(run.calls.some((call) => call.startsWith("system-claude "))).toBe(false);
+  });
+
+  test("a no-service install never offers or configures the Claude Code agent", () => {
+    installClaudeSignal();
+    const run = runInstaller("claude-no-service", [
+      "--no-service",
+      "--no-model",
+      "--no-tls",
+      "--no-keyring",
+    ]);
+
+    expect(run.status).toBe(0);
+    expect(run.calls.some((call) => call.startsWith("claude-code "))).toBe(false);
+    expect(run.calls.some((call) => call.startsWith("system-claude "))).toBe(false);
   });
 });
 

@@ -89,6 +89,7 @@ import type { InferenceRegistry } from "../inference/registry.js";
 import type { ConfigStore } from "../config-store.js";
 import type { WsEventHandler } from "../http/services/WsEventHandler.js";
 import type { AgentRoutesDeps } from "../http/routes/agent.js";
+import type { ClaudeCodeService } from "../models/claude-code-service.js";
 import type { CodexRuntimeService } from "../models/codex-runtime-service.js";
 import type { PersonLookupGate } from "../domain/person-lookup.js";
 import type { CorpusAuthorization } from "../access/corpus-authorization.js";
@@ -153,8 +154,9 @@ export interface AgentServiceDeps {
  * privacy gate must instead treat null as unavailable and fail closed.
  *
  * `local` GGUF agent models aren't supported, so they resolve to `null` (the
- * caller inherits) rather than throwing. Codex resolves through the gateway's
- * shared runtime service, which isolates nested turns from their callers.
+ * caller inherits) rather than throwing. Codex and Claude Code resolve through
+ * the gateway's shared runtime services, which isolate nested turns from their
+ * callers.
  */
 function anthropicModelLimits(
   catalogEntry: AnthropicCatalogEntry | undefined,
@@ -188,6 +190,7 @@ export function resolveRoleBackend(
     maxToolIterations: number | undefined;
     log: Logger;
     codexRuntimeService?: CodexRuntimeService | null;
+    claudeCodeService?: ClaudeCodeService | null;
   },
 ): ChatBackend | null {
   const resolved = ctx.inferenceRegistry.resolve(role);
@@ -259,6 +262,23 @@ export function resolveRoleBackend(
                 : "inference",
         }) ?? null
       );
+    case "claude-code":
+      if (!resolved.allowRemoteInference || !resolved.available) return null;
+      return (
+        ctx.claudeCodeService?.createBackend({
+          model: resolved.model,
+          ...(resolved.modelBehavior?.reasoningEffort
+            ? { reasoningEffort: resolved.modelBehavior.reasoningEffort }
+            : {}),
+          maxToolIterations: ctx.maxToolIterations,
+          lane:
+            role === "background-agent"
+              ? "background"
+              : role === "agent"
+                ? "interactive"
+                : "inference",
+        }) ?? null
+      );
     // disabled / unresolved / local → unassigned for sub-agent purposes.
     default:
       return null;
@@ -280,6 +300,7 @@ function makeRoleAwareFactory(
     maxToolIterations: number | undefined;
     log: Logger;
     codexRuntimeService?: CodexRuntimeService | null;
+    claudeCodeService?: ClaudeCodeService | null;
   },
 ): (role: CapabilityRole) => ChatBackend | null {
   return (role) => (role === "agent" ? agentFactory() : resolveRoleBackend(role, ctx));
@@ -598,6 +619,7 @@ export interface AgentLifecycleDeps {
    */
   watchPreflight?: (watch: WatchDefinition, opts: { events?: number }) => Promise<PreflightOutcome>;
   codexRuntimeService?: CodexRuntimeService | null;
+  claudeCodeService?: ClaudeCodeService | null;
   /** Read-worker gate forwarded to the person port for off-thread `lookup_people`. */
   personLookupGate?: PersonLookupGate;
   /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
@@ -775,6 +797,7 @@ export class AgentLifecycle {
           maxToolIterations: this.privacyReviewerMaxToolIterations,
           log: this.deps.log,
           codexRuntimeService: this.deps.codexRuntimeService,
+          claudeCodeService: this.deps.claudeCodeService,
         }),
     });
     this.conversationReadState = new ConversationReadStateService({
@@ -841,6 +864,7 @@ export class AgentLifecycle {
       maxToolIterations,
       log: this.deps.log,
       codexRuntimeService: this.deps.codexRuntimeService,
+      claudeCodeService: this.deps.claudeCodeService,
     });
     return createAgentService(
       {
@@ -917,13 +941,16 @@ export class AgentLifecycle {
     // A cloud agent selected while remote inference is off will be refused by
     // the switch below — don't boot the chat runtime for a doomed agent.
     const cloudBlockedByEgress =
-      (agentResolved.kind === "anthropic" || agentResolved.kind === "codex") &&
+      (agentResolved.kind === "anthropic" ||
+        agentResolved.kind === "codex" ||
+        agentResolved.kind === "claude-code") &&
       !agentResolved.allowRemoteInference;
     const agentEnabled =
       agentResolved.kind !== "disabled" &&
       agentResolved.kind !== "unresolved" &&
       !cloudBlockedByEgress &&
-      (agentResolved.kind !== "codex" || agentResolved.available);
+      ((agentResolved.kind !== "codex" && agentResolved.kind !== "claude-code") ||
+        agentResolved.available);
 
     if (agentEnabled) {
       const debounceMsRaw = process.env.OMNESIS_CHAT_DEBOUNCE_MS;
@@ -1075,6 +1102,32 @@ export class AgentLifecycle {
             });
           agentService = this.makeAgentService(factory, maxToolIterations);
           log.info(`agent enabled (codex; model=${agentResolved.model})`);
+        }
+        break;
+      }
+
+      case "claude-code": {
+        if (!agentResolved.allowRemoteInference) {
+          agentDisabledReason = agentResolved.reason ?? CLOUD_EGRESS_DISABLED_REASON;
+          log.warn(`agent disabled: ${agentDisabledReason}`);
+        } else if (!agentResolved.available) {
+          agentDisabledReason = agentResolved.reason ?? "Claude Code backend is unavailable.";
+          log.warn(`agent disabled: ${agentDisabledReason}`);
+        } else if (!this.deps.claudeCodeService) {
+          agentDisabledReason = "Claude Code is not initialized on this gateway.";
+          log.warn(`agent disabled: ${agentDisabledReason}`);
+        } else {
+          const service = this.deps.claudeCodeService;
+          const factory = (): ChatBackend =>
+            service.createBackend({
+              model: agentResolved.model,
+              ...(agentResolved.modelBehavior?.reasoningEffort
+                ? { reasoningEffort: agentResolved.modelBehavior.reasoningEffort }
+                : {}),
+              maxToolIterations,
+            });
+          agentService = this.makeAgentService(factory, maxToolIterations);
+          log.info(`agent enabled (claude-code; model=${agentResolved.model})`);
         }
         break;
       }
@@ -1303,6 +1356,28 @@ export class AgentLifecycle {
         }
         break;
       }
+      case "claude-code": {
+        if (!resolved.allowRemoteInference) {
+          newReason = resolved.reason ?? CLOUD_EGRESS_DISABLED_REASON;
+        } else if (!resolved.available) {
+          newReason = resolved.reason ?? "Claude Code backend is unavailable.";
+        } else if (!this.deps.claudeCodeService) {
+          newReason = "Claude Code is not initialized on this gateway.";
+        } else {
+          const service = this.deps.claudeCodeService;
+          const factory = (): ChatBackend =>
+            service.createBackend({
+              model: resolved.model,
+              ...(resolved.modelBehavior?.reasoningEffort
+                ? { reasoningEffort: resolved.modelBehavior.reasoningEffort }
+                : {}),
+              maxToolIterations,
+            });
+          newService = this.makeAgentService(factory, maxToolIterations);
+          log.info(`agent swap → claude-code (model=${resolved.model})`);
+        }
+        break;
+      }
       case "local":
         newReason = "Local GGUF agent models are not yet supported.";
         break;
@@ -1331,7 +1406,10 @@ export class AgentLifecycle {
       : undefined;
     this.routeDeps.disabledReason = newReason;
     this.routeDeps.disabledCode =
-      (resolved.kind === "anthropic" || resolved.kind === "codex") && !resolved.allowRemoteInference
+      (resolved.kind === "anthropic" ||
+        resolved.kind === "codex" ||
+        resolved.kind === "claude-code") &&
+      !resolved.allowRemoteInference
         ? "remote_inference_disabled"
         : resolved.kind === "http"
           ? resolved.reasonCode

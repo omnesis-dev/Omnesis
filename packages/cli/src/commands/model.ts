@@ -102,6 +102,8 @@ function resolvedActiveId(resolved: ResolvedAssignment): string | undefined {
       return undefined;
     case "codex":
       return undefined;
+    case "claude-code":
+      return undefined;
     case "typesafe":
       return undefined;
     default:
@@ -584,7 +586,7 @@ const modelAssignCommand = defineCommand({
     value: {
       type: "positional",
       description:
-        "Assignment: local/<id>, anthropic/<model>, codex/<model>, <backend>/<model>, replay, disabled",
+        "Assignment: local/<id>, anthropic/<model>, codex/<model>, claude-code/<model>, <backend>/<model>, replay, disabled",
       required: true,
     },
   },
@@ -770,14 +772,16 @@ function printRoleLine(
           ? "Replay (demo mode)"
           : resolved.kind === "codex"
             ? `Codex: ${resolved.model}`
-            : resolved.kind === "typesafe"
-              ? `TypeSafe: ${resolved.model}`
-              : "(none)";
+            : resolved.kind === "claude-code"
+              ? `Claude Code: ${resolved.model}`
+              : resolved.kind === "typesafe"
+                ? `TypeSafe: ${resolved.model}`
+                : "(none)";
   const available =
     resolved.kind === "replay" ||
     (resolved.kind !== "disabled" && resolved.kind !== "unresolved" && resolved.available);
   const status =
-    available && resolved.kind === "codex"
+    available && (resolved.kind === "codex" || resolved.kind === "claude-code")
       ? `${c.green}configured${c.reset}`
       : available
         ? `${c.green}ready${c.reset}`

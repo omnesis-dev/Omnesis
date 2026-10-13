@@ -18,6 +18,7 @@
  *                   like local (just needs an API key).
  *   - `replay`    — Scripted fixture playback (agent only; dev/demo).
  *   - `codex`     — Codex app-server subprocess for text and image inference.
+ *   - `claude-code` — the operator's own Claude Code CLI, for text and image inference.
  */
 
 import type { GgufCatalogEntry, AnthropicCatalogEntry } from "./types.js";
@@ -203,7 +204,7 @@ export interface ResolvedHttp extends ResolvedBase {
 }
 
 /**
- * Reason surfaced when a cloud chat backend (Anthropic, Codex) is
+ * Reason surfaced when a cloud chat backend (Anthropic, Codex, Claude Code) is
  * selected but `inference.allowRemoteInference` is off. These backends send the
  * corpus off-host unconditionally — there is no loopback variant to fall back
  * to — so they stay disabled until remote inference is explicitly enabled.
@@ -256,6 +257,22 @@ export interface ResolvedCodex extends ResolvedBase {
   reason?: string;
 }
 
+export interface ResolvedClaudeCode extends ResolvedBase {
+  kind: "claude-code";
+  /** Model accepted by `claude --model`, from a `"claude-code/<model>"` assignment. */
+  model: string;
+  /**
+   * Whether config permits sending data to this cloud backend. When false the
+   * backend is never constructed. Claude Code reaches Anthropic's cloud with no
+   * in-process URL gate, so `inference.allowRemoteInference` is the only gate.
+   */
+  allowRemoteInference: boolean;
+  /** Provider-native settings saved for this exact Claude Code assignment. */
+  modelBehavior?: ModelBehaviorValues;
+  available: boolean;
+  reason?: string;
+}
+
 export interface ResolvedTypeSafe extends ResolvedBase {
   kind: "typesafe";
   /** TypeSafe model id, from a `"typesafe/<model>"` assignment (e.g. `jev-1.13.0`). */
@@ -281,6 +298,7 @@ export type ResolvedAssignment =
   | ResolvedUnresolved
   | ResolvedReplay
   | ResolvedCodex
+  | ResolvedClaudeCode
   | ResolvedTypeSafe;
 
 // ── Backend status (for portal/CLI) ──────────────────────────────────
@@ -455,6 +473,71 @@ export interface CodexLoginFlow {
   reason?: string;
 }
 
+export interface ClaudeCodeModelStatus {
+  /** Value accepted by `claude --model` (used as `claude-code/<id>` in assignments). */
+  id: string;
+  /** Human-readable label from the Claude Code catalog, when available. */
+  name?: string;
+  /** Short catalog description, when available. */
+  description?: string;
+  /** The concrete model an alias such as `opus` currently selects. */
+  resolvedModel?: string;
+  /** Claude models read text and images. */
+  inputModalities?: Array<"text" | "image">;
+  /** Effort values `claude --effort` accepts for this model. */
+  supportedReasoningEfforts?: string[];
+}
+
+/**
+ * The operator's own Claude Code CLI as an agent backend. Omnesis runs the
+ * installed `claude` binary under whatever login its owner made; it never
+ * signs in, stores or reads Claude credentials itself.
+ */
+export interface ClaudeCodeBackendStatus {
+  type: "claude-code";
+  /**
+   * Whether a `claude` executable that reports its version was found on the
+   * gateway host; `runtime.supported` says whether that version is new enough.
+   * An installed CLI is offered from "Add backend"; it is shown as an existing
+   * backend once it is also signed in.
+   */
+  installed: boolean;
+  /**
+   * - `ok` — the CLI is supported, signed in, and returned a model catalog.
+   * - `unreachable` — the CLI is missing, too old, signed out, or its catalog
+   *   could not be read.
+   * - `probing` — a refresh is in flight.
+   */
+  status: "ok" | "unreachable" | "probing";
+  /** Whether `claude auth status` reports a login. */
+  loggedIn: boolean;
+  /** How the CLI is signed in, as `claude auth status` reports it. */
+  account?: {
+    /** e.g. `claude.ai` (a Claude plan login) or `oauth_token` (`claude setup-token`). */
+    authMethod?: string;
+    /** Claude plan tier, e.g. `pro` or `max`. */
+    subscriptionType?: string;
+  };
+  /** Executable and version details for operator diagnostics. */
+  runtime?: {
+    command: string;
+    version?: string;
+    /** Whether the version probe succeeded and meets Omnesis' minimum. */
+    supported: boolean;
+    reason?: string;
+  };
+  /** Model ids from the CLI's catalog, in served order. */
+  models: string[];
+  /** Richer details for the same models. */
+  modelDetails?: ClaudeCodeModelStatus[];
+  /** The roles each model can serve. */
+  modelRoles?: Record<string, CapabilityRole[]>;
+  /** Why the last refresh was not fully usable. */
+  reason?: string;
+  /** ISO timestamp for the latest completed refresh attempt. */
+  refreshedAt?: string;
+}
+
 // ── Behavioral capability verdict ────────────────────────────────────
 
 /**
@@ -485,6 +568,8 @@ export interface InferenceOverview {
   /** Built-in Codex backend status. Separate from HTTP backends because it is
    * backed by the local Codex CLI/ChatGPT login, not an OpenAI-compatible URL. */
   codex?: CodexBackendStatus;
+  /** Built-in Claude Code backend status: the operator's own `claude` CLI and login. */
+  claudeCode?: ClaudeCodeBackendStatus;
   assignments: Record<CapabilityRole, ResolvedAssignment>;
 }
 

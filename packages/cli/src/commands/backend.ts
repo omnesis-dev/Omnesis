@@ -125,7 +125,7 @@ const backendAddCommand = defineCommand({
       );
     }
 
-    const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "replay"];
+    const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "claude-code", "replay"];
     if (RESERVED_BACKEND_NAMES.includes(name) || name.includes("/")) {
       throw new CliError(
         `${c.red}Backend name "${name}" is reserved or contains '/'.${c.reset}`,

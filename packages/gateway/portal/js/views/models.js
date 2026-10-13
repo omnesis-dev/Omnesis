@@ -43,6 +43,8 @@ import {
   getCodexLogin,
   cancelCodexLogin,
   removeCodexBackend,
+  refreshClaudeCodeBackend,
+  removeClaudeCodeBackend,
   rebuildIndex,
   getAdminConfig,
   patchAdminConfig,
@@ -58,10 +60,28 @@ import { ProviderIcon } from "../components/provider-icon.js";
 import { navigate } from "../lib/router.js";
 import { isEnabled, isConfigured, capabilityCardState } from "../lib/capability-state.js";
 import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend, isDecisionRole } from "../lib/backend-options.js";
-import { ModelConfigModal, AddBackendModal, CodexConfigModal, codexRuntimeUpdatePresentation, classifyRecentApply, typesafeKeyConfigured } from "./model-config.js";
+import {
+  ModelConfigModal,
+  AddBackendModal,
+  CodexConfigModal,
+  ClaudeCodeConfigModal,
+  codexRuntimeUpdatePresentation,
+  classifyRecentApply,
+  typesafeKeyConfigured,
+  claudeCodeAccountLabel,
+  cliBackendAssignments,
+} from "./model-config.js";
 import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
 
 // ── Capability grid (the tab's landing view) ──────────────────────────────
+
+/** Assignment kinds whose reasoning/behavior controls the portal can edit. */
+const BEHAVIOR_KINDS = ["http", "codex", "claude-code"];
+const NO_BEHAVIOR_ROLES = ["embedder", "transcriber", "ocr"];
+
+function hasBehaviorControls(role, assignment) {
+  return BEHAVIOR_KINDS.includes(assignment?.kind) && !NO_BEHAVIOR_ROLES.includes(role);
+}
 
 function CapabilityCard({ cap, assignment, display, behaviorSummary, onOpen }) {
   // "on" → green tick; "warn" → configured but unavailable (needs attention);
@@ -115,7 +135,7 @@ export function CapabilityGrid({ overview, onConfigureBackends }) {
     cap=${cap}
     assignment=${assignments[cap.role]}
     display=${displays[cap.role]}
-    behaviorSummary=${["http", "codex"].includes(assignments[cap.role]?.kind) && !["embedder", "transcriber", "ocr"].includes(cap.role)
+    behaviorSummary=${hasBehaviorControls(cap.role, assignments[cap.role])
       ? modelBehaviorSummary(settings[cap.role], controls[settings[cap.role]?.assignment]) : null}
     onOpen=${() => open(cap.role)}
   />`;
@@ -167,7 +187,19 @@ function codexRuntimeLabel(codex) {
   return `${source}, ${version}${codex.discovery ? `, ${codex.discovery}` : ""}`;
 }
 
-function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, onAddBackend, onConfigureAnthropic, onConfigureCodex, onRefreshAnthropic, onRefreshCodex, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onTestBackend, testStates }) {
+/**
+ * The Claude Code CLI as a listed backend: shown once it is signed in on the
+ * gateway host, or while a capability still points at it (so a lapsed
+ * sign-in is visible where it is fixed).
+ */
+export function claudeCodeBackendRow(overview) {
+  const claudeCode = overview.inference?.claudeCode;
+  if (!claudeCode) return null;
+  const signedIn = claudeCode.installed === true && claudeCode.loggedIn === true;
+  return signedIn || cliBackendAssignments(overview, "claude-code").length > 0 ? claudeCode : null;
+}
+
+function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onRemoveClaudeCode, onTestBackend, testStates }) {
   const inference = overview.inference;
   const httpBackends = Object.entries(inference.backends).filter(([, s]) => s.type === "http");
   const hasAnthropic = !!inference.backends.anthropic;
@@ -187,6 +219,10 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
     ? `last checked ${new Date(codex.refreshedAt).toLocaleTimeString()}`
     : null;
   const codexRuntime = codexRuntimeLabel(codex);
+  const claudeCode = claudeCodeBackendRow(overview);
+  const claudeCodeBusy = !!claudeCode && (claudeCodeRefreshBusy || claudeCode.status === "probing");
+  const claudeCodeAccount = claudeCodeAccountLabel(claudeCode?.account);
+  const claudeCodeAssigned = cliBackendAssignments(overview, "claude-code").length > 0;
 
   const testBtn = (key) => {
     const state = testStates[key] || "idle";
@@ -206,7 +242,7 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
         </div>
         <p class="detail-sub">Cloud and self-hosted inference servers. Bundled local models are installed from each capability's own section.</p>
 
-        ${httpBackends.length === 0 && !hasAnthropic && !codex
+        ${httpBackends.length === 0 && !hasAnthropic && !codex && !claudeCode
           ? html`<p class="detail-empty">No external backends yet. Add an HTTP server or the Anthropic API to use cloud or self-hosted models.</p>`
           : null}
 
@@ -287,6 +323,32 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
               </div>
             </div>`
           : null}
+
+        ${claudeCode
+          ? html`<div class="backend-item">
+              <div class="backend-item-main">
+                <div class="backend-item-title"><${ProviderIcon} providerId="claude-code" /> Claude Code</div>
+                <div class="backend-item-meta">
+                  <span style="color: ${backendStatusColor(claudeCode.status)}">${backendStatusLabel(claudeCode.status)}</span>
+                  <span>${claudeCode.loggedIn ? `Signed in${claudeCodeAccount ? ` (${claudeCodeAccount})` : ""}` : "Not signed in"}</span>
+                  ${claudeCode.runtime?.version ? html`<span>CLI ${claudeCode.runtime.version}</span>` : null}
+                  ${claudeCode.refreshedAt ? html`<span>last checked ${new Date(claudeCode.refreshedAt).toLocaleTimeString()}</span>` : null}
+                  ${claudeCode.models?.length > 0 ? html`<span>${claudeCode.models.length} model${claudeCode.models.length !== 1 ? "s" : ""}</span>` : null}
+                  ${claudeCode.status !== "ok" && claudeCode.reason ? html`<span title=${claudeCode.reason}>${claudeCode.reason}</span>` : null}
+                </div>
+              </div>
+              <div class="backend-item-actions">
+                <button class="btn-tiny" onClick=${onRefreshClaudeCode} disabled=${claudeCodeBusy}>${claudeCodeBusy ? "Checking…" : claudeCode.loggedIn ? "Refresh model list" : "Check status"}</button>
+                <button class="btn-tiny" onClick=${onConfigureClaudeCode} disabled=${claudeCodeBusy}>${claudeCode.loggedIn ? "Manage" : "Sign-in help"}</button>
+                <button
+                  class="btn-tiny danger"
+                  onClick=${onRemoveClaudeCode}
+                  disabled=${claudeCodeBusy || !claudeCodeAssigned}
+                  title=${claudeCodeAssigned ? "Stop using Claude Code for every capability" : "No capability uses Claude Code"}
+                >Remove</button>
+              </div>
+            </div>`
+          : null}
       </div>
     </div>
   `;
@@ -307,7 +369,7 @@ function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisabl
   const configured = isConfigured(assignment);
   const settings = overview.modelSettings?.[role];
   const model = overview.modelControls?.[settings?.assignment];
-  const behaviorEditor = ["http", "codex"].includes(assignment.kind) && settings?.assignment && !["embedder", "transcriber", "ocr"].includes(role)
+  const behaviorEditor = hasBehaviorControls(role, assignment) && settings?.assignment
     ? html`<${ModelBehaviorEditor} key=${`${role}:${settings.assignment}`} settings=${settings} model=${model} onSave=${onSaveBehavior} />`
     : null;
 
@@ -496,6 +558,8 @@ export function ModelsView({ section }) {
   const [cloudBusy, setCloudBusy] = useState(false);
   const [showAddBackend, setShowAddBackend] = useState(false);
   const [showCodexConfig, setShowCodexConfig] = useState(false);
+  const [showClaudeCodeConfig, setShowClaudeCodeConfig] = useState(false);
+  const [claudeCodeRefreshBusy, setClaudeCodeRefreshBusy] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [testStates, setTestStates] = useState({});
   const [codexLoginFlow, setCodexLoginFlow] = useState(null);
@@ -566,6 +630,8 @@ export function ModelsView({ section }) {
   useVisiblePoll(refresh, 1000, { enabled: hasProbingBackend });
   const hasProbingCodex = overview?.inference?.codex?.status === "probing";
   useVisiblePoll(refresh, 1000, { enabled: hasProbingCodex });
+  const hasProbingClaudeCode = overview?.inference?.claudeCode?.status === "probing";
+  useVisiblePoll(refresh, 1000, { enabled: hasProbingClaudeCode });
   const codexUpdateActive = codexRuntimeUpdatePresentation(codexRuntimeUpdate).active;
   useVisiblePoll(async () => {
     try {
@@ -641,6 +707,41 @@ export function ModelsView({ section }) {
     } finally {
       setCodexRefreshBusy(false);
     }
+  };
+
+  const onRefreshClaudeCode = async () => {
+    if (claudeCodeRefreshBusy) return false;
+    setClaudeCodeRefreshBusy(true);
+    try {
+      await refreshClaudeCodeBackend();
+      await refresh();
+      return true;
+    } catch (e) {
+      flashErr(e?.message ?? String(e));
+      return false;
+    } finally {
+      setClaudeCodeRefreshBusy(false);
+    }
+  };
+
+  const onRemoveClaudeCode = () => {
+    setConfirmState({
+      title: "Remove Claude Code backend?",
+      body: "Roles assigned to Claude Code are unassigned. Claude Code itself stays signed in.",
+      confirmLabel: "Remove",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          const res = await removeClaudeCodeBackend();
+          const cleared = res?.clearedAssignments?.length ?? 0;
+          flashOk(cleared > 0 ? `Stopped using Claude Code for ${cleared} capabilit${cleared === 1 ? "y" : "ies"}.` : "Stopped using Claude Code.");
+          setShowClaudeCodeConfig(false);
+          await refresh();
+        } catch (e) {
+          flashErr(e?.message ?? String(e));
+        }
+      },
+    });
   };
 
   const onRefreshAnthropic = async () => {
@@ -976,6 +1077,24 @@ export function ModelsView({ section }) {
     }
   };
 
+  const assignClaudeCodeModel = async (targetRole, model) => {
+    const targetTitle = capabilityFor(overview, targetRole)?.title ?? targetRole;
+    try {
+      const res = await saveAssignment(targetRole, "claude-code", model);
+      if (!res) return false;
+      if (!res.ok) {
+        flashErr(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to update config.");
+        return false;
+      }
+      flashOk(`${targetTitle} now uses ${model} on Claude Code.`);
+      await refresh();
+      return true;
+    } catch (e) {
+      flashErr(e?.message ?? String(e));
+      return false;
+    }
+  };
+
   // TypeSafe is the Decision model's only backend. Without a key the
   // credentials wizard opens first and the assignment completes when it is
   // saved; with one, the model is assigned straight away.
@@ -1019,6 +1138,11 @@ export function ModelsView({ section }) {
   const pickCodex = async (model) => {
     setShowPicker(false);
     return assignCodexModel(role, model);
+  };
+
+  const pickClaudeCode = async (model) => {
+    setShowPicker(false);
+    return assignClaudeCodeModel(role, model);
   };
 
   // Apply one "Recently used" entry: catalog models go through the same
@@ -1162,15 +1286,19 @@ export function ModelsView({ section }) {
             codexRefreshBusy=${codexRefreshBusy}
             codexRuntimeUpdate=${visibleCodexRuntimeUpdate}
             codexLoginPending=${codexLoginFlow?.status === "pending"}
+            claudeCodeRefreshBusy=${claudeCodeRefreshBusy}
             testStates=${testStates}
             onAddBackend=${() => setShowAddBackend(true)}
             onConfigureAnthropic=${onConfigureAnthropic}
             onConfigureCodex=${() => setShowCodexConfig(true)}
+            onConfigureClaudeCode=${() => setShowClaudeCodeConfig(true)}
             onRefreshAnthropic=${onRefreshAnthropic}
             onRefreshCodex=${onRefreshCodex}
+            onRefreshClaudeCode=${onRefreshClaudeCode}
             onUpdateCodexRuntime=${onUpdateCodexRuntime}
             onRemoveBackend=${onRemoveBackend}
             onRemoveCodex=${onRemoveCodex}
+            onRemoveClaudeCode=${onRemoveClaudeCode}
             onTestBackend=${onTestBackend}
           />`
         : null}
@@ -1193,6 +1321,18 @@ export function ModelsView({ section }) {
             onAddHttp=${onAddHttp}
             onConfigureAnthropic=${onConfigureAnthropic}
             onConfigureCodex=${() => setShowCodexConfig(true)}
+            onConfigureClaudeCode=${() => setShowClaudeCodeConfig(true)}
+          />`
+        : null}
+
+      ${showClaudeCodeConfig
+        ? html`<${ClaudeCodeConfigModal}
+            overview=${overview}
+            refreshing=${claudeCodeRefreshBusy}
+            onClose=${() => setShowClaudeCodeConfig(false)}
+            onRefresh=${onRefreshClaudeCode}
+            onSwitchModel=${assignClaudeCodeModel}
+            onRemove=${onRemoveClaudeCode}
           />`
         : null}
 
@@ -1223,12 +1363,15 @@ export function ModelsView({ section }) {
             codexLoginFlow=${codexLoginFlow}
             codexRefreshing=${codexRefreshBusy}
             codexRuntimeUpdate=${visibleCodexRuntimeUpdate}
+            claudeCodeRefreshing=${claudeCodeRefreshBusy}
             onClose=${() => setShowPicker(false)}
             onAddHttp=${onAddHttp}
             onPickLocal=${pickLocal}
             onPickAnthropic=${pickAnthropic}
             onPickHttp=${pickHttp}
             onPickCodex=${pickCodex}
+            onPickClaudeCode=${pickClaudeCode}
+            onRefreshClaudeCode=${onRefreshClaudeCode}
             onPickTypeSafe=${pickTypeSafe}
             onConfigureTypeSafeKey=${onConfigureTypeSafeKey}
             onPickRecent=${pickRecent}

@@ -22,8 +22,9 @@ import {
 import { resolveAnthropicApiKey } from "../model-credentials.js";
 import { HttpCompleter } from "./http-completer.js";
 import { LlamaCppCompleter } from "./llama-cpp-completer.js";
-import { CodexCompleter } from "./codex-completer.js";
+import { AgentTurnCompleter } from "./agent-turn-completer.js";
 import { AnthropicCompleter } from "./anthropic-completer.js";
+import type { ClaudeCodeService } from "../models/claude-code-service.js";
 import type { CodexRuntimeService } from "../models/codex-runtime-service.js";
 
 const log = createLogger("inference:completion");
@@ -31,6 +32,8 @@ const log = createLogger("inference:completion");
 export interface LoadCompletionDeps {
   /** Gateway-owned independent inference lane, safe inside another Codex turn. */
   codexRuntimeService?: Pick<CodexRuntimeService, "createBackend">;
+  /** Gateway-owned Claude Code inference lane, safe inside another Claude Code turn. */
+  claudeCodeService?: Pick<ClaudeCodeService, "createBackend">;
   /**
    * Gateway-host config dir — used to read model-provider credential
    * files (e.g. `<configDir>/anthropic-credentials.json`).
@@ -45,7 +48,7 @@ export interface LoadCompletionDeps {
    * classification — and is far too tight for a caller that sends tens of
    * thousands of tokens and waits for a document back. How long a call should
    * be allowed to run is a property of the work, not of the backend, so the
-   * caller states it. Honoured by the HTTP and Codex backends; the local and Anthropic
+   * caller states it. Honoured by the HTTP, Codex and Claude Code backends; the local and Anthropic
    * ones manage their own deadlines.
    */
   timeoutMs?: number;
@@ -128,8 +131,27 @@ export function loadCompletionFromResolved(
         );
         return null;
       }
-      return new CodexCompleter({
+      return new AgentTurnCompleter({
         backend: deps.codexRuntimeService.createBackend({
+          model: resolved.model,
+          ...(resolved.modelBehavior?.reasoningEffort
+            ? { reasoningEffort: resolved.modelBehavior.reasoningEffort }
+            : {}),
+          lane: "inference",
+        }),
+        ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
+      });
+    }
+
+    case "claude-code": {
+      if (!resolved.allowRemoteInference || !resolved.available || !deps.claudeCodeService) {
+        log.info(
+          "Completion provider unavailable — Claude Code requires remote inference, an available model and a runtime",
+        );
+        return null;
+      }
+      return new AgentTurnCompleter({
+        backend: deps.claudeCodeService.createBackend({
           model: resolved.model,
           ...(resolved.modelBehavior?.reasoningEffort
             ? { reasoningEffort: resolved.modelBehavior.reasoningEffort }

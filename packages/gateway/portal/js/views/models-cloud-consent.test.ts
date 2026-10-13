@@ -68,7 +68,7 @@ describe("Models cloud inference consent", () => {
     expect(api.patchAdminConfig).not.toHaveBeenCalled();
   });
 
-  it.each(["codex/example-model", "anthropic/example-model", "remote/example-model"])("atomically saves permission and recent assignment %s", async (assignment) => {
+  it.each(["codex/example-model", "claude-code/sonnet", "anthropic/example-model", "remote/example-model"])("atomically saves permission and recent assignment %s", async (assignment) => {
     await openRecent(assignment);
     await click("Enable cloud inference");
     expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({ inference: { allowRemoteInference: true, assignments: { agent: assignment } } });
@@ -85,6 +85,22 @@ describe("Models cloud inference consent", () => {
     expect(api.patchAdminConfig).not.toHaveBeenCalled();
     await click("Enable cloud inference");
     expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({ inference: { allowRemoteInference: true, assignments: { agent: "codex/example-model" } } });
+  });
+
+  it("requests Anthropic consent from the Claude Code picker before applying the model", async () => {
+    api.getModelsOverview.mockResolvedValue({ ...overview, inference: { ...overview.inference,
+      claudeCode: { type: "claude-code", installed: true, loggedIn: true, status: "ok", models: ["sonnet"], modelDetails: [{ id: "sonnet", name: "Sonnet" }], modelRoles: { sonnet: ["agent"] } } } });
+    await act(async () => { render(h(ModelsView, { section: "agent" }), host); });
+    await act(async () => { await Promise.resolve(); });
+    await click("Choose model");
+    const claudeCode = [...host.querySelectorAll("button")].find((entry) => entry.querySelector(".backend-opt-title")?.textContent === "Claude Code");
+    expect(claudeCode).toBeTruthy();
+    await act(async () => { claudeCode.dispatchEvent(new window.Event("click", { bubbles: false })); });
+    await click("Use for Agent");
+    expect(host.textContent).toContain("to Anthropic");
+    expect(api.patchAdminConfig).not.toHaveBeenCalled();
+    await click("Enable cloud inference");
+    expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({ inference: { allowRemoteInference: true, assignments: { agent: "claude-code/sonnet" } } });
   });
 
   it("requires the same confirmation before adding a remote HTTP backend", async () => {

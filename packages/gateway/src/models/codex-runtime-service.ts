@@ -29,10 +29,10 @@ import {
 } from "@omnesis/core";
 import { CodexRuntimeInstaller } from "./codex-runtime-installer.js";
 import {
-  CodexAgentSetupConflictError,
-  setupCodexAgent,
-  type CodexAgentSetupResult,
-} from "./codex-agent-setup.js";
+  AgentSetupConflictError,
+  setupAgentAssignment,
+  type AgentSetupResult,
+} from "./agent-assignment-setup.js";
 import {
   CodexGenerationSupervisor,
   type CodexRuntimeGeneration,
@@ -346,12 +346,20 @@ export class CodexRuntimeService {
     return promise;
   }
 
-  setupAgent(configStore: ConfigStore, model: string): Promise<CodexAgentSetupResult> {
+  setupAgent(configStore: ConfigStore, model: string): Promise<AgentSetupResult> {
     return this.lifecycle
-      .runAgentSetup(() => setupCodexAgent(configStore, () => this.refresh(), model))
+      .runAgentSetup(() =>
+        setupAgentAssignment({
+          configStore,
+          backend: "codex",
+          label: "Codex",
+          refreshStatus: () => this.refresh(),
+          model,
+        }),
+      )
       .catch((error) => {
         if (error instanceof CodexRuntimeLifecycleConflictError) {
-          throw new CodexAgentSetupConflictError(error.message);
+          throw new AgentSetupConflictError(error.message);
         }
         throw error;
       });

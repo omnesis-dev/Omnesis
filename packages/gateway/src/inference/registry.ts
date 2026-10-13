@@ -3,7 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { CODEX_SUPPORTED_ROLES } from "@omnesis/core";
+import { CLAUDE_CODE_SUPPORTED_ROLES, CODEX_SUPPORTED_ROLES } from "@omnesis/core";
 import {
   createLogger,
   getCatalogEntry as getBundledCatalogEntry,
@@ -30,6 +30,7 @@ import {
   type OcrNativeRuntime,
   type ResolvedAnthropic,
   type ResolvedReplay,
+  type ResolvedClaudeCode,
   type ResolvedCodex,
   type ResolvedTypeSafe,
   type InferenceOverview,
@@ -189,7 +190,7 @@ function normalizeBackendConfig(cfg: HttpBackendConfig): HttpBackendConfig {
 const NATIVE_OCR_RUNTIMES = new Set<OcrNativeRuntime>(["apple-vision", "tesseract", "gguf"]);
 
 /**
- * Roles that can actually run a cloud (Anthropic/Codex) backend. The
+ * Roles that can actually run a cloud (Anthropic/Codex/Claude Code) backend. The
  * transcriber, ocr, and embedder loaders are local/HTTP-only and reject a cloud
  * assignment regardless of `allowRemoteInference`, so an egress-off block is not
  * an actionable degradation for them.
@@ -429,6 +430,7 @@ export class InferenceRegistry {
     if (prefix === "local") return this.resolveLocalModel(role, suffix);
     if (prefix === "anthropic") return this.resolveAnthropicModel(role, value, suffix);
     if (prefix === "codex") return this.resolveCodex(role, suffix);
+    if (prefix === "claude-code") return this.resolveClaudeCode(role, suffix);
     if (prefix === "typesafe" && role === "decision") return this.resolveTypeSafe(role, suffix);
     if (prefix === "replay") {
       if (role === "watch-judge") {
@@ -810,7 +812,9 @@ export class InferenceRegistry {
       if (resolved.kind === "unresolved") {
         degraded.push({ role, reason: resolved.reason });
       } else if (
-        (resolved.kind === "anthropic" || resolved.kind === "codex") &&
+        (resolved.kind === "anthropic" ||
+          resolved.kind === "codex" ||
+          resolved.kind === "claude-code") &&
         !resolved.allowRemoteInference &&
         CLOUD_CAPABLE_ROLES.has(role)
       ) {
@@ -1123,6 +1127,33 @@ export class InferenceRegistry {
       model,
       allowRemoteInference,
       ...(this.modelSettings[role]?.assignment === `codex/${model}`
+        ? { modelBehavior: this.modelSettings[role]!.values }
+        : {}),
+      available: true,
+      reason: allowRemoteInference ? undefined : CLOUD_EGRESS_DISABLED_REASON,
+    };
+  }
+
+  private resolveClaudeCode(role: CapabilityRole, model: string): ResolvedClaudeCode {
+    const allowRemoteInference = this.allowRemoteInference;
+    const base = { role, kind: "claude-code" as const, model, allowRemoteInference };
+    if (!CLAUDE_CODE_SUPPORTED_ROLES.includes(role)) {
+      return {
+        ...base,
+        available: false,
+        reason: `Claude Code does not provide ${role === "embedder" ? "embedding vectors" : "audio transcription"}; assign a backend that supports "${role}"`,
+      };
+    }
+    if (!model.trim()) {
+      return {
+        ...base,
+        available: false,
+        reason: 'Claude Code assignment must include a model, e.g. "claude-code/sonnet"',
+      };
+    }
+    return {
+      ...base,
+      ...(this.modelSettings[role]?.assignment === `claude-code/${model}`
         ? { modelBehavior: this.modelSettings[role]!.values }
         : {}),
       available: true,

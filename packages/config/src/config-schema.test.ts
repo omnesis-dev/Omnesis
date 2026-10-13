@@ -1288,7 +1288,7 @@ describe("validateConfig — inference backend names", () => {
   });
 
   test("the built-in backend names stay reserved", () => {
-    for (const name of ["local", "anthropic", "codex", "replay"]) {
+    for (const name of ["local", "anthropic", "codex", "claude-code", "replay"]) {
       expect(
         validateConfig({
           inference: { backends: { [name]: { type: "http", url: "http://127.0.0.1:18998/v1" } } },

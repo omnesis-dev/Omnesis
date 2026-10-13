@@ -34,16 +34,19 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const installer = join(repoRoot, "scripts", "install.sh");
 const HAS_PTY = process.platform === "linux";
 const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-const pathWithoutCodex = (process.env.PATH ?? "")
+/** The developer's PATH minus any real Codex or Claude Code, each of which controls an optional setup offer. */
+const pathWithoutAgentClis = (process.env.PATH ?? "")
   .split(delimiter)
   .filter((entry) => {
     if (entry.length === 0) return false;
-    try {
-      accessSync(join(entry, "codex"), constants.X_OK);
-      return false;
-    } catch {
-      return true;
-    }
+    return ["codex", "claude"].every((command) => {
+      try {
+        accessSync(join(entry, command), constants.X_OK);
+        return false;
+      } catch {
+        return true;
+      }
+    });
   })
   .join(delimiter);
 
@@ -163,6 +166,7 @@ function install(
     prefixPackageRootSymlink = false,
     ttyAnswers = null,
     codexInstalled = false,
+    claudeInstalled = false,
     agentAssignment = "",
   } = {},
 ) {
@@ -193,6 +197,9 @@ function install(
   mkdirSync(home, { recursive: true });
   if (codexInstalled) {
     writeFileSync(join(fixture, "fake-bin", "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  }
+  if (claudeInstalled) {
+    writeFileSync(join(fixture, "fake-bin", "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   }
   if (preexistingLocalPackageVersion !== null) {
     const modulesRoot = preexistingLocalNodeModulesSymlink
@@ -229,7 +236,7 @@ function install(
   const env = {
     ...process.env,
     HOME: home,
-    PATH: `${join(fixture, "fake-bin")}:${pathWithoutCodex}`,
+    PATH: `${join(fixture, "fake-bin")}:${pathWithoutAgentClis}`,
     OMNESIS_REPO_URL: fixture,
     OMNESIS_KEYRING_PASSPHRASE_FILE: "",
     FAKE_NPM_PREFIX: prefix,
@@ -368,11 +375,13 @@ describe("install.sh package channel", () => {
       clientOnly: false,
       ttyAnswers: [],
       codexInstalled: true,
+      claudeInstalled: true,
       agentAssignment: "local/fictional-agent-model",
     });
 
     expect(result.status, result.output).toBe(0);
     expect(read(join(result.prefix, "package-argv-log"))).not.toContain("codex refresh");
+    expect(read(join(result.prefix, "package-argv-log"))).not.toContain("claude-code refresh");
     expect(existsSync(join(result.prefix, "codex-setup-model"))).toBe(false);
   });
 

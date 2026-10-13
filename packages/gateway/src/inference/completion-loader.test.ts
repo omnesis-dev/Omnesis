@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { loadCompletionFromResolved } from "./completion-loader.js";
 import { LlamaCppCompleter } from "./llama-cpp-completer.js";
-import { CodexCompleter } from "./codex-completer.js";
+import { AgentTurnCompleter } from "./agent-turn-completer.js";
 import { HttpCompleter } from "./http-completer.js";
 
 const deps = { configDir: "/tmp/omnesis-completion-loader-test" };
@@ -164,7 +164,7 @@ describe("loadCompletionFromResolved", () => {
       allowRemoteInference: true,
     } as const;
     const provider = loadCompletionFromResolved(resolved, codexDeps);
-    expect(provider).toBeInstanceOf(CodexCompleter);
+    expect(provider).toBeInstanceOf(AgentTurnCompleter);
     expect(createBackend).toHaveBeenCalledWith({
       model: "example-model",
       reasoningEffort: "high",

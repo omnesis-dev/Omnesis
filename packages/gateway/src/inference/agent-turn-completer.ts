@@ -6,8 +6,8 @@ import { classifyAgentTurn, type ChatBackend, type TurnInput } from "@omnesis/ag
 import type { AgentMessageEndEvent, CompleteCapability } from "@omnesis/core";
 import type { HttpCompletion } from "./http-completer.js";
 
-interface CodexCompletionOptions {
-  /** Codex does not expose a hard output-token cap or temperature control. */
+interface AgentTurnCompletionOptions {
+  /** Agent runtimes expose no hard output-token cap or temperature control. */
   maxTokens?: number;
   temperature?: number;
   /** Applied to the completed text; does not reduce upstream token usage. */
@@ -16,31 +16,39 @@ interface CodexCompletionOptions {
   signal?: AbortSignal;
 }
 
-/** A fresh, tool-free Codex turn for single-shot inference. The runtime is shared;
- * disposing this adapter cancels only its own calls, never the runtime itself. */
-export class CodexCompleter implements CompleteCapability {
-  readonly name = "codex";
+/**
+ * A fresh, tool-free agent turn for single-shot inference, over a subscription
+ * runtime (Codex, Claude Code) that offers no plain completion endpoint. The
+ * runtime is shared; disposing this adapter cancels only its own calls, never
+ * the runtime itself.
+ */
+export class AgentTurnCompleter implements CompleteCapability {
+  readonly name: string;
   readonly modelId: string;
   private readonly active = new Set<AbortController>();
   private disposed = false;
 
   constructor(private readonly opts: { backend: ChatBackend; timeoutMs?: number }) {
+    this.name = opts.backend.name;
     this.modelId = opts.backend.model;
   }
 
-  async complete(prompt: string, opts?: CodexCompletionOptions): Promise<string> {
+  async complete(prompt: string, opts?: AgentTurnCompletionOptions): Promise<string> {
     return (await this.completeWithUsage(prompt, opts)).text;
   }
 
-  async completeWithUsage(prompt: string, opts?: CodexCompletionOptions): Promise<HttpCompletion> {
-    if (this.disposed) throw new Error("Codex completer is disposed");
+  async completeWithUsage(
+    prompt: string,
+    opts?: AgentTurnCompletionOptions,
+  ): Promise<HttpCompletion> {
+    if (this.disposed) throw new Error("Agent turn completer is disposed");
     opts?.signal?.throwIfAborted();
     const controller = new AbortController();
     this.active.add(controller);
     const cancel = () => controller.abort(opts?.signal?.reason);
     opts?.signal?.addEventListener("abort", cancel, { once: true });
     const timeout = setTimeout(
-      () => controller.abort(new Error("Codex completion timed out")),
+      () => controller.abort(new Error("Completion timed out")),
       this.opts.timeoutMs ?? 45_000,
     );
     let rejectAbort: (() => void) | undefined;
@@ -60,7 +68,7 @@ export class CodexCompleter implements CompleteCapability {
 
   private async consume(
     prompt: string,
-    opts: CodexCompletionOptions | undefined,
+    opts: AgentTurnCompletionOptions | undefined,
     signal: AbortSignal,
   ): Promise<HttpCompletion> {
     let text = "";
@@ -83,11 +91,11 @@ export class CodexCompleter implements CompleteCapability {
       if (event.type === "agent.message.end") terminal = event.payload;
     }
     signal.throwIfAborted();
-    if (!terminal) throw new Error("Codex completion ended without a terminal result");
+    if (!terminal) throw new Error("Completion ended without a terminal result");
     const outcome = classifyAgentTurn(terminal);
     if (outcome.status === "failed") throw new Error(outcome.failure.message);
     if (terminal.stopReason !== "end_turn") {
-      throw new Error("Codex completion ended without a complete answer");
+      throw new Error("Completion ended without a complete answer");
     }
     for (const stop of opts?.stop ?? []) {
       if (!stop) continue;
@@ -110,7 +118,7 @@ export class CodexCompleter implements CompleteCapability {
   async dispose(): Promise<void> {
     this.disposed = true;
     for (const controller of this.active) {
-      controller.abort(new Error("Codex completer is disposed"));
+      controller.abort(new Error("Agent turn completer is disposed"));
     }
   }
 }

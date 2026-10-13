@@ -232,6 +232,8 @@ function resolvedModelIdentity(r: ResolvedAssignment): string {
       return `anthropic:${r.apiModelId}`;
     case "codex":
       return `codex:${r.model}:${r.available}`;
+    case "claude-code":
+      return `claude-code:${r.model}:${r.available}`;
     case "disabled":
       return "disabled";
     case "unresolved":

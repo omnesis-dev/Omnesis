@@ -137,6 +137,7 @@ function toApply(
     }
     case "http":
     case "codex":
+    case "claude-code":
     case "replay":
     case "typesafe":
       return { type: "assign", value };

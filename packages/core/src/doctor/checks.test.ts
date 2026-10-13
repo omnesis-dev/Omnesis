@@ -1031,6 +1031,67 @@ describe("evaluateDoctor — Codex runtime maintenance", () => {
   });
 });
 
+describe("evaluateDoctor — Claude Code", () => {
+  test("says nothing about Claude Code when no role uses it", () => {
+    const data = healthyData();
+    data.models!.inference.claudeCode = {
+      type: "claude-code",
+      installed: true,
+      status: "unreachable",
+      loggedIn: false,
+      models: [],
+    };
+    expect(findCheck(evaluateDoctor(data).checks, "models.claude-code")).toBeUndefined();
+  });
+
+  test("tells the operator to sign in on the gateway host when an assigned CLI is signed out", () => {
+    const data = healthyData();
+    data.models!.inference.claudeCode = {
+      type: "claude-code",
+      installed: true,
+      status: "unreachable",
+      loggedIn: false,
+      models: [],
+      reason: "Claude Code is not signed in.",
+    };
+    data.models!.inference.assignments.agent = {
+      role: "agent",
+      kind: "claude-code",
+      model: "sonnet",
+      allowRemoteInference: true,
+      available: true,
+    };
+    expect(findCheck(evaluateDoctor(data).checks, "models.claude-code")).toMatchObject({
+      status: "warn",
+      hint: expect.stringContaining("claude auth login"),
+    });
+  });
+
+  test("passes a signed-in CLI with its version", () => {
+    const data = healthyData();
+    data.models!.inference.claudeCode = {
+      type: "claude-code",
+      installed: true,
+      status: "ok",
+      loggedIn: true,
+      runtime: { command: "/usr/local/bin/claude", version: "2.1.296", supported: true },
+      models: ["sonnet"],
+    };
+    data.models!.inference.assignments.agent = {
+      role: "agent",
+      kind: "claude-code",
+      model: "sonnet",
+      allowRemoteInference: true,
+      available: true,
+    };
+    const checks = evaluateDoctor(data).checks;
+    expect(findCheck(checks, "models.claude-code")).toMatchObject({
+      status: "pass",
+      message: "Claude Code 2.1.296 is signed in",
+    });
+  });
+});
+
 describe("evaluateDoctor — sources needing re-auth", () => {
   test("warns with the capability remediation for degraded phone permissions", () => {
     const data = healthyData();

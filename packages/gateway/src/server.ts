@@ -442,12 +442,17 @@ export function createServer(
     refreshCodexStatus?: () => Promise<import("@omnesis/core").CodexBackendStatus>;
     setupCodexAgent?: (
       model: string,
-    ) => Promise<import("./models/codex-agent-setup.js").CodexAgentSetupResult>;
+    ) => Promise<import("./models/agent-assignment-setup.js").AgentSetupResult>;
     getCodexRuntimeUpdate?: () => Promise<import("@omnesis/core").CodexRuntimeUpdateSnapshot>;
     startCodexRuntimeUpdate?: (opts: {
       dryRun: boolean;
     }) => Promise<import("@omnesis/core").CodexRuntimeUpdateSnapshot>;
     cancelCodexRuntimeUpdate?: () => Promise<import("@omnesis/core").CodexRuntimeUpdateSnapshot>;
+    /** The operator's own Claude Code CLI: status refresh and assisted Agent setup. */
+    refreshClaudeCodeStatus?: () => Promise<import("@omnesis/core").ClaudeCodeBackendStatus>;
+    setupClaudeCodeAgent?: (
+      model: string,
+    ) => Promise<import("./models/agent-assignment-setup.js").AgentSetupResult>;
     /** Refresh the Anthropic Models API catalog on demand. */
     refreshAnthropicStatus?: () => Promise<import("@omnesis/core").BackendStatus | undefined>;
     /**
@@ -1271,6 +1276,8 @@ export function createServer(
       getCodexLogin: opts.getCodexLogin,
       cancelCodexLogin: opts.cancelCodexLogin,
       logoutCodex: opts.logoutCodex,
+      refreshClaudeCodeStatus: opts.refreshClaudeCodeStatus,
+      setupClaudeCodeAgent: opts.setupClaudeCodeAgent,
       getRecentModels: opts.getRecentModels,
     });
   }

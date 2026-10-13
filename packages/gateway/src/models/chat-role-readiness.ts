@@ -46,8 +46,8 @@ const READY: ChatRoleReadiness = { runnable: true };
  * The one condition the resolved assignment cannot answer on its own.
  *
  * Everything else the resolver needs is already on the assignment: the
- * registry folds the Anthropic key check into `available`, and the Codex
- * runtime is unconditionally constructed. A replay fixture is different — the
+ * registry folds the Anthropic key check into `available`, and the Codex and
+ * Claude Code runtimes are unconditionally constructed. A replay fixture is different — the
  * resolver builds its backend eagerly and fails on a path that does not
  * resolve, so readiness has to reach the filesystem to match it.
  */
@@ -90,6 +90,17 @@ export function chatRoleReadiness(
         return {
           runnable: false,
           reason: resolved.reason ?? "This Codex assignment is incomplete.",
+        };
+      }
+      return READY;
+
+    case "claude-code":
+      if (!resolved.allowRemoteInference)
+        return { runnable: false, reason: CLOUD_EGRESS_DISABLED_REASON };
+      if (!resolved.available) {
+        return {
+          runnable: false,
+          reason: resolved.reason ?? "This Claude Code assignment is incomplete.",
         };
       }
       return READY;

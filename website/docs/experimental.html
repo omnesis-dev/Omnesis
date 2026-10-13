@@ -462,11 +462,12 @@
           </div>
         </div>
         <p>
-          The value is <code>anthropic/&lt;model&gt;</code>, <code>codex/&lt;model&gt;</code> or
-          <code>&lt;backend&gt;/&lt;model&gt;</code> for an OpenAI-compatible backend you configured
-          (see <a href="/docs/operating#models">Operating → Models</a>). A local GGUF model cannot
-          serve <code>background-agent</code> or <code>brief-judge</code>, which need a chat
-          backend; it can serve <code>entailment-verifier</code>. The portal's
+          The value is <code>anthropic/&lt;model&gt;</code>, <code>codex/&lt;model&gt;</code>,
+          <code>claude-code/&lt;model&gt;</code> or <code>&lt;backend&gt;/&lt;model&gt;</code> for
+          an OpenAI-compatible backend you configured (see
+          <a href="/docs/operating#models">Operating → Models</a>). A local GGUF model cannot serve
+          <code>background-agent</code> or <code>brief-judge</code>, which need a chat backend; it
+          can serve <code>entailment-verifier</code>. The portal's
           <strong>Settings → Models</strong> page lists the same roles under
           <strong>Cognition</strong>. Three further roles are optional:
         </p>
@@ -516,9 +517,10 @@
           </table>
         </div>
         <p>
-          Codex can serve the first three through the same ChatGPT login. The two reviewers each run
-          as their own model turn even when they use the same model as the agent waiting on their
-          verdict, and every role shares the account's usage allowance.
+          Codex can serve the first three through the same ChatGPT login, and Claude Code through
+          the same Claude Code sign-in. The two reviewers each run as their own model turn even when
+          they use the same model as the agent waiting on their verdict, and every role shares the
+          account's usage allowance.
           <code>GET /status</code> reports the gate as <code>brain</code>, with
           <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
           <code>active</code>; the portal's Cognition page says which of the two conditions is
@@ -1731,11 +1733,11 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
         <p>
           The <strong>judge</strong> runs on the <code>watch-judge</code> role, which must be
           assigned explicitly: it does not inherit the Brain's model, and until it is assigned,
-          events that need a judgement wait, with no model call and no spend. It can be Codex, a
-          local GGUF model, an Anthropic model or an OpenAI-compatible backend that speaks Chat
-          Completions. It sees the document's id and title, its kind, time and participant roles; a
-          body excerpt is shown only in a second, veto-only check after the title-based decision
-          says yes, so a body-reviewed nomination can cost two calls.
+          events that need a judgement wait, with no model call and no spend. It can be Codex,
+          Claude Code, a local GGUF model, an Anthropic model or an OpenAI-compatible backend that
+          speaks Chat Completions. It sees the document's id and title, its kind, time and
+          participant roles; a body excerpt is shown only in a second, veto-only check after the
+          title-based decision says yes, so a body-reviewed nomination can cost two calls.
         </p>
         <p>
           It fails closed: an error, an unparseable reply or a spent budget produces no decision and

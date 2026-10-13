@@ -3,15 +3,16 @@
 
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — portal modules are plain JS.
-import { inferenceAssignmentPatch, isLoopbackInferenceUrl, remoteAssignmentConsent } from "./cloud-inference.js";
+import { cloudProviderLabel, inferenceAssignmentPatch, isLoopbackInferenceUrl, remoteAssignmentConsent } from "./cloud-inference.js";
 
 const overview = { inference: { allowRemoteInference: false, backends: {
   local: { url: "http://127.0.0.1:8000" }, remote: { url: "https://api.example.com" },
 } } };
 
 describe("cloud inference permission", () => {
-  it("requires consent for Codex, Anthropic, and remote HTTP selections", () => {
+  it("requires consent for Codex, Claude Code, Anthropic, and remote HTTP selections", () => {
     expect(remoteAssignmentConsent(overview, "codex", "example-model")).toEqual({ modelName: "example-model", providerLabel: "OpenAI" });
+    expect(remoteAssignmentConsent(overview, "claude-code", "sonnet")).toEqual({ modelName: "sonnet", providerLabel: "Anthropic" });
     expect(remoteAssignmentConsent(overview, "anthropic", "example-model").providerLabel).toBe("Anthropic");
     expect(remoteAssignmentConsent(overview, "typesafe", "example-model")).toEqual({ modelName: "example-model", providerLabel: "TypeSafe" });
     expect(remoteAssignmentConsent(overview, "remote", "example-model").providerLabel).toBe("https://api.example.com");
@@ -25,8 +26,15 @@ describe("cloud inference permission", () => {
     for (const url of ["https://api.example.com", "not a URL", "http://127.example.com"]) expect(isLoopbackInferenceUrl(url)).toBe(false);
   });
 
+  it("names the company behind each built-in cloud provider", () => {
+    expect(cloudProviderLabel("codex", "Codex")).toBe("OpenAI");
+    expect(cloudProviderLabel("claude-code", "Claude Code")).toBe("Anthropic");
+    expect(cloudProviderLabel("groq", "Groq")).toBe("Groq");
+  });
+
   it("saves consent and the requested assignment in one patch", () => {
     expect(inferenceAssignmentPatch("agent", "codex/example-model", true)).toEqual({ inference: { allowRemoteInference: true, assignments: { agent: "codex/example-model" } } });
+    expect(inferenceAssignmentPatch("agent", "claude-code/opus", true)).toEqual({ inference: { allowRemoteInference: true, assignments: { agent: "claude-code/opus" } } });
     expect(inferenceAssignmentPatch("agent", "local/example-model")).toEqual({ inference: { assignments: { agent: "local/example-model" } } });
   });
 });

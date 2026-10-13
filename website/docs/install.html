@@ -302,8 +302,9 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           </li>
           <li>Downloads the embedding model you chose, so semantic search works from the start.</li>
           <li>
-            If <code>codex</code> is installed, offers to set up the agent with a ChatGPT sign-in
-            (see <a href="#first-run">First run</a>).
+            If <code>codex</code> is installed, offers to set up the agent with a ChatGPT sign-in;
+            then, if the agent is still unassigned and <code>claude</code> is installed, offers to
+            set it up with Claude Code (see <a href="#first-run">First run</a>).
           </li>
           <li>
             Prints the exact command another machine runs to join this gateway, as a collector or an
@@ -632,6 +633,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                 <td>Nothing; an unattended install skips it.</td>
               </tr>
               <tr>
+                <td>Set up the agent with Claude Code (Sonnet)?</td>
+                <td>
+                  When <code>claude</code> is installed and the agent still has no model after the
+                  Codex offer. Optional.
+                </td>
+                <td>Nothing; an unattended install skips it.</td>
+              </tr>
+              <tr>
                 <td>Which address should other machines use?</td>
                 <td>After a self-signed or mkcert gateway starts. Optional.</td>
                 <td>Nothing; an unattended install keeps the default.</td>
@@ -674,6 +683,25 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           later is allowed too. Collector, harness, client-only, Docker and hardened installs, and
           installs with
           <code>--no-service</code>, never make this offer.
+        </p>
+        <p id="claude-code-offer">
+          <strong>Claude Code.</strong> The offer appears once an ordinary gateway is healthy, when
+          a <code>claude</code> command is on your PATH and the agent still has no model after the
+          Codex offer. If you accept, the installer asks the gateway for its view of Claude Code.
+          Only when the gateway reports Claude Code installed but signed out does the installer run
+          your own <code>claude auth login</code> in the terminal; the login belongs to that Claude
+          Code installation, and Omnesis never stores or reads it. A Claude Code too old for the
+          gateway gets a hint to update it with <code>claude update</code> instead. The installer
+          assigns <code>claude-code/sonnet</code> to the agent only if your account's model list
+          includes it. A status the gateway cannot report, a failed sign-in or a failed check leaves
+          the agent unassigned and prints how to retry with
+          <code>omnesis claude-code setup-agent</code>.
+        </p>
+        <p>
+          Accepting turns on remote inference for the whole gateway: conversation context, relevant
+          Omnesis data and tool results are sent to Anthropic through Claude Code, and any other
+          remote model you configure later is allowed too. The same installs that never make the
+          Codex offer never make this one, and an unattended install skips it.
         </p>
         <p>
           <strong>Address for other machines.</strong> The installer lists the names and network

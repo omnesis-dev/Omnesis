@@ -90,6 +90,7 @@ describe("install.sh --hardened", () => {
     () => {
       installSystemd();
       writeFileSync(fixturePath("fake-bin", "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      writeFileSync(fixturePath("fake-bin", "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       const run = runInstaller("printed", ["--hardened"]);
       expect(run.status, run.output).toBe(0);
       expect(run.calls).toContain("service install gateway --hardened");
@@ -113,6 +114,8 @@ describe("install.sh --hardened", () => {
       expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
       expect(run.output).not.toContain(["Set up the agent with Codex", "Luna"].join(" "));
       expect(run.calls.some((call) => call.startsWith("codex "))).toBe(false);
+      expect(run.output).not.toContain(["Set up the agent with Claude", "Code"].join(" "));
+      expect(run.calls.some((call) => call.startsWith("claude-code "))).toBe(false);
       expect(run.envFile()).not.toContain("OMNESIS_TLS_CERT");
       expect(run.output).toContain("the dedicated gateway waits for the root command above");
       expect(run.output).toContain("where only root can change it");

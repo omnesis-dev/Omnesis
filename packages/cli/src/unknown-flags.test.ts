@@ -77,6 +77,8 @@ describe("what it must keep accepting", () => {
     await accepts(["codex", "status", "--json"]);
     await accepts(["codex", "update", "--check", "--json"]);
     await accepts(["codex", "update", "--dry-run", "--yes"]);
+    await accepts(["claude-code", "status", "--json"]);
+    await accepts(["claude-code", "refresh", "--json"]);
   });
 
   it("accepts help and version anywhere", async () => {

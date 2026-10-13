@@ -19,9 +19,9 @@ import {
   parseCodexCliVersion,
   parseCodexContextInputTokens,
   parseCodexUsage,
-  renderCodexUserInput,
   resolveCodexRuntimeCommand,
 } from "./codex-app-server-backend.js";
+import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import type { ChatMessage, ToolHandle, TurnInput } from "./backend.js";
 import type { AgentEvent, ToolResult } from "@omnesis/core";
 
@@ -248,10 +248,10 @@ describe("CodexAppServerBackend", () => {
       { role: "assistant", parts: [{ kind: "text", text: "Earlier synthetic answer" }] },
     ];
 
-    expect(renderCodexUserInput(history, "New synthetic question")).toContain(
+    expect(renderTranscriptUserInput(history, "New synthetic question")).toContain(
       "Conversation so far:\nUser: Earlier synthetic question\nAssistant: Earlier synthetic answer",
     );
-    expect(renderCodexUserInput(history, "New synthetic question")).toContain(
+    expect(renderTranscriptUserInput(history, "New synthetic question")).toContain(
       "New user message:\nNew synthetic question",
     );
   });
@@ -269,7 +269,7 @@ describe("CodexAppServerBackend", () => {
       const logs = readLog(logPath);
       const turn = firstPayload<{ params: { input: unknown[] } }>(logs, "turn_start");
       expect(turn.params.input).toEqual([
-        { type: "text", text: renderCodexUserInput([], baseInput().userMessage) },
+        { type: "text", text: renderTranscriptUserInput([], baseInput().userMessage) },
         { type: "image", url },
       ]);
       const thread = firstPayload<{ dynamicToolNames: string[] }>(logs, "thread_start");
@@ -793,7 +793,7 @@ describe("model context serialization", () => {
   it("projects historical tool evidence without mutating canonical history", () => {
     const result = searchModelContextResult();
     const canonical = JSON.stringify(result);
-    const text = renderCodexUserInput(
+    const text = renderTranscriptUserInput(
       [{ role: "user", parts: [{ kind: "tool_result", toolCallId: "call-model", result }] }],
       "next",
     );

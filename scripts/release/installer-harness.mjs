@@ -444,10 +444,10 @@ export const HAS_REAL_OPENSSL = REAL_OPENSSL_DIR !== null;
 /**
  * Every executable the installer looks for on PATH and would act on if it found
  * a real one: the CLI it may already have installed, agent harnesses the
- * `--openclaw` / `--hermes` roles probe, and Codex (which controls an optional
- * setup offer).
+ * `--openclaw` / `--hermes` roles probe, and Codex and Claude Code (each of
+ * which controls an optional setup offer).
  */
-const SHADOWED_ON_PATH = ["omnesis", "openclaw", "hermes", "codex"];
+const SHADOWED_ON_PATH = ["omnesis", "openclaw", "hermes", "codex", "claude"];
 
 /**
  * PATH for one installer run: the fakes first, then the developer's own PATH

@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { wrapEvent, type ChatBackend, type TurnInput } from "@omnesis/agent";
-import { CodexOcr } from "./codex-ocr.js";
+import { AgentTurnOcr } from "./agent-turn-ocr.js";
 import { loadOcrFromResolved, type LoadOcrDeps } from "./loader.js";
 import { OcrService, type OcrServiceDeps } from "./ocr-service.js";
 import type { ResolvedCodex } from "@omnesis/core";
@@ -46,7 +46,7 @@ function backend(
 describe("Codex OCR", () => {
   it("sends image bytes inline on a tool-free fresh turn", async () => {
     const model = backend("  INVENTED LABEL\nSecond line  ");
-    const ocr = new CodexOcr({ backend: model });
+    const ocr = new AgentTurnOcr({ backend: model });
     expect(await ocr.recognize(png, "image/png")).toEqual({ text: "INVENTED LABEL\nSecond line" });
     expect(model.inputs[0]).toMatchObject({
       tools: [],
@@ -56,12 +56,12 @@ describe("Codex OCR", () => {
   });
 
   it("accepts a successful empty transcription", async () => {
-    const ocr = new CodexOcr({ backend: backend("") });
+    const ocr = new AgentTurnOcr({ backend: backend("") });
     expect(await ocr.recognize(png, "image/png")).toEqual({ text: "" });
   });
 
   it("propagates failures so an unavailable backend does not silently drop an image", async () => {
-    const ocr = new CodexOcr({
+    const ocr = new AgentTurnOcr({
       backend: backend("", async () => {
         throw new Error("offline");
       }),
@@ -70,7 +70,7 @@ describe("Codex OCR", () => {
   });
 
   it("bounds a stalled recognition by a deadline", async () => {
-    const ocr = new CodexOcr({
+    const ocr = new AgentTurnOcr({
       backend: backend("", () => new Promise(() => {})),
       timeoutMs: 10,
     });
@@ -85,7 +85,7 @@ describe("Codex OCR", () => {
     expect(await loadOcrFromResolved({ ...assignment, available: false }, deps)).toBeNull();
     expect(createCodexBackend).not.toHaveBeenCalled();
     expect(await loadOcrFromResolved(assignment)).toBeNull();
-    expect(await loadOcrFromResolved(assignment, deps)).toBeInstanceOf(CodexOcr);
+    expect(await loadOcrFromResolved(assignment, deps)).toBeInstanceOf(AgentTurnOcr);
   });
 
   it("refuses a discovered text-only model, including after a catalog refresh", async () => {
@@ -143,7 +143,7 @@ describe("Codex OCR", () => {
       release = resolve;
     });
     const model = backend("Earlier page", () => pending);
-    const ocr = new CodexOcr({ backend: model });
+    const ocr = new AgentTurnOcr({ backend: model });
     const result = ocr.recognize(png, "image/png");
     await ocr.dispose();
     release();

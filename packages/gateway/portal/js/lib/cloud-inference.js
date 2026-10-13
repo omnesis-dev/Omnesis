@@ -10,11 +10,20 @@ export function isLoopbackInferenceUrl(raw) {
   }
 }
 
+/**
+ * The company a built-in cloud backend sends inference content to, for the
+ * remote-inference consent prompt. Other providers are named by their own label.
+ */
+const CLOUD_PROVIDER_LABELS = { codex: "OpenAI", "claude-code": "Anthropic", anthropic: "Anthropic", typesafe: "TypeSafe" };
+
+export function cloudProviderLabel(providerId, fallbackLabel) {
+  return CLOUD_PROVIDER_LABELS[providerId] ?? fallbackLabel;
+}
+
 export function remoteAssignmentConsent(overview, backendKey, modelName) {
   if (overview.inference.allowRemoteInference === true) return null;
-  if (backendKey === "codex") return { modelName, providerLabel: "OpenAI" };
-  if (backendKey === "anthropic") return { modelName, providerLabel: "Anthropic" };
-  if (backendKey === "typesafe") return { modelName, providerLabel: "TypeSafe" };
+  const builtIn = cloudProviderLabel(backendKey, null);
+  if (builtIn) return { modelName, providerLabel: builtIn };
   const backend = overview.inference.backends[backendKey];
   if (backend?.url && isLoopbackInferenceUrl(backend.url)) return null;
   return { modelName, providerLabel: backend?.url ?? backendKey };

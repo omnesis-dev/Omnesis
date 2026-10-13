@@ -242,6 +242,7 @@ function anthropicEntailmentCompleter(modelId: string, apiKey: string): Entailme
 
 export interface LoadEntailmentDeps {
   codexRuntimeService?: LoadCompletionDeps["codexRuntimeService"];
+  claudeCodeService?: LoadCompletionDeps["claudeCodeService"];
   /** Gateway-host config dir — where Anthropic credentials live. */
   configDir: string;
   /** Live prompt-style knob (`inference.entailment.promptStyle`). */
@@ -332,7 +333,8 @@ export async function loadEntailmentFromResolved(
       );
       return null;
 
-    case "codex": {
+    case "codex":
+    case "claude-code": {
       const completer = loadCompletionFromResolved(resolved, deps);
       if (!completer) return null;
       return build({

@@ -286,12 +286,14 @@ afterEach(destroyFixture);
 const QUIET = ["--docker", "--no-model", "--no-keyring", "--version", "9.9.0"];
 
 describe("install.sh --docker: what it puts on this host", () => {
-  test.skipIf(!HAS_PTY)("never offers native Codex setup", () => {
+  test.skipIf(!HAS_PTY)("never offers native Codex or Claude Code setup", () => {
     writeExecutable(fixturePath("fake-bin", "codex"), "#!/bin/sh\nexit 0\n");
+    writeExecutable(fixturePath("fake-bin", "claude"), "#!/bin/sh\nexit 0\n");
     const run = runInstallerOnTty("docker-codex", QUIET, []);
 
     expect(run.status).toBe(0);
     expect(run.output).not.toContain(["Set up the agent with Codex", "Luna"].join(" "));
+    expect(run.output).not.toContain(["Set up the agent with Claude", "Code"].join(" "));
   });
 
   test("a gateway that never becomes healthy fails the install and shows its compose log", () => {

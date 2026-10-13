@@ -253,9 +253,10 @@ the portal reads the gateway-computed result.
   passes.
 
 `watch-judge` is narrower at runtime than the shared generative classification:
-it accepts Codex, a local GGUF, Anthropic, or an OpenAI-compatible HTTP backend
-using Chat Completions. Replay and Responses-only HTTP backends are rejected
-for this single-shot Watch role. Codex uses an independent inference turn.
+it accepts Codex, Claude Code, a local GGUF, Anthropic, or an OpenAI-compatible
+HTTP backend using Chat Completions. Replay and Responses-only HTTP backends are
+rejected for this single-shot Watch role. Codex and Claude Code each use an
+independent, tool-free inference turn.
 
 - Non-generative, non-suggestable families classify to **no** role: TTS,
   image/video/music generation, moderation/guard, and cross-encoder scoring

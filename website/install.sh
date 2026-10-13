@@ -28,6 +28,10 @@
 #   8. Download the embedding model with progress (`omnesis model install`).
 #   9. On an interactive gateway install where a Codex command is already on
 #      PATH, offer to sign Omnesis into Codex and assign Luna to the agent.
+#      When the agent is still unassigned and a Claude Code command is on
+#      PATH, offer to assign Claude Code (Sonnet) instead, running the
+#      operator's own `claude auth login` if it is signed out; Omnesis never
+#      handles Claude credentials.
 #  10. Print the next step (add a source), then the optional follow-ons a
 #      gateway host can offer: a phone, a browser, another machine.
 #
@@ -70,7 +74,7 @@
 # The two required choices (which embedding model, and what to do about a
 # keyring it cannot use) are read from /dev/tty, because under `curl | sh`
 # stdin is the script itself. An ordinary gateway may optionally offer Codex
-# agent setup, and a self-signed or mkcert gateway may ask which
+# or Claude Code agent setup, and a self-signed or mkcert gateway may ask which
 # certificate-covered address another machine should use. With no terminal,
 # optional setup is skipped and the address keeps its safe default; pass flags
 # for either required choice instead of accepting a silent default.
@@ -200,6 +204,7 @@ NO_PROMPT="${OMNESIS_NO_PROMPT:-0}"
 # upgrade). The catalog, not this line, is what the question offers.
 EMBEDDER_ID="nomic-embed-text-v1.5.Q8_0"
 CODEX_AGENT_MODEL="gpt-5.6-luna"
+CLAUDE_CODE_AGENT_MODEL="sonnet"
 
 # Default stays `source`: a checkout works from the first tagged release on,
 # with no dependency on a registry having the version. `--method auto` is the
@@ -3689,6 +3694,147 @@ setup_codex_agent() {
     warn "Retry this installer or use the manual Agent setup commands in the docs."
   fi
 }
+# ── Optional Claude Code-backed agent setup ──────────────────────────────────
+
+# Refresh the gateway's view of the operator's own Claude Code CLI and reduce
+# its JSON status to five newline-delimited fields the POSIX shell can consume
+# safely. Omnesis never signs Claude Code in or reads its credentials; the
+# gateway only runs the installed `claude` under its owner's existing login.
+read_claude_code_backend_status() {
+  CLAUDE_CODE_STATUS_JSON="$("$OMNESIS_BIN" claude-code refresh --json 2>/dev/null)" || return 1
+  CLAUDE_CODE_STATUS_SUMMARY="$(printf '%s' "$CLAUDE_CODE_STATUS_JSON" | node -e '
+let raw = "";
+process.stdin.on("data", (chunk) => { raw += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const value = JSON.parse(raw);
+    const models = Array.isArray(value?.models) ? value.models : [];
+    const reason = typeof value?.reason === "string" ? value.reason.replace(/\s+/g, " ") : "";
+    process.stdout.write([
+      value?.installed === true && value?.runtime?.supported !== false ? "1" : "0",
+      value?.loggedIn === true ? "1" : "0",
+      value?.status === "ok" && models.length > 0 ? "1" : "0",
+      models.includes(process.argv[1]) ? "1" : "0",
+      reason,
+    ].join("\n"));
+  } catch { process.exit(2); }
+});
+' "$CLAUDE_CODE_AGENT_MODEL" 2>/dev/null)" || return 1
+  CLAUDE_CODE_INSTALLED="$(printf '%s\n' "$CLAUDE_CODE_STATUS_SUMMARY" | sed -n '1p')"
+  CLAUDE_CODE_LOGGED_IN="$(printf '%s\n' "$CLAUDE_CODE_STATUS_SUMMARY" | sed -n '2p')"
+  CLAUDE_CODE_READY="$(printf '%s\n' "$CLAUDE_CODE_STATUS_SUMMARY" | sed -n '3p')"
+  CLAUDE_CODE_HAS_AGENT_MODEL="$(printf '%s\n' "$CLAUDE_CODE_STATUS_SUMMARY" | sed -n '4p')"
+  CLAUDE_CODE_STATUS_REASON="$(printf '%s\n' "$CLAUDE_CODE_STATUS_SUMMARY" | sed -n '5p')"
+}
+
+ask_claude_code_agent_setup() {
+  echo "" >/dev/tty
+  printf 'Claude Code is installed on this machine. Set up Omnesis Agent with your Claude subscription?\n' >/dev/tty
+  printf '  This sends conversation context and relevant Omnesis data and tool results to Anthropic.\n' >/dev/tty
+  printf '  It also enables this gateway to use explicitly configured remote inference backends.\n' >/dev/tty
+  CLAUDE_CODE_ASK_ATTEMPTS=0
+  while [ "$CLAUDE_CODE_ASK_ATTEMPTS" -lt 5 ]; do
+    CLAUDE_CODE_ANSWER="$(ask_tty 'Set up the agent with Claude Code (Sonnet)? [y/N] ')"
+    CLAUDE_CODE_ANSWER="$(printf '%s' "$CLAUDE_CODE_ANSWER" | tr '[:upper:]' '[:lower:]')"
+    case "$CLAUDE_CODE_ANSWER" in
+      y|yes) return 0 ;;
+      ''|n|no) return 1 ;;
+      *)
+        printf 'Please answer y or n.\n' >/dev/tty
+        CLAUDE_CODE_ASK_ATTEMPTS=$((CLAUDE_CODE_ASK_ATTEMPTS + 1))
+        ;;
+    esac
+  done
+  warn "No valid Claude Code setup choice was entered — leaving the agent unconfigured."
+  return 1
+}
+
+claude_code_agent_setup_supported() {
+  CLAUDE_CODE_SETUP_HELP="$("$OMNESIS_BIN" claude-code setup-agent --help 2>/dev/null </dev/null)" || return 1
+  printf '%s\n' "$CLAUDE_CODE_SETUP_HELP" | grep -q -- 'setup-agent' || return 1
+}
+
+claude_code_manual_hint() {
+  warn "The agent remains unconfigured. On this machine, run: claude auth login"
+  warn "Then run: omnesis claude-code setup-agent $CLAUDE_CODE_AGENT_MODEL"
+}
+
+setup_claude_code_agent() {
+  # The same optional finish as the Codex offer, made only while the agent is
+  # still unassigned — so a run whose Codex setup assigned it never reaches
+  # this prompt.
+  [ "$GATEWAY_HEALTHY" = 1 ] || return 0
+  is_promptable || return 0
+  command -v claude >/dev/null 2>&1 || return 0
+
+  if ! read_agent_assignment; then
+    warn "Could not inspect the current agent assignment — preserving it and skipping Claude Code setup."
+    return 0
+  fi
+  [ -z "$AGENT_ASSIGNMENT" ] || return 0
+  if ! claude_code_agent_setup_supported; then
+    info "Claude Code detected; assisted Agent setup needs a newer Omnesis release. Run 'omnesis update', then rerun the installer."
+    return 0
+  fi
+  ask_claude_code_agent_setup || return 0
+
+  # The sign-in below is the operator's own Claude Code login, so it runs only
+  # when the gateway positively reported a usable CLI that is signed out —
+  # never on a status it could not read.
+  if ! read_claude_code_backend_status; then
+    warn "Could not read the gateway's Claude Code status."
+    warn "The agent remains unconfigured. Check 'omnesis claude-code status', then run: omnesis claude-code setup-agent $CLAUDE_CODE_AGENT_MODEL"
+    return 0
+  fi
+  if [ "$CLAUDE_CODE_INSTALLED" != 1 ]; then
+    warn "The gateway could not use the Claude Code on this machine${CLAUDE_CODE_STATUS_REASON:+: $CLAUDE_CODE_STATUS_REASON}"
+    warn "The agent remains unconfigured. Install or update Claude Code (https://claude.com/claude-code, or run: claude update), then run: omnesis claude-code setup-agent $CLAUDE_CODE_AGENT_MODEL"
+    return 0
+  fi
+  if [ "$CLAUDE_CODE_LOGGED_IN" != 1 ]; then
+    info "Omnesis never handles your Claude credentials: Claude Code signs itself in, and Omnesis runs it under that login."
+    info "Starting Claude Code's own sign-in (claude auth login)..."
+    claude auth login </dev/tty >/dev/tty || true
+    CLAUDE_CODE_STATUS_READ=0
+    if read_claude_code_backend_status; then CLAUDE_CODE_STATUS_READ=1; fi
+    if [ "$CLAUDE_CODE_STATUS_READ" != 1 ] || [ "$CLAUDE_CODE_LOGGED_IN" != 1 ]; then
+      warn "Claude Code is not signed in${CLAUDE_CODE_STATUS_REASON:+: $CLAUDE_CODE_STATUS_REASON}"
+      claude_code_manual_hint
+      return 0
+    fi
+  fi
+
+  if [ "$CLAUDE_CODE_READY" != 1 ]; then
+    warn "Claude Code is not ready${CLAUDE_CODE_STATUS_REASON:+: $CLAUDE_CODE_STATUS_REASON}"
+    warn "The agent remains unconfigured. Check 'omnesis claude-code status', then run: omnesis claude-code setup-agent $CLAUDE_CODE_AGENT_MODEL"
+    return 0
+  fi
+  if [ "$CLAUDE_CODE_HAS_AGENT_MODEL" != 1 ]; then
+    warn "Claude Code is signed in, but $CLAUDE_CODE_AGENT_MODEL is not available to this account."
+    warn "The agent remains unconfigured. Retry with an available model using: omnesis claude-code setup-agent MODEL"
+    return 0
+  fi
+
+  # Sign-in can take several minutes. Preserve an assignment made by another
+  # terminal meanwhile rather than replacing it.
+  if ! read_agent_assignment; then
+    warn "Could not re-check the agent assignment — preserving it and skipping Claude Code setup."
+    return 0
+  fi
+  if [ -n "$AGENT_ASSIGNMENT" ]; then
+    warn "The agent was assigned to $AGENT_ASSIGNMENT while Claude Code sign-in was in progress — leaving it unchanged."
+    return 0
+  fi
+
+  # The gateway performs the final still-unassigned check and config mutation
+  # under one mutex, so a concurrent administrator's assignment always wins.
+  if "$OMNESIS_BIN" claude-code setup-agent "$CLAUDE_CODE_AGENT_MODEL"; then
+    info "Omnesis Agent is ready with Claude Code ($CLAUDE_CODE_AGENT_MODEL)."
+  else
+    warn "Claude Code is signed in, but the agent assignment was not saved."
+    warn "Retry with: omnesis claude-code setup-agent $CLAUDE_CODE_AGENT_MODEL"
+  fi
+}
 
 # ── The collector role ───────────────────────────────────────────────────────
 #
@@ -6692,6 +6838,7 @@ main() {
       if restart_package_service_for_wrapper collector && restart_moved_source_service collector; then
         install_model
         setup_codex_agent
+        setup_claude_code_agent
         choose_certificate_gateway_url
         finalize_package_source_wrapper healthy
       else

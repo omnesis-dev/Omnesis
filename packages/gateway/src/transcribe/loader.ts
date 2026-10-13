@@ -77,6 +77,11 @@ export async function loadTranscriberFromResolved(
         "Codex does not provide an audio-transcription backend — transcription is local-only.",
       );
       return null;
+    case "claude-code":
+      log.warn(
+        "Claude Code does not provide an audio-transcription backend — transcription is local-only.",
+      );
+      return null;
     case "disabled":
     case "unresolved":
     case "typesafe":

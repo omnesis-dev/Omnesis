@@ -73,10 +73,16 @@ function httpFitCount(backend, role) {
   return filterBackendModels(backend?.modelRoles ?? {}, role).suggestedCount;
 }
 
-function codexFitCount(codex, role) {
-  if (!codex?.models?.length) return 0;
-  const rolesByModel = codex.modelRoles ?? {};
-  return codex.models.filter((model) => rolesByModel[model]?.includes(role)).length;
+/** Models a built-in CLI backend (Codex, Claude Code) advertises for a role. */
+function cliBackendFitCount(status, role) {
+  if (!status?.models?.length) return 0;
+  const rolesByModel = status.modelRoles ?? {};
+  return status.models.filter((model) => rolesByModel[model]?.includes(role)).length;
+}
+
+/** Whether Claude Code can serve assignments: signed in with a model catalog. */
+export function isClaudeCodeReady(claudeCode) {
+  return claudeCode?.status === "ok" && claudeCode?.loggedIn === true;
 }
 
 /** Exact serving-provider logo identity for a configured HTTP backend. */
@@ -93,7 +99,8 @@ export function catalogProviderForBackend(overview, backendKey) {
 /**
  * Options for the capability model picker — the grid the user picks a model
  * source from. Ordered: Local, each preset, each existing custom HTTP backend,
- * Codex for roles it advertises, Anthropic, then "add a custom HTTP backend".
+ * Codex and Claude Code for roles they advertise, Anthropic, then "add a
+ * custom HTTP backend".
  * Local/Anthropic cards appear only when the role has bundled catalog entries
  * for them. A decision role gets the TypeSafe card alone: no chat backend
  * can serve it, and TypeSafe serves nothing else.
@@ -103,8 +110,8 @@ export function catalogProviderForBackend(overview, backendKey) {
  * probe `status`.
  *
  * @returns {Array<object>} option descriptors keyed by `kind`:
- *   "local" | "preset" | "custom" | "codex" | "anthropic" | "add-custom" |
- *   "typesafe".
+ *   "local" | "preset" | "custom" | "codex" | "claude-code" | "anthropic" |
+ *   "add-custom" | "typesafe".
  */
 export function buildModelPickerOptions(overview, role) {
   if (isDecisionRole(role)) return [{ kind: "typesafe" }];
@@ -112,6 +119,7 @@ export function buildModelPickerOptions(overview, role) {
   const presets = overview.presets ?? [];
   const backends = overview.inference?.backends ?? {};
   const codex = overview.inference?.codex;
+  const claudeCode = overview.inference?.claudeCode;
   const catalog = overview.catalog ?? [];
   const catalogRole = CAPABILITY_TO_CATALOG[role];
 
@@ -148,7 +156,7 @@ export function buildModelPickerOptions(overview, role) {
     });
   }
 
-  const codexCount = codexFitCount(codex, role);
+  const codexCount = cliBackendFitCount(codex, role);
   if (codex?.configured === true && codexCount > 0) {
     options.push({
       kind: "codex",
@@ -156,6 +164,18 @@ export function buildModelPickerOptions(overview, role) {
       fitCount: codexCount,
       status: codex.status,
       loggedIn: codex.loggedIn === true,
+    });
+  }
+
+  const claudeCodeCount = cliBackendFitCount(claudeCode, role);
+  if (claudeCode?.installed === true && claudeCodeCount > 0) {
+    options.push({
+      kind: "claude-code",
+      configured: isClaudeCodeReady(claudeCode),
+      fitCount: claudeCodeCount,
+      status: claudeCode.status,
+      loggedIn: claudeCode.loggedIn === true,
+      installed: true,
     });
   }
 
@@ -176,12 +196,14 @@ export function buildModelPickerOptions(overview, role) {
  * Options for the "Add a backend" grid — not capability-scoped, so no Local
  * card and no per-role counts. Each preset and Anthropic carry a `configured`
  * flag so the grid can mark backends you've already set up; "add-custom" is
- * always last.
+ * always last. Claude Code is offered whenever the gateway reports on it, even
+ * when the CLI is missing, so its pane can explain how to install it.
  */
 export function buildAddBackendOptions(overview) {
   const presets = overview.presets ?? [];
   const backends = overview.inference?.backends ?? {};
   const codex = overview.inference?.codex;
+  const claudeCode = overview.inference?.claudeCode;
   const options = presets.map((preset) => ({
     kind: "preset",
     id: preset.id,
@@ -200,6 +222,16 @@ export function buildAddBackendOptions(overview) {
       fitCount: codex.models?.length ?? 0,
       status: codex.status,
       loggedIn: codex.loggedIn === true,
+    });
+  }
+  if (claudeCode) {
+    options.push({
+      kind: "claude-code",
+      configured: isClaudeCodeReady(claudeCode),
+      fitCount: claudeCode.models?.length ?? 0,
+      status: claudeCode.status,
+      loggedIn: claudeCode.loggedIn === true,
+      installed: claudeCode.installed === true,
     });
   }
   options.push({ kind: "add-custom" });

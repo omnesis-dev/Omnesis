@@ -117,6 +117,7 @@ function signatureOf(
     case "http":
     case "anthropic":
     case "codex":
+    case "claude-code":
     case "disabled":
       return resolved.kind;
     default:

@@ -465,6 +465,27 @@ function checkModels(d: DoctorData, ck: Checks): void {
       );
     }
   }
+  const claudeCode = d.models.inference.claudeCode;
+  const claudeCodeAssigned = Object.values(assignments).some(
+    (assignment) => assignment?.kind === "claude-code",
+  );
+  if (claudeCodeAssigned && claudeCode && claudeCode.status !== "probing") {
+    if (claudeCode.status === "ok") {
+      const version = claudeCode.runtime?.version;
+      ck.pass(
+        "Models",
+        "models.claude-code",
+        version ? `Claude Code ${version} is signed in` : "Claude Code is signed in",
+      );
+    } else {
+      ck.warn(
+        "Models",
+        "models.claude-code",
+        `Claude Code is not ready${claudeCode.reason ? ` (${claudeCode.reason})` : ""}`,
+        "On the gateway host, install Claude Code and run `claude auth login`, then `omnesis claude-code refresh`.",
+      );
+    }
+  }
   for (const role of CHECKED_ROLES) {
     const a = assignments[role];
     const id = `models.${role}`;
@@ -516,6 +537,11 @@ function checkModels(d: DoctorData, ck: Checks): void {
           `${role} (Anthropic) is unavailable${why}`,
           "Confirm the Anthropic API key is configured and valid.",
         );
+      } else if (a.kind === "claude-code") {
+        emit(
+          `${role} (Claude Code) is unavailable${why}`,
+          "Confirm Claude Code is installed and signed in on the gateway host (claude auth login).",
+        );
       } else {
         emit(
           `${role} (Codex) is unavailable${why}`,
@@ -532,7 +558,9 @@ function checkModels(d: DoctorData, ck: Checks): void {
           ? `${a.backendKey}/${a.model}`
           : a.kind === "anthropic"
             ? a.apiModelId
-            : `codex/${a.model}`;
+            : a.kind === "claude-code"
+              ? `claude-code/${a.model}`
+              : `codex/${a.model}`;
     if (a.kind === "codex") {
       ck.pass(
         "Models",

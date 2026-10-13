@@ -74,6 +74,17 @@ describe("Nx change selection", () => {
     expect(behavioralBundles(["docs/brain.md", "website/docs/search.html"])).toEqual([]);
   });
 
+  test("the subscription runtime services select the agent bundle", () => {
+    for (const file of [
+      "packages/gateway/src/models/codex-runtime-service.ts",
+      "packages/gateway/src/models/claude-code-service.ts",
+    ])
+      expect(behavioralBundles([file])).toContain("agent-brain-watch");
+    expect(behavioralBundles(["packages/gateway/src/models/routes.ts"])).not.toContain(
+      "agent-brain-watch",
+    );
+  });
+
   test("runs each native bridge in its native lane without unrelated backend E2E", () => {
     const bridges = {
       "scripts/ios-logic.sh": "ios-logic",

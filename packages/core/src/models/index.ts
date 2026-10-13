@@ -52,7 +52,12 @@ export type {
   CapabilityMetadata,
 } from "./capabilities.js";
 
-export { CAPABILITY_ROLES, CODEX_SUPPORTED_ROLES, CAPABILITY_METADATA } from "./capabilities.js";
+export {
+  CAPABILITY_ROLES,
+  CODEX_SUPPORTED_ROLES,
+  CLAUDE_CODE_SUPPORTED_ROLES,
+  CAPABILITY_METADATA,
+} from "./capabilities.js";
 
 export type {
   DecisionAnswer,
@@ -85,9 +90,12 @@ export type {
   ResolvedUnresolved,
   ResolvedReplay,
   ResolvedCodex,
+  ResolvedClaudeCode,
   ResolvedTypeSafe,
   BackendStatus,
   CodexBackendStatus,
+  ClaudeCodeBackendStatus,
+  ClaudeCodeModelStatus,
   CodexLoginFlow,
   CodexModelStatus,
   CodexRuntimeStatus,

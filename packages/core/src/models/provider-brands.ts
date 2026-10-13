@@ -38,6 +38,7 @@ export const PROVIDER_BRANDS: Readonly<Record<string, ProviderBrand>> = {
   local: { id: "local", label: "Local" },
   replay: { id: "replay", label: "Replay" },
   codex: { id: "codex", label: "Codex" },
+  "claude-code": { id: "claude-code", label: "Claude Code" },
   typesafe: { id: "typesafe", label: "TypeSafe" },
   http: { id: "http", label: "HTTP" },
   none: { id: "none", label: "Not configured" },
@@ -132,6 +133,16 @@ export function resolveModelDisplay(assignment: ResolvedAssignment): ModelDispla
     }
     case "codex": {
       const brand = getProviderBrand("codex");
+      return {
+        providerId: brand.id,
+        providerLabel: brand.label,
+        modelName: assignment.model,
+        available: assignment.available,
+        configured: true,
+      };
+    }
+    case "claude-code": {
+      const brand = getProviderBrand("claude-code");
       return {
         providerId: brand.id,
         providerLabel: brand.label,

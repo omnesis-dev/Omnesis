@@ -227,8 +227,11 @@ const areas = [
     bundles: ["search-graph"],
   },
   {
+    // The subscription runtime services admit and run agent turns, though their
+    // paths name no agent.
     test: (p) =>
-      p.startsWith("packages/") && /(?:brain|brief|watch|agent|mcp|memory|replay)/.test(p),
+      (p.startsWith("packages/") && /(?:brain|brief|watch|agent|mcp|memory|replay)/.test(p)) ||
+      /^packages\/gateway\/src\/models\/(?:codex|claude-code)-/.test(p),
     bundles: ["agent-brain-watch"],
   },
   {

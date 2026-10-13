@@ -343,6 +343,12 @@
             <a href="/docs/operating#models">Operating → Models</a> covers runtime status and
             updates.
           </li>
+          <li>
+            <strong>Claude Code</strong>: the agent runs on your Claude subscription through the
+            <code>claude</code> command you installed and signed in to on the gateway host. There is
+            no API key, and Omnesis never signs in to Claude or reads its credentials. The privacy
+            reviewer can use the same login; see <a href="#claude-code">Claude Code</a> below.
+          </li>
         </ul>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -381,6 +387,17 @@
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis codex setup-agent MODEL_ID_FROM_STATUS</span>
             </p>
+            <p class="t-dim">
+              # Claude subscription: sign in to Claude Code on the gateway host, then assign
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">claude auth login</span></p>
+            <p>
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis claude-code refresh</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis claude-code setup-agent sonnet</span>
+            </p>
           </div>
         </div>
         <p>
@@ -398,19 +415,19 @@
           install offers to do this for you (see <a href="/docs/install#first-run">First run</a>).
         </p>
         <p>
-          After assigning an HTTP or Codex model, open its role card in
+          After assigning an HTTP, Codex or Claude Code model, open its role card in
           <strong>Settings → Models</strong> to choose the reasoning settings that model offers,
           such as a reasoning toggle, an effort level or a token budget; see
           <a href="/docs/operating#model-settings">Reasoning settings</a>.
         </p>
         <p>
-          Nothing leaves your machine by default: cloud backends (Anthropic, Codex) and HTTP
-          backends that do not resolve to loopback stay unused until you enable remote inference.
-          Choosing a cloud model in the portal asks you to confirm before enabling this permission
-          and saving the assignment. The permission covers all configured remote inference backends
-          on the gateway; turn off the <strong>Allow cloud inference</strong> switch under
-          <strong>Settings → Models</strong>. Backends, presets, the remote-inference setting, and
-          the other model roles are covered in
+          Nothing leaves your machine by default: cloud backends (Anthropic, Codex, Claude Code) and
+          HTTP backends that do not resolve to loopback stay unused until you enable remote
+          inference. Choosing a cloud model in the portal asks you to confirm before enabling this
+          permission and saving the assignment. The permission covers all configured remote
+          inference backends on the gateway; turn off the
+          <strong>Allow cloud inference</strong> switch under <strong>Settings → Models</strong>.
+          Backends, presets, the remote-inference setting, and the other model roles are covered in
           <a href="/docs/operating#models">Operating → Models</a>.
         </p>
         <p>
@@ -420,6 +437,56 @@
           context, relevant Omnesis data, and tool results to the selected provider when you use the
           agent. After enabling it, use <strong>Retry message</strong> to send a failed message. No
           gateway restart or JSON editing is needed.
+        </p>
+
+        <h3 id="claude-code">Claude Code</h3>
+        <p>
+          The Claude Code backend runs the <code>claude</code> command on the gateway host, Claude
+          Code 2.1.259 or later, so the agent draws on that installation's Claude subscription. An
+          assignment reads <code>claude-code/&lt;model&gt;</code>, where the model is any value
+          <code>claude --model</code> accepts: <code>sonnet</code>, <code>opus</code>,
+          <code>haiku</code>, <code>fable</code> or a full model ID. The model list comes from the
+          installed CLI's own catalog.
+        </p>
+        <p>
+          Omnesis never signs in to Claude, and never stores or reads Claude credentials. Install
+          Claude Code on the gateway host and run <code>claude auth login</code> there as the user
+          the gateway runs as. On a host without a browser, run <code>claude setup-token</code> and
+          export the token it prints as <code>CLAUDE_CODE_OAUTH_TOKEN</code> in the gateway
+          service's environment; <code>CLAUDE_CONFIG_DIR</code> is honoured when your login lives
+          outside <code>~/.claude</code>. API-key variables such as
+          <code>ANTHROPIC_API_KEY</code> are never passed to the CLI, so usage counts against the
+          subscription rather than API billing. Then refresh the backend under
+          <strong>Settings → Models → Backends</strong> (<strong
+            >Add backend → Claude Code → Check again</strong
+          >
+          before it is listed), or with <code>omnesis claude-code refresh</code>. A Claude Code
+          older than 2.1.259 is reported as too old, with the hint to run
+          <code>claude update</code>; refresh again once it is updated.
+        </p>
+        <p>
+          <code>omnesis claude-code setup-agent &lt;model&gt;</code> checks the model against the
+          signed-in CLI, enables remote inference and assigns the model to the agent, only while the
+          agent role is unassigned. <code>omnesis claude-code status</code> shows the installation,
+          sign-in, plan and models; <code>omnesis claude-code remove</code> unassigns every role
+          that uses Claude Code and leaves Claude Code itself signed in. Claude receives the
+          conversation, the relevant Omnesis data and tool results. When a
+          <code>claude</code> command is installed and the agent role is unassigned, an interactive
+          install offers to set this up (see
+          <a href="/docs/install#claude-code-offer">First run</a>).
+        </p>
+        <p>
+          Each turn runs in isolation from the rest of your Claude Code use. It is a fresh
+          <code>claude -p</code> process in an empty working directory that Omnesis owns,
+          <code>claude-code-workspace</code> in the configuration directory. Every built-in Claude
+          Code tool is removed, so the model has no shell, file, web search, web fetch or sub-agent
+          tools. Omnesis loads none of your settings files, so plugins, hooks and MCP servers that
+          settings enable stay off, and your <code>CLAUDE.md</code> files, auto memory, skills and
+          slash commands are not loaded either. Omnesis serves its own tools to the CLI in-process
+          over the CLI's control channel, denies every permission prompt, and does not let Claude
+          Code persist the session. Omnesis checks the session the CLI reports and fails the turn if
+          any tool outside Omnesis is offered or attempted. Each turn replays the conversation from
+          Omnesis' own transcript store.
         </p>
 
         <h2 id="standing-instructions">Standing instructions</h2>

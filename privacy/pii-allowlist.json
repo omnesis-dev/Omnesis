@@ -3830,8 +3830,8 @@
       "paths": [
         "packages/collector/src/e2e/brain-codex.e2e.test.ts",
         "packages/collector/src/e2e/brain-bench/codex-fixture.mjs",
-        "packages/gateway/src/ocr/codex-ocr.ts",
-        "packages/gateway/src/ocr/codex-ocr.test.ts",
+        "packages/gateway/src/ocr/agent-turn-ocr.ts",
+        "packages/gateway/src/ocr/agent-turn-ocr.test.ts",
         "android/app/src/test/kotlin/dev/omnesis/android/ui/agent/AgentCoordinatorSeenTest.kt",
         "android/app/src/test/kotlin/dev/omnesis/android/ui/agent/AgentReducerBatchTest.kt",
         "android/app/src/test/kotlin/dev/omnesis/android/ui/agent/AgentReducerFailureDetailTest.kt",
@@ -6374,10 +6374,23 @@
     {
       "value": "Claude Code",
       "paths": [
+        "packages/agent/src/claude-code-backend.test.ts",
+        "packages/agent/src/test-fixtures/fake-claude-code.mjs",
         "packages/collector/src/document-event-profiles.test.ts",
+        "packages/collector/src/e2e/claude-code-agent.e2e.test.ts",
         "packages/collector/src/e2e/mcp-oauth-lifecycle.e2e.test.ts",
+        "packages/core/src/doctor/checks.test.ts",
+        "packages/gateway/portal/js/lib/backend-options.test.ts",
+        "packages/gateway/portal/js/lib/cloud-inference.test.ts",
+        "packages/gateway/portal/js/views/claude-code-ui.test.ts",
+        "packages/gateway/portal/js/views/models-cloud-consent.test.ts",
+        "packages/gateway/src/agent/agent-lifecycle.test.ts",
         "packages/gateway/src/http/routes/oauth-access.test.ts",
-        "packages/providers/claude-code/src/index.test.ts"
+        "packages/gateway/src/models/routes.test.ts",
+        "packages/providers/claude-code/src/index.test.ts",
+        "scripts/release/install-sh-docker.test.mjs",
+        "scripts/release/install-sh-first-run.test.mjs",
+        "scripts/release/install-sh-package.test.mjs"
       ],
       "reason": "product name, not a person"
     },
@@ -12078,6 +12091,16 @@
       "value": "Varell Orvenna",
       "paths": ["packages/gateway/src/transcribe/vocabulary/extract.test.ts"],
       "reason": "Invented hyphenated-name fragment for Unicode typography extraction regression."
+    },
+    {
+      "value": "Claude Max",
+      "paths": ["packages/gateway/portal/js/views/claude-code-ui.test.ts"],
+      "reason": "plan name, not a person"
+    },
+    {
+      "value": "Switch Agent",
+      "paths": ["packages/gateway/portal/js/views/claude-code-ui.test.ts"],
+      "reason": "UI label, not a person"
     }
   ],
   "secretFixtures": [

@@ -18,6 +18,7 @@ import type { ChatBackend } from "@omnesis/agent";
 import type { Logger } from "@omnesis/core";
 import type Database from "better-sqlite3";
 import type { InferenceRegistry } from "../inference/registry.js";
+import type { ClaudeCodeService } from "../models/claude-code-service.js";
 import type { CodexRuntimeService } from "../models/codex-runtime-service.js";
 
 export function backgroundAgentBackendResolver(ctx: {
@@ -28,6 +29,7 @@ export function backgroundAgentBackendResolver(ctx: {
   getMaxToolIterations: () => number | undefined;
   log: Logger;
   codexRuntimeService?: CodexRuntimeService | null;
+  claudeCodeService?: ClaudeCodeService | null;
 }): () => ChatBackend | null {
   return () =>
     resolveRoleBackend(BACKGROUND_AGENT_ROLE, {
@@ -37,5 +39,6 @@ export function backgroundAgentBackendResolver(ctx: {
       maxToolIterations: ctx.getMaxToolIterations(),
       log: ctx.log,
       codexRuntimeService: ctx.codexRuntimeService,
+      claudeCodeService: ctx.claudeCodeService,
     });
 }

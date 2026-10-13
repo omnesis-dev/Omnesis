@@ -241,6 +241,7 @@ import { eventBus } from "./events.js";
 import { runWithPriority } from "./priority.js";
 import { resolveNearDupConfig, subscribeNearDupInbox } from "./near-dupes/index.js";
 import { ModelManager } from "./models/manager.js";
+import { ClaudeCodeService } from "./models/claude-code-service.js";
 import { CodexRuntimeService } from "./models/codex-runtime-service.js";
 import { AnthropicCatalogService } from "./models/anthropic-catalog-service.js";
 import { ModelHistoryStore } from "./models/model-history.js";
@@ -1222,15 +1223,28 @@ const codexRuntimeService = new CodexRuntimeService({
   getSubagentDepthCap: () =>
     configStore.get().agent?.subagentDepthCap ?? CONFIG_DEFAULTS.agent.subagentDepthCap,
 });
-const inferenceOverviewWithCodex = () => ({
+// The operator's own Claude Code CLI, run under its existing login.
+const claudeCodeService = new ClaudeCodeService({
+  configDir,
+  command: process.env.OMNESIS_CLAUDE_CODE_COMMAND,
+  getSubagentDepthCap: () =>
+    configStore.get().agent?.subagentDepthCap ?? CONFIG_DEFAULTS.agent.subagentDepthCap,
+});
+const inferenceOverviewWithRuntimes = () => ({
   ...inferenceRegistry.getOverview(),
   codex: codexRuntimeService.snapshot(),
+  claudeCode: claudeCodeService.snapshot(),
 });
 {
   void codexRuntimeService.refresh().catch((err) => {
     log.warn(
       `Codex model status refresh failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+  });
+  void claudeCodeService.refresh().then((status) => {
+    if (status.installed && status.status !== "ok" && status.reason) {
+      log.info(`Claude Code is installed but not ready: ${status.reason}`);
+    }
   });
 }
 
@@ -1339,6 +1353,7 @@ const agentLifecycle = new AgentLifecycle({
           refusal: { reason: "no-runtime" as const },
         }),
   codexRuntimeService,
+  claudeCodeService,
   // Read-worker gate — `lookup_people` runs its heavy assembly off the main
   // event loop (fires on nearly every agent turn).
   personLookupGate: ioGate,
@@ -1470,6 +1485,14 @@ const watchJudgeReadiness = (): { loadable: boolean; reason: string | null } => 
             ? null
             : (resolved.reason ?? "The assigned Codex model is unavailable"),
       };
+    case "claude-code":
+      return {
+        loadable: resolved.available && resolved.allowRemoteInference,
+        reason:
+          resolved.available && resolved.allowRemoteInference
+            ? null
+            : (resolved.reason ?? "The assigned Claude Code model is unavailable"),
+      };
     case "typesafe":
       return { loadable: false, reason: "TypeSafe cannot serve single-shot Watch completions" };
     default:
@@ -1486,6 +1509,7 @@ const resolveBackgroundAgentBackend = backgroundAgentBackendResolver({
   getMaxToolIterations: () => configStore.get().agent?.maxToolIterations,
   log,
   codexRuntimeService,
+  claudeCodeService,
 });
 /**
  * The one way a watch reaches a phone. Holds the live APNs client so a
@@ -1750,6 +1774,7 @@ const ocrService = new OcrService({
   resolveAssignment: () => inferenceRegistry.resolve("ocr"),
   deps: {
     codexRuntimeService,
+    claudeCodeService,
     getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
     getGgufConfig: () => configStore.get().inference?.ocr?.gguf,
     getPageConcurrency: () => configStore.get().inference?.ocr?.pageConcurrency,
@@ -1767,6 +1792,7 @@ const entailmentService = new EntailmentVerifierService({
   deps: {
     configDir,
     codexRuntimeService,
+    claudeCodeService,
     getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
     getPromptStyle: () => configStore.get().inference?.entailment?.promptStyle ?? "judge",
     recordUsage: (u) => {
@@ -1999,6 +2025,7 @@ if (watchV2 && watchStores?.ok) {
       const provider = loadCompletionFromResolved(inferenceRegistry.resolve("watch-judge"), {
         configDir,
         codexRuntimeService,
+        claudeCodeService,
         getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
       });
       return provider ? withSpendRecording(provider, recordCompleterSpend("watch-v2-judge")) : null;
@@ -2120,6 +2147,7 @@ if (watchV2 && watchStores?.ok) {
         loadCompletionFromResolved(inferenceRegistry.resolve("background-agent"), {
           configDir,
           codexRuntimeService,
+          claudeCodeService,
           getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
           timeoutMs: compileTimeoutMs,
         }),
@@ -2424,7 +2452,7 @@ const app = createServer(db, DB_PATH, {
   modelManager,
   modelsDevCatalog,
   getSystemInfo: () => getSystemInfo(MODELS_DIR),
-  getInferenceOverview: inferenceOverviewWithCodex,
+  getInferenceOverview: inferenceOverviewWithRuntimes,
   getRecentModels: (capability) =>
     computeRecentModels({
       reference: capability,
@@ -2451,6 +2479,8 @@ const app = createServer(db, DB_PATH, {
   getCodexLogin: codexRuntimeService ? () => codexRuntimeService.getLoginFlow() : undefined,
   cancelCodexLogin: codexRuntimeService ? async () => codexRuntimeService.cancelLogin() : undefined,
   logoutCodex: codexRuntimeService ? () => codexRuntimeService.logout() : undefined,
+  refreshClaudeCodeStatus: () => claudeCodeService.refresh(),
+  setupClaudeCodeAgent: (model) => claudeCodeService.setupAgent(configStore, model),
   getConfigHealth: () => inferenceRegistry.configHealth(),
   getReleaseCheck: () => releaseCheckService.snapshot(),
   getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
@@ -2542,6 +2572,7 @@ const resolveBriefJudgeBackend = () =>
   resolveRoleBackend("brief-judge", {
     inferenceRegistry,
     codexRuntimeService,
+    claudeCodeService,
     configDir,
     db,
     maxToolIterations: undefined,
@@ -2868,6 +2899,7 @@ const backfillBundle = createBackfillTasks(
       const provider = loadCompletionFromResolved(inferenceRegistry.resolve("background-agent"), {
         configDir,
         codexRuntimeService,
+        claudeCodeService,
         getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
       });
       return provider ? withSpendRecording(provider, recordCompleterSpend("token-identity")) : null;

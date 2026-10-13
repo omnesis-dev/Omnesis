@@ -459,7 +459,7 @@ body excerpt and body-backed rationale, so a later corpus deletion does not
 leave copied body text in the watch ledger.
 
 It carries a judge, so it needs a single-shot completion model assigned to the
-independent `watch-judge` role: Codex, local GGUF, Anthropic, or an OpenAI-compatible
+independent `watch-judge` role: Codex, Claude Code, local GGUF, Anthropic, or an OpenAI-compatible
 HTTP backend using Chat Completions. Replay and Responses-only HTTP
 backends cannot serve that leaf call. Without a usable model the judge fails closed and the canary is
 silent — which looks exactly like the failure it exists to detect. Check that

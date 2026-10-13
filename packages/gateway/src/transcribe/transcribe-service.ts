@@ -46,6 +46,8 @@ function signatureOf(resolved: ResolvedAssignment): string {
       return `anthropic:${resolved.catalogId}:${resolved.available}`;
     case "codex":
       return `codex:${resolved.model}:${resolved.available}`;
+    case "claude-code":
+      return `claude-code:${resolved.model}:${resolved.available}`;
     case "typesafe":
       return `typesafe:${resolved.model}:${resolved.available}`;
     case "disabled":
@@ -83,6 +85,7 @@ export function assignmentReadiness(resolved: ResolvedAssignment): TranscriberRe
     case "http":
     case "anthropic":
     case "codex":
+    case "claude-code":
     case "typesafe":
       return { runnable: false, reason: "Transcription runs on local models only." };
     case "disabled":

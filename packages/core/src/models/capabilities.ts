@@ -225,6 +225,9 @@ export const CODEX_SUPPORTED_ROLES: readonly CapabilityRole[] = [
   "ocr",
 ];
 
+/** Roles served by Claude Code turns: the same chat, judgement and vision roles. */
+export const CLAUDE_CODE_SUPPORTED_ROLES: readonly CapabilityRole[] = CODEX_SUPPORTED_ROLES;
+
 /**
  * Presentation metadata for a capability — the title, plain-language
  * description, and a Lucide-style icon slug. Lives here (not in the portal)

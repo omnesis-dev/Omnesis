@@ -23,6 +23,7 @@ import {
 import { FsConversationStore } from "./conversation-store.js";
 import type { ResolvedSpecialist } from "./subagent-service.js";
 import type { OmnesisConfig } from "@omnesis/config";
+import type { ClaudeCodeService } from "../models/claude-code-service.js";
 import type { CodexRuntimeService } from "../models/codex-runtime-service.js";
 
 // A config assigning a cloud agent (Anthropic) with remote inference OFF —
@@ -472,6 +473,16 @@ describe("AgentLifecycle", () => {
     expect(attach).not.toHaveBeenCalled();
   });
 
+  test("a cloud agent (claude-code) is refused at boot when remote inference is off", async () => {
+    const { lifecycle, attach } = makeLifecycle(cloudAgentRemoteOffConfig("claude-code/sonnet"));
+
+    await lifecycle.bootAgent();
+
+    expect(lifecycle.routeDeps.agentService).toBeUndefined();
+    expect(lifecycle.routeDeps.disabledCode).toBe("remote_inference_disabled");
+    expect(attach).not.toHaveBeenCalled();
+  });
+
   test("a live swap to a cloud agent is refused when remote inference is off", async () => {
     const { lifecycle } = makeLifecycle(cloudAgentRemoteOffConfig());
 
@@ -772,6 +783,52 @@ describe("AgentLifecycle", () => {
 
     expect(laneFor("entailment-verifier")).toBe("inference");
     expect(laneFor("brief-judge")).toBe("inference");
+  });
+
+  test("routes Claude Code roles to the correct lane with the saved effort", () => {
+    const registry = new InferenceRegistry({
+      modelsDir,
+      configDir,
+      manifest: () => ({ version: 1, models: [] }),
+      hasAnthropicApiKey: () => false,
+    });
+    registry.loadConfig({
+      inference: {
+        allowRemoteInference: true,
+        assignments: {
+          agent: "claude-code/opus",
+          "background-agent": "claude-code/sonnet",
+          "privacy-reviewer": "claude-code/haiku",
+          embedder: "claude-code/sonnet",
+        },
+        modelSettings: {
+          agent: { assignment: "claude-code/opus", values: { reasoningEffort: "high" } },
+        },
+      },
+    });
+    const createBackend = vi.fn(() => ({ runTurn: vi.fn() }) as unknown as ChatBackend);
+    const ctx = {
+      inferenceRegistry: registry,
+      configDir,
+      db: {} as AgentLifecycleDeps["db"],
+      maxToolIterations: 1,
+      log: createLogger("test:claude-code-lane"),
+      claudeCodeService: { createBackend } as unknown as ClaudeCodeService,
+    };
+    const optsFor = (role: Parameters<typeof resolveRoleBackend>[0]): unknown => {
+      createBackend.mockClear();
+      resolveRoleBackend(role, ctx);
+      return createBackend.mock.calls[0]?.[0];
+    };
+
+    expect(optsFor("agent")).toMatchObject({
+      model: "opus",
+      reasoningEffort: "high",
+      lane: "interactive",
+    });
+    expect(optsFor("background-agent")).toMatchObject({ model: "sonnet", lane: "background" });
+    expect(optsFor("privacy-reviewer")).toMatchObject({ model: "haiku", lane: "inference" });
+    expect(optsFor("embedder")).toBeUndefined();
   });
 
   test("intentionally-unset agent assignment stays a normal state (no error log)", async () => {

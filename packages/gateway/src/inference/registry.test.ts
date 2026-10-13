@@ -367,6 +367,40 @@ describe("InferenceRegistry.resolve", () => {
     expect(agent.apiModelId).toBe("claude-haiku-4-5-20251001");
   });
 
+  it("resolves claude-code/<model> for chat and vision roles but not embeddings or audio", () => {
+    const reg = makeRegistry();
+    reg.loadConfig(
+      configWithAssignments(
+        {
+          agent: "claude-code/sonnet",
+          ocr: "claude-code/haiku",
+          embedder: "claude-code/sonnet",
+          transcriber: "claude-code/sonnet",
+          "privacy-reviewer": "claude-code/",
+        },
+        { allowRemoteInference: true },
+      ),
+    );
+    const agent = reg.resolve("agent");
+    expect(agent).toMatchObject({ kind: "claude-code", model: "sonnet", available: true });
+    expect(agent.kind === "claude-code" && agent.reason).toBeFalsy();
+    expect(reg.resolve("ocr")).toMatchObject({ kind: "claude-code", available: true });
+    expect(reg.resolve("embedder")).toMatchObject({ kind: "claude-code", available: false });
+    expect(reg.resolve("transcriber")).toMatchObject({ kind: "claude-code", available: false });
+    expect(reg.resolve("privacy-reviewer")).toMatchObject({
+      kind: "claude-code",
+      available: false,
+    });
+  });
+
+  it("flags a claude-code assignment while remote inference is off", () => {
+    const reg = makeRegistry();
+    reg.loadConfig(configWithAssignments({ agent: "claude-code/sonnet" }));
+    const agent = reg.resolve("agent");
+    expect(agent).toMatchObject({ kind: "claude-code", allowRemoteInference: false });
+    expect(reg.degradedAssignments().map((d) => d.role)).toContain("agent");
+  });
+
   it("resolves codex/<model> for the main agent without any experimental flag", () => {
     withExperimentalEnv(undefined, () => {
       const reg = makeRegistry();

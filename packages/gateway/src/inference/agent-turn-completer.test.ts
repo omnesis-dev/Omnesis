@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test, vi } from "vitest";
-import { CodexCompleter } from "./codex-completer.js";
+import { AgentTurnCompleter } from "./agent-turn-completer.js";
 import type { AgentEvent, AgentMessageEndEvent } from "@omnesis/core";
 import type { ChatBackend } from "@omnesis/agent";
 
@@ -26,10 +26,10 @@ const end = (extra: Partial<AgentMessageEndEvent> = {}): AgentEvent => ({
   payload: { ...ids, stopReason: "end_turn", ...extra },
 });
 
-describe("CodexCompleter", () => {
+describe("AgentTurnCompleter", () => {
   test("uses fresh tool-free turns, returns terminal usage and applies stop strings", async () => {
     const model = backend([delta, end({ usage: { inputTokens: 23, outputTokens: 7 } })]);
-    const completer = new CodexCompleter({ backend: model });
+    const completer = new AgentTurnCompleter({ backend: model });
     expect(
       await completer.completeWithUsage("Classify", {
         stop: [" STOP"],
@@ -52,13 +52,13 @@ describe("CodexCompleter", () => {
   test.each(["error", "canceled", "max_tokens", "tool_use"] as const)(
     "rejects partial text with terminal %s",
     async (stopReason) => {
-      const completer = new CodexCompleter({ backend: backend([delta, end({ stopReason })]) });
+      const completer = new AgentTurnCompleter({ backend: backend([delta, end({ stopReason })]) });
       await expect(completer.complete("Classify")).rejects.toThrow();
     },
   );
 
   test("terminal failure is authoritative even with end_turn and output", async () => {
-    const completer = new CodexCompleter({
+    const completer = new AgentTurnCompleter({
       backend: backend([
         delta,
         end({
@@ -77,10 +77,12 @@ describe("CodexCompleter", () => {
 
   test("requires terminal result but permits successful empty output", async () => {
     await expect(
-      new CodexCompleter({ backend: backend([delta]) }).complete("Classify"),
+      new AgentTurnCompleter({ backend: backend([delta]) }).complete("Classify"),
     ).rejects.toThrow("terminal result");
     expect(
-      await new CodexCompleter({ backend: backend([end()]) }).completeWithUsage("Read blank image"),
+      await new AgentTurnCompleter({ backend: backend([end()]) }).completeWithUsage(
+        "Read blank image",
+      ),
     ).toEqual({ text: "", usage: null });
   });
 
@@ -95,7 +97,7 @@ describe("CodexCompleter", () => {
         await new Promise<void>(() => {});
       },
     };
-    const completer = new CodexCompleter({ backend: model, timeoutMs: 10 });
+    const completer = new AgentTurnCompleter({ backend: model, timeoutMs: 10 });
     await expect(completer.complete("Classify")).rejects.toThrow("timed out");
     expect(signal?.aborted).toBe(true);
   });
@@ -110,7 +112,7 @@ describe("CodexCompleter", () => {
       },
       dispose: vi.fn(async () => {}),
     };
-    const completer = new CodexCompleter({ backend: model });
+    const completer = new AgentTurnCompleter({ backend: model });
     const pending = expect(completer.complete("Classify")).rejects.toThrow("disposed");
     await completer.dispose();
     await pending;
@@ -127,7 +129,7 @@ describe("CodexCompleter", () => {
         await new Promise<void>(() => {});
       },
     };
-    const completer = new CodexCompleter({ backend: model });
+    const completer = new AgentTurnCompleter({ backend: model });
     const controller = new AbortController();
     const pending = expect(
       completer.complete("Classify", { signal: controller.signal }),
@@ -143,7 +145,7 @@ describe("Codex completion over the app-server protocol", () => {
     async (scenario) => {
       const { model, cleanup } = await fakeBackend(scenario);
       try {
-        const completer = new CodexCompleter({ backend: model });
+        const completer = new AgentTurnCompleter({ backend: model });
         expect(await completer.completeWithUsage("Classify the claim")).toEqual({
           text: "NEUTRAL",
           // The whole turn (`total`), cached input included: 30 in, 11 out.
@@ -162,7 +164,7 @@ describe("Codex completion over the app-server protocol", () => {
       const { model, cleanup } = await fakeBackend(scenario);
       try {
         await expect(
-          new CodexCompleter({ backend: model }).complete("Classify the claim"),
+          new AgentTurnCompleter({ backend: model }).complete("Classify the claim"),
         ).rejects.toThrow();
       } finally {
         await cleanup();
@@ -173,7 +175,7 @@ describe("Codex completion over the app-server protocol", () => {
   test("deadline bounds a real app-server turn", async () => {
     const { model, cleanup } = await fakeBackend("hang");
     try {
-      const completer = new CodexCompleter({ backend: model, timeoutMs: 200 });
+      const completer = new AgentTurnCompleter({ backend: model, timeoutMs: 200 });
       await expect(completer.complete("Classify the claim")).rejects.toThrow("timed out");
       await completer.dispose();
     } finally {
