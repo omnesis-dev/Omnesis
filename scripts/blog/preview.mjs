@@ -17,6 +17,7 @@ const TYPES = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
+  ".mp4": "video/mp4",
   ".webp": "image/webp",
   ".avif": "image/avif",
   ".ico": "image/x-icon",

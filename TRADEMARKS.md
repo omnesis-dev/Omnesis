@@ -75,6 +75,8 @@ The website architecture diagram uses the Claude, OpenClaw, Hermes, and ChatGPT 
 
 The author-supplied ChatGPT illustrations in `website/blog/images/brain-prompt-caching/` include Gmail and Google Drive marks (Google LLC), WhatsApp marks (WhatsApp LLC), and Apple Messages marks (Apple Inc.) to identify the kinds of documents the Brain processes. These marks remain the property of their respective owners. Their display is nominative and does not imply endorsement, partnership, or sponsorship.
 
+The generated illustration in `website/blog/images/chrome-agentic-search/capture-graph.png` uses the WhatsApp mark (WhatsApp LLC) and Chrome mark (Google LLC) to identify message and browser-visit evidence. These marks remain the property of their respective owners. Their display is nominative and does not imply endorsement, partnership, or sponsorship.
+
 ## Community links
 
 The website footer uses the X and Discord marks to identify Omnesis's public account and community invite. The bundled SVGs come from [Simple Icons](https://simpleicons.org) under CC0-1.0. X and Discord own their respective marks; their use here does not imply endorsement or partnership.

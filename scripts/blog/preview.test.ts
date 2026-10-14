@@ -173,6 +173,16 @@ describe("local blog preview", () => {
     expect(image.headers["content-type"]).toMatch(/^image\/svg\+xml/);
   });
 
+  it("serves MP4 recordings with a playable media type", async () => {
+    const { root, url } = await fixture();
+    await mkdir(join(root, "website/blog/videos"));
+    await writeFile(join(root, "website/blog/videos/demo.mp4"), "VIDEO_SENTINEL");
+    const result = await get(url, "/blog/videos/demo.mp4");
+    expect(result.status).toBe(200);
+    expect(result.headers["content-type"]).toBe("video/mp4");
+    expect(result.body).toBe("VIDEO_SENTINEL");
+  });
+
   it("denies source files, metadata, dotfiles, traversal and files outside the website", async () => {
     const { root, url } = await fixture();
     await writeFile(join(root, "website/.secret"), "PRIVATE_SENTINEL");

@@ -105,6 +105,17 @@ describe("blog publishing", () => {
       'data-giscus-term="blog/bounded-queue"',
     );
   });
+  it("embeds local MP4 recordings with muted autoplay and escaped accessible text", () => {
+    const html = renderMarkdown('![Find <demo>](/blog/videos/find/demo.mp4 "A & B")');
+    expect(html).toContain('<video controls autoplay muted playsinline preload="auto"');
+    expect(html).toContain('aria-label="Find &lt;demo&gt;"');
+    expect(html).toContain('title="A &amp; B"');
+    expect(html).toContain('<source src="/blog/videos/find/demo.mp4" type="video/mp4"');
+    expect(html).toContain('<a href="/blog/videos/find/demo.mp4">Find &lt;demo&gt;</a>');
+    expect(html).toContain("muted playsinline");
+    expect(renderMarkdown("![External](https://example.com/demo.mp4)")).not.toContain("<video");
+    expect(() => renderMarkdown("![Unsafe](javascript:alert.mp4)")).toThrow(/Unsupported/);
+  });
   it("escapes raw HTML and rejects executable or ambiguous links", () => {
     expect(renderMarkdown("<script>alert(1)</script>")).not.toContain("<script>");
     for (const link of ["javascript:alert(1)", "//example.com", "data:text/html,test"]) {

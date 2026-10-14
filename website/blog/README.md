@@ -17,7 +17,9 @@ Copy `posts/first-post.md` to a short, permanent filename such as
 `title`, `description`, `date` (`YYYY-MM-DD`), `author`, optional `tags`, and
 `draft` (boolean). Write the article beneath it using Markdown. Use `##` for
 section headings; the title supplies the page's `h1`. Code fences, lists,
-tables, links, and images are supported. Raw HTML is displayed as text; links
+tables, links, and images are supported. Embed a local MP4 recording with image
+syntax, for example `![Search demonstration](/blog/videos/search/demo.mp4)`.
+Recordings autoplay muted with playback controls and inline playback on mobile. Raw HTML is displayed as text; links
 must use HTTPS/HTTP, a site-relative `/path`, or a `#fragment`.
 
 Keep `draft: true` while writing. Start the local preview from the repository root:

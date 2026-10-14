@@ -198,6 +198,7 @@
 }
 
 .post-body > p:has(img),
+.post-body > p:has(video),
 .post-body > pre,
 .post-body > table {
   max-width: 100%;
@@ -298,7 +299,8 @@
   border-top: 1px solid var(--border-subtle);
 }
 
-.post-body img {
+.post-body img,
+.post-body video {
   display: block;
   max-width: 100%;
   height: auto;

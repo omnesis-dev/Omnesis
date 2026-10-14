@@ -54,6 +54,8 @@ const markdown = new Marked({
     image({ href, title, text }) {
       if (!safeUrl(href) || href.startsWith("#"))
         throw new Error(`Unsupported Markdown image: ${href}`);
+      if (/^\/blog\/videos\/[^?#]+\.mp4$/.test(href))
+        return `<video controls autoplay muted playsinline preload="auto" aria-label="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""}><source src="${escapeHtml(href)}" type="video/mp4" /><a href="${escapeHtml(href)}">${escapeHtml(text || "Download video")}</a></video>`;
       return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""} loading="lazy" />`;
     },
   },
