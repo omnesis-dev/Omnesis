@@ -114,3 +114,73 @@ describe("fetch_document tool", () => {
     if (r.kind === "error") expect(r.code).toBe("invalid_args");
   });
 });
+
+describe("bounded default reads", () => {
+  const body = "Quarterly planning notes. ".repeat(40); // 1,040 characters
+  const ref: DocRef = { documentId: "long", sourceType: "notes", sourceId: "notes:fixture" };
+  const longPort = port(async (id) => ({ ref, document: { id, content: body } }));
+
+  it("returns the whole body when no default cap is configured", async () => {
+    const r = await createFetchDocumentTool({ port: longPort }).invoke({ documentId: "long" }, ctx);
+    if (r.kind !== "document") throw new Error("expected document");
+    expect((r.document as { content: string }).content).toBe(body);
+    expect(r.document).not.toHaveProperty("contentRange");
+  });
+
+  it("caps an unranged read and says where the next page starts", async () => {
+    const tool = createFetchDocumentTool({ port: longPort, defaultMaxContentChars: 400 });
+    expect(tool.description).toContain("contentOffset set to nextOffset");
+    const first = await tool.invoke({ documentId: "long" }, ctx);
+    if (first.kind !== "document") throw new Error("expected document");
+    expect(first.document).toMatchObject({
+      content: body.slice(0, 400),
+      contentRange: {
+        offset: 0,
+        returnedCharacters: 400,
+        totalCharacters: 1040,
+        truncated: true,
+        nextOffset: 400,
+      },
+    });
+    // Paging with the offset alone keeps the same bounded page size, and the
+    // last page carries no further offset.
+    const last = await tool.invoke({ documentId: "long", contentOffset: 800 }, ctx);
+    if (last.kind !== "document") throw new Error("expected document");
+    expect(last.document).toMatchObject({
+      content: body.slice(800),
+      contentRange: { offset: 800, returnedCharacters: 240, truncated: true },
+    });
+    expect(
+      (last.document as { contentRange: Record<string, unknown> }).contentRange,
+    ).not.toHaveProperty("nextOffset");
+  });
+
+  it("lets an explicit range override the default and leaves short bodies whole", async () => {
+    const tool = createFetchDocumentTool({ port: longPort, defaultMaxContentChars: 400 });
+    const wide = await tool.invoke({ documentId: "long", maxContentChars: 2000 }, ctx);
+    if (wide.kind !== "document") throw new Error("expected document");
+    expect((wide.document as { content: string }).content).toBe(body);
+    const short = createFetchDocumentTool({
+      port: port(async (id) => ({ ref, document: { id, content: "Short memo." } })),
+      defaultMaxContentChars: 400,
+    });
+    const whole = await short.invoke({ documentId: "short" }, ctx);
+    if (whole.kind !== "document") throw new Error("expected document");
+    expect(whole.document).toEqual({ id: "short", content: "Short memo." });
+  });
+
+  it("applies the cap to every document of a fetch_many batch", async () => {
+    const tool = createFetchManyTool({ port: longPort, defaultMaxContentChars: 400 });
+    expect(tool.description).toContain("contentOffset set to nextOffset");
+    const r = await tool.invoke(
+      { documents: [{ documentId: "long" }, { documentId: "long", contentOffset: 400 }] },
+      ctx,
+    );
+    if (r.kind !== "document.batch") throw new Error("expected batch");
+    expect(
+      r.items.map((item) =>
+        item.kind === "document" ? (item.document as { content: string }).content.length : -1,
+      ),
+    ).toEqual([400, 400]);
+  });
+});

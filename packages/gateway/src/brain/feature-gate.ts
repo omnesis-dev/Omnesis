@@ -65,7 +65,11 @@ import type { PersonLookupGate } from "../domain/person-lookup.js";
 import type { ResolvedBrainSettings } from "./config.js";
 import type { SweepService } from "./sweeps/service.js";
 import type { CognitionRunActivity } from "./run-activity.js";
-import type { CognitionPromptBuilder, CognitionRunExecutionContext } from "./run-driver.js";
+import type {
+  CognitionContextBudget,
+  CognitionPromptBuilder,
+  CognitionRunExecutionContext,
+} from "./run-driver.js";
 import type { ClaimedCognitionRun, Clock } from "./storage/types.js";
 
 /** The capability role the Cognition Steward runs on. */
@@ -552,6 +556,12 @@ export async function bootBriefs(deps: {
           }
         : {}),
       ...(validateRun ? { validateRun } : {}),
+      ...(knowledge
+        ? {
+            contextBudget: (run: ClaimedCognitionRun) =>
+              maintenanceContextBudget(run, rq.getSettings().knowledge),
+          }
+        : {}),
       ...(rq.clock ? { clock: rq.clock } : {}),
     });
     const bundle = createCognitionDrainerTasks(
@@ -566,6 +576,7 @@ export async function bootBriefs(deps: {
         isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
         ...(rq.activity ? { activity: rq.activity } : {}),
         getWorkerConcurrency: () => rq.getSettings().workerConcurrency,
+        getMaxStalledHandoffs: () => rq.getSettings().knowledge.maxStalledHandoffs,
         ...(rq.getDecision
           ? {
               worthGate: new WorthGate({
@@ -867,4 +878,21 @@ async function observationRuntimeDeps(
       getPushEnabled: () => rq.getSettings().digest.push,
     },
   };
+}
+
+/**
+ * The context budget of one run. Only knowledge maintenance can resume from a
+ * fresh context — its frontier is durable, so a successor continues where the
+ * run stopped — so every other run is left to its backend's own limits.
+ */
+export function maintenanceContextBudget(
+  run: Pick<ClaimedCognitionRun, "kind" | "payload">,
+  settings: Pick<
+    ResolvedBrainSettings["knowledge"],
+    "contextHandoffRatio" | "contextHandoffTokens"
+  >,
+): CognitionContextBudget | null {
+  const payload = run.kind === "synthesis" ? parseCognitionSynthesisRunPayload(run.payload) : null;
+  if (payload?.focus !== "knowledge-maintenance" || !payload.batchId) return null;
+  return { ratio: settings.contextHandoffRatio, fallbackTokens: settings.contextHandoffTokens };
 }

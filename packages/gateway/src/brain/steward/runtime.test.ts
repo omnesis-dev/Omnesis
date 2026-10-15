@@ -319,6 +319,36 @@ describe("assembled Cognition Steward through the real driver", () => {
     }
   });
 
+  test("bounds each fetch_many read of a background run to the configured page size", async () => {
+    const body = "Venue checklist entry. ".repeat(100);
+    const basePorts: ToolPorts = {
+      ...toolsetDeps.basePorts,
+      document: {
+        fetch: async (id) => ({
+          ref: { documentId: id, sourceType: "test", sourceId: "test" },
+          document: { id, content: body },
+        }),
+      },
+    };
+    const fetchMany = (documentReadChars?: number) =>
+      buildCognitionToolset(
+        { ...toolsetDeps, basePorts, ...(documentReadChars ? { documentReadChars } : {}) },
+        claimed({}),
+      ).find((tool) => tool.name === "fetch_many")!;
+    expect(fetchMany(1024).description).toContain("nextOffset");
+    const result = await fetchMany(1024).invoke(
+      { documents: [{ documentId: "doc_long" }] },
+      { sessionId: "test", messageId: "message" },
+    );
+    if (result.kind !== "document.batch") throw new Error("expected a batch");
+    expect(result.items[0]).toMatchObject({
+      kind: "document",
+      document: { contentRange: { returnedCharacters: 1024, nextOffset: 1024 } },
+    });
+    // Without a page size the read stays whole, as interactive reads are.
+    expect(fetchMany().description).not.toContain("nextOffset");
+  });
+
   test("interactive annotations retain consumption provenance with background annotations disabled", async () => {
     const evidence = "The venue requires a response before Friday.";
     db.prepare(

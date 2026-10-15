@@ -34,7 +34,11 @@ describe("resolveBrainSettings", () => {
         retryBackoffMs: 3600000,
         retryBackoffCapMs: 86400000,
         maxFailedAttempts: 5,
+        contextHandoffRatio: 0.65,
+        contextHandoffTokens: 120_000,
+        maxStalledHandoffs: 2,
       },
+      documentReadChars: 16_384,
       workerConcurrency: 4,
       conversationDebounceMs: 60 * 60 * 1000,
       conversationMaxDeferMs: 6 * 60 * 60 * 1000,
@@ -195,6 +199,12 @@ describe("brain config schema", () => {
     expect(validateConfig({ brain: { workerConcurrency: 0 } }).ok).toBe(false);
     expect(validateConfig({ brain: { workerConcurrency: 32 } }).ok).toBe(true);
     expect(validateConfig({ brain: { workerConcurrency: 33 } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { contextHandoffRatio: 0.99 } } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { contextHandoffTokens: 1000 } } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { contextHandoffRatio: 0.05 } } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { maxStalledHandoffs: 11 } } }).ok).toBe(false);
+    expect(validateConfig({ brain: { knowledge: { maxStalledHandoffs: 0 } } }).ok).toBe(true);
+    expect(validateConfig({ brain: { documentReadChars: 70_000 } }).ok).toBe(false);
   });
 
   it("accepts a background-agent assignment keyed by the capability role id", () => {
@@ -215,6 +225,10 @@ describe("CONFIG_DEFAULTS.brain cross-check against the live resolver", () => {
   it("matches resolveBrainSettings(undefined)", () => {
     const r = resolveBrainSettings(undefined);
     expect(defAt("/brain/workerConcurrency")).toBe(r.workerConcurrency);
+    expect(defAt("/brain/documentReadChars")).toBe(r.documentReadChars);
+    expect(defAt("/brain/knowledge/contextHandoffRatio")).toBe(r.knowledge.contextHandoffRatio);
+    expect(defAt("/brain/knowledge/contextHandoffTokens")).toBe(r.knowledge.contextHandoffTokens);
+    expect(defAt("/brain/knowledge/maxStalledHandoffs")).toBe(r.knowledge.maxStalledHandoffs);
     expect(parseDuration(defAt("/brain/conversationDebounce") as string)).toBe(
       r.conversationDebounceMs,
     );

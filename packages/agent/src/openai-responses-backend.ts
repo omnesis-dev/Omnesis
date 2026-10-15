@@ -641,6 +641,13 @@ export class OpenAIResponsesBackend implements ChatBackend {
         outputTokens: iterationUsage.output,
         cacheReadTokens: iterationUsage.cachedInput,
       });
+      if (iterationUsage.input > 0 && !signal?.aborted)
+        yield wrapEvent("agent.usage.update", {
+          sessionId,
+          messageId,
+          usage: { ...totalUsage },
+          context: contextAssessment,
+        });
 
       if (signal?.aborted) {
         yield wrapEvent("agent.message.end", {

@@ -136,6 +136,12 @@ export interface CognitionDrainerOpts {
   /** Live maintenance worker cap (1–32); unfenced and root work stays exclusive. */
   getWorkerConcurrency: () => number;
   /**
+   * Live count of consecutive context handoffs a maintenance batch may take
+   * without settling an input before it fails the ordinary way. Absent, a
+   * context handoff continues only after progress.
+   */
+  getMaxStalledHandoffs?: () => number;
+  /**
    * Live quiet window (ms) to re-open when an in-flight fold resurrects a
    * `data` run — the debounce a resurrected hot thread must re-clear before it
    * fires again (the primary spend-safety window). A single generic value: a
@@ -406,16 +412,19 @@ export function createCognitionDrainerTasks(
     // profiles, and a model-assignment decision is made per workflow. Derived
     // from the CLAIMED payload, before settle wipes its transient fields.
     const mechanism = cognitiveWorkflowIdForRun(run.kind, run.payload);
-    if (
-      progress &&
-      !outcome.ok &&
-      (outcome.failure?.code === "tool_iteration_cap" || outcome.toolLimitReached)
-    ) {
+    const handoffReason = outcome.ok
+      ? undefined
+      : outcome.failure?.code === "tool_iteration_cap" || outcome.toolLimitReached
+        ? ("tool_iteration_cap" as const)
+        : outcome.contextHandoff;
+    if (progress && handoffReason) {
       const successorId = `cog_${randomUUID()}`;
       if (
         await opts.writeGate["knowledge.continueRun"]({
           progress,
           successorId,
+          reason: handoffReason,
+          maxStalledHandoffs: opts.getMaxStalledHandoffs?.() ?? 0,
           settlement: {
             runId: run.id,
             now,
@@ -427,8 +436,11 @@ export function createCognitionDrainerTasks(
           },
         })
       ) {
+        const context = outcome.usage?.context;
         log.info(
-          `knowledge run ${run.id} reached its tool limit after durable progress; continuing in ${successorId}`,
+          handoffReason === "tool_iteration_cap"
+            ? `knowledge run ${run.id} reached its tool limit after durable progress; continuing in ${successorId}`
+            : `knowledge run ${run.id} handed off at ${context?.lastInputTokens ?? "?"} input tokens (peak ${context?.peakInputTokens ?? "?"}, window ${context?.contextWindowTokens ?? "unknown"}, ${handoffReason}); continuing in ${successorId}`,
         );
         return "completed";
       }

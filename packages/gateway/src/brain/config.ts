@@ -46,7 +46,16 @@ export const BRAIN_DEFAULTS = {
     retryBackoff: "1h",
     retryBackoffCap: "1d",
     maxFailedAttempts: 5,
+    // A run ends while a third of the window is still free, so the response
+    // that crossed the line can finish its tool calls before the next request.
+    contextHandoffRatio: 0.65,
+    // Below the input window of the supported frontier models; used when none is reported.
+    contextHandoffTokens: 120_000,
+    maxStalledHandoffs: 2,
   },
+  // About 4k tokens per document, so a full fetch_many batch stays a fraction
+  // of a context window.
+  documentReadChars: 16_384,
   workerConcurrency: 4,
   conversationDebounce: "1h",
   // Max-defer ceilings are derived from their debounce timescales: 6× the 1h
@@ -194,7 +203,15 @@ export interface ResolvedBrainSettings {
     retryBackoffCapMs: number;
     /** Failed batch attempts after which work is parked until its input revision changes. */
     maxFailedAttempts: number;
+    /** Share of a reported context window a maintenance run may fill before handing off. */
+    contextHandoffRatio: number;
+    /** Per-request input tokens that trigger a handoff when the window is unknown. */
+    contextHandoffTokens: number;
+    /** Consecutive context handoffs without settled progress before ordinary failure. */
+    maxStalledHandoffs: number;
   };
+  /** Default characters of a document body per Brain read; longer bodies are paged. */
+  documentReadChars: number;
   /** Concurrent fenced maintenance workers; root and legacy runs stay exclusive. */
   workerConcurrency: number;
   /** Quiet period before new conversation messages enqueue one `data` run. */
@@ -464,7 +481,11 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
         parseDuration(knowledge?.retryBackoffCap ?? defaults.retryBackoffCap),
       ),
       maxFailedAttempts: knowledge?.maxFailedAttempts ?? defaults.maxFailedAttempts,
+      contextHandoffRatio: knowledge?.contextHandoffRatio ?? defaults.contextHandoffRatio,
+      contextHandoffTokens: knowledge?.contextHandoffTokens ?? defaults.contextHandoffTokens,
+      maxStalledHandoffs: knowledge?.maxStalledHandoffs ?? defaults.maxStalledHandoffs,
     },
+    documentReadChars: settings?.documentReadChars ?? BRAIN_DEFAULTS.documentReadChars,
     workerConcurrency: settings?.workerConcurrency ?? BRAIN_DEFAULTS.workerConcurrency,
     conversationDebounceMs,
     // A ceiling below its debounce is nonsensical (it would clamp the very

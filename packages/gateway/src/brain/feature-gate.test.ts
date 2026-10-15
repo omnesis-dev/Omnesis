@@ -22,7 +22,12 @@ import { createToken } from "../data/repositories/TokenRepository.js";
 import { directWriteGate } from "../write-gate.js";
 import { EventBus } from "../events.js";
 import { priorContentRequested } from "../data/document-prior-content.js";
-import { briefsFeatureStatus, bootBriefs, BACKGROUND_AGENT_ROLE } from "./feature-gate.js";
+import {
+  briefsFeatureStatus,
+  bootBriefs,
+  BACKGROUND_AGENT_ROLE,
+  maintenanceContextBudget,
+} from "./feature-gate.js";
 import { resolveBrainSettings, type ResolvedBrainSettings } from "./config.js";
 import { createDocAnnotation } from "./storage/annotations.js";
 import { enqueueCognitionRun } from "./storage/run-queue.js";
@@ -837,5 +842,25 @@ describe("GET /status advertises the brain gate", () => {
     });
     // Apps that predate the Morning brief read `briefs`; it always reads off.
     expect((await statusBody(app)).briefs).toMatchObject({ visible: false, active: false });
+  });
+});
+
+describe("maintenanceContextBudget", () => {
+  const settings = { contextHandoffRatio: 0.6, contextHandoffTokens: 90_000 };
+  it("budgets knowledge maintenance runs bound to a batch", () => {
+    expect(
+      maintenanceContextBudget(
+        { kind: "synthesis", payload: { focus: "knowledge-maintenance", batchId: "batch" } },
+        settings,
+      ),
+    ).toEqual({ ratio: 0.6, fallbackTokens: 90_000 });
+  });
+  it("leaves every other run to its backend's limits", () => {
+    for (const run of [
+      { kind: "synthesis" as const, payload: { focus: "noticing", date: "2031-04-03" } },
+      { kind: "synthesis" as const, payload: { focus: "knowledge-maintenance" } },
+      { kind: "data" as const, payload: { docId: "doc_a" } },
+    ])
+      expect(maintenanceContextBudget(run, settings)).toBeNull();
   });
 });

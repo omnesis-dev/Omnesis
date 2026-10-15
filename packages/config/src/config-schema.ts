@@ -2891,6 +2891,32 @@ const brainKnowledge = z
         "Failed batch attempts after which maintenance work is parked until its input changes.",
       )
       .optional(),
+    contextHandoffRatio: z
+      .number()
+      .min(0.1)
+      .max(0.95)
+      .describe(
+        "Share of the model's reported context window a maintenance run may fill before it ends and a fresh run continues the batch.",
+      )
+      .optional(),
+    contextHandoffTokens: z
+      .number()
+      .int()
+      .min(4096)
+      .max(10_000_000)
+      .describe(
+        "Input tokens per model request at which a maintenance run hands off when the model reports no context window.",
+      )
+      .optional(),
+    maxStalledHandoffs: z
+      .number()
+      .int()
+      .min(0)
+      .max(10)
+      .describe(
+        "Consecutive context handoffs without settled frontier progress before the batch takes the ordinary failure path.",
+      )
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -2923,6 +2949,15 @@ const brain = z
       .optional(),
     knowledge: brainKnowledge
       .describe("Grounded synthesis, discovery and maintenance scheduling.")
+      .optional(),
+    documentReadChars: z
+      .number()
+      .int()
+      .min(1024)
+      .max(65536)
+      .describe(
+        "Characters of a document body a Brain run receives per read unless it asks for a range; longer bodies are paged with contentOffset.",
+      )
       .optional(),
     workerConcurrency: z
       .number()

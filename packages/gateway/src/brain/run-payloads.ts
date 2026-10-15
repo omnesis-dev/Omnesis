@@ -462,6 +462,12 @@ export const cognitionSynthesisRunPayloadSchema = z.preprocess(
       /** Durable run lineage for paid segments of the same maintenance batch. */
       continuedFromRunId: z.string().min(1).optional(),
       continuedByRunId: z.string().min(1).optional(),
+      /** Why this segment ended and handed its batch to `continuedByRunId`. */
+      handoffReason: z
+        .enum(["tool_iteration_cap", "context_budget", "context_window_exceeded"])
+        .optional(),
+      /** Consecutive context handoffs before this segment that settled no input. */
+      stalledHandoffs: z.number().int().positive().optional(),
       /** noticing: the local day the pass covers. */
       date: z.string().min(1).optional(),
       /** collision: the colliding loop ids to judge. */

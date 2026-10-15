@@ -36,6 +36,7 @@ import { promisify } from "node:util";
 import {
   createLogger,
   readPackageVersion,
+  type AgentContextAssessment,
   type AgentEvent,
   type Logger,
   type ToolResult,
@@ -554,7 +555,10 @@ class ClaudeCodeTurn {
   private canceled = false;
   private toolCalls = 0;
   private usage: Usage = {};
+  /** Per-request usage keyed by API message id, summed for live progress. */
+  private readonly requestUsage = new Map<string, Usage>();
   private contextInputTokens: number | undefined;
+  private peakContextInputTokens: number | undefined;
   /** Error the CLI attached to an assistant message (`authentication_failed`, …). */
   private apiError: string | undefined;
   private startupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -758,8 +762,37 @@ class ClaudeCodeTurn {
         (numberField(usage, "input_tokens") ?? 0) +
         (numberField(usage, "cache_read_input_tokens") ?? 0) +
         (numberField(usage, "cache_creation_input_tokens") ?? 0);
-      if (context > 0) this.contextInputTokens = context;
+      if (context > 0) {
+        this.contextInputTokens = context;
+        this.peakContextInputTokens = Math.max(this.peakContextInputTokens ?? 0, context);
+      }
+      // One API request can surface as several assistant messages sharing an
+      // id and its usage, so live progress sums distinct requests.
+      const requestId = stringField(body, "id");
+      if (requestId && context > 0) {
+        this.requestUsage.set(requestId, parseClaudeCodeUsage(usage));
+        const live: Usage = {};
+        for (const request of this.requestUsage.values())
+          for (const key of ["inputTokens", "outputTokens", "cacheReadTokens"] as const)
+            if (request[key] !== undefined) live[key] = (live[key] ?? 0) + request[key];
+        this.queue.push(
+          wrapEvent("agent.usage.update", { ...this.ids, usage: live, context: this.context() }),
+        );
+      }
     }
+  }
+
+  /** The latest request's input size, as far as the CLI reported it. */
+  private context(): AgentContextAssessment {
+    const inputTokens = this.contextInputTokens;
+    return {
+      ...(inputTokens === undefined
+        ? {}
+        : { inputTokens, peakInputTokens: this.peakContextInputTokens ?? inputTokens }),
+      measurement: inputTokens === undefined ? "unknown" : "provider_reported",
+      limitSource: "unknown",
+      requestIteration: Math.max(1, this.requestUsage.size),
+    };
   }
 
   /**
@@ -996,18 +1029,12 @@ class ClaudeCodeTurn {
     this.completed = true;
     clearTimeout(this.startupTimer);
     clearTimeout(this.idleTimer);
-    const inputTokens = this.contextInputTokens;
     this.queue.push(
       wrapEvent("agent.message.end", {
         ...this.ids,
         stopReason,
         usage: Object.keys(this.usage).length > 0 ? this.usage : undefined,
-        context: {
-          ...(inputTokens === undefined ? {} : { inputTokens, peakInputTokens: inputTokens }),
-          measurement: inputTokens === undefined ? "unknown" : "provider_reported",
-          limitSource: "unknown",
-          requestIteration: 1,
-        },
+        context: this.context(),
         ...(failure
           ? {
               failure: {

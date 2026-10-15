@@ -8,6 +8,7 @@ import {
 } from "../storage/run-queue.js";
 import { parseCognitionSynthesisRunPayload } from "../run-payloads.js";
 import type { ClaimedCognitionRun } from "../storage/types.js";
+import type { CognitionContextHandoffReason } from "../run-driver.js";
 import type Database from "better-sqlite3";
 
 export interface KnowledgeContinuationProgress {
@@ -42,13 +43,38 @@ export function knowledgeContinuationProgress(
   return { batchId: payload.batchId, settled: settledFrontier(db, payload.batchId) };
 }
 
+/** Why a maintenance segment ended before its batch did. */
+export type KnowledgeHandoffReason = "tool_iteration_cap" | CognitionContextHandoffReason;
+
 export interface ContinueKnowledgeRunInput {
   progress: KnowledgeContinuationProgress;
   successorId: string;
   settlement: Omit<FinalizeCognitionRunInput, "outcome">;
+  /** Defaults to the tool-call budget. */
+  reason?: KnowledgeHandoffReason;
+  /**
+   * Consecutive context handoffs a batch may take without settling a frontier
+   * input. A fresh context can succeed where a full one failed, but a segment
+   * that overflows before saving anything would otherwise repeat forever.
+   * A tool-call cap always needs progress. Defaults to none.
+   */
+  maxStalledHandoffs?: number;
 }
 
-/** Keep frontier progress and reservations while giving a paid segment its own history. */
+const HANDOFF_MESSAGES: Record<KnowledgeHandoffReason, string> = {
+  tool_iteration_cap:
+    "Tool-call limit reached; remaining durable frontier continues in the linked run",
+  context_budget: "Context budget reached; remaining durable frontier continues in the linked run",
+  context_window_exceeded:
+    "Model context window exceeded; remaining durable frontier continues in the linked run",
+};
+
+/**
+ * Keep frontier progress and reservations while giving a paid segment its own
+ * history. A segment continues when it settled frontier inputs, or — after a
+ * context handoff — while its batch has stalled fewer than the allowed number
+ * of consecutive times; the successor carries the stall count.
+ */
 export function continueKnowledgeRun(
   db: Database.Database,
   input: ContinueKnowledgeRunInput,
@@ -74,11 +100,11 @@ export function continueKnowledgeRun(
         .get(progress.batchId, settlement.runId)
     )
       return false;
-    if (
-      !Number.isSafeInteger(progress.settled) ||
-      progress.settled < 0 ||
-      settledFrontier(db, progress.batchId) <= progress.settled
-    )
+    if (!Number.isSafeInteger(progress.settled) || progress.settled < 0) return false;
+    const reason = input.reason ?? "tool_iteration_cap";
+    const advanced = settledFrontier(db, progress.batchId) > progress.settled;
+    const stalled = advanced ? 0 : (payload.stalledHandoffs ?? 0) + 1;
+    if (!advanced && (reason === "tool_iteration_cap" || stalled > (input.maxStalledHandoffs ?? 0)))
       return false;
     finalizeCognitionRun(db, {
       ...settlement,
@@ -86,12 +112,21 @@ export function continueKnowledgeRun(
       usage: settlement.usage ?? { promptTokens: 0, completionTokens: 0 },
       outcome: { kind: "completed" },
     });
+    // The stall count is the successor's own; the predecessor's is replaced.
+    const { stalledHandoffs: _stalled, ...inherited } = JSON.parse(run.payload_json) as Record<
+      string,
+      unknown
+    >;
     enqueueCognitionRun(
       db,
       {
         id: input.successorId,
         kind: "synthesis",
-        payload: { ...JSON.parse(run.payload_json), continuedFromRunId: settlement.runId },
+        payload: {
+          ...inherited,
+          continuedFromRunId: settlement.runId,
+          ...(stalled > 0 ? { stalledHandoffs: stalled } : {}),
+        },
         ...(run.dedupe_key ? { dedupeKey: run.dedupe_key } : {}),
         notBefore: settlement.now,
       },
@@ -101,12 +136,8 @@ export function continueKnowledgeRun(
       "UPDATE knowledge_batches SET run_id=?,status='pending',updated_at=?,revision=revision+1 WHERE id=?",
     ).run(input.successorId, settlement.now, progress.batchId);
     db.prepare(
-      "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.continuedByRunId',?),last_error=? WHERE id=?",
-    ).run(
-      input.successorId,
-      "Tool-call limit reached; remaining durable frontier continues in the linked run",
-      settlement.runId,
-    );
+      "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.continuedByRunId',?,'$.handoffReason',?),last_error=? WHERE id=?",
+    ).run(input.successorId, reason, HANDOFF_MESSAGES[reason], settlement.runId);
     return true;
   })();
 }

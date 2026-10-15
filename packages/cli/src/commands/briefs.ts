@@ -88,6 +88,31 @@ interface RunDto {
     cacheReadTokens?: number;
     cacheCreationTokens?: number;
   } | null;
+  /** Context-window occupancy of the run's conversation; absent from older gateways. */
+  context?: RunContextDto | null;
+}
+
+interface RunContextDto {
+  peakInputTokens: number | null;
+  lastInputTokens: number | null;
+  contextWindowTokens: number | null;
+  handoffReason: string | null;
+}
+
+/** One line describing a run's context occupancy and handoff, or null when unknown. */
+export function renderRunContext(context: RunContextDto | null | undefined): string | null {
+  if (!context) return null;
+  const parts: string[] = [];
+  if (context.peakInputTokens !== null) {
+    const window =
+      context.contextWindowTokens !== null
+        ? ` of ${context.contextWindowTokens} (${Math.round((context.peakInputTokens / context.contextWindowTokens) * 100)}%)`
+        : "";
+    parts.push(`peak ${context.peakInputTokens} input tokens${window}`);
+  }
+  if (context.lastInputTokens !== null) parts.push(`latest ${context.lastInputTokens}`);
+  if (context.handoffReason !== null) parts.push(`handed off: ${context.handoffReason}`);
+  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 /**
@@ -684,6 +709,8 @@ const runShowCommand = defineCommand({
           `  tokens:       ${run.usage.promptTokens} prompt${cached} + ${run.usage.completionTokens} completion`,
         );
       }
+      const context = renderRunContext(run.context);
+      if (context) console.log(`  context:      ${context}`);
       if (run.lastError) console.log(`  last error:   ${c.red}${oneLine(run.lastError)}${c.reset}`);
       // The decoded payload — WHAT the run reacts to. Live for pending
       // AND settled runs (settling retains the reference-shaped payload);

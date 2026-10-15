@@ -57,6 +57,19 @@ export type FetchDocumentArgs = z.infer<typeof fetchDocumentArgsSchema>;
 export interface FetchDocumentToolDeps {
   port: DocumentPort;
   citationReads?: CitationReads;
+  /**
+   * Body characters returned when a call names no `maxContentChars`. Unset
+   * returns the whole body. A host whose sessions run long tool loops sets it
+   * so one read cannot fill the model's context; longer bodies are paged.
+   */
+  defaultMaxContentChars?: number;
+}
+
+/** How the model pages a body longer than the default read, for tool descriptions. */
+export function documentPagingNote(maxChars: number | undefined): string {
+  return maxChars === undefined
+    ? ""
+    : ` A body longer than ${maxChars} characters returns its first ${maxChars} with contentRange.truncated and contentRange.nextOffset; read the rest by fetching again with contentOffset set to nextOffset.`;
 }
 
 export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle {
@@ -69,7 +82,8 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
       "candidate, only the ones likely to answer the question." +
       (deps.port.supportsKnowledgeAliases
         ? " Also accepts wiki:<pageId> links from maintained context. Copy a wiki:<pageId> alias only from an actual wiki link. A knowledgeContext overlay separates claim provenance from navigation; its returned documentIds are opaque corpus IDs: copy them exactly into fetch tools, without adding wiki: or any other prefix. Missing or stale projections are unavailable, so use search instead."
-        : ""),
+        : "") +
+      documentPagingNote(deps.defaultMaxContentChars),
     schema: fetchDocumentArgsSchema,
     summarize(args: unknown): string | undefined {
       if (!args || typeof args !== "object") return undefined;
@@ -110,9 +124,11 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
           const offset = args.contentOffset ?? 0;
           const limit =
             args.maxContentChars ??
+            deps.defaultMaxContentChars ??
             (args.contentOffset === undefined ? document.content.length : 65536);
           observed = document.content.slice(offset, offset + limit);
           full = offset === 0 && observed.length === document.content.length;
+          const end = offset + observed.length;
           if (!full)
             document = {
               ...document,
@@ -122,6 +138,7 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
                 returnedCharacters: observed.length,
                 totalCharacters: document.content.length,
                 truncated: true,
+                ...(end < document.content.length ? { nextOffset: end } : {}),
               },
             };
         }

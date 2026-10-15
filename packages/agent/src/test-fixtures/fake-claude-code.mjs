@@ -21,6 +21,8 @@
  *                                  silent | auth-error | hang | exit
  *   OMNESIS_FAKE_CLAUDE_LIST_MODELS "fail" answers list_models with an error
  *   OMNESIS_FAKE_CLAUDE_TOOL       tool the `tool` scenario calls (default: the first)
+ *   OMNESIS_FAKE_CLAUDE_MESSAGE_ID every assistant message carries this API message
+ *                                  id, as when one request spans several messages
  *   OMNESIS_FAKE_CLAUDE_TOOL_ARGS  JSON arguments for the `tool` scenario
  *   OMNESIS_FAKE_CLAUDE_TOOL_PROGRESS "own" reports progress on the `tool`
  *                                  scenario's call, "heartbeat" sends the
@@ -114,10 +116,12 @@ const textDelta = (text) =>
     session_id: sessionId,
   });
 
+let assistantMessages = 0;
 const assistant = (content, extra = {}) =>
   send({
     type: "assistant",
     message: {
+      id: env.OMNESIS_FAKE_CLAUDE_MESSAGE_ID ?? `msg_fake_${++assistantMessages}`,
       model: "claude-fake",
       role: "assistant",
       content,

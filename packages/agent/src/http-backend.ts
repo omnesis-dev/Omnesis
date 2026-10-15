@@ -483,6 +483,7 @@ export class HttpChatBackend implements ChatBackend {
                   cacheReadTokens: totalUsage.cacheReadTokens + iterationUsage.cachedInput,
                   outputTokens: totalUsage.outputTokens + iterationUsage.completion,
                 },
+                context: contextAssessment,
               });
             }
 
@@ -657,6 +658,13 @@ export class HttpChatBackend implements ChatBackend {
           requestIteration,
         );
         if (attempt.usage.reasoning > 0) this.extendedOutputObserved = true;
+        if (attempt.usage.prompt > 0)
+          yield wrapEvent("agent.usage.update", {
+            sessionId,
+            messageId,
+            usage: { ...totalUsage },
+            context: contextAssessment,
+          });
 
         if (attempt.reasoning) {
           if (replayReasoningContent) reasoningBuf = attempt.reasoning;

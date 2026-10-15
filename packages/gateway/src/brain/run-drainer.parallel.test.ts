@@ -67,6 +67,7 @@ function setup(
     limit?: number;
     exhausted?: () => boolean;
     enabled?: () => boolean;
+    maxStalledHandoffs?: number;
   } = {},
 ) {
   const controller = new AbortController();
@@ -89,6 +90,9 @@ function setup(
           ? { exhausted: true, dimension: "runs", used: 1, limit: 1, reason: "test budget" }
           : { exhausted: false },
       getWorkerConcurrency: () => options.limit ?? 2,
+      ...(options.maxStalledHandoffs === undefined
+        ? {}
+        : { getMaxStalledHandoffs: () => options.maxStalledHandoffs! }),
       getResurrectDebounceMs: () => 0,
       clock: () => 100,
     },
@@ -310,6 +314,92 @@ test("a tool cap without settled frontier progress remains a terminal failure", 
   await drain.run();
   expect(getCognitionRun(db, "stalled")?.status).toBe("failed");
   expect(db.prepare("SELECT COUNT(*) AS n FROM cognition_runs").get()).toEqual({ n: 1 });
+});
+
+test("continues a segment that reached its context budget and names the reason", async () => {
+  await enqueue("full");
+  db.exec(
+    "INSERT INTO knowledge_frontier(batch_id,node_id,input_fingerprint,input_versions_json,depth,status) VALUES('batch-full','source:done','done','{}',0,'offered'),('batch-full','source:remaining','remaining','{}',0,'offered')",
+  );
+  const starts: string[] = [];
+  const drain = setup(async (run) => {
+    starts.push(run.id);
+    if (run.id === "full")
+      db.exec("UPDATE knowledge_frontier SET status='unchanged' WHERE node_id='source:done'");
+    return run.id === "full"
+      ? {
+          ...success,
+          ok: false,
+          modelId: "scripted",
+          contextHandoff: "context_budget",
+          usage: {
+            promptTokens: 900,
+            completionTokens: 20,
+            context: { peakInputTokens: 130_000, lastInputTokens: 130_000 },
+          },
+          failure: {
+            code: "context_budget",
+            message: "Background run reached its context budget",
+            retryable: false,
+            backend: "scripted",
+            model: "scripted",
+          },
+        }
+      : success;
+  });
+  await drain.run();
+  const successor = (
+    db.prepare("SELECT run_id FROM knowledge_batches WHERE id='batch-full'").get() as {
+      run_id: string;
+    }
+  ).run_id;
+  expect(starts).toEqual(["full", successor]);
+  expect(getCognitionRun(db, "full")).toMatchObject({
+    status: "completed",
+    payload: { handoffReason: "context_budget", continuedByRunId: successor },
+    usage: { context: { peakInputTokens: 130_000 } },
+  });
+  expect(getCognitionRun(db, successor)?.payload).toMatchObject({ continuedFromRunId: "full" });
+});
+
+test("gives an overflowed segment a fresh context a bounded number of times", async () => {
+  await enqueue("overflow");
+  db.exec(
+    "INSERT INTO knowledge_frontier(batch_id,node_id,input_fingerprint,input_versions_json,depth,status) VALUES('batch-overflow','source:remaining','remaining','{}',0,'offered')",
+  );
+  const starts: string[] = [];
+  const drain = setup(
+    async (run) => {
+      starts.push(run.id);
+      return {
+        ...success,
+        ok: false,
+        modelId: "scripted",
+        contextHandoff: "context_window_exceeded",
+        usage: { promptTokens: 400, completionTokens: 0 },
+        failure: {
+          code: "context_window_exceeded",
+          message: "The conversation exceeded the model's context window.",
+          retryable: false,
+          backend: "scripted",
+          model: "scripted",
+        },
+      };
+    },
+    { maxStalledHandoffs: 1 },
+  );
+  await drain.run();
+  // One fresh-context retry without progress, then the ordinary terminal failure.
+  expect(starts).toHaveLength(2);
+  expect(getCognitionRun(db, "overflow")).toMatchObject({
+    status: "completed",
+    payload: { handoffReason: "context_window_exceeded" },
+  });
+  expect(getCognitionRun(db, starts[1]!)).toMatchObject({
+    status: "failed",
+    failureCode: "context_window_exceeded",
+    payload: { stalledHandoffs: 1 },
+  });
 });
 
 test("renews admission rounds behind a slow sibling without exceeding capacity", async () => {

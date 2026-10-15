@@ -681,6 +681,19 @@
           and explicit deferrals retain their reconsideration date.
         </p>
         <p>
+          Brain runs read documents in pages: unless a run asks for a range, each
+          <code>fetch_many</code> read returns at most
+          <code>brain.documentReadChars</code> characters of a body. A maintenance run's
+          conversation is also bounded. When a request's input reaches
+          <code>brain.knowledge.contextHandoffRatio</code> of the model's reported context window,
+          or <code>brain.knowledge.contextHandoffTokens</code> when no window is reported, the run
+          stops after its current tool calls and a new run continues the batch from a fresh context.
+          A request the provider refuses as too long is handed on the same way, so settled work is
+          kept. After <code>brain.knowledge.maxStalledHandoffs</code> handoffs in a row that settle
+          nothing, the batch fails the ordinary way. <code>omnesis brain run &lt;id&gt;</code> shows
+          the largest request input and why a run handed off.
+        </p>
+        <p>
           Bounded organization passes also consider already-interpreted sources together. They can
           maintain a useful wiki about a settled decision or arrangement without creating a new
           task. The agent records the grounded page targets, a no-page decision, or a deferral with

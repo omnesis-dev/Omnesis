@@ -625,6 +625,14 @@ export class AnthropicBackend implements ChatBackend {
         outputTokens: iterationOutputTokens,
         cacheReadTokens: iterationCacheReadTokens,
       });
+      // The request's spend and input size, before any of its tool calls run.
+      if (!signal?.aborted && contextAssessment.inputTokens !== undefined)
+        yield wrapEvent("agent.usage.update", {
+          sessionId,
+          messageId,
+          usage: { ...totalUsage },
+          context: contextAssessment,
+        });
 
       // Aborting an SDK stream may either throw or end iteration normally.
       // In both cases cancellation wins over the transport-shaped outcome.

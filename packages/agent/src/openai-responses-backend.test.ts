@@ -3,9 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
-import { BACKGROUND_RATE_LIMIT_PATIENCE, type AgentEvent, type ToolResult } from "@omnesis/core";
 import {
   OpenAIResponsesBackend,
   convertHistoryToResponsesInput,
@@ -860,6 +860,13 @@ describe("OpenAIResponsesBackend.runTurn", () => {
     expect((toolStart!.payload as { tool: string }).tool).toBe("search_documents");
     expect(events.some((e) => e.type === "agent.tool.result")).toBe(true);
     expect(textOf(events)).toBe("Found it.");
+    // Each request reports its input size before its tool calls run.
+    const live = events.filter((e) => e.type === "agent.usage.update");
+    expect(events.indexOf(live[0]!)).toBeLessThan(events.indexOf(toolStart!));
+    expect(live.map((e) => (e.payload as { context?: { inputTokens?: number } }).context)).toEqual([
+      expect.objectContaining({ inputTokens: 20, peakInputTokens: 20 }),
+      expect.objectContaining({ inputTokens: 30, peakInputTokens: 30 }),
+    ]);
 
     // Continuation request chains by previous_response_id and sends only the output.
     const secondBody = JSON.parse((fetchMock.mock.calls[2]![1] as { body: string }).body);

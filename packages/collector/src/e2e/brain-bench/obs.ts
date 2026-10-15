@@ -89,6 +89,13 @@ export interface RunDto {
   lastAttemptAt: string | null;
   completedAt: string | null;
   usage: { promptTokens?: number; completionTokens?: number } | null;
+  /** Context-window occupancy and the reason the run handed its work on, if it did. */
+  context: {
+    peakInputTokens: number | null;
+    lastInputTokens: number | null;
+    contextWindowTokens: number | null;
+    handoffReason: string | null;
+  } | null;
   /**
    * The worth gate's verdict for the run (the newest decision's), or null when
    * the gate never judged it. Served on the runs LIST only.
@@ -539,6 +546,7 @@ export class BrainObs {
       events: Array<{ type: string; payload: unknown }>;
       finalText: string;
       outcome: string;
+      failureCode?: string;
       usage: unknown;
     };
   }> {

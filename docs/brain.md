@@ -74,20 +74,23 @@ invalid judgements take the conservative path; they do not establish that
 content is irrelevant or verified. Maintenance tiers are configurable under
 `brain.knowledge`:
 
-| Setting              | Default | Purpose                                       |
-| -------------------- | ------- | --------------------------------------------- |
-| `immediateThreshold` | 0.8     | Immediate repair threshold                    |
-| `soonThreshold`      | 0.4     | Hourly repair threshold                       |
-| `soonDelay`          | `1h`    | Delay for soon work                           |
-| `routineDelay`       | `6h`    | Delay for routine work                        |
-| `rootMaxChars`       | 8000    | Hard limit for the root wiki                  |
-| `maxSeeds`           | 64      | Admission bound per maintenance pass          |
-| `maxFrontierNodes`   | 32      | Maximum offered frontier size                 |
-| `maxFrontierChars`   | 65536   | Maximum JSON characters per frontier response |
-| `maxVisitedPerSeed`  | 256     | Bounded affected-region traversal             |
-| `retryBackoff`       | `1h`    | First delay after a failed batch attempt      |
-| `retryBackoffCap`    | `1d`    | Longest delay between those retries           |
-| `maxFailedAttempts`  | 5       | Failed attempts before work is parked         |
+| Setting                | Default | Purpose                                        |
+| ---------------------- | ------- | ---------------------------------------------- |
+| `immediateThreshold`   | 0.8     | Immediate repair threshold                     |
+| `soonThreshold`        | 0.4     | Hourly repair threshold                        |
+| `soonDelay`            | `1h`    | Delay for soon work                            |
+| `routineDelay`         | `6h`    | Delay for routine work                         |
+| `rootMaxChars`         | 8000    | Hard limit for the root wiki                   |
+| `maxSeeds`             | 64      | Admission bound per maintenance pass           |
+| `maxFrontierNodes`     | 32      | Maximum offered frontier size                  |
+| `maxFrontierChars`     | 65536   | Maximum JSON characters per frontier response  |
+| `maxVisitedPerSeed`    | 256     | Bounded affected-region traversal              |
+| `retryBackoff`         | `1h`    | First delay after a failed batch attempt       |
+| `retryBackoffCap`      | `1d`    | Longest delay between those retries            |
+| `maxFailedAttempts`    | 5       | Failed attempts before work is parked          |
+| `contextHandoffRatio`  | 0.65    | Share of a reported context window a run fills |
+| `contextHandoffTokens` | 120000  | Handoff input size when no window is reported  |
+| `maxStalledHandoffs`   | 2       | Context handoffs in a row without progress     |
 
 Evidence changes whose potentially affected regions overlap share a batch;
 disjoint regions can remain separate. The root is a separately coordinated
@@ -503,6 +506,32 @@ continues in a new run on the same durable batch. Completed inputs and reservati
 remain intact, each segment keeps its transcript and spend, and the successor must
 pass the usual admission budget. A cap reached without settled-input progress
 retains the ordinary failure policy.
+
+The same continuation bounds a maintenance run's context. Every model request
+reports its input size, and a run whose latest request reaches its budget ends once
+that response's tool calls finish. The in-process backends (Anthropic,
+OpenAI-compatible HTTP and Responses) then send no further request. Codex and
+Claude Code run their own tool loop and may already have sent one, or report the
+size after the tools ran and stop a response later; the remaining share of the
+window absorbs that. The budget is `contextHandoffRatio` of the input limit the backend
+reports (Codex reports the model's window; Anthropic, Responses and configured HTTP
+limits come from the model registry), or `contextHandoffTokens` when none is
+reported, as with Claude Code. A provider refusing a
+request as too long for the window ends the run the same way instead of failing
+it. Either handoff continues after settled progress, and up to
+`maxStalledHandoffs` consecutive times without it, because a fresh context can
+succeed where a full one could not; past that the ordinary failure policy applies.
+The run record keeps the handoff reason (`tool_iteration_cap`, `context_budget` or
+`context_window_exceeded`) and its context occupancy: the largest and the latest
+request input and the reported window. `/admin/brain/runs` serves both;
+`omnesis brain run` prints the peak and latest input, the window and the reason; and the gateway logs one line per context handoff.
+
+Document reads are bounded the same way. A Brain run's `fetch_many` returns at most
+`brain.documentReadChars` characters (default 16384) of each body unless the call
+names a range; a longer body comes back with `contentRange.truncated` and
+`contentRange.nextOffset`, and the run reads on by fetching again from that offset.
+Paged reads of one revision combine into a complete read for discovery coverage.
+Interactive reads are unchanged.
 Codex background turns have independent runtime capacity, defaulting to four
 slots (`inference.codex.backgroundPoolSize`), so interactive requests and nested
 verification calls do not compete for those slots.
@@ -1266,7 +1295,8 @@ reads; partial reads expose the first unread UTF-16 offset. Only actual complete
 reads at the current source and privacy generation authorize discovery coverage.
 Deferred reference results never count as reads.
 
-Background sessions stop inference when the first tool-call-budget refusal arrives.
+Background sessions stop inference when the first tool-call-budget refusal arrives,
+and maintenance sessions also when their context budget is reached.
 Completed writes and observed usage remain recorded; the existing durable-progress continuation
 policy decides whether a new bounded segment may resume unfinished maintenance. A cap
 never increases the tool budget or replays the completed segment's writes automatically.

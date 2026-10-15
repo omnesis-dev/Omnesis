@@ -13,6 +13,7 @@ import { z } from "zod";
 import { runBatch, BATCH_MAX_ITEMS, type BatchChild } from "./batch.js";
 import {
   createFetchDocumentTool,
+  documentPagingNote,
   fetchDocumentArgsSchema,
   type FetchDocumentToolDeps,
 } from "./fetch-document.js";
@@ -43,7 +44,8 @@ export function createFetchManyTool(deps: FetchDocumentToolDeps): ToolHandle {
       "likely to answer the question, not every candidate." +
       (deps.port.supportsKnowledgeAliases
         ? " documentId also accepts wiki:<pageId> links from maintained context. Copy a wiki:<pageId> alias only from an actual wiki link. knowledgeContext separates claim provenance from navigation; its returned documentIds are opaque corpus IDs: copy them exactly, without adding wiki: or any other prefix. Use search when a page is unavailable."
-        : ""),
+        : "") +
+      documentPagingNote(deps.defaultMaxContentChars),
     schema,
     summarize(args: unknown): string | undefined {
       const d = (args as { documents?: unknown[] } | null)?.documents;

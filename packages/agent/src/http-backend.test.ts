@@ -442,6 +442,9 @@ describe("HttpChatBackend", () => {
       "agent.usage.update",
       "agent.message.end",
     ]);
+    const live = events.find((e) => e.type === "agent.usage.update");
+    if (live?.type !== "agent.usage.update") throw new Error("expected live usage");
+    expect(live.payload.context).toMatchObject({ inputTokens: 50, peakInputTokens: 50 });
 
     const deltas = events
       .filter((e) => e.type === "agent.text.delta")
@@ -2444,9 +2447,13 @@ describe("HttpChatBackend — resilience ladder", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     expect(events.map((e) => e.type)).toEqual([
       "agent.message.start",
+      "agent.usage.update",
       "agent.error",
       "agent.message.end",
     ]);
+    const live = events.find((e) => e.type === "agent.usage.update");
+    if (live?.type !== "agent.usage.update") throw new Error("expected live usage");
+    expect(live.payload.context).toMatchObject({ inputTokens: 9, peakInputTokens: 9 });
     const err = events.find((e) => e.type === "agent.error");
     if (err && err.type === "agent.error") {
       expect(err.payload.code).toBe("http_empty_response");

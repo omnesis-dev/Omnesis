@@ -79,6 +79,11 @@ export async function startOpenAiServer(opts: {
   modelId: string;
   /** Decide the reply for one request. Throwing yields a 500 (the caller's error path). */
   respond: (messages: readonly WireMessage[]) => WireReply | Promise<WireReply>;
+  /**
+   * The input size reported for one request. Defaults to a character
+   * estimate of the conversation; a scenario about context growth scripts it.
+   */
+  promptTokens?: (messages: readonly WireMessage[]) => number;
 }): Promise<OpenAiServerHandle> {
   let counter = 0;
 
@@ -122,7 +127,9 @@ export async function startOpenAiServer(opts: {
           return;
         }
         const usage = {
-          prompt_tokens: Math.ceil(JSON.stringify(body.messages).length / 4),
+          prompt_tokens:
+            opts.promptTokens?.(body.messages) ??
+            Math.ceil(JSON.stringify(body.messages).length / 4),
           completion_tokens: 24,
         };
         const message =

@@ -517,6 +517,7 @@ function notifyUsage() {
     tokenUsage: {
       total: { inputTokens: 30, outputTokens: 11, cachedInputTokens: 20 },
       last: { inputTokens: 12, outputTokens: 7, cachedInputTokens: 2 },
+      modelContextWindow: 258_400,
     },
   });
 }

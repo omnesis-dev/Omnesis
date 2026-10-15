@@ -5,7 +5,7 @@ import { buildPage } from "@omnesis/types";
 import { BadRequestError, StalePageCursorError } from "../http/errors.js";
 import { decodePageCursor, encodePageCursor } from "../http/pagination-cursor.js";
 import { decodeRunTrigger } from "./run-payload-view.js";
-import { runScopeLoopId } from "./run-payloads.js";
+import { parseCognitionSynthesisRunPayload, runScopeLoopId } from "./run-payloads.js";
 import type {
   CognitionAdminDocumentRef,
   CognitionAdminQueryService,
@@ -195,7 +195,35 @@ export function runDto(run: CognitionRunRow, activity: RunActivityReader | undef
     nextAttemptAt: iso(run.nextAttemptAt),
     lastAttemptAt: iso(run.lastAttemptAt),
     completedAt: iso(run.completedAt),
-    usage: run.usage,
+    usage: runUsageDto(run.usage),
+    context: runContextDto(run),
+  };
+}
+
+/** Spend only; context occupancy is served beside it as `context`. */
+function runUsageDto(usage: CognitionRunRow["usage"]) {
+  if (!usage) return null;
+  const { context: _context, ...spend } = usage;
+  return spend;
+}
+
+/**
+ * How much of its model's context window a run's conversation filled, and why
+ * it handed its work to a successor if it did. Null when the backend reported
+ * no input sizes and the run did not hand off.
+ */
+function runContextDto(run: CognitionRunRow) {
+  const usage = run.usage?.context;
+  const handoffReason =
+    run.kind === "synthesis"
+      ? (parseCognitionSynthesisRunPayload(run.payload)?.handoffReason ?? null)
+      : null;
+  if (!usage && handoffReason === null) return null;
+  return {
+    peakInputTokens: usage?.peakInputTokens ?? null,
+    lastInputTokens: usage?.lastInputTokens ?? null,
+    contextWindowTokens: usage?.contextWindowTokens ?? null,
+    handoffReason,
   };
 }
 

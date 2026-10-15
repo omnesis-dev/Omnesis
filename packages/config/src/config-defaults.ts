@@ -71,10 +71,14 @@ export const CONFIG_DEFAULTS = {
       retryBackoff: "1h",
       retryBackoffCap: "1d",
       maxFailedAttempts: 5,
+      contextHandoffRatio: 0.65,
+      contextHandoffTokens: 120000,
+      maxStalledHandoffs: 2,
     },
     // Omnesis Brain / Cognition Steward (experimental). Runtime resolution lives in
     // packages/gateway/src/brain/config.ts; a cross-check test there keeps
     // these display mirrors honest.
+    documentReadChars: 16384,
     workerConcurrency: 4,
     conversationDebounce: "1h",
     conversationMaxDefer: "6h",

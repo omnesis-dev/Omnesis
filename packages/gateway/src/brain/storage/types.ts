@@ -476,6 +476,20 @@ export interface CognitionRunUsage {
   completionTokens: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  /** How much of the context window the attempt's conversation occupied. */
+  context?: CognitionRunContextUsage;
+}
+
+/**
+ * Context-window occupancy of one attempt, per model request: the input of
+ * the largest and of the latest request, cached input included. Absent fields
+ * were not reported by the backend.
+ */
+export interface CognitionRunContextUsage {
+  peakInputTokens?: number;
+  lastInputTokens?: number;
+  /** The model's input limit, when the backend reported one. */
+  contextWindowTokens?: number;
 }
 
 /** A claimed, ready-to-execute run (attempts already bumped). */

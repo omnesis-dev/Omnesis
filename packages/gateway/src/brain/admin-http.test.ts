@@ -684,6 +684,56 @@ describe("GET /admin/brain/runs", () => {
     expect((await get("/admin/brain/runs?status=bogus")).status).toBe(400);
   });
 
+  test("reports a run's context occupancy and the reason it handed off", async () => {
+    enqueueCognitionRun(
+      db,
+      {
+        id: "run_segment",
+        kind: "synthesis",
+        payload: { focus: "knowledge-maintenance", batchId: "batch_demo" },
+      },
+      1000,
+    );
+    claimDueCognitionRuns(db, { now: 2000, limit: 1 });
+    completeCognitionRun(db, "run_segment", {
+      usage: {
+        promptTokens: 400_000,
+        completionTokens: 900,
+        context: {
+          peakInputTokens: 168_000,
+          lastInputTokens: 168_000,
+          contextWindowTokens: 258_400,
+        },
+      },
+      now: 3000,
+    });
+    db.prepare(
+      "UPDATE cognition_runs SET payload_json=json_set(payload_json,'$.continuedByRunId','run_next','$.handoffReason','context_budget') WHERE id='run_segment'",
+    ).run();
+    seedCompletedRun("run_plain", "doc_a");
+    const expected = {
+      peakInputTokens: 168_000,
+      lastInputTokens: 168_000,
+      contextWindowTokens: 258_400,
+      handoffReason: "context_budget",
+    };
+    const { items } = (await (await get("/admin/brain/runs")).json()) as {
+      items: Array<{ id: string; context: unknown }>;
+    };
+    const segment = items.find((run) => run.id === "run_segment") as
+      | { context: unknown; usage: Record<string, unknown> }
+      | undefined;
+    expect(segment?.context).toEqual(expected);
+    // Spend and occupancy are served separately.
+    expect(segment?.usage).toEqual({ promptTokens: 400_000, completionTokens: 900 });
+    // A run whose backend reported no input sizes carries no context.
+    expect(items.find((run) => run.id === "run_plain")?.context).toBeNull();
+    const detail = (await (await get("/admin/brain/runs/run_segment")).json()) as {
+      run: { context: unknown };
+    };
+    expect(detail.run.context).toEqual(expected);
+  });
+
   test("orders and keyset-pages scheduled runs by nextAttemptAt", async () => {
     enqueueCognitionRun(
       db,

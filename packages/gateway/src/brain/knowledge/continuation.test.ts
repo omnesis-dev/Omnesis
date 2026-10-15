@@ -121,3 +121,51 @@ it("counts a paid continuation against the run budget even when usage was omitte
   expect(continueKnowledgeRun(db, input)).toBe(true);
   expect(db.prepare("SELECT SUM(runs) AS runs FROM cognition_spend").get()).toEqual({ runs: 1 });
 });
+
+it("records why the segment ended on the settled run", () => {
+  const input = { ...continuation(), reason: "context_budget" as const };
+  settleFirst();
+  expect(continueKnowledgeRun(db, input)).toBe(true);
+  expect(getCognitionRun(db, "run")).toMatchObject({
+    payload: { continuedByRunId: "successor", handoffReason: "context_budget" },
+    lastError: "Context budget reached; remaining durable frontier continues in the linked run",
+  });
+  // A segment that settled input starts its successor with a clean stall count.
+  expect(getCognitionRun(db, "successor")?.payload).not.toHaveProperty("stalledHandoffs");
+  expect(getCognitionRun(db, "successor")?.payload).not.toHaveProperty("handoffReason");
+});
+
+it("bounds consecutive context handoffs that settle nothing", () => {
+  const segment = (runId: string, successorId: string, now: number) => {
+    const [run] = claimDueCognitionRuns(db, { now, limit: 1 });
+    expect(run?.id).toBe(runId);
+    return continueKnowledgeRun(db, {
+      progress: knowledgeContinuationProgress(db, run!)!,
+      successorId,
+      reason: "context_window_exceeded",
+      maxStalledHandoffs: 2,
+      settlement: {
+        runId,
+        claimedPayloadJson: run!.payloadJson,
+        now: now + 1,
+        day: cognitionSpendDay(now + 1),
+        mechanism: "knowledge-maintenance",
+        modelId: "scripted",
+        usage: { promptTokens: 100, completionTokens: 20 },
+      },
+    });
+  };
+  expect(segment("run", "second", 2)).toBe(true);
+  expect(getCognitionRun(db, "second")?.payload).toMatchObject({ stalledHandoffs: 1 });
+  expect(segment("second", "third", 4)).toBe(true);
+  expect(getCognitionRun(db, "third")?.payload).toMatchObject({ stalledHandoffs: 2 });
+  // The third stalled segment takes the ordinary failure path instead.
+  expect(segment("third", "fourth", 6)).toBe(false);
+  expect(getCognitionRun(db, "third")?.status).toBe("pending");
+  expect(getCognitionRun(db, "fourth")).toBeNull();
+});
+
+it("never continues a tool-capped segment that settled nothing, whatever the stall allowance", () => {
+  const input = { ...continuation(), maxStalledHandoffs: 5 };
+  expect(continueKnowledgeRun(db, input)).toBe(false);
+});

@@ -8,6 +8,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger, type AgentEvent } from "@omnesis/core";
 import {
   CognitionRunDriver,
+  contextHandoffThreshold,
   defaultCognitionPrompt,
   type CognitionRunDriverDeps,
 } from "./run-driver.js";
@@ -761,6 +762,249 @@ describe("CognitionRunDriver", () => {
     expect(transcript.failureCode).toBe("tool_iteration_cap");
     expect(transcript.events.filter((event) => event.type === "agent.tool.result")).toHaveLength(2);
     expect(transcript.usage).toMatchObject({ promptTokens: 30, completionTokens: 7 });
+  });
+
+  /**
+   * A tool loop whose every model request reports its input size live: each
+   * request answers with two tool calls, and the backend stops issuing
+   * requests once the session is cancelled.
+   */
+  function growingContextBackend(
+    inputs: number[],
+    opts: { window?: number; requests?: number[] } = {},
+  ): ChatBackend {
+    return {
+      name: "scripted",
+      model: "scripted-model",
+      async *runTurn(input, signal) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield happyScript("")(input)[0]!;
+        let peak = 0;
+        for (const [index, inputTokens] of inputs.entries()) {
+          if (signal?.aborted) break;
+          opts.requests?.push(inputTokens);
+          peak = Math.max(peak, inputTokens);
+          yield {
+            type: "agent.usage.update",
+            payload: {
+              ...ids,
+              usage: { inputTokens: peak * (index + 1), outputTokens: 5 * (index + 1) },
+              context: {
+                inputTokens,
+                peakInputTokens: peak,
+                ...(opts.window ? { contextWindowTokens: opts.window } : {}),
+                measurement: "provider_reported",
+                limitSource: opts.window ? "provider" : "unknown",
+                requestIteration: index + 1,
+              },
+            },
+          };
+          for (const call of ["first", "second"])
+            yield {
+              type: "agent.tool.start",
+              payload: { ...ids, toolCallId: `${call}-${index}`, tool: "knowledge_save", args: {} },
+            };
+          for (const call of ["first", "second"])
+            yield {
+              type: "agent.tool.result",
+              payload: {
+                ...ids,
+                toolCallId: `${call}-${index}`,
+                durationMs: 0,
+                result: { kind: "structured", resultType: "saved", data: { revision: index } },
+              },
+            };
+        }
+        yield {
+          type: "agent.message.end",
+          payload: {
+            ...ids,
+            stopReason: signal?.aborted ? "canceled" : "end_turn",
+            usage: { inputTokens: peak * inputs.length, outputTokens: 5 * inputs.length },
+          },
+        };
+      },
+    };
+  }
+
+  test("counts a fetched document as opened only when the run read it whole", async () => {
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async *runTurn(input) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield happyScript("")(input)[0]!;
+        yield {
+          type: "agent.tool.start",
+          payload: {
+            ...ids,
+            toolCallId: "read",
+            tool: "fetch_many",
+            args: {
+              documents: [
+                { documentId: "doc_whole" },
+                { documentId: "doc_paged" },
+                { documentId: "doc_missing" },
+              ],
+            },
+          },
+        };
+        const ref = (documentId: string) => ({
+          documentId,
+          sourceType: "notes",
+          sourceId: "notes",
+        });
+        yield {
+          type: "agent.tool.result",
+          payload: {
+            ...ids,
+            toolCallId: "read",
+            durationMs: 0,
+            result: {
+              kind: "document.batch",
+              items: [
+                { kind: "document", ref: ref("doc_whole"), document: { id: "doc_whole" } },
+                {
+                  kind: "document",
+                  ref: ref("doc_paged"),
+                  document: { id: "doc_paged", contentRange: { truncated: true } },
+                },
+                { kind: "error", code: "not_found", message: "missing" },
+              ],
+            },
+          },
+        };
+        yield happyScript("done")(input).at(-1)!;
+      },
+    };
+    const outcome = await makeDriver({ resolveBackend: () => backend }).execute(claimed());
+    expect(outcome.openedDocIds).toEqual(["doc_whole"]);
+  });
+
+  test("derives the handoff threshold from a reported limit, else the fallback", () => {
+    const budget = { ratio: 0.65, fallbackTokens: 120_000 };
+    const reading = {
+      measurement: "provider_reported",
+      limitSource: "provider",
+      requestIteration: 1,
+    } as const;
+    expect(contextHandoffThreshold(budget, undefined)).toBe(120_000);
+    expect(contextHandoffThreshold(budget, { ...reading, contextWindowTokens: 400_000 })).toBe(
+      260_000,
+    );
+    // An input-only limit wins over a combined window that includes output.
+    expect(
+      contextHandoffThreshold(budget, {
+        ...reading,
+        maxInputTokens: 200_000,
+        contextWindowTokens: 264_000,
+      }),
+    ).toBe(130_000);
+  });
+
+  test("hands off once the request that crossed the budget has finished its tool calls", async () => {
+    const requests: number[] = [];
+    const outcome = await makeDriver({
+      resolveBackend: () => growingContextBackend([1_000, 3_000, 6_000, 9_000], { requests }),
+      contextBudget: () => ({ ratio: 0.65, fallbackTokens: 5_000 }),
+    }).execute(claimed());
+    // The third request crossed 5,000 tokens; its two saves still ran and no
+    // fourth request was sent.
+    expect(requests).toEqual([1_000, 3_000, 6_000]);
+    expect(outcome).toMatchObject({
+      ok: false,
+      contextHandoff: "context_budget",
+      failure: { code: "context_budget", retryable: false },
+      usage: {
+        promptTokens: 18_000,
+        completionTokens: 15,
+        context: { peakInputTokens: 6_000, lastInputTokens: 6_000 },
+      },
+    });
+    expect(outcome.toolLimitReached).toBeUndefined();
+    const transcript = transcripts.load(transcripts.list()[0]!.fileName);
+    expect(transcript.failureCode).toBe("context_budget");
+    expect(transcript.events.filter((event) => event.type === "agent.tool.result")).toHaveLength(6);
+    // The cancelled turn has no terminal reading; the last live one is kept.
+    expect(transcript.context).toMatchObject({ inputTokens: 6_000, peakInputTokens: 6_000 });
+  });
+
+  test("measures the budget against the model's reported window", async () => {
+    const requests: number[] = [];
+    const outcome = await makeDriver({
+      resolveBackend: () =>
+        growingContextBackend([1_000, 3_000, 6_000, 9_000], { window: 10_000, requests }),
+      contextBudget: () => ({ ratio: 0.5, fallbackTokens: 1_000 }),
+    }).execute(claimed());
+    expect(requests).toEqual([1_000, 3_000, 6_000]);
+    expect(outcome.usage?.context).toEqual({
+      peakInputTokens: 6_000,
+      lastInputTokens: 6_000,
+      contextWindowTokens: 10_000,
+    });
+  });
+
+  test("leaves a run without a budget to finish, recording its peak input", async () => {
+    const requests: number[] = [];
+    const outcome = await makeDriver({
+      resolveBackend: () => growingContextBackend([1_000, 3_000, 6_000, 9_000], { requests }),
+      contextBudget: () => null,
+    }).execute(claimed());
+    expect(requests).toHaveLength(4);
+    expect(outcome.ok).toBe(true);
+    expect(outcome.contextHandoff).toBeUndefined();
+    expect(outcome.usage?.context).toMatchObject({ peakInputTokens: 9_000 });
+  });
+
+  test("reports a context-window refusal as a context handoff", async () => {
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "scripted-model",
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async *runTurn(input) {
+        const ids = { sessionId: input.sessionId, messageId: input.messageId };
+        yield happyScript("")(input)[0]!;
+        yield {
+          type: "agent.error",
+          payload: { ...ids, code: "context_window_exceeded", message: "too long" },
+        };
+        yield {
+          type: "agent.message.end",
+          payload: {
+            ...ids,
+            stopReason: "error",
+            usage: { inputTokens: 900, outputTokens: 4 },
+            context: {
+              inputTokens: 210_000,
+              peakInputTokens: 210_000,
+              maxInputTokens: 200_000,
+              measurement: "provider_count",
+              limitSource: "provider",
+              requestIteration: 7,
+            },
+            failure: {
+              code: "context_window_exceeded",
+              message: "too long",
+              retryable: false,
+            },
+          },
+        };
+      },
+    };
+    const outcome = await makeDriver({ resolveBackend: () => backend }).execute(claimed());
+    expect(outcome).toMatchObject({
+      ok: false,
+      contextHandoff: "context_window_exceeded",
+      failure: { code: "context_window_exceeded" },
+      usage: {
+        context: {
+          peakInputTokens: 210_000,
+          lastInputTokens: 210_000,
+          contextWindowTokens: 200_000,
+        },
+      },
+    });
   });
 
   test("fails closed when post-turn validation reports incomplete durable work", async () => {

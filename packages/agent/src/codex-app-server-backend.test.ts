@@ -27,6 +27,7 @@ import {
   isSupportedCodexCliVersion,
   parseCodexCliVersion,
   parseCodexContextInputTokens,
+  parseCodexContextWindowTokens,
   parseCodexUsage,
   resolveCodexRuntimeCommand,
 } from "./codex-app-server-backend.js";
@@ -179,6 +180,13 @@ describe("parseCodexUsage", () => {
     expect(parseCodexContextInputTokens(tokenUsage)).toBe(9_000);
     expect(parseCodexContextInputTokens({ total: tokenUsage.total })).toBe(25_696);
     expect(parseCodexContextInputTokens(undefined)).toBeUndefined();
+  });
+
+  it("reads the model context window only when Codex reports a positive one", () => {
+    expect(parseCodexContextWindowTokens({ modelContextWindow: 258_400 })).toBe(258_400);
+    expect(parseCodexContextWindowTokens({ modelContextWindow: null })).toBeUndefined();
+    expect(parseCodexContextWindowTokens({ modelContextWindow: 0 })).toBeUndefined();
+    expect(parseCodexContextWindowTokens(undefined)).toBeUndefined();
   });
 });
 
@@ -709,8 +717,20 @@ describe("CodexAppServerBackend", () => {
         outputTokens: 11,
         cacheReadTokens: 20,
       });
-      // The context reading is the final request's whole input.
-      expect(end?.payload.context?.inputTokens).toBe(12);
+      // The context reading is the final request's whole input, against the
+      // window Codex reports for the model.
+      expect(end?.payload.context).toMatchObject({
+        inputTokens: 12,
+        peakInputTokens: 12,
+        contextWindowTokens: 258_400,
+        limitSource: "provider",
+      });
+      // The live update carries the same reading while the turn still runs.
+      const live = events.find((ev) => ev.type === "agent.usage.update");
+      expect(live?.payload.context).toMatchObject({
+        inputTokens: 12,
+        contextWindowTokens: 258_400,
+      });
 
       const configToml = readFileSync(join(codexHome, "config.toml"), "utf8");
       expect(configToml).toContain('approval_policy = "never"');

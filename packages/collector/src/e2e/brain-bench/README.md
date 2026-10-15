@@ -133,6 +133,14 @@ and revision coverage still run through the real engine. Live-arrival cases use
 `push` or `pushAndSettle`. Historical counters count source-revision work items;
 they cannot imply corpus completion or assign shared batch tokens to individual sources.
 
+A scenario about context growth scripts the input size each request reports:
+`startOpenAiServer({ respond, promptTokens })` serves the puppet behind a custom
+`extraInference` backend and answers every request with `promptTokens(messages)`
+as its `prompt_tokens` (the default estimates it from the conversation's
+characters). `brain-context-handoff.e2e.test.ts` grows it per tool result to drive
+a maintenance run to its `brain.knowledge.contextHandoffTokens` budget, and refuses
+a request with a context-length 400 to drive the overflow handoff.
+
 Old decision cassettes remain recovery fixtures for explicitly seeded persisted
 legacy datum rows. New source discovery requests use the current rubric; an old
 cassette miss proves fail-open behavior rather than silently substituting an old request.

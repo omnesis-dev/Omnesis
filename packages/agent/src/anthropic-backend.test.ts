@@ -440,8 +440,20 @@ describe("AnthropicBackend", () => {
       "agent.message.start",
       "agent.text.delta",
       "agent.text.delta",
+      "agent.usage.update",
       "agent.message.end",
     ]);
+    const live = events.find((e) => e.type === "agent.usage.update");
+    if (live?.type !== "agent.usage.update") throw new Error("expected live usage");
+    // The request's full input, as the window sees it, rides beside the spend.
+    // The request's output is counted too, so a cancelled turn keeps its spend.
+    expect(live.payload.usage).toMatchObject({ inputTokens: 50, outputTokens: 20 });
+    expect(live.payload.context).toMatchObject({
+      inputTokens: 50,
+      peakInputTokens: 50,
+      measurement: "provider_reported",
+      requestIteration: 1,
+    });
     const end = events[events.length - 1]!;
     if (end.type !== "agent.message.end") throw new Error("expected end");
     expect(end.payload.stopReason).toBe("end_turn");
@@ -496,8 +508,10 @@ describe("AnthropicBackend", () => {
       "agent.message.start",
       "agent.tool.input_start",
       "agent.tool.start",
+      "agent.usage.update",
       "agent.tool.result",
       "agent.text.delta",
+      "agent.usage.update",
       "agent.message.end",
     ]);
     expect(invokedWith).toEqual({ query: "Quentin" });

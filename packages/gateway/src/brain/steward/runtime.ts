@@ -181,6 +181,11 @@ export interface CognitionToolsetDeps {
   /** Advertise experimental surfaces to the steward (default: gateway mode). */
   experimental?: boolean;
   /**
+   * Body characters one `fetch_many` read returns per document unless the run
+   * names a range; longer bodies are paged. Omitted, whole bodies are returned.
+   */
+  documentReadChars?: number;
+  /**
    * Live config knobs for `open_loop_search`'s identity reconcile pass. Read
    * per toolset build so a config change takes on the next run. Omitted by
    * pure-composition unit tests — identity then falls back to person + link
@@ -296,6 +301,7 @@ export function buildCognitionToolset(
     // The steward reconciles against facts and its own annotations; the date
     // mentions of the documents it reads are a lead it asks for by name.
     temporalDefaultOrigins: ["projection", "annotation"],
+    ...(deps.documentReadChars === undefined ? {} : { documentReadChars: deps.documentReadChars }),
   }).filter((t) => COGNITION_INTERACTIVE_TOOLS.has(t.name));
   // The loop this run is itself scoped to (a loop-scoped time_based / decay
   // check), so `schedule_agent_run` can auto-attach it to a follow-up check.
@@ -678,6 +684,9 @@ export async function createCognitionRuntime(
         personProfileReads,
         ...toolsetDeps,
         sourceFence,
+        // A background run loops through many reads in one conversation, so
+        // each read is bounded; the run pages a longer body explicitly.
+        documentReadChars: deps.getSettings().documentReadChars,
         basePorts: fenceReadPorts(
           {
             ...basePorts,

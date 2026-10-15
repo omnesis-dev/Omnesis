@@ -873,18 +873,6 @@ export const agentUsageSchema = z.object({
 export type AgentUsage = z.infer<typeof agentUsageSchema>;
 
 /**
- * Cumulative usage reported while a model turn is still running. Providers
- * that expose no live usage simply omit this event; `agent.message.end`
- * remains the authoritative terminal total.
- */
-export const agentUsageUpdateEvent = z.object({
-  sessionId: z.string(),
-  messageId: z.string(),
-  usage: agentUsageSchema,
-});
-export type AgentUsageUpdateEvent = z.infer<typeof agentUsageUpdateEvent>;
-
-/**
  * What Omnesis knows about the input size of the sampling request that ended
  * a turn. Measurement and limit provenance stay explicit: an absent token
  * count must never be mistaken for zero, and a configured limit must never be
@@ -902,6 +890,22 @@ export const agentContextAssessmentSchema = z.object({
   requestIteration: z.number().int().positive(),
 });
 export type AgentContextAssessment = z.infer<typeof agentContextAssessmentSchema>;
+
+/**
+ * Cumulative usage reported while a model turn is still running. Providers
+ * that expose no live usage simply omit this event; `agent.message.end`
+ * remains the authoritative terminal total. `context`, when present, is the
+ * input size of the latest model request of the turn — how much of the
+ * context window the conversation occupies now — so a caller can bound a
+ * long tool loop before the provider refuses it.
+ */
+export const agentUsageUpdateEvent = z.object({
+  sessionId: z.string(),
+  messageId: z.string(),
+  usage: agentUsageSchema,
+  context: agentContextAssessmentSchema.optional(),
+});
+export type AgentUsageUpdateEvent = z.infer<typeof agentUsageUpdateEvent>;
 
 /**
  * What the model provider itself reported about a rejected request, reduced to

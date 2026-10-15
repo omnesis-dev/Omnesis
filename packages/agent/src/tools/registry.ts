@@ -46,6 +46,11 @@ export interface BuiltinToolsOptions {
   /** Default limit for search_documents (default: 8). */
   defaultSearchLimit?: number;
   /**
+   * Body characters `fetch_many` returns per document when a call names no
+   * range. Unset returns whole bodies, as the interactive agent reads them.
+   */
+  documentReadChars?: number;
+  /**
    * Whether the gateway runs in experimental mode. Gates every tool whose
    * feature is hidden behind the experimental flag on the other clients: the
    * watch-authoring tools (`watch_create` / `watch_update`), the
@@ -88,7 +93,15 @@ export function buildBuiltinTools(opts: BuiltinToolsOptions): ToolHandle[] {
     }),
   );
   const citationReads = opts.citationReads ?? new CitationReads();
-  tools.push(createFetchManyTool({ port: opts.ports.document, citationReads }));
+  tools.push(
+    createFetchManyTool({
+      port: opts.ports.document,
+      citationReads,
+      ...(opts.documentReadChars === undefined
+        ? {}
+        : { defaultMaxContentChars: opts.documentReadChars }),
+    }),
+  );
   // `annotate_many` shares the document port with `fetch_many` — each child
   // loads the doc body to obtain the canonical ref for the citation card.
   tools.push(createAnnotateManyTool({ port: opts.ports.document, citationReads }));

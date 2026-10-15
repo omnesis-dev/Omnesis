@@ -330,6 +330,12 @@ describe("Claude Code runtime against a scripted CLI", () => {
     expect(terminal.stopReason).toBe("end_turn");
     expect(terminal.usage).toEqual({ inputTokens: 20, outputTokens: 30, cacheReadTokens: 200 });
     expect(terminal.context).toMatchObject({ inputTokens: 115, measurement: "provider_reported" });
+    // Each request's input size is reported live, before the turn's result.
+    const live = events.filter((event) => event.type === "agent.usage.update");
+    expect(live[0]?.payload).toMatchObject({
+      usage: { inputTokens: 15, cacheReadTokens: 100 },
+      context: { inputTokens: 115, peakInputTokens: 115, measurement: "provider_reported" },
+    });
 
     const [run] = records();
     const init = run.received.find((frame) => frame.type === "control_request") as {
@@ -384,6 +390,30 @@ describe("Claude Code runtime against a scripted CLI", () => {
         JSON.stringify(frame).includes('"tools":[{"name":"search"'),
     );
     expect(listed).toBeDefined();
+  });
+
+  it("counts one request once in live usage however many messages carry it", async () => {
+    const shared = async (env: Record<string, string>) => {
+      const { runtime } = setup({
+        OMNESIS_FAKE_CLAUDE_SCENARIO: "tool",
+        OMNESIS_FAKE_CLAUDE_TOOL_ARGS: JSON.stringify({ query: "budget" }),
+        ...env,
+      });
+      const search = tool("search", () => ({ kind: "error", code: "x", message: "none" }));
+      const events = await collect(
+        new ClaudeCodeBackend({ model: "sonnet", runtime }).runTurn(input({ tools: [search] })),
+      );
+      return events.filter((e) => e.type === "agent.usage.update").map((e) => e.payload);
+    };
+    // Two requests: the live total is their sum.
+    const distinct = await shared({});
+    expect(distinct[1]).toMatchObject({ usage: { inputTokens: 30, cacheReadTokens: 200 } });
+    // One request reported on two messages: counted once.
+    const repeated = await shared({ OMNESIS_FAKE_CLAUDE_MESSAGE_ID: "msg_fake_shared" });
+    expect(repeated[1]).toMatchObject({
+      usage: { inputTokens: 15, cacheReadTokens: 100 },
+      context: { inputTokens: 115, requestIteration: 1 },
+    });
   });
 
   it("returns a schema error to the model instead of invoking the tool", async () => {

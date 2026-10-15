@@ -26,6 +26,7 @@ import { promisify } from "node:util";
 import {
   createLogger,
   readPackageVersion,
+  type AgentContextAssessment,
   type AgentEvent,
   type Logger,
   type ToolResult,
@@ -344,6 +345,7 @@ export class CodexAppServerRuntime {
       queue,
       usage: {},
       progressUsage: {},
+      contextReadings: 0,
       completed: false,
       answer: input.finalAnswerOnly ? { deltas: "", phased: false } : undefined,
       toolCalls: 0,
@@ -837,13 +839,23 @@ export class CodexAppServerRuntime {
         state.progressUsage[key] = Math.max(state.progressUsage[key] ?? 0, usage[key] ?? 0);
       state.usage = usage;
       const contextInputTokens = parseCodexContextInputTokens(p?.tokenUsage);
-      if (contextInputTokens !== undefined) state.contextInputTokens = contextInputTokens;
+      if (contextInputTokens !== undefined) {
+        state.contextInputTokens = contextInputTokens;
+        state.peakContextInputTokens = Math.max(
+          state.peakContextInputTokens ?? 0,
+          contextInputTokens,
+        );
+        state.contextReadings += 1;
+      }
+      const contextWindowTokens = parseCodexContextWindowTokens(p?.tokenUsage);
+      if (contextWindowTokens !== undefined) state.contextWindowTokens = contextWindowTokens;
       if (Object.keys(state.usage).length > 0) {
         state.queue.push(
           wrapEvent("agent.usage.update", {
             sessionId: state.sessionId,
             messageId: state.messageId,
             usage: state.usage,
+            ...(contextInputTokens === undefined ? {} : { context: codexContextAssessment(state) }),
           }),
         );
       }
@@ -1018,24 +1030,13 @@ export class CodexAppServerRuntime {
           }),
         );
     }
-    const inputTokens = state.contextInputTokens;
     state.queue.push(
       wrapEvent("agent.message.end", {
         sessionId: state.sessionId,
         messageId: state.messageId,
         stopReason,
         usage: Object.keys(state.usage).length > 0 ? state.usage : undefined,
-        context: {
-          ...(inputTokens === undefined
-            ? {}
-            : {
-                inputTokens,
-                peakInputTokens: inputTokens,
-              }),
-          measurement: inputTokens === undefined ? "unknown" : "provider_reported",
-          limitSource: "unknown",
-          requestIteration: 1,
-        },
+        context: codexContextAssessment(state),
         ...(failure
           ? {
               failure: {
@@ -1257,6 +1258,12 @@ interface ActiveCodexTurn {
   progressUsage: AgentEndUsage;
   /** The input size of the turn's latest model request, cached input included. */
   contextInputTokens?: number;
+  /** The largest such input seen during the turn. */
+  peakContextInputTokens?: number;
+  /** The model's context window, when Codex reports it. */
+  contextWindowTokens?: number;
+  /** How many model requests have reported their input size. */
+  contextReadings: number;
   completed: boolean;
   answer?: { deltas: string; phased: boolean; final?: string; unphased?: string };
   toolCalls: number;
@@ -1552,6 +1559,29 @@ export function parseCodexContextInputTokens(value: unknown): number | undefined
   const usage = asRecord(value);
   const counts = asRecord(usage?.last) ?? asRecord(usage?.total);
   return counts ? numberField(counts, "inputTokens") : undefined;
+}
+
+/** The model context window Codex reports beside its token counts, when it does. */
+export function parseCodexContextWindowTokens(value: unknown): number | undefined {
+  const usage = asRecord(value);
+  const window = usage ? numberField(usage, "modelContextWindow") : undefined;
+  return window !== undefined && Number.isSafeInteger(window) && window > 0 ? window : undefined;
+}
+
+/** The turn's context-window reading in the shared assessment shape. */
+function codexContextAssessment(state: ActiveCodexTurn): AgentContextAssessment {
+  const inputTokens = state.contextInputTokens;
+  return {
+    ...(inputTokens === undefined
+      ? {}
+      : { inputTokens, peakInputTokens: state.peakContextInputTokens ?? inputTokens }),
+    ...(state.contextWindowTokens === undefined
+      ? {}
+      : { contextWindowTokens: state.contextWindowTokens }),
+    measurement: inputTokens === undefined ? "unknown" : "provider_reported",
+    limitSource: state.contextWindowTokens === undefined ? "unknown" : "provider",
+    requestIteration: Math.max(1, state.contextReadings),
+  };
 }
 
 function isNativeCodexNotification(method: string): boolean {
