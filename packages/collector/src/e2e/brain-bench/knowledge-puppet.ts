@@ -101,6 +101,16 @@ export interface KnowledgePuppetPolicy {
 }
 
 const MAX_SOURCE_REREADS = 2;
+/** The paging cursor of a one-document `fetch_many` result. */
+const pageSchema = z.object({
+  items: z.array(
+    z.object({
+      document: z
+        .object({ contentRange: z.object({ nextOffset: z.number() }).partial().optional() })
+        .optional(),
+    }),
+  ),
+});
 function isSourceReadRefusal(step: ToolStep): boolean {
   const result = step.result as { kind?: unknown; code?: unknown } | null;
   return result?.kind === "error" && result.code === "source_read_required";
@@ -248,20 +258,32 @@ export function knowledgePuppet(
       }
       if (rereading && item.source) {
         const refusedAt = since.lastIndexOf(readRefusals.at(-1)!);
-        const reread = since
+        // Reread the whole source, following each page's nextOffset to its end.
+        const lastPage = since
           .slice(refusedAt + 1)
-          .some(
+          .filter(
             (step) =>
               step.name === "fetch_many" &&
-              JSON.stringify(step.args?.documents) ===
-                JSON.stringify([{ documentId: item.source!.id }]) &&
+              (step.args?.documents as Array<{ documentId?: unknown }> | undefined)?.[0]
+                ?.documentId === item.source!.id &&
               (step.result as { kind?: unknown } | null)?.kind === "document.batch",
-          );
-        if (!reread)
+          )
+          .at(-1);
+        const nextOffset = lastPage
+          ? pageSchema.safeParse(lastPage.result).data?.items[0]?.document?.contentRange?.nextOffset
+          : undefined;
+        if (!lastPage || nextOffset !== undefined)
           return {
             kind: "tool",
             name: "fetch_many",
-            args: { documents: [{ documentId: item.source.id }] },
+            args: {
+              documents: [
+                {
+                  documentId: item.source.id,
+                  ...(nextOffset !== undefined ? { contentOffset: nextOffset } : {}),
+                },
+              ],
+            },
           };
         return {
           kind: "tool",

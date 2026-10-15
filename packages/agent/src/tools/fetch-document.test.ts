@@ -151,7 +151,7 @@ describe("bounded default reads", () => {
       contentRange: { offset: 800, returnedCharacters: 240, truncated: true },
     });
     expect(
-      (last.document as { contentRange: Record<string, unknown> }).contentRange,
+      (last.document as unknown as { contentRange: Record<string, unknown> }).contentRange,
     ).not.toHaveProperty("nextOffset");
   });
 
