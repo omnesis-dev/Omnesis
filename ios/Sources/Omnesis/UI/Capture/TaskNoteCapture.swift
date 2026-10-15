@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 #if canImport(SwiftUI) && canImport(UIKit)
+import SwiftUI
+
 /// What the capture screen (`CaptureView`) does on Done when its note is
 /// about a task rather than a note on its own: completing the task with the
 /// note, or accepting a suggestion with it. It names the task, words the
@@ -40,4 +42,36 @@ struct TaskNoteCapture {
         )
     }
 }
+
+#if DEBUG
+@available(iOS 17.0, *)
+#Preview("Capture — completing a task, listening") {
+    CaptureView(
+        completion: .completing(PreviewMocks.taskWithPerson.title) { _ in true },
+        speech: .preview(state: .listening, transcript: "Went through it together"),
+        previewText: "Went through it together"
+    )
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Capture — completing a task, typing") {
+    CaptureView(
+        completion: .completing(PreviewMocks.taskWithPerson.title) { _ in true },
+        speech: .preview(state: .idle),
+        previewText: "Signed and scanned, copy sent to the club"
+    )
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Capture — accepting a suggestion, typing") {
+    CaptureView(
+        completion: .accepting(PreviewMocks.tasksSuggested[0].title) { _ in true },
+        speech: .preview(state: .idle),
+        previewText: "Jamie needs it by Friday, pay from the joint account"
+    )
+    .environment(AppStore.preview())
+}
+#endif
 #endif
