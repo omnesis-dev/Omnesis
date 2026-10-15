@@ -181,15 +181,27 @@ public final class TasksModel {
     }
 
     public func undo(_ toast: TaskToast) async {
-        guard let service, let seq = toast.undoSeq else { return }
+        guard let seq = toast.undoSeq else { return }
+        await undo(seq: seq)
+    }
+
+    /// Undo the change recorded as `seq` — a receipt's, or one a task's
+    /// history offers — and show what the undo did. Returns whether the
+    /// gateway accepted it.
+    @discardableResult
+    public func undo(seq: Int) async -> Bool {
+        guard let service else { return false }
         dismissToast()
+        var undone = false
         do {
             let mutation = try await service.undo(seq: seq)
             show(text: mutation.receipt.text, undoSeq: nil, isError: false)
+            undone = true
         } catch {
             showError(error)
         }
         await load(showSpinner: false)
+        return undone
     }
 
     public func dismissToast() {

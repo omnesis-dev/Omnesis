@@ -1413,6 +1413,19 @@ enum PreviewMocks {
         ),
     ]
 
+    /// A history whose newest change Omnesis applied on its own, still undoable.
+    static let taskHistoryAutoApplied: [TaskEvent] = [
+        TaskEvent(
+            seq: 52,
+            at: "2026-10-14T07:10:00Z",
+            note: "The receipt says the invoice was paid in full.",
+            kind: "auto_applied",
+            surface: "brain",
+            change: "complete",
+            evidence: ["doc_receipt_1"]
+        ),
+    ] + taskHistory
+
     /// The standing Morning brief conversation, as the conversation list
     /// returns it: pinned, with no brief references on the summary.
     static let morningBriefConversation = ConversationSummary(

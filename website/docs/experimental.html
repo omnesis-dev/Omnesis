@@ -545,11 +545,20 @@
           Omnesis note about that task, and the note agent applies it to the task.
           <strong>Ignore</strong> only takes the suggestion out of Tasks: Brain keeps tracking the
           loop behind it and does not suggest it again. Each of these can be undone from its
-          receipt. Brain never changes one of your own tasks silently: when it judges one done, no
-          longer relevant or worded wrongly, the task shows the proposed change and its reason, with
+          receipt. When Brain judges one of your own tasks done, no longer relevant or worded
+          wrongly, the task shows the proposed change and its reason, with
           <strong>Confirm</strong> to apply it or <strong>Keep</strong> to leave the task as it is.
-          Your own tasks never decay. Without experimental mode, neither the Suggested view nor
-          proposed changes appear.
+          Brain applies a change itself only when it is sure: a source states the fact explicitly,
+          the entailment verifier confirms the quoted text establishes it, and the change is a
+          completion, an addition to a description Brain wrote, or a deadline the source states.
+          Striking a task, a new title, and anything you wrote or edited yourself are always
+          proposed, as is every change when no verifier is assigned. A change Brain applied reads
+          <strong>Marked done by Omnesis</strong> or <strong>Updated by Omnesis</strong> in the
+          task's history, with its reason and an <strong>Undo</strong>; undoing it also keeps Brain
+          from making that change on its own again, and the next morning brief mentions such changes
+          in one line. Set <code>brain.tasks.autoApply</code> to <code>false</code> to have every
+          change proposed. Your own tasks never decay. Without experimental mode, neither the
+          Suggested view nor proposed changes appear.
         </p>
         <p>
           <strong>Debug → Cognition → Observations</strong> lists observations by state, with each
@@ -1582,6 +1591,14 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
                 <td><code>mergeAdjudication.enabled</code></td>
                 <td>true</td>
                 <td>Let Brain decide undecided person-merge proposals.</td>
+              </tr>
+              <tr>
+                <td><code>tasks.autoApply</code></td>
+                <td>true</td>
+                <td>
+                  Let Brain apply a verified change to one of your own tasks instead of proposing it
+                  (see <a href="#brain-morning-brief">Observations and the morning brief</a>).
+                </td>
               </tr>
               <tr>
                 <td><code>bootstrap.enabled</code> / <code>direction</code></td>

@@ -13,8 +13,12 @@ import {
 } from "./open-loops.js";
 import {
   applyTaskCommand,
+  autoApplyTaskChange,
   isTaskSchedule,
   proposeTaskChange,
+  readTaskAuthorship,
+  userAuthoredTaskFields,
+  type AutoAppliedTaskChange,
   type TaskCommand,
   type TaskCommandResult,
 } from "./tasks.js";
@@ -443,5 +447,163 @@ describe("decay", () => {
     expect(ids).toContain(suggestion.id);
     expect(ids).not.toContain(loopId);
     expect(ids).not.toContain(accepted.id);
+  });
+});
+
+describe("Brain changes Omnesis applies on its own", () => {
+  function acceptedSuggestion(description = "The plumber sent a quote.") {
+    const loop = brainLoop();
+    db.prepare("UPDATE open_loops SET description = ? WHERE id = ?").run(description, loop.id);
+    ok(apply({ kind: "accept", id: loop.id }));
+    return loop.id;
+  }
+
+  function change(id: string, extra: Partial<AutoAppliedTaskChange> = {}): AutoAppliedTaskChange {
+    return {
+      kind: "complete",
+      reason: "The plumber confirmed the quote was accepted.",
+      evidence: ["doc_reply"],
+      runId: "run_2",
+      basedOnSeq: readTaskAuthorship(db, id).latestEventSeq,
+      ...extra,
+    };
+  }
+
+  test("a completion closes the task with an auto_applied event, and undo reopens it", () => {
+    const id = acceptedSuggestion();
+    const applied = autoApplyTaskChange(db, id, change(id), NOW + 1000);
+    expect(applied).toMatchObject({ applied: true, resolved: true });
+    expect(getOpenLoop(db, id)).toMatchObject({ state: "done" });
+    const entry = listOpenLoopLedger(db, id).at(-1)!;
+    expect(entry.note).toBe(
+      "Marked done by Omnesis: The plumber confirmed the quote was accepted.",
+    );
+    expect(entry.runId).toBe("run_2");
+    expect(entry.event).toMatchObject({
+      kind: "auto_applied",
+      surface: "brain",
+      note: "The plumber confirmed the quote was accepted.",
+      change: { kind: "complete" },
+      evidence: ["doc_reply"],
+      before: { state: "open" },
+    });
+
+    const undone = ok(apply({ kind: "undo", seq: (applied as { seq: number }).seq }, NOW + 2000));
+    expect(undone).toMatchObject({ reopened: true, loop: { state: "open" } });
+    // Undoing it makes the state the user's: Omnesis never closes it on its own again.
+    expect(readTaskAuthorship(db, id).authored.has("state")).toBe(true);
+  });
+
+  test("an edit sets only the description and deadline, and undo restores both", () => {
+    const id = acceptedSuggestion("The plumber sent a quote.");
+    const result = autoApplyTaskChange(
+      db,
+      id,
+      change(id, {
+        kind: "edit",
+        fields: {
+          description: "The plumber sent a quote. It is valid until Friday.",
+          deadline: { type: "by", date: "2026-03-13" },
+        },
+      }),
+      NOW + 1000,
+    );
+    expect(result).toMatchObject({ applied: true, resolved: false });
+    expect(getOpenLoop(db, id)).toMatchObject({
+      state: "open",
+      description: "The plumber sent a quote. It is valid until Friday.",
+      deadline: { type: "by", date: "2026-03-13" },
+    });
+    const event = listOpenLoopLedger(db, id).at(-1)!.event!;
+    expect(event.change).toEqual({ kind: "edit", fields: ["description", "deadline"] });
+    expect(listOpenLoopLedger(db, id).at(-1)!.note).toMatch(/^Updated by Omnesis: /);
+
+    ok(apply({ kind: "undo", seq: listOpenLoopLedger(db, id).at(-1)!.seq }, NOW + 2000));
+    expect(getOpenLoop(db, id)).toMatchObject({
+      description: "The plumber sent a quote.",
+      deadline: null,
+    });
+    expect([...readTaskAuthorship(db, id).authored].sort()).toEqual(["deadline", "description"]);
+  });
+
+  test("a task that changed after the change was judged is left alone", () => {
+    const id = acceptedSuggestion();
+    const judged = change(id);
+    ok(apply({ kind: "edit", id, fields: { title: "Reply to the plumber today" } }, NOW + 500));
+    expect(autoApplyTaskChange(db, id, judged, NOW + 1000)).toEqual({
+      applied: false,
+      reason: "stale",
+    });
+    expect(getOpenLoop(db, id)?.state).toBe("open");
+  });
+
+  test("only the user's own open tasks change", () => {
+    const suggestion = brainLoop();
+    expect(autoApplyTaskChange(db, suggestion.id, change(suggestion.id), NOW)).toEqual({
+      applied: false,
+      reason: "not_owned",
+    });
+    expect(autoApplyTaskChange(db, "loop_missing", change("loop_missing"), NOW)).toEqual({
+      applied: false,
+      reason: "not_found",
+    });
+    const id = acceptedSuggestion();
+    ok(apply({ kind: "complete", id }, NOW + 500));
+    expect(autoApplyTaskChange(db, id, change(id), NOW + 1000)).toEqual({
+      applied: false,
+      reason: "invalid",
+    });
+    expect(
+      autoApplyTaskChange(db, id, change(id, { kind: "edit", fields: {} }), NOW + 1000),
+    ).toEqual({ applied: false, reason: "invalid" });
+  });
+});
+
+describe("userAuthoredTaskFields", () => {
+  test("a task the user created owns what they gave it", () => {
+    const { loopId } = create("Book the bike service");
+    expect([...readTaskAuthorship(db, loopId).authored]).toEqual(["title"]);
+    const withDetails = create("Book the bike service", {
+      description: "Brakes squeak.",
+      deadline: { type: "by", date: "2026-03-20" },
+    });
+    expect([...readTaskAuthorship(db, withDetails.loopId).authored].sort()).toEqual([
+      "deadline",
+      "description",
+      "title",
+    ]);
+  });
+
+  test("an accepted suggestion owns only what the user edited or reopened", () => {
+    const loop = brainLoop();
+    ok(apply({ kind: "accept", id: loop.id }));
+    expect(readTaskAuthorship(db, loop.id).authored.size).toBe(0);
+    ok(apply({ kind: "edit", id: loop.id, fields: { description: "Ask about Thursday." } }));
+    expect([...readTaskAuthorship(db, loop.id).authored]).toEqual(["description"]);
+    ok(apply({ kind: "complete", id: loop.id }));
+    ok(apply({ kind: "reopen", id: loop.id }));
+    expect([...readTaskAuthorship(db, loop.id).authored].sort()).toEqual(["description", "state"]);
+  });
+
+  test("events recorded before fields were tracked count as setting every field", () => {
+    expect(
+      [
+        ...userAuthoredTaskFields([
+          { seq: 1, event: { kind: "created", surface: "tasks" } },
+          { seq: 2, event: null },
+        ]),
+      ].sort(),
+    ).toEqual(["deadline", "description", "title"]);
+    expect(
+      [...userAuthoredTaskFields([{ seq: 3, event: { kind: "edited", surface: "note" } }])].sort(),
+    ).toEqual(["deadline", "description", "title"]);
+  });
+
+  test("undoing a user change does not hand its field back", () => {
+    const loop = brainLoop();
+    ok(apply({ kind: "accept", id: loop.id }));
+    const edited = ok(apply({ kind: "edit", id: loop.id, fields: { title: "Call the plumber" } }));
+    ok(apply({ kind: "undo", seq: edited.eventSeq! }));
+    expect([...readTaskAuthorship(db, loop.id).authored]).toEqual(["title"]);
   });
 });

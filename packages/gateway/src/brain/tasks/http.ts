@@ -73,11 +73,18 @@ export function taskDto(item: TaskItem, documents: ReadonlyMap<string, TaskDocum
 }
 
 export function taskEventDto(entry: OpenLoopLedgerEntry) {
+  const autoApplied = entry.event?.kind === "auto_applied";
   return {
     seq: entry.seq,
     at: iso(entry.at),
-    note: entry.note,
+    // A change Omnesis applied on its own reads as its reason; the kind and
+    // `change` already say what it did.
+    note: autoApplied ? (entry.event?.note ?? entry.note) : entry.note,
     kind: entry.event?.kind ?? "note",
+    /** For `auto_applied`: `complete` or `edit`. */
+    change: entry.event?.change?.kind ?? null,
+    /** For `auto_applied`: the documents whose quotes established the change. */
+    evidence: entry.event?.evidence ?? [],
     surface: entry.event?.surface ?? (entry.runId.startsWith("user:") ? "tasks" : "brain"),
     conversationId: entry.event?.conversationId ?? null,
     from: entry.event?.from ?? null,

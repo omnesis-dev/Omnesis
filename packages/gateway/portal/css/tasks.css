@@ -531,6 +531,10 @@ button.tasks-bullet-struck:hover {
   color: var(--text-primary);
 }
 
+.tasks-history-undo {
+  padding: 0 8px;
+}
+
 .tasks-history-note {
   flex-basis: 100%;
   color: var(--text-secondary);

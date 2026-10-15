@@ -240,6 +240,16 @@ class TasksViewModel internal constructor(
 
     fun undo(receipt: TaskReceipt) {
         val seq = receipt.undoSeq ?: return
+        undo(seq)
+    }
+
+    /** Undo a change Omnesis applied on its own, from the task's open history, and show it again. */
+    fun undoFromHistory(history: TaskHistoryState) {
+        val seq = history.autoAppliedUndoSeq ?: return
+        undo(seq) { openHistory(history.task) }
+    }
+
+    private fun undo(seq: Long, then: () -> Unit = {}) {
         _state.update { it.copy(receipt = null) }
         viewModelScope.launch {
             try {
@@ -251,6 +261,7 @@ class TasksViewModel internal constructor(
                 _state.update { it.copy(actionError = classifyGatewayError(error)) }
             }
             reread()
+            then()
         }
     }
 

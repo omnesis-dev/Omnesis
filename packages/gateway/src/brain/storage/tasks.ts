@@ -7,11 +7,12 @@
  * transaction with a structured ledger event.
  *
  * A task is an open loop. The user's own tasks (from a note, created by the
- * user, or an accepted Brain suggestion) change only through these commands
- * or through a Brain proposal the user confirms. A Brain suggestion the
- * user ignores leaves the Tasks views but stays an open loop the Brain keeps
- * tracking. Every event records the fields it replaced, so the latest change
- * to a task can be undone.
+ * user, or an accepted Brain suggestion) change through these commands,
+ * through a Brain proposal the user confirms, or through a Brain change
+ * Omnesis applied on its own after verifying its evidence (recorded as
+ * `auto_applied`). A Brain suggestion the user ignores leaves the Tasks views
+ * but stays an open loop the Brain keeps tracking. Every event records the
+ * fields it replaced, so the latest change to a task can be undone.
  */
 
 import { assertNever } from "@omnesis/core";
@@ -26,6 +27,7 @@ import {
   isOwnedTask,
   type OpenLoopRow,
   type ProposedTaskChange,
+  type TaskAuthoredField,
   type TaskEvent,
   type TaskSchedule,
   type TaskSnapshot,
@@ -183,7 +185,14 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
       },
       now,
     );
-    const seq = record(command.id, "Created", { kind: "created" });
+    const seq = record(command.id, "Created", {
+      kind: "created",
+      fields: [
+        "title",
+        ...(command.description?.trim() ? (["description"] as const) : []),
+        ...(command.deadline != null ? (["deadline"] as const) : []),
+      ],
+    });
     return done(db, command.id, seq, false, false, `Added: ${command.title}`);
   }
 
@@ -279,7 +288,11 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
         },
         now,
       );
-      const seq = record(loop.id, "Edited", { kind: "edited", before });
+      const seq = record(loop.id, "Edited", {
+        kind: "edited",
+        before,
+        fields: AUTHORED_EDIT_FIELDS.filter((field) => fields[field] !== undefined),
+      });
       return done(db, loop.id, seq, false, false, `Edited: ${fields.title ?? loop.title}`);
     }
     case "accept": {
@@ -340,6 +353,8 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
       return assertNever(command);
   }
 }
+
+const AUTHORED_EDIT_FIELDS = ["title", "description", "deadline"] as const;
 
 function proposalUpdate(proposal: ProposedTaskChange): Parameters<typeof updateOpenLoop>[2] {
   switch (proposal.kind) {
@@ -471,4 +486,154 @@ export function proposeTaskChange(
     );
     return true;
   })();
+}
+
+/**
+ * The fields of a task the user wrote themselves, read from its events. The
+ * title, description and deadline the user gave a task they created, every
+ * field they edited, the state of a task they reopened, and whatever Omnesis
+ * changed on its own that the user then undid. A Brain change to one of
+ * these is always a proposal: the user's own word wins.
+ *
+ * Events recorded before the fields were tracked count as setting every
+ * field. `entries` may be in any order.
+ */
+export function userAuthoredTaskFields(
+  entries: readonly { seq: number; event: TaskEvent | null }[],
+): Set<TaskAuthoredField> {
+  const authored = new Set<TaskAuthoredField>();
+  const bySeq = new Map(entries.map((entry) => [entry.seq, entry.event]));
+  const all: TaskAuthoredField[] = ["title", "description", "deadline"];
+  for (const { event } of entries) {
+    if (!event) continue;
+    switch (event.kind) {
+      case "created":
+      case "edited":
+        for (const field of event.fields ?? all) authored.add(field);
+        break;
+      case "reopened":
+        authored.add("state");
+        break;
+      case "undone": {
+        const reverted = event.undoOf !== undefined ? bySeq.get(event.undoOf) : undefined;
+        if (reverted?.kind === "auto_applied" && reverted.change) {
+          if (reverted.change.kind === "complete") authored.add("state");
+          for (const field of reverted.change.fields ?? []) authored.add(field);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return authored;
+}
+
+/**
+ * What a Brain change applied on its own needs to know about a task: which
+ * fields the user wrote, and its newest event, which the change is judged
+ * against.
+ */
+export function readTaskAuthorship(
+  db: Db,
+  loopId: string,
+): { authored: Set<TaskAuthoredField>; latestEventSeq: number | null } {
+  const rows = db
+    .prepare<[string], { seq: number; event_json: string }>(
+      `SELECT seq, event_json FROM open_loop_ledger
+        WHERE loop_id = ? AND event_json IS NOT NULL ORDER BY seq`,
+    )
+    .all(loopId);
+  const entries = rows.map((row) => ({
+    seq: row.seq,
+    event: JSON.parse(row.event_json) as TaskEvent,
+  }));
+  return {
+    authored: userAuthoredTaskFields(entries),
+    latestEventSeq: entries.at(-1)?.seq ?? null,
+  };
+}
+
+/** A verified Brain change Omnesis applies to one of the user's own tasks. */
+export interface AutoAppliedTaskChange {
+  kind: "complete" | "edit";
+  /** For `edit`: the new values. */
+  fields?: { description?: string; deadline?: unknown };
+  /** Why, in one sentence, citing what changed. */
+  reason: string;
+  /** Documents whose quotes established the change. */
+  evidence: string[];
+  runId: string;
+  /** The task's newest event when the change was judged; null when it had none. */
+  basedOnSeq: number | null;
+}
+
+export type AutoApplyTaskResult =
+  | { applied: true; seq: number; resolved: boolean }
+  | { applied: false; reason: "not_found" | "not_owned" | "stale" | "invalid" };
+
+/**
+ * Apply a verified Brain change to one of the user's own tasks and record it
+ * as an `auto_applied` event the user can undo. The change was judged
+ * against the task as it stood at `basedOnSeq`: when the task has changed
+ * since (the user edited, reopened or undid something meanwhile), nothing is
+ * applied and the caller proposes the change instead.
+ */
+export function autoApplyTaskChange(
+  db: Db,
+  loopId: string,
+  change: AutoAppliedTaskChange,
+  now: number,
+): AutoApplyTaskResult {
+  return db.transaction((): AutoApplyTaskResult => {
+    const loop = getOpenLoop(db, loopId);
+    if (!loop) return { applied: false, reason: "not_found" };
+    if (!isOwnedTask(loop)) return { applied: false, reason: "not_owned" };
+    if (readTaskAuthorship(db, loopId).latestEventSeq !== change.basedOnSeq)
+      return { applied: false, reason: "stale" };
+    const before = snapshot(loop);
+    const fields = change.fields ?? {};
+    const changed: TaskAuthoredField[] = [];
+    if (change.kind === "complete") {
+      if (loop.state === "done" || loop.state === "dismissed")
+        return { applied: false, reason: "invalid" };
+      updateOpenLoop(db, loop.id, { state: "done", proposedChange: null }, now);
+    } else {
+      if (fields.description !== undefined) changed.push("description");
+      if (fields.deadline !== undefined) changed.push("deadline");
+      if (changed.length === 0) return { applied: false, reason: "invalid" };
+      updateOpenLoop(
+        db,
+        loop.id,
+        {
+          ...(fields.description !== undefined ? { description: fields.description } : {}),
+          ...(fields.deadline !== undefined ? { deadline: fields.deadline } : {}),
+        },
+        now,
+      );
+    }
+    const seq = appendOpenLoopLedger(
+      db,
+      loop.id,
+      {
+        runId: change.runId,
+        note: `${autoAppliedLabel(change.kind)}: ${change.reason}`,
+        event: {
+          kind: "auto_applied",
+          surface: "brain",
+          before,
+          note: change.reason,
+          change: { kind: change.kind, ...(changed.length > 0 ? { fields: changed } : {}) },
+          evidence: change.evidence,
+        },
+      },
+      now,
+    );
+    return { applied: true, seq, resolved: change.kind === "complete" };
+  })();
+}
+
+/** How a task's history names a change Omnesis applied on its own. */
+export function autoAppliedLabel(kind: AutoAppliedTaskChange["kind"]): string {
+  return kind === "complete" ? "Marked done by Omnesis" : "Updated by Omnesis";
 }

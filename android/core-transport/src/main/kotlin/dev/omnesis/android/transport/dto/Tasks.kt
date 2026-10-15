@@ -170,6 +170,10 @@ data class TaskEventDto(
     val conversationId: String? = null,
     val from: String? = null,
     val to: String? = null,
+    /** For a change Omnesis applied on its own (`auto_applied`): `complete` or `edit`. */
+    val change: String? = null,
+    /** For `auto_applied`: the documents whose quotes established the change. */
+    val evidence: List<String> = emptyList(),
 )
 
 /** `GET /tasks/:id`. */

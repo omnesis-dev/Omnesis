@@ -122,6 +122,24 @@ class TasksDecodeTest {
         assertEquals("2026-10-13", detail.history[0].to)
         assertEquals("note", detail.history[1].surface)
         assertEquals(12L, detail.undoSeq)
+        // An older gateway sends no change or evidence.
+        assertNull(detail.history[0].change)
+        assertEquals(emptyList<String>(), detail.history[0].evidence)
+    }
+
+    @Test
+    fun a_change_omnesis_applied_on_its_own_decodes_with_its_evidence() {
+        val detail = OmnesisJson.decodeFromString<TaskDetailDto>(
+            """{"task":{"id":"loop_a","title":"Pay the window cleaner"},
+               "history":[
+                 {"seq":20,"at":"2026-10-14T07:10:00.000Z","note":"The receipt says it was paid in full.",
+                  "kind":"auto_applied","surface":"brain","conversationId":null,"from":null,"to":null,
+                  "change":"complete","evidence":["doc_receipt_1"]}],
+               "undoSeq":20}""",
+        )
+        assertEquals("auto_applied", detail.history[0].kind)
+        assertEquals("complete", detail.history[0].change)
+        assertEquals(listOf("doc_receipt_1"), detail.history[0].evidence)
     }
 
     @Test

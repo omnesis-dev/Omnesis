@@ -129,6 +129,7 @@ export const BRAIN_DEFAULTS = {
   // it triggers, which are what stop a loop resting on a prior that has since
   // died. An observation resting on a dead prior is dropped without a run.
   provenanceRecheck: { enabled: true },
+  tasks: { autoApply: true },
   // Merge adjudication — the background agent's verdict pass over pending
   // person-merge candidates. Bounded by construction: one run per candidate,
   // re-run only if the candidate is re-detected, so it cannot accumulate the
@@ -349,6 +350,11 @@ export interface ResolvedBrainSettings {
   mergeAdjudication: {
     /** The enqueue pass runs only when true (checked live per rhythm tick). */
     enabled: boolean;
+  };
+  /** How the Brain changes the user's own tasks. */
+  tasks: {
+    /** Apply a verified change directly instead of proposing it (read per run). */
+    autoApply: boolean;
   };
   /** The retrospective bootstrap lane (historical temporal-annotation / loop seeding). */
   bootstrap: {
@@ -578,6 +584,9 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     },
     mergeAdjudication: {
       enabled: settings?.mergeAdjudication?.enabled ?? BRAIN_DEFAULTS.mergeAdjudication.enabled,
+    },
+    tasks: {
+      autoApply: settings?.tasks?.autoApply ?? BRAIN_DEFAULTS.tasks.autoApply,
     },
     bootstrap: {
       enabled: settings?.bootstrap?.enabled ?? BRAIN_DEFAULTS.bootstrap.enabled,

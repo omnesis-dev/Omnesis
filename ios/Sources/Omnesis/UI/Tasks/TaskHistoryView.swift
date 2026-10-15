@@ -21,7 +21,13 @@ struct TaskHistoryView: View {
                 TaskHistoryContent(
                     detail: detail,
                     today: model.today,
-                    onOpenConversation: openAgentConversation
+                    onOpenConversation: openAgentConversation,
+                    onUndo: { seq in
+                        Task {
+                            await model.undo(seq: seq)
+                            await load()
+                        }
+                    }
                 )
             } else if let loadError {
                 GatewayErrorView(context: "load this task", error: loadError, onRetry: { Task { await load() } })
@@ -50,12 +56,14 @@ struct TaskHistoryView: View {
 }
 
 /// The history page's body, separated from the fetch so a preview renders
-/// it from fixtures.
+/// it from fixtures. A change Omnesis applied on its own offers Undo on its
+/// line while it is still the newest change.
 @available(iOS 17.0, *)
 struct TaskHistoryContent: View {
     let detail: TaskDetail
     let today: String
     var onOpenConversation: ((String) -> Void)?
+    var onUndo: ((Int) -> Void)?
 
     private var schedule: TaskSchedule {
         TaskSchedule()
@@ -148,6 +156,13 @@ struct TaskHistoryContent: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: Theme.Spacing.sm)
+                if let onUndo, event.seq == TaskJournal.autoAppliedUndoSeq(detail) {
+                    Button("Undo") { onUndo(event.seq) }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityHint("Reverts this change by Omnesis")
+                }
                 if let when = eventTime(event) {
                     Text(when)
                         .font(.caption)
@@ -198,6 +213,21 @@ struct TaskHistoryContent: View {
             detail: TaskDetail(task: PreviewMocks.taskCarried, history: PreviewMocks.taskHistory, undoSeq: 41),
             today: "2026-10-14",
             onOpenConversation: { _ in }
+        )
+        .navigationTitle("History")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    .background(Theme.bgPrimary)
+}
+
+@available(iOS 17.0, *)
+#Preview("TaskHistoryContent – applied by Omnesis") {
+    NavigationStack {
+        TaskHistoryContent(
+            detail: TaskDetail(task: PreviewMocks.taskCarried, history: PreviewMocks.taskHistoryAutoApplied, undoSeq: 52),
+            today: "2026-10-14",
+            onOpenConversation: { _ in },
+            onUndo: { _ in }
         )
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)

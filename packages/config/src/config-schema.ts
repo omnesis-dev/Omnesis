@@ -2470,6 +2470,17 @@ const brainProvenanceRecheck = z
   })
   .strict();
 
+const brainTasks = z
+  .object({
+    autoApply: z
+      .boolean()
+      .describe(
+        "Apply a Brain change to one of your own tasks directly when it is sure: the change is a completion, an addition to a description Omnesis wrote, or a deadline a source states, it touches nothing you wrote yourself, and the entailment verifier confirms the quoted evidence establishes it. Each such change is recorded in the task's history and can be undone. False makes every change a proposal you confirm.",
+      )
+      .optional(),
+  })
+  .strict();
+
 const brainJudge = z
   .object({
     enabled: z.boolean().describe("Deprecated — no effect.").optional(),
@@ -2991,6 +3002,7 @@ const brain = z
         "Provenance-recheck sweep tunables (re-examine loops built on a since-dead annotation prior).",
       )
       .optional(),
+    tasks: brainTasks.describe("How the Brain changes the tasks you own.").optional(),
     judge: brainJudge.describe("Deprecated — no effect.").optional(),
     observations: brainObservations
       .describe("Observations awaiting the morning brief, and the policy that ranks them.")

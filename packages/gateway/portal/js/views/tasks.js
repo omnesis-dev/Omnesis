@@ -33,6 +33,7 @@ import {
   editBody,
   emptyViewMessage,
   groupTasks,
+  autoAppliedUndoSeq,
   historyEventLabel,
   historyNote,
   isResolved,
@@ -164,6 +165,7 @@ export function TasksView({ taskView = "today", focusTaskId = null, experimental
     focused=${focusTaskId === task.id}
     onToggle=${() => setExpandedId(expandedId === task.id ? null : task.id)}
     act=${(body) => act(task, body)}
+    onUndo=${undo}
   />`;
   const proposals = experimental ? data?.counts?.proposals ?? 0 : 0;
 
@@ -281,7 +283,7 @@ export function isRowToggleClick(event) {
   return !String(window.getSelection?.() ?? "");
 }
 
-function TaskRow({ task, view, today, experimental, expanded, focused = false, onToggle, act }) {
+function TaskRow({ task, view, today, experimental, expanded, focused = false, onToggle, act, onUndo }) {
   const rowRef = useRef(null);
   // A task opened by a link is brought into view once it renders.
   useEffect(() => {
@@ -329,7 +331,7 @@ function TaskRow({ task, view, today, experimental, expanded, focused = false, o
       </div>
     </div>
     ${expanded && html`<div class="tasks-row-detail" id=${detailId}>
-      <${TaskDetail} task=${task} view=${view} today=${today} act=${act} />
+      <${TaskDetail} task=${task} view=${view} today=${today} act=${act} onUndo=${onUndo} />
     </div>`}
   </li>`;
 }
@@ -404,7 +406,7 @@ function SuggestionActions({ task, today, act }) {
   </div>`;
 }
 
-function TaskDetail({ task, view, today, act }) {
+function TaskDetail({ task, view, today, act, onUndo }) {
   const [note, setNote] = useState("");
   const [mode, setMode] = useState("actions");
   const resolved = isResolved(task);
@@ -439,7 +441,7 @@ function TaskDetail({ task, view, today, act }) {
           ${!suggested && html`<button type="button" class="btn-tiny" onClick=${() => setMode("edit")}>Edit</button>`}
           <button type="button" class="btn-tiny" aria-expanded=${mode === "history"} onClick=${() => setMode(mode === "history" ? "actions" : "history")}>History</button>
         </div>
-        ${mode === "history" && html`<${TaskHistory} id=${task.id} />`}
+        ${mode === "history" && html`<${TaskHistory} id=${task.id} lastUpdate=${task.lastUpdate} onUndo=${onUndo} />`}
       `}
   </div>`;
 }
@@ -505,15 +507,17 @@ function TaskEditor({ task, act, onCancel }) {
   </form>`;
 }
 
-function TaskHistory({ id }) {
-  const [state, setState] = useState({ loading: true, error: null, history: [] });
+function TaskHistory({ id, lastUpdate, onUndo }) {
+  const [state, setState] = useState({ loading: true, error: null, history: [], undoSeq: null });
+  // Re-read whenever the task changes, so an undo shows in its history.
   useEffect(() => {
     let live = true;
     getTask(id)
-      .then((out) => live && setState({ loading: false, error: null, history: out?.history ?? [] }))
-      .catch((err) => live && setState({ loading: false, error: errorText(err), history: [] }));
+      .then((out) => live && setState({ loading: false, error: null, history: out?.history ?? [], undoSeq: out?.undoSeq ?? null }))
+      .catch((err) => live && setState({ loading: false, error: errorText(err), history: [], undoSeq: null }));
     return () => { live = false; };
-  }, [id]);
+  }, [id, lastUpdate]);
+  const undoable = autoAppliedUndoSeq(state.history, state.undoSeq);
   if (state.loading) return html`<div class="tasks-history-empty">Loading history…</div>`;
   if (state.error) return html`<div class="debug-error">${state.error}</div>`;
   if (state.history.length === 0) return html`<div class="tasks-history-empty">No history yet.</div>`;
@@ -521,6 +525,7 @@ function TaskHistory({ id }) {
     ${state.history.map((event) => html`<li key=${event.seq} class="tasks-history-entry">
       <time datetime=${event.at} class="tasks-history-at">${event.at ? new Date(event.at).toLocaleString() : ""}</time>
       <span class="tasks-history-kind">${historyEventLabel(event)}</span>
+      ${undoable === event.seq && onUndo && html`<button type="button" class="btn-tiny tasks-history-undo" onClick=${() => onUndo(event.seq)}>Undo</button>`}
       ${historyNote(event) && html`<span class="tasks-history-note">${historyNote(event)}</span>`}
       ${event.conversationId && html`<a
         class="tasks-history-link"

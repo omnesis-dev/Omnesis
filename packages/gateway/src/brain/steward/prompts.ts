@@ -814,7 +814,7 @@ function buildDigestRunPrompt(
     timeZone: "UTC",
     truncated: false,
   };
-  const { horizonLines, itemLines, deltaPrime, hasInputs } = readDigestInputs(
+  const { horizonLines, itemLines, deltaPrime, autoAppliedLines, hasInputs } = readDigestInputs(
     deps.db,
     now,
     deps.cfg,
@@ -845,6 +845,12 @@ function buildDigestRunPrompt(
             : ""
         }`
       : `Calendar, now through +${DIGEST_HORIZON_DAYS} days: (empty)`,
+    ...(autoAppliedLines.length > 0
+      ? [
+          "",
+          `Tasks Omnesis changed on its own since the last brief, each verified against its source (the user can undo any of them in Tasks). Mention them together in ONE short line, not one per task:\n${autoAppliedLines.join("\n")}`,
+        ]
+      : []),
     deltaPrime,
   );
   return parts.join("\n");

@@ -294,6 +294,10 @@ export interface TaskEventDto {
   conversationId: string | null;
   from: string | null;
   to: string | null;
+  /** For `auto_applied`: `complete` or `edit`. */
+  change: string | null;
+  /** For `auto_applied`: the documents whose quotes established the change. */
+  evidence: string[];
 }
 
 /** What a task command answers: the task after the change and its undo handle. */

@@ -155,6 +155,29 @@ final class TasksClientTests: XCTestCase {
         XCTAssertNil(TaskJournal.eventSource(detail.history[0]))
     }
 
+    func testAutoAppliedEventDecodesChangeAndEvidence() async throws {
+        let session = MockSession()
+        session.body = """
+        {"task":\(Self.taskJSON),
+         "history":[
+           {"seq":52,"at":"2026-10-14T07:10:00.000Z","note":"The receipt says it was paid.",
+            "kind":"auto_applied","surface":"brain","conversationId":null,"from":null,"to":null,
+            "change":"complete","evidence":["doc_receipt_1"]},
+           {"seq":41,"at":"2026-10-14T08:00:00.000Z","note":"Moved","kind":"migrated","surface":"tasks"}
+         ],
+         "undoSeq":52}
+        """
+        let detail = try await client(session).detail(id: "loop_1")
+        XCTAssertEqual(detail.history[0].change, "complete")
+        XCTAssertEqual(detail.history[0].evidence, ["doc_receipt_1"])
+        // An older gateway sends neither field.
+        XCTAssertNil(detail.history[1].change)
+        XCTAssertEqual(detail.history[1].evidence, [])
+        XCTAssertEqual(TaskJournal.eventTitle(detail.history[0]), "Marked done by Omnesis")
+        XCTAssertNil(TaskJournal.eventSource(detail.history[0]))
+        XCTAssertEqual(TaskJournal.autoAppliedUndoSeq(detail), 52)
+    }
+
     func testSuggestionEventsReadAsTheyNowMean() {
         func title(_ kind: String) -> String {
             TaskJournal.eventTitle(TaskEvent(seq: 1, at: nil, note: "", kind: kind, surface: "tasks"))

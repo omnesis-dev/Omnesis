@@ -183,7 +183,7 @@ fun TasksScreen(
             sheetState = sheet,
             containerColor = OmTheme.colors.bgSecondary,
         ) {
-            TaskHistoryContent(history)
+            TaskHistoryContent(history, onUndo = { vm.undoFromHistory(history) })
         }
     }
 
