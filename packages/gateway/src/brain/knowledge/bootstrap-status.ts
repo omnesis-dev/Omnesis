@@ -104,10 +104,13 @@ export function readKnowledgeBootstrapStatus(
     recentWindowMs: settings.knowledgeRecentWindowMs ?? 30 * 86_400_000,
     /** Documents dated before `notBefore` are outside review, not pending. */
     horizon: { horizonMs: settings.horizonMs, notBefore },
+    /** Sources the Brain never processes; their documents are excluded, not pending. */
+    excludedSources: settings.excludedSources ?? [],
     inventory: readKnowledgeInventoryStatus(
       db,
       settings.knowledgeRecentWindowMs ?? 30 * 86_400_000,
       notBefore,
+      settings.excludedSources ?? [],
     ),
     corpusCompletion: "not-measured" as const,
   };

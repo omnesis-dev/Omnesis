@@ -49,6 +49,7 @@ import {
   type TemporalItem,
 } from "@omnesis/core";
 import { SUBJECT_ATTRIBUTION_REQUIRES_EVIDENCE } from "@omnesis/agent";
+import { isBrainExcludedSource } from "../source-exclusion.js";
 import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
 import { WIKI_AUTHORING_GUIDANCE } from "../knowledge/wiki-authoring.js";
 import {
@@ -488,6 +489,23 @@ function flattenUntrustedTitle(raw: string): string {
 }
 
 /** One neighbour line: id, title, type, source, date — enough to decide whether to fetch it. */
+/** The neighbourhood without documents of sources excluded from the Brain, counts included. */
+function withoutExcludedNeighbours(
+  neighbourhood: ReturnType<typeof readDocumentNeighbourhood>,
+  excluded: readonly string[],
+): ReturnType<typeof readDocumentNeighbourhood> {
+  if (excluded.length === 0) return neighbourhood;
+  let removed = 0;
+  const groups = neighbourhood.groups.flatMap((group) => {
+    const edges = group.edges.filter((edge) => !isBrainExcludedSource(excluded, edge.sourceId));
+    const dropped = group.edges.length - edges.length;
+    removed += dropped;
+    const total = group.total - dropped;
+    return total > 0 ? [{ ...group, edges, total }] : [];
+  });
+  return { ...neighbourhood, groups, total: neighbourhood.total - removed };
+}
+
 function renderNeighbourLine(edge: NeighbourEdge): string {
   const title = edge.title === null ? "(untitled)" : flattenUntrustedTitle(edge.title);
   const day = edge.sourceCreatedAt.slice(0, 10);
@@ -509,7 +527,10 @@ function renderNeighbourLine(edge: NeighbourEdge): string {
  * costs no prompt.
  */
 function buildDatumNeighbourhoodSection(docId: string, deps: CognitionRunPromptDeps): string[] {
-  const neighbourhood = readDocumentNeighbourhood(deps.db, docId);
+  const neighbourhood = withoutExcludedNeighbours(
+    readDocumentNeighbourhood(deps.db, docId),
+    deps.cfg.excludedSources,
+  );
   const derivation = documentDerivationState(deps.db, docId, deps.activeDerivationStages?.());
   const parts: string[] = [];
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { hasSourceInventoryTables } from "../../data/repositories/SourceInventoryRepository.js";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery-policy.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { knowledgeWorkParkedSql } from "./work-retry.js";
@@ -10,18 +11,21 @@ import type Database from "better-sqlite3";
 /**
  * Coverage of the explicitly observed import, never a claim about unseen provider history.
  * Revisions dated before the history horizon floor (`notBefore`) form their own
- * `beyond-horizon` window: review never admits them, so they are out of scope
- * rather than pending.
+ * `beyond-horizon` window, and an inventory of a source excluded from the Brain
+ * (`excludedSources`) forms an `excluded` window: review never admits either,
+ * so what they leave unreviewed is out of scope rather than pending.
  */
 export function readKnowledgeInventoryStatus(
   db: Database.Database,
   recentWindowMs: number,
   notBefore: string,
+  excludedSources: readonly string[] = [],
 ) {
   if (!hasSourceInventoryTables(db)) return [];
+  const included = brainSourceInclusionSql(excludedSources, "i.source_id");
   return db
     .prepare<
-      [string, number, string],
+      unknown[],
       {
         sourceId: string;
         inventoryId: string;
@@ -47,6 +51,7 @@ export function readKnowledgeInventoryStatus(
       `WITH inventory AS (
     SELECT i.*, d.id AS document_id,d.source_created_at,c.status,ph.phase,
       CASE WHEN d.id IS NULL THEN 'empty'
+        WHEN NOT (${included.sql}) THEN 'excluded'
         WHEN julianday(d.source_created_at) IS NULL THEN 'undated'
         WHEN d.source_created_at<? THEN 'beyond-horizon'
         WHEN julianday(d.source_created_at)>=julianday(i.first_received_at/1000.0,'unixepoch')-? THEN 'recent' ELSE 'history' END AS window,
@@ -65,19 +70,18 @@ export function readKnowledgeInventoryStatus(
     SUM(pending) AS pending,SUM(parked) AS parked,MIN(source_created_at) AS earliestSourceDate,MAX(source_created_at) AS latestSourceDate
     FROM inventory GROUP BY id,window,phase ORDER BY source_id,started_at DESC,window,phase`,
     )
-    .all(notBefore, recentWindowMs / 86_400_000, KNOWLEDGE_DISCOVERY_POLICY)
-    .map((row) => ({
-      ...row,
-      importState: row.completedAt === null ? "importing" : "complete",
-      // Beyond the horizon, what was never reviewed is out of scope, not owed.
-      unconsidered:
-        row.window === "beyond-horizon"
-          ? 0
-          : Math.max(0, row.observed - row.considered - row.gated),
-      outOfScope:
-        row.window === "beyond-horizon"
-          ? Math.max(0, row.observed - row.considered - row.gated)
-          : 0,
-      coverageScope: "observed-inventory-revisions",
-    }));
+    .all(...included.params, notBefore, recentWindowMs / 86_400_000, KNOWLEDGE_DISCOVERY_POLICY)
+    .map((row) => {
+      // Beyond the horizon or from an excluded source, what was never
+      // reviewed is out of scope, not owed.
+      const outOfReview = row.window === "beyond-horizon" || row.window === "excluded";
+      const unreviewed = Math.max(0, row.observed - row.considered - row.gated);
+      return {
+        ...row,
+        importState: row.completedAt === null ? "importing" : "complete",
+        unconsidered: outOfReview ? 0 : unreviewed,
+        outOfScope: outOfReview ? unreviewed : 0,
+        coverageScope: "observed-inventory-revisions",
+      };
+    });
 }

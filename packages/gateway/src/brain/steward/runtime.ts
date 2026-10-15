@@ -33,6 +33,7 @@ import {
   parseCognitionSynthesisRunPayload,
   parseCognitionDataRunPayload,
   parseCognitionBootstrapRunPayload,
+  parseCognitionDailyRunPayload,
   parseCognitionDigestRunPayload,
   parseCognitionMergeAdjudicationRunPayload,
   runScopeLoopId,
@@ -61,8 +62,15 @@ import { renderKnowledgeRootContext } from "../knowledge/root-context.js";
 import { recheckObservations } from "../observations/recheck.js";
 import { buildMorningBriefSendTool } from "../observations/morning-brief.js";
 import { morningBriefSent } from "../storage/morning-brief-items.js";
+import { createBrainSourceFence, type BrainSourceFence } from "../source-exclusion.js";
 import { readDigestInputs } from "./digest-inputs.js";
 import { PersonProfileReads } from "./person-profile-reads.js";
+import {
+  existingPageCitations,
+  fenceExcludedDocumentArguments,
+  fenceReadPorts,
+  fenceTemporalReader,
+} from "./source-fence.js";
 import {
   buildCognitionOwnTools,
   COGNITION_MUTATING_TOOL_NAMES,
@@ -211,6 +219,11 @@ export interface CognitionToolsetDeps {
   createObservationScorer?: (
     runId: string,
   ) => (input: ObservationScoringInput) => Promise<ObservationScoringResult>;
+  /**
+   * Sources excluded from the Brain, for a background run: their documents
+   * never seed it. Omitted, nothing is excluded.
+   */
+  sourceFence?: BrainSourceFence;
 }
 
 /**
@@ -220,7 +233,18 @@ export interface CognitionToolsetDeps {
  * neighbourhood. Maintenance uses its bounded current source work; other kinds have no seeds,
  * and `open_loop_search` stays lexical + semantic.
  */
-function cognitionSeedDocIds(db: Db, run: ClaimedCognitionRun): string[] {
+function cognitionSeedDocIds(
+  db: Db,
+  run: ClaimedCognitionRun,
+  fence: BrainSourceFence | undefined,
+): string[] {
+  const seeds = unfencedSeedDocIds(db, run);
+  if (!fence || seeds.length === 0) return seeds;
+  const excluded = fence.excludedDocuments(seeds);
+  return excluded.size ? seeds.filter((id) => !excluded.has(id)) : seeds;
+}
+
+function unfencedSeedDocIds(db: Db, run: ClaimedCognitionRun): string[] {
   const data = parseCognitionDataRunPayload(run.payload);
   if (data) return [data.docId];
   const boot = parseCognitionBootstrapRunPayload(run.payload);
@@ -286,7 +310,7 @@ export function buildCognitionToolset(
     }),
     ...(checkRecord ? { checkRecord } : {}),
     get seedDocIds() {
-      return cognitionSeedDocIds(deps.db, run);
+      return cognitionSeedDocIds(deps.db, run, deps.sourceFence);
     },
   });
   // A merge-adjudication run gets its one dedicated verdict tool, scoped to
@@ -582,7 +606,25 @@ export async function createCognitionRuntime(
   // tracker across the two seams without any lifecycle bookkeeping (a settled
   // run's tracker is garbage-collected with its row object).
   const consumptionByRun = new WeakMap<ClaimedCognitionRun, RunConsumptionTracker>();
-  const temporalQuery = new TemporalQueryService(deps.db, deps.analyticsDb);
+  // Background runs never read a document of a source the operator excluded
+  // from the Brain, in their prompts' temporal context or through any tool.
+  const sourceFence = createBrainSourceFence(deps.db, () => deps.getSettings().excludedSources);
+  const temporalQuery = fenceTemporalReader(
+    new TemporalQueryService(deps.db, deps.analyticsDb),
+    sourceFence,
+  );
+  /** A run whose subject is a document or source excluded from the Brain. */
+  const concernsExcludedSource = (run: ClaimedCognitionRun): boolean => {
+    if (sourceFence.entries().length === 0) return false;
+    const docId =
+      (run.kind === "data" ? parseCognitionDataRunPayload(run.payload)?.docId : undefined) ??
+      (run.kind === "bootstrap"
+        ? parseCognitionBootstrapRunPayload(run.payload)?.docId
+        : undefined);
+    if (docId !== undefined) return sourceFence.excludedDocuments([docId]).size > 0;
+    const daily = run.kind === "daily" ? parseCognitionDailyRunPayload(run.payload) : null;
+    return daily !== null && sourceFence.excludesSource(daily.sourceId);
+  };
   const successfulDocumentReadsByRun = new WeakMap<ClaimedCognitionRun, Set<string>>();
   const consumptionFor = (run: ClaimedCognitionRun): RunConsumptionTracker => {
     let tracker = consumptionByRun.get(run);
@@ -595,6 +637,8 @@ export async function createCognitionRuntime(
 
   return {
     preflight: async (run) => {
+      // Queued before its source was excluded: settled without a model call.
+      if (concernsExcludedSource(run)) return "complete";
       const digest = run.kind === "daily" ? parseCognitionDigestRunPayload(run.payload) : null;
       if (!digest) return "continue";
       if (morningBriefSent(deps.db, digest.date)) return "complete";
@@ -633,23 +677,33 @@ export async function createCognitionRuntime(
       const runToolsetDeps = {
         personProfileReads,
         ...toolsetDeps,
-        basePorts: {
-          ...basePorts,
-          search: {
-            async search(...args: Parameters<NonNullable<ToolPorts["search"]>["search"]>) {
-              const result = await basePorts.search!.search(...args);
-              const coverage = result.coverage;
-              if (
-                coverage?.status !== "scanned" &&
-                coverage?.corpusBoundary &&
-                (!incompleteRetrievalBoundary ||
-                  coverage.corpusBoundary > incompleteRetrievalBoundary)
-              )
-                incompleteRetrievalBoundary = coverage.corpusBoundary;
-              return result;
+        sourceFence,
+        basePorts: fenceReadPorts(
+          {
+            ...basePorts,
+            search: {
+              async search(...args: Parameters<NonNullable<ToolPorts["search"]>["search"]>) {
+                const result = await basePorts.search!.search(...args);
+                const coverage = result.coverage;
+                if (
+                  coverage?.status !== "scanned" &&
+                  coverage?.corpusBoundary &&
+                  (!incompleteRetrievalBoundary ||
+                    coverage.corpusBoundary > incompleteRetrievalBoundary)
+                )
+                  incompleteRetrievalBoundary = coverage.corpusBoundary;
+                return result;
+              },
             },
           },
-        },
+          sourceFence,
+          {
+            sqlPortFor: (permittedSourceIds) =>
+              ports.createGatewaySqlPort(deps.analyticsDb, { permittedSourceIds }),
+            catalogSourceIds: async () =>
+              (await deps.analyticsDb.getCatalog()).map((entry) => entry.sourceId),
+          },
+        ),
       };
       const consumption = consumptionFor(run);
       const parallel = isParallelKnowledgeRun(deps.db, run.id);
@@ -748,9 +802,13 @@ export async function createCognitionRuntime(
           },
         };
       }
-      return payload?.focus === "knowledge-maintenance" && payload.batchId
-        ? withKnowledgeSourceReadReceipts(deps.db, tools)
-        : tools;
+      return fenceExcludedDocumentArguments(
+        payload?.focus === "knowledge-maintenance" && payload.batchId
+          ? withKnowledgeSourceReadReceipts(deps.db, tools)
+          : tools,
+        sourceFence,
+        existingPageCitations(deps.db),
+      );
     },
     buildOwnTools: (runId) => [
       ...buildCognitionInteractiveOwnTools(toolsetDeps, runId),

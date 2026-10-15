@@ -261,6 +261,7 @@ beforeEach(() => {
               failed: 0,
               pending: 3,
               outOfScope: 0,
+              excluded: 0,
             },
             organization: {
               considered: 1,
@@ -269,6 +270,7 @@ beforeEach(() => {
               failed: 0,
               pending: 4,
               outOfScope: 0,
+              excluded: 0,
             },
           },
         ];

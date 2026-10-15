@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { assertCandidateReservation } from "./candidate-affinity.js";
 import { pendingCandidateDecisions } from "./candidate-decision.js";
@@ -266,6 +267,50 @@ export function retireHistoricalKnowledgeWorkBeyond(db: Database.Database, floor
           AND d.source_created_at<? LIMIT ${RETIRE_BATCH})`,
     )
     .run(floor).changes;
+}
+
+/**
+ * Pending source work whose document belongs to a source excluded from the
+ * Brain (`brain.excludedSources`). Read side of the retirement below.
+ */
+export function hasKnowledgeWorkFromExcludedSources(
+  db: Database.Database,
+  excluded: readonly string[],
+): boolean {
+  if (excluded.length === 0) return false;
+  const inclusion = brainSourceInclusionSql(excluded, "d.source_id");
+  return !!db
+    .prepare<unknown[], { one: number }>(
+      `SELECT 1 AS one FROM knowledge_work w JOIN documents d ON d.id=w.subject_id
+      WHERE w.status='pending' AND w.subject_kind='source' AND NOT (${inclusion.sql}) LIMIT 1`,
+    )
+    .get(...inclusion.params);
+}
+
+/**
+ * Retire pending source work whose document belongs to an excluded source,
+ * whatever admitted it — a live change, recent inventory or historical review.
+ * Nothing was bought for it, so the row is removed rather than settled and no
+ * coverage is recorded, so historical review can admit the document once the
+ * source is no longer excluded. Batched work is not touched here; the engine reads
+ * an excluded source as absent, so its frontier item settles without a model
+ * turn. Admission counters are not refunded. Idempotent, and bounded to
+ * RETIRE_BATCH rows per call like the horizon retirement above.
+ */
+export function retireKnowledgeWorkFromExcludedSources(
+  db: Database.Database,
+  excluded: readonly string[],
+): number {
+  if (excluded.length === 0) return 0;
+  const inclusion = brainSourceInclusionSql(excluded, "d.source_id");
+  return db
+    .prepare<unknown[]>(
+      `DELETE FROM knowledge_work WHERE id IN (
+        SELECT w.id FROM knowledge_work w JOIN documents d ON d.id=w.subject_id
+        WHERE w.status='pending' AND w.subject_kind='source' AND NOT (${inclusion.sql})
+        LIMIT ${RETIRE_BATCH})`,
+    )
+    .run(...inclusion.params).changes;
 }
 
 /** Identity-free counters survive corpus erasure; deleting evidence never refunds consent limits. */

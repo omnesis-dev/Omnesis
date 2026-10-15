@@ -49,6 +49,7 @@ export interface BootstrapTimelinePhaseCounts {
   failed: number;
   pending: number;
   outOfScope: number;
+  excluded: number;
 }
 
 export interface PulseCounts {
@@ -871,6 +872,8 @@ export class BrainObs {
     corpusCompletion?: "not-measured";
     /** History dated before `notBefore` is outside review, not pending. */
     horizon?: { horizonMs: number; notBefore: string };
+    /** Sources the Brain never processes (`brain.excludedSources`). */
+    excludedSources?: string[];
     admission?: {
       total: number;
       today: number;

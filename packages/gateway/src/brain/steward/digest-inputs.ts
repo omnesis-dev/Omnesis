@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { excludedDocumentIds } from "../source-exclusion.js";
 import { listMorningBriefItems } from "../storage/morning-brief-items.js";
 import { getObservation } from "../storage/observations.js";
 import { readDueSoonDeltaPrime } from "./delta-prime.js";
@@ -10,15 +11,24 @@ import type Database from "better-sqlite3";
 
 const iso = (ms: number | null): string | null => (ms === null ? null : new Date(ms).toISOString());
 
-/** One line per ranked observation the morning recheck chose for `day`. */
-export function renderMorningBriefItemLines(db: Database.Database, day: string): string[] {
+/**
+ * One line per ranked observation the morning recheck chose for `day`. A
+ * citation of a source excluded from the Brain is left out of the line.
+ */
+export function renderMorningBriefItemLines(
+  db: Database.Database,
+  day: string,
+  excludedSources: readonly string[] = [],
+): string[] {
   const titles = db.prepare<[string], { title: string }>(
     "SELECT title FROM documents WHERE id = ?",
   );
   return listMorningBriefItems(db, day).flatMap((item) => {
     const observation = getObservation(db, item.observationId);
     if (!observation) return [];
+    const excluded = excludedDocumentIds(db, excludedSources, observation.citations);
     const sources = observation.citations
+      .filter((id) => !excluded.has(id))
       .map((id) => `${titles.get(id)?.title ?? "untitled"} (${id})`)
       .join("; ");
     const window = [
@@ -50,7 +60,7 @@ export function readDigestInputs(
   day: string,
 ) {
   const horizonLines = renderDigestHorizonLines(horizon);
-  const itemLines = renderMorningBriefItemLines(db, day);
+  const itemLines = renderMorningBriefItemLines(db, day, cfg.excludedSources);
   const prime = readDueSoonDeltaPrime(db, { now, cfg });
   return {
     horizonLines,

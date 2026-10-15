@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { OPEN_LOOP_SOURCE_ID, OPEN_LOOP_DOCUMENT_TYPE } from "../open-loop-source/source-meta.js";
+import { brainSourceInclusionSql, excludedDocumentIds } from "../source-exclusion.js";
 import { getKnowledgeCandidate, type KnowledgeCandidate } from "./discovery.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery-policy.js";
 import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
@@ -17,7 +18,14 @@ export type OrganizationAdmission =
 /** Revisit already authorized evidence; this does not expand historical consent. */
 export function listOrganizationAdmissions(
   db: Database.Database,
-  options: { now: number; limit: number; retryMs: number; initialDelayMs?: number },
+  options: {
+    now: number;
+    limit: number;
+    retryMs: number;
+    initialDelayMs?: number;
+    /** Sources excluded from the Brain: evidence from them is never revisited. */
+    excludedSources?: readonly string[];
+  },
 ): OrganizationAdmission[] {
   const limit = Math.max(1, Math.min(100, options.limit));
   // Filter unreadable evidence before LIMIT. Privacy cleanup can be deferred;
@@ -29,13 +37,15 @@ export function listOrganizationAdmissions(
     .prepare<[], { name: string }>("PRAGMA table_info(documents)")
     .all()
     .some((column) => column.name === "metadata");
+  const included = brainSourceInclusionSql(options.excludedSources ?? [], "oe.source_id");
   const readable = `EXISTS(SELECT 1 FROM documents oe LEFT JOIN knowledge_source_revisions r ON r.document_id=oe.id
-    WHERE oe.id=e.value AND COALESCE(r.deleted,0)=0 AND oe.source_id NOT IN (?,?)
+    WHERE oe.id=e.value AND COALESCE(r.deleted,0)=0 AND oe.source_id NOT IN (?,?) AND ${included.sql}
     ${metadata ? "AND COALESCE(json_extract(oe.metadata,'$.documentType'),'') NOT IN (?,?)" : ""}
     ${removed ? "AND NOT EXISTS(SELECT 1 FROM removed_sources rs WHERE rs.id=oe.source_id)" : ""})`;
   const evidenceParams = [
     KNOWLEDGE_SOURCE_ID,
     OPEN_LOOP_SOURCE_ID,
+    ...included.params,
     ...(metadata ? [KNOWLEDGE_DOCUMENT_TYPE, OPEN_LOOP_DOCUMENT_TYPE] : []),
   ];
   const rows = db
@@ -96,7 +106,13 @@ export function listOrganizationAdmissions(
 /** Bounded writer transaction binds reconsideration backoff to durable admission. */
 export function admitKnowledgeOrganization(
   db: Database.Database,
-  input: { admission: OrganizationAdmission; workPrefix: string; retryAt: number },
+  input: {
+    admission: OrganizationAdmission;
+    workPrefix: string;
+    retryAt: number;
+    /** Sources excluded from the Brain when the admission was selected. */
+    excludedSources?: readonly string[];
+  },
   now: number,
 ): boolean {
   return db.transaction(() => {
@@ -135,6 +151,7 @@ export function admitKnowledgeOrganization(
             >("SELECT decision_generation+CASE WHEN decision_pending=0 THEN 1 ELSE 0 END AS generation FROM knowledge_candidates WHERE id=?")
             .get(admission.id)!.generation
         : 0;
+    if (excludedDocumentIds(db, input.excludedSources ?? [], ids).size > 0) return false;
     const sources: Array<{ id: string; revision: string }> = [];
     for (const id of ids) {
       if (!isKnowledgeEvidenceReadable(db, id)) return false;

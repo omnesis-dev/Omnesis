@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { OPEN_LOOP_SOURCE_ID, OPEN_LOOP_DOCUMENT_TYPE } from "../open-loop-source/source-meta.js";
 import { getKnowledgeNode, knowledgeNodeFence } from "./storage.js";
 import { assertCandidateGrounded } from "./discovery.js";
@@ -47,6 +48,8 @@ export interface OrganizationCohortOptions {
   limit?: number;
   intervalMs: number;
   retryMs: number;
+  /** Sources excluded from the Brain (`brain.excludedSources`): never selected. */
+  excludedSources?: readonly string[];
 }
 function fingerprint(versions: Record<string, string>): string {
   return createHash("sha256")
@@ -123,19 +126,21 @@ function publishedRetry(
   now: number,
   ownBatchId = "",
   limit = 8,
+  excludedSources: readonly string[] = [],
 ): OrganizationCohort | null {
   const removed = db
     .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='removed_sources'")
     .get();
+  const included = brainSourceInclusionSql(excludedSources, "d.source_id");
   const rows = db
-    .prepare<[number, string, number, string], { id: string }>(
+    .prepare<unknown[], { id: string }>(
       `SELECT c.id FROM knowledge_organization_cohorts c WHERE c.retrieval_reconsider_at<=?
       AND c.status IN ('completed','deferred') AND c.policy_version=?
       AND (SELECT COUNT(*) FROM knowledge_organization_members m WHERE m.cohort_id=c.id)<=?
       AND NOT EXISTS(SELECT 1 FROM knowledge_organization_members m
         LEFT JOIN documents d ON d.id=m.source_id AND ${knowledgeSourceRevisionSql()}=m.content_hash
         LEFT JOIN knowledge_source_revisions r ON r.document_id=m.source_id
-        WHERE m.cohort_id=c.id AND (d.id IS NULL OR COALESCE(r.deleted,0)!=0
+        WHERE m.cohort_id=c.id AND (d.id IS NULL OR COALESCE(r.deleted,0)!=0 OR NOT (${included.sql})
           ${removed ? "OR EXISTS(SELECT 1 FROM removed_sources rs WHERE rs.id=d.source_id)" : ""}))
       AND NOT EXISTS(SELECT 1 FROM knowledge_organization_members m JOIN knowledge_work w
         ON w.subject_id=m.source_id AND w.subject_kind='source'
@@ -143,7 +148,7 @@ function publishedRetry(
           AND (w.batch_id IS NULL OR w.batch_id!=?))
       ORDER BY c.retrieval_reconsider_at,c.id LIMIT 32`,
     )
-    .all(now, KNOWLEDGE_DISCOVERY_POLICY, limit, ownBatchId);
+    .all(now, KNOWLEDGE_DISCOVERY_POLICY, limit, ...included.params, ownBatchId);
   for (const row of rows) {
     const cohort = getOrganizationCohort(db, row.id);
     if (cohort && isOrganizationCohortCurrent(db, cohort)) return cohort;
@@ -158,7 +163,8 @@ export function selectOrganizationCohort(
 ): OrganizationCohortSelection | null {
   if (hasActiveCohort(db)) return null;
   const limit = Math.max(2, Math.min(8, Math.trunc(options.limit ?? 8)));
-  const retry = publishedRetry(db, options.now, "", limit);
+  const excluded = options.excludedSources ?? [];
+  const retry = publishedRetry(db, options.now, "", limit, excluded);
   if (retry)
     return { sourceVersions: retry.sourceVersions, inputFingerprint: retry.inputFingerprint };
   const cadenceElapsed = cadenceReady(db, options.now, options.intervalMs);
@@ -172,6 +178,7 @@ export function selectOrganizationCohort(
     .prepare<[], { name: string }>("PRAGMA table_info(documents)")
     .all()
     .some((c) => c.name === "metadata");
+  const included = brainSourceInclusionSql(excluded, "d.source_id");
   const rows = (onlyDue: boolean, count: number, initialOnly = false) =>
     db
       .prepare<unknown[], { id: string; revision: string }>(
@@ -183,7 +190,7 @@ export function selectOrganizationCohort(
     AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='source' AND w.subject_id=d.id AND w.status IN ('pending','batched'))
     AND NOT ${knowledgeWorkParkedSql("'source'", "d.id", knowledgeSourceRevisionSql())}
     AND COALESCE(r.deleted,0)=0
-    AND d.source_id NOT IN (?,?)
+    AND d.source_id NOT IN (?,?) AND ${included.sql}
     ${metadata ? "AND COALESCE(json_extract(d.metadata,'$.documentType'),'') NOT IN (?,?)" : ""}
     ${removed ? "AND NOT EXISTS(SELECT 1 FROM removed_sources s WHERE s.id=d.source_id)" : ""}
     AND NOT EXISTS(SELECT 1 FROM knowledge_organization_members m
@@ -204,6 +211,7 @@ export function selectOrganizationCohort(
         KNOWLEDGE_DISCOVERY_POLICY,
         KNOWLEDGE_SOURCE_ID,
         OPEN_LOOP_SOURCE_ID,
+        ...included.params,
         ...(metadata ? [KNOWLEDGE_DOCUMENT_TYPE, OPEN_LOOP_DOCUMENT_TYPE] : []),
         KNOWLEDGE_DISCOVERY_POLICY,
         ...(onlyDue ? [options.now] : []),

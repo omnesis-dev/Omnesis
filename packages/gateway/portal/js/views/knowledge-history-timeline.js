@@ -13,6 +13,9 @@ const BANDS = [
   // Never reviewed and older than brain.bootstrap.horizon: not owed, so it is
   // drawn muted and left out of the headline's denominator.
   { key: "outOfScope", color: "var(--text-muted)", label: "Outside history horizon" },
+  // Never reviewed and from a source in brain.excludedSources: never admitted,
+  // so it is drawn muted and left out of the headline's denominator too.
+  { key: "excluded", color: "var(--border)", label: "Excluded from the Brain" },
 ];
 const PHASES = [
   { value: "interpretation", label: "Read evidence" },
@@ -21,6 +24,8 @@ const PHASES = [
 const fmt = (n) => n.toLocaleString();
 const OUT_OF_SCOPE_NOTE =
   "older documents are outside the history horizon: they are not reviewed proactively, and stay searchable.";
+const EXCLUDED_NOTE =
+  "documents come from sources excluded from the Brain: it never reads them, and they stay searchable.";
 
 export function coverageTotals(months, phase) {
   const counts = Object.fromEntries(BANDS.map(({ key }) => [key, 0]));
@@ -58,7 +63,7 @@ export function CoverageColumns({ months, phase }) {
 export function KnowledgeHistoryTimeline({ timeline, loading, error, onRefresh, phase = "interpretation", onPhaseChange }) {
   const months = timeline?.mode === "knowledge" ? timeline.months ?? [] : [];
   const totals = coverageTotals(months, phase);
-  const inScope = totals.total - totals.outOfScope;
+  const inScope = totals.total - totals.outOfScope - totals.excluded;
   const dated = months.filter((month) => month.month);
   return html`<section class="cognition-timeline" aria-label="Historical discovery coverage">
     <div class="tl-head">
@@ -74,6 +79,7 @@ export function KnowledgeHistoryTimeline({ timeline, loading, error, onRefresh, 
         ? "Has the brain read this evidence and considered what it means?"
         : "Has the brain considered how this evidence belongs with existing knowledge? A review need not create a wiki page."}
       ${totals.outOfScope > 0 && ` ${fmt(totals.outOfScope)} ${OUT_OF_SCOPE_NOTE}`}
+      ${totals.excluded > 0 && ` ${fmt(totals.excluded)} ${EXCLUDED_NOTE}`}
     </p>
     ${error && html`<p class="debug-error" role="alert">${error}</p>`}
     ${!timeline && loading ? html`<p role="status">Loading historical coverage…</p>`

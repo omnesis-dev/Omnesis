@@ -91,6 +91,7 @@ describe("resolveBrainSettings", () => {
         horizonMs: 90 * 24 * 60 * 60 * 1000,
       },
       sweepsEnabled: true,
+      excludedSources: [],
       synthesisLookbackMs: 7 * 24 * 60 * 60 * 1000,
       primeMaxAnnotations: 12,
       annotationConfidenceCeiling: 0.9,
@@ -276,6 +277,7 @@ describe("CONFIG_DEFAULTS.brain cross-check against the live resolver", () => {
     expect(defAt("/brain/provenanceRecheck/enabled")).toBe(r.provenanceRecheck.enabled);
     expect(defAt("/brain/mergeAdjudication/enabled")).toBe(r.mergeAdjudication.enabled);
     expect(defAt("/brain/sweepsEnabled")).toBe(r.sweepsEnabled);
+    expect(defAt("/brain/excludedSources")).toEqual(r.excludedSources);
     expect(defAt("/brain/bootstrap/enabled")).toBe(r.bootstrap.enabled);
     expect(defAt("/brain/bootstrap/maxRunsPerDay")).toBe(r.bootstrap.maxRunsPerDay);
     expect(defAt("/brain/bootstrap/maxRuns")).toBe(r.bootstrap.maxRuns);
@@ -394,6 +396,13 @@ describe("proactive-lane knobs (experimental prototypes)", () => {
   it("partial synthesis overrides fall back per-field", () => {
     const r = resolveBrainSettings({ synthesis: { cadenceHours: 6 } });
     expect(r.synthesis).toEqual({ enabled: true, cadenceHours: 6, maxPerDay: 1 });
+  });
+});
+
+describe("excluded sources", () => {
+  it("resolves the configured entries, deduplicated in order", () => {
+    const r = resolveBrainSettings({ excludedSources: ["codex", "github:someone", "codex"] });
+    expect(r.excludedSources).toEqual(["codex", "github:someone"]);
   });
 });
 

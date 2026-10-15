@@ -1380,6 +1380,56 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
           </li>
         </ul>
 
+        <h3 id="brain-excluded-sources">Keeping sources out of Brain</h3>
+        <p>
+          <code>brain.excludedSources</code> lists sources Brain never processes. An entry is either
+          a source type, which covers every source of that type, or one source's id, which covers
+          only that source:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis config set brain.excludedSources '["codex","github:jamie-lopez"]'</span
+              >
+            </p>
+          </div>
+        </div>
+        <p>
+          The list is read live; no restart is needed. A type that is not installed yet is accepted
+          and applies once a source of that type is added. While a source is excluded:
+        </p>
+        <ul>
+          <li>
+            Its documents are never admitted: not as live arrivals or edits, not by an initial
+            import, not by historical review, and not in organization or the daily batch. Pending
+            work already queued for them is withdrawn on the next pass without a model call, and the
+            coverage chart shows them as excluded rather than pending.
+          </li>
+          <li>
+            Brain runs cannot read them. Search, fetch, connection traces, time-index reads, entity
+            context, SQL over the source's tables and the context a run's prompt is built from leave
+            them out, and a run that names one of its documents is refused.
+          </li>
+          <li>
+            Nothing new cites them. Loops, annotations, dated facts and pages written from then on
+            cannot use their documents as evidence.
+          </li>
+        </ul>
+        <p>
+          The agent you talk to is not affected: it still searches and reads every source. Knowledge
+          already derived from an excluded source is kept as it is, and Brain still sees it as
+          knowledge: an annotation keeps its quoted evidence, a loop keeps its linked documents, and
+          a page keeps the claims that cite the source. Those annotations are not re-verified while
+          the exclusion holds, and nothing new may cite the source. Editing or deleting one of its
+          documents still repairs or removes what cites it. Removing an entry makes the source's
+          documents eligible again: historical review admits the ones inside
+          <code>brain.bootstrap.horizon</code>, and later arrivals and edits are reactive as usual.
+          Documents that arrived while the source was excluded are not replayed as live arrivals.
+        </p>
+
         <h3 id="brain-privacy">Privacy and removing its records</h3>
         <p>
           Brain reads the same corpus the agent does and sends what a run reads to the backends
@@ -1442,6 +1492,16 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td><code>excludedSources</code></td>
+                <td>none</td>
+                <td>
+                  Source types and source ids Brain never processes (<a
+                    href="#brain-excluded-sources"
+                    >Keeping sources out of Brain</a
+                  >).
+                </td>
+              </tr>
               <tr>
                 <td><code>recencyWindow</code></td>
                 <td><code>7d</code></td>

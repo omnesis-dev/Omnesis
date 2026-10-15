@@ -447,3 +447,34 @@ describe("self-trigger guard (criterion 10)", () => {
     ).not.toBeNull();
   });
 });
+
+describe("sources excluded from the Brain", () => {
+  const excluded: WakerHeuristicsConfig = {
+    ...CFG,
+    excludedSources: ["codex", "gmail:maya@example.com"],
+  };
+
+  test("a document from an excluded source never wakes the agent, even when addressed", () => {
+    expect(decideWake(insertEvent(), excluded, NOW)).toBeNull();
+    expect(
+      decideWake(
+        insertEvent({ sourceId: "codex:local", documentType: "conversation" }),
+        excluded,
+        NOW,
+      ),
+    ).toBeNull();
+    expect(
+      decideWake(
+        insertEvent({ sourceId: "codex:local", metadata: { addressedToAgent: true } }),
+        excluded,
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
+  test("a sibling account of an excluded source id still wakes it", () => {
+    expect(
+      decideWake(insertEvent({ sourceId: "gmail:jamie@example.com" }), excluded, NOW),
+    ).not.toBeNull();
+  });
+});

@@ -639,6 +639,7 @@ export async function bootBriefs(deps: {
           log: log.child("rhythm"),
           isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
           getDailyRunHour: () => rq.getSettings().dailyRunHour,
+          getExcludedSources: () => rq.getSettings().excludedSources,
           getDecayBackoff: () => {
             const s = rq.getSettings();
             return {
@@ -750,6 +751,7 @@ export async function bootBriefs(deps: {
             documentUpdateDebounceMs: s.documentUpdateDebounceMs,
             conversationMaxDeferMs: s.conversationMaxDeferMs,
             documentMaxDeferMs: s.documentMaxDeferMs,
+            excludedSources: s.excludedSources,
           };
         },
         clock: rq.clock ?? (() => Date.now()),

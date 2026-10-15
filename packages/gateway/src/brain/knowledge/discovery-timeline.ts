@@ -5,6 +5,7 @@ import {
   cognitionAuthoredDocumentTypes,
   cognitionAuthoredSqlExclusion,
 } from "../cognition-authored.js";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery-policy.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import type Database from "better-sqlite3";
@@ -17,6 +18,8 @@ export interface DiscoveryPhaseCounts {
   pending: number;
   /** Never reviewed and dated before the history horizon: out of scope, not pending. */
   outOfScope: number;
+  /** Never reviewed and from a source excluded from the Brain: never admitted, not pending. */
+  excluded: number;
 }
 export interface KnowledgeDiscoveryMonth {
   month: string | null;
@@ -31,10 +34,12 @@ export interface KnowledgeDiscoveryTimeline {
 
 /** Full corpus scan: call only on the IO worker. Counts current readable indexed
  * generations, never provider history that has not reached this database.
- * `notBefore` is the history horizon floor (`history-horizon.ts`). */
+ * `notBefore` is the history horizon floor (`history-horizon.ts`);
+ * `excludedSources` is `brain.excludedSources` (`source-exclusion.ts`). */
 export function knowledgeDiscoveryByMonth(
   db: Database.Database,
   notBefore: string,
+  excludedSources: readonly string[] = [],
 ): KnowledgeDiscoveryMonth[] {
   const exclusion = cognitionAuthoredSqlExclusion("d.source_id");
   const types = cognitionAuthoredDocumentTypes();
@@ -48,7 +53,8 @@ export function knowledgeDiscoveryByMonth(
     .get()
     ? "AND NOT EXISTS(SELECT 1 FROM removed_sources s WHERE s.id=d.source_id)"
     : "";
-  const unreviewed = "CASE WHEN d.source_created_at<? THEN 'outOfScope' ELSE 'pending' END";
+  const included = brainSourceInclusionSql(excludedSources, "d.source_id");
+  const unreviewed = `CASE WHEN NOT (${included.sql}) THEN 'excluded' WHEN d.source_created_at<? THEN 'outOfScope' ELSE 'pending' END`;
   const rows = db
     .prepare<
       unknown[],
@@ -72,7 +78,9 @@ export function knowledgeDiscoveryByMonth(
   `,
     )
     .all(
+      ...included.params,
       notBefore,
+      ...included.params,
       notBefore,
       KNOWLEDGE_DISCOVERY_POLICY,
       KNOWLEDGE_DISCOVERY_POLICY,
@@ -87,6 +95,7 @@ export function knowledgeDiscoveryByMonth(
     failed: 0,
     pending: 0,
     outOfScope: 0,
+    excluded: 0,
   });
   for (const row of rows) {
     let month = months.get(row.month);

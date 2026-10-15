@@ -58,6 +58,7 @@
  */
 
 import { containsNormalized } from "../quote-match.js";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import {
   isKnowledgeOwnerReadable,
   knowledgeOwnerReadPredicate,
@@ -735,15 +736,31 @@ export interface DueVerificationAnnotation {
  */
 export function listDueVerificationDocAnnotations(
   db: Db,
-  opts: { cutoff: number; limit: number },
+  opts: {
+    cutoff: number;
+    limit: number;
+    /**
+     * Sources excluded from the Brain: an annotation about one of their
+     * documents, or resting on live evidence from one, is not due.
+     */
+    excludedSources?: readonly string[];
+  },
 ): DueVerificationAnnotation[] {
+  const excluded = opts.excludedSources ?? [];
+  const inclusion = brainSourceInclusionSql(excluded, "d.source_id");
+  const fence = excluded.length
+    ? `AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = doc_annotations.doc_id AND NOT (${inclusion.sql}))
+       AND NOT EXISTS (SELECT 1 FROM doc_annotation_evidence e JOIN documents d ON d.id = e.evidence_doc_id
+         WHERE e.annotation_id = doc_annotations.id AND e.broken_at IS NULL AND NOT (${inclusion.sql}))`
+    : "";
   return db
-    .prepare<[number, number], { id: string; last_verified_at: number | null; created_at: number }>(
+    .prepare<unknown[], { id: string; last_verified_at: number | null; created_at: number }>(
       `SELECT id, last_verified_at, created_at FROM doc_annotations
         WHERE invalidated_at IS NULL AND (last_verified_at IS NULL OR last_verified_at < ?)
+        ${fence}
         ORDER BY COALESCE(last_verified_at, 0) ASC, created_at ASC LIMIT ?`,
     )
-    .all(opts.cutoff, opts.limit)
+    .all(opts.cutoff, ...(fence ? [...inclusion.params, ...inclusion.params] : []), opts.limit)
     .map((r) => ({ id: r.id, lastVerifiedAt: r.last_verified_at, createdAt: r.created_at }));
 }
 

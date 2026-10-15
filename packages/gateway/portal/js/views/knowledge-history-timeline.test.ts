@@ -24,10 +24,10 @@ afterEach(() => { render(null, host); vi.unstubAllGlobals(); });
 
 it("keeps phase coverage, skipped evidence, outstanding work and undated sources distinct", () => {
   expect(coverageTotals(months, "interpretation")).toEqual({
-    considered: 4, gated: 2, deferred: 1, failed: 1, pending: 5, outOfScope: 0, total: 13,
+    considered: 4, gated: 2, deferred: 1, failed: 1, pending: 5, outOfScope: 0, excluded: 0, total: 13,
   });
   expect(coverageTotals(months, "organization")).toEqual({
-    considered: 1, gated: 2, deferred: 2, failed: 0, pending: 8, outOfScope: 0, total: 13,
+    considered: 1, gated: 2, deferred: 2, failed: 0, pending: 8, outOfScope: 0, excluded: 0, total: 13,
   });
 });
 
@@ -72,4 +72,18 @@ it("counts history beyond the horizon as out of scope rather than outstanding", 
   expect(host.textContent).toContain("5 of 14 documents read");
   expect(host.textContent).toContain("6 older documents are outside the history horizon");
   expect(host.textContent).toContain("Outside history horizon");
+});
+
+it("counts documents from excluded sources apart from outstanding work", async () => {
+  const withExcluded = [
+    { month: "2025-02", interpretation: { considered: 0, gated: 0, deferred: 0, failed: 0, pending: 0, excluded: 9 },
+      organization: { considered: 0, gated: 0, deferred: 0, failed: 0, pending: 0, excluded: 9 } },
+    ...months,
+  ];
+  await act(async () => { render(h(KnowledgeHistoryTimeline, {
+    timeline: { mode: "knowledge", months: withExcluded }, phase: "interpretation",
+  }), host); });
+  expect(host.textContent).toContain("4 of 13 documents read");
+  expect(host.textContent).toContain("9 documents come from sources excluded from the Brain");
+  expect(host.textContent).toContain("Excluded from the Brain");
 });

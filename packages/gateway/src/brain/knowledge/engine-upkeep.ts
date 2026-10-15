@@ -143,6 +143,7 @@ export class KnowledgeUpkeep {
       limit: cfg.maxReviewsPerTick,
       retryMs: cfg.maxReviewIntervalMs,
       initialDelayMs: cfg.soonDelayMs,
+      excludedSources: this.deps.getSettings().excludedSources,
     });
     for (const admission of admissions) {
       if (cognitionBudgetVerdict(this.deps.db, this.deps.getSettings().budget, now).exhausted)
@@ -152,6 +153,7 @@ export class KnowledgeUpkeep {
           admission,
           workPrefix: this.id("kw"),
           retryAt: now + cfg.maxReviewIntervalMs,
+          excludedSources: this.deps.getSettings().excludedSources,
         },
         now,
       );

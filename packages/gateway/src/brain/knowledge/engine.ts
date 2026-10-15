@@ -7,6 +7,7 @@ import {
   captureDecisionPayloadSubjects,
   decisionPayloadErasureGeneration,
 } from "../decision-payload.js";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { WIKI_CURATION_TASK } from "./wiki-authoring.js";
 import { knowledgeOrganizationVersion } from "./organization-context.js";
@@ -168,15 +169,25 @@ export class KnowledgeEngine {
   private id(prefix: string): string {
     return `${prefix}_${this.deps.idGen?.() ?? randomUUID()}`;
   }
+  /**
+   * A readable source document, or null. A document from a source excluded
+   * from the Brain (`brain.excludedSources`) reads as absent, so intake admits
+   * no work for it, an already-batched frontier item settles without a model
+   * turn, and a batch's change summary never carries its content.
+   */
   private source(id: string): SourceInput | null {
+    const inclusion = brainSourceInclusionSql(
+      this.deps.getSettings().excludedSources,
+      "d.source_id",
+    );
     return (
       this.deps.db
-        .prepare<[string], SourceInput>(
+        .prepare<unknown[], SourceInput>(
           `SELECT d.id,d.title,d.content,d.content_hash AS contentHash,${knowledgeSourceRevisionSql()} AS sourceRevision,d.source_created_at AS sourceCreatedAt,d.source_updated_at AS sourceUpdatedAt
       FROM documents d LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id
-      WHERE d.id=? AND COALESCE(r.deleted,0)=0`,
+      WHERE d.id=? AND COALESCE(r.deleted,0)=0 AND ${inclusion.sql}`,
         )
-        .get(id) ?? null
+        .get(id, ...inclusion.params) ?? null
     );
   }
   private sourceExcerpt(id: string): SourceInput | null {
@@ -360,6 +371,7 @@ export class KnowledgeEngine {
       await this.intake.bootstrap();
       await this.upkeep.reviews();
       await this.upkeep.organization();
+      await this.intake.retireExcluded();
       const enqueued = await this.planner.plan();
       return { cascading: false, enqueued: enqueued + (await this.organization.plan()) };
     } finally {
@@ -518,6 +530,13 @@ export class KnowledgeEngine {
           const source = item.nodeId.startsWith("source:")
             ? this.source(item.nodeId.slice(7))
             : null;
+          // The source became unreadable (deleted or excluded) after the
+          // frontier read above: it has nothing left to offer.
+          if (item.nodeId.startsWith("source:") && !source) {
+            await this.settle(item, runId, "unchanged", []);
+            progressed = true;
+            continue;
+          }
           const node = source ? null : this.deps.service.fetch(item.nodeId, true);
           const isReview = !!this.deps.db
             .prepare(
@@ -645,6 +664,14 @@ export class KnowledgeEngine {
             this.deps.clock(),
           );
         }
+        const excerpt = item.nodeId.startsWith("source:")
+          ? this.sourceExcerpt(item.nodeId.slice(7))
+          : null;
+        if (item.nodeId.startsWith("source:") && !excerpt) {
+          await this.settle(item, runId, "unchanged", []);
+          progressed = true;
+          continue;
+        }
         const candidate: KnowledgeFrontierView["items"][number] = {
           id: item.nodeId,
           pendingClaimIds: pendingMaintenanceClaimIds(this.deps.db, item),
@@ -653,7 +680,7 @@ export class KnowledgeEngine {
           depth: item.depth,
           ...(item.nodeId.startsWith("source:")
             ? {
-                source: this.sourceExcerpt(item.nodeId.slice(7))!,
+                source: excerpt!,
                 completionRequirements: {
                   requiredPhases: requiredKnowledgeDiscoveryPhases(
                     this.deps.db,

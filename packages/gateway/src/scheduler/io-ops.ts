@@ -105,6 +105,7 @@ export interface IoGate {
    */
   knowledgeDiscoveryByMonth(
     notBefore: string,
+    excludedSources?: readonly string[],
   ): Promise<import("../brain/knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]>;
   bootstrapCorpusByMonth(
     recencyFloor: string,
@@ -586,7 +587,8 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
       call("io.planSourceUrlRecanonicalization", [specs, cursor]),
     countDocuments: () => call("io.countDocuments", []),
     bootstrapBacklog: (recencyFloor) => call("io.bootstrapBacklog", [recencyFloor]),
-    knowledgeDiscoveryByMonth: (notBefore) => call("io.knowledgeDiscoveryByMonth", [notBefore]),
+    knowledgeDiscoveryByMonth: (notBefore, excludedSources = []) =>
+      call("io.knowledgeDiscoveryByMonth", [notBefore, [...excludedSources]]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),
     conversationRetentionCandidates: (files, cutoffMs) =>
