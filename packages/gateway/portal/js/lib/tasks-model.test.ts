@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   TASK_VIEW_KEYS,
   addDays,
+  autoAppliedUndoSeq,
   countLabel,
   deadlineLabel,
   editBody,
@@ -158,6 +159,29 @@ describe("row labels", () => {
     expect(historyEventLabel({ kind: "ignored", surface: "tasks" })).toBe("Ignored in Tasks");
     // Older builds dismissed a suggestion the user refused.
     expect(historyEventLabel({ kind: "refused", surface: "tasks" })).toBe("Dismissed in Tasks");
+  });
+
+  it("names a change Omnesis applied on its own once", () => {
+    expect(historyEventLabel({ kind: "auto_applied", surface: "brain", change: "complete" })).toBe(
+      "Marked done by Omnesis",
+    );
+    expect(historyEventLabel({ kind: "auto_applied", surface: "brain", change: "edit" })).toBe(
+      "Updated by Omnesis",
+    );
+    // Its note is the reason, which the label does not restate.
+    expect(
+      historyNote({ kind: "auto_applied", note: "The receipt says the invoice was paid in full." }),
+    ).toBe("The receipt says the invoice was paid in full.");
+  });
+
+  it("offers undo on a change Omnesis applied only while it is the latest change", () => {
+    const applied = { seq: 9, kind: "auto_applied", surface: "brain", change: "complete" };
+    const created = { seq: 4, kind: "created", surface: "tasks" };
+    expect(autoAppliedUndoSeq([applied, created], 9)).toBe(9);
+    // Undo reverts a later change first.
+    expect(autoAppliedUndoSeq([applied, created], null)).toBeNull();
+    expect(autoAppliedUndoSeq([{ seq: 10, kind: "edited", surface: "tasks" }, applied], 10)).toBeNull();
+    expect(autoAppliedUndoSeq([], null)).toBeNull();
   });
 
   it("builds a suggestion's accept from its time and note", () => {

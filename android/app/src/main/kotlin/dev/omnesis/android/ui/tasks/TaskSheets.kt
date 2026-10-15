@@ -299,9 +299,16 @@ private val EVENT_TIME = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGL
 private fun dayLabel(day: String?): String =
     day?.let { runCatching { LONG_DAY.format(LocalDate.parse(it)) }.getOrNull() } ?: "Pick a day"
 
-/** A task's history, newest first: what changed, when, and where it was changed from. */
+/**
+ * A task's history, newest first: what changed, when, and where it was changed from. A change
+ * Omnesis applied on its own offers Undo on its line while it is still the newest change.
+ */
 @Composable
-fun TaskHistoryContent(history: TaskHistoryState, zone: ZoneId = ZoneId.systemDefault()) {
+fun TaskHistoryContent(
+    history: TaskHistoryState,
+    zone: ZoneId = ZoneId.systemDefault(),
+    onUndo: (() -> Unit)? = null,
+) {
     val c = OmTheme.colors
     Column(
         Modifier
@@ -339,7 +346,7 @@ fun TaskHistoryContent(history: TaskHistoryState, zone: ZoneId = ZoneId.systemDe
             history.error != null -> Text(history.error, style = MaterialTheme.typography.bodyMedium, color = c.danger)
             events.isEmpty() -> Text("No changes recorded yet.", style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
             else -> events.forEachIndexed { index, event ->
-                HistoryRow(event, zone)
+                HistoryRow(event, zone, onUndo?.takeIf { event.seq == history.autoAppliedUndoSeq })
                 if (index < events.lastIndex) HorizontalDivider(color = c.borderLight)
             }
         }
@@ -347,7 +354,7 @@ fun TaskHistoryContent(history: TaskHistoryState, zone: ZoneId = ZoneId.systemDe
 }
 
 @Composable
-private fun HistoryRow(event: TaskEventDto, zone: ZoneId) {
+private fun HistoryRow(event: TaskEventDto, zone: ZoneId, onUndo: (() -> Unit)?) {
     val c = OmTheme.colors
     Row(Modifier.fillMaxWidth().padding(vertical = OmSpacing.sm), verticalAlignment = Alignment.Top) {
         Box(
@@ -362,17 +369,29 @@ private fun HistoryRow(event: TaskEventDto, zone: ZoneId) {
             Text(taskEventTitle(event), style = MaterialTheme.typography.bodyMedium, color = c.textPrimary)
             val time = event.at?.let { runCatching { EVENT_TIME.format(Instant.parse(it).atZone(zone)) }.getOrNull() }
             Text(
-                listOfNotNull(time, taskEventSurface(event.surface)).joinToString(" · "),
+                listOfNotNull(time, taskEventAttribution(event)).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = c.textSecondary,
             )
         }
+        if (onUndo != null) TextButton(onClick = onUndo) { Text("Undo", color = c.accent) }
     }
 }
 
-/** A history line's headline: the gateway's own note when it wrote one, else the kind. */
-internal fun taskEventTitle(event: TaskEventDto): String =
-    event.note?.takeIf(String::isNotBlank) ?: when (event.kind) {
+/** How a change Omnesis applied on its own names itself. */
+internal fun autoAppliedLabel(event: TaskEventDto): String =
+    if (event.change == "complete") "Marked done by Omnesis" else "Updated by Omnesis"
+
+/**
+ * A history line's headline: the gateway's own note when it wrote one, else the kind. A change
+ * Omnesis applied on its own leads with who made it, then its reason.
+ */
+internal fun taskEventTitle(event: TaskEventDto): String {
+    if (event.kind == "auto_applied") {
+        val label = autoAppliedLabel(event)
+        return event.note?.takeIf(String::isNotBlank)?.let { "$label — $it" } ?: label
+    }
+    return event.note?.takeIf(String::isNotBlank) ?: when (event.kind) {
         "created" -> "Created"
         "accepted" -> "Accepted"
         "ignored" -> "Ignored"
@@ -388,6 +407,11 @@ internal fun taskEventTitle(event: TaskEventDto): String =
         "undone" -> "Undone"
         else -> "Updated"
     }
+}
+
+/** Where a history line's change came from; null when its headline already says so. */
+internal fun taskEventAttribution(event: TaskEventDto): String? =
+    if (event.kind == "auto_applied") null else taskEventSurface(event.surface)
 
 /** Where a change was made, in the reader's terms; null for a surface this build does not know. */
 internal fun taskEventSurface(surface: String): String? = when (surface) {

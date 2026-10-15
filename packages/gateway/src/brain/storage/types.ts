@@ -199,6 +199,8 @@ export interface TaskEvent {
     | "reopened"
     | "proposal_confirmed"
     | "proposal_kept"
+    /** A Brain change Omnesis applied on its own after verifying its evidence. */
+    | "auto_applied"
     | "undone";
   /** Where the change was made. */
   surface: "tasks" | "conversation" | "note" | "brain";
@@ -210,7 +212,19 @@ export interface TaskEvent {
   before?: TaskSnapshot;
   /** For `undone`: the ledger entry that was reverted. */
   undoOf?: number;
+  /**
+   * For `created` and `edited`: the fields the user set. Absent from events
+   * recorded before it was tracked, which count as setting every field.
+   */
+  fields?: TaskAuthoredField[];
+  /** For `auto_applied`: what Omnesis changed. */
+  change?: { kind: "complete" | "edit"; fields?: TaskAuthoredField[] };
+  /** For `auto_applied`: the documents whose quotes established the change. */
+  evidence?: string[];
 }
+
+/** A task field a user can author and a Brain change can touch. */
+export type TaskAuthoredField = "title" | "description" | "deadline" | "state";
 
 /** The task fields a mutation can change. */
 export interface TaskSnapshot {

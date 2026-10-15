@@ -161,6 +161,30 @@ final class TasksLogicTests: XCTestCase {
         XCTAssertEqual(TaskJournal.entries(for: .month, tasks: [planned]).map(\.id), ["t1"])
     }
 
+    func testAChangeOmnesisAppliedNamesItselfAndOffersUndoWhileNewest() {
+        func event(_ seq: Int, _ kind: String, change: String? = nil) -> TaskEvent {
+            TaskEvent(seq: seq, at: nil, note: "The receipt says it was paid.", kind: kind, surface: "brain", change: change)
+        }
+        let done = event(9, "auto_applied", change: "complete")
+        let edit = event(9, "auto_applied", change: "edit")
+        XCTAssertEqual(TaskJournal.eventTitle(done), "Marked done by Omnesis")
+        XCTAssertEqual(TaskJournal.eventTitle(edit), "Updated by Omnesis")
+        // The title already says who made the change.
+        XCTAssertNil(TaskJournal.eventSource(done))
+        XCTAssertEqual(TaskJournal.eventSource(event(8, "struck")), "By Omnesis")
+
+        let task = TaskRecord(id: "t", title: "Pay the invoice")
+        XCTAssertEqual(TaskJournal.autoAppliedUndoSeq(TaskDetail(task: task, history: [done], undoSeq: 9)), 9)
+        // Not undoable any more, or a later change came first, or not by Omnesis.
+        XCTAssertNil(TaskJournal.autoAppliedUndoSeq(TaskDetail(task: task, history: [done], undoSeq: nil)))
+        XCTAssertNil(TaskJournal.autoAppliedUndoSeq(TaskDetail(
+            task: task,
+            history: [event(10, "undone"), done],
+            undoSeq: nil
+        )))
+        XCTAssertNil(TaskJournal.autoAppliedUndoSeq(TaskDetail(task: task, history: [event(9, "completed")], undoSeq: 9)))
+    }
+
     func testMenuLabelAndReviewBanner() {
         XCTAssertEqual(TaskJournal.menuLabel(todayCount: 4), "Tasks (4)")
         XCTAssertEqual(TaskJournal.menuLabel(todayCount: 0), "Tasks")
@@ -339,6 +363,17 @@ final class TasksModelTests: XCTestCase {
         if let toast { await model.undo(toast) }
         let afterUndo = await service.calls
         XCTAssertEqual(afterUndo.suffix(2), ["undo 7", "view today 2026-10-14"])
+        XCTAssertEqual(model.toast?.text, "Undone")
+        XCTAssertNil(model.toast?.undoSeq)
+    }
+
+    func testUndoBySeqFromHistoryShowsTheReceiptAndRereads() async {
+        let service = FakeService()
+        let model = model(service)
+        let undone = await model.undo(seq: 52)
+        XCTAssertTrue(undone)
+        let calls = await service.calls
+        XCTAssertEqual(calls, ["undo 52", "view today 2026-10-14"])
         XCTAssertEqual(model.toast?.text, "Undone")
         XCTAssertNil(model.toast?.undoSeq)
     }

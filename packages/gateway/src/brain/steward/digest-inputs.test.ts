@@ -13,11 +13,16 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { createObservation } from "../storage/observations.js";
-import { replaceMorningBriefItems } from "../storage/morning-brief-items.js";
+import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
+import { applyTaskCommand, autoApplyTaskChange, readTaskAuthorship } from "../storage/tasks.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { resolveBrainSettings } from "../config.js";
-import { readDigestInputs, renderMorningBriefItemLines } from "./digest-inputs.js";
+import {
+  readDigestInputs,
+  renderAutoAppliedTaskLines,
+  renderMorningBriefItemLines,
+} from "./digest-inputs.js";
 import type { DigestHorizon } from "./digest-horizon.js";
 import type { TemporalItem } from "@omnesis/core";
 import type Database from "better-sqlite3";
@@ -229,5 +234,69 @@ describe("readDigestInputs", () => {
     const inputs = readDigestInputs(db, NOW, settings(), EMPTY_HORIZON, TODAY);
     expect(inputs.deltaPrime).toContain("Compare insurance quotes");
     expect(inputs.hasInputs).toBe(false);
+  });
+});
+
+describe("renderAutoAppliedTaskLines", () => {
+  function userTask(id: string, title: string, at: number): void {
+    applyTaskCommand(
+      db,
+      { surface: "tasks", runId: "user:tasks", kind: "create", id, origin: "user", title },
+      at,
+    );
+  }
+
+  function autoComplete(id: string, reason: string, at: number): number {
+    const result = autoApplyTaskChange(
+      db,
+      id,
+      {
+        kind: "complete",
+        reason,
+        evidence: [],
+        runId: "run_1",
+        basedOnSeq: readTaskAuthorship(db, id).latestEventSeq,
+      },
+      at,
+    );
+    if (!result.applied) throw new Error(`not applied: ${result.reason}`);
+    return result.seq;
+  }
+
+  test("lists the changes since the last brief, leaving out undone ones", () => {
+    userTask("loop_old", "Renew the bike insurance", NOW - 3 * DAY);
+    autoComplete("loop_old", "The insurer confirmed the renewal.", NOW - 2 * DAY);
+    markMorningBriefSent(
+      db,
+      { day: "2026-07-01", runId: "r", conversationId: "c", messageId: "m" },
+      NOW - DAY,
+    );
+    userTask("loop_paid", "Pay the window cleaner", NOW - 3 * DAY);
+    autoComplete("loop_paid", "The receipt says it was paid in full.", NOW - 3_600_000);
+    userTask("loop_undone", "Return the hedge trimmer", NOW - 3 * DAY);
+    const seq = autoComplete("loop_undone", "The library logged the return.", NOW - 1_800_000);
+    applyTaskCommand(
+      db,
+      { surface: "tasks", runId: "user:tasks", kind: "undo", seq },
+      NOW - 900_000,
+    );
+
+    expect(renderAutoAppliedTaskLines(db, NOW)).toEqual([
+      "- Marked done: Pay the window cleaner — The receipt says it was paid in full.",
+    ]);
+    // Context for the brief, never a reason to send one.
+    const inputs = readDigestInputs(db, NOW, settings(), EMPTY_HORIZON, TODAY);
+    expect(inputs.autoAppliedLines).toHaveLength(1);
+    expect(inputs.hasInputs).toBe(false);
+  });
+
+  test("before the first brief, looks back one day", () => {
+    userTask("loop_a", "Book the bike service", NOW - 3 * DAY);
+    autoComplete("loop_a", "The shop confirmed the booking.", NOW - 2 * DAY);
+    userTask("loop_b", "Send the Q4 budget review", NOW - 3 * DAY);
+    autoComplete("loop_b", "The review was sent.", NOW - 3_600_000);
+    expect(renderAutoAppliedTaskLines(db, NOW)).toEqual([
+      "- Marked done: Send the Q4 budget review — The review was sent.",
+    ]);
   });
 });

@@ -618,6 +618,11 @@ public struct TaskEvent: Decodable, Equatable, Sendable, Identifiable {
     public let conversationId: String?
     public let from: String?
     public let to: String?
+    /// For a change Omnesis applied on its own (`auto_applied`): `complete`
+    /// or `edit`. Nil for every other kind.
+    public let change: String?
+    /// For `auto_applied`: the documents whose quotes established the change.
+    public let evidence: [String]
 
     public var id: Int {
         seq
@@ -631,7 +636,9 @@ public struct TaskEvent: Decodable, Equatable, Sendable, Identifiable {
         surface: String,
         conversationId: String? = nil,
         from: String? = nil,
-        to: String? = nil
+        to: String? = nil,
+        change: String? = nil,
+        evidence: [String] = []
     ) {
         self.seq = seq
         self.at = at
@@ -641,9 +648,13 @@ public struct TaskEvent: Decodable, Equatable, Sendable, Identifiable {
         self.conversationId = conversationId
         self.from = from
         self.to = to
+        self.change = change
+        self.evidence = evidence
     }
 
-    private enum CodingKeys: String, CodingKey { case seq, at, note, kind, surface, conversationId, from, to }
+    private enum CodingKeys: String, CodingKey {
+        case seq, at, note, kind, surface, conversationId, from, to, change, evidence
+    }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -657,6 +668,8 @@ public struct TaskEvent: Decodable, Equatable, Sendable, Identifiable {
         // not something this list renders.
         from = try? values.decodeIfPresent(String.self, forKey: .from)
         to = try? values.decodeIfPresent(String.self, forKey: .to)
+        change = try values.decodeIfPresent(String.self, forKey: .change)
+        evidence = try values.decodeIfPresent([String].self, forKey: .evidence) ?? []
     }
 }
 

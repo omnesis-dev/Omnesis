@@ -563,6 +563,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "cognition.observationUserAction", priority: "user" },
   { name: "cognition.taskCommand", priority: "user" },
   { name: "cognition.taskPropose", priority: "background" },
+  { name: "cognition.taskAutoApply", priority: "background" },
   { name: "noteAgent.enqueue", priority: "background" },
   { name: "cognition.morningBriefItemsClear", priority: "background" },
   { name: "noteAgent.claim", priority: "background" },

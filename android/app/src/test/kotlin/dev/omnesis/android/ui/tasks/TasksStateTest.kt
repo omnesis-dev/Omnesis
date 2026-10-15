@@ -7,6 +7,7 @@ import dev.omnesis.android.transport.client.FieldChange
 import dev.omnesis.android.transport.client.TaskDeadlineInput
 import dev.omnesis.android.transport.dto.TaskActorDto
 import dev.omnesis.android.transport.dto.TaskCountsDto
+import dev.omnesis.android.transport.dto.TaskDetailDto
 import dev.omnesis.android.transport.dto.TaskDocumentDto
 import dev.omnesis.android.transport.dto.TaskDto
 import dev.omnesis.android.transport.dto.TaskEventDto
@@ -425,5 +426,28 @@ class TasksStateTest {
         assertEquals(TaskDocumentsShown(documents.take(3), 3), taskDocumentsShown(documents, showAll = false))
         assertEquals(TaskDocumentsShown(documents, 0), taskDocumentsShown(documents, showAll = true))
         assertEquals(TaskDocumentsShown(emptyList(), 0), taskDocumentsShown(emptyList(), showAll = false))
+    }
+
+    // --- Changes Omnesis applied on its own --------------------------------------------
+
+    @Test
+    fun a_change_omnesis_applied_leads_with_who_made_it_and_names_no_surface() {
+        val done = TaskEventDto(seq = 20, kind = "auto_applied", surface = "brain", change = "complete", note = "The receipt says it was paid.")
+        assertEquals("Marked done by Omnesis — The receipt says it was paid.", taskEventTitle(done))
+        assertEquals("Updated by Omnesis", taskEventTitle(done.copy(change = "edit", note = " ")))
+        assertNull(taskEventAttribution(done))
+        assertEquals("by Omnesis", taskEventAttribution(TaskEventDto(kind = "struck", surface = "brain")))
+    }
+
+    @Test
+    fun only_the_newest_change_omnesis_applied_offers_undo_while_it_is_undoable() {
+        val applied = TaskEventDto(seq = 20, kind = "auto_applied", surface = "brain", change = "complete")
+        fun history(events: List<TaskEventDto>, undoSeq: Long?) =
+            TaskHistoryState(task("t"), TaskDetailDto(task = task("t"), history = events, undoSeq = undoSeq), loading = false)
+        assertEquals(20L, history(listOf(applied), 20L).autoAppliedUndoSeq)
+        assertNull(history(listOf(applied), null).autoAppliedUndoSeq)
+        assertNull(history(listOf(TaskEventDto(seq = 21, kind = "undone"), applied), null).autoAppliedUndoSeq)
+        assertNull(history(listOf(TaskEventDto(seq = 20, kind = "completed")), 20L).autoAppliedUndoSeq)
+        assertNull(TaskHistoryState(task("t")).autoAppliedUndoSeq)
     }
 }

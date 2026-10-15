@@ -16,9 +16,12 @@
  * receipts, undo — and the Brain's side of the contract through scripted
  * source-maintenance runs: loops it creates arrive as suggestions, its
  * change to a user task is recorded as a proposal (and refused without a
- * reason), it can never delete a user task, and the decay engine never
- * schedules a user task for retirement. A task lists the documents it refers
- * to by title and source, and a deleted document leaves that list.
+ * reason) unless the scripted entailment verifier confirms the evidence it
+ * states — then it is applied as an undoable `auto_applied` event, except
+ * striking and anything the user wrote, which stay proposals — it can never
+ * delete a user task, and the decay engine never schedules a user task for
+ * retirement. A task lists the documents it refers to by title and source,
+ * and a deleted document leaves that list.
  */
 
 import "./synth-env.js";
@@ -97,6 +100,44 @@ const RENAME = email({
     "Hello,\n\nThe hall booking form is now called the venue hire agreement.\n\nRiverside Estate",
 });
 
+const PERMIT = email({
+  externalId: "tasks-parking-permit-renewed",
+  title: "Parking permit renewed",
+  content:
+    "Hello,\n\nYour residents' parking permit has been renewed until next spring.\n\nRiverside Estate",
+});
+const PERMIT_TASK = "Renew the parking permit";
+const PERMIT_QUOTE = "Your residents' parking permit has been renewed until next spring.";
+const PERMIT_REASON = "The council confirmed the permit was renewed.";
+
+const DRY_CLEANING = email({
+  externalId: "tasks-dry-cleaning-ready",
+  title: "Dry cleaning ready",
+  content:
+    "Hello,\n\nYour coat is ready at the counter and has been collected by your neighbour.\n\nThe dry cleaners",
+});
+const DRY_CLEANING_TASK = "Collect the dry cleaning";
+/** The scripted verifier finds this fact unsupported. */
+const UNSUPPORTED_FACT = "The dry cleaning was collected by the user.";
+
+const GYM = email({
+  externalId: "tasks-gym-closing",
+  title: "Gym closing notice",
+  content: "Hello,\n\nThe community gym closes for good at the end of this month.\n\nThe gym team",
+});
+const GYM_TASK = "Book a gym induction";
+const GYM_QUOTE = "The community gym closes for good at the end of this month.";
+
+const BOILER = email({
+  externalId: "tasks-boiler-service-renamed",
+  title: "Boiler service booking",
+  content:
+    "Hello,\n\nYour boiler service is now booked as the annual gas safety check.\n\nRiverside Estate",
+});
+const BOILER_TASK = "Book the boiler service";
+const BOILER_EDITED_TITLE = "Book the boiler service before winter";
+const BOILER_QUOTE = "Your boiler service is now booked as the annual gas safety check.";
+
 const DECAY_DOC = email({
   externalId: "tasks-decay-flyer",
   title: "Summer fete stall flyer",
@@ -137,6 +178,7 @@ describe("brain bench: tasks", () => {
       experimental: true,
       clock: "virtual",
       syncSources: false,
+      entailment: ({ claim }) => (claim.includes(UNSUPPORTED_FACT) ? "neutral" : "entailment"),
       brain: {
         knowledge: { soonDelay: "0s", routineDelay: "0s", maxSeeds: 1, maxFrontierNodes: 1 },
         derivationBarrier: "0s",
@@ -231,6 +273,87 @@ describe("brain bench: tasks", () => {
                     id: ref("open_loop_search", "loops.0.id"),
                     title: "Return the signed venue hire agreement",
                     reason: "The form was renamed to the venue hire agreement.",
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: PERMIT.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "parking permit" }),
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    state: "done",
+                    docs: [ctx.subject],
+                    reason: PERMIT_REASON,
+                    evidence: {
+                      fact: "The residents' parking permit has been renewed.",
+                      basis: "explicit",
+                      quotes: [{ docId: ctx.subject, quote: PERMIT_QUOTE }],
+                    },
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: DRY_CLEANING.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "dry cleaning" }),
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    state: "done",
+                    docs: [ctx.subject],
+                    reason: "The shop says the coat has been collected.",
+                    evidence: {
+                      fact: UNSUPPORTED_FACT,
+                      basis: "explicit",
+                      quotes: [
+                        {
+                          docId: ctx.subject,
+                          quote: "Your coat is ready at the counter and has been collected",
+                        },
+                      ],
+                    },
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: GYM.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "gym induction" }),
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    state: "dismissed",
+                    docs: [ctx.subject],
+                    reason: "The gym closes at the end of the month.",
+                    evidence: {
+                      fact: "The gym closes for good at the end of this month.",
+                      basis: "explicit",
+                      quotes: [{ docId: ctx.subject, quote: GYM_QUOTE }],
+                    },
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: BOILER.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "boiler service" }),
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    title: "Book the annual gas safety check",
+                    docs: [ctx.subject],
+                    reason: "The booking is now called the annual gas safety check.",
+                    evidence: {
+                      fact: "The boiler service is now booked as the annual gas safety check.",
+                      basis: "explicit",
+                      quotes: [{ docId: ctx.subject, quote: BOILER_QUOTE }],
+                    },
                   }),
                 ],
               }),
@@ -581,6 +704,75 @@ describe("brain bench: tasks", () => {
     expect((await bench.obs.task(task.task!.id)).history[0]).toMatchObject({
       kind: "proposal_confirmed",
     });
+  }, 240_000);
+
+  test("a verified completion applies on its own, shows in history, and undo restores it", async () => {
+    const task = await create({ title: PERMIT_TASK, scheduledFor: TODAY });
+    await bench.pushAndSettle([{ ...PERMIT, at: NOON }]);
+    const permitDoc = await bench.docId(PERMIT.externalId);
+
+    // The verifier was asked whether the quote establishes the fact behind the change.
+    expect(
+      bench.entailmentCalls.some(
+        (c) => c.claim?.includes("So this is done: Renew the parking permit") === true,
+      ),
+    ).toBe(true);
+
+    const detail = await bench.obs.task(task.task!.id);
+    expect(detail.task).toMatchObject({ state: "done", proposedChange: null });
+    expect(detail.history[0]).toMatchObject({
+      kind: "auto_applied",
+      surface: "brain",
+      change: "complete",
+      note: PERMIT_REASON,
+      evidence: [permitDoc],
+    });
+    expect(detail.undoSeq).toBe(detail.history[0]!.seq);
+    expect((await bench.obs.tasks("today")).counts.proposals).toBe(0);
+
+    const undone = await bench.obs.undoTask(detail.undoSeq!);
+    expect(undone.status).toBe(200);
+    const after = await bench.obs.task(task.task!.id);
+    expect(after.task).toMatchObject({ state: "open", proposedChange: null });
+    expect(after.history.map((e) => e.kind).slice(0, 2)).toEqual(["undone", "auto_applied"]);
+  }, 240_000);
+
+  test("an unverified completion and a strike stay proposals", async () => {
+    const cleaning = await create({ title: DRY_CLEANING_TASK, scheduledFor: TODAY });
+    const gym = await create({ title: GYM_TASK, scheduledFor: TODAY });
+    await bench.pushAndSettle([
+      { ...DRY_CLEANING, at: NOON },
+      { ...GYM, at: NOON },
+    ]);
+
+    const unverified = await bench.obs.task(cleaning.task!.id);
+    expect(unverified.task).toMatchObject({
+      state: "open",
+      proposedChange: { kind: "complete" },
+    });
+    expect(unverified.history.some((e) => e.kind === "auto_applied")).toBe(false);
+    expect(bench.entailmentCalls.some((c) => c.claim?.includes(UNSUPPORTED_FACT) === true)).toBe(
+      true,
+    );
+
+    // Striking is the user's call, whatever the evidence: the verifier is not asked.
+    const struck = await bench.obs.task(gym.task!.id);
+    expect(struck.task).toMatchObject({ state: "open", proposedChange: { kind: "strike" } });
+    expect(bench.entailmentCalls.some((c) => c.claim?.includes("gym") === true)).toBe(false);
+  }, 240_000);
+
+  test("a title the user edited is never changed on its own", async () => {
+    const task = await create({ title: BOILER_TASK });
+    expect((await act(task.task!.id, { action: "edit", title: BOILER_EDITED_TITLE })).status).toBe(
+      200,
+    );
+    await bench.pushAndSettle([{ ...BOILER, at: NOON }]);
+    const detail = await bench.obs.task(task.task!.id);
+    expect(detail.task).toMatchObject({
+      title: BOILER_EDITED_TITLE,
+      proposedChange: { kind: "edit", fields: { title: "Book the annual gas safety check" } },
+    });
+    expect(detail.history.some((e) => e.kind === "auto_applied")).toBe(false);
   }, 240_000);
 
   test("a proposal on an accepted suggestion can be refused, keeping the task as it is", async () => {

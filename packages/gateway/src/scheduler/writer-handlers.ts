@@ -77,7 +77,13 @@ import {
   getPersonAnnotation as getWithdrawalPersonAnnotation,
   type PersonProfileBudget,
 } from "../brain/storage/person-annotations.js";
-import { applyTaskCommand, proposeTaskChange, type TaskCommand } from "../brain/storage/tasks.js";
+import {
+  applyTaskCommand,
+  autoApplyTaskChange,
+  proposeTaskChange,
+  type AutoAppliedTaskChange,
+  type TaskCommand,
+} from "../brain/storage/tasks.js";
 import { KnowledgeStorageError } from "../brain/knowledge/types.js";
 import { assertStoredTemporalMutationScope } from "../brain/knowledge/temporal-scope-fence.js";
 import {
@@ -1808,6 +1814,8 @@ export const writerHandlers = {
     applyTaskCommand(db, command, now),
   "cognition.taskPropose": (db: Db, loopId: string, proposal: ProposedTaskChange, now: number) =>
     proposeTaskChange(db, loopId, proposal, now),
+  "cognition.taskAutoApply": (db: Db, loopId: string, change: AutoAppliedTaskChange, now: number) =>
+    autoApplyTaskChange(db, loopId, change, now),
   "cognition.observationPrune": (db: Db, olderThan: number, now: number) =>
     pruneClosedObservations(db, olderThan, now),
   "cognition.morningBriefItems": (

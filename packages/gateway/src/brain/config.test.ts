@@ -78,6 +78,7 @@ describe("resolveBrainSettings", () => {
       reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
       provenanceRecheck: { enabled: true },
       mergeAdjudication: { enabled: true },
+      tasks: { autoApply: true },
       observations: {
         minConsequence: 2,
         timelyLevel: 2,
@@ -436,6 +437,18 @@ describe("merge-adjudication knob", () => {
     expect(validateConfig({ brain: { mergeAdjudication: { nonsense: 1 } as never } }).ok).toBe(
       false,
     );
+  });
+});
+
+describe("task auto-apply knob", () => {
+  it("defaults on, and an explicit false makes every task change a proposal", () => {
+    expect(resolveBrainSettings(undefined).tasks.autoApply).toBe(true);
+    expect(resolveBrainSettings({ tasks: { autoApply: false } }).tasks.autoApply).toBe(false);
+  });
+
+  it("the schema accepts the block and rejects unknown keys inside it", () => {
+    expect(validateConfig({ brain: { tasks: { autoApply: false } } }).ok).toBe(true);
+    expect(validateConfig({ brain: { tasks: { nonsense: 1 } as never } }).ok).toBe(false);
   });
 });
 

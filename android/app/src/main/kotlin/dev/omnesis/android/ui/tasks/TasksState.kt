@@ -143,7 +143,18 @@ data class TaskHistoryState(
     val detail: TaskDetailDto? = null,
     val loading: Boolean = true,
     val error: String? = null,
-)
+) {
+    /**
+     * The change the history offers to undo in place: its newest entry, when Omnesis applied it on
+     * its own and it is still the change undo would revert. Null otherwise.
+     */
+    val autoAppliedUndoSeq: Long?
+        get() {
+            val detail = detail ?: return null
+            val newest = detail.history.firstOrNull() ?: return null
+            return newest.seq.takeIf { newest.kind == "auto_applied" && it == detail.undoSeq }
+        }
+}
 
 data class TasksUiState(
     val segment: TaskSegment = TaskSegment.TODAY,

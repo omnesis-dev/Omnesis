@@ -246,6 +246,7 @@ const EVENT_LABELS = {
   reopened: "Reopened",
   proposal_confirmed: "Proposal confirmed",
   proposal_kept: "Proposal declined",
+  auto_applied: "Updated by Omnesis",
   undone: "Undone",
   note: "Note",
 };
@@ -259,10 +260,23 @@ const SURFACE_LABELS = {
 
 /** One history entry as a sentence head: "Moved by Omnesis". */
 export function historyEventLabel(event) {
+  // A change Omnesis applied on its own names Omnesis in its own label.
+  if (event.kind === "auto_applied") {
+    return event.change === "complete" ? "Marked done by Omnesis" : EVENT_LABELS.auto_applied;
+  }
   const kind = EVENT_LABELS[event.kind] ?? event.kind;
   const surface = SURFACE_LABELS[event.surface];
   const move = event.kind === "migrated" && event.to ? ` to ${event.to}` : "";
   return `${kind}${move}${surface ? ` ${surface}` : ""}`;
+}
+
+/**
+ * The change undo would revert, when it is one Omnesis applied on its own:
+ * the newest entry of a task's history, still the change undo reverts.
+ */
+export function autoAppliedUndoSeq(history, undoSeq) {
+  const latest = history?.[0];
+  return latest && latest.kind === "auto_applied" && latest.seq === undoSeq ? latest.seq : null;
 }
 
 /**

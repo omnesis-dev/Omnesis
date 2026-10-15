@@ -11,7 +11,10 @@ import {
 } from "./brain/note-agent/storage.js";
 import {
   applyTaskCommand,
+  autoApplyTaskChange,
   proposeTaskChange,
+  type AutoAppliedTaskChange,
+  type AutoApplyTaskResult,
   type TaskCommand,
   type TaskCommandResult,
 } from "./brain/storage/tasks.js";
@@ -2002,6 +2005,12 @@ export interface WriteGate extends KnowledgeWriteGate {
   applyTaskCommand(command: TaskCommand, now: number): Promise<TaskCommandResult>;
   /** Record a Brain proposal on one of the user's own tasks. */
   proposeTaskChange(loopId: string, proposal: ProposedTaskChange, now: number): Promise<boolean>;
+  /** Apply a verified Brain change to one of the user's own tasks, as an undoable event. */
+  autoApplyTaskChange(
+    loopId: string,
+    change: AutoAppliedTaskChange,
+    now: number,
+  ): Promise<AutoApplyTaskResult>;
   /** Forget a redacted morning brief's items. */
   clearMorningBriefMessageItems(messageId: string): Promise<number>;
   /** Queue notes captured since the note agent started; returns how many. */
@@ -2760,6 +2769,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("noteAgent.finish", [entryId, attempt, outcome, now]),
     proposeTaskChange: (loopId, proposal, now) =>
       call("cognition.taskPropose", [loopId, proposal, now]),
+    autoApplyTaskChange: (loopId, change, now) =>
+      call("cognition.taskAutoApply", [loopId, change, now]),
     pruneClosedObservations: (olderThan, now) =>
       call("cognition.observationPrune", [olderThan, now]),
     replaceMorningBriefItems: (day, runId, observationIds) =>
@@ -3446,6 +3457,8 @@ export function directWriteGate(db: Db): WriteGate {
       finishNoteRun(db, entryId, attempt, outcome, now),
     proposeTaskChange: async (loopId, proposal, now) =>
       proposeTaskChange(db, loopId, proposal, now),
+    autoApplyTaskChange: async (loopId, change, now) =>
+      autoApplyTaskChange(db, loopId, change, now),
     pruneClosedObservations: async (olderThan, now) => pruneClosedObservations(db, olderThan, now),
     replaceMorningBriefItems: async (day, runId, observationIds) =>
       replaceMorningBriefItems(db, day, runId, observationIds),

@@ -210,6 +210,11 @@ export interface CognitionToolsetDeps {
    * annotation writes are unchanged.
    */
   getEntailmentVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
+  /**
+   * Whether a verified Brain change to the user's own task applies directly,
+   * read per toolset build. Omitted, every such change is a proposal.
+   */
+  getTaskAutoApply?: () => boolean;
   validateAnnotationEvidence?: AnnotationToolDeps["validateAnnotationEvidence"];
   /**
    * The record check, bound per background run to the lanes it covers.
@@ -419,6 +424,7 @@ function ownToolsInput(
       ? { validateAnnotationEvidence: deps.validateAnnotationEvidence }
       : {}),
     ...(deps.getEntailmentVerifier ? { getEntailmentVerifier: deps.getEntailmentVerifier } : {}),
+    ...(deps.getTaskAutoApply ? { taskAutoApply: deps.getTaskAutoApply() } : {}),
     ...(opts.triggeringLoopId !== undefined ? { triggeringLoopId: opts.triggeringLoopId } : {}),
     ...(opts.consumption ? { consumption: opts.consumption } : {}),
     ...(deps.idGen ? { idGen: deps.idGen } : {}),
@@ -601,6 +607,7 @@ export async function createCognitionRuntime(
       ? { validateAnnotationEvidence: deps.validateAnnotationEvidence }
       : {}),
     ...(deps.getEntailmentVerifier ? { getEntailmentVerifier: deps.getEntailmentVerifier } : {}),
+    getTaskAutoApply: () => deps.getSettings().tasks.autoApply,
     ...(deps.recordCheck ? { recordCheck: deps.recordCheck } : {}),
     ...(deps.observations ? { createObservationScorer: deps.observations.createScorer } : {}),
     clock,

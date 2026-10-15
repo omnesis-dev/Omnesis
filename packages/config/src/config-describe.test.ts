@@ -120,6 +120,7 @@ const EXPECTED_INVENTORY = [
   "/brain/synthesis/cadenceHours [number]",
   "/brain/synthesis/enabled [boolean]",
   "/brain/synthesis/maxPerDay [number]",
+  "/brain/tasks/autoApply [boolean]",
   "/brain/transcriptRetention [duration]",
   "/brain/workerConcurrency [number]",
   "/dataRetention/maxAge [duration]",

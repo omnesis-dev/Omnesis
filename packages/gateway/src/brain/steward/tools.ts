@@ -117,6 +117,12 @@ import {
   type TemporalAnnotation,
 } from "../../enrichment/temporal-annotations/storage.js";
 import { isOwnedTask } from "../storage/types.js";
+import { readTaskAuthorship } from "../storage/tasks.js";
+import {
+  decideTaskAutoApply,
+  planTaskAutoApply,
+  type TaskEvidenceVerdict,
+} from "../tasks/auto-apply.js";
 import { jointContextualEvidence } from "./annotation-gate-evidence.js";
 import { assessPersonWithdrawal } from "./person-withdrawal.js";
 import { PersonProfileReads } from "./person-profile-reads.js";
@@ -157,6 +163,7 @@ export type CognitionWriteOps = Pick<
   | "transitionObservation"
   | "dropObservationsForResolvedLoop"
   | "proposeTaskChange"
+  | "autoApplyTaskChange"
   | "writeCognitionNotes"
   | "appendCognitionNotes"
   | "editCognitionNotes"
@@ -258,6 +265,12 @@ export interface CognitionToolDeps {
    * record is saved unchecked.
    */
   checkRecord?: CheckRecord;
+  /**
+   * Apply a verified Brain change to one of the user's own tasks directly
+   * instead of proposing it (config `brain.tasks.autoApply`). Absent or
+   * false, every such change is a proposal.
+   */
+  taskAutoApply?: boolean;
   /**
    * Per-run surfaced-prior tracker (consumption provenance). Search results,
    * prompt-inlined priors and self-memory become candidates that a later
@@ -818,6 +831,36 @@ async function vetTemporalAnnotationEvidence(
     };
   }
   return null;
+}
+
+/**
+ * Ask the entailment verifier whether the quoted evidence establishes the
+ * claim a task change rests on. Each quote must first be found in a
+ * readable source document; a quote that is not, a verifier that is not
+ * configured or cannot answer, all come back without an entailment verdict,
+ * which leaves the change a proposal.
+ */
+async function verifyTaskEvidence(
+  deps: Pick<CognitionToolDeps, "db" | "getEntailmentVerifier" | "log" | "clock">,
+  quotes: readonly { docId: string; quote: string }[],
+  claim: string,
+  signal?: AbortSignal,
+): Promise<{ verdict: TaskEvidenceVerdict; why?: string }> {
+  for (const quote of quotes) {
+    const refusal = vetTemporalSourceEvidence(deps.db, quote);
+    if (refusal)
+      return {
+        verdict: "unavailable",
+        why: `a quote could not be checked against ${quote.docId}: ${refusal.kind === "error" ? refusal.message : "invalid evidence"}`,
+      };
+  }
+  const evidence =
+    quotes.length === 1
+      ? quotes[0]!.quote
+      : quotes.map((q, i) => `[${i + 1}] ${q.quote}`).join("\n");
+  const gate = await runEntailmentGate(deps, { claim, evidence }, deps.clock(), signal);
+  if (gate.kind === "refused") return { verdict: gate.verdict };
+  return gate.state === "verified" ? { verdict: "entailment" } : { verdict: "unavailable" };
 }
 
 /**
@@ -1484,7 +1527,43 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .max(300)
         .optional()
         .describe(
-          "Why, in one sentence citing what changed. Required when the loop is one of the user's own tasks (userTask: true) and you change its state, title, description or deadline: the change is then proposed to the user instead of applied.",
+          "Why, in one sentence citing what changed. Required when the loop is one of the user's own tasks (userTask: true) and you change its state, title, description or deadline.",
+        ),
+      evidence: z
+        .object({
+          fact: z
+            .string()
+            .trim()
+            .min(1)
+            .max(500)
+            .describe(
+              "The specific fact that establishes the change, as one plain sentence (e.g. that the invoice was paid in full, or the date the form is due by).",
+            ),
+          basis: z
+            .enum(["explicit", "inferred"])
+            .describe(
+              '"explicit" when a source states the fact itself; "inferred" when you concluded it from what the sources say.',
+            ),
+          quotes: z
+            .array(
+              z
+                .object({
+                  docId: z.string().min(1),
+                  quote: z
+                    .string()
+                    .min(12)
+                    .max(500)
+                    .describe("A VERBATIM quote from that document establishing the fact."),
+                })
+                .strict(),
+            )
+            .min(1)
+            .max(4),
+        })
+        .strict()
+        .optional()
+        .describe(
+          "For a change to the user's own task (userTask: true): the fact behind it and the verbatim quotes that establish it. A completion, an addition to the description, or a deadline a source states is applied directly once the quotes are verified to establish it; otherwise the change is proposed.",
         ),
     })
     .strict();
@@ -1503,16 +1582,20 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "reason; a different task's completion does not " +
       "fulfil it. Track a distinct supported action in a separate loop, " +
       "preserving relevant context links. On the user's own task (userTask: " +
-      "true) a change to state, title, description or deadline is recorded as a " +
-      "proposal the user confirms or refuses — pass `reason`; links, people, " +
-      "importance and decay checks still apply directly.",
+      "true) a change to state, title, description or deadline needs `reason`. " +
+      "With `evidence` stating the fact explicitly in a source, a completion, an " +
+      "addition to the description or a stated deadline is verified and applied " +
+      "directly (the user can undo it); anything else — striking, a new title, " +
+      "rewriting what the user wrote, an inference, evidence that does not verify " +
+      "— is recorded as a proposal the user confirms or refuses. Links, people, " +
+      "importance and decay checks always apply directly.",
     schema: openLoopUpdateSchema,
     mutates: true,
     summarize: (args) => (args as { id?: string })?.id,
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = openLoopUpdateSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
-      const { id, docs, blockedBy, deadline, ...rest } = parsed.data;
+      const { id, docs, blockedBy, deadline, evidence, ...rest } = parsed.data;
       const dependencies = selectDeclaredDependencies(rest.annotationDependencies);
       if (!dependencies.ok) return dependencies.result;
       const docsPart = docs !== undefined ? partitionDocIds(db, docs) : null;
@@ -1542,7 +1625,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           kind: "error",
           code: "reason_required",
           message:
-            "This loop is one of the user's own tasks: the change will be proposed to them. Retry with `reason`, one sentence citing what changed.",
+            "This loop is one of the user's own tasks: a change to it needs `reason`. Retry with `reason`, one sentence citing what changed, and `evidence` when a source states the fact behind it.",
         };
       const previous = outcomeProposal(existing);
       const proposed = outcomeProposal({
@@ -1614,23 +1697,58 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           : deadDependenciesResult(persisted.dead);
       let updated = persisted.value;
       if (!updated) return notFound("open loop", id);
+      let applied: { resolved: boolean } | null = null;
+      let notApplied: string | null = null;
       if (proposal && rest.reason) {
-        await writeGate.proposeTaskChange(
-          id,
-          {
-            ...proposal,
-            reason: rest.reason,
-            evidence: [
-              ...new Set([
-                ...(docsPart?.known ?? []).filter((docId) => !existing.docs.includes(docId)),
-                ...(deps.seedDocIds ?? []),
-              ]),
-            ],
-            runId,
-            proposedAt: clock(),
-          },
-          clock(),
-        );
+        const evidenceDocs = [
+          ...new Set([
+            ...(docsPart?.known ?? []).filter((docId) => !existing.docs.includes(docId)),
+            ...(deps.seedDocIds ?? []),
+            ...(evidence?.quotes.map((q) => q.docId) ?? []),
+          ]),
+        ];
+        const { authored, latestEventSeq } = readTaskAuthorship(db, id);
+        const plan = planTaskAutoApply({
+          enabled: deps.taskAutoApply === true,
+          loop: existing,
+          proposal,
+          authored,
+          evidence,
+        });
+        const verdict =
+          plan.eligible && evidence
+            ? await verifyTaskEvidence(deps, evidence.quotes, plan.claim, ctx.abortSignal)
+            : null;
+        const decision = decideTaskAutoApply(plan, verdict?.verdict ?? null);
+        if (decision.apply) {
+          const result = await writeGate.autoApplyTaskChange(
+            id,
+            {
+              ...decision.change,
+              reason: rest.reason,
+              evidence: evidenceDocs,
+              runId,
+              basedOnSeq: latestEventSeq,
+            },
+            clock(),
+          );
+          if (result.applied) applied = { resolved: result.resolved };
+          else notApplied = "the task changed while the evidence was checked";
+        } else {
+          notApplied = verdict?.why ?? decision.why;
+        }
+        if (!applied)
+          await writeGate.proposeTaskChange(
+            id,
+            {
+              ...proposal,
+              reason: rest.reason,
+              evidence: evidenceDocs,
+              runId,
+              proposedAt: clock(),
+            },
+            clock(),
+          );
         updated = getOpenLoop(db, id) ?? updated;
       }
       await mirror.refresh(id);
@@ -1642,9 +1760,10 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       // loop's decay check), and (2) drops the loop's open observations,
       // so tomorrow's brief never raises something already handled.
       if (
-        appliesTaskFields &&
-        rest.state !== undefined &&
-        RESOLVED_OPEN_LOOP_STATES.has(rest.state as OpenLoopState)
+        applied?.resolved ||
+        (appliesTaskFields &&
+          rest.state !== undefined &&
+          RESOLVED_OPEN_LOOP_STATES.has(rest.state as OpenLoopState))
       ) {
         await writeGate.cancelScheduledRunsForLoop(id);
         const dropped = await writeGate.dropObservationsForResolvedLoop(id, clock());
@@ -1654,25 +1773,38 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           );
         }
       }
-      return ok(proposal ? "open_loop.change_proposed" : "open_loop.updated", {
-        loop: loopToModelJson(db, updated, { ledger: false }),
-        ...(proposal
-          ? {
-              proposed:
-                "The user's task keeps its current values; your change is shown to them to confirm or refuse.",
-            }
-          : {}),
-        ...(docsPart && docsPart.dropped.length > 0 ? { droppedDocIds: docsPart.dropped } : {}),
-        ...(blockedPart && blockedPart.dropped.length > 0
-          ? { droppedBlockedByIds: blockedPart.dropped }
-          : {}),
-        ...(actorsPart && actorsPart.dropped.length > 0
-          ? { droppedActors: actorsPart.dropped }
-          : {}),
-        ...(involvedPart && involvedPart.dropped.length > 0
-          ? { droppedInvolved: involvedPart.dropped }
-          : {}),
-      });
+      return ok(
+        applied
+          ? "open_loop.change_applied"
+          : proposal
+            ? "open_loop.change_proposed"
+            : "open_loop.updated",
+        {
+          loop: loopToModelJson(db, updated, { ledger: false }),
+          ...(applied
+            ? {
+                applied:
+                  "The evidence was verified: your change was applied to the user's task and shown in its history, where the user can undo it.",
+              }
+            : proposal
+              ? {
+                  proposed:
+                    "The user's task keeps its current values; your change is shown to them to confirm or refuse.",
+                  notAppliedBecause: notApplied,
+                }
+              : {}),
+          ...(docsPart && docsPart.dropped.length > 0 ? { droppedDocIds: docsPart.dropped } : {}),
+          ...(blockedPart && blockedPart.dropped.length > 0
+            ? { droppedBlockedByIds: blockedPart.dropped }
+            : {}),
+          ...(actorsPart && actorsPart.dropped.length > 0
+            ? { droppedActors: actorsPart.dropped }
+            : {}),
+          ...(involvedPart && involvedPart.dropped.length > 0
+            ? { droppedInvolved: involvedPart.dropped }
+            : {}),
+        },
+      );
     },
   };
 
