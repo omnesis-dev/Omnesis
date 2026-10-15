@@ -49,6 +49,9 @@ describe("writeGateFromScheduler", () => {
   let dbPath: string;
   let scheduler: Scheduler;
 
+  // The writer worker loads its whole operation graph through the TypeScript
+  // loader on first start, which can outlast the default hook timeout on a
+  // slow runner.
   beforeEach(async () => {
     dbPath = testDbPath();
     const db = createDatabase(dbPath);
@@ -65,7 +68,7 @@ describe("writeGateFromScheduler", () => {
       }),
     );
     await scheduler.start();
-  });
+  }, 60_000);
 
   afterEach(async () => {
     await scheduler.dispose();
