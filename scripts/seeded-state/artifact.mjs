@@ -178,6 +178,7 @@ const SAFE_TABLES = new Set([
   "knowledge_checkpoints",
   "knowledge_claims",
   "knowledge_claim_outcomes",
+  "knowledge_conversion_deferrals",
   "knowledge_decisions",
   "knowledge_dependencies",
   "knowledge_discovery_coverage",
