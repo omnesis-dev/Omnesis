@@ -4,6 +4,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { HttpCompleter } from "./http-completer.js";
 
+// The inference URL policy resolves every hostname before a request. Answer
+// from a fixed table so the remote-endpoint cases never wait on real DNS.
+vi.mock("node:dns/promises", () => ({
+  default: {
+    lookup: async (hostname: string) =>
+      hostname === "localhost"
+        ? [{ address: "127.0.0.1", family: 4 }]
+        : [{ address: "93.184.215.14", family: 4 }],
+  },
+}));
+
 const FAKE_URL = "http://localhost:55555";
 const FAKE_MODEL = "test-model";
 
