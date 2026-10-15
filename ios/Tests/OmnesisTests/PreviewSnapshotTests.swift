@@ -7527,7 +7527,8 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "311-tasks-today-undo-toast", size: CGSize(width: 393, height: 1100))
     }
 
-    /// One suggestion waiting: the review banner speaks in the singular.
+    /// One suggestion waiting: the review banner speaks in the singular, at
+    /// the top of the page above the day's tasks.
     func testTasksTodayOneSuggestion() {
         let view = NavigationStack {
             TasksContent(
@@ -7552,6 +7553,7 @@ final class PreviewSnapshotTests: XCTestCase {
         selected: TaskViewKind = .today,
         tasks: [TaskRecord] = PreviewMocks.tasksToday,
         fan: TaskFanPreview,
+        experimental: Bool = false,
         dynamicType: DynamicTypeSize = .large
     ) {
         let view = NavigationStack {
@@ -7562,6 +7564,7 @@ final class PreviewSnapshotTests: XCTestCase {
                     counts: PreviewMocks.tasksTodayCounts,
                     now: PreviewMocks.tasksNow
                 ),
+                experimental: experimental,
                 initialFan: fan
             )
             .navigationTitle("Tasks")
@@ -7622,8 +7625,9 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    /// The Brain's suggestions on an experimental gateway, each answered with
-    /// Accept or Not for me; the Suggested chip carries the waiting count.
+    /// The Brain's suggestions on an experimental gateway: the same rows as
+    /// the person's own tasks, each with a dashed circle that marks it already
+    /// done; the Suggested chip carries the waiting count.
     func testTasksSuggested() {
         let view = NavigationStack {
             TasksContent(
@@ -7707,7 +7711,7 @@ final class PreviewSnapshotTests: XCTestCase {
     /// listening, the transcript landing in the same field.
     func testTaskNoteComposerListening() {
         let view = CaptureView(
-            completion: TaskCompletionCapture(taskTitle: PreviewMocks.taskWithPerson.title) { _ in true },
+            completion: .completing(PreviewMocks.taskWithPerson.title) { _ in true },
             speech: .preview(state: .listening, transcript: "Went through it together, she signs on Friday"),
             previewText: "Went through it together, she signs on Friday"
         )
@@ -7719,12 +7723,48 @@ final class PreviewSnapshotTests: XCTestCase {
     /// typing state Tell Omnesis has.
     func testTaskNoteComposerTyping() {
         let view = CaptureView(
-            completion: TaskCompletionCapture(taskTitle: PreviewMocks.taskWithPerson.title) { _ in true },
+            completion: .completing(PreviewMocks.taskWithPerson.title) { _ in true },
             speech: .preview(state: .idle),
             previewText: "Signed and scanned, copy sent to the club"
         )
         .environment(AppStore.preview())
         snapshot(view, name: "324a-task-note-composer-typing")
+    }
+
+    /// "Accept with note" on a suggestion is the same Tell Omnesis screen,
+    /// worded for accepting it.
+    func testTaskNoteComposerAccepting() {
+        let view = CaptureView(
+            completion: .accepting(PreviewMocks.tasksSuggested[0].title) { _ in true },
+            speech: .preview(state: .idle),
+            previewText: "Jamie needs it by Friday, pay from the joint account"
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "324b-task-note-composer-accepting")
+    }
+
+    /// A long press on a suggestion: its fan offers Accept nearest the
+    /// thumb, then Accept with note, Accept for…, Mark as done and Ignore.
+    func testTasksSuggestionFan() {
+        renderFan(
+            "325-tasks-suggestion-fan",
+            selected: .suggested,
+            tasks: PreviewMocks.tasksSuggestedLong,
+            fan: TaskFanPreview(taskId: PreviewMocks.tasksSuggestedLong[4].id, highlight: .acceptWithNote),
+            experimental: true
+        )
+    }
+
+    /// Resting on Accept for…: Back nearest, then the times to accept the
+    /// suggestion for, soonest first.
+    func testTasksSuggestionFanWhen() {
+        renderFan(
+            "325a-tasks-suggestion-fan-when",
+            selected: .suggested,
+            tasks: PreviewMocks.tasksSuggestedLong,
+            fan: TaskFanPreview(taskId: PreviewMocks.tasksSuggestedLong[5].id, mode: .when, highlight: .tomorrow),
+            experimental: true
+        )
     }
 
     /// A gateway that serves Tasks: the Tasks row sits under Search and reads

@@ -375,7 +375,9 @@ internal fun taskEventTitle(event: TaskEventDto): String =
     event.note?.takeIf(String::isNotBlank) ?: when (event.kind) {
         "created" -> "Created"
         "accepted" -> "Accepted"
-        "refused" -> "Not for me"
+        "ignored" -> "Ignored"
+        // Older gateways dismissed a refused suggestion.
+        "refused" -> "Dismissed"
         "migrated" -> "Moved"
         "completed" -> "Done"
         "struck" -> "Struck"

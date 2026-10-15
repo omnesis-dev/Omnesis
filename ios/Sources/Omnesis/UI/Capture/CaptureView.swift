@@ -35,11 +35,12 @@ extension EnvironmentValues {
 /// the phone's transcript, and Done saves it at once for the gateway to
 /// transcribe. Discarding the recording turns it back into a typed note.
 ///
-/// The same screen completes a task with a note ("Done + note" on Tasks)
-/// when given a `TaskCompletionCapture`: it listens at once and can be
-/// typed into just the same, and Done completes the task with the text
-/// instead of saving a note. That note is always text, so it is never a
-/// voice note.
+/// The same screen writes a note about a task when given a
+/// `TaskNoteCapture` — completing a task with a note ("Done + note" on
+/// Tasks) or accepting a suggestion with one ("Accept with note"): it listens
+/// at once and can be typed into just the same, and Done hands the text to
+/// the task instead of saving a note here. That note is always text, so it
+/// is never a voice note.
 @available(iOS 17.0, *)
 struct CaptureView: View {
     @Environment(AppStore.self) private var store
@@ -56,8 +57,8 @@ struct CaptureView: View {
     /// snapshots, which really are presented, fall back to `dismiss`.
     var onClose: (() -> Void)?
 
-    /// Set when the screen completes a task rather than saving a note.
-    let completion: TaskCompletionCapture?
+    /// Set when the note is about a task rather than a note on its own.
+    let completion: TaskNoteCapture?
 
     @State private var speech: SpeechRecognizer
     @State private var text: String = ""
@@ -96,7 +97,7 @@ struct CaptureView: View {
     init(
         surface: NoteSurface = .app,
         onClose: (() -> Void)? = nil,
-        completion: TaskCompletionCapture? = nil,
+        completion: TaskNoteCapture? = nil,
         speech: SpeechRecognizer = SpeechRecognizer(),
         previewText: String = "",
         previewPhase: Phase = .capturing,
@@ -249,7 +250,7 @@ struct CaptureView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .accessibilityLabel("Cancel capture")
             Spacer()
-            Text(completion == nil ? "Tell Omnesis" : "Done with a note")
+            Text(completion?.heading ?? "Tell Omnesis")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
@@ -321,7 +322,7 @@ struct CaptureView: View {
     static let transcriptShape = RoundedRectangle(cornerRadius: 20, style: .continuous)
 
     private var placeholder: String {
-        completion == nil ? "What should the brain remember?" : "What happened?"
+        completion?.placeholder ?? "What should the brain remember?"
     }
 
     /// Live transcript / manual entry. Editable whenever speech is
@@ -522,12 +523,12 @@ struct CaptureView: View {
         keyboardFocused = false
         withAnimation(.easeInOut(duration: 0.15)) { phase = .saving }
         if let completion {
-            // The Tasks screen confirms the completion itself, with Undo.
+            // The Tasks screen confirms the change itself, with Undo.
             if await completion.save(noteText) {
                 close()
             } else {
                 phase = .capturing
-                saveError = "Couldn't complete the task — try again."
+                saveError = completion.failure
             }
             return
         }
@@ -660,7 +661,7 @@ extension VoiceNoteCaptureState {
 @available(iOS 17.0, *)
 #Preview("Capture — completing a task, listening") {
     CaptureView(
-        completion: TaskCompletionCapture(taskTitle: PreviewMocks.taskWithPerson.title) { _ in true },
+        completion: .completing(PreviewMocks.taskWithPerson.title) { _ in true },
         speech: .preview(state: .listening, transcript: "Went through it together"),
         previewText: "Went through it together"
     )
@@ -670,9 +671,19 @@ extension VoiceNoteCaptureState {
 @available(iOS 17.0, *)
 #Preview("Capture — completing a task, typing") {
     CaptureView(
-        completion: TaskCompletionCapture(taskTitle: PreviewMocks.taskWithPerson.title) { _ in true },
+        completion: .completing(PreviewMocks.taskWithPerson.title) { _ in true },
         speech: .preview(state: .idle),
         previewText: "Signed and scanned, copy sent to the club"
+    )
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Capture — accepting a suggestion, typing") {
+    CaptureView(
+        completion: .accepting(PreviewMocks.tasksSuggested[0].title) { _ in true },
+        speech: .preview(state: .idle),
+        previewText: "Jamie needs it by Friday, pay from the joint account"
     )
     .environment(AppStore.preview())
 }

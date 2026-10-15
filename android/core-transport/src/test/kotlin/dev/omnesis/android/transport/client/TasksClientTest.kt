@@ -71,7 +71,7 @@ class TasksClientTest {
 
     @Test
     fun actions_send_exactly_the_fields_the_gateway_accepts() = runTest {
-        repeat(5) { server.enqueue(MockResponse().setBody(receipt)) }
+        repeat(8) { server.enqueue(MockResponse().setBody(receipt)) }
         val tasks = client()
 
         tasks.act("loop_a", TaskAction.Complete(note = "  "))
@@ -90,6 +90,18 @@ class TasksClientTest {
 
         tasks.act("loop_a", TaskAction.Keep)
         assertEquals("""{"action":"keep"}""", server.takeRequest().body.readUtf8())
+
+        tasks.act("loop_a", TaskAction.Ignore())
+        assertEquals("""{"action":"ignore"}""", server.takeRequest().body.readUtf8())
+
+        // Accepting with a note sends the note with its id; a blank note sends neither.
+        tasks.act("loop_a", TaskAction.Accept("2026-11", note = " The form is in the glovebox ", noteId = "6f1c2a3e-0000-4000-8000-000000000001"))
+        assertEquals(
+            """{"action":"accept","scheduledFor":"2026-11","note":"The form is in the glovebox","noteId":"6f1c2a3e-0000-4000-8000-000000000001"}""",
+            server.takeRequest().body.readUtf8(),
+        )
+        tasks.act("loop_a", TaskAction.Accept(note = "  ", noteId = "6f1c2a3e-0000-4000-8000-000000000002"))
+        assertEquals("""{"action":"accept"}""", server.takeRequest().body.readUtf8())
     }
 
     /** Clearing a schedule is an explicit null; leaving a field alone omits it. */

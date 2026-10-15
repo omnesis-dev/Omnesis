@@ -10,8 +10,8 @@
  * and, when unscheduled, from its deadline. A task planned for an earlier
  * day that is still open stays on today, marked carried, until the user
  * completes, moves or strikes it. Only the user's own tasks appear in the
- * journal views; Brain loops the user has not accepted appear only under
- * Suggested.
+ * journal views; Brain loops the user has neither accepted nor ignored
+ * appear only under Suggested.
  */
 
 import { assertNever } from "@omnesis/core";
@@ -204,7 +204,7 @@ export class TaskQueryService {
         tasks = loopIds(
           this.db,
           `SELECT id FROM open_loops
-            WHERE origin = 'brain' AND accepted = 0 AND state = 'open'
+            WHERE origin = 'brain' AND accepted = 0 AND ignored = 0 AND state = 'open'
               AND ${knowledgeOwnerReadPredicate(this.db, "open_loops.id")}
             ORDER BY importance DESC, last_update DESC, id DESC LIMIT ?`,
           options.limit ?? 100,
@@ -307,7 +307,7 @@ export class TaskQueryService {
       this.db
         .prepare<[], { n: number }>(
           `SELECT COUNT(*) AS n FROM open_loops
-            WHERE origin = 'brain' AND accepted = 0 AND state = 'open'
+            WHERE origin = 'brain' AND accepted = 0 AND ignored = 0 AND state = 'open'
               AND ${knowledgeOwnerReadPredicate(this.db, "open_loops.id")}`,
         )
         .get()?.n ?? 0

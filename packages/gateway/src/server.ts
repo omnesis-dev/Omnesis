@@ -1772,6 +1772,7 @@ export function createServer(
     writeGate: w,
     clock: opts?.briefsClock,
     effects: opts?.taskEffects,
+    notes: getOmnesisNotesRuntime,
   });
 
   // /temporal/* — the time index the portal's Calendar reads. Not gated on

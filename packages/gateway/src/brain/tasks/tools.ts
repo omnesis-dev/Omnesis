@@ -39,7 +39,7 @@ export interface TaskToolDeps {
   idGen?: () => string;
   /**
    * Limit the tools to the user's own tasks: no suggestions listed, accepted
-   * or refused. The note turn runs this way.
+   * or ignored. The note turn runs this way.
    */
   ownedOnly?: boolean;
   /** Offer `observation_suppress` (the Morning brief is running). */
@@ -217,7 +217,7 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
         "strike",
         "edit",
         "accept",
-        "refuse",
+        "ignore",
         "confirm",
         "keep",
         "reopen",
@@ -230,7 +230,9 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
         .enum(actions as unknown as [string, ...string[]])
         .describe(
           "complete (done; optional note on how), migrate (move to `to`), strike (not worth doing; optional reason), edit (change title, description, scheduledFor or deadline), " +
-            (deps.ownedOnly ? "" : "accept / refuse (a Brain suggestion), ") +
+            (deps.ownedOnly
+              ? ""
+              : "accept / ignore (a Brain suggestion; ignore only takes it out of the user's tasks, the Brain keeps tracking it), ") +
             "confirm / keep (accept or refuse the Brain's proposed change), reopen" +
             (deps.ownedOnly ? "." : ", delete (only for a task that should never have existed)."),
         ),
@@ -295,8 +297,8 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
               ? { scheduledFor: parsed.data.scheduledFor }
               : {}),
           });
-        case "refuse":
-          return apply({ ...base, kind: "refuse", ...(reason ? { reason } : {}) });
+        case "ignore":
+          return apply({ ...base, kind: "ignore", ...(reason ? { reason } : {}) });
         case "confirm":
           return apply({ ...base, kind: "confirm_proposal" });
         case "keep":

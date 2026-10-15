@@ -10,14 +10,18 @@ import SwiftUI
 /// document.
 ///
 /// A tap on the circle completes the task (or reopens a resolved one), and a
-/// tap on the text opens its details. A long press anywhere on one of the
-/// person's own open tasks opens its action fan (`TaskFanOverlay`); the
-/// screen reads that press over the whole list (`TaskRowPressBridge`), so the
-/// row itself carries only the fan's VoiceOver actions.
+/// tap on the text opens its details. A long press anywhere on an open task
+/// opens its action fan (`TaskFanOverlay`); the screen reads that press over
+/// the whole list (`TaskRowPressBridge`), so the row itself carries only the
+/// fan's VoiceOver actions.
+///
+/// A suggestion from Omnesis is the same line with a dashed circle: the
+/// circle marks it already done, and its fan offers to accept it — as it stands,
+/// with a note, or for a time — or to ignore it.
 ///
 /// Proposals and suggestions come from the Brain, which runs only on an
 /// experimental gateway; `showsBrainProposals` carries that mode, and
-/// without it the row shows neither.
+/// without it the row shows no proposal.
 @available(iOS 17.0, *)
 struct TaskRowView: View {
     let task: TaskRecord
@@ -35,10 +39,10 @@ struct TaskRowView: View {
     /// Runs a fan action directly — VoiceOver's custom actions.
     var onFanAction: (TaskFanAction) -> Void = { _ in }
 
-    /// Whether a long press opens the action fan: the person's own open tasks.
-    /// Suggestions keep Accept / Not for me; a resolved task is reopened.
+    /// Whether a long press opens the action fan: any open task, a
+    /// suggestion included. A resolved task is reopened instead.
     private var hasFan: Bool {
-        !task.isResolved && !task.isSuggestion
+        !task.isResolved
     }
 
     /// Where the title starts: the side inset plus the bullet's column.
@@ -69,14 +73,6 @@ struct TaskRowView: View {
                         busy: busy,
                         onConfirm: { onAction(.confirm) },
                         onKeep: { onAction(.keep) }
-                    )
-                }
-                if showsBrainProposals, task.isSuggestion {
-                    TaskSuggestionButtons(
-                        today: today,
-                        busy: busy,
-                        onAccept: { onAction(.accept(scheduledFor: $0)) },
-                        onRefuse: { onAction(.refuse(reason: nil)) }
                     )
                 }
             }
@@ -120,7 +116,13 @@ struct TaskRowView: View {
         .accessibilityValue(accessibilityState)
         .accessibilityHint("Opens details")
         .accessibilityActions {
-            if hasFan {
+            if task.isSuggestion {
+                Button("Accept") { onFanAction(.accept) }
+                Button("Accept with note") { onFanAction(.acceptWithNote) }
+                Button("Accept for…") { onFanAction(.acceptFor) }
+                Button("Mark as done") { onFanAction(.done) }
+                Button("Ignore") { onFanAction(.ignore) }
+            } else if hasFan {
                 Button("Done") { onFanAction(.done) }
                 Button("Done with note") { onFanAction(.doneWithNote) }
                 Button("Tomorrow") { onFanAction(.tomorrow) }
@@ -205,9 +207,9 @@ extension ISO8601DateFormatter {
 
 // MARK: - Bullet
 
-/// The tap target that completes a task, or reopens a resolved one. A
-/// suggestion's bullet is a mark, not a control: it is answered with Accept
-/// or Not for me.
+/// The tap target that completes a task, or reopens a resolved one. On a
+/// suggestion it marks the suggestion already done; its dashed circle says
+/// the task is not yet the person's own.
 @available(iOS 17.0, *)
 private struct TaskBullet: View {
     let task: TaskRecord
@@ -220,23 +222,16 @@ private struct TaskBullet: View {
     @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 28
 
     var body: some View {
-        if task.isSuggestion {
-            Image(systemName: "sparkle")
-                .font(.system(size: glyphSize * 0.72, weight: .semibold))
-                .foregroundStyle(Theme.accent)
-                .frame(width: Theme.tapTarget, height: rowHeight)
-                .accessibilityHidden(true)
-        } else {
-            Button(action: action) {
-                glyph
-                    .frame(width: Theme.tapTarget, height: Theme.tapTarget)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(busy)
-            .frame(width: Theme.tapTarget, height: rowHeight)
-            .accessibilityLabel(task.isResolved ? "Reopen \(task.title)" : "Complete \(task.title)")
+        Button(action: action) {
+            glyph
+                .frame(width: Theme.tapTarget, height: Theme.tapTarget)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .frame(width: Theme.tapTarget, height: rowHeight)
+        .accessibilityLabel(task.isResolved ? "Reopen \(task.title)" : "Complete \(task.title)")
+        .accessibilityHint(task.isSuggestion ? "Marks the suggestion as already done" : "")
     }
 
     @ViewBuilder
@@ -251,9 +246,9 @@ private struct TaskBullet: View {
                 .font(.system(size: glyphSize))
                 .foregroundStyle(Theme.textMuted)
         default:
-            Image(systemName: "circle")
+            Image(systemName: task.isSuggestion ? "circle.dashed" : "circle")
                 .font(.system(size: glyphSize, weight: .light))
-                .foregroundStyle(task.carried ? Theme.warning : Theme.textSecondary)
+                .foregroundStyle(task.isSuggestion ? Theme.accent : task.carried ? Theme.warning : Theme.textSecondary)
         }
     }
 }
@@ -404,42 +399,6 @@ private struct TaskProposalView: View {
             .buttonStyle(TaskPillButtonStyle(prominent: false))
             .fixedSize()
             .accessibilityLabel("Keep as it is")
-    }
-}
-
-// MARK: - Suggestion
-
-/// Accept or decline one of Omnesis's suggestions. Accept takes the
-/// suggestion as it stands; its menu picks when.
-@available(iOS 17.0, *)
-private struct TaskSuggestionButtons: View {
-    let today: String
-    let busy: Bool
-    let onAccept: (TaskFieldChange<String>) -> Void
-    let onRefuse: () -> Void
-
-    var body: some View {
-        let schedule = TaskSchedule()
-        let now = schedule.date(fromDay: today) ?? Date()
-        HStack(spacing: Theme.Spacing.sm) {
-            Menu {
-                Button("Today") { onAccept(.set(today)) }
-                Button("Tomorrow") { onAccept(.set(schedule.tomorrow(from: now))) }
-                Button("Next week") { onAccept(.set(schedule.nextWeek(from: now))) }
-                Button("Next month") { onAccept(.set(schedule.nextMonth(from: now))) }
-                Button("No date") { onAccept(.set(nil)) }
-            } label: {
-                Label("Accept", systemImage: "checkmark")
-            } primaryAction: {
-                onAccept(.unchanged)
-            }
-            .buttonStyle(TaskPillButtonStyle(prominent: true))
-            .accessibilityHint("Adds it to your tasks. Hold to choose when.")
-            Button("Not for me", action: onRefuse)
-                .buttonStyle(TaskPillButtonStyle(prominent: false))
-        }
-        .disabled(busy)
-        .padding(.top, Theme.Spacing.xs)
     }
 }
 

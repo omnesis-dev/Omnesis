@@ -236,7 +236,9 @@ function proposedFieldsSummary(fields) {
 const EVENT_LABELS = {
   created: "Added",
   accepted: "Accepted",
-  refused: "Declined",
+  ignored: "Ignored",
+  // Recorded by older builds, whose refusal dismissed the suggestion.
+  refused: "Dismissed",
   migrated: "Moved",
   completed: "Done",
   struck: "Struck",
@@ -354,6 +356,29 @@ export function quickMoves(today) {
     { key: "next-week", label: "Next week", to: nextMonday(today) },
     { key: "next-month", label: "Next month", to: nextMonth(today) },
   ];
+}
+
+/** When a suggestion can be accepted for: unscheduled, today, the quick moves, or someday. */
+export function suggestionWhenOptions(today) {
+  return [
+    { value: "", label: "Not scheduled" },
+    { value: today, label: "Today" },
+    ...quickMoves(today).map((move) => ({ value: move.to, label: move.label })),
+    { value: "someday", label: "Someday" },
+  ];
+}
+
+/**
+ * The accept action for a suggestion: planned for `when` when one is chosen,
+ * and carrying what the user wrote about it, under `noteId`, when they did.
+ */
+export function suggestionAcceptBody({ when = "", note = "", noteId } = {}) {
+  const text = note.trim();
+  return {
+    action: "accept",
+    ...(when ? { scheduledFor: when } : {}),
+    ...(text ? { note: text, noteId } : {}),
+  };
 }
 
 /** How a schedule value splits into the editor's mode + value fields. */

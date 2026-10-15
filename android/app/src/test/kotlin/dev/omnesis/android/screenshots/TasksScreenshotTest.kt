@@ -155,12 +155,12 @@ class TasksScreenshotTest {
 
     /**
      * An experimental gateway, where the Brain runs: the Suggested chip with its count, the
-     * banner at the foot of Today pointing to it, and a proposed change answered with Confirm
-     * or Keep. Today's rows stay closed so the banner is in view.
+     * banner at the top of Today pointing to it — above a full day, so it is never scrolled out
+     * of sight — and a proposed change answered with Confirm or Keep.
      */
     @Test
     fun tasks_today_experimental_dark() = capture("tasks_today_experimental_dark", dark = true) {
-        Screen(todayState.copy(tasks = listOf(proposed, planned.copy(documents = emptyList()), done)), experimental = true)
+        Screen(todayState, experimental = true)
     }
 
     @Test
@@ -175,9 +175,9 @@ class TasksScreenshotTest {
     }
 
     @Composable
-    private fun FanScreen(state: TasksUiState, fan: TaskFanPreview) {
+    private fun FanScreen(state: TasksUiState, fan: TaskFanPreview, experimental: Boolean = false) {
         TasksFrame(onOpenMenu = {}) {
-            TasksContent(state = state, today = today, initialFan = fan)
+            TasksContent(state = state, today = today, experimental = experimental, initialFan = fan)
         }
     }
 
@@ -273,6 +273,30 @@ class TasksScreenshotTest {
     @Test
     fun tasks_suggested_light() = capture("tasks_suggested_light", dark = false) {
         Screen(suggestedState, experimental = true)
+    }
+
+    /**
+     * A long press on a suggestion: its own fan — Accept nearest, then Accept with note,
+     * Accept for…, Mark as done and Ignore — with the finger on Accept.
+     */
+    @Test
+    fun tasks_suggestion_fan_dark() = capture("tasks_suggestion_fan_dark", dark = true) {
+        FanScreen(suggestedState, TaskFanPreview(taskId = "s_reply", highlight = TaskFanAction.Accept), experimental = true)
+    }
+
+    @Test
+    fun tasks_suggestion_fan_light() = capture("tasks_suggestion_fan_light", dark = false) {
+        FanScreen(suggestedState, TaskFanPreview(taskId = "s_reply", highlight = TaskFanAction.Ignore), experimental = true)
+    }
+
+    /** Accept for… opened the "when" fan: Back nearest, then the times to plan the suggestion for. */
+    @Test
+    fun tasks_suggestion_when_fan_light() = capture("tasks_suggestion_when_fan_light", dark = false) {
+        FanScreen(
+            suggestedState,
+            TaskFanPreview(taskId = "s_reply", mode = TaskFanSession.Mode.When, highlight = TaskFanAction.Tomorrow),
+            experimental = true,
+        )
     }
 
     @Test

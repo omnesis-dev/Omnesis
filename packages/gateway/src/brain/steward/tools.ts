@@ -962,6 +962,10 @@ function loopToModelJson(
     // The user's own task: its state, title, description and deadline change
     // only by proposal (open_loop_update records one for the user to confirm).
     userTask: isOwnedTask(loop),
+    // The user chose not to see this suggestion among their tasks; the loop
+    // is still the Brain's to maintain, and must not be re-created to put it
+    // back in front of them.
+    ...(loop.ignored ? { ignoredByUser: true } : {}),
     ...(loop.scheduledFor ? { scheduledFor: loop.scheduledFor } : {}),
     ...(loop.proposedChange
       ? { pendingProposal: { kind: loop.proposedChange.kind, reason: loop.proposedChange.reason } }

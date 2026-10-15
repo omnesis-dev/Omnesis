@@ -150,7 +150,9 @@ class TasksStateTest {
         assertTrue(hasActionFan(task("a")))
         assertFalse(hasActionFan(task("a", state = TaskDto.STATE_DONE)))
         assertFalse(hasActionFan(task("a", state = TaskDto.STATE_DISMISSED)))
-        assertFalse(hasActionFan(TaskDto(id = "s", origin = "brain", accepted = false)))
+        // A suggestion has its own fan; a resolved one has none.
+        assertTrue(hasActionFan(TaskDto(id = "s", origin = "brain", accepted = false)))
+        assertFalse(hasActionFan(TaskDto(id = "s", origin = "brain", accepted = false, state = TaskDto.STATE_DONE)))
         assertTrue(hasActionFan(TaskDto(id = "s", origin = "brain", accepted = true)))
     }
 
@@ -322,7 +324,7 @@ class TasksStateTest {
         assertEquals(listOf("b"), next.tasks.map { it.id })
     }
 
-    /** Suggestions live only under Suggested, so an accepted or refused one leaves it at once. */
+    /** Suggestions live only under Suggested, so an accepted, done or ignored one leaves it at once. */
     @Test
     fun a_handled_suggestion_leaves_the_suggested_list() {
         val suggestion = TaskDto(id = "s", title = "Renew the parking permit", origin = "brain", accepted = false)
@@ -331,8 +333,19 @@ class TasksStateTest {
         val accepted = TasksReducer.mutated(state, "s", mutation(suggestion.copy(accepted = true), "Accepted"), 1)
         assertTrue(accepted.tasks.isEmpty())
 
-        val refused = TasksReducer.mutated(state, "s", mutation(suggestion.copy(state = "dismissed"), "Refused"), 2)
-        assertTrue(refused.tasks.isEmpty())
+        val done = TasksReducer.mutated(state, "s", mutation(suggestion.copy(state = "done", accepted = true), "Done"), 2)
+        assertTrue(done.tasks.isEmpty())
+
+        val ignored = TasksReducer.mutated(state, "s", mutation(suggestion.copy(ignored = true), "Ignored"), 3)
+        assertTrue(ignored.tasks.isEmpty())
+        assertEquals("Ignored", ignored.receipt?.text)
+    }
+
+    @Test
+    fun an_ignored_suggestion_is_no_longer_a_suggestion() {
+        val suggestion = TaskDto(id = "s", title = "Renew the parking permit", origin = "brain", accepted = false)
+        assertTrue(suggestion.isSuggestion)
+        assertFalse(suggestion.copy(ignored = true).isSuggestion)
     }
 
     @Test
@@ -396,7 +409,10 @@ class TasksStateTest {
     @Test
     fun history_lines_prefer_the_gateway_note_and_name_the_surface() {
         assertEquals("Moved to tomorrow", taskEventTitle(TaskEventDto(kind = "migrated", note = "Moved to tomorrow")))
-        assertEquals("Not for me", taskEventTitle(TaskEventDto(kind = "refused", note = null)))
+        assertEquals("Ignored", taskEventTitle(TaskEventDto(kind = "ignored", note = null)))
+        // Older gateways dismissed a refused suggestion.
+        assertEquals("Dismissed", taskEventTitle(TaskEventDto(kind = "refused", note = null)))
+        assertEquals("Already done", taskEventTitle(TaskEventDto(kind = "completed", note = "Already done")))
         assertEquals("Updated", taskEventTitle(TaskEventDto(kind = "something_later")))
         assertEquals("by Omnesis", taskEventSurface("brain"))
         assertNull(taskEventSurface("somewhere_new"))

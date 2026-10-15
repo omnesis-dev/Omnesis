@@ -136,6 +136,7 @@ import {
 } from "./legacy-brief-tables.js";
 import { retireBriefsForObservations } from "./migration-197-observations.js";
 import { addTaskFieldsToLoops } from "./migration-198-task-fields.js";
+import { addSuggestionIgnoreAndTaskNotes } from "./migration-200-task-suggestions.js";
 import { addNotesAccessCapability } from "./migration-163-notes-access.js";
 import { addSourceAccountDescriptor } from "./migration-172-source-account.js";
 import { addPersonAliasAssertions } from "./migration-173-alias-assertions.js";
@@ -4851,6 +4852,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 199,
     description: "note agent queue: one row per Tell Omnesis note it reads, with its receipt",
     up: createNoteAgentTables,
+  },
+  {
+    version: 200,
+    description: "tasks: an ignored suggestion stays tracked; a note can name its task",
+    up: addSuggestionIgnoreAndTaskNotes,
   },
 ];
 

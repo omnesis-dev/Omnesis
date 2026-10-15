@@ -182,11 +182,77 @@ describe("task commands", () => {
     expect(apply({ kind: "accept", id: loop.id })).toMatchObject({ ok: false, reason: "invalid" });
   });
 
-  test("refusing a suggestion dismisses it as refused", () => {
+  test("ignoring a suggestion keeps its loop open and tracked", () => {
     const loop = brainLoop();
-    const result = ok(apply({ kind: "refuse", id: loop.id, reason: "not mine" }));
-    expect(result.receipt).toBe(`Not for you: ${loop.title}`);
-    expect(listOpenLoopLedger(db, loop.id).at(-1)?.event?.kind).toBe("refused");
+    const result = ok(apply({ kind: "ignore", id: loop.id, reason: "not mine" }));
+    expect(result.receipt).toBe(`Ignored: ${loop.title}`);
+    expect(result.resolved).toBe(false);
+    const after = getOpenLoop(db, loop.id)!;
+    expect(after).toMatchObject({
+      state: "open",
+      accepted: false,
+      ignored: true,
+      resolvedAt: null,
+    });
+    // Decay checks still cover it like any other suggestion.
+    expect(listDecayCandidateLoops(db).map((candidate) => candidate.id)).toContain(loop.id);
+    expect(listOpenLoopLedger(db, loop.id).at(-1)?.event).toMatchObject({
+      kind: "ignored",
+      note: "not mine",
+      before: { state: "open", ignored: false },
+    });
+    expect(apply({ kind: "ignore", id: loop.id })).toMatchObject({ ok: false, reason: "invalid" });
+  });
+
+  test("only an open suggestion can be ignored", () => {
+    const own = ok(create());
+    expect(apply({ kind: "ignore", id: own.loopId })).toMatchObject({
+      ok: false,
+      reason: "invalid",
+    });
+    const struck = brainLoop("Return the borrowed ladder");
+    ok(apply({ kind: "strike", id: struck.id }));
+    expect(apply({ kind: "ignore", id: struck.id })).toMatchObject({
+      ok: false,
+      reason: "invalid",
+    });
+  });
+
+  test("undoing an ignore offers the suggestion again", () => {
+    const loop = brainLoop();
+    const seq = ok(apply({ kind: "ignore", id: loop.id })).eventSeq!;
+    const undone = ok(apply({ kind: "undo", seq }));
+    expect(undone.loop).toMatchObject({ state: "open", accepted: false, ignored: false });
+  });
+
+  test("accepting an ignored suggestion makes it the user's task again", () => {
+    const loop = brainLoop();
+    ok(apply({ kind: "ignore", id: loop.id }));
+    const accepted = ok(apply({ kind: "accept", id: loop.id, scheduledFor: "2026-03" }));
+    expect(accepted.loop).toMatchObject({
+      accepted: true,
+      ignored: false,
+      scheduledFor: "2026-03",
+    });
+  });
+
+  test("completing a suggestion marks it already done, and undo offers it again", () => {
+    const loop = brainLoop();
+    const result = ok(apply({ kind: "complete", id: loop.id }));
+    expect(result.resolved).toBe(true);
+    expect(result.loop).toMatchObject({ state: "done", accepted: true });
+    const entry = listOpenLoopLedger(db, loop.id).at(-1)!;
+    expect(entry.note).toBe("Already done");
+    expect(entry.event?.kind).toBe("completed");
+    const undone = ok(apply({ kind: "undo", seq: result.eventSeq! }));
+    expect(undone.loop).toMatchObject({ state: "open", accepted: false, resolvedAt: null });
+  });
+
+  test("striking a suggestion records a strike", () => {
+    const loop = brainLoop();
+    ok(apply({ kind: "strike", id: loop.id }));
+    expect(getOpenLoop(db, loop.id)!.state).toBe("dismissed");
+    expect(listOpenLoopLedger(db, loop.id).at(-1)?.event?.kind).toBe("struck");
   });
 
   test("unknown ids are not found", () => {

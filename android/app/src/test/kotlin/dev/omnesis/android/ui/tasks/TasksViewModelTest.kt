@@ -117,12 +117,67 @@ class TasksViewModelTest {
     }
 
     @Test
+    fun a_suggestions_fan_accepts_plans_marks_done_and_ignores() {
+        val suggestion = TaskDto(id = "s", title = "Renew the parking permit", origin = "brain", accepted = false)
+        gateway.tasks = listOf(suggestion)
+        listOf(
+            TaskFanAction.Accept,
+            TaskFanAction.Today,
+            TaskFanAction.Tomorrow,
+            TaskFanAction.NextWeek,
+            TaskFanAction.NextMonth,
+            TaskFanAction.Month("2027-02"),
+            TaskFanAction.Someday,
+            TaskFanAction.Done,
+            TaskFanAction.Ignore,
+        ).forEach { vm.perform(suggestion, it) }
+
+        assertEquals(
+            listOf(
+                TaskAction.Accept(),
+                TaskAction.Accept("2026-10-18"),
+                TaskAction.Accept("2026-10-19"),
+                TaskAction.Accept("2026-10-19"),
+                TaskAction.Accept("2026-11"),
+                TaskAction.Accept("2027-02"),
+                TaskAction.Accept("someday"),
+                TaskAction.Complete(),
+                TaskAction.Ignore(),
+            ),
+            gateway.actions.map { it.second },
+        )
+    }
+
+    @Test
+    fun accept_with_note_opens_the_capture_and_accepts_with_its_words_under_one_note_id() = runTest {
+        val suggestion = TaskDto(id = "s", title = "Renew the parking permit", origin = "brain", accepted = false)
+        gateway.tasks = listOf(suggestion)
+        vm.perform(suggestion, TaskFanAction.AcceptWithNote)
+        assertEquals(suggestion, vm.state.value.noting)
+        assertTrue(gateway.actions.isEmpty())
+
+        assertNull(vm.saveNote(suggestion, "The form is in the glovebox"))
+        assertNull(vm.saveNote(suggestion, "The form is in the glovebox"))
+
+        val sent = gateway.actions.map { it.second as TaskAction.Accept }
+        assertEquals(listOf("The form is in the glovebox", "The form is in the glovebox"), sent.map { it.note })
+        // A retry from the same capture replays the same note.
+        assertEquals(1, sent.map { it.noteId }.toSet().size)
+        assertTrue(sent.first().noteId != null)
+
+        // A new capture is a new note.
+        vm.perform(suggestion, TaskFanAction.AcceptWithNote)
+        vm.saveNote(suggestion, "Another thought")
+        assertEquals(2, gateway.actions.map { (it.second as TaskAction.Accept).noteId }.toSet().size)
+    }
+
+    @Test
     fun done_with_note_opens_the_capture_and_completes_with_its_words() = runTest {
         val task = gateway.tasks.single()
         vm.perform(task, TaskFanAction.DoneWithNote)
         assertEquals(task, vm.state.value.noting)
 
-        assertNull(vm.completeWithNote(task, "Paid by card"))
+        assertNull(vm.saveNote(task, "Paid by card"))
 
         assertEquals(TaskAction.Complete("Paid by card"), gateway.actions.single().second)
         assertEquals("Done", vm.state.value.receipt?.text)
@@ -136,7 +191,7 @@ class TasksViewModelTest {
         val task = gateway.tasks.single()
         vm.perform(task, TaskFanAction.DoneWithNote)
 
-        val error = vm.completeWithNote(task, "Paid by card")
+        val error = vm.saveNote(task, "Paid by card")
 
         assertTrue(error != null)
         assertEquals(task, vm.state.value.noting)

@@ -29,6 +29,9 @@ internal class StatefulTasksGateway(tasks: List<TaskDto>, private val resolvedNo
 
     /** Every command the screen sent, in order. */
     val commands = mutableListOf<Pair<String, TaskAction>>()
+
+    /** The notes saved while accepting a suggestion with one: task id to text, by note id. */
+    val notes = linkedMapOf<String, Pair<String, String>>()
     var reads = 0
         private set
 
@@ -39,7 +42,7 @@ internal class StatefulTasksGateway(tasks: List<TaskDto>, private val resolvedNo
 
     override suspend fun view(view: TaskView, date: String): TaskViewDto {
         reads++
-        val owned = tasks.filter { !it.isResolved && !it.isSuggestion }
+        val owned = tasks.filter { !it.isResolved && isMine(it) }
         val listed = when (view) {
             TaskView.TODAY -> owned.filter { place(it, date) == TaskView.TODAY }.map { carried(it, date) } +
                 tasks.filter { it.isResolved && it.resolvedAt?.take(10) == date && isMine(it) }
@@ -60,7 +63,13 @@ internal class StatefulTasksGateway(tasks: List<TaskDto>, private val resolvedNo
         val (updated, verb) = when (action) {
             is TaskAction.Complete -> {
                 require(!task.isResolved, "Task is already resolved")
-                task.copy(state = TaskDto.STATE_DONE, completionNote = action.note, resolvedAt = resolvedNow) to "Done"
+                // A suggestion marked done is the user's, done.
+                task.copy(
+                    state = TaskDto.STATE_DONE,
+                    accepted = true,
+                    completionNote = action.note,
+                    resolvedAt = resolvedNow,
+                ) to "Done"
             }
             is TaskAction.Strike -> {
                 require(!task.isResolved, "Task is already resolved")
@@ -75,12 +84,16 @@ internal class StatefulTasksGateway(tasks: List<TaskDto>, private val resolvedNo
                 task.copy(scheduledFor = action.to, carried = false) to "Moved"
             }
             is TaskAction.Accept -> {
+                // A retry of an accept whose note was saved replays it.
+                val replayed = action.noteId?.let { notes[it] }?.first == id
+                if (replayed) return TaskMutationDto(task, TaskReceiptDto("Added to your tasks: ${task.title}", nextSeq))
                 require(task.isSuggestion, "Task is already accepted")
-                task.copy(accepted = true, scheduledFor = action.scheduledFor ?: task.scheduledFor) to "Added"
+                action.note?.let { note -> notes[action.noteId ?: "note-$nextSeq"] = id to note }
+                task.copy(accepted = true, scheduledFor = action.scheduledFor ?: task.scheduledFor) to "Added to your tasks"
             }
-            is TaskAction.Refuse -> {
-                require(task.isSuggestion, "Task is already accepted")
-                task.copy(state = TaskDto.STATE_DISMISSED, resolvedAt = resolvedNow) to "Declined"
+            is TaskAction.Ignore -> {
+                require(task.isSuggestion, "Only a suggestion can be ignored")
+                task.copy(ignored = true) to "Ignored"
             }
             is TaskAction.Edit -> {
                 val plan = (action.scheduledFor as? FieldChange.Set)?.value ?: task.scheduledFor
@@ -128,7 +141,7 @@ internal class StatefulTasksGateway(tasks: List<TaskDto>, private val resolvedNo
     private fun isMine(task: TaskDto): Boolean = task.origin != "brain" || task.accepted
 
     private fun counts(day: String): TaskCountsDto {
-        val owned = tasks.filter { !it.isResolved && !it.isSuggestion }
+        val owned = tasks.filter { !it.isResolved && isMine(it) }
         val placed = owned.map { place(it, day) }
         return TaskCountsDto(
             today = placed.count { it == TaskView.TODAY },

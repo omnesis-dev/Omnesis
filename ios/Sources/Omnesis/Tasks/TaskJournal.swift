@@ -64,7 +64,7 @@ public enum TaskJournal {
         todayCount > 0 ? "Tasks (\(todayCount))" : "Tasks"
     }
 
-    /// The line at the foot of Today that leads to the Suggested view. Nil
+    /// The banner at the top of Today that leads to the Suggested view. Nil
     /// when there is nothing to review.
     public static func reviewBannerText(suggested: Int) -> String? {
         guard suggested > 0 else { return nil }
@@ -178,7 +178,9 @@ public enum TaskJournal {
         switch event.kind {
         case "created": "Added"
         case "accepted": "Accepted"
-        case "refused": "Declined"
+        case "ignored": "Ignored"
+        // Older gateways dismissed a declined suggestion.
+        case "refused": "Dismissed"
         case "migrated": "Moved"
         case "completed": "Done"
         case "struck": "Struck"

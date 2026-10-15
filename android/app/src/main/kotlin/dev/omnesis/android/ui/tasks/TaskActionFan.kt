@@ -13,8 +13,12 @@ import kotlin.math.PI
 import kotlin.math.hypot
 import kotlin.math.sin
 
-/** What a target in a task's action fan does. */
+/**
+ * What a target in a task's action fan does. A suggestion's fan reuses the move targets
+ * (Tomorrow, Next month, a month) to accept it planned for that time.
+ */
 sealed interface TaskFanAction {
+    /** Completes the task; on a suggestion, marks it done without accepting it first. */
     data object Done : TaskFanAction
 
     /** Opens the note composer; saving completes the task with the note. */
@@ -40,9 +44,31 @@ sealed interface TaskFanAction {
     /** The previous page of months. */
     data object EarlierMonths : TaskFanAction
 
+    /** Accepts a suggestion as it stands. */
+    data object Accept : TaskFanAction
+
+    /** Opens the note composer; saving accepts the suggestion with the note. */
+    data object AcceptWithNote : TaskFanAction
+
+    /** Opens the "when" fan, whose targets accept the suggestion planned for that time. */
+    data object AcceptFor : TaskFanAction
+
+    /** Accepts a suggestion planned for today. */
+    data object Today : TaskFanAction
+
+    /** Accepts a suggestion planned for next Monday. */
+    data object NextWeek : TaskFanAction
+
+    /** Accepts a suggestion planned for someday. */
+    data object Someday : TaskFanAction
+
+    /** Takes a suggestion out of Tasks; Omnesis keeps tracking it. */
+    data object Ignore : TaskFanAction
+
     /** Whether the target changes what the fan shows rather than the task. */
     val isNavigation: Boolean
-        get() = this == OtherMonth || this == Back || this == LaterMonths || this == EarlierMonths
+        get() = this == OtherMonth || this == Back || this == LaterMonths || this == EarlierMonths ||
+            this == AcceptFor
 }
 
 /** One labelled target, placed in the overlay's pixel coordinates. */
@@ -82,9 +108,14 @@ class TaskFanSession(
     mode: Mode = Mode.Main,
     tracking: Boolean = true,
     private val locale: Locale = Locale.getDefault(),
+    /** The fan is a Brain suggestion's rather than one of the user's own tasks'. */
+    val suggestion: Boolean = false,
 ) {
     sealed interface Mode {
         data object Main : Mode
+
+        /** A suggestion's "Accept for…": when to plan it. */
+        data object When : Mode
         data class Months(val page: Int) : Mode
     }
 
@@ -244,7 +275,8 @@ class TaskFanSession(
         highlighted = null
         hoverSinceMillis = null
         val labelled = when (mode) {
-            Mode.Main -> MAIN_ACTIONS
+            Mode.Main -> if (suggestion) SUGGESTION_ACTIONS else MAIN_ACTIONS
+            Mode.When -> WHEN_ACTIONS
             is Mode.Months -> monthActions(mode.page, today, metrics.monthsPerPage, locale)
         }
         targets = layout(labelled, anchor, bounds, metrics)
@@ -254,7 +286,9 @@ class TaskFanSession(
         val current = mode
         when {
             action == TaskFanAction.OtherMonth -> show(Mode.Months(0))
-            action == TaskFanAction.Back -> show(Mode.Main)
+            action == TaskFanAction.AcceptFor -> show(Mode.When)
+            // A suggestion's months were reached through "when", so Back returns there.
+            action == TaskFanAction.Back -> show(if (suggestion && current is Mode.Months) Mode.When else Mode.Main)
             action == TaskFanAction.LaterMonths && current is Mode.Months -> show(Mode.Months(current.page + 1))
             action == TaskFanAction.EarlierMonths && current is Mode.Months ->
                 show(Mode.Months((current.page - 1).coerceAtLeast(0)))
@@ -270,6 +304,26 @@ class TaskFanSession(
             TaskFanAction.NextMonth to "Next month",
             TaskFanAction.OtherMonth to "Other month…",
             TaskFanAction.CancelTask to "Cancel task",
+        )
+
+        /** A suggestion's main fan, nearest the finger first. */
+        val SUGGESTION_ACTIONS: List<Pair<TaskFanAction, String>> = listOf(
+            TaskFanAction.Accept to "Accept",
+            TaskFanAction.AcceptWithNote to "Accept with note",
+            TaskFanAction.AcceptFor to "Accept for…",
+            TaskFanAction.Done to "Mark as done",
+            TaskFanAction.Ignore to "Ignore",
+        )
+
+        /** "Accept for…": Back nearest the finger, then the times to plan the suggestion for. */
+        val WHEN_ACTIONS: List<Pair<TaskFanAction, String>> = listOf(
+            TaskFanAction.Back to "Back",
+            TaskFanAction.Today to "Today",
+            TaskFanAction.Tomorrow to "Tomorrow",
+            TaskFanAction.NextWeek to "Next week",
+            TaskFanAction.NextMonth to "Next month",
+            TaskFanAction.OtherMonth to "Other month…",
+            TaskFanAction.Someday to "Someday",
         )
 
         internal fun upwards(count: Int, anchor: Offset, bounds: Rect, metrics: Metrics): Boolean {

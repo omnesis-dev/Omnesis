@@ -13,7 +13,7 @@
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   listTasks: vi.fn(),
@@ -144,4 +144,61 @@ it("hands every read's counts to the shell", async () => {
   win.addEventListener(TASK_COUNTS_EVENT, (event) => seen.push((event as CustomEvent).detail.counts));
   await mount();
   expect(seen).toEqual([COUNTS]);
+});
+
+describe("a suggestion", () => {
+  beforeEach(() => {
+    api.listTasks.mockImplementation(async (view: string, day: string) => ({
+      view,
+      day,
+      counts: COUNTS,
+      tasks: [task({ id: "loop_s", title: "Renew the parking permit", origin: "brain", accepted: false })],
+    }));
+    api.taskAction.mockResolvedValue({ task: {}, receipt: { text: "Done.", undoSeq: 9 } });
+  });
+  const suggestion = () => row("Renew the parking permit");
+  const button = (label: string) =>
+    [...suggestion().querySelectorAll("button")].find((b) => b.textContent?.trim() === label) ?? null;
+
+  it("is marked already done from its bullet", async () => {
+    await mount({ experimental: true, taskView: "suggested" });
+    const bullet = suggestion().querySelector("button.tasks-bullet");
+    expect(bullet?.getAttribute("aria-label")).toBe("Mark “Renew the parking permit” as already done");
+    await act(async () => click(bullet));
+    expect(api.taskAction).toHaveBeenCalledWith("loop_s", { action: "complete" });
+  });
+
+  it("offers Accept, Accept with note, Mark as done and Ignore", async () => {
+    await mount({ experimental: true, taskView: "suggested" });
+    const labels = [...suggestion().querySelectorAll(".tasks-suggestion-actions button")].map((b) =>
+      b.textContent?.trim(),
+    );
+    expect(labels).toEqual(["Accept", "Accept with note", "Mark as done", "Ignore"]);
+    await act(async () => click(button("Ignore")));
+    expect(api.taskAction).toHaveBeenLastCalledWith("loop_s", { action: "ignore" });
+    await act(async () => click(button("Mark as done")));
+    expect(api.taskAction).toHaveBeenLastCalledWith("loop_s", { action: "complete" });
+    await act(async () => click(button("Accept")));
+    expect(api.taskAction).toHaveBeenLastCalledWith("loop_s", { action: "accept" });
+  });
+
+  it("is accepted with a note the user writes", async () => {
+    await mount({ experimental: true, taskView: "suggested" });
+    await act(async () => click(button("Accept with note")));
+    const field = suggestion().querySelector("textarea") as unknown as HTMLTextAreaElement;
+    expect(field.getAttribute("aria-label")).toBe("Note about “Renew the parking permit”");
+    await act(async () => {
+      field.value = "  the old one runs out on the 20th ";
+      field.dispatchEvent(new (win as unknown as { Event: typeof Event }).Event("input", { bubbles: true }));
+    });
+    const form = suggestion().querySelector("form.tasks-suggestion-note");
+    await act(async () => {
+      form?.dispatchEvent(new (win as unknown as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(api.taskAction).toHaveBeenCalledWith("loop_s", {
+      action: "accept",
+      note: "the old one runs out on the 20th",
+      noteId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+  });
 });

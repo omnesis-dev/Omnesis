@@ -193,6 +193,21 @@ describe("open_loop_update / open_loop_delete on the user's own tasks", () => {
     },
   );
 
+  test("a suggestion the user ignored is still the Brain's to maintain, and says so", async () => {
+    seedLoop("loop_i", "brain");
+    db.prepare("UPDATE open_loops SET ignored = 1 WHERE id = ?").run("loop_i");
+    const fetched = structured(await tool("open_loop_fetch").invoke({ id: "loop_i" }, CTX));
+    expect(JSON.stringify(fetched.data)).toContain('"ignoredByUser":true');
+    const result = await update({ id: "loop_i", importance: 0.9, description: "Draft sent" });
+    expect(result.kind).toBe("structured");
+    expect(getOpenLoop(db, "loop_i")).toMatchObject({
+      state: "open",
+      ignored: true,
+      importance: 0.9,
+      description: "Draft sent",
+    });
+  });
+
   test("a title edit without a reason is refused too", async () => {
     seedLoop("loop_u", "user");
     expect(await update({ id: "loop_u", title: "Send the Q4 budget" })).toMatchObject({

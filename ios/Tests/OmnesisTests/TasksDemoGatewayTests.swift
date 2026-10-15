@@ -94,4 +94,52 @@ final class TasksDemoGatewayTests: XCTestCase {
         let doneAfter = try await ids(gateway, .done)
         XCTAssertEqual(doneAfter, [])
     }
+
+    func testIgnoringHidesTheSuggestionEverywhereAndUndoBringsItBack() async throws {
+        let gateway = gateway()
+        let mutation = try await gateway.perform(.ignore(reason: nil), on: "s")
+        XCTAssertEqual(mutation.task?.ignored, true)
+        XCTAssertEqual(mutation.task?.state, .open, "an ignored suggestion stays an open loop")
+        XCTAssertEqual(mutation.receipt.text, "Ignored: A suggestion")
+        for view in TaskViewKind.allCases {
+            let listed = try await ids(gateway, view)
+            XCTAssertFalse(listed.contains("s"), "\(view) lists the ignored suggestion")
+        }
+        let counts = try await gateway.view(.today, day: day, limit: nil, before: nil).counts
+        XCTAssertEqual(counts.suggested, 0)
+        _ = try await gateway.undo(seq: XCTUnwrap(mutation.receipt.undoSeq))
+        let suggested = try await ids(gateway, .suggested)
+        XCTAssertEqual(suggested, ["s"])
+    }
+
+    func testMarkingASuggestionDoneMakesItTheirsAndDone() async throws {
+        let gateway = gateway()
+        let mutation = try await gateway.perform(.complete(note: nil), on: "s")
+        XCTAssertEqual(mutation.task?.state, .done)
+        XCTAssertEqual(mutation.task?.accepted, true)
+        let suggested = try await ids(gateway, .suggested)
+        let done = try await ids(gateway, .done)
+        XCTAssertEqual(suggested, [])
+        XCTAssertEqual(done, ["s"])
+        _ = try await gateway.undo(seq: XCTUnwrap(mutation.receipt.undoSeq))
+        let suggestedAfter = try await ids(gateway, .suggested)
+        let doneAfter = try await ids(gateway, .done)
+        XCTAssertEqual(suggestedAfter, ["s"])
+        XCTAssertEqual(doneAfter, [])
+    }
+
+    func testAcceptingWithANoteKeepsTheNoteForTheTask() async throws {
+        let gateway = gateway()
+        let mutation = try await gateway.perform(
+            .accept(scheduledFor: .set("2026-10-14"), note: "Ask about the deposit", noteId: "n-1"),
+            on: "s"
+        )
+        XCTAssertEqual(mutation.task?.accepted, true)
+        XCTAssertEqual(mutation.receipt.text, "Added to your tasks: A suggestion")
+        let today = try await ids(gateway, .today)
+        XCTAssertEqual(today, ["p", "s"])
+        let notes = await gateway.notes
+        XCTAssertEqual(notes.map(\.taskId), ["s"])
+        XCTAssertEqual(notes.map(\.text), ["Ask about the deposit"])
+    }
 }

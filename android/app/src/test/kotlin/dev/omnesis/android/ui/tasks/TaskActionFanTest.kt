@@ -23,7 +23,8 @@ class TaskActionFanTest {
         anchor: Offset = Offset(300f, 600f),
         mode: TaskFanSession.Mode = TaskFanSession.Mode.Main,
         tracking: Boolean = true,
-    ) = TaskFanSession(anchor, bounds, today, mode = mode, tracking = tracking, locale = Locale.UK)
+        suggestion: Boolean = false,
+    ) = TaskFanSession(anchor, bounds, today, mode = mode, tracking = tracking, locale = Locale.UK, suggestion = suggestion)
 
     private fun TaskFanSession.target(action: TaskFanAction) = targets.single { it.action == action }
 
@@ -35,6 +36,42 @@ class TaskActionFanTest {
             listOf("Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task"),
             session().targets.map { it.label },
         )
+    }
+
+    @Test
+    fun a_suggestions_fan_offers_its_own_actions_nearest_first() {
+        assertEquals(
+            listOf("Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore"),
+            session(suggestion = true).targets.map { it.label },
+        )
+    }
+
+    /** Accept for… leads to the times to plan it for; Other month… to the months; Back retraces the way. */
+    @Test
+    fun a_suggestions_accept_for_walks_through_when_and_months_and_back() {
+        val fan = session(suggestion = true, tracking = false)
+        assertEquals(TaskFanSession.Outcome.StayOpen, fan.tap(TaskFanAction.AcceptFor))
+        assertEquals(TaskFanSession.Mode.When, fan.mode)
+        assertEquals(
+            listOf("Back", "Today", "Tomorrow", "Next week", "Next month", "Other month…", "Someday"),
+            fan.targets.map { it.label },
+        )
+        assertEquals(TaskFanSession.Outcome.StayOpen, fan.tap(TaskFanAction.OtherMonth))
+        assertEquals(TaskFanSession.Mode.Months(0), fan.mode)
+        fan.tap(TaskFanAction.Back)
+        assertEquals(TaskFanSession.Mode.When, fan.mode)
+        fan.tap(TaskFanAction.Back)
+        assertEquals(TaskFanSession.Mode.Main, fan.mode)
+        assertEquals(TaskFanSession.Outcome.Perform(TaskFanAction.Ignore), fan.tap(TaskFanAction.Ignore))
+    }
+
+    /** Resting on Accept for… opens the when fan in place, like Other month… does. */
+    @Test
+    fun resting_on_accept_for_opens_the_when_fan() {
+        val fan = session(suggestion = true)
+        val target = fan.target(TaskFanAction.AcceptFor)
+        fan.move(target.center, nowMillis = 0)
+        assertTrue(fan.tick(nowMillis = 500).contains(TaskFanSession.Event.ModeChanged(TaskFanSession.Mode.When)))
     }
 
     /** For a right thumb: every target sits up and to the left of the press, Done nearest. */

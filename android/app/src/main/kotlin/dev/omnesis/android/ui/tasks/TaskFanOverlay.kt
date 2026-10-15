@@ -22,13 +22,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.AddTask
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.EventRepeat
+import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Today
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -170,6 +176,7 @@ class TaskFanController {
             metrics = metrics,
             mode = mode,
             tracking = tracking,
+            suggestion = task.isSuggestion,
         )
         this.task = task
         openings++
@@ -358,6 +365,7 @@ fun TaskFanOverlay(controller: TaskFanController, modifier: Modifier = Modifier)
             FanTargetButton(
                 target = target,
                 highlighted = session.highlighted == target.action,
+                suggestion = session.suggestion,
                 onTap = { controller.tap(target.action) },
             )
         }
@@ -365,7 +373,7 @@ fun TaskFanOverlay(controller: TaskFanController, modifier: Modifier = Modifier)
 }
 
 @Composable
-private fun FanTargetButton(target: TaskFanTarget, highlighted: Boolean, onTap: () -> Unit) {
+private fun FanTargetButton(target: TaskFanTarget, highlighted: Boolean, suggestion: Boolean, onTap: () -> Unit) {
     val c = OmTheme.colors
     val density = LocalDensity.current
     val width = with(density) { target.frame.width.toDp() }
@@ -383,10 +391,10 @@ private fun FanTargetButton(target: TaskFanTarget, highlighted: Boolean, onTap: 
             .clip(FAN_SHAPE)
             .background(if (highlighted) c.accent else c.bgTertiary)
             .border(1.dp, if (highlighted) Color.Transparent else c.border, FAN_SHAPE)
-            .clickable(role = Role.Button, onClickLabel = fanTargetSpokenLabel(target), onClick = onTap)
+            .clickable(role = Role.Button, onClickLabel = fanTargetSpokenLabel(target, suggestion), onClick = onTap)
             .semantics {
-                contentDescription = fanTargetSpokenLabel(target)
-                onClick(label = fanTargetSpokenLabel(target)) { onTap(); true }
+                contentDescription = fanTargetSpokenLabel(target, suggestion)
+                onClick(label = fanTargetSpokenLabel(target, suggestion)) { onTap(); true }
             }
             .testTag("tasks.fan.${fanTargetTag(target.action)}")
             .padding(horizontal = 14.dp),
@@ -404,7 +412,7 @@ private fun FanTargetButton(target: TaskFanTarget, highlighted: Boolean, onTap: 
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (target.action == TaskFanAction.OtherMonth) {
+        if (target.action == TaskFanAction.OtherMonth || target.action == TaskFanAction.AcceptFor) {
             Icon(
                 Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                 contentDescription = null,
@@ -416,9 +424,10 @@ private fun FanTargetButton(target: TaskFanTarget, highlighted: Boolean, onTap: 
 }
 
 /** What TalkBack says for a target. */
-internal fun fanTargetSpokenLabel(target: TaskFanTarget): String = when (target.action) {
-    is TaskFanAction.Month -> "Move to ${target.label}"
+internal fun fanTargetSpokenLabel(target: TaskFanTarget, suggestion: Boolean = false): String = when (target.action) {
+    is TaskFanAction.Month -> if (suggestion) "Accept for ${target.label}" else "Move to ${target.label}"
     TaskFanAction.OtherMonth -> "Other month"
+    TaskFanAction.AcceptFor -> "Accept for"
     else -> target.label
 }
 
@@ -434,6 +443,13 @@ internal fun fanTargetTag(action: TaskFanAction): String = when (action) {
     TaskFanAction.Back -> "back"
     TaskFanAction.LaterMonths -> "later"
     TaskFanAction.EarlierMonths -> "earlier"
+    TaskFanAction.Accept -> "accept"
+    TaskFanAction.AcceptWithNote -> "acceptWithNote"
+    TaskFanAction.AcceptFor -> "acceptFor"
+    TaskFanAction.Today -> "today"
+    TaskFanAction.NextWeek -> "nextWeek"
+    TaskFanAction.Someday -> "someday"
+    TaskFanAction.Ignore -> "ignore"
 }
 
 private fun fanIcon(action: TaskFanAction): ImageVector = when (action) {
@@ -447,4 +463,11 @@ private fun fanIcon(action: TaskFanAction): ImageVector = when (action) {
     TaskFanAction.Back -> Icons.AutoMirrored.Outlined.ArrowBack
     TaskFanAction.LaterMonths -> Icons.Outlined.KeyboardArrowDown
     TaskFanAction.EarlierMonths -> Icons.Outlined.KeyboardArrowUp
+    TaskFanAction.Accept -> Icons.Outlined.AddTask
+    TaskFanAction.AcceptWithNote -> Icons.Outlined.EditNote
+    TaskFanAction.AcceptFor -> Icons.Outlined.Event
+    TaskFanAction.Today -> Icons.Outlined.Today
+    TaskFanAction.NextWeek -> Icons.Outlined.DateRange
+    TaskFanAction.Someday -> Icons.Outlined.HourglassEmpty
+    TaskFanAction.Ignore -> Icons.Outlined.VisibilityOff
 }

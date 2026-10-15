@@ -46,6 +46,7 @@ export function createBriefsStorageTables(db: Db): void {
       decay_check_count INTEGER NOT NULL DEFAULT 0,
       origin TEXT NOT NULL DEFAULT 'brain',
       accepted INTEGER NOT NULL DEFAULT 0,
+      ignored INTEGER NOT NULL DEFAULT 0,
       scheduled_for TEXT,
       proposed_change_json TEXT,
       completion_note TEXT,

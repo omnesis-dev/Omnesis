@@ -4,20 +4,34 @@
 import CoreGraphics
 import Foundation
 
-/// What a target in a task's action fan does.
+/// What a target in a task's action fan does. On a suggestion, a target
+/// that names a time (Today, Tomorrow, a month, Someday) accepts it for that
+/// time; on one of the person's own tasks it moves the task there.
 public enum TaskFanAction: Hashable, Sendable {
+    /// Completes the task; on a suggestion, marks it already done.
     case done
     /// Opens a note composer; saving completes the task with the note.
     case doneWithNote
+    case today
     case tomorrow
+    case thisMonth
     case nextMonth
+    case someday
     /// Opens the month fan.
     case otherMonth
     /// Strikes the task: it leaves the lists but keeps its history.
     case cancelTask
     /// Moves the task to a month, `YYYY-MM`.
     case month(String)
-    /// From the month fan back to the main fan.
+    /// Takes on a suggestion as it stands.
+    case accept
+    /// Opens a note composer; saving accepts the suggestion with the note.
+    case acceptWithNote
+    /// Opens the fan of times to accept a suggestion for.
+    case acceptFor
+    /// Takes a suggestion out of the person's tasks; Omnesis keeps tracking it.
+    case ignore
+    /// Back to the fan this one was opened from.
     case back
     /// The next page of months.
     case laterMonths
@@ -27,7 +41,7 @@ public enum TaskFanAction: Hashable, Sendable {
     /// Whether the target changes what the fan shows rather than the task.
     public var isNavigation: Bool {
         switch self {
-        case .otherMonth, .back, .laterMonths, .earlierMonths: true
+        case .otherMonth, .acceptFor, .back, .laterMonths, .earlierMonths: true
         default: false
         }
     }
@@ -57,13 +71,15 @@ public struct TaskFanTarget: Equatable, Sendable, Identifiable {
 /// thumb: a column of labelled targets up and to the left of the touch, so
 /// the thumb, which reaches in from the lower right, never covers a label.
 /// The column leans further left as it rises, following the thumb's arc. Its
-/// order is fixed and counted outwards from the thumb — Done is always
-/// nearest. Near the top of the list the column flips downwards (mirrored, so
-/// the order by distance never changes); near the left edge it slides right
-/// to stay on screen.
+/// order is fixed and counted outwards from the thumb — Done (Accept, on a
+/// suggestion) is always nearest. Near the top of the list the column flips
+/// downwards (mirrored, so the order by distance never changes); near the
+/// left edge it slides right to stay on screen.
 ///
 /// The fan lives only while the finger is down: slide onto a target and lift
-/// to act; lift anywhere else and nothing changes. Resting on Other month…
+/// to act; lift anywhere else and nothing changes. A suggestion's fan offers
+/// to take it on instead (`Kind.suggestion`); resting on its Accept for…
+/// opens the times to accept it for. Resting on Other month…
 /// opens the month fan in place; its targets wait for a deliberate movement
 /// before they can be selected, so the one that appears under the finger is
 /// never chosen by accident. VoiceOver, which cannot hold and slide, opens
@@ -71,7 +87,16 @@ public struct TaskFanTarget: Equatable, Sendable, Identifiable {
 public struct TaskFanSession: Sendable {
     public enum Mode: Equatable, Sendable {
         case main
+        /// When to accept a suggestion for.
+        case when
         case months(page: Int)
+    }
+
+    /// What was pressed: one of the person's own tasks, or a suggestion,
+    /// whose fan offers to take it on instead.
+    public enum Kind: Equatable, Sendable {
+        case task
+        case suggestion
     }
 
     public enum Event: Equatable, Sendable {
@@ -118,6 +143,7 @@ public struct TaskFanSession: Sendable {
     public let bounds: CGRect
     public let metrics: Metrics
     public let today: String
+    public let kind: Kind
     private let schedule: TaskSchedule
 
     public private(set) var mode: Mode = .main
@@ -145,6 +171,7 @@ public struct TaskFanSession: Sendable {
         anchor: CGPoint,
         bounds: CGRect,
         today: String,
+        kind: Kind = .task,
         schedule: TaskSchedule = TaskSchedule(),
         metrics: Metrics = Metrics(),
         mode: Mode = .main,
@@ -153,6 +180,7 @@ public struct TaskFanSession: Sendable {
         self.anchor = anchor
         self.bounds = bounds
         self.today = today
+        self.kind = kind
         self.schedule = schedule
         self.metrics = metrics
         self.tracking = tracking
@@ -305,6 +333,28 @@ public struct TaskFanSession: Sendable {
         (.cancelTask, "Cancel task"),
     ]
 
+    /// A suggestion's main fan: take it on as it stands, with a note, or for
+    /// a time; say it is already done; or ignore it.
+    public static let suggestionActions: [(TaskFanAction, String)] = [
+        (.accept, "Accept"),
+        (.acceptWithNote, "Accept with note"),
+        (.acceptFor, "Accept for…"),
+        (.done, "Mark as done"),
+        (.ignore, "Ignore"),
+    ]
+
+    /// When to accept a suggestion for: Back nearest the finger, then the
+    /// times from soonest to latest.
+    public static let whenActions: [(TaskFanAction, String)] = [
+        (.back, "Back"),
+        (.today, "Today"),
+        (.tomorrow, "Tomorrow"),
+        (.thisMonth, "This month"),
+        (.nextMonth, "Next month"),
+        (.otherMonth, "Other month…"),
+        (.someday, "Someday"),
+    ]
+
     /// The month fan for `page`: Back nearest the finger, Earlier when there
     /// is an earlier page, the page's months, then Later.
     public static func monthActions(
@@ -355,7 +405,8 @@ public struct TaskFanSession: Sendable {
         highlighted = nil
         hoverSince = nil
         let labelled: [(TaskFanAction, String)] = switch mode {
-        case .main: Self.mainActions
+        case .main: kind == .suggestion ? Self.suggestionActions : Self.mainActions
+        case .when: Self.whenActions
         case .months(let page):
             Self.monthActions(page: page, today: today, schedule: schedule, perPage: metrics.monthsPerPage)
         }
@@ -365,6 +416,9 @@ public struct TaskFanSession: Sendable {
     private mutating func navigate(_ action: TaskFanAction) {
         switch (action, mode) {
         case (.otherMonth, _): show(.months(page: 0))
+        case (.acceptFor, _): show(.when)
+        // A suggestion's months were reached from its times.
+        case (.back, .months): show(kind == .suggestion ? .when : .main)
         case (.back, _): show(.main)
         case (.laterMonths, .months(let page)): show(.months(page: page + 1))
         case (.earlierMonths, .months(let page)): show(.months(page: max(page - 1, 0)))

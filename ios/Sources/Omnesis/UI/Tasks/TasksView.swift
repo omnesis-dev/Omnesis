@@ -9,7 +9,8 @@ import SwiftUI
 /// A tap on a task's circle completes it (or reopens a resolved one) and
 /// offers Undo; a tap on its text opens its details; a long press anywhere
 /// on the row opens its action fan, which the same touch slides over and
-/// lifts on. There are no swipe actions: a horizontal swipe anywhere
+/// lifts on. Omnesis's suggestions are the same rows: their fan accepts or
+/// ignores them, and their circle marks them already done. There are no swipe actions: a horizontal swipe anywhere
 /// in the leading majority of the screen belongs to the menu reveal.
 @available(iOS 17.0, *)
 struct TasksView: View {
@@ -133,8 +134,9 @@ struct TasksContent: View {
 
     @State private var fan = TaskFanController()
     @State private var press = TaskRowPressBridge()
-    /// The task a "Done + note" composer is open for.
-    @State private var noting: TaskRecord?
+    /// The task a note composer is open for: "Done + note", or a
+    /// suggestion's "Accept with note".
+    @State private var noting: TaskNoting?
     /// The fan's targets grow with the text size.
     @ScaledMetric(relativeTo: .subheadline) private var fanTargetHeight: CGFloat = 44
     @ScaledMetric(relativeTo: .subheadline) private var fanTargetWidth: CGFloat = 176
@@ -148,6 +150,7 @@ struct TasksContent: View {
                 onSelect: { view in Task { await model.select(view) } }
             )
             Divider().overlay(Theme.borderLight)
+            banner
             journal
         }
         .background(Theme.bgPrimary)
@@ -175,7 +178,11 @@ struct TasksContent: View {
         GeometryReader { viewport in
             ZStack(alignment: .topLeading) {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    // Eager, not lazy: a journal page is short (Done pages in
+                    // fifties), every row reports its frame for the fan, and a
+                    // lazy stack of rows that measure themselves can keep
+                    // re-placing its rows without end once scrolled to its foot.
+                    VStack(alignment: .leading, spacing: 0) {
                         TaskPageHeading(view: model.selected, today: model.today, tasks: model.tasks)
                         rows(for: model)
                         footer
@@ -195,11 +202,9 @@ struct TasksContent: View {
         .coordinateSpace(.named(TaskFanOverlay.space))
         .onPreferenceChange(TaskRowFrameKey.self) { frames in fan.rowFrames = frames }
         .onChange(of: model.selected) { _, _ in fan.dismiss() }
-        // "Done + note" is the Tell Omnesis screen, completing the task.
-        .fullScreenCover(item: $noting) { task in
-            CaptureView(completion: TaskCompletionCapture(taskTitle: task.title) { note in
-                await model.perform(.complete(note: note), on: task)
-            })
+        // A note about a task is written on the Tell Omnesis screen.
+        .fullScreenCover(item: $noting) { noting in
+            CaptureView(completion: capture(for: noting))
         }
         .task {
             #if DEBUG
@@ -234,33 +239,71 @@ struct TasksContent: View {
     }
 
     /// What a fan action does to its task. Completion goes through the
-    /// bullet's path, which shows the row done at once.
+    /// bullet's path, which shows the row done at once. A time accepts a
+    /// suggestion for then, and moves one of the person's own tasks there.
     private func run(_ action: TaskFanAction, on task: TaskRecord) {
         let schedule = TaskSchedule()
         let now = schedule.date(fromDay: model.today) ?? Date()
+        let plan: (String) -> TaskAction = { value in
+            task.isSuggestion ? .accept(scheduledFor: .set(value)) : .migrate(to: value)
+        }
         switch action {
         case .done: Task { await model.tapBullet(task) }
-        case .doneWithNote: noting = task
-        case .tomorrow: Task { await model.perform(.migrate(to: schedule.tomorrow(from: now)), on: task) }
-        case .nextMonth: Task { await model.perform(.migrate(to: schedule.nextMonth(from: now)), on: task) }
-        case .month(let month): Task { await model.perform(.migrate(to: month), on: task) }
+        case .doneWithNote: noting = TaskNoting(task: task, purpose: .complete)
+        case .today: Task { await model.perform(plan(model.today), on: task) }
+        case .tomorrow: Task { await model.perform(plan(schedule.tomorrow(from: now)), on: task) }
+        case .thisMonth: Task { await model.perform(plan(schedule.month(now)), on: task) }
+        case .nextMonth: Task { await model.perform(plan(schedule.nextMonth(from: now)), on: task) }
+        case .month(let month): Task { await model.perform(plan(month), on: task) }
+        case .someday: Task { await model.perform(plan("someday"), on: task) }
         case .cancelTask: Task { await model.perform(.strike(reason: nil), on: task) }
+        case .accept: Task { await model.perform(.accept(scheduledFor: .unchanged), on: task) }
+        case .acceptWithNote: noting = TaskNoting(task: task, purpose: .accept)
+        case .ignore: Task { await model.perform(.ignore(reason: nil), on: task) }
         case .otherMonth: fan.openForAccessibility(task, today: model.today, mode: .months(page: 0))
+        case .acceptFor: fan.openForAccessibility(task, today: model.today, mode: .when)
         case .back, .laterMonths, .earlierMonths: break
         }
     }
 
-    /// What closes the list: on Today, the way to Omnesis's suggestions;
-    /// on the views a person fills, how tasks get there.
+    /// The composer's wording and call for a note about `noting`'s task. The
+    /// note's id is fixed while the composer is open, so saving again after
+    /// a failure is a replay rather than a second note.
+    private func capture(for noting: TaskNoting) -> TaskNoteCapture {
+        let task = noting.task
+        switch noting.purpose {
+        case .complete:
+            return .completing(task.title) { note in
+                await model.perform(.complete(note: note), on: task)
+            }
+        case .accept:
+            return .accepting(task.title) { note in
+                await model.perform(
+                    .accept(scheduledFor: .unchanged, note: note, noteId: noting.id.uuidString.lowercased()),
+                    on: task
+                )
+            }
+        }
+    }
+
+    /// What opens Today when Omnesis has suggestions waiting: the way to
+    /// them, held under the segment bar above the list, so however long the
+    /// day it never scrolls out of reach.
+    @ViewBuilder
+    private var banner: some View {
+        if !model.loading, model.loadError == nil || !model.tasks.isEmpty,
+           experimental, model.selected == .today,
+           let text = TaskJournal.reviewBannerText(suggested: model.counts.suggested) {
+            TaskReviewBanner(text: text) { Task { await model.select(.suggested) } }
+                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.vertical, Theme.Spacing.sm)
+        }
+    }
+
+    /// What closes the list on the views a person fills: how tasks get there.
     @ViewBuilder
     private var footer: some View {
         if !model.loading, model.loadError == nil || !model.tasks.isEmpty {
-            if experimental, model.selected == .today,
-               let text = TaskJournal.reviewBannerText(suggested: model.counts.suggested) {
-                TaskReviewBanner(text: text) { Task { await model.select(.suggested) } }
-                    .padding(.horizontal, Theme.Spacing.lg)
-                    .padding(.top, Theme.Spacing.lg)
-            }
             if TaskJournal.showsCaptureHint(for: model.selected) {
                 TaskCaptureHint()
                     .padding(.horizontal, Theme.Spacing.lg)
@@ -527,6 +570,16 @@ private struct TaskEmptyState: View {
 
 // MARK: - Footer
 
+/// A note composer open for a task, with the id its note is saved under.
+@available(iOS 17.0, *)
+struct TaskNoting: Identifiable {
+    enum Purpose { case complete, accept }
+
+    let id = UUID()
+    let task: TaskRecord
+    let purpose: Purpose
+}
+
 /// A fan to open as soon as the rows are laid out — previews and snapshots.
 @available(iOS 17.0, *)
 struct TaskFanPreview {
@@ -547,7 +600,7 @@ private struct TaskRowFrameKey: PreferenceKey {
     }
 }
 
-/// The foot of Today when Omnesis has suggestions waiting: one tap opens the
+/// The top of Today when Omnesis has suggestions waiting: one tap opens the
 /// Suggested view. Dressed like the home screen's access-request banner —
 /// the app's one treatment for "something is waiting for you".
 @available(iOS 17.0, *)
@@ -739,6 +792,44 @@ struct TaskCaptureHint: View {
             ),
             experimental: true
         )
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Tasks — suggestion fan") {
+    NavigationStack {
+        TasksContent(
+            model: .fixture(
+                selected: .suggested,
+                tasks: PreviewMocks.tasksSuggestedLong,
+                counts: PreviewMocks.tasksTodayCounts,
+                now: PreviewMocks.tasksNow
+            ),
+            experimental: true,
+            initialFan: TaskFanPreview(taskId: PreviewMocks.tasksSuggestedLong[4].id, highlight: .acceptWithNote)
+        )
+        .navigationTitle("Tasks")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Tasks — suggestion fan, accept for") {
+    NavigationStack {
+        TasksContent(
+            model: .fixture(
+                selected: .suggested,
+                tasks: PreviewMocks.tasksSuggestedLong,
+                counts: PreviewMocks.tasksTodayCounts,
+                now: PreviewMocks.tasksNow
+            ),
+            experimental: true,
+            initialFan: TaskFanPreview(taskId: PreviewMocks.tasksSuggestedLong[5].id, mode: .when, highlight: .tomorrow)
+        )
+        .navigationTitle("Tasks")
+        .navigationBarTitleDisplayMode(.inline)
     }
     .environment(AppStore.preview())
 }

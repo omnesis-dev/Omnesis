@@ -1371,6 +1371,21 @@ enum PreviewMocks {
         ),
     ]
 
+    /// Enough suggestions to fill a phone screen, so a long press low on the
+    /// list has room for the suggestion fan above it.
+    static let tasksSuggestedLong: [TaskRecord] = tasksSuggested + [
+        TaskRecord(id: "loop_suggest_3", title: "Confirm the Studio Northstar framing order", origin: .brain),
+        TaskRecord(
+            id: "loop_suggest_4",
+            title: "Send the boiler service dates",
+            origin: .brain,
+            actors: [TaskActor(id: "p_david", name: "David Lin")]
+        ),
+        TaskRecord(id: "loop_suggest_5", title: "Book the heart-rate monitor follow-up", origin: .brain),
+        TaskRecord(id: "loop_suggest_6", title: "Pay the Riverside Estate allotment fee", origin: .brain, scheduledFor: "2026-10"),
+        TaskRecord(id: "loop_suggest_7", title: "Return the borrowed camping tent", origin: .brain),
+    ]
+
     static let taskHistory: [TaskEvent] = [
         TaskEvent(
             seq: 41,

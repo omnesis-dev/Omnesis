@@ -92,13 +92,31 @@ sealed interface TaskAction {
         }
     }
 
-    /** Accept a suggestion, optionally planning it for [scheduledFor]. */
-    data class Accept(val scheduledFor: String? = null) : TaskAction {
-        override fun body() = action("accept") { scheduledFor?.let { put("scheduledFor", it) } }
+    /**
+     * Accept a suggestion, optionally planning it for [scheduledFor]. A [note] is what the user
+     * adds about it: the gateway saves it as a Tell Omnesis note naming the task, which the note
+     * agent applies. [noteId] (a UUID) keeps one note per attempt, so a retried request replays.
+     */
+    data class Accept(
+        val scheduledFor: String? = null,
+        val note: String? = null,
+        val noteId: String? = null,
+    ) : TaskAction {
+        override fun body() = action("accept") {
+            scheduledFor?.let { put("scheduledFor", it) }
+            note?.trim()?.takeIf(String::isNotEmpty)?.let { text ->
+                put("note", text)
+                noteId?.let { put("noteId", it) }
+            }
+        }
     }
 
-    data class Refuse(val reason: String? = null) : TaskAction {
-        override fun body() = action("refuse") { reason?.trim()?.takeIf(String::isNotEmpty)?.let { put("reason", it) } }
+    /**
+     * Take a suggestion out of the Tasks views. The Brain keeps tracking the loop behind it;
+     * the receipt's undo brings the suggestion back.
+     */
+    data class Ignore(val reason: String? = null) : TaskAction {
+        override fun body() = action("ignore") { reason?.trim()?.takeIf(String::isNotEmpty)?.let { put("reason", it) } }
     }
 
     /** Apply the Brain's proposed change. */

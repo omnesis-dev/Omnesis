@@ -8,8 +8,10 @@
  *
  * A task is an open loop. The user's own tasks (from a note, created by the
  * user, or an accepted Brain suggestion) change only through these commands
- * or through a Brain proposal the user confirms. Every event records the
- * fields it replaced, so the latest change to a task can be undone.
+ * or through a Brain proposal the user confirms. A Brain suggestion the
+ * user ignores leaves the Tasks views but stays an open loop the Brain keeps
+ * tracking. Every event records the fields it replaced, so the latest change
+ * to a task can be undone.
  */
 
 import { assertNever } from "@omnesis/core";
@@ -66,7 +68,7 @@ export type TaskCommand = TaskCommandOrigin &
         };
       }
     | { kind: "accept"; id: string; scheduledFor?: TaskSchedule | null }
-    | { kind: "refuse"; id: string; reason?: string }
+    | { kind: "ignore"; id: string; reason?: string }
     | { kind: "confirm_proposal"; id: string }
     | { kind: "keep"; id: string }
     | { kind: "reopen"; id: string }
@@ -82,7 +84,7 @@ export type TaskCommandResult =
       loopId: string;
       /** Ledger entry of the change, the handle undo takes. Null for a delete. */
       eventSeq: number | null;
-      /** The change closed the task (done or struck). */
+      /** The change closed the task (done or struck). An ignored suggestion stays open. */
       resolved: boolean;
       /** The change reopened a closed task. */
       reopened: boolean;
@@ -110,6 +112,7 @@ function snapshot(loop: OpenLoopRow): TaskSnapshot {
     deadline: loop.deadline,
     scheduledFor: loop.scheduledFor,
     accepted: loop.accepted,
+    ignored: loop.ignored,
     completionNote: loop.completionNote,
     proposedChange: loop.proposedChange,
   };
@@ -205,7 +208,9 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
         },
         now,
       );
-      const seq = record(loop.id, command.note ? `Done: ${command.note}` : "Done", {
+      // A suggestion completed straight away was done before the user saw it.
+      const label = owned ? "Done" : "Already done";
+      const seq = record(loop.id, command.note ? `${label}: ${command.note}` : label, {
         kind: "completed",
         before,
         ...(command.note ? { note: command.note } : {}),
@@ -233,24 +238,29 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
         `Moved to ${describeSchedule(command.to, now)}: ${loop.title}`,
       );
     }
-    case "strike":
-    case "refuse": {
+    case "strike": {
       if (loop.state === "dismissed") return fail("invalid", "the task is already struck");
-      const refusing = command.kind === "refuse" || !owned;
       updateOpenLoop(db, loop.id, { state: "dismissed", proposedChange: null }, now);
       const seq = record(loop.id, command.reason ? `Struck: ${command.reason}` : "Struck", {
-        kind: refusing ? "refused" : "struck",
+        kind: "struck",
         before,
         ...(command.reason ? { note: command.reason } : {}),
       });
-      return done(
-        db,
-        loop.id,
-        seq,
-        true,
-        false,
-        refusing ? `Not for you: ${loop.title}` : `Struck: ${loop.title}`,
-      );
+      return done(db, loop.id, seq, true, false, `Struck: ${loop.title}`);
+    }
+    case "ignore": {
+      // Only the Tasks views stop offering it: the loop stays open, with its
+      // ledger, observations and checks, for the Brain to keep maintaining.
+      if (owned) return fail("invalid", "only a suggestion can be ignored; strike a task instead");
+      if (loop.ignored) return fail("invalid", "the suggestion is already ignored");
+      if (loop.state !== "open") return fail("invalid", "only an open suggestion can be ignored");
+      updateOpenLoop(db, loop.id, { ignored: true }, now);
+      const seq = record(loop.id, command.reason ? `Ignored: ${command.reason}` : "Ignored", {
+        kind: "ignored",
+        before,
+        ...(command.reason ? { note: command.reason } : {}),
+      });
+      return done(db, loop.id, seq, false, false, `Ignored: ${loop.title}`);
     }
     case "edit": {
       if (!owned) return fail("not_owned", "accept the suggestion before editing it");
@@ -282,6 +292,7 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
         loop.id,
         {
           accepted: true,
+          ignored: false,
           ...(command.scheduledFor !== undefined ? { scheduledFor: command.scheduledFor } : {}),
         },
         now,
@@ -403,6 +414,7 @@ function undo(
       deadline: before.deadline,
       scheduledFor: before.scheduledFor,
       accepted: before.accepted,
+      ignored: before.ignored ?? loop.ignored,
       completionNote: before.completionNote,
       // A proposal the Brain made after this change stands; otherwise the
       // proposal the change consumed comes back with it.

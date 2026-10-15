@@ -9,9 +9,12 @@
  * to show its actions —
  * Done with an optional note, the quick moves, Strike, Edit and History.
  * Every change answers with a receipt that the toast shows with Undo.
- * In experimental mode the Brain's suggestions live under Suggested, and a
- * task the Brain proposes to change shows the proposal inline with Confirm /
- * Keep and keeps its values until confirmed. Both exist only where the Brain
+ * In experimental mode the Brain's suggestions live under Suggested: the
+ * bullet marks one already done, and its line offers Accept (for a chosen
+ * time), Accept with a note the note agent applies to it, and Ignore, which
+ * leaves the Brain tracking it out of Tasks. A task the Brain proposes to
+ * change shows the proposal inline with Confirm / Keep and keeps its values
+ * until confirmed. Both exist only where the Brain
  * runs, so neither surface appears outside experimental mode. A task lists
  * the documents it refers to under its title, each a link to the document
  * view. Tasks are added through Tell Omnesis, which the Today view points to.
@@ -39,6 +42,8 @@ import {
   resolveTaskView,
   scheduleEditorState,
   shortDayLabel,
+  suggestionAcceptBody,
+  suggestionWhenOptions,
   taskBullet,
   taskDocumentsShown,
   taskMetaItems,
@@ -288,21 +293,19 @@ function TaskRow({ task, view, today, experimental, expanded, focused = false, o
   const proposal = experimental ? proposalText(task.proposedChange) : null;
   const detailId = `task-detail-${task.id}`;
   const bulletLabel = suggested
-    ? null
+    ? `Mark “${task.title}” as already done`
     : resolved
       ? `Reopen “${task.title}”`
       : `Complete “${task.title}”`;
   return html`<li ref=${rowRef} class=${`tasks-row tasks-row-${bullet}${expanded ? " expanded" : ""}${focused ? " focused" : ""}`}>
     <div class="tasks-row-main" onClick=${(e) => { if (isRowToggleClick(e)) onToggle(); }}>
-      ${suggested
-        ? html`<span class="tasks-bullet tasks-bullet-suggested" aria-hidden="true"></span>`
-        : html`<button
-            type="button"
-            class=${`tasks-bullet tasks-bullet-${bullet}`}
-            aria-label=${bulletLabel}
-            title=${resolved ? "Reopen" : "Complete"}
-            onClick=${() => act(resolved ? { action: "reopen" } : { action: "complete" })}
-          ></button>`}
+      <button
+        type="button"
+        class=${`tasks-bullet tasks-bullet-${suggested ? "suggested" : bullet}`}
+        aria-label=${bulletLabel}
+        title=${suggested ? "Already done" : resolved ? "Reopen" : "Complete"}
+        onClick=${() => act(resolved ? { action: "reopen" } : { action: "complete" })}
+      ></button>
       <div class="tasks-row-body">
         <button
           type="button"
@@ -360,21 +363,44 @@ function TaskDocuments({ documents }) {
 
 function SuggestionActions({ task, today, act }) {
   const [when, setWhen] = useState("");
-  const options = [
-    { value: "", label: "Not scheduled" },
-    { value: today, label: "Today" },
-    ...quickMoves(today).map((move) => ({ value: move.to, label: move.label })),
-    { value: "someday", label: "Someday" },
-  ];
+  const [note, setNote] = useState(null);
+  const noteId = useRef(null);
+  const accept = async () => {
+    if (note !== null && !note.trim()) return;
+    // One id per note, so a retried request saves the note once.
+    noteId.current ??= crypto.randomUUID();
+    const ok = await act(suggestionAcceptBody({ when, note: note ?? "", noteId: noteId.current }));
+    if (ok) {
+      setNote(null);
+      noteId.current = null;
+    }
+  };
   return html`<div class="tasks-suggestion-actions">
     <label class="tasks-inline-label">
       <span class="sr-only">When to do “${task.title}”</span>
       <select class="tasks-select" value=${when} onChange=${(e) => setWhen(e.currentTarget.value)}>
-        ${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+        ${suggestionWhenOptions(today).map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
       </select>
     </label>
-    <button type="button" class="btn-tiny tasks-accept" onClick=${() => act(when ? { action: "accept", scheduledFor: when } : { action: "accept" })}>Accept</button>
-    <button type="button" class="btn-tiny" onClick=${() => act({ action: "refuse" })}>Not for me</button>
+    ${note === null
+      ? html`
+        <button type="button" class="btn-tiny tasks-accept" onClick=${accept}>Accept</button>
+        <button type="button" class="btn-tiny tasks-accept-note" onClick=${() => setNote("")}>Accept with note</button>
+        <button type="button" class="btn-tiny tasks-mark-done" onClick=${() => act({ action: "complete" })}>Mark as done</button>
+        <button type="button" class="btn-tiny tasks-ignore" title="Hide it from Tasks; Omnesis keeps track of it" onClick=${() => act({ action: "ignore" })}>Ignore</button>`
+      : html`<form class="tasks-suggestion-note" onSubmit=${(e) => { e.preventDefault(); accept(); }}>
+          <textarea
+            class="tasks-note-input"
+            rows="2"
+            maxlength="8000"
+            aria-label=${`Note about “${task.title}”`}
+            placeholder="Add context for Omnesis"
+            value=${note}
+            onInput=${(e) => setNote(e.currentTarget.value)}
+          ></textarea>
+          <button type="submit" class="btn-tiny tasks-accept" disabled=${!note.trim()}>Accept with note</button>
+          <button type="button" class="btn-tiny" onClick=${() => setNote(null)}>Cancel</button>
+        </form>`}
   </div>`;
 }
 

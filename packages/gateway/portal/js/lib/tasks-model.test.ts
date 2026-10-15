@@ -11,6 +11,8 @@ import {
   groupTasks,
   historyEventLabel,
   historyNote,
+  suggestionAcceptBody,
+  suggestionWhenOptions,
   isOverdue,
   localDay,
   nextMonday,
@@ -153,6 +155,29 @@ describe("row labels", () => {
     expect(historyEventLabel({ kind: "completed", surface: "conversation" })).toBe("Done in a conversation");
     expect(historyEventLabel({ kind: "created", surface: "note" })).toBe("Added from a note");
     expect(historyEventLabel({ kind: "note", surface: "brain" })).toBe("Note by Omnesis");
+    expect(historyEventLabel({ kind: "ignored", surface: "tasks" })).toBe("Ignored in Tasks");
+    // Older builds dismissed a suggestion the user refused.
+    expect(historyEventLabel({ kind: "refused", surface: "tasks" })).toBe("Dismissed in Tasks");
+  });
+
+  it("builds a suggestion's accept from its time and note", () => {
+    expect(suggestionAcceptBody()).toEqual({ action: "accept" });
+    expect(suggestionAcceptBody({ when: "2026-11" })).toEqual({ action: "accept", scheduledFor: "2026-11" });
+    expect(suggestionAcceptBody({ when: "someday", note: " for the blue car ", noteId: "n1" })).toEqual({
+      action: "accept",
+      scheduledFor: "someday",
+      note: "for the blue car",
+      noteId: "n1",
+    });
+    expect(suggestionAcceptBody({ note: "   ", noteId: "n1" })).toEqual({ action: "accept" });
+    expect(suggestionWhenOptions("2026-10-12").map((o: { label: string }) => o.label)).toEqual([
+      "Not scheduled",
+      "Today",
+      "Tomorrow",
+      "Next week",
+      "Next month",
+      "Someday",
+    ]);
   });
 });
 

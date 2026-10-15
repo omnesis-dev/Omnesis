@@ -7,7 +7,10 @@
  * A task is an open loop read the way a bullet journal is. The user's own
  * tasks (typed, from a note, or an accepted Brain suggestion) change only
  * through the user's commands or through a Brain proposal the user
- * confirms; a Brain loop the user has not accepted is a Suggestion.
+ * confirms; a Brain loop the user has not accepted is a Suggestion. The user
+ * accepts a suggestion (for a planned time, or with a note the note agent
+ * applies to it), marks it already done, or ignores it — which only takes it
+ * out of Tasks: the Brain keeps the loop open and keeps maintaining it.
  *
  * The suite drives the `/tasks` surface for real — views, commands,
  * receipts, undo — and the Brain's side of the contract through scripted
@@ -19,6 +22,7 @@
  */
 
 import "./synth-env.js";
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { describeSchedule } from "../../../gateway/src/brain/storage/tasks.js";
 import {
@@ -57,7 +61,27 @@ const SUGGESTIONS = email({
     "Hello,\n\nPlease return the signed hall booking form and pay the cleaning deposit.\n\nRiverside Estate",
 });
 const ACCEPTED_TITLE = "Return the signed hall booking form";
-const REFUSED_TITLE = "Pay the hall cleaning deposit";
+const IGNORED_TITLE = "Pay the hall cleaning deposit";
+
+const DEPOSIT_REMINDER = email({
+  externalId: "tasks-hall-deposit-reminder",
+  title: "Hall cleaning deposit reminder",
+  content:
+    "Hello,\n\nA reminder that the cleaning deposit is due before the booking.\n\nRiverside Estate",
+});
+const DEPOSIT_DESCRIPTION = "The cleaning deposit is due before the booking.";
+
+const CHOIR = email({
+  externalId: "tasks-choir-season",
+  title: "Choir season letter",
+  content:
+    "Hello,\n\nPlease renew your choir membership, collect your music folder, and sign up for the spring concert rota.\n\nStudio Northstar",
+});
+const NOTE_TITLE = "Renew the choir membership";
+const DONE_TITLE = "Collect the choir music folder";
+const LATER_TITLE = "Sign up for the spring concert rota";
+const TASK_NOTE = "I pay by standing order from now on";
+const TASK_NOTE_DESCRIPTION = "Paid by standing order.";
 
 const RECEIPT = email({
   externalId: "tasks-window-cleaner-receipt",
@@ -137,11 +161,40 @@ describe("brain bench: tasks", () => {
                     docs: [ctx.subject],
                   }),
                   call("open_loop_create", {
-                    title: REFUSED_TITLE,
+                    title: IGNORED_TITLE,
                     confidence: 0.9,
                     importance: 0.6,
                     docs: [ctx.subject],
                   }),
+                ],
+              }),
+            },
+            {
+              docTitle: DEPOSIT_REMINDER.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "cleaning deposit" }),
+                  call("open_loop_update", {
+                    id: ref("open_loop_search", "loops.0.id"),
+                    description: DEPOSIT_DESCRIPTION,
+                    docs: [ctx.subject],
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: CHOIR.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "choir" }),
+                  ...[NOTE_TITLE, DONE_TITLE, LATER_TITLE].map((title) =>
+                    call("open_loop_create", {
+                      title,
+                      confidence: 0.9,
+                      importance: 0.5,
+                      docs: [ctx.subject],
+                    }),
+                  ),
                 ],
               }),
             },
@@ -213,6 +266,22 @@ describe("brain bench: tasks", () => {
           ],
         }),
         behaviors: [
+          {
+            // The note written while accepting a suggestion names that task.
+            flavour: "note",
+            promptContains: TASK_NOTE,
+            plan: {
+              calls: [
+                call("task_list", { query: "choir membership" }),
+                call("task_update", {
+                  id: ref("task_list", "tasks.0.id"),
+                  action: "edit",
+                  description: TASK_NOTE_DESCRIPTION,
+                }),
+              ],
+              finalText: "Noted the standing order on the choir membership task.",
+            },
+          },
           {
             flavour: "time_based.decay",
             plan: (ctx) => ({
@@ -355,7 +424,7 @@ describe("brain bench: tasks", () => {
     await bench.pushAndSettle([{ ...SUGGESTIONS, at: NOON }]);
     const suggested = await bench.obs.tasks("suggested");
     expect(suggested.tasks.map((t) => t.title).sort()).toEqual(
-      [ACCEPTED_TITLE, REFUSED_TITLE].sort(),
+      [ACCEPTED_TITLE, IGNORED_TITLE].sort(),
     );
     expect(suggested.counts.suggested).toBe(2);
     for (const t of suggested.tasks) expect(t).toMatchObject({ origin: "brain", accepted: false });
@@ -364,11 +433,11 @@ describe("brain bench: tasks", () => {
       expect(await titles(name)).not.toContain(ACCEPTED_TITLE);
 
     const accepting = suggested.tasks.find((t) => t.title === ACCEPTED_TITLE)!;
-    const refusing = suggested.tasks.find((t) => t.title === REFUSED_TITLE)!;
+    const ignoring = suggested.tasks.find((t) => t.title === IGNORED_TITLE)!;
 
     // A suggestion cannot be planned or edited before it is accepted.
-    expect((await act(refusing.id, { action: "edit", title: "Mine now" })).status).toBe(409);
-    expect((await act(refusing.id, { action: "migrate", to: TODAY })).status).toBe(409);
+    expect((await act(ignoring.id, { action: "edit", title: "Mine now" })).status).toBe(409);
+    expect((await act(ignoring.id, { action: "migrate", to: TODAY })).status).toBe(409);
 
     // A suggestion names the document it came from by title and source.
     const suggestionDoc = await bench.docId(SUGGESTIONS.externalId);
@@ -384,13 +453,98 @@ describe("brain bench: tasks", () => {
     expect(await titles("today")).toContain(ACCEPTED_TITLE);
     expect((await act(accepting.id, { action: "accept" })).status).toBe(400);
 
-    const refused = await act(refusing.id, { action: "refuse", reason: "Already paid." });
-    expect(refused.body.receipt.text).toBe(`Not for you: ${REFUSED_TITLE}`);
-    expect(refused.body.task?.state).toBe("dismissed");
-    expect((await bench.obs.task(refusing.id)).history[0]).toMatchObject({ kind: "refused" });
+    // Ignoring takes the suggestion out of Tasks; its loop stays open.
+    const ignored = await act(ignoring.id, { action: "ignore", reason: "Already arranged." });
+    expect(ignored.body.receipt.text).toBe(`Ignored: ${IGNORED_TITLE}`);
+    expect(ignored.body.task).toMatchObject({ state: "open", accepted: false, ignored: true });
+    expect((await bench.obs.task(ignoring.id)).history[0]).toMatchObject({ kind: "ignored" });
+    const afterIgnore = await bench.obs.tasks("suggested");
+    expect(afterIgnore.tasks).toEqual([]);
+    expect(afterIgnore.counts.suggested).toBe(0);
+    expect(await titles("done")).not.toContain(IGNORED_TITLE);
+
+    // Undo offers it again; ignoring it again takes it back out.
+    const undone = await bench.obs.undoTask(ignored.body.receipt.undoSeq!);
+    expect(undone.status).toBe(200);
+    expect(await titles("suggested")).toEqual([IGNORED_TITLE]);
+    expect((await act(ignoring.id, { action: "ignore" })).body.task?.ignored).toBe(true);
+
+    // Brain runs keep maintaining the ignored loop without offering it again.
+    await bench.pushAndSettle([{ ...DEPOSIT_REMINDER, at: NOON }]);
+    expect((await bench.obs.task(ignoring.id)).task).toMatchObject({
+      state: "open",
+      ignored: true,
+      description: DEPOSIT_DESCRIPTION,
+    });
     expect((await bench.obs.tasks("suggested")).tasks).toEqual([]);
-    // A refused suggestion never reaches the user's done list.
-    expect(await titles("done")).not.toContain(REFUSED_TITLE);
+  }, 240_000);
+
+  test("a suggestion is accepted with a note, accepted for later, or marked already done", async () => {
+    await bench.pushAndSettle([{ ...CHOIR, at: NOON }]);
+    const suggested = (await view("suggested")).filter((t) =>
+      [NOTE_TITLE, DONE_TITLE, LATER_TITLE].includes(t.title),
+    );
+    expect(suggested.map((t) => t.title).sort()).toEqual(
+      [NOTE_TITLE, DONE_TITLE, LATER_TITLE].sort(),
+    );
+    const byTitle = (title: string) => suggested.find((t) => t.title === title)!;
+
+    // Accepted with a note: the note is saved as a quick-capture note about that task,
+    // and the note agent applies it to the task.
+    const noteId = randomUUID();
+    const withNote = await act(byTitle(NOTE_TITLE).id, {
+      action: "accept",
+      note: TASK_NOTE,
+      noteId,
+    });
+    expect(withNote.status).toBe(200);
+    expect(withNote.body.task).toMatchObject({ accepted: true, state: "open" });
+    expect((withNote.body as { noteId?: string }).noteId).toBe(noteId);
+    const saved = (await bench.obs.tellNotes(TODAY)).find((n) => n.id === noteId);
+    expect(saved).toMatchObject({
+      taskId: byTitle(NOTE_TITLE).id,
+      text: `This is a note about the task “${NOTE_TITLE}”: ${TASK_NOTE}`,
+    });
+    // The note waits out its settle time on the gateway's clock.
+    await bench.clock.set(NOON + 60_000);
+    const receipt = await waitFor(
+      `the note agent's receipt for ${noteId}`,
+      async () => {
+        const note = (await bench.obs.tellNotes(TODAY)).find((n) => n.id === noteId);
+        return note?.agent?.state === "done" ? note.agent.receipt : null;
+      },
+      90_000,
+    );
+    expect(receipt?.changes.map((c) => c.taskId)).toEqual([byTitle(NOTE_TITLE).id]);
+    expect((await bench.obs.task(byTitle(NOTE_TITLE).id)).task.description).toBe(
+      TASK_NOTE_DESCRIPTION,
+    );
+
+    // Marked already done: closed in one step, in the done list, undoable.
+    const done = await act(byTitle(DONE_TITLE).id, { action: "complete" });
+    expect(done.body.task).toMatchObject({ state: "done", accepted: true });
+    expect((await bench.obs.task(byTitle(DONE_TITLE).id)).history[0]).toMatchObject({
+      kind: "completed",
+      note: "Already done",
+    });
+    expect(await titles("done")).toContain(DONE_TITLE);
+    expect((await bench.obs.undoTask(done.body.receipt.undoSeq!)).status).toBe(200);
+    expect((await bench.obs.task(byTitle(DONE_TITLE).id)).task).toMatchObject({
+      state: "open",
+      accepted: false,
+    });
+    expect(await titles("suggested")).toContain(DONE_TITLE);
+
+    // Accepted for a later month: planned there, undoable back to a suggestion.
+    const later = await act(byTitle(LATER_TITLE).id, {
+      action: "accept",
+      scheduledFor: NEXT_MONTH,
+    });
+    expect(later.body.task).toMatchObject({ accepted: true, scheduledFor: NEXT_MONTH });
+    expect([...(await titles("month")), ...(await titles("future"))]).toContain(LATER_TITLE);
+    expect(await titles("today")).not.toContain(LATER_TITLE);
+    expect((await bench.obs.undoTask(later.body.receipt.undoSeq!)).status).toBe(200);
+    expect(await titles("suggested")).toContain(LATER_TITLE);
   }, 240_000);
 
   test("a run's change to a user task is a proposal the user confirms", async () => {

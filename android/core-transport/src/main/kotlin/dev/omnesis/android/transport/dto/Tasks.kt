@@ -17,12 +17,12 @@ import kotlinx.serialization.json.JsonPrimitive
  * // GET  /tasks?view&date&limit&before -> { view, day, tasks: Task[], counts: Counts }
  * // GET  /tasks/counts?date            -> { day, counts: Counts }
  * // GET  /tasks/:id                    -> { task: Task, history: TaskEvent[], undoSeq: number | null }
- * // POST /tasks/:id/actions            -> { task: Task | null, receipt: { text, undoSeq } }
+ * // POST /tasks/:id/actions            -> { task: Task | null, receipt: { text, undoSeq }, noteId? }
  * // POST /tasks/undo                   -> { task: Task | null, receipt: { text, undoSeq } }
  * type Task = {
  *   id: string; title: string; description: string;
  *   state: "open" | "snoozed" | "done" | "dismissed"; origin: "note" | "user" | "brain";
- *   accepted: boolean; scheduledFor: string | null; deadline: unknown | null;
+ *   accepted: boolean; ignored: boolean; scheduledFor: string | null; deadline: unknown | null;
  *   dueDay: string | null; carried: boolean; completionNote: string | null;
  *   proposedChange: { kind: "complete" | "strike" | "edit"; fields: {...} | null;
  *                     reason: string; evidence: string[]; proposedAt: string } | null;
@@ -47,6 +47,8 @@ data class TaskDto(
     /** `note`, `user` or `brain`. */
     val origin: String = "user",
     val accepted: Boolean = false,
+    /** The user ignored this suggestion: it leaves Tasks while the Brain keeps tracking it. */
+    val ignored: Boolean = false,
     /** When the user plans to do it: `YYYY-MM-DD`, `YYYY-MM`, `someday`, or null. */
     val scheduledFor: String? = null,
     /** The agent-owned deadline structure, opaque to the client; read [dueDay] instead. */
@@ -69,8 +71,8 @@ data class TaskDto(
     val isStruck: Boolean get() = state == STATE_DISMISSED
     val isResolved: Boolean get() = isDone || isStruck
 
-    /** A Brain suggestion the user has not accepted yet. */
-    val isSuggestion: Boolean get() = origin == "brain" && !accepted
+    /** A Brain suggestion the user has neither accepted nor ignored. */
+    val isSuggestion: Boolean get() = origin == "brain" && !accepted && !ignored
 
     /** The deadline's free-text note, when the deadline is the structured kind that has one. */
     val deadlineNote: String?
@@ -161,7 +163,7 @@ data class TaskEventDto(
     val seq: Long = 0,
     val at: String? = null,
     val note: String? = null,
-    /** `created`, `completed`, `migrated`, … or `note` for a free ledger entry. */
+    /** `created`, `completed`, `migrated`, `ignored`, … or `note` for a free ledger entry. */
     val kind: String = "note",
     /** `tasks`, `conversation`, `note` or `brain`. */
     val surface: String = "tasks",

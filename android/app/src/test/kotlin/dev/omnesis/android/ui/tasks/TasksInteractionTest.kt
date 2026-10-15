@@ -136,6 +136,44 @@ class TasksInteractionTest {
         node("tasks.fan").assertDoesNotExist()
     }
 
+    /**
+     * Long-press [taskId]'s row, then rest on each navigation target in [stops] long enough to
+     * follow it, and lift on the last stop.
+     */
+    private fun fanThrough(taskId: String, vararg stops: String) {
+        val row = node("tasks.row.$taskId")
+        val rowBounds = row.fetchSemanticsNode().boundsInRoot
+        val press = Offset(rowBounds.width * 0.75f, 40f)
+        row.performTouchInput {
+            down(press)
+            advanceEventTime(viewConfiguration.longPressTimeoutMillis + 100)
+            moveBy(Offset(0f, 1f))
+        }
+        compose.waitForIdle()
+        fun local(tag: String) = node("tasks.fan.$tag").fetchSemanticsNode().boundsInRoot.center - rowBounds.topLeft
+        stops.dropLast(1).forEach { stop ->
+            row.performTouchInput {
+                moveTo(local(stop))
+                advanceEventTime(600)
+                moveBy(Offset(0f, 0.5f))
+            }
+            compose.waitForIdle()
+        }
+        val last = local(stops.last())
+        row.performTouchInput {
+            moveTo(last)
+            up()
+        }
+        compose.waitForIdle()
+        node("tasks.fan").assertDoesNotExist()
+    }
+
+    private fun openSuggested() {
+        vm.select(TaskSegment.SUGGESTED)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertExists()
+    }
+
     // --- The circle ----------------------------------------------------------------------------
 
     @Test
@@ -191,7 +229,7 @@ class TasksInteractionTest {
 
         // What the capture's Done hands over.
         var error: String? = "pending"
-        MainScope().launch { error = vm.completeWithNote(vm.state.value.noting!!, "Paid by card") }
+        MainScope().launch { error = vm.saveNote(vm.state.value.noting!!, "Paid by card") }
         compose.waitForIdle()
         vm.closeNote()
         compose.waitForIdle()
@@ -284,58 +322,206 @@ class TasksInteractionTest {
     // --- Suggestions -------------------------------------------------------------------------------
 
     @Test
-    fun accepting_a_suggestion_takes_it_out_of_suggested_and_onto_the_journal() {
+    fun a_suggestion_offers_its_own_fan() {
         start(experimental = true)
-        vm.select(TaskSegment.SUGGESTED)
+        openSuggested()
+        val row = node("tasks.row.${permit.id}")
+        row.performTouchInput {
+            down(Offset(width * 0.75f, 40f))
+            advanceEventTime(viewConfiguration.longPressTimeoutMillis + 100)
+            moveBy(Offset(0f, 1f))
+        }
         compose.waitForIdle()
-        node("tasks.row.${permit.id}").assertExists()
+        listOf("accept", "acceptWithNote", "acceptFor", "done", "ignore").forEach { node("tasks.fan.$it").assertExists() }
+        listOf("doneWithNote", "tomorrow", "cancelTask").forEach { node("tasks.fan.$it").assertDoesNotExist() }
+        row.performTouchInput { up() }
+        compose.waitForIdle()
+        assertTrue(gateway.commands.isEmpty())
+    }
 
-        compose.onNodeWithText("Accept").performClick()
+    @Test
+    fun tapping_a_suggestions_circle_marks_it_done_and_undo_brings_it_back() {
+        start(experimental = true)
+        openSuggested()
+
+        node("tasks.circle.${permit.id}").performClick()
         compose.waitForIdle()
 
         node("tasks.row.${permit.id}").assertDoesNotExist()
-        compose.onNodeWithText("Accept").assertDoesNotExist()
+        assertEquals(TaskAction.Complete(), gateway.commands.single().second)
+        compose.onNodeWithText("Done: Renew the parking permit").assertExists()
+        vm.select(TaskSegment.DONE)
+        compose.waitForIdle()
+        node("tasks.done.${permit.id}").assertIsDisplayed()
+
+        undo()
+        vm.select(TaskSegment.SUGGESTED)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertExists()
+    }
+
+    @Test
+    fun fan_mark_as_done_resolves_the_suggestion() {
+        start(experimental = true)
+        openSuggested()
+        fan(permit.id, "done")
+        node("tasks.row.${permit.id}").assertDoesNotExist()
+        assertEquals(TaskAction.Complete(), gateway.commands.single().second)
+        assertEquals(TaskDto.STATE_DONE, gateway.tasks.first { it.id == permit.id }.state)
+    }
+
+    @Test
+    fun fan_accept_takes_it_out_of_suggested_and_onto_the_journal_and_undo_brings_it_back() {
+        start(experimental = true)
+        openSuggested()
+
+        fan(permit.id, "accept")
+
+        node("tasks.row.${permit.id}").assertDoesNotExist()
+        assertEquals(TaskAction.Accept(), gateway.commands.single().second)
         vm.select(TaskSegment.ANYTIME)
         compose.waitForIdle()
         node("tasks.row.${permit.id}").assertExists()
-        compose.onNodeWithText("Accept").assertDoesNotExist()
+
+        undo()
+        node("tasks.row.${permit.id}").assertDoesNotExist()
+        vm.select(TaskSegment.SUGGESTED)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertExists()
     }
 
     @Test
-    fun not_for_me_declines_the_suggestion() {
+    fun fan_accept_with_note_opens_the_capture_and_accepts_with_its_words() {
         start(experimental = true)
-        vm.select(TaskSegment.SUGGESTED)
+        openSuggested()
+
+        fan(permit.id, "acceptWithNote")
+        val noting = vm.state.value.noting
+        assertEquals(permit.id, noting?.id)
+        assertTrue(gateway.commands.isEmpty())
+
+        var error: String? = "pending"
+        MainScope().launch { error = vm.saveNote(noting!!, "The renewal form is in the glovebox") }
         compose.waitForIdle()
 
-        compose.onNodeWithText("Not for me").performClick()
-        compose.waitForIdle()
-
+        assertNull(error)
+        val sent = gateway.commands.single().second as TaskAction.Accept
+        assertEquals("The renewal form is in the glovebox", sent.note)
+        assertTrue(sent.noteId != null)
+        assertEquals(permit.id to "The renewal form is in the glovebox", gateway.notes[sent.noteId])
         node("tasks.row.${permit.id}").assertDoesNotExist()
-        assertTrue(gateway.commands.single().second is TaskAction.Refuse)
+
+        // Saving again from the same capture replays the same note rather than writing another.
+        var again: String? = "pending"
+        MainScope().launch { again = vm.saveNote(noting!!, "The renewal form is in the glovebox") }
+        compose.waitForIdle()
+        assertNull(again)
+        assertEquals(1, gateway.notes.size)
+        assertEquals(sent.noteId, (gateway.commands.last().second as TaskAction.Accept).noteId)
+        vm.closeNote()
+        compose.waitForIdle()
+
+        vm.select(TaskSegment.ANYTIME)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertExists()
     }
 
-    /** Accepted on another device meanwhile: the gateway's 400 re-reads the list, so no stale Accept stays. */
+    @Test
+    fun fan_accept_for_today_plans_it_for_today() {
+        start(experimental = true)
+        openSuggested()
+
+        fanThrough(permit.id, "acceptFor", "today")
+
+        assertEquals(TaskAction.Accept("2026-10-14"), gateway.commands.single().second)
+        vm.select(TaskSegment.TODAY)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertExists()
+
+        undo()
+        node("tasks.row.${permit.id}").assertDoesNotExist()
+    }
+
+    @Test
+    fun fan_accept_for_someday_plans_it_for_someday() {
+        start(experimental = true)
+        openSuggested()
+        fanThrough(permit.id, "acceptFor", "someday")
+        assertEquals(TaskAction.Accept("someday"), gateway.commands.single().second)
+        vm.select(TaskSegment.FUTURE)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertExists()
+    }
+
+    @Test
+    fun fan_accept_for_another_month_plans_it_for_that_month() {
+        start(experimental = true)
+        openSuggested()
+        fanThrough(permit.id, "acceptFor", "otherMonth", "month.2027-01")
+        assertEquals(TaskAction.Accept("2027-01"), gateway.commands.single().second)
+        vm.select(TaskSegment.FUTURE)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertExists()
+    }
+
+    @Test
+    fun fan_ignore_takes_it_out_of_tasks_and_undo_restores_the_suggestion() {
+        start(experimental = true)
+        openSuggested()
+
+        fan(permit.id, "ignore")
+
+        node("tasks.row.${permit.id}").assertDoesNotExist()
+        assertTrue(gateway.commands.single().second is TaskAction.Ignore)
+        compose.onNodeWithText("Ignored: Renew the parking permit").assertExists()
+        assertEquals(0, vm.state.value.counts.suggested)
+        // Not resolved: the loop stays open; it is only out of the Tasks views.
+        assertEquals(TaskDto.STATE_OPEN, gateway.tasks.first { it.id == permit.id }.state)
+        vm.select(TaskSegment.ANYTIME)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertDoesNotExist()
+        vm.select(TaskSegment.SUGGESTED)
+        compose.waitForIdle()
+        node("tasks.row.${permit.id}").assertDoesNotExist()
+
+        undo()
+        node("tasks.row.${permit.id}").assertExists()
+        assertEquals(1, vm.state.value.counts.suggested)
+    }
+
+    /** Accepted on another device meanwhile: the gateway's 400 re-reads the list, so no stale row stays. */
     @Test
     fun a_suggestion_accepted_elsewhere_leaves_the_list_on_refusal() {
         start(experimental = true)
-        vm.select(TaskSegment.SUGGESTED)
-        compose.waitForIdle()
+        openSuggested()
         gateway.changeElsewhere(permit.id) { it.copy(accepted = true) }
 
-        compose.onNodeWithText("Accept").performClick()
-        compose.waitForIdle()
+        fan(permit.id, "accept")
 
         node("tasks.row.${permit.id}").assertDoesNotExist()
         assertTrue(vm.state.value.actionError != null)
     }
 
     @Test
-    fun today_ends_with_the_review_banner_that_opens_suggested() {
+    fun today_opens_with_the_review_banner_that_opens_suggested() {
         start(experimental = true)
         compose.onNodeWithText("Omnesis has created 1 task for your review").assertExists()
         node("tasks.reviewBanner").performClick()
         compose.waitForIdle()
         assertEquals(TaskSegment.SUGGESTED, vm.state.value.segment)
         node("tasks.row.${permit.id}").assertExists()
+    }
+
+    /** A long day never pushes the banner out of sight: it sits above the first task. */
+    @Test
+    fun the_review_banner_sits_above_a_long_today() {
+        val many = (1..18).map { n ->
+            TaskDto(id = "t_$n", title = "Invented errand number $n", accepted = true, scheduledFor = "2026-10-14")
+        }
+        start(many + permit, experimental = true)
+        node("tasks.reviewBanner").assertIsDisplayed()
+        val banner = node("tasks.reviewBanner").fetchSemanticsNode().boundsInRoot
+        val first = node("tasks.row.t_1").fetchSemanticsNode().boundsInRoot
+        assertTrue("banner ${banner.top} above first row ${first.top}", banner.bottom <= first.top)
     }
 }

@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,8 +38,6 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -55,9 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -108,6 +103,7 @@ import dev.omnesis.android.transport.dto.TaskDto
 import dev.omnesis.android.ui.capture.CaptureScreen
 import dev.omnesis.android.ui.capture.CaptureViewModel
 import dev.omnesis.android.ui.capture.TaskCompletionCapture
+import dev.omnesis.android.ui.capture.TaskNoteKind
 import dev.omnesis.android.ui.common.GatewayErrorView
 import dev.omnesis.android.ui.common.PullToRefresh
 import java.time.LocalDate
@@ -192,7 +188,7 @@ fun TasksScreen(
     }
 
     state.noting?.let { task ->
-        TaskNoteCapture(task = task, onClose = vm::closeNote, onSave = { note -> vm.completeWithNote(task, note) })
+        TaskNoteCapture(task = task, onClose = vm::closeNote, onSave = { note -> vm.saveNote(task, note) })
     }
 
     state.actionError?.let { message ->
@@ -206,9 +202,10 @@ fun TasksScreen(
 }
 
 /**
- * "Done + note": the Tell Omnesis capture, listening as soon as it opens and ready for typing,
- * completing [task] with what was said instead of saving a note. The capture stays open with
- * its words when the gateway refuses, so nothing said is lost.
+ * "Done + note" and a suggestion's "Accept with note": the Tell Omnesis capture, listening as
+ * soon as it opens and ready for typing, completing [task] with what was said — or, for a
+ * suggestion, accepting it with the note for Omnesis to apply — instead of saving a note on its
+ * own. The capture stays open with its words when the gateway refuses, so nothing said is lost.
  */
 @Composable
 private fun TaskNoteCapture(task: TaskDto, onClose: () -> Unit, onSave: suspend (String) -> String?) {
@@ -221,13 +218,19 @@ private fun TaskNoteCapture(task: TaskDto, onClose: () -> Unit, onSave: suspend 
             CaptureScreen(
                 onClose = onClose,
                 vm = capture,
-                completion = remember(task.id) { TaskCompletionCapture(taskTitle = task.title, save = onSave) },
+                completion = remember(task.id) {
+                    TaskCompletionCapture(
+                        taskTitle = task.title,
+                        kind = if (task.isSuggestion) TaskNoteKind.ACCEPT else TaskNoteKind.COMPLETE,
+                        save = onSave,
+                    )
+                },
             )
         }
     }
 }
 
-/** One capture view model serves every "Done + note"; each opening starts it afresh. */
+/** One capture view model serves every task note; each opening starts it afresh. */
 private const val TASK_NOTE_CAPTURE_KEY = "tasks.done-with-note"
 
 /** The screen's chrome: the title bar with the menu button, over the journal. */
@@ -258,8 +261,6 @@ internal fun taskRowActions(vm: TasksViewModel, onOpenDocument: (String) -> Unit
     onFanAction = vm::perform,
     onConfirm = vm::confirmProposal,
     onKeep = vm::keepAsIs,
-    onAccept = vm::accept,
-    onRefuse = vm::refuse,
     onOpenDocument = { onOpenDocument(it.id) },
 )
 
@@ -271,8 +272,6 @@ data class TaskRowActions(
     val onFanAction: (TaskDto, TaskFanAction) -> Unit = { _, _ -> },
     val onConfirm: (TaskDto) -> Unit = {},
     val onKeep: (TaskDto) -> Unit = {},
-    val onAccept: (TaskDto, String?) -> Unit = { _, _ -> },
-    val onRefuse: (TaskDto) -> Unit = {},
     val onOpenDocument: (TaskDocumentDto) -> Unit = {},
 )
 
@@ -420,8 +419,17 @@ private fun TaskList(
         contentPadding = PaddingValues(bottom = RECEIPT_ROOM),
         userScrollEnabled = !fan.isOpen,
     ) {
+        // The way to the Brain's suggestions comes first, so a long day never hides it.
+        if (state.segment == TaskSegment.TODAY) {
+            suggestionsBannerText(state.counts.suggested, experimental)?.let { text ->
+                item(key = "suggestions") { SuggestionsBanner(text, onOpenSuggested) }
+            }
+        }
         TaskPageHeading.of(state.segment, today, state.tasks)?.let { heading ->
             item(key = "page-heading") { PageHeading(heading) }
+        }
+        if (state.segment == TaskSegment.SUGGESTED && entries.isNotEmpty()) {
+            item(key = "suggested-hint") { SuggestedHint() }
         }
         if (entries.isEmpty()) {
             item(key = "empty") { EmptySegment(state.segment) }
@@ -447,11 +455,6 @@ private fun TaskList(
                         modifier = Modifier.padding(start = TASK_TEXT_INSET),
                     )
                 }
-            }
-        }
-        if (state.segment == TaskSegment.TODAY) {
-            suggestionsBannerText(state.counts.suggested, experimental)?.let { text ->
-                item(key = "suggestions") { SuggestionsBanner(text, onOpenSuggested) }
             }
         }
         if (showsCaptureHint(state.segment)) {
@@ -546,8 +549,22 @@ internal fun TaskSegment.spokenLabel(counts: TaskCountsDto): String {
     return if (open > 0) "$label, $open open" else label
 }
 
+/** How a suggestion is answered, above the Suggested list: its row looks like any task's. */
+@Composable
+private fun SuggestedHint() {
+    Text(
+        "Tap the circle if it is already done. Press and hold to accept, add a note, plan it or ignore it.",
+        style = MaterialTheme.typography.bodySmall,
+        color = OmTheme.colors.textSecondary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = OmSpacing.lg, end = OmSpacing.lg, top = OmSpacing.md, bottom = OmSpacing.xs)
+            .testTag("tasks.suggestedHint"),
+    )
+}
+
 /**
- * Today's closing pointer to the Suggested segment. It wears the same card as the main screen's
+ * Today's pointer to the Suggested segment, at the top of the page. It wears the same card as the main screen's
  * access-request banner, the app's one way of saying "something here waits for your decision".
  */
 @Composable
@@ -698,6 +715,17 @@ private fun TaskRow(
             .then(if (fanned && !pending) Modifier.taskFanPress(task, fan, today) else Modifier)
             .semantics {
                 customActions = when {
+                    fanned && suggestion -> listOf(
+                        CustomAccessibilityAction("Accept") { actions.onFanAction(task, TaskFanAction.Accept); true },
+                        CustomAccessibilityAction("Accept with note") {
+                            actions.onFanAction(task, TaskFanAction.AcceptWithNote); true
+                        },
+                        CustomAccessibilityAction("Accept for…") {
+                            fan.openForAccessibility(task, today, TaskFanSession.Mode.When); true
+                        },
+                        CustomAccessibilityAction("Mark as done") { actions.onFanAction(task, TaskFanAction.Done); true },
+                        CustomAccessibilityAction("Ignore") { actions.onFanAction(task, TaskFanAction.Ignore); true },
+                    )
                     fanned -> listOf(
                         CustomAccessibilityAction("Done") { actions.onFanAction(task, TaskFanAction.Done); true },
                         CustomAccessibilityAction("Done with note") {
@@ -790,27 +818,19 @@ private fun TaskRow(
                 onKeep = { actions.onKeep(task) },
             )
         }
-        if (suggestion && experimental) {
-            SuggestionActions(
-                today = today,
-                enabled = !pending,
-                onAccept = { actions.onAccept(task, it) },
-                onRefuse = { actions.onRefuse(task) },
-            )
-        }
     }
 }
 
 /**
  * The circle: an open task's circle completes it, a done task shows a green check and a struck
- * one its dash, either of which reopens it. A suggestion has no circle to tap — it is not the
- * user's task until they accept it.
+ * one its dash, either of which reopens it. A suggestion's circle, drawn in the accent, marks it
+ * done directly — it was done before the user saw it.
  */
 @Composable
 private fun TaskBullet(task: TaskDto, enabled: Boolean, onTap: () -> Unit) {
     val c = OmTheme.colors
     val label = when {
-        task.isSuggestion -> "Suggestion"
+        task.isSuggestion -> "Mark ${task.title} as done"
         task.isResolved -> "Reopen ${task.title}"
         else -> "Complete ${task.title}"
     }
@@ -819,7 +839,7 @@ private fun TaskBullet(task: TaskDto, enabled: Boolean, onTap: () -> Unit) {
             .padding(start = 6.dp)
             .size(44.dp)
             .clip(CircleShape)
-            .clickable(enabled = enabled && !task.isSuggestion, role = Role.Checkbox, onClickLabel = label, onClick = onTap)
+            .clickable(enabled = enabled, role = Role.Checkbox, onClickLabel = label, onClick = onTap)
             .semantics {
                 contentDescription = label
                 stateDescription = when {
@@ -832,11 +852,8 @@ private fun TaskBullet(task: TaskDto, enabled: Boolean, onTap: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         when {
-            task.isSuggestion -> Icon(
-                Icons.Outlined.AutoAwesome,
-                contentDescription = null,
-                tint = c.accent,
-                modifier = Modifier.size(18.dp),
+            task.isSuggestion -> Box(
+                Modifier.size(22.dp).border(1.5.dp, c.accent, CircleShape).testTag("tasks.open.${task.id}"),
             )
             task.isDone -> Box(
                 Modifier.size(22.dp).clip(CircleShape).background(c.success).testTag("tasks.done.${task.id}"),
@@ -986,89 +1003,6 @@ private fun ProposalLine(
             TextButton(onClick = onKeep, enabled = enabled) { Text("Keep", color = c.textSecondary) }
             TextButton(onClick = onConfirm, enabled = enabled) { Text("Confirm", fontWeight = FontWeight.SemiBold) }
         }
-    }
-}
-
-/**
- * Accept or decline one of Omnesis's suggestions. Accept takes the suggestion as it stands;
- * "When…" picks the day it is planned for as it is accepted.
- */
-@Composable
-private fun SuggestionActions(
-    today: LocalDate,
-    enabled: Boolean,
-    onAccept: (String?) -> Unit,
-    onRefuse: () -> Unit,
-) {
-    var pickWhen by remember { mutableStateOf(false) }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = TASK_TEXT_INSET, end = OmSpacing.lg, bottom = OmSpacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm),
-    ) {
-        Pill("Accept", prominent = true, enabled = enabled, icon = Icons.Outlined.Check) { onAccept(null) }
-        Box {
-            Pill("When…", prominent = false, enabled = enabled) { pickWhen = true }
-            DropdownMenu(expanded = pickWhen, onDismissRequest = { pickWhen = false }) {
-                listOf(
-                    "Today" to today.toString(),
-                    "Tomorrow" to TaskDates.tomorrow(today),
-                    "Next week" to TaskDates.nextWeek(today),
-                    "Next month" to TaskDates.nextMonth(today),
-                    "Someday" to TaskDates.SOMEDAY,
-                ).forEach { (label, schedule) ->
-                    DropdownMenuItem(
-                        text = { Text(label) },
-                        onClick = {
-                            pickWhen = false
-                            onAccept(schedule)
-                        },
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.weight(1f))
-        Pill("Not for me", prominent = false, enabled = enabled, onClick = onRefuse)
-    }
-}
-
-/** The screen's compact capsule button: accent-filled when prominent, a quiet outline otherwise. */
-@Composable
-private fun Pill(
-    label: String,
-    prominent: Boolean,
-    enabled: Boolean,
-    icon: ImageVector? = null,
-    onClick: () -> Unit,
-) {
-    val c = OmTheme.colors
-    val shape = RoundedCornerShape(50)
-    // On the dark palette's light accent, the page colour reads better than white.
-    val onAccent = if (c.isDark) c.bgPrimary else Color.White
-    val foreground = (if (prominent) onAccent else c.textPrimary).copy(alpha = if (enabled) 1f else 0.45f)
-    Row(
-        Modifier
-            .heightIn(min = 36.dp)
-            .clip(shape)
-            .background(if (prominent) c.accent.copy(alpha = if (enabled) 1f else 0.45f) else c.bgPrimary)
-            .border(1.dp, if (prominent) Color.Transparent else c.border, shape)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (icon != null) {
-            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-        }
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = foreground,
-            maxLines = 1,
-        )
     }
 }
 

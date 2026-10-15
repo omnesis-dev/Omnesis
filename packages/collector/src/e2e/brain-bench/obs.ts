@@ -264,6 +264,8 @@ export interface TaskDto {
   state: "open" | "snoozed" | "done" | "dismissed";
   origin: "brain" | "note" | "user";
   accepted: boolean;
+  /** A suggestion the user ignored: out of Tasks, still tracked by the Brain. */
+  ignored: boolean;
   scheduledFor: string | null;
   deadline: unknown;
   dueDay: string | null;
@@ -304,6 +306,8 @@ export interface TaskReceiptDto {
 export interface ListedNoteDto {
   id: string;
   text: string;
+  /** The task the note is about, when written while accepting a suggestion. */
+  taskId?: string;
   transcription?: string;
   agent?: {
     state: "pending" | "running" | "done" | "failed" | "skipped";

@@ -153,6 +153,7 @@ fun CaptureScreen(
         onDismissError = vm::dismissError,
         onDiscardVoiceNote = vm::discardVoiceNote,
         completionTaskTitle = completion?.taskTitle,
+        completionKind = completion?.kind ?: TaskNoteKind.COMPLETE,
     )
 }
 
@@ -166,8 +167,10 @@ fun CaptureContent(
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
     onDiscardVoiceNote: () -> Unit = {},
-    /** The task this capture completes, when it is "Done with a note" rather than a note. */
+    /** The task the note belongs to, when it completes or accepts a task rather than standing alone. */
     completionTaskTitle: String? = null,
+    /** What the note does to that task, which words the screen. */
+    completionKind: TaskNoteKind = TaskNoteKind.COMPLETE,
 ) {
     val c = OmTheme.colors
     // The same wash the agent landing screen sits on, with the halo centred on the
@@ -191,7 +194,7 @@ fun CaptureContent(
                         Text("Tell Omnesis")
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Done with a note")
+                            Text(completionKind.heading)
                             Text(
                                 completionTaskTitle,
                                 style = MaterialTheme.typography.bodySmall,
@@ -214,7 +217,7 @@ fun CaptureContent(
                 is SaveState.Done -> SavedConfirmation(queued = save.queued)
                 else -> CaptureForm(
                     state = state,
-                    completing = completionTaskTitle != null,
+                    completing = completionKind.takeIf { completionTaskTitle != null },
                     saving = save is SaveState.Saving,
                     onMicTap = onMicTap,
                     onTextChange = onTextChange,
@@ -232,7 +235,8 @@ fun CaptureContent(
 @Composable
 private fun CaptureForm(
     state: CaptureUiState,
-    completing: Boolean,
+    /** What the note does to a task, when it belongs to one. */
+    completing: TaskNoteKind?,
     saving: Boolean,
     onMicTap: () -> Unit,
     onTextChange: (String) -> Unit,
@@ -281,7 +285,7 @@ private fun CaptureForm(
             onValueChange = onTextChange,
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
             placeholder = {
-                Text(if (completing) "What happened?" else "What should Omnesis remember?", color = c.textMuted)
+                Text(completing?.prompt ?: "What should Omnesis remember?", color = c.textMuted)
             },
             enabled = !saving,
             shape = RoundedCornerShape(20.dp),
@@ -348,7 +352,7 @@ private fun CaptureForm(
                     Spacer(Modifier.width(8.dp))
                     Text("Saving…")
                 } else {
-                    Text(if (completing) "Done" else "Tell Omnesis")
+                    Text(completing?.confirm ?: "Tell Omnesis")
                 }
             }
         }

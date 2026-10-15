@@ -18,6 +18,7 @@ import dev.omnesis.android.transport.dto.TaskMutationDto
 import dev.omnesis.android.transport.dto.TaskViewDto
 import dev.omnesis.android.ui.common.classifyGatewayError
 import java.time.LocalDate
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -137,7 +138,10 @@ class TasksViewModel internal constructor(
         load()
     }
 
-    /** The circle: an open task completes, a resolved one reopens — shown at once, confirmed by the gateway. */
+    /**
+     * The circle: an open task completes, a resolved one reopens — shown at once, confirmed by
+     * the gateway. On a suggestion it marks it done directly: it was done before the user saw it.
+     */
     fun tapBullet(task: TaskDto) {
         if (task.id in _state.value.pending) return
         val action = if (task.isResolved) TaskAction.Reopen else TaskAction.Complete()
@@ -148,33 +152,69 @@ class TasksViewModel internal constructor(
 
     /**
      * What a target of the action fan does to its task. Done goes through the circle's path,
-     * which shows the row done at once; Done + note opens the note capture; the moves and
-     * Cancel task are ordinary commands, each with a receipt and Undo.
+     * which shows the row done at once; Done + note and Accept with note open the note capture;
+     * the moves and Cancel task are ordinary commands, each with a receipt and Undo. On a
+     * suggestion, the time targets accept it planned for that time.
      */
     fun perform(task: TaskDto, action: TaskFanAction) {
+        if (task.isSuggestion) return performOnSuggestion(task, action)
         when (action) {
             TaskFanAction.Done -> tapBullet(task)
-            TaskFanAction.DoneWithNote -> _state.update { it.copy(noting = task) }
+            TaskFanAction.DoneWithNote -> openNote(task)
             TaskFanAction.Tomorrow -> mutate(task, TaskAction.Migrate(TaskDates.tomorrow(localDay)))
             TaskFanAction.NextMonth -> mutate(task, TaskAction.Migrate(TaskDates.nextMonth(localDay)))
             is TaskFanAction.Month -> mutate(task, TaskAction.Migrate(action.month))
             TaskFanAction.CancelTask -> mutate(task, TaskAction.Strike())
-            TaskFanAction.OtherMonth, TaskFanAction.Back, TaskFanAction.LaterMonths, TaskFanAction.EarlierMonths -> Unit
+            TaskFanAction.Accept, TaskFanAction.AcceptWithNote, TaskFanAction.Today, TaskFanAction.NextWeek,
+            TaskFanAction.Someday, TaskFanAction.Ignore,
+            TaskFanAction.OtherMonth, TaskFanAction.Back, TaskFanAction.LaterMonths, TaskFanAction.EarlierMonths,
+            TaskFanAction.AcceptFor -> Unit
+        }
+    }
+
+    private fun performOnSuggestion(task: TaskDto, action: TaskFanAction) {
+        when (action) {
+            TaskFanAction.Accept -> accept(task, null)
+            TaskFanAction.AcceptWithNote -> openNote(task)
+            TaskFanAction.Done -> tapBullet(task)
+            TaskFanAction.Ignore -> ignore(task)
+            TaskFanAction.Today -> accept(task, localDay.toString())
+            TaskFanAction.Tomorrow -> accept(task, TaskDates.tomorrow(localDay))
+            TaskFanAction.NextWeek -> accept(task, TaskDates.nextWeek(localDay))
+            TaskFanAction.NextMonth -> accept(task, TaskDates.nextMonth(localDay))
+            is TaskFanAction.Month -> accept(task, action.month)
+            TaskFanAction.Someday -> accept(task, TaskDates.SOMEDAY)
+            TaskFanAction.DoneWithNote, TaskFanAction.CancelTask,
+            TaskFanAction.OtherMonth, TaskFanAction.Back, TaskFanAction.LaterMonths, TaskFanAction.EarlierMonths,
+            TaskFanAction.AcceptFor -> Unit
         }
     }
 
     /**
-     * Complete [task] with the note the capture took. Returns null once the gateway accepted it,
-     * or the sentence to show in the capture when it did not, so the note is never lost to a
+     * The id the open note capture's accept sends, fixed for as long as the capture is open, so
+     * saving again after a lost answer replays the same note rather than writing a second one.
+     */
+    private var noteId: String = UUID.randomUUID().toString()
+
+    private fun openNote(task: TaskDto) {
+        noteId = UUID.randomUUID().toString()
+        _state.update { it.copy(noting = task) }
+    }
+
+    /**
+     * Save the note the capture took: an own task completes with it, a suggestion is accepted
+     * with it (the gateway hands the note to the note agent). Returns null once the gateway took
+     * it, or the sentence to show in the capture when it did not, so the note is never lost to a
      * refusal. Runs in the view model's scope: closing the capture does not cancel it.
      */
-    suspend fun completeWithNote(task: TaskDto, note: String): String? {
+    suspend fun saveNote(task: TaskDto, note: String): String? {
         if (task.id in _state.value.pending) return null
+        val action = if (task.isSuggestion) TaskAction.Accept(note = note, noteId = noteId) else TaskAction.Complete(note)
         generation++
         _state.update { TasksReducer.begin(it, task.id) }
         return viewModelScope.async {
             try {
-                val result = gateway.act(task.id, TaskAction.Complete(note))
+                val result = gateway.act(task.id, action)
                 _state.update { TasksReducer.mutated(it, task.id, result, ++receiptCounter) }
                 reread()
                 null
@@ -194,7 +234,7 @@ class TasksViewModel internal constructor(
     fun confirmProposal(task: TaskDto) = mutate(task, TaskAction.Confirm)
     fun keepAsIs(task: TaskDto) = mutate(task, TaskAction.Keep)
     fun accept(task: TaskDto, scheduledFor: String?) = mutate(task, TaskAction.Accept(scheduledFor))
-    fun refuse(task: TaskDto) = mutate(task, TaskAction.Refuse())
+    fun ignore(task: TaskDto) = mutate(task, TaskAction.Ignore())
 
     fun saveEdit(task: TaskDto, edit: TaskAction.Edit) = mutate(task, edit)
 

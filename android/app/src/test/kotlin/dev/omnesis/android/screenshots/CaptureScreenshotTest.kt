@@ -13,6 +13,7 @@ import dev.omnesis.android.ui.capture.CaptureContent
 import dev.omnesis.android.ui.capture.CaptureUiState
 import dev.omnesis.android.ui.capture.SaveState
 import dev.omnesis.android.ui.capture.SpeechState
+import dev.omnesis.android.ui.capture.TaskNoteKind
 import dev.omnesis.android.ui.capture.VoiceNoteUi
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -249,6 +250,21 @@ class CaptureScreenshotTest {
             onCancel = {},
             onDismissError = {},
             completionTaskTitle = "Pay the venue deposit",
+        )
+    }
+
+    /** A suggestion's "Accept with note": the same capture, accepting the suggestion with the note. */
+    @Test
+    fun capture_task_accept_note_light() = capture("capture_task_accept_note_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(text = "The renewal form is in the glovebox"),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionTaskTitle = "Renew the residents' parking permit",
+            completionKind = TaskNoteKind.ACCEPT,
         )
     }
 }

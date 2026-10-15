@@ -60,7 +60,7 @@ const TAIL_VERSIONS = Array.from(
  */
 const WOUND_BACK = [
   172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
-  191, 192, 193, 194, 195, 196, 197, 198, 199,
+  191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
 ];
 
 let dir: string;
@@ -125,6 +125,20 @@ function undoVocabulary(db: Db): void {
     .all();
   if (pendingVoiceColumns.some((row) => row.name === "allow_vocabulary"))
     db.exec("ALTER TABLE voice_note_transcriptions DROP COLUMN allow_vocabulary");
+}
+
+/** Undo migration 200: no ignored suggestions, and notes name no task. */
+function undoTaskSuggestions(db: Db): void {
+  for (const [table, column] of [
+    ["open_loops", "ignored"],
+    ["note_entries", "task_id"],
+  ] as const) {
+    const present = db
+      .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+      .all()
+      .some((row) => row.name === column);
+    if (present) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  }
 }
 
 /** Undo migration 199: the note agent's queue did not exist yet. */
@@ -202,6 +216,7 @@ function undoKnowledge(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  undoTaskSuggestions(db);
   undoNoteAgent(db);
   undoTaskFields(db);
   undoObservations(db);
@@ -741,8 +756,12 @@ describe("an install several versions behind, upgrading", () => {
           .all(),
       ).toEqual([]);
       expect(
-        db.prepare("SELECT title, origin, accepted FROM open_loops WHERE id = 'older-loop'").get(),
-      ).toEqual({ title: "Book the workshop room", origin: "brain", accepted: 0 });
+        db
+          .prepare(
+            "SELECT title, origin, accepted, ignored FROM open_loops WHERE id = 'older-loop'",
+          )
+          .get(),
+      ).toEqual({ title: "Book the workshop room", origin: "brain", accepted: 0, ignored: 0 });
       expect(
         db.prepare("SELECT name FROM sqlite_master WHERE name = 'note_agent_runs'").get(),
       ).toEqual({ name: "note_agent_runs" });

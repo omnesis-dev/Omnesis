@@ -393,6 +393,55 @@ describe("note agent turn", () => {
     });
   });
 
+  test("a note written while accepting a task is applied to that task", async () => {
+    createOpenLoop(
+      db,
+      {
+        id: "loop_accepted",
+        createdByRun: "run_1",
+        title: "Book the bike service",
+        confidence: 0.7,
+        importance: 0.5,
+      },
+      T0,
+    );
+    applyTaskCommand(
+      db,
+      { surface: "tasks", runId: "user:tasks", kind: "accept", id: "loop_accepted" },
+      T0,
+    );
+    enqueueNewNotes(db, T0);
+    note(
+      "n_task",
+      "This is a note about the task “Book the bike service”: the rear brake squeaks too",
+      T0 + 1_000,
+      { taskId: "loop_accepted" },
+    );
+    enqueueNewNotes(db, T0 + 1_000);
+    const seen: TurnInput[] = [];
+    const { runner } = agent(
+      toolCallingBackend(
+        () => [
+          {
+            tool: "task_update",
+            args: {
+              id: "loop_accepted",
+              action: "edit",
+              description: "The rear brake squeaks too.",
+            },
+          },
+        ],
+        "Added the brake to “Book the bike service”.",
+        seen,
+      ),
+    );
+    await runner.drain();
+    expect(seen[0]!.userMessage).toContain(
+      "The user wrote it while accepting their task loop_accepted",
+    );
+    expect(getOpenLoop(db, "loop_accepted")?.description).toBe("The rear brake squeaks too.");
+  });
+
   test("never touches a Brain suggestion", async () => {
     createOpenLoop(
       db,

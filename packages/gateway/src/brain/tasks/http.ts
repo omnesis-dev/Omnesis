@@ -4,7 +4,7 @@
 /**
  * `/tasks*` — the Tasks view's HTTP surface: the journal views, one task with
  * its history, and the user's task commands (create, complete, move, strike,
- * edit, accept or refuse a suggestion, confirm or keep a proposed change,
+ * edit, accept or ignore a suggestion, confirm or keep a proposed change,
  * reopen, delete, undo).
  *
  * Tasks are available on every install: a user can keep their own tasks with
@@ -23,6 +23,7 @@ import { isTaskSchedule, type TaskCommand, type TaskCommandResult } from "../sto
 import { TASK_VIEWS, type TaskDocument, type TaskItem, type TaskView } from "./views.js";
 import { TaskService, type TaskEffects } from "./service.js";
 import type { OpenLoopLedgerEntry } from "../storage/types.js";
+import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/wiring.js";
 import type { RouteApp } from "../../http/routes/types.js";
 import type { WriteGate } from "../../write-gate.js";
 import type Database from "better-sqlite3";
@@ -44,6 +45,7 @@ export function taskDto(item: TaskItem, documents: ReadonlyMap<string, TaskDocum
     state: loop.state,
     origin: loop.origin,
     accepted: loop.accepted,
+    ignored: loop.ignored,
     scheduledFor: loop.scheduledFor,
     deadline: loop.deadline,
     dueDay: item.dueDay,
@@ -124,7 +126,22 @@ const actionBody = z.discriminatedUnion("action", [
       deadline: deadline.optional(),
     })
     .strict(),
-  z.object({ action: z.literal("accept"), scheduledFor: schedule.optional() }).strict(),
+  z
+    .object({
+      action: z.literal("accept"),
+      scheduledFor: schedule.optional(),
+      // What the user adds about the task, saved as a Tell Omnesis note the
+      // note agent applies to it; `noteId` makes a retry a replay.
+      note: z
+        .string()
+        .max(8000)
+        .refine((s) => s.trim().length > 0, "must not be blank")
+        .optional(),
+      noteId: z.string().uuid().optional(),
+    })
+    .strict(),
+  z.object({ action: z.literal("ignore"), reason: z.string().max(500).optional() }).strict(),
+  // The name older app builds send for ignoring a suggestion.
   z.object({ action: z.literal("refuse"), reason: z.string().max(500).optional() }).strict(),
   z.object({ action: z.literal("confirm") }).strict(),
   z.object({ action: z.literal("keep") }).strict(),
@@ -141,6 +158,8 @@ export interface MountTaskRoutesOpts {
   idGen?: () => string;
   /** The cascades that follow a task change; see {@link TaskEffects}. */
   effects?: TaskEffects | undefined;
+  /** Tell Omnesis capture, for a suggestion accepted with a note. */
+  notes?: () => Pick<OmnesisNotesRuntime, "capture">;
 }
 
 /** A Done-view cursor: `<resolvedAt ms>:<task id>`. */
@@ -154,7 +173,13 @@ function parseDoneCursor(raw: string | undefined): { resolvedAt: number; id: str
 const ORIGIN = { surface: "tasks", runId: "user:tasks" } as const;
 
 export function mountTaskRoutes(app: RouteApp, opts: MountTaskRoutesOpts): void {
-  const tasks = new TaskService(opts.db, opts.writeGate, opts.clock ?? Date.now, opts.effects);
+  const tasks = new TaskService(
+    opts.db,
+    opts.writeGate,
+    opts.clock ?? Date.now,
+    opts.effects,
+    opts.notes,
+  );
   const idGen = opts.idGen ?? (() => randomUUID().replace(/-/g, "").slice(0, 16));
 
   // Every read reflects the journal as it is now; a cached answer would show a
@@ -242,6 +267,19 @@ export function mountTaskRoutes(app: RouteApp, opts: MountTaskRoutesOpts): void 
   app.post("/tasks/:id/actions", scope.admin(), validateJson(actionBody), async (c) => {
     const id = c.req.param("id");
     const body = c.req.valid("json") as z.infer<typeof actionBody>;
+    if (body.action === "accept" && body.note !== undefined) {
+      const result = await tasks.acceptWithNote({
+        ...ORIGIN,
+        id,
+        note: body.note,
+        noteId: body.noteId ?? randomUUID(),
+        ...(body.scheduledFor !== undefined ? { scheduledFor: body.scheduledFor } : {}),
+      });
+      return c.json({
+        ...respond(result),
+        ...(result.ok && result.noteId ? { noteId: result.noteId } : {}),
+      });
+    }
     return c.json(respond(await tasks.apply(taskCommandFor(id, body))));
   });
 }
@@ -265,8 +303,9 @@ function taskCommandFor(id: string, body: z.infer<typeof actionBody>): TaskComma
         id,
         ...(body.scheduledFor !== undefined ? { scheduledFor: body.scheduledFor } : {}),
       };
+    case "ignore":
     case "refuse":
-      return { ...ORIGIN, kind: "refuse", id, ...(body.reason ? { reason: body.reason } : {}) };
+      return { ...ORIGIN, kind: "ignore", id, ...(body.reason ? { reason: body.reason } : {}) };
     case "confirm":
       return { ...ORIGIN, kind: "confirm_proposal", id };
     case "keep":

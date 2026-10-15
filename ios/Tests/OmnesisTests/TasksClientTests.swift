@@ -122,6 +122,8 @@ final class TasksClientTests: XCTestCase {
     func testSuggestionAndResolvedFlags() {
         XCTAssertTrue(TaskRecord(id: "a", title: "A", origin: .brain).isSuggestion)
         XCTAssertFalse(TaskRecord(id: "b", title: "B", origin: .brain, accepted: true).isSuggestion)
+        // An ignored suggestion is still an open loop, but no longer offered.
+        XCTAssertFalse(TaskRecord(id: "i", title: "I", origin: .brain, ignored: true).isSuggestion)
         XCTAssertTrue(TaskRecord(id: "c", title: "C", state: .dismissed).isResolved)
         XCTAssertEqual(TaskRecord(id: "d", title: "D").with(state: .done).state, .done)
     }
@@ -151,6 +153,30 @@ final class TasksClientTests: XCTestCase {
         XCTAssertEqual(TaskJournal.eventTitle(detail.history[2]), "Note")
         XCTAssertEqual(TaskJournal.eventSource(detail.history[1]), "In a conversation")
         XCTAssertNil(TaskJournal.eventSource(detail.history[0]))
+    }
+
+    func testSuggestionEventsReadAsTheyNowMean() {
+        func title(_ kind: String) -> String {
+            TaskJournal.eventTitle(TaskEvent(seq: 1, at: nil, note: "", kind: kind, surface: "tasks"))
+        }
+        XCTAssertEqual(title("ignored"), "Ignored")
+        // An older gateway dismissed a declined suggestion.
+        XCTAssertEqual(title("refused"), "Dismissed")
+        XCTAssertEqual(title("completed"), "Done")
+        XCTAssertEqual(title("accepted"), "Accepted")
+    }
+
+    func testIgnoredDecodesAndDefaultsToFalse() throws {
+        let decoder = JSONDecoder()
+        let ignored = try decoder.decode(
+            TaskRecord.self,
+            from: Data(#"{"id":"a","title":"A","origin":"brain","ignored":true}"#.utf8)
+        )
+        XCTAssertTrue(ignored.ignored)
+        XCTAssertFalse(ignored.isSuggestion)
+        let older = try decoder.decode(TaskRecord.self, from: Data(#"{"id":"b","title":"B","origin":"brain"}"#.utf8))
+        XCTAssertFalse(older.ignored)
+        XCTAssertTrue(older.isSuggestion)
     }
 
     /// Every read goes to the gateway: a view answered from the URL cache
@@ -234,7 +260,8 @@ final class TasksClientTests: XCTestCase {
         )
         XCTAssertEqual(try encode(.migrate(to: "2026-11")) as NSDictionary, ["action": "migrate", "to": "2026-11"])
         XCTAssertEqual(try encode(.strike(reason: nil)) as NSDictionary, ["action": "strike"])
-        XCTAssertEqual(try encode(.refuse(reason: "Not mine")) as NSDictionary, ["action": "refuse", "reason": "Not mine"])
+        XCTAssertEqual(try encode(.ignore(reason: "Not mine")) as NSDictionary, ["action": "ignore", "reason": "Not mine"])
+        XCTAssertEqual(try encode(.ignore(reason: nil)) as NSDictionary, ["action": "ignore"])
         XCTAssertEqual(try encode(.confirm) as NSDictionary, ["action": "confirm"])
         XCTAssertEqual(try encode(.keep) as NSDictionary, ["action": "keep"])
         XCTAssertEqual(try encode(.reopen) as NSDictionary, ["action": "reopen"])
@@ -242,6 +269,17 @@ final class TasksClientTests: XCTestCase {
         XCTAssertEqual(
             try encode(.accept(scheduledFor: .set("2026-10-15"))) as NSDictionary,
             ["action": "accept", "scheduledFor": "2026-10-15"]
+        )
+        // Accepting with a note sends the trimmed note and its id; a blank
+        // note is no note at all.
+        XCTAssertEqual(
+            try encode(.accept(scheduledFor: .unchanged, note: " Pay from the joint account ", noteId: "n-1"))
+                as NSDictionary,
+            ["action": "accept", "note": "Pay from the joint account", "noteId": "n-1"]
+        )
+        XCTAssertEqual(
+            try encode(.accept(scheduledFor: .set("someday"), note: "  ", noteId: "n-2")) as NSDictionary,
+            ["action": "accept", "scheduledFor": "someday"]
         )
         // Clearing a field sends an explicit null; leaving it alone omits it.
         let cleared = try encode(.accept(scheduledFor: .set(nil)))

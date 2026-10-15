@@ -187,8 +187,8 @@
   text-decoration: line-through;
 }
 
-/* The bullet: a 20px ring with a visible border. Hovering an open one
-   previews the check it will get. */
+/* The bullet: a 20px ring with a visible border. Hovering an open one, or a
+   suggestion, previews the check it will get. */
 .tasks-bullet {
   position: relative;
   flex: none;
@@ -202,10 +202,6 @@
   color: var(--text-secondary);
   cursor: pointer;
   transition: border-color 0.12s ease, background-color 0.12s ease;
-}
-
-span.tasks-bullet {
-  cursor: default;
 }
 
 /* The check: an L turned 45°, hidden until hover or done. */
@@ -222,13 +218,15 @@ span.tasks-bullet {
 }
 
 button.tasks-bullet-open:hover,
-button.tasks-bullet-carried:hover {
+button.tasks-bullet-carried:hover,
+button.tasks-bullet-suggested:hover {
   border-color: var(--success);
   background: color-mix(in srgb, var(--success) 14%, transparent);
 }
 
 button.tasks-bullet-open:hover::after,
-button.tasks-bullet-carried:hover::after {
+button.tasks-bullet-carried:hover::after,
+button.tasks-bullet-suggested:hover::after {
   border-color: var(--success);
 }
 
@@ -441,9 +439,15 @@ button.tasks-bullet-struck:hover {
   overflow: hidden;
 }
 
-.tasks-done-form {
+.tasks-done-form,
+.tasks-suggestion-note {
   display: flex;
   gap: 6px;
+}
+
+.tasks-suggestion-note {
+  flex: 1 1 100%;
+  align-items: flex-start;
 }
 
 .tasks-note-input {

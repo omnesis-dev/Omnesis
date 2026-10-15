@@ -79,7 +79,7 @@ class CaptureViewModel @Inject constructor(
     private var voiceNotesUnusable = false
 
     /**
-     * Completing a task with a note rather than saving one ("Done + note" in Tasks): the words
+     * Completing a task with a note rather than saving one ("Done + note" in Tasks), or accepting a suggestion with one: the words
      * stay on the phone — the note is the completion's, not a voice note for the gateway — and
      * Save hands them over as [CaptureUiState.completionNote] instead of sending them.
      */

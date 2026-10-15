@@ -278,6 +278,9 @@ public struct TaskRecord: Decodable, Equatable, Sendable, Identifiable {
     public let origin: Origin?
     /// A Brain suggestion the user took on.
     public let accepted: Bool
+    /// A Brain suggestion the user ignored: it leaves their tasks while
+    /// Omnesis keeps tracking it.
+    public let ignored: Bool
     /// When the user plans to do it: `YYYY-MM-DD`, `YYYY-MM`, `someday`, or nil.
     public let scheduledFor: String?
     public let deadline: TaskDeadline?
@@ -302,6 +305,7 @@ public struct TaskRecord: Decodable, Equatable, Sendable, Identifiable {
         state: State = .open,
         origin: Origin = .user,
         accepted: Bool = false,
+        ignored: Bool = false,
         scheduledFor: String? = nil,
         deadline: TaskDeadline? = nil,
         dueDay: String? = nil,
@@ -321,6 +325,7 @@ public struct TaskRecord: Decodable, Equatable, Sendable, Identifiable {
         self.state = state
         self.origin = origin
         self.accepted = accepted
+        self.ignored = ignored
         self.scheduledFor = scheduledFor
         self.deadline = deadline
         self.dueDay = dueDay
@@ -336,7 +341,7 @@ public struct TaskRecord: Decodable, Equatable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, description, state, origin, accepted, scheduledFor, deadline, dueDay
+        case id, title, description, state, origin, accepted, ignored, scheduledFor, deadline, dueDay
         case carried, completionNote, proposedChange, actors, blockedBy, documents
         case createdAt, lastUpdate, resolvedAt
     }
@@ -349,6 +354,7 @@ public struct TaskRecord: Decodable, Equatable, Sendable, Identifiable {
         state = try values.decodeIfPresent(String.self, forKey: .state).flatMap(State.init(rawValue:))
         origin = try values.decodeIfPresent(String.self, forKey: .origin).flatMap(Origin.init(rawValue:))
         accepted = try values.decodeIfPresent(Bool.self, forKey: .accepted) ?? false
+        ignored = try values.decodeIfPresent(Bool.self, forKey: .ignored) ?? false
         scheduledFor = try values.decodeIfPresent(String.self, forKey: .scheduledFor)
         // The deadline is agent-owned and loosely shaped; one this build
         // cannot read is dropped rather than failing the whole view.
@@ -372,7 +378,7 @@ public struct TaskRecord: Decodable, Equatable, Sendable, Identifiable {
 
     /// A Brain suggestion still waiting for the user's yes or no.
     public var isSuggestion: Bool {
-        origin == .brain && !accepted && !isResolved
+        origin == .brain && !accepted && !ignored && !isResolved
     }
 
     /// The same task with a new state — the optimistic face of a tap on its
@@ -385,6 +391,7 @@ public struct TaskRecord: Decodable, Equatable, Sendable, Identifiable {
             state: newState,
             origin: origin ?? .user,
             accepted: accepted,
+            ignored: ignored,
             scheduledFor: scheduledFor,
             deadline: deadline,
             dueDay: dueDay,
@@ -695,16 +702,19 @@ public enum TaskAction: Encodable, Equatable, Sendable {
         scheduledFor: TaskFieldChange<String>,
         deadline: TaskFieldChange<TaskDeadline>
     )
-    /// Take on a suggestion; `.set(nil)` leaves it unscheduled.
-    case accept(scheduledFor: TaskFieldChange<String>)
-    case refuse(reason: String?)
+    /// Take on a suggestion; `.set(nil)` leaves it unscheduled. With a
+    /// `note`, the gateway also saves it as a Tell Omnesis note about the
+    /// task, which Omnesis applies to it; `noteId` makes a retry a replay.
+    case accept(scheduledFor: TaskFieldChange<String>, note: String? = nil, noteId: String? = nil)
+    /// Take a suggestion out of the person's tasks; Omnesis keeps tracking it.
+    case ignore(reason: String?)
     case confirm
     case keep
     case reopen
     case delete
 
     private enum CodingKeys: String, CodingKey {
-        case action, note, to, reason, title, description, scheduledFor, deadline
+        case action, note, noteId, to, reason, title, description, scheduledFor, deadline
     }
 
     public var name: String {
@@ -714,7 +724,7 @@ public enum TaskAction: Encodable, Equatable, Sendable {
         case .strike: "strike"
         case .edit: "edit"
         case .accept: "accept"
-        case .refuse: "refuse"
+        case .ignore: "ignore"
         case .confirm: "confirm"
         case .keep: "keep"
         case .reopen: "reopen"
@@ -730,15 +740,19 @@ public enum TaskAction: Encodable, Equatable, Sendable {
             try values.encodeIfPresent(note.nonBlank, forKey: .note)
         case .migrate(let to):
             try values.encode(to, forKey: .to)
-        case .strike(let reason), .refuse(let reason):
+        case .strike(let reason), .ignore(let reason):
             try values.encodeIfPresent(reason.nonBlank, forKey: .reason)
         case .edit(let title, let description, let scheduledFor, let deadline):
             try values.encodeIfPresent(title, forKey: .title)
             try values.encodeIfPresent(description, forKey: .description)
             try Self.encode(scheduledFor, forKey: .scheduledFor, into: &values)
             try Self.encode(deadline, forKey: .deadline, into: &values)
-        case .accept(let scheduledFor):
+        case .accept(let scheduledFor, let note, let noteId):
             try Self.encode(scheduledFor, forKey: .scheduledFor, into: &values)
+            if let note = note.nonBlank {
+                try values.encode(note, forKey: .note)
+                try values.encodeIfPresent(noteId, forKey: .noteId)
+            }
         case .confirm, .keep, .reopen, .delete:
             break
         }

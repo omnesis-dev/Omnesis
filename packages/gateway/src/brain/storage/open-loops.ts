@@ -69,6 +69,7 @@ interface OpenLoopDbRow {
   decay_check_count: number;
   origin: string;
   accepted: number;
+  ignored: number;
   scheduled_for: string | null;
   proposed_change_json: string | null;
   completion_note: string | null;
@@ -95,6 +96,7 @@ function rowToOpenLoop(r: OpenLoopDbRow, docs: string[]): OpenLoopRow {
     decayCheckCount: r.decay_check_count,
     origin: r.origin as TaskOrigin,
     accepted: r.accepted === 1,
+    ignored: r.ignored === 1,
     scheduledFor: r.scheduled_for,
     proposedChange:
       r.proposed_change_json === null
@@ -487,6 +489,7 @@ export interface UpdateOpenLoopInput {
   blockedBy?: string[];
   lastDecayCheck?: number;
   accepted?: boolean;
+  ignored?: boolean;
   scheduledFor?: TaskSchedule | null;
   proposedChange?: ProposedTaskChange | null;
   completionNote?: string | null;
@@ -573,6 +576,7 @@ export function updateOpenLoop(
   if (input.blockedBy !== undefined) push("blocked_by_json", JSON.stringify(input.blockedBy));
   if (input.lastDecayCheck !== undefined) push("last_decay_check", input.lastDecayCheck);
   if (input.accepted !== undefined) push("accepted", input.accepted ? 1 : 0);
+  if (input.ignored !== undefined) push("ignored", input.ignored ? 1 : 0);
   if (input.scheduledFor !== undefined) push("scheduled_for", input.scheduledFor);
   if (input.proposedChange !== undefined)
     push(

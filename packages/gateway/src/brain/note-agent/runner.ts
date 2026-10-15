@@ -72,6 +72,9 @@ function noteBlock(entry: NoteEntry, today: string, dayDocId: string | null): st
     dayDocId
       ? `It is part of the notes document ${dayDocId}; cite that document when you remember a fact from it.`
       : "",
+    entry.taskId
+      ? `The user wrote it while accepting their task ${entry.taskId}: it is about that task, so apply what it says to that task, by that id.`
+      : "",
     "",
     "<note>",
     entry.text,

@@ -116,6 +116,11 @@ export interface OpenLoopRow {
   origin: TaskOrigin;
   /** The user accepted this Brain suggestion into their tasks. */
   accepted: boolean;
+  /**
+   * The user ignored this Brain suggestion: it is not offered among their
+   * tasks, while the Brain keeps tracking the loop as before.
+   */
+  ignored: boolean;
   scheduledFor: TaskSchedule | null;
   proposedChange: ProposedTaskChange | null;
   /** The user's note on how the task was completed. */
@@ -184,6 +189,8 @@ export interface TaskEvent {
   kind:
     | "created"
     | "accepted"
+    | "ignored"
+    /** Written by older builds, whose refusal dismissed the suggestion. */
     | "refused"
     | "migrated"
     | "completed"
@@ -213,6 +220,8 @@ export interface TaskSnapshot {
   deadline: unknown | null;
   scheduledFor: TaskSchedule | null;
   accepted: boolean;
+  /** Absent from events recorded before suggestions could be ignored. */
+  ignored?: boolean;
   completionNote: string | null;
   proposedChange: ProposedTaskChange | null;
 }

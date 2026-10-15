@@ -9,8 +9,8 @@ import XCTest
 /// on the tabs, the receipt and its Undo — never only by the call made.
 ///
 /// The fan's targets are found the way the screen lays them out
-/// (`TaskFanSession`): a column up and to the left of the press, Done
-/// nearest, each 50 points further away. Each test presses a row with room
+/// (`TaskFanSession`): a column up and to the left of the press, Done (or a
+/// suggestion's Accept) nearest, each 50 points further away. Each test presses a row with room
 /// above it, so the column is never moved to fit.
 final class TasksInteractionUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -43,6 +43,9 @@ final class TasksInteractionUITests: XCTestCase {
         static let insurance = "Renew the car insurance"
         static let suggestion = "Reply to Jamie Lopez about the venue deposit"
         static let passport = "Renew the passport before the Lisbon trip"
+        /// The lowest suggestion, with room above it for its fan.
+        static let tent = "Return the borrowed camping tent"
+        static let suggestedCount = 7
     }
 
     // MARK: - 1. The circle
@@ -184,27 +187,148 @@ final class TasksInteractionUITests: XCTestCase {
 
     // MARK: - 6. Suggestions
 
-    func testAcceptMovesTheSuggestionOutOfSuggested() {
-        open("Suggested")
-        XCTAssertTrue(text(Fixture.suggestion).waitForExistence(timeout: 5))
-        app.buttons["Accept"].firstMatch.tap()
-        XCTAssertTrue(wait { !self.text(Fixture.suggestion).exists }, "the accepted suggestion is still in Suggested")
-        open("Anytime")
-        XCTAssertTrue(text(Fixture.suggestion).waitForExistence(timeout: 5), "the accepted task is not in Anytime")
-        XCTAssertFalse(app.buttons["Accept"].exists, "the accepted task still offers Accept")
-        open("Suggested")
-        XCTAssertTrue(text(Fixture.passport).waitForExistence(timeout: 5))
-        XCTAssertFalse(text(Fixture.suggestion).exists, "Suggested shows the accepted task again")
+    /// The banner that leads to the suggestions opens Today, above the
+    /// day's tasks, so a long day never pushes it out of sight.
+    func testTheReviewBannerSitsAboveTodaysTasks() {
+        let banner = app.buttons["Omnesis has created \(Fixture.suggestedCount) tasks for your review"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 5), "no review banner")
+        XCTAssertLessThan(banner.frame.maxY, circle(complete: Fixture.marathon).frame.minY, "the banner is below a task")
+        XCTAssertLessThan(banner.frame.minY, chip("Today").frame.maxY + 40, "the banner is not at the top")
+        banner.tap()
+        XCTAssertTrue(text(Fixture.suggestion).waitForExistence(timeout: 5), "the banner did not open Suggested")
     }
 
-    func testNotForMeRemovesTheSuggestion() {
+    /// The circle on a suggestion marks it already done: it leaves the
+    /// suggestions for Done, and Undo makes it a suggestion again.
+    func testASuggestionsCircleMarksItDone() {
+        openSuggested()
+        let title = Fixture.suggestion
+        circle(complete: title).tap()
+        XCTAssertTrue(wait { self.text("Done: \(title)").exists }, "no receipt")
+        XCTAssertTrue(wait { !self.circle(complete: title).exists && !self.circle(reopen: title).exists }, "the suggestion is still listed")
+        XCTAssertTrue(wait { self.suggestedCount() == Fixture.suggestedCount - 1 }, chip("Suggested").label)
+        undo()
+        XCTAssertTrue(wait { self.circle(complete: title).exists }, "Undo did not bring the suggestion back")
+        XCTAssertTrue(wait { self.suggestedCount() == Fixture.suggestedCount }, chip("Suggested").label)
+        circle(complete: title).tap()
+        XCTAssertTrue(wait { !self.circle(complete: title).exists })
+        open("Done")
+        XCTAssertTrue(text(title).waitForExistence(timeout: 5), "the suggestion marked done is not in Done")
+    }
+
+    func testFanAcceptMovesTheSuggestionIntoTheTasks() throws {
+        openSuggested()
+        let title = Fixture.tent
+        try fan(on: title, choose: 0, of: 5)
+        XCTAssertTrue(wait { self.text("Added to your tasks: \(title)").exists }, "no receipt")
+        XCTAssertTrue(wait { !self.text(title).exists }, "the accepted suggestion is still in Suggested")
+        XCTAssertTrue(wait { self.suggestedCount() == Fixture.suggestedCount - 1 }, chip("Suggested").label)
+        open("Anytime")
+        XCTAssertTrue(circle(complete: title).waitForExistence(timeout: 5), "the accepted task is not in Anytime")
         open("Suggested")
-        XCTAssertTrue(text(Fixture.suggestion).waitForExistence(timeout: 5))
-        app.buttons["Not for me"].firstMatch.tap()
-        XCTAssertTrue(wait { !self.text(Fixture.suggestion).exists }, "the declined suggestion is still shown")
-        for name in ["Today", "Anytime", "Suggested"] {
+        XCTAssertTrue(text(Fixture.passport).waitForExistence(timeout: 5))
+        XCTAssertFalse(text(title).exists, "Suggested shows the accepted task again")
+    }
+
+    func testFanAcceptWithNoteAcceptsWithTheNote() throws {
+        openSuggested()
+        let title = Fixture.tent
+        try fan(on: title, choose: 1, of: 5)
+        XCTAssertTrue(app.staticTexts["Accept with a note"].waitForExistence(timeout: 5), "the composer did not open")
+        XCTAssertTrue(text(title).exists, "the composer does not name the task")
+        let field = app.textFields["captureTranscript"].exists ? app.textFields["captureTranscript"] : app.textViews["captureTranscript"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.tap()
+        field.typeText("Maya needs it back by Saturday")
+        app.buttons["captureDoneButton"].tap()
+        XCTAssertTrue(wait { !self.app.staticTexts["Accept with a note"].exists }, "the composer stayed open")
+        XCTAssertTrue(wait { self.text("Added to your tasks: \(title)").exists }, "no receipt")
+        XCTAssertTrue(wait { !self.text(title).exists }, "the accepted suggestion is still in Suggested")
+        open("Anytime")
+        XCTAssertTrue(circle(complete: title).waitForExistence(timeout: 5), "the accepted task is not in Anytime")
+    }
+
+    func testCancellingTheAcceptNoteChangesNothing() throws {
+        openSuggested()
+        let title = Fixture.tent
+        try fan(on: title, choose: 1, of: 5)
+        XCTAssertTrue(app.staticTexts["Accept with a note"].waitForExistence(timeout: 5))
+        app.buttons["Cancel capture"].tap()
+        XCTAssertTrue(wait { !self.app.staticTexts["Accept with a note"].exists })
+        XCTAssertTrue(isListed(circle(complete: title)), "cancelling changed the suggestion")
+        XCTAssertEqual(suggestedCount(), Fixture.suggestedCount)
+    }
+
+    /// Accept for… opens the times; Tomorrow accepts it planned for tomorrow.
+    func testFanAcceptForTomorrowPlansIt() throws {
+        openSuggested()
+        let title = Fixture.tent
+        let anchor = try pressPoint(on: title, needing: 7)
+        var touch = TouchPath(pressAt: anchor)
+        touch.hold(0.7)
+        touch.slide(to: target(from: anchor, index: 2, of: 5))
+        touch.hold(0.9)
+        // Tomorrow opens under the finger, which must move deliberately
+        // before anything is chosen: across Today, then back up onto it.
+        touch.slide(to: target(from: anchor, index: 1, of: 7))
+        touch.slide(to: target(from: anchor, index: 2, of: 7))
+        touch.hold(0.2)
+        try touch.perform()
+        XCTAssertTrue(wait { self.text("Added to your tasks: \(title)").exists }, "no receipt")
+        XCTAssertTrue(wait { !self.text(title).exists }, "the accepted suggestion is still in Suggested")
+        open("Month")
+        XCTAssertTrue(isListed(circle(complete: title)), "the task accepted for tomorrow is not in Month")
+        XCTAssertTrue(text("Tomorrow").exists, "no Tomorrow plan label")
+    }
+
+    /// Accept for… then Someday: the task goes to Future, planned someday.
+    func testFanAcceptForSomedayPlansIt() throws {
+        openSuggested()
+        let title = Fixture.tent
+        let anchor = try pressPoint(on: title, needing: 7)
+        var touch = TouchPath(pressAt: anchor)
+        touch.hold(0.7)
+        touch.slide(to: target(from: anchor, index: 2, of: 5))
+        touch.hold(0.9)
+        touch.slide(to: target(from: anchor, index: 6, of: 7))
+        touch.hold(0.2)
+        try touch.perform()
+        XCTAssertTrue(wait { !self.text(title).exists }, "the accepted suggestion is still in Suggested")
+        open("Future")
+        XCTAssertTrue(circle(complete: title).waitForExistence(timeout: 5), "the task accepted for someday is not in Future")
+    }
+
+    func testFanMarkAsDoneResolvesTheSuggestion() throws {
+        openSuggested()
+        let title = Fixture.tent
+        try fan(on: title, choose: 3, of: 5)
+        XCTAssertTrue(wait { self.text("Done: \(title)").exists }, "no receipt")
+        XCTAssertTrue(wait { !self.circle(complete: title).exists }, "the suggestion marked done is still open")
+        undo()
+        XCTAssertTrue(wait { self.isListed(self.circle(complete: title)) }, "Undo did not bring the suggestion back")
+        try fan(on: title, choose: 3, of: 5)
+        XCTAssertTrue(wait { !self.circle(complete: title).exists })
+        open("Done")
+        XCTAssertTrue(text(title).waitForExistence(timeout: 5), "the suggestion marked done is not in Done")
+    }
+
+    /// Ignore takes the suggestion out of every Tasks view and the count;
+    /// Undo makes it a suggestion again.
+    func testFanIgnoreHidesTheSuggestionAndUndoRestoresIt() throws {
+        openSuggested()
+        let title = Fixture.tent
+        try fan(on: title, choose: 4, of: 5)
+        XCTAssertTrue(wait { self.text("Ignored: \(title)").exists }, "no receipt")
+        XCTAssertTrue(wait { !self.text(title).exists }, "the ignored suggestion is still shown")
+        XCTAssertTrue(wait { self.suggestedCount() == Fixture.suggestedCount - 1 }, chip("Suggested").label)
+        undo()
+        XCTAssertTrue(wait { self.isListed(self.circle(complete: title)) }, "Undo did not bring the suggestion back")
+        XCTAssertTrue(wait { self.suggestedCount() == Fixture.suggestedCount }, chip("Suggested").label)
+        try fan(on: title, choose: 4, of: 5)
+        XCTAssertTrue(wait { !self.text(title).exists })
+        for name in ["Today", "Anytime", "Done", "Suggested"] {
             open(name)
-            XCTAssertFalse(text(Fixture.suggestion).waitForExistence(timeout: 1), "\(name) shows the declined suggestion")
+            XCTAssertFalse(text(title).waitForExistence(timeout: 1), "\(name) shows the ignored suggestion")
         }
     }
 
@@ -232,6 +356,22 @@ final class TasksInteractionUITests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// Opens Suggested and lets its first layout settle: a press synthesized
+    /// in the same instant the rows appear lands before the list has
+    /// reported where its rows are, as no finger ever could.
+    private func openSuggested() {
+        open("Suggested")
+        XCTAssertTrue(text(Fixture.suggestion).waitForExistence(timeout: 5), "the suggestions did not load")
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+    }
+
+    /// The Suggested chip's badge, read from its "Suggested, 7 waiting" label.
+    private func suggestedCount() -> Int {
+        let parts = chip("Suggested").label.components(separatedBy: ", ")
+        guard parts.count > 1, let count = parts[1].split(separator: " ").first else { return 0 }
+        return Int(count) ?? 0
+    }
 
     private func chip(_ name: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
@@ -358,12 +498,13 @@ final class TasksInteractionUITests: XCTestCase {
         return CGPoint(x: anchor.x - offset, y: anchor.y - (CGFloat(index) + 0.5) * 50)
     }
 
-    /// Long-press `title`, slide onto main-fan target `index` and lift.
-    private func fan(on title: String, choose index: Int) throws {
-        let anchor = try pressPoint(on: title, needing: 6)
+    /// Long-press `title`, slide onto main-fan target `index` of `count`
+    /// (a task's fan holds six, a suggestion's five) and lift.
+    private func fan(on title: String, choose index: Int, of count: Int = 6) throws {
+        let anchor = try pressPoint(on: title, needing: count)
         var touch = TouchPath(pressAt: anchor)
         touch.hold(0.7)
-        touch.slide(to: target(from: anchor, index: index, of: 6))
+        touch.slide(to: target(from: anchor, index: index, of: count))
         touch.hold(0.2)
         try touch.perform()
     }

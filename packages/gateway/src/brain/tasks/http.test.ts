@@ -216,21 +216,88 @@ describe("/tasks", () => {
     expect((await view("today")).tasks.map((t: { id: string }) => t.id)).toEqual([suggestion.id]);
   });
 
-  test("refusing a suggestion removes it from Suggested", async () => {
-    createOpenLoop(
-      db,
-      {
-        id: "loop_refuse",
-        createdByRun: "run_1",
-        title: "Sign up for the newsletter",
-        confidence: 0.5,
-        importance: 0.2,
-      },
-      NOW,
-    );
-    await action("loop_refuse", { action: "refuse", reason: "not interested" });
+  function brainSuggestion(id: string, title: string) {
+    createOpenLoop(db, { id, createdByRun: "run_1", title, confidence: 0.5, importance: 0.2 }, NOW);
+  }
+
+  test("ignoring a suggestion takes it out of Tasks while its loop stays open", async () => {
+    brainSuggestion("loop_ignore", "Sign up for the newsletter");
+    expect((await call("GET", `/tasks/counts?date=${TODAY}`)).json.counts.suggested).toBe(1);
+    const ignored = await action("loop_ignore", { action: "ignore", reason: "not interested" });
+    expect(ignored.status).toBe(200);
+    expect(ignored.json.task).toMatchObject({ state: "open", accepted: false, ignored: true });
+    expect(ignored.json.receipt.text).toBe("Ignored: Sign up for the newsletter");
     expect((await view("suggested")).tasks).toHaveLength(0);
     expect((await view("done")).tasks).toHaveLength(0);
+    expect((await call("GET", `/tasks/counts?date=${TODAY}`)).json.counts.suggested).toBe(0);
+    const detail = await call("GET", "/tasks/loop_ignore");
+    expect(detail.json.history[0]).toMatchObject({
+      kind: "ignored",
+      note: "Ignored: not interested",
+    });
+
+    const undone = await call("POST", "/tasks/undo", { seq: ignored.json.receipt.undoSeq });
+    expect(undone.json.task).toMatchObject({ state: "open", ignored: false });
+    expect((await view("suggested")).tasks.map((t: { id: string }) => t.id)).toEqual([
+      "loop_ignore",
+    ]);
+  });
+
+  test("an older app's refuse ignores the suggestion", async () => {
+    brainSuggestion("loop_legacy", "Join the book club mailing list");
+    const res = await action("loop_legacy", { action: "refuse" });
+    expect(res.json.task).toMatchObject({ state: "open", ignored: true });
+    expect((await view("suggested")).tasks).toHaveLength(0);
+  });
+
+  test("a suggestion accepted with a note is planned and leaves a note about it", async () => {
+    brainSuggestion("loop_note", "Book the bike service");
+    const noteId = randomUUID();
+    const res = await action("loop_note", {
+      action: "accept",
+      scheduledFor: "2026-03-14",
+      note: "the rear brake squeaks too",
+      noteId,
+    });
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({
+      noteId,
+      task: { accepted: true, scheduledFor: "2026-03-14" },
+      receipt: { text: "Added to your tasks: Book the bike service" },
+    });
+    const notes = (await call("GET", "/notes?day=2026-03-10", undefined, reader)).json
+      .entries as Array<{
+      id: string;
+      text: string;
+      taskId?: string;
+    }>;
+    expect(notes.find((note) => note.id === noteId)).toMatchObject({
+      text: "This is a note about the task “Book the bike service”: the rear brake squeaks too",
+      taskId: "loop_note",
+    });
+    // The same request again is a replay, not a conflict.
+    const again = await action("loop_note", {
+      action: "accept",
+      note: "the rear brake squeaks too",
+      noteId,
+    });
+    expect(again.status).toBe(200);
+    expect(
+      ((await call("GET", "/notes?day=2026-03-10", undefined, reader)).json.entries as unknown[])
+        .length,
+    ).toBe(notes.length);
+    expect((await action("loop_note", { action: "accept", note: "  " })).status).toBe(400);
+  });
+
+  test("a suggestion that is already done is completed straight away", async () => {
+    brainSuggestion("loop_done", "Pay the gym membership");
+    const res = await action("loop_done", { action: "complete" });
+    expect(res.json.task).toMatchObject({ state: "done", accepted: true });
+    expect((await view("suggested")).tasks).toHaveLength(0);
+    expect((await view("done")).tasks.map((t: { id: string }) => t.id)).toEqual(["loop_done"]);
+    const undone = await call("POST", "/tasks/undo", { seq: res.json.receipt.undoSeq });
+    expect(undone.json.task).toMatchObject({ state: "open", accepted: false });
+    expect((await view("suggested")).tasks.map((t: { id: string }) => t.id)).toEqual(["loop_done"]);
   });
 
   test("a proposal is shown on the task and confirmed or kept by the user", async () => {

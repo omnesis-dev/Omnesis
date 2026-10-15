@@ -7,6 +7,7 @@
  * same cascades a Brain run applies to a loop it changes.
  */
 
+import { getNoteEntry } from "../../sources/omnesis-notes/storage.js";
 import {
   TaskQueryService,
   type TaskDocument,
@@ -15,8 +16,9 @@ import {
   type TaskViewResult,
   type TaskCounts,
 } from "./views.js";
-import type { OpenLoopLedgerEntry } from "../storage/types.js";
-import type { TaskCommand, TaskCommandResult } from "../storage/tasks.js";
+import type { OpenLoopLedgerEntry, TaskSchedule } from "../storage/types.js";
+import type { TaskCommand, TaskCommandOrigin, TaskCommandResult } from "../storage/tasks.js";
+import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/wiring.js";
 import type { WriteGate } from "../../write-gate.js";
 import type Database from "better-sqlite3";
 
@@ -32,14 +34,31 @@ export interface TaskEffects {
   };
 }
 
+/** Accepting a suggestion with what the user wants to add about it. */
+export interface AcceptWithNote extends TaskCommandOrigin {
+  id: string;
+  scheduledFor?: TaskSchedule | null;
+  /** What the user typed or dictated. */
+  note: string;
+  /** The note's id, which makes a retried request a replay. */
+  noteId: string;
+}
+
+/** The text of a note written while accepting a task, as the note agent and the notes list read it. */
+export function taskNoteText(title: string, note: string): string {
+  return `This is a note about the task “${title}”: ${note.trim()}`;
+}
+
 export class TaskService {
   private readonly queries: TaskQueryService;
 
   constructor(
-    db: Database.Database,
+    private readonly db: Database.Database,
     private readonly writeGate: Pick<WriteGate, "applyTaskCommand">,
     private readonly clock: () => number = Date.now,
     private readonly effects?: TaskEffects,
+    /** Tell Omnesis capture, for a suggestion accepted with a note. */
+    private readonly notes?: () => Pick<OmnesisNotesRuntime, "capture">,
   ) {
     this.queries = new TaskQueryService(db);
   }
@@ -72,6 +91,57 @@ export class TaskService {
   /** A task's change history, newest first, and the change undo would revert. */
   history(id: string): { events: OpenLoopLedgerEntry[]; undoSeq: number | null } {
     return { events: this.queries.history(id), undoSeq: this.queries.latestUndoable(id) };
+  }
+
+  /**
+   * Accept a suggestion and save what the user said about it as a Tell
+   * Omnesis note naming the task, which the note agent then reads and applies
+   * to it. Both land or neither does: a note that cannot be saved undoes the
+   * acceptance. A retry with the same note id finds the note already saved
+   * and answers with the task as it stands.
+   */
+  async acceptWithNote(input: AcceptWithNote): Promise<TaskCommandResult & { noteId?: string }> {
+    const notes = this.notes?.();
+    if (!notes) return { ok: false, reason: "invalid", message: "notes are unavailable" };
+    const saved = getNoteEntry(this.db, input.noteId);
+    if (saved) {
+      const item = this.queries.get(input.id);
+      if (saved.taskId !== input.id || !item)
+        return { ok: false, reason: "invalid", message: "that note belongs to another task" };
+      return {
+        ok: true,
+        loop: item.row,
+        loopId: input.id,
+        eventSeq: this.queries.latestUndoable(input.id),
+        resolved: false,
+        reopened: false,
+        receipt: `Added to your tasks: ${item.row.title}`,
+        noteId: saved.id,
+      };
+    }
+    const { note, noteId, ...accept } = input;
+    const result = await this.apply({ ...accept, kind: "accept" });
+    if (!result.ok || !result.loop) return result;
+    try {
+      await notes.capture({
+        id: noteId,
+        text: taskNoteText(result.loop.title, note),
+        capturedAt: new Date(this.clock()).toISOString(),
+        surface: "tasks",
+        fromOwner: true,
+        taskId: result.loopId,
+      });
+    } catch (err) {
+      if (result.eventSeq !== null)
+        await this.apply({
+          surface: input.surface,
+          runId: input.runId,
+          kind: "undo",
+          seq: result.eventSeq,
+        });
+      throw err;
+    }
+    return { ...result, noteId };
   }
 
   async apply(command: TaskCommand): Promise<TaskCommandResult> {

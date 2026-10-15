@@ -38,10 +38,11 @@ final class TaskFanController {
         session != nil
     }
 
-    /// The task whose row is under `point`, if its fan can open there.
+    /// The task whose row is under `point`, if its fan can open there: an
+    /// open task, or a suggestion, whose fan offers to take it on.
     func pressedTask(at point: CGPoint, in tasks: [TaskRecord]) -> TaskRecord? {
         tasks.first { task in
-            !task.isResolved && !task.isSuggestion && (rowFrames[task.id]?.contains(point) ?? false)
+            !task.isResolved && (rowFrames[task.id]?.contains(point) ?? false)
         }
     }
 
@@ -61,6 +62,7 @@ final class TaskFanController {
                 anchor: point,
                 bounds: bounds,
                 today: today,
+                kind: task.isSuggestion ? .suggestion : .task,
                 metrics: metrics,
                 mode: mode,
                 tracking: tracking
@@ -263,7 +265,7 @@ private struct TaskFanTargetButton: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
-                if target.action == .otherMonth {
+                if target.action == .otherMonth || target.action == .acceptFor {
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.bold))
                         .accessibilityHidden(true)
@@ -290,6 +292,7 @@ private struct TaskFanTargetButton: View {
         switch target.action {
         case .month: "Move to \(target.label)"
         case .otherMonth: "Other month"
+        case .acceptFor: "Accept for"
         default: target.label
         }
     }
@@ -297,11 +300,15 @@ private struct TaskFanTargetButton: View {
     private var icon: String {
         switch target.action {
         case .done: "checkmark"
-        case .doneWithNote: "square.and.pencil"
+        case .doneWithNote, .acceptWithNote: "square.and.pencil"
+        case .today: "sun.min"
         case .tomorrow: "sun.max"
-        case .nextMonth: "calendar"
-        case .otherMonth: "calendar.badge.clock"
+        case .thisMonth, .nextMonth: "calendar"
+        case .someday: "tray"
+        case .otherMonth, .acceptFor: "calendar.badge.clock"
         case .cancelTask: "xmark"
+        case .accept: "plus.circle"
+        case .ignore: "eye.slash"
         case .month: "calendar"
         case .back: "chevron.backward"
         case .laterMonths: "chevron.down"

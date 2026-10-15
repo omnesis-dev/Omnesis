@@ -163,7 +163,10 @@ data class TasksUiState(
     /** The task whose details (the editor) are open, if any. */
     val editing: TaskDto? = null,
     val history: TaskHistoryState? = null,
-    /** The task a "Done + note" capture is open for, if any. */
+    /**
+     * The task a note capture is open for, if any: "Done + note" on one of the user's tasks,
+     * "Accept with note" on a suggestion.
+     */
     val noting: TaskDto? = null,
 ) {
     val entries: List<TaskJournalEntry> get() = TasksReducer.entries(segment, tasks)
@@ -288,7 +291,7 @@ object TasksReducer {
 }
 
 /**
- * Today's footer banner, pointing at the Brain's suggestions: shown only where the Suggested
+ * Today's banner, at the top of the page, pointing at the Brain's suggestions: shown only where the Suggested
  * segment exists and something waits there.
  */
 fun suggestionsBannerText(count: Int, experimental: Boolean): String? = when {
@@ -304,8 +307,11 @@ fun suggestionsBannerText(count: Int, experimental: Boolean): String? = when {
 fun showsCaptureHint(segment: TaskSegment): Boolean =
     segment != TaskSegment.SUGGESTED && segment != TaskSegment.DONE
 
-/** Whether a long press on [task]'s row opens the action fan: the user's own open tasks. */
-fun hasActionFan(task: TaskDto): Boolean = !task.isResolved && !task.isSuggestion
+/**
+ * Whether a long press on [task]'s row opens the action fan: any open task. A suggestion's fan
+ * holds its own set of actions (see [TaskFanSession.SUGGESTION_ACTIONS]).
+ */
+fun hasActionFan(task: TaskDto): Boolean = !task.isResolved
 
 /** How the editor plans a task: not at all, on a day, in a month, or someday. */
 enum class TaskPlan { NONE, DAY, MONTH, SOMEDAY }

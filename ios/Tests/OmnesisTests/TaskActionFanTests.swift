@@ -21,6 +21,7 @@ final class TaskActionFanTests: XCTestCase {
     private func session(
         at anchor: CGPoint? = nil,
         today: String = "2026-10-14",
+        kind: TaskFanSession.Kind = .task,
         mode: TaskFanSession.Mode = .main,
         tracking: Bool = true
     )
@@ -29,6 +30,7 @@ final class TaskActionFanTests: XCTestCase {
             anchor: anchor ?? press,
             bounds: bounds,
             today: today,
+            kind: kind,
             schedule: schedule,
             mode: mode,
             tracking: tracking
@@ -48,6 +50,38 @@ final class TaskActionFanTests: XCTestCase {
             fan.targets.map(\.label),
             ["Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task"]
         )
+    }
+
+    /// A suggestion's fan offers to take it on, not to plan or cancel it.
+    func testSuggestionFanOffersAcceptMarkDoneAndIgnore() {
+        let fan = session(kind: .suggestion)
+        XCTAssertEqual(fan.targets.map(\.action), [.accept, .acceptWithNote, .acceptFor, .done, .ignore])
+        XCTAssertEqual(
+            fan.targets.map(\.label),
+            ["Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore"]
+        )
+    }
+
+    /// Resting on Accept for… opens the times to accept it for; its Other
+    /// month… leads to the months, whose Back returns to the times.
+    func testAcceptForOpensTheTimesAndTheirMonths() throws {
+        var fan = session(kind: .suggestion)
+        try fan.move(to: center(fan, .acceptFor), at: t0)
+        XCTAssertEqual(fan.tick(at: t0.addingTimeInterval(1)), [.modeChanged(.when)])
+        XCTAssertEqual(
+            fan.targets.map(\.label),
+            ["Back", "Today", "Tomorrow", "This month", "Next month", "Other month…", "Someday"]
+        )
+        var months = session(kind: .suggestion, mode: .when, tracking: false)
+        XCTAssertEqual(months.tap(.otherMonth), .stayOpen)
+        XCTAssertEqual(months.mode, .months(page: 0))
+        XCTAssertEqual(months.tap(.back), .stayOpen)
+        XCTAssertEqual(months.mode, .when, "a suggestion's months go back to its times")
+        XCTAssertEqual(months.tap(.back), .stayOpen)
+        XCTAssertEqual(months.mode, .main)
+        XCTAssertEqual(months.tap(.ignore), .perform(.ignore))
+        XCTAssertTrue(TaskFanAction.acceptFor.isNavigation)
+        XCTAssertFalse(TaskFanAction.ignore.isNavigation)
     }
 
     /// Up and to the left of a right thumb: every label clears the touch to

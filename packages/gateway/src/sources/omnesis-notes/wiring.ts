@@ -103,6 +103,8 @@ export interface CaptureNoteInput {
   placeName?: string;
   /** The capturing principal is the owner's own client; see `NoteEntry.fromOwner`. */
   fromOwner?: boolean;
+  /** The task the note is about; see `NoteEntry.taskId`. */
+  taskId?: string;
   /**
    * Leave the day document as it is for now; the caller calls `project(day)`
    * once whatever must accompany the note (a voice note's queued recording)
@@ -234,6 +236,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
         longitude: input.longitude ?? null,
         placeName: input.placeName ?? null,
         ...(input.fromOwner && !audit && !input.browserAuthority ? { fromOwner: true } : {}),
+        ...(input.taskId ? { taskId: input.taskId } : {}),
       };
       // INSERT OR IGNORE under the hood: a false result means this id
       // was already captured (client retry) — return the stored entry

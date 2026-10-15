@@ -93,6 +93,20 @@ class TasksDecodeTest {
         assertFalse(tasks[1].isDone)
     }
 
+    /** An ignored suggestion is out of Tasks; a gateway that predates `ignored` reads as not ignored. */
+    @Test
+    fun an_ignored_suggestion_is_not_a_suggestion() {
+        val tasks = OmnesisJson.decodeFromString<TaskViewDto>(
+            """{"view":"suggested","day":"2026-10-12","tasks":[
+                 {"id":"loop_i","title":"Renew the parking permit","origin":"brain","accepted":false,"ignored":true,"state":"open"},
+                 {"id":"loop_s","title":"Book the piano tuner","origin":"brain","accepted":false,"state":"open"}]}""",
+        ).tasks
+        assertTrue(tasks[0].ignored)
+        assertFalse(tasks[0].isSuggestion)
+        assertFalse(tasks[1].ignored)
+        assertTrue(tasks[1].isSuggestion)
+    }
+
     @Test
     fun task_detail_carries_history_newest_first_and_its_undo_point() {
         val detail = OmnesisJson.decodeFromString<TaskDetailDto>(
