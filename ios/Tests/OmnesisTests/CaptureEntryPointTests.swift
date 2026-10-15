@@ -46,7 +46,7 @@ final class CaptureEntryPointTests: XCTestCase {
         let home = uiRoot.appendingPathComponent("HomeView.swift")
         // Tasks are added by telling Omnesis, so the Tasks page's closing line
         // links to the same capture. That line is its only use.
-        let tasks = uiRoot.appendingPathComponent("Tasks/TasksView.swift")
+        let tasks = uiRoot.appendingPathComponent("Tasks/TaskJournalBanners.swift")
         let tasksSource = try source(at: tasks)
         XCTAssertTrue(tasksSource.contains("struct TaskCaptureHint"))
         XCTAssertEqual(
