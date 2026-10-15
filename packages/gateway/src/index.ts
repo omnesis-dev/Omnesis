@@ -2532,6 +2532,7 @@ const app = createServer(db, DB_PATH, {
       ...b.bootstrap,
       recencyWindowMs: b.recencyWindowMs,
       knowledgeRecentWindowMs: b.knowledge.recentWindowMs,
+      excludedSources: b.excludedSources,
       knowledge: true,
     };
   },

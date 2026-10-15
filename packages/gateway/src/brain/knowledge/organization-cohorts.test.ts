@@ -765,3 +765,17 @@ describe("publication-backed joint reconsideration", () => {
     expect(reconsiderPublishedRetrieval(db, { publishedThrough: boundary, limit: 8 }, 121)).toBe(0);
   });
 });
+
+describe("excluded sources", () => {
+  it("never selects a document from a source excluded from the Brain", () => {
+    for (const id of ["a", "b", "c"]) evidence(id);
+    expect(Object.keys(select()!.sourceVersions).sort()).toEqual(["a", "b", "c"]);
+    const selection = selectOrganizationCohort(db, {
+      now: 100,
+      intervalMs: 100,
+      retryMs: 500,
+      excludedSources: ["source-b"],
+    })!;
+    expect(Object.keys(selection.sourceVersions).sort()).toEqual(["a", "c"]);
+  });
+});

@@ -148,7 +148,14 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
   const knowledgeTimelineProbe =
     getSettings && io?.knowledgeDiscoveryByMonth
       ? new CachedScanProbe(
-          () => query.knowledgeDiscoveryTimeline(io, { now, horizonMs: getSettings().horizonMs }),
+          () => {
+            const settings = getSettings();
+            return query.knowledgeDiscoveryTimeline(io, {
+              now,
+              horizonMs: settings.horizonMs,
+              excludedSources: settings.excludedSources ?? [],
+            });
+          },
           BOOTSTRAP_TIMELINE_TTL_MS,
           now,
         )

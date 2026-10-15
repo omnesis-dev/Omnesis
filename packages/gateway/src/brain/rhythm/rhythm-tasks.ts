@@ -83,6 +83,8 @@ export interface CognitionRhythmOpts {
   isEnabled: () => boolean;
   /** Live settings slices (config is hot-reloadable). */
   getDailyRunHour: () => number;
+  /** Sources the Brain never processes (`brain.excludedSources`). */
+  getExcludedSources?: () => readonly string[];
   getDecayBackoff: () => DecayBackoffConfig;
   /**
    * Proactive-lane knobs — read live per tick. Optional: absent (as in
@@ -189,6 +191,7 @@ export function createCognitionRhythmTasks(
             writeGate: opts.writeGate,
             clock,
             getDailyRunHour: opts.getDailyRunHour,
+            ...(opts.getExcludedSources ? { getExcludedSources: opts.getExcludedSources } : {}),
             log,
             ...(opts.listAnalyticsSampleSourceIds
               ? { listAnalyticsSampleSourceIds: opts.listAnalyticsSampleSourceIds }
@@ -506,6 +509,7 @@ export function createCognitionRhythmTasks(
             writeGate: opts.writeGate,
             clock,
             getSettings: () => settings,
+            ...(opts.getExcludedSources ? { getExcludedSources: opts.getExcludedSources } : {}),
             log,
             ...(opts.idGen ? { idGen: opts.idGen } : {}),
           }),

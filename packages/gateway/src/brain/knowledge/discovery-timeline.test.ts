@@ -65,8 +65,17 @@ it("counts both phases exhaustively by current content generation and policy, re
         failed: 0,
         pending: 3,
         outOfScope: 0,
+        excluded: 0,
       },
-      organization: { considered: 1, gated: 0, deferred: 1, failed: 1, pending: 2, outOfScope: 0 },
+      organization: {
+        considered: 1,
+        gated: 0,
+        deferred: 1,
+        failed: 1,
+        pending: 2,
+        outOfScope: 0,
+        excluded: 0,
+      },
     },
     {
       month: null,
@@ -77,8 +86,17 @@ it("counts both phases exhaustively by current content generation and policy, re
         failed: 0,
         pending: 1,
         outOfScope: 0,
+        excluded: 0,
       },
-      organization: { considered: 0, gated: 0, deferred: 0, failed: 0, pending: 1, outOfScope: 0 },
+      organization: {
+        considered: 0,
+        gated: 0,
+        deferred: 0,
+        failed: 0,
+        pending: 1,
+        outOfScope: 0,
+        excluded: 0,
+      },
     },
   ]);
 });
@@ -117,8 +135,32 @@ it("reports unreviewed documents dated before the history horizon as out of scop
         failed: 0,
         pending: 1,
         outOfScope: 1,
+        excluded: 0,
       },
-      organization: { considered: 0, gated: 0, deferred: 0, failed: 0, pending: 1, outOfScope: 2 },
+      organization: {
+        considered: 0,
+        gated: 0,
+        deferred: 0,
+        failed: 0,
+        pending: 1,
+        outOfScope: 2,
+        excluded: 0,
+      },
     },
   ]);
+});
+
+it("reports unreviewed documents from excluded sources as excluded, not pending", () => {
+  source("session", "2025-06-20T10:00:00Z", "codex:local");
+  source("reviewed-session", "2025-06-20T10:00:00Z", "codex:local");
+  source("mail", "2025-06-20T10:00:00Z", "gmail:maya@example.com");
+  coverage("reviewed-session", "interpretation", "considered");
+  const [month] = knowledgeDiscoveryByMonth(db, ALL_HISTORY, ["codex"]);
+  // Review done before the exclusion stays counted as review.
+  expect(month!.interpretation).toMatchObject({ considered: 1, pending: 1, excluded: 1 });
+  expect(month!.organization).toMatchObject({ pending: 1, excluded: 2 });
+  expect(knowledgeDiscoveryByMonth(db, ALL_HISTORY)[0]!.organization).toMatchObject({
+    pending: 3,
+    excluded: 0,
+  });
 });

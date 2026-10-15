@@ -78,7 +78,7 @@ const CHOIR = email({
   externalId: "tasks-choir-season",
   title: "Choir season letter",
   content:
-    "Hello,\n\nPlease renew your choir membership, collect your music folder, and sign up for the spring concert rota.\n\nThe gym team",
+    "Hello,\n\nPlease renew your choir membership, collect your music folder, and sign up for the spring concert rota.\n\nStudio Northstar",
 });
 const NOTE_TITLE = "Renew the choir membership";
 const DONE_TITLE = "Collect the choir music folder";
@@ -114,7 +114,7 @@ const DRY_CLEANING = email({
   externalId: "tasks-dry-cleaning-ready",
   title: "Dry cleaning ready",
   content:
-    "Hello,\n\nYour coat is ready at the counter and has been collected by your neighbour.\n\nThe gym team",
+    "Hello,\n\nYour coat is ready at the counter and has been collected by your neighbour.\n\nThe dry cleaners",
 });
 const DRY_CLEANING_TASK = "Collect the dry cleaning";
 /** The scripted verifier finds this fact unsupported. */

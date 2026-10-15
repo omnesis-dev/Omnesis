@@ -121,6 +121,19 @@ describe("renderMorningBriefItemLines", () => {
     ]);
   });
 
+  test("leaves out a citation of a source excluded from the Brain", () => {
+    const doc = insertDoc("m2", "Studio Northstar invoice");
+    createObservation(
+      db,
+      { id: "obs_c", createdByRun: "r", summary: "Invoice due.", citations: [doc] },
+      NOW,
+    );
+    replaceMorningBriefItems(db, TODAY, "r", ["obs_c"]);
+    expect(renderMorningBriefItemLines(db, TODAY, ["gmail-test"])).toEqual([
+      "1. [obs_c] Invoice due.",
+    ]);
+  });
+
   test("renders a one-sided window", () => {
     createObservation(
       db,

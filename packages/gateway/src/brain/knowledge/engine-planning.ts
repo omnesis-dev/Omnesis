@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import {
   candidateAffinity,
   candidateBatchWork,
@@ -89,12 +90,17 @@ export class KnowledgeBatchPlanner {
       const erasureGeneration = this.context.deps.decisions.record
         ? knowledgeDecisionErasureGeneration(this.context.deps.db)
         : 0;
+      // An excluded source is never judged; its work is retired before planning.
+      const included = brainSourceInclusionSql(
+        this.context.deps.getSettings().excludedSources,
+        "d.source_id",
+      );
       const source = this.context.deps.db
         .prepare<
-          [string],
+          unknown[],
           { title: string; content: string; contentHash: string; sourceRevision: string }
-        >(`SELECT title,content,content_hash AS contentHash,${knowledgeSourceRevisionSql()} AS sourceRevision FROM documents d WHERE id=?`)
-        .get(item.subjectId);
+        >(`SELECT title,content,content_hash AS contentHash,${knowledgeSourceRevisionSql()} AS sourceRevision FROM documents d WHERE id=? AND ${included.sql}`)
+        .get(item.subjectId, ...included.params);
       if (!source || source.sourceRevision !== item.inputRevision) continue;
       const decisionId = this.context.deps.decisions.record ? this.context.id("kd") : undefined;
       const score = await judgeKnowledge(

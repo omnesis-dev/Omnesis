@@ -696,6 +696,9 @@ export function KnowledgeBootstrapPanel({
       html`${" History is admitted back to "}<strong
           >${new Date(status.horizon.notBefore).toLocaleDateString()}</strong
         >${" ("}<code>brain.bootstrap.horizon</code>${"); older documents are not reviewed proactively."}`}
+      ${status.excludedSources?.length > 0 &&
+      html`${" The Brain never processes "}<strong>${status.excludedSources.join(", ")}</strong
+        >${" ("}<code>brain.excludedSources</code>${")."}`}
     </p>
     <div class="cognition-cards">
       <${StatCard} label="Admitted today" value=${fmtCount(admission.today)} />

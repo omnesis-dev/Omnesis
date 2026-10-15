@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
-import { sourceTypeOf } from "@omnesis/types";
+import { sourceTypeOf, trySourceId } from "@omnesis/types";
 
 /**
  * Generation number of the persisted config shape (`omnesis.json`).
@@ -2913,8 +2913,25 @@ const brainKnowledge = z
       });
   });
 
+// One `brain.excludedSources` entry: a bare source type covers every source of
+// that type, a `type:account` id exactly one source. The type need not be
+// installed yet, so only the syntax is checked.
+const brainExcludedSource = z
+  .string()
+  .refine(
+    (value) => trySourceId(value) !== null,
+    "must be a source type (for example codex) or a source id (for example github:someone)",
+  );
+
 const brain = z
   .object({
+    excludedSources: z
+      .array(brainExcludedSource)
+      .max(256)
+      .describe(
+        "Sources the Brain never processes. A source type (for example codex) covers every source of that type; a source id (for example github:someone) covers exactly that source. The Brain admits no work from their documents, live or historical, its runs cannot search, fetch or newly cite them, and pending work already queued for them is withdrawn. Knowledge already derived from them is kept. Removing an entry lets historical review admit the source's documents again; arrivals while it was excluded are not replayed as live changes. The interactive agent is unaffected. Takes effect without a restart.",
+      )
+      .optional(),
     knowledge: brainKnowledge
       .describe("Grounded synthesis, discovery and maintenance scheduling.")
       .optional(),

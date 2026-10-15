@@ -40,6 +40,34 @@ describe("validateConfig — compact person profiles", () => {
   });
 });
 
+describe("validateConfig — brain.excludedSources", () => {
+  test("accepts source types and exact source ids, installed or not", () => {
+    const result = validateConfig({
+      brain: { excludedSources: ["codex", "github:jamie-lopez", "not-installed-yet"] },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.config.brain?.excludedSources).toEqual([
+        "codex",
+        "github:jamie-lopez",
+        "not-installed-yet",
+      ]);
+  });
+
+  test.each([
+    [["Codex"]],
+    [[""]],
+    [["codex:"]],
+    [[":account"]],
+    [["gmail:a:b"]],
+    [["two words"]],
+    [[42]],
+    ["codex"],
+  ])("rejects %j", (excludedSources) => {
+    expect(validateConfig({ brain: { excludedSources } }).ok).toBe(false);
+  });
+});
+
 describe("validateConfig — transcriptionVocabulary", () => {
   test("accepts disabling hints independently of the transcriber assignment", () => {
     const result = validateConfig({

@@ -64,6 +64,8 @@ export interface BootstrapSettingsView {
   /** How far back historical review reaches; see `knowledge/history-horizon.ts`. */
   horizonMs: number;
   recencyWindowMs: number;
+  /** Sources the Brain never processes (`brain.excludedSources`); see `source-exclusion.ts`. */
+  excludedSources?: readonly string[];
   /** Optional daily window the lane may buy work in; absent means always. */
   activeHours?: { from: string; to: string };
 }
@@ -506,6 +508,7 @@ export class CachedScanProbe<T extends { computedAt: number }> {
 export interface BootstrapTimelineReader {
   knowledgeDiscoveryByMonth?: (
     notBefore: string,
+    excludedSources?: readonly string[],
   ) => Promise<import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]>;
   bootstrapCorpusByMonth(
     recencyFloor: string,

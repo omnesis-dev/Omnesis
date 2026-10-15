@@ -139,6 +139,7 @@ export const CONFIG_DEFAULTS = {
       horizon: "90d",
     },
     sweepsEnabled: true,
+    excludedSources: [],
   },
   enrichment: {
     // Omnesis-derived enrichment signals. Runtime resolution lives in

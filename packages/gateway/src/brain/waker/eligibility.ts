@@ -68,6 +68,7 @@
  */
 
 import { isCognitionAuthoredDocument } from "../cognition-authored.js";
+import { isBrainExcludedSource } from "../source-exclusion.js";
 import { changedAddressedEntryIds } from "../addressed-entry-context.js";
 import {
   WAKER_SKIP_DOC_TYPES,
@@ -101,6 +102,8 @@ export interface WakerHeuristicsConfig {
   conversationMaxDeferMs: number;
   /** Max-defer ceiling for a document's continuously-folded run. */
   documentMaxDeferMs: number;
+  /** Sources the Brain never processes (`brain.excludedSources`); none wake it. */
+  excludedSources?: readonly string[];
 }
 
 /** A positive wake decision for one upsert event. */
@@ -184,6 +187,10 @@ export function decideWake(
   // Self-trigger guard: a cognition-authored document carries this engine's own
   // output, never something that happened to the user.
   if (isCognitionAuthoredDocument(after.sourceId, after.documentType)) return null;
+
+  // An excluded source never wakes the Brain, not even with addressed content.
+  if (cfg.excludedSources && isBrainExcludedSource(cfg.excludedSources, after.sourceId))
+    return null;
 
   // Explicitly-addressed documents (generic `metadata.addressedToAgent`
   // marker): the user deliberately handed this content to the assistant,

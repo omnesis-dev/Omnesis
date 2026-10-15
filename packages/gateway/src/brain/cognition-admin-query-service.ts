@@ -360,11 +360,14 @@ export class CognitionAdminQueryService {
 
   async knowledgeDiscoveryTimeline(
     io: BootstrapTimelineReader,
-    opts: { now: () => number; horizonMs: number },
+    opts: { now: () => number; horizonMs: number; excludedSources: readonly string[] },
   ): Promise<import("./knowledge/discovery-timeline.js").KnowledgeDiscoveryTimeline> {
     if (!io.knowledgeDiscoveryByMonth) throw new Error("Discovery timeline IO unavailable");
     const now = opts.now;
-    const months = await io.knowledgeDiscoveryByMonth(historyHorizonFloor(now(), opts.horizonMs));
+    const months = await io.knowledgeDiscoveryByMonth(
+      historyHorizonFloor(now(), opts.horizonMs),
+      opts.excludedSources,
+    );
     return { mode: "knowledge", months, computedAt: now() };
   }
 

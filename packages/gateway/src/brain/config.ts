@@ -166,6 +166,8 @@ export const BRAIN_DEFAULTS = {
   // a prompt nobody reads. Individual themes are toggled per sweep rather
   // than through this switch, which turns the whole lane off.
   sweepsEnabled: true,
+  // No source is withheld from the Brain unless the operator names it.
+  excludedSources: [] as readonly string[],
 } as const;
 
 /** The `brain` block resolved to concrete runtime values (durations in ms). */
@@ -383,6 +385,11 @@ export interface ResolvedBrainSettings {
   };
   /** Master switch for the built-in scheduled sweep themes. */
   sweepsEnabled: boolean;
+  /**
+   * Sources the Brain never processes: bare source types and exact source ids,
+   * deduplicated. See `source-exclusion.ts`.
+   */
+  excludedSources: readonly string[];
   /**
    * Trailing window (ms) the synthesis "Noticing" pass reflects over and the
    * span of recent annotations surfaced as priors. Derived = the recency
@@ -602,6 +609,7 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
       ...(settings?.bootstrap?.activeHours ? { activeHours: settings.bootstrap.activeHours } : {}),
     },
     sweepsEnabled: settings?.sweepsEnabled ?? BRAIN_DEFAULTS.sweepsEnabled,
+    excludedSources: [...new Set(settings?.excludedSources ?? BRAIN_DEFAULTS.excludedSources)],
     // Derived (no operator knob): the noticing pass reflects over the recency
     // window; the annotation prime and confidence ceiling are fixed caps.
     synthesisLookbackMs: recencyWindowMs,

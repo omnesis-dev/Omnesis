@@ -16,9 +16,16 @@ import Foundation
 actor TasksDemoGateway: TasksService {
     private var tasks: [TaskRecord]
     private var ledger: [(seq: Int, before: TaskRecord)] = []
-    /// Notes saved by accepting a suggestion with a note, as the gateway's
-    /// Tell Omnesis ledger would hold them.
-    private(set) var notes: [(id: String?, taskId: String, text: String)] = []
+    /// A note saved by accepting a suggestion with a note, as the gateway's
+    /// Tell Omnesis ledger would hold it.
+    struct SavedNote: Equatable {
+        let id: String?
+        let taskId: String
+        let text: String
+    }
+
+    /// Notes saved by accepting a suggestion with a note.
+    private(set) var notes: [SavedNote] = []
     private var nextSeq = 100
     private let schedule: TaskSchedule
     /// The instant a task resolved "now" is stamped with.
@@ -93,7 +100,7 @@ actor TasksDemoGateway: TasksService {
             var plan = task.scheduledFor
             if case .set(let value) = scheduledFor { plan = value }
             updated = task.changed(accepted: true, scheduledFor: .some(plan))
-            if let note { notes.append((id: noteId, taskId: task.id, text: note)) }
+            if let note { notes.append(SavedNote(id: noteId, taskId: task.id, text: note)) }
             verb = "Added to your tasks"
         case .ignore:
             // The loop stays open on the gateway; only the Tasks views drop it.

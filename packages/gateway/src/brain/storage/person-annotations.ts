@@ -28,6 +28,7 @@
 
 import { createHash } from "node:crypto";
 import { containsNormalized } from "../quote-match.js";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { resolvePersonId } from "../../domain/PeopleResolutionService.js";
 import { knowledgeSourceRevisionSql } from "../knowledge/source-revision.js";
 import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
@@ -709,11 +710,22 @@ export interface DueVerificationPersonAnnotation {
  */
 export function listDueVerificationPersonAnnotations(
   db: Db,
-  opts: { cutoff: number; limit: number },
+  opts: {
+    cutoff: number;
+    limit: number;
+    /** Sources excluded from the Brain: a fact resting on live evidence from one is not due. */
+    excludedSources?: readonly string[];
+  },
 ): DueVerificationPersonAnnotation[] {
+  const excluded = opts.excludedSources ?? [];
+  const inclusion = brainSourceInclusionSql(excluded, "d.source_id");
+  const fence = excluded.length
+    ? `AND NOT EXISTS (SELECT 1 FROM person_annotation_evidence e JOIN documents d ON d.id = e.evidence_doc_id
+         WHERE e.annotation_id = pa.id AND e.broken_at IS NULL AND NOT (${inclusion.sql}))`
+    : "";
   return db
     .prepare<
-      [number, number],
+      unknown[],
       { id: string; last_verified_at: number | null; created_at: number; is_self: number }
     >(
       `SELECT pa.id, pa.last_verified_at, pa.created_at,
@@ -722,11 +734,12 @@ export function listDueVerificationPersonAnnotations(
          LEFT JOIN people p ON p.id = pa.person_id
         WHERE pa.invalidated_at IS NULL
           AND (pa.last_verified_at IS NULL OR pa.last_verified_at < ?)
+          ${fence}
         ORDER BY COALESCE(p.is_self, 0) DESC, COALESCE(pa.last_verified_at, 0) ASC,
                  pa.created_at ASC
         LIMIT ?`,
     )
-    .all(opts.cutoff, opts.limit)
+    .all(opts.cutoff, ...(fence ? inclusion.params : []), opts.limit)
     .map((r) => ({
       id: r.id,
       lastVerifiedAt: r.last_verified_at,

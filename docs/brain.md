@@ -145,6 +145,54 @@ purges derived content, including historical provenance.
 Newly arriving historical evidence is considered without treating its events
 as new commitments or allowing an old proposal to overwrite an accepted plan.
 
+## Excluded sources
+
+`brain.excludedSources` names sources the Brain never processes. An entry is a
+bare source type (`codex`), covering every source of that type, or an exact
+source id (`github:someone`), covering one source; matching follows
+`sourceIdAddresses`, so a type never matches another type that merely shares its
+prefix. Entries are validated for syntax only, so a type can be excluded before
+any source of it is installed. Every consumer reads the list live
+(`brain/source-exclusion.ts`), so a change applies on the next tick or tool call.
+
+- **Admission.** The engine reads an excluded document as absent: intake
+  acknowledges its journal entries without enqueuing work, recent-inventory and
+  historical admission skip its source, organization cohorts never select it,
+  the daily batch enqueuer skips it, and the waker ignores it. Each maintenance
+  tick withdraws pending source work for excluded documents, whatever admitted
+  it, after every admission step and before planning, without settling
+  coverage, so historical review can admit them once the exclusion is removed.
+  Organization revisits skip evidence from excluded sources, and the planner's
+  urgency judgement never reads one. A frontier item already batched settles as unchanged without a model
+  turn. A queued datum, bootstrap or daily run for an excluded subject completes
+  in preflight without a model call.
+- **Reading.** A background run's read ports are wrapped
+  (`brain/steward/source-fence.ts`): search drops excluded hits, their
+  breadcrumbs and any graph-context provenance that touches one, a fetch or URL lookup of an excluded document reads as
+  not found, connection traces, time-index results and entity context omit
+  excluded documents and sources, and `run_sql` is scoped to the tables of the
+  remaining sources, as for a source-restricted grant. The temporal reads that
+  build run prompts (datum projections, nearby timeline, digest horizon) are
+  fenced the same way; the datum neighbourhood, the morning brief's citations and
+  maintenance seeds exclude them.
+- **Citation.** Every tool call of a background run is refused with
+  `excluded_source` when its arguments name an excluded document, as an id, a
+  list entry, an object key or a `source:<id>` reference in text; arguments too
+  large or deep to check are refused too. No new loop, annotation, temporal
+  annotation or page claim can rest on one. A `knowledge_save` may carry the
+  page's existing citations of an excluded document through unchanged.
+
+The interactive agent and its own memory tools are unaffected. Existing
+knowledge derived from an excluded source is kept and stays visible to Brain
+runs as knowledge (annotation evidence quotes, loop document ids, page claims);
+its doc and person annotations are skipped by the re-verification sweep. Source edits and deletions still invalidate and purge
+dependent knowledge as usual. Journal entries acknowledged while a source was
+excluded are not replayed; historical review within `brain.bootstrap.horizon`
+admits those documents once the exclusion is removed. Bootstrap status reports
+the active list as `excludedSources`, the discovery timeline counts unreviewed
+excluded documents as `excluded`, and inventory status reports an `excluded`
+window, none of which reads as pending.
+
 ## Claims and context
 
 Wikis, root text, loop descriptions and annotations use Markdown with

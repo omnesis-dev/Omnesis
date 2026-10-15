@@ -40,6 +40,7 @@ export class KnowledgeOrganization {
       limit: Math.min(8, cfg.maxSeeds),
       intervalMs: Math.max(60000, cfg.routineDelayMs),
       retryMs: Math.max(60000, cfg.maxReviewIntervalMs),
+      excludedSources: deps.getSettings().excludedSources,
     });
     if (!selection) return 0;
     const ids = Object.keys(selection.sourceVersions);

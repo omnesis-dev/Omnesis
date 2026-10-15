@@ -8,15 +8,22 @@ import {
 import { listTemporalAnnotationsAwaitingRefile } from "../../enrichment/temporal-annotations/storage.js";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
 import { bootstrapWindowOpen } from "../bootstrap-window.js";
+import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
 import { getKnowledgeDependencies, getKnowledgeNode, listKnowledgeChanges } from "./storage.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
-import { hasHistoricalKnowledgeWorkBeyond, historicalKnowledgeAdmissions } from "./work.js";
+import {
+  hasHistoricalKnowledgeWorkBeyond,
+  hasKnowledgeWorkFromExcludedSources,
+  historicalKnowledgeAdmissions,
+} from "./work.js";
 import { historyHorizonFloor } from "./history-horizon.js";
 import { KNOWLEDGE_DISCOVERY_POLICY, listKnowledgeDiscoveryBacklog } from "./discovery.js";
 import { judgeKnowledge } from "./decision.js";
 import { scheduleKnowledgeChange, type MaintenanceArc } from "./planner.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
+/** Bounded writer ops one tick spends withdrawing excluded work; the rest waits a tick. */
+const MAX_RETIRE_PASSES = 8;
 interface IntakeContext {
   deps: KnowledgeEngineDeps;
   id: (prefix: string) => string;
@@ -262,12 +269,13 @@ export class KnowledgeIntake {
     const after = checkpoint
       ? (JSON.parse(checkpoint.value_json) as { sourceId: string }).sourceId
       : "";
+    const included = brainSourceInclusionSql(deps.getSettings().excludedSources, "source_id");
     const sources = deps.db
       .prepare<
-        [string, number],
+        unknown[],
         { sourceId: string }
-      >(`SELECT DISTINCT source_id AS sourceId FROM source_inventories ORDER BY source_id<=?,source_id LIMIT ?`)
-      .all(after, Math.min(cfg.bootstrapBatchSize, room));
+      >(`SELECT DISTINCT source_id AS sourceId FROM source_inventories WHERE ${included.sql} ORDER BY source_id<=?,source_id LIMIT ?`)
+      .all(...included.params, after, Math.min(cfg.bootstrapBatchSize, room));
     for (const { sourceId } of sources) {
       const docs = listKnowledgeDiscoveryBacklog(deps.db, {
         phase: "organization",
@@ -307,6 +315,29 @@ export class KnowledgeIntake {
       );
   }
 
+  /**
+   * Withdraw pending source work of sources excluded from the Brain, whatever
+   * admitted it. Each tick runs it after every admission step and before
+   * planning, so no excluded work is batched; the list is re-read every tick,
+   * so an exclusion added while the gateway runs applies without a restart.
+   * Each writer op is bounded; a large backlog drains over a few of them.
+   */
+  async retireExcluded(): Promise<void> {
+    const excluded = this.context.deps.getSettings().excludedSources;
+    let retired = 0;
+    for (
+      let pass = 0;
+      pass < MAX_RETIRE_PASSES &&
+      hasKnowledgeWorkFromExcludedSources(this.context.deps.db, excluded);
+      pass++
+    )
+      retired += await this.context.deps.writeGate["knowledge.retireExcludedSources"](excluded);
+    if (retired)
+      this.context.deps.log.info(
+        `Retired ${retired} pending work item(s) from sources excluded from the Brain`,
+      );
+  }
+
   async bootstrap(): Promise<void> {
     const settings = this.context.deps.getSettings(),
       cfg = settings.knowledge,
@@ -322,6 +353,7 @@ export class KnowledgeIntake {
         `Retired ${retired} pending historical work item(s) dated before the history horizon (${notBefore})`,
       );
     }
+    const excluded = settings.excludedSources;
     await this.recentInventory(notBefore);
     if (
       !backfill.enabled ||
@@ -360,20 +392,21 @@ export class KnowledgeIntake {
       ? (JSON.parse(checkpoint.value_json) as { sourceId: string }).sourceId
       : "";
     const limit = Math.min(cfg.bootstrapBatchSize, room);
+    const included = brainSourceInclusionSql(excluded, "source_id");
     const sources = this.context.deps.db
       .prepare<
-        [string, number],
+        unknown[],
         { source_id: string }
-      >("SELECT DISTINCT source_id FROM documents WHERE source_id>? ORDER BY source_id LIMIT ?")
-      .all(after, limit);
+      >(`SELECT DISTINCT source_id FROM documents WHERE source_id>? AND ${included.sql} ORDER BY source_id LIMIT ?`)
+      .all(after, ...included.params, limit);
     if (sources.length < limit) {
       sources.push(
         ...this.context.deps.db
           .prepare<
-            [string, number],
+            unknown[],
             { source_id: string }
-          >("SELECT DISTINCT source_id FROM documents WHERE source_id<=? ORDER BY source_id LIMIT ?")
-          .all(after, limit - sources.length),
+          >(`SELECT DISTINCT source_id FROM documents WHERE source_id<=? AND ${included.sql} ORDER BY source_id LIMIT ?`)
+          .all(after, ...included.params, limit - sources.length),
       );
     }
     let remaining = sources;

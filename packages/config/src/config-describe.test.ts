@@ -76,6 +76,7 @@ const EXPECTED_INVENTORY = [
   "/brain/digest/push [boolean]",
   "/brain/documentMaxDefer [duration]",
   "/brain/documentUpdateDebounce [duration]",
+  "/brain/excludedSources [stringArray]",
   "/brain/judge/enabled [boolean]",
   "/brain/knowledge/bootstrapBatchSize [number]",
   "/brain/knowledge/cascadeBatchSize [number]",
