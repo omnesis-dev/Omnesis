@@ -107,6 +107,14 @@ export function createKnowledgeTables(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS knowledge_retired_loop_sources (loop_id TEXT NOT NULL, document_id TEXT NOT NULL, PRIMARY KEY(loop_id,document_id));
     CREATE INDEX IF NOT EXISTS knowledge_retired_source ON knowledge_retired_loop_sources(document_id,loop_id);
     CREATE TABLE IF NOT EXISTS knowledge_node_tombstones (id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL);
+    -- Legacy owners the conversion sweep set aside: why, and the input
+    -- fingerprint and retry time that make it eligible again.
+    CREATE TABLE IF NOT EXISTS knowledge_conversion_deferrals (
+      kind TEXT NOT NULL, owner_id TEXT NOT NULL, reason TEXT NOT NULL,
+      input_fingerprint TEXT NOT NULL, attempts INTEGER NOT NULL,
+      first_deferred_at INTEGER NOT NULL, last_attempt_at INTEGER NOT NULL,
+      retry_at INTEGER NOT NULL, PRIMARY KEY(kind,owner_id)
+    );
     CREATE TABLE IF NOT EXISTS knowledge_cascade_jobs (
       id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, target_kind TEXT NOT NULL,
       target_id TEXT NOT NULL, revision TEXT NOT NULL, created_at INTEGER NOT NULL,

@@ -476,6 +476,17 @@ Late sources, revised inputs and policy changes can reopen coverage. Pausing
 historical admission preserves completed work; resuming can revisit genuinely
 changed inputs.
 
+Legacy loops, observations and annotations convert into knowledge nodes through
+a bounded sweep. A conversion keeps the sources that are still readable
+evidence, ignores generated mirror documents it cites, and drops deleted or
+removed ones. An owner the sweep cannot convert (it is hidden, every source it
+cites is gone, or it cites too many) is set aside with its reason and an input
+fingerprint. The sweep skips it until that fingerprint changes or a backed-off
+retry comes due: minutes for a write race, hours to a week for an input refusal.
+`conversionProgress` in bootstrap status and `conversion` in
+`/admin/brain/knowledge/status` count converted owners and set-aside owners by
+reason, and each sweep pass that converts or sets aside an owner logs one line.
+
 The run queue uses four maintenance workers by default (`brain.workerConcurrency`,
 maximum 32). Only maintenance tied to a live batch with reserved regions can
 execute in parallel; root aggregation and legacy runs, including daily reviews

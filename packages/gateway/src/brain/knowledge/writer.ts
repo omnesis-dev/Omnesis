@@ -26,7 +26,8 @@ import {
 import { recordKnowledgeDecision } from "./decision-storage.js";
 import { advanceKnowledgeOwnerSync } from "./owner-sync.js";
 import { setKnowledgeLink } from "./links.js";
-import { saveOwnedKnowledgeNode, convertKnowledgeOwner } from "./owner-adapters.js";
+import { saveOwnedKnowledgeNode } from "./owner-adapters.js";
+import { attemptLegacyOwnerConversion } from "./owner-conversion.js";
 import {
   saveKnowledgeNode,
   registerKnowledgeEvidence,
@@ -113,7 +114,7 @@ export const knowledgeWriterHandlers = {
   "knowledge.syncOwners": advanceKnowledgeOwnerSync,
   "knowledge.adoptWork": appendKnowledgeBatchWork,
   "knowledge.promoteBlockingBatches": promoteBlockingKnowledgeBatches,
-  "knowledge.convertOwner": convertKnowledgeOwner,
+  "knowledge.convertOwner": attemptLegacyOwnerConversion,
   "knowledge.saveOwned": saveOwnedKnowledgeNode,
   "knowledge.checkpoint": setKnowledgeCheckpoint,
   "knowledge.scheduleReview": scheduleKnowledgeReview,
@@ -217,7 +218,7 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.adoptWork": async (...args) => appendKnowledgeBatchWork(db, ...args),
     "knowledge.promoteBlockingBatches": async (...args) =>
       promoteBlockingKnowledgeBatches(db, ...args),
-    "knowledge.convertOwner": async (...args) => convertKnowledgeOwner(db, ...args),
+    "knowledge.convertOwner": async (...args) => attemptLegacyOwnerConversion(db, ...args),
     "knowledge.saveOwned": async (...args) => saveOwnedKnowledgeNode(db, ...args),
     "knowledge.checkpoint": async (...args) => setKnowledgeCheckpoint(db, ...args),
     "knowledge.scheduleReview": async (...args) => scheduleKnowledgeReview(db, ...args),

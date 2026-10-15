@@ -18,6 +18,7 @@ import { historicalObservationFields } from "./owner-maintenance.js";
 import { parseClaimMarkup } from "./claims.js";
 import { getKnowledgeNode, saveKnowledgeNode } from "./storage.js";
 import { isKnowledgeOwnerReadable } from "./storage-fence.js";
+import { knowledgeEvidenceAvailability } from "./storage-source-fence.js";
 import { knowledgeHash } from "./storage-validation.js";
 import {
   KnowledgeStorageError,
@@ -27,6 +28,26 @@ import {
 import type Database from "better-sqlite3";
 
 export type KnowledgeOwnerKind = Exclude<KnowledgeNodeKind, "wiki" | "root">;
+
+/**
+ * Why a legacy owner cannot become a knowledge node from its current inputs:
+ * it is missing or privacy-hidden, every source it cites is gone, or it cites
+ * more sources than one bounded conversion can record.
+ */
+export type LegacyOwnerUnconvertibleReason =
+  | "owner_unavailable"
+  | "evidence_unavailable"
+  | "provenance_limit";
+
+export class LegacyOwnerConversionError extends KnowledgeStorageError {
+  constructor(
+    code: "reference_invalid" | "claim_invalid",
+    readonly reason: LegacyOwnerUnconvertibleReason,
+    message: string,
+  ) {
+    super(code, message);
+  }
+}
 export interface KnowledgeOwnerSnapshot {
   id: string;
   kind: KnowledgeOwnerKind;
@@ -197,7 +218,11 @@ export function readKnowledgeOwner(
     default:
       return assertNever(kind);
   }
-  throw new KnowledgeStorageError("reference_invalid", "Canonical synthesis owner does not exist");
+  throw new LegacyOwnerConversionError(
+    "reference_invalid",
+    "owner_unavailable",
+    "Canonical synthesis owner does not exist",
+  );
 }
 
 /** Canonical operational fields are read inside the writer transaction, never model supplied. */
@@ -408,7 +433,14 @@ export function buildLegacyOwnerKnowledge(
   const ownerId = owner.id;
   const kind = owner.kind;
   const versions: Record<string, string> = {};
+  // Generated mirrors are not evidence. Deleted or removed sources drop out;
+  // derived text survives only while some source it cites is still readable.
+  let cited = 0;
   for (const id of owner.evidenceDocumentIds) {
+    const availability = knowledgeEvidenceAvailability(db, id);
+    if (availability === "generated") continue;
+    cited++;
+    if (availability === "unavailable") continue;
     const doc = db
       .prepare<
         [string],
@@ -417,9 +449,10 @@ export function buildLegacyOwnerKnowledge(
       .get(id);
     if (doc) versions[`source:${id}`] = doc.content_hash;
   }
-  if (owner.evidenceDocumentIds.length && !Object.keys(versions).length)
-    throw new KnowledgeStorageError(
+  if (cited && !Object.keys(versions).length)
+    throw new LegacyOwnerConversionError(
       "reference_invalid",
+      "evidence_unavailable",
       "Legacy evidence is unavailable; conversion cannot restore derived text",
     );
   // Escape legacy claim-like syntax: migration must not interpret arbitrary old
@@ -430,8 +463,9 @@ export function buildLegacyOwnerKnowledge(
     refs.slice(index * 64, index * 64 + 64),
   );
   if (groups.length > 16)
-    throw new KnowledgeStorageError(
+    throw new LegacyOwnerConversionError(
       "claim_invalid",
+      "provenance_limit",
       "Legacy provenance exceeds the bounded conversion context",
     );
   let markdown = escaped;

@@ -10,6 +10,7 @@ import { historicalKnowledgeAdmissions } from "./work.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery.js";
 import { KNOWLEDGE_WORK_PARKED } from "./work-retry.js";
 import { historyHorizonFloor } from "./history-horizon.js";
+import { readLegacyConversionStatus } from "./owner-conversion.js";
 import type Database from "better-sqlite3";
 
 /** Durable admission and coverage milestones; never legacy processed-document markers. */
@@ -101,6 +102,8 @@ export function readKnowledgeBootstrapStatus(
         "SELECT id,revision,updated_at AS updatedAt FROM knowledge_checkpoints WHERE id LIKE 'knowledge:conversion:%' ORDER BY id",
       )
       .all(),
+    /** Legacy owners converted, and those the sweep set aside by reason. */
+    conversionProgress: readLegacyConversionStatus(db),
     recentWindowMs: settings.knowledgeRecentWindowMs ?? 30 * 86_400_000,
     /** Documents dated before `notBefore` are outside review, not pending. */
     horizon: { horizonMs: settings.horizonMs, notBefore },

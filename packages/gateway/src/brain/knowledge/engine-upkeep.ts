@@ -17,8 +17,8 @@ import { isHistoricalKnowledgeOwner } from "./owner-maintenance.js";
 import { knowledgeWorkParkedSql } from "./work-retry.js";
 import { judgeKnowledge } from "./decision.js";
 import { KnowledgeStorageError } from "./types.js";
+import { LEGACY_OWNER_TABLES, legacyOwnerConversionFingerprint } from "./owner-conversion.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
-import type { KnowledgeOwnerKind } from "./owner-adapters.js";
 
 export class KnowledgeUpkeep {
   constructor(
@@ -75,18 +75,20 @@ export class KnowledgeUpkeep {
       );
   }
 
+  /**
+   * One page per owner kind of the legacy conversion sweep. An owner the sweep
+   * set aside is skipped on the reader until its retry comes due or its input
+   * fingerprint changes, so an unconvertible owner costs no writer work per pass.
+   */
   async convert(): Promise<void> {
-    const kinds: Array<[KnowledgeOwnerKind, string]> = [
-      ["loop", "open_loops"],
-      ["observation", "observations"],
-      ["doc_annotation", "doc_annotations"],
-      ["person_annotation", "person_annotations"],
-    ];
     const limit = Math.max(
       1,
-      Math.floor(this.deps.getSettings().knowledge.bootstrapBatchSize / kinds.length),
+      Math.floor(this.deps.getSettings().knowledge.bootstrapBatchSize / LEGACY_OWNER_TABLES.length),
     );
-    for (const [kind, table] of kinds) {
+    const now = this.deps.clock();
+    let converted = 0;
+    const deferred = new Map<string, number>();
+    for (const [kind, table] of LEGACY_OWNER_TABLES) {
       if (
         !this.deps.db
           .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
@@ -103,25 +105,28 @@ export class KnowledgeUpkeep {
       const after = checkpoint ? (JSON.parse(checkpoint.value_json) as string) : "";
       const rows = this.deps.db
         .prepare<
-          [string, number],
-          { id: string }
-        >(`SELECT o.id FROM ${table} o WHERE o.id>? AND NOT EXISTS(SELECT 1 FROM knowledge_nodes n WHERE n.id=o.id) AND NOT EXISTS(SELECT 1 FROM knowledge_node_tombstones t WHERE t.id=o.id) ORDER BY o.id LIMIT ?`)
-        .all(after, limit);
+          [string, string, number],
+          { id: string; retryAt: number | null; fingerprint: string | null }
+        >(
+          `SELECT o.id,d.retry_at AS retryAt,d.input_fingerprint AS fingerprint FROM ${table} o
+          LEFT JOIN knowledge_conversion_deferrals d ON d.kind=? AND d.owner_id=o.id
+          WHERE o.id>? AND NOT EXISTS(SELECT 1 FROM knowledge_nodes n WHERE n.id=o.id) AND NOT EXISTS(SELECT 1 FROM knowledge_node_tombstones t WHERE t.id=o.id) ORDER BY o.id LIMIT ?`,
+        )
+        .all(kind, after, limit);
       for (const row of rows) {
-        try {
-          await this.deps.writeGate["knowledge.convertOwner"](kind, row.id, this.deps.clock());
-        } catch (error) {
-          if (
-            !(
-              error instanceof KnowledgeStorageError &&
-              ["reference_invalid", "revision_conflict", "claim_invalid"].includes(error.code)
-            )
-          )
-            throw error;
-          this.deps.log.warn(
-            "Knowledge owner conversion deferred because evidence or structure needs repair",
-          );
-        }
+        if (
+          row.retryAt !== null &&
+          row.retryAt > now &&
+          legacyOwnerConversionFingerprint(this.deps.db, kind, row.id) === row.fingerprint
+        )
+          continue;
+        const attempt = await this.deps.writeGate["knowledge.convertOwner"](
+          kind,
+          row.id,
+          this.deps.clock(),
+        );
+        if (attempt.outcome === "converted") converted++;
+        else deferred.set(attempt.reason, (deferred.get(attempt.reason) ?? 0) + 1);
       }
       // A completed scan wraps for newly created legacy owners whose IDs sort earlier.
       await this.deps.writeGate["knowledge.checkpoint"](
@@ -133,6 +138,12 @@ export class KnowledgeUpkeep {
         this.deps.clock(),
       );
     }
+    if (deferred.size) {
+      const reasons = [...deferred].map(([reason, count]) => `${reason} ${count}`).join(", ");
+      this.deps.log.warn(
+        `Legacy owner conversion: ${converted} converted, ${[...deferred.values()].reduce((a, b) => a + b, 0)} set aside (${reasons})`,
+      );
+    } else if (converted) this.deps.log.info(`Legacy owner conversion: ${converted} converted`);
   }
 
   async organization(): Promise<void> {

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { NotFoundError } from "../../http/errors.js";
+import { readLegacyConversionStatus } from "./owner-conversion.js";
 import { readRetrievalReconsiderationStatus } from "./retrieval-reconsideration.js";
 import {
   readParkedKnowledgeWorkSummary,
@@ -104,6 +105,8 @@ export class KnowledgeQueryService {
       cascades: this.db
         .prepare("SELECT COUNT(*) AS pending FROM knowledge_cascade_frontier WHERE done=0")
         .get(),
+      // Legacy owners converted, and those the sweep set aside by reason.
+      conversion: readLegacyConversionStatus(this.db),
     };
   }
   nodeDecisions(id: string) {
