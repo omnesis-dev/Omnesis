@@ -7647,6 +7647,29 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "312-tasks-suggested")
     }
 
+    /// A page of the pager on its own — Month, as a swipe from Today draws
+    /// it in — and a page whose read-ahead has not landed yet, which shows a
+    /// spinner rather than claiming the view is empty.
+    func testTasksJournalPages() {
+        let month = TaskJournalPage(
+            model: .fixture(
+                selected: .month,
+                tasks: PreviewMocks.tasksMonth,
+                counts: PreviewMocks.tasksTodayCounts,
+                now: PreviewMocks.tasksNow
+            ),
+            view: .month
+        )
+        .environment(AppStore.preview())
+        snapshot(month, name: "313a-tasks-page-month", size: CGSize(width: 393, height: 1100))
+        let unread = TaskJournalPage(
+            model: .fixture(tasks: PreviewMocks.tasksToday, counts: PreviewMocks.tasksTodayCounts, now: PreviewMocks.tasksNow),
+            view: .future
+        )
+        .environment(AppStore.preview())
+        snapshot(unread, name: "313b-tasks-page-not-yet-read", size: CGSize(width: 393, height: 600))
+    }
+
     /// An empty Today: heading, the empty state's guidance, and the Tell
     /// Omnesis line.
     func testTasksEmpty() {

@@ -17,9 +17,11 @@ import UIKit
 /// the views under it, so a long press never also completes a task or opens
 /// its details.
 ///
-/// While a press owns the touch the bridge switches the scroll view's own
-/// pan off, so sliding over the fan cannot scroll the list, and switches it
-/// back on in the same step that ends the press — `TaskPressLifecycle`
+/// While a press owns the touch the bridge switches off the pan of the
+/// scroll view and of every scroll view around it — the list, and the pager
+/// that turns between journal views — so sliding over the fan can neither
+/// scroll the list nor turn the page, and switches them back on in the same
+/// step that ends the press — `TaskPressLifecycle`
 /// guarantees that step comes exactly once, however the press ends. Nothing
 /// about scrolling is left to view state, which can lag or be lost.
 ///
@@ -49,8 +51,8 @@ final class TaskRowPressBridge: NSObject, UIGestureRecognizerDelegate {
     }()
 
     private var lifecycle = TaskPressLifecycle()
-    /// The scroll view whose pan this press switched off, to switch back on.
-    private weak var suspendedScrollView: UIScrollView?
+    /// The scroll views whose pans this press switched off, to switch back on.
+    private var suspendedScrollViews: [WeakScrollView] = []
 
     fileprivate weak var spaceView: UIView?
 
@@ -88,13 +90,17 @@ final class TaskRowPressBridge: NSObject, UIGestureRecognizerDelegate {
         for command in commands {
             switch command {
             case .suspendScrolling:
-                // Switching the pan off also cancels one already under way.
-                let scrollView = recognizer.view as? UIScrollView
-                scrollView?.panGestureRecognizer.isEnabled = false
-                suspendedScrollView = scrollView
+                // Switching a pan off also cancels one already under way.
+                let scrollViews = Self.scrollViews(enclosing: recognizer.view)
+                for scrollView in scrollViews {
+                    scrollView.panGestureRecognizer.isEnabled = false
+                }
+                suspendedScrollViews = scrollViews.map(WeakScrollView.init)
             case .resumeScrolling:
-                suspendedScrollView?.panGestureRecognizer.isEnabled = true
-                suspendedScrollView = nil
+                for scrollView in suspendedScrollViews.compactMap(\.view) {
+                    scrollView.panGestureRecognizer.isEnabled = true
+                }
+                suspendedScrollViews = []
             case .begin(let point): began(point)
             case .move(let point): moved(point)
             case .end(let point): ended(point)
@@ -102,10 +108,21 @@ final class TaskRowPressBridge: NSObject, UIGestureRecognizerDelegate {
         }
     }
 
+    /// `view` itself when it scrolls, then every scroll view it sits in.
+    private static func scrollViews(enclosing view: UIView?) -> [UIScrollView] {
+        guard let view else { return [] }
+        return sequence(first: view, next: \.superview).compactMap { $0 as? UIScrollView }
+    }
+
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let point = location(of: gestureRecognizer) else { return false }
         return canBegin(point)
     }
+}
+
+/// A scroll view held without keeping it alive.
+private struct WeakScrollView {
+    weak var view: UIScrollView?
 }
 
 /// Placed inside the scroll content: attaches the bridge to the enclosing

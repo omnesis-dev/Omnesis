@@ -130,6 +130,17 @@ final class TasksLogicTests: XCTestCase {
         XCTAssertNil(TaskJournal.proposalFields(.init(), schedule: schedule, today: "2026-10-14"))
     }
 
+    /// The pages a swipe reaches from a view: the segments either side of
+    /// it, none past either end.
+    func testNeighboursAreTheSegmentsEitherSide() {
+        let segments = TaskJournal.segments(experimental: true)
+        XCTAssertEqual(TaskJournal.neighbours(of: .today, in: segments), [.month])
+        XCTAssertEqual(TaskJournal.neighbours(of: .future, in: segments), [.month, .anytime])
+        XCTAssertEqual(TaskJournal.neighbours(of: .done, in: segments), [.suggested])
+        XCTAssertEqual(TaskJournal.neighbours(of: .done, in: TaskJournal.segments(experimental: false)), [.waiting])
+        XCTAssertEqual(TaskJournal.neighbours(of: .suggested, in: TaskJournal.segments(experimental: false)), [])
+    }
+
     func testSegmentLabelsCarryOpenCountsOnlyAboveZero() {
         let counts = TaskCounts(today: 4, month: 10, future: 0, anytime: 2, waiting: 1, suggested: 3)
         XCTAssertEqual(TaskJournal.segmentLabel(for: .today, counts: counts), "Today (4)")
@@ -283,10 +294,21 @@ final class TasksModelTests: XCTestCase {
     private actor FakeService: TasksService {
         var calls: [String] = []
         var page = TaskViewPage(view: .today, day: "2026-10-14", tasks: [])
+        /// Pages answered for one view, ahead of `page`.
+        var pages: [TaskViewKind: TaskViewPage] = [:]
         var failNext: Error?
+        var failNextRead: Error?
 
         func setPage(_ page: TaskViewPage) {
             self.page = page
+        }
+
+        func setPage(_ page: TaskViewPage, for view: TaskViewKind) {
+            pages[view] = page
+        }
+
+        func setFailNextRead(_ error: Error) {
+            failNextRead = error
         }
 
         func setFailNext(_ error: Error?) {
@@ -295,7 +317,11 @@ final class TasksModelTests: XCTestCase {
 
         func view(_ view: TaskViewKind, day: String, limit: Int?, before: String?) async throws -> TaskViewPage {
             calls.append("view \(view.rawValue) \(day)")
-            return page
+            if let failNextRead {
+                self.failNextRead = nil
+                throw failNextRead
+            }
+            return pages[view] ?? page
         }
 
         func detail(id: String) async throws -> TaskDetail {
@@ -407,6 +433,111 @@ final class TasksModelTests: XCTestCase {
         XCTAssertEqual(model.selected, .suggested)
         let calls = await service.calls
         XCTAssertEqual(calls, ["view suggested 2026-10-14"])
+    }
+
+    /// A view read once is shown again at once when it is selected, before
+    /// the read that refreshes it lands — a swipe back never shows an empty
+    /// page.
+    func testAViewReadOnceIsShownAtOnceWhenSelectedAgain() async {
+        let service = FakeService()
+        let today = TaskRecord(id: "t", title: "Pay the invoice")
+        let month = TaskRecord(id: "m", title: "Book the venue tour", scheduledFor: "2026-10")
+        await service.setPage(TaskViewPage(view: .today, day: "2026-10-14", tasks: [today]), for: .today)
+        await service.setPage(TaskViewPage(view: .month, day: "2026-10-14", tasks: [month]), for: .month)
+        let model = model(service)
+        await model.load()
+        await model.select(.month)
+        XCTAssertEqual(model.tasks, [month])
+        model.show(.today)
+        XCTAssertEqual(model.tasks, [today], "Today is shown from what was read before")
+        XCTAssertEqual(model.page(.month).tasks, [month], "Month keeps what it read")
+    }
+
+    /// Reading ahead reads each neighbour once; the selected view and views
+    /// already read are left alone.
+    func testPrefetchReadsOnlyViewsNotYetRead() async {
+        let service = FakeService()
+        let model = model(service)
+        await model.load()
+        await model.prefetch([.today, .month])
+        await model.prefetch([.month])
+        let calls = await service.calls
+        XCTAssertEqual(calls, ["view today 2026-10-14", "view month 2026-10-14"])
+        XCTAssertTrue(model.page(.month).loaded)
+        XCTAssertEqual(model.selected, .today, "reading ahead does not turn the page")
+    }
+
+    /// A change re-reads the selected view at once and marks every other
+    /// view read so far stale, so the read-ahead fetches the neighbours again.
+    func testAChangeMarksTheOtherViewsStale() async {
+        let service = FakeService()
+        let task = TaskRecord(id: "t", title: "Pay the invoice")
+        await service.setPage(TaskViewPage(view: .today, day: "2026-10-14", tasks: [task]))
+        let model = model(service)
+        await model.load()
+        await model.prefetch([.month])
+        let before = model.invalidations
+        await model.tapBullet(task)
+        XCTAssertTrue(model.page(.month).stale)
+        XCTAssertFalse(model.page(.today).stale)
+        XCTAssertEqual(model.invalidations, before + 1)
+        await model.prefetch([.month])
+        XCTAssertFalse(model.page(.month).stale)
+        let calls = await service.calls
+        XCTAssertEqual(calls.filter { $0.hasPrefix("view month") }.count, 2)
+    }
+
+    /// The circle's optimistic change shows on the task's row wherever it is
+    /// listed, so the page beside it does not show it open during a swipe.
+    func testTheCircleChangesTheRowInEveryViewThatListsIt() async {
+        let service = FakeService()
+        let task = TaskRecord(id: "t", title: "Pay the invoice", scheduledFor: "2026-10-14")
+        await service.setPage(TaskViewPage(view: .today, day: "2026-10-14", tasks: [task]))
+        let model = model(service)
+        await model.load()
+        await model.prefetch([.month])
+        await model.tapBullet(task)
+        XCTAssertEqual(model.page(.month).tasks.first?.state, .done, "Month still shows the task open")
+        XCTAssertTrue(model.page(.month).stale)
+    }
+
+    /// Reaching a page read before re-reads it without a spinner, so its
+    /// rows (and the banner above them) stay put; one never read shows it.
+    func testRevisitingKeepsAReadPageOnScreen() async {
+        let service = FakeService()
+        let model = model(service)
+        await model.revisit()
+        XCTAssertTrue(model.page(.today).loaded)
+        model.show(.month)
+        await model.revisit()
+        model.show(.today)
+        let again = Task { await model.revisit() }
+        await Task.yield()
+        XCTAssertFalse(model.page(.today).loading, "a page read before shows no spinner while it is re-read")
+        await again.value
+    }
+
+    /// A read-ahead overtaken by a newer one stops instead of restarting the
+    /// newer one's reads.
+    func testACancelledReadAheadReadsNothing() async {
+        let service = FakeService()
+        let model = model(service)
+        let readAhead = Task { await model.prefetch([.month, .future]) }
+        readAhead.cancel()
+        await readAhead.value
+        let calls = await service.calls
+        XCTAssertEqual(calls, [])
+    }
+
+    /// A read abandoned because the screen moved on is not shown as an error.
+    func testACancelledReadIsNotAnError() async {
+        let service = FakeService()
+        await service.setFailNextRead(URLError(.cancelled))
+        let model = model(service)
+        await model.load()
+        XCTAssertNil(model.loadError)
+        XCTAssertFalse(model.page(.today).loaded, "the view is read again when next wanted")
+        XCTAssertFalse(model.loading)
     }
 
     func testConflictMessage() {

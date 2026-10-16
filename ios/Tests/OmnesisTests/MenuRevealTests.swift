@@ -134,6 +134,17 @@ final class MenuRevealTests: XCTestCase {
         XCTAssertEqual(mode(vx: 400, startX: 2), .horizontal)
     }
 
+    /// The leading edge is the menu's ahead of a horizontal scroller under
+    /// it — the Tasks pager turning back a page — but only while the menu is
+    /// closed, and only from the edge strip itself.
+    func testOnlyTheLeadingEdgeClaimsTheMenuAheadOfAScroller() {
+        XCTAssertTrue(MenuReveal.claimsEdge(startX: 0, isOpen: false))
+        XCTAssertTrue(MenuReveal.claimsEdge(startX: MenuReveal.edgeWidth, isOpen: false))
+        XCTAssertFalse(MenuReveal.claimsEdge(startX: MenuReveal.edgeWidth + 1, isOpen: false))
+        XCTAssertFalse(MenuReveal.claimsEdge(startX: width / 2, isOpen: false))
+        XCTAssertFalse(MenuReveal.claimsEdge(startX: 0, isOpen: true))
+    }
+
     /// The trailing band is held clear so it belongs unambiguously to the
     /// Timeline's own edge gesture.
     func testDragFromTheTrailingBandIsLeftAlone() {

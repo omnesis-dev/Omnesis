@@ -208,6 +208,9 @@ struct MenuRevealContainer<Menu: View, Content: View>: View {
                     if accepted { feedbackGenerator.prepare() }
                     return accepted
                 },
+                claimsEdge: { start in
+                    progressOverride == nil && MenuReveal.claimsEdge(startX: start.x, isOpen: isOpen)
+                },
                 onChanged: { translation in
                     dragDistance = MenuReveal.clampDragDistance(
                         translation.x,

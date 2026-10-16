@@ -30,6 +30,9 @@ struct MenuRevealPanGesture: UIViewRepresentable {
     /// Decides, once per touch, whether this is a reveal. Called when the pan
     /// clears its own slop, with the translation and velocity so far.
     let shouldBegin: (_ start: CGPoint, _ translation: CGPoint, _ velocity: CGPoint) -> Bool
+    /// Whether a touch that went down at `start` belongs to the reveal ahead
+    /// of a horizontal scroller under it (`MenuReveal.claimsEdge`).
+    let claimsEdge: (_ start: CGPoint) -> Bool
     let onChanged: (_ translation: CGPoint) -> Void
     let onEnded: (_ velocity: CGPoint) -> Void
     /// A touch taken away mid-drag — a system gesture winning late, the app
@@ -52,8 +55,11 @@ struct MenuRevealPanGesture: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var gesture: MenuRevealPanGesture
-        /// Where the touch went down, in window coordinates.
-        private var start: CGPoint = .zero
+        /// Where the current touch went down, in window coordinates,
+        /// recorded as its first finger lands — before UIKit asks which
+        /// recognisers must wait for which. Nil before any touch, which
+        /// claims nothing.
+        private var touchDown: CGPoint?
 
         init(gesture: MenuRevealPanGesture) {
             self.gesture = gesture
@@ -83,12 +89,11 @@ struct MenuRevealPanGesture: UIViewRepresentable {
             guard !Self.hasPresentedContent(
                 in: window?.rootViewController
             ) else { return false }
-            start = pan.location(in: nil)
+            let now = pan.location(in: nil)
             let translation = pan.translation(in: pan.view)
             // `location` is where the finger is *now*; the touch went down a
             // translation ago, and the reveal's rules are about where it began.
-            let origin = CGPoint(x: start.x - translation.x, y: start.y - translation.y)
-            start = origin
+            let origin = CGPoint(x: now.x - translation.x, y: now.y - translation.y)
             return gesture.shouldBegin(origin, translation, pan.velocity(in: pan.view))
         }
 
@@ -99,6 +104,15 @@ struct MenuRevealPanGesture: UIViewRepresentable {
             guard let controller else { return false }
             if controller.presentedViewController != nil { return true }
             return controller.children.contains { hasPresentedContent(in: $0) }
+        }
+
+        private var claimsEdge: Bool {
+            touchDown.map(gesture.claimsEdge) ?? false
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            if recognizer.numberOfTouches == 0 { touchDown = touch.location(in: nil) }
+            return true
         }
 
         /// Runs alongside everything by default — vertical scrolling has to
@@ -114,13 +128,29 @@ struct MenuRevealPanGesture: UIViewRepresentable {
 
         /// The arbitration this whole type exists for: the reveal waits for
         /// the gestures UIKit owns to decline the touch first, and never
-        /// begins at all if one of them takes it.
+        /// begins at all if one of them takes it — except that a touch from
+        /// the leading edge does not wait for a horizontal scroller, which
+        /// waits for the reveal instead (below).
         func gestureRecognizer(
             _ recognizer: UIGestureRecognizer,
             shouldRequireFailureOf other: UIGestureRecognizer
         )
             -> Bool {
-            Self.ownsRightwardDrags(other)
+            if Self.scrollsHorizontally(other), claimsEdge { return false }
+            return Self.ownsRightwardDrags(other)
+        }
+
+        /// From the leading edge the order turns round: a horizontal
+        /// scroller under the finger — the Tasks pager, a wide table — waits
+        /// for the reveal to decline the touch, so a rightward drag there
+        /// opens the menu instead of turning back a page, while any other
+        /// drag (leftward, vertical) fails the reveal and is the scroller's.
+        func gestureRecognizer(
+            _ recognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy other: UIGestureRecognizer
+        )
+            -> Bool {
+            Self.scrollsHorizontally(other) && claimsEdge
         }
 
         /// Recognisers whose job is also "a rightward drag means something".
@@ -138,14 +168,16 @@ struct MenuRevealPanGesture: UIViewRepresentable {
             if name.contains("InteractivePop") || name.contains("NavigationTransition") {
                 return true
             }
-            // A scroll view that can actually scroll horizontally: a code
-            // block, a wide table, a rail of cards.
-            if let pan = other as? UIPanGestureRecognizer,
-               let scroll = pan.view as? UIScrollView,
-               scroll.contentSize.width > scroll.bounds.width + 1 {
-                return true
-            }
-            return false
+            return scrollsHorizontally(other)
+        }
+
+        /// The pan of a scroll view that can actually scroll horizontally: a
+        /// pager, a code block, a wide table, a rail of cards.
+        static func scrollsHorizontally(_ other: UIGestureRecognizer) -> Bool {
+            guard let pan = other as? UIPanGestureRecognizer,
+                  let scroll = pan.view as? UIScrollView
+            else { return false }
+            return scroll.contentSize.width > scroll.bounds.width + 1
         }
     }
 }

@@ -22,6 +22,14 @@ public enum TaskJournal {
         return experimental ? all : all.filter { $0 != .suggested }
     }
 
+    /// The segments either side of `view` in `segments` — the pages a swipe
+    /// from `view` reaches, read ahead so they are already filled while the
+    /// finger draws them in.
+    public static func neighbours(of view: TaskViewKind, in segments: [TaskViewKind]) -> [TaskViewKind] {
+        guard let index = segments.firstIndex(of: view) else { return [] }
+        return [index - 1, index + 1].filter(segments.indices.contains).map { segments[$0] }
+    }
+
     public static func label(for view: TaskViewKind) -> String {
         switch view {
         case .today: "Today"

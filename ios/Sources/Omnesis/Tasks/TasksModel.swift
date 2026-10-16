@@ -25,32 +25,52 @@ public struct TaskToast: Equatable, Sendable, Identifiable {
     public let isError: Bool
 }
 
-/// The Tasks screen's state: the selected view, its rows, and the toast.
-/// Every change goes to the gateway and the view is re-read afterwards,
-/// because one command can move a task between sections or views
-/// (completing a carried task drops it from "Carried over" into "Done
-/// today"). Only completing from the circle is applied before the gateway
-/// answers — it is the one gesture that has to feel instant.
+/// One journal view as the screen last read it.
+public struct TaskViewState {
+    public var tasks: [TaskRecord] = []
+    /// A read is in flight; the page shows a spinner only while it has no
+    /// rows to show instead.
+    public var loading = false
+    public var loadError: Error?
+    /// Whether the Done history has older entries to page in.
+    public var canLoadMoreDone = false
+    /// Whether the view has been read at all.
+    public var loaded = false
+    /// Whether a command may have changed what the view holds since it was
+    /// read: it is still shown, and read again before it is next reached.
+    public var stale = false
+}
+
+/// The Tasks screen's state: the selected view, every view it has read, and
+/// the toast.
+///
+/// Views are kept once read, so swiping between them shows each at once; a
+/// view is read again whenever it is selected, and the views beside the
+/// selected one are read ahead (`prefetch`) so a swipe draws in a filled
+/// page. Every change goes to the gateway and the selected view is re-read
+/// afterwards, because one command can move a task between sections or
+/// views (completing a carried task drops it from "Carried over" into "Done
+/// today"); the other views are marked stale for the same reason. Only
+/// completing from the circle is applied before the gateway answers — it is
+/// the one gesture that has to feel instant.
 @available(iOS 17.0, macOS 14.0, *)
 @MainActor
 @Observable
 public final class TasksModel {
     public private(set) var selected: TaskViewKind = .today
-    public private(set) var tasks: [TaskRecord] = []
+    public private(set) var pages: [TaskViewKind: TaskViewState] = [:]
     public private(set) var counts = TaskCounts()
-    public private(set) var loading = false
-    public private(set) var loadError: Error?
-    /// Whether the Done history has older entries to page in.
-    public private(set) var canLoadMoreDone = false
     public private(set) var loadingMore = false
     public private(set) var toast: TaskToast?
     /// Tasks with a command in flight; their controls are disabled.
     public private(set) var busyIds: Set<String> = []
+    /// Bumped each time views go stale, so the screen reads ahead again.
+    public private(set) var invalidations = 0
 
     @ObservationIgnored private let service: TasksService?
     @ObservationIgnored private let schedule: TaskSchedule
     @ObservationIgnored private let now: () -> Date
-    @ObservationIgnored private var loadGeneration = 0
+    @ObservationIgnored private var generations: [TaskViewKind: Int] = [:]
     @ObservationIgnored private var toastCounter = 0
 
     static let doneLimit = 50
@@ -78,10 +98,9 @@ public final class TasksModel {
         -> TasksModel {
         let model = TasksModel(service: nil, now: { now })
         model.selected = selected
-        model.tasks = tasks
+        model.pages[selected] = TaskViewState(tasks: tasks, loadError: loadError, loaded: true)
         model.counts = counts
         model.toast = toast
-        model.loadError = loadError
         return model
     }
 
@@ -90,69 +109,115 @@ public final class TasksModel {
         schedule.day(now())
     }
 
-    public var sections: [TaskJournal.Section] {
-        TaskJournal.sections(for: selected, tasks: tasks)
+    /// `view` as last read; empty and unread before its first read.
+    public func page(_ view: TaskViewKind) -> TaskViewState {
+        pages[view] ?? TaskViewState()
     }
 
-    /// `sections` as the one list of lines the screen draws.
-    public var entries: [TaskJournal.Entry] {
-        TaskJournal.entries(for: selected, tasks: tasks)
+    /// The selected view's rows, read state and error — conveniences for
+    /// callers that only ever look at the view on screen.
+    public var tasks: [TaskRecord] {
+        page(selected).tasks
+    }
+
+    public var loading: Bool {
+        page(selected).loading
+    }
+
+    public var loadError: Error? {
+        page(selected).loadError
     }
 
     // MARK: - Reading
 
+    /// Make `view` the selected one, showing what was last read of it. The
+    /// screen reads it again (`load`) once it is selected.
+    public func show(_ view: TaskViewKind) {
+        if view != selected { selected = view }
+    }
+
+    /// Select `view` and read it.
     public func select(_ view: TaskViewKind) async {
         guard view != selected else { return }
-        selected = view
-        tasks = []
-        canLoadMoreDone = false
+        show(view)
         await load()
     }
 
-    /// Re-read the selected view. `showSpinner` false keeps the rows on
-    /// screen while it loads (pull to refresh, after a command).
+    /// Re-read the selected view. `showSpinner` false keeps the page as it is
+    /// while it loads (pull to refresh, after a command); a page with rows
+    /// keeps them on screen either way.
     public func load(showSpinner: Bool = true) async {
+        await load(selected, showSpinner: showSpinner)
+    }
+
+    /// Re-read the view the screen has just reached: a page read before
+    /// keeps its rows on screen meanwhile, one never read shows a spinner.
+    public func revisit() async {
+        await load(selected, showSpinner: !page(selected).loaded)
+    }
+
+    /// Read ahead each of `views` that has not been read, or has gone stale,
+    /// so a swipe to it draws in a filled page. Without a gateway there is
+    /// nothing to read and nothing to report.
+    public func prefetch(_ views: [TaskViewKind]) async {
+        guard service != nil else { return }
+        for view in views where view != selected {
+            // A read-ahead overtaken by a newer one stops here rather than
+            // restarting reads the newer one has in flight.
+            guard !Task.isCancelled else { return }
+            let page = page(view)
+            if !page.loading, !page.loaded || page.stale { await load(view, showSpinner: true) }
+        }
+    }
+
+    /// Read `view`. `showSpinner` false leaves its page as it is while it
+    /// loads.
+    public func load(_ view: TaskViewKind, showSpinner: Bool) async {
         guard let service else {
             // Unpaired, or a fixture: keep what is shown, and say why nothing
-            // can load only when there is nothing to show.
-            if tasks.isEmpty { loadError = URLError(.cannotConnectToHost) }
+            // can load only when nothing was ever there to show.
+            if !page(view).loaded { pages[view, default: TaskViewState()].loadError = URLError(.cannotConnectToHost) }
             return
         }
-        loadGeneration &+= 1
-        let generation = loadGeneration
-        let view = selected
-        if showSpinner { loading = true }
-        defer { if generation == loadGeneration { loading = false } }
+        let generation = (generations[view] ?? 0) &+ 1
+        generations[view] = generation
+        if showSpinner { pages[view, default: TaskViewState()].loading = true }
+        defer { if generation == generations[view] { pages[view]?.loading = false } }
         do {
             let limit = view == .done ? Self.doneLimit : nil
-            let page = try await service.view(view, day: today, limit: limit, before: nil)
-            guard generation == loadGeneration else { return }
-            tasks = page.tasks
-            counts = page.counts
-            canLoadMoreDone = view == .done && page.tasks.count >= Self.doneLimit
-            loadError = nil
+            let read = try await service.view(view, day: today, limit: limit, before: nil)
+            guard generation == generations[view] else { return }
+            pages[view] = TaskViewState(
+                tasks: read.tasks,
+                canLoadMoreDone: view == .done && read.tasks.count >= Self.doneLimit,
+                loaded: true
+            )
+            counts = read.counts
         } catch {
-            guard generation == loadGeneration else { return }
-            loadError = error
+            // A read abandoned because the screen moved on is not a failure:
+            // the view is simply read again when it is next wanted.
+            guard generation == generations[view], !Self.isCancellation(error) else { return }
+            pages[view, default: TaskViewState()].loadError = error
         }
     }
 
     /// Page in older Done history, resolved before the oldest row shown.
     public func loadMoreDone() async {
-        guard let service, selected == .done, canLoadMoreDone, !loadingMore,
-              let before = tasks.last?.resolvedAt
+        guard let service, selected == .done, page(.done).canLoadMoreDone, !loadingMore,
+              let before = page(.done).tasks.last?.resolvedAt
         else { return }
-        let generation = loadGeneration
+        let generation = generations[.done]
         loadingMore = true
         defer { loadingMore = false }
         do {
-            let page = try await service.view(.done, day: today, limit: Self.doneLimit, before: before)
-            guard generation == loadGeneration else { return }
-            let known = Set(tasks.map(\.id))
-            tasks += page.tasks.filter { !known.contains($0.id) }
-            canLoadMoreDone = page.tasks.count >= Self.doneLimit
+            let older = try await service.view(.done, day: today, limit: Self.doneLimit, before: before)
+            guard generation == generations[.done], var done = pages[.done] else { return }
+            let known = Set(done.tasks.map(\.id))
+            done.tasks += older.tasks.filter { !known.contains($0.id) }
+            done.canLoadMoreDone = older.tasks.count >= Self.doneLimit
+            pages[.done] = done
         } catch {
-            guard generation == loadGeneration else { return }
+            guard generation == generations[.done] else { return }
             showError(error)
         }
     }
@@ -195,12 +260,12 @@ public final class TasksModel {
         var undone = false
         do {
             let mutation = try await service.undo(seq: seq)
-            show(text: mutation.receipt.text, undoSeq: nil, isError: false)
+            present(text: mutation.receipt.text, undoSeq: nil, isError: false)
             undone = true
         } catch {
             showError(error)
         }
-        await load(showSpinner: false)
+        await reread()
         return undone
     }
 
@@ -226,16 +291,16 @@ public final class TasksModel {
         do {
             let mutation = try await service.perform(action, on: id)
             // The row shows the task as the gateway now holds it straight
-            // away — an accepted suggestion loses its Accept — and the view
-            // is re-read to move it wherever it now belongs.
+            // away — an accepted suggestion loses its Accept — and the views
+            // are re-read to move it wherever it now belongs.
             if let task = mutation.task { replace(id, with: task) }
             showReceipt(mutation.receipt)
-            await load(showSpinner: false)
+            await reread()
             return true
         } catch {
             rollback?()
             showError(error)
-            if Self.isRefusal(error) { await load(showSpinner: false) }
+            if Self.isRefusal(error) { await reread() }
             return false
         }
     }
@@ -254,20 +319,49 @@ public final class TasksModel {
         }
     }
 
+    /// After a change: the selected view is read again at once, and every
+    /// other view read so far is marked stale, to be read again before it
+    /// is next reached.
+    private func reread() async {
+        var invalidated = false
+        for view in pages.keys where view != selected {
+            if pages[view]?.loading == true {
+                // A read that began before the change would land what the
+                // view held before it: drop it, and read again.
+                generations[view, default: 0] &+= 1
+                pages[view]?.loading = false
+                invalidated = true
+            } else if pages[view]?.loaded == true {
+                pages[view]?.stale = true
+                invalidated = true
+            }
+        }
+        if invalidated { invalidations &+= 1 }
+        await load(showSpinner: false)
+    }
+
+    /// Shows `task` in place of its row in every view that lists it.
     private func replace(_ id: String, with task: TaskRecord) {
-        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
-        tasks[index] = task
+        for view in pages.keys {
+            guard let index = pages[view]?.tasks.firstIndex(where: { $0.id == id }) else { continue }
+            pages[view]?.tasks[index] = task
+        }
+    }
+
+    /// Whether `error` is a read abandoned by its caller rather than a failure.
+    static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
     private func showReceipt(_ receipt: TaskReceipt) {
-        show(text: receipt.text, undoSeq: receipt.undoSeq, isError: false)
+        present(text: receipt.text, undoSeq: receipt.undoSeq, isError: false)
     }
 
     private func showError(_ error: Error) {
-        show(text: Self.message(for: error), undoSeq: nil, isError: true)
+        present(text: Self.message(for: error), undoSeq: nil, isError: true)
     }
 
-    private func show(text: String, undoSeq: Int?, isError: Bool) {
+    private func present(text: String, undoSeq: Int?, isError: Bool) {
         toastCounter &+= 1
         toast = TaskToast(id: toastCounter, text: text, undoSeq: undoSeq, isError: isError)
     }

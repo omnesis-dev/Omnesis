@@ -10,8 +10,9 @@ import SwiftUI
 /// offers Undo; a tap on its text opens its details; a long press anywhere
 /// on the row opens its action fan, which the same touch slides over and
 /// lifts on. Omnesis's suggestions are the same rows: their fan accepts or
-/// ignores them, and their circle marks them already done. There are no swipe actions: a horizontal swipe anywhere
-/// in the leading majority of the screen belongs to the menu reveal.
+/// ignores them, and their circle marks them already done. There are no swipe
+/// actions: a horizontal swipe turns to the next or previous view, and one
+/// from the screen's leading edge reveals the menu.
 @available(iOS 17.0, *)
 struct TasksView: View {
     @Environment(AppStore.self) private var store
@@ -95,7 +96,6 @@ struct TasksScreen: View {
                     DocumentDetailView(documentId: id, presetTitle: title)
                 }
             }
-            .task { await model.load() }
             .task(id: focus) {
                 // The task as it now stands, wherever it sits in the journal.
                 guard let focus, let detail = try? await model.detail(id: focus.taskId) else { return }
@@ -118,6 +118,15 @@ struct TasksScreen: View {
 /// The screen below the navigation bar, separated from the fetch so a
 /// preview can render every state from a fixture model.
 ///
+/// The journal's views are pages side by side: a swipe across the list turns
+/// to the next or previous view, and the segment bar above follows (and a tap
+/// on a segment turns to it). The pager is SwiftUI's own paging `TabView`,
+/// so each page keeps its own vertical scroll and pull to refresh, and the
+/// menu's reveal negotiates with it like any other horizontal scroller —
+/// except at the screen's leading edge, which is always the menu's
+/// (`MenuReveal.edgeWidth`). Rows carry no swipe actions, so a horizontal
+/// swipe on a row has one meaning: the next page.
+///
 /// `experimental` mirrors the gateway's experimental mode: the Brain's
 /// suggestions (the Suggested segment) and its proposed changes (Confirm /
 /// Keep on a row) exist only there, so they are shown only then.
@@ -132,32 +141,41 @@ struct TasksContent: View {
     /// snapshots.
     var initialFan: TaskFanPreview?
 
-    @State private var fan = TaskFanController()
-    @State private var press = TaskRowPressBridge()
     /// The task a note composer is open for: "Done + note", or a
     /// suggestion's "Accept with note".
     @State private var noting: TaskNoting?
-    /// The fan's targets grow with the text size.
-    @ScaledMetric(relativeTo: .subheadline) private var fanTargetHeight: CGFloat = 44
-    @ScaledMetric(relativeTo: .subheadline) private var fanTargetWidth: CGFloat = 176
+
+    /// How a tap on a segment, or the review banner, turns the page.
+    static let pageAnimation: Animation = .easeInOut(duration: 0.3)
+
+    private var segments: [TaskViewKind] {
+        TaskJournal.segments(experimental: experimental)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             TaskSegmentBar(
-                segments: TaskJournal.segments(experimental: experimental),
+                segments: segments,
                 selected: model.selected,
                 counts: model.counts,
-                onSelect: { view in Task { await model.select(view) } }
+                onSelect: { view in withAnimation(Self.pageAnimation) { model.show(view) } }
             )
             Divider().overlay(Theme.borderLight)
-            banner
-            journal
+            pager
         }
         .background(Theme.bgPrimary)
         .task(id: experimental) {
             // A gateway that left experimental mode has no Suggested segment
             // to stay on.
-            if !experimental, model.selected == .suggested { await model.select(.today) }
+            if !experimental, model.selected == .suggested { model.show(.today) }
+        }
+        // Whichever way a view was reached — swipe, tap, banner — it is read
+        // again, showing what was last read of it meanwhile.
+        .task(id: model.selected) { await model.revisit() }
+        // The views either side are read ahead, and read again after a
+        // change, so a swipe draws in a page that is already filled.
+        .task(id: ReadAhead(selected: model.selected, invalidations: model.invalidations, experimental: experimental)) {
+            await model.prefetch(TaskJournal.neighbours(of: model.selected, in: segments))
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let toast = model.toast {
@@ -172,98 +190,28 @@ struct TasksContent: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: model.toast)
-    }
-
-    private var journal: some View {
-        GeometryReader { viewport in
-            ZStack(alignment: .topLeading) {
-                ScrollView {
-                    // Eager, not lazy: a journal page is short (Done pages in
-                    // fifties), every row reports its frame for the fan, and a
-                    // lazy stack of rows that measure themselves can keep
-                    // re-placing its rows without end once scrolled to its foot.
-                    VStack(alignment: .leading, spacing: 0) {
-                        TaskPageHeading(view: model.selected, today: model.today, tasks: model.tasks)
-                        rows(for: model)
-                        footer
-                    }
-                    .padding(.bottom, Theme.Spacing.xl)
-                    .background(TaskRowPressScrollProbe(bridge: press))
-                }
-                .refreshable { await model.load(showSpinner: false) }
-                TaskFanOverlay(controller: fan)
-            }
-            .background(TaskFanSpaceProbe(bridge: press))
-            .onAppear { configureFan(size: viewport.size) }
-            // An open fan keeps the bounds it opened with: the toast coming
-            // or going must not pull it out from under a finger.
-            .onChange(of: viewport.size) { _, size in configureFan(size: size) }
-        }
-        .coordinateSpace(.named(TaskFanOverlay.space))
-        .onPreferenceChange(TaskRowFrameKey.self) { frames in fan.rowFrames = frames }
-        .onChange(of: model.selected) { _, _ in fan.dismiss() }
         // A note about a task is written on the Tell Omnesis screen.
         .fullScreenCover(item: $noting) { noting in
             CaptureView(completion: capture(for: noting))
         }
-        .task {
-            #if DEBUG
-            if let initialFan, let task = model.tasks.first(where: { $0.id == initialFan.taskId }) {
-                try? await Task.sleep(for: .milliseconds(400))
-                fan.previewOpen(
-                    task,
-                    pressedAt: initialFan.pressedAt,
-                    today: model.today,
-                    mode: initialFan.mode,
-                    highlighting: initialFan.highlight
+    }
+
+    private var pager: some View {
+        TabView(selection: Binding(get: { model.selected }, set: { model.show($0) })) {
+            ForEach(segments, id: \.self) { view in
+                TaskJournalPage(
+                    model: model,
+                    view: view,
+                    experimental: experimental,
+                    onOpen: onOpen,
+                    onDocument: onDocument,
+                    onNote: { noting = $0 },
+                    initialFan: view == model.selected ? initialFan : nil
                 )
+                .tag(view)
             }
-            #endif
         }
-    }
-
-    private func configureFan(size: CGSize) {
-        fan.bounds = CGRect(origin: .zero, size: size)
-        var metrics = TaskFanSession.Metrics()
-        metrics.targetHeight = max(44, fanTargetHeight)
-        metrics.targetWidth = min(fanTargetWidth, max(140, size.width - metrics.lead - 2 * TaskRowView.textInset))
-        fan.metrics = metrics
-        fan.perform = { action, task in run(action, on: task) }
-        press.canBegin = { point in fan.pressedTask(at: point, in: model.tasks) != nil }
-        press.began = { point in
-            guard let task = fan.pressedTask(at: point, in: model.tasks) else { return }
-            fan.open(task, at: point, today: model.today)
-        }
-        press.moved = { fan.move($0) }
-        press.ended = { fan.end($0) }
-    }
-
-    /// What a fan action does to its task. Completion goes through the
-    /// bullet's path, which shows the row done at once. A time accepts a
-    /// suggestion for then, and moves one of the person's own tasks there.
-    private func run(_ action: TaskFanAction, on task: TaskRecord) {
-        let schedule = TaskSchedule()
-        let now = schedule.date(fromDay: model.today) ?? Date()
-        let plan: (String) -> TaskAction = { value in
-            task.isSuggestion ? .accept(scheduledFor: .set(value)) : .migrate(to: value)
-        }
-        switch action {
-        case .done: Task { await model.tapBullet(task) }
-        case .doneWithNote: noting = TaskNoting(task: task, purpose: .complete)
-        case .today: Task { await model.perform(plan(model.today), on: task) }
-        case .tomorrow: Task { await model.perform(plan(schedule.tomorrow(from: now)), on: task) }
-        case .thisMonth: Task { await model.perform(plan(schedule.month(now)), on: task) }
-        case .nextMonth: Task { await model.perform(plan(schedule.nextMonth(from: now)), on: task) }
-        case .month(let month): Task { await model.perform(plan(month), on: task) }
-        case .someday: Task { await model.perform(plan("someday"), on: task) }
-        case .cancelTask: Task { await model.perform(.strike(reason: nil), on: task) }
-        case .accept: Task { await model.perform(.accept(scheduledFor: .unchanged), on: task) }
-        case .acceptWithNote: noting = TaskNoting(task: task, purpose: .accept)
-        case .ignore: Task { await model.perform(.ignore(reason: nil), on: task) }
-        case .otherMonth: fan.openForAccessibility(task, today: model.today, mode: .months(page: 0))
-        case .acceptFor: fan.openForAccessibility(task, today: model.today, mode: .when)
-        case .back, .laterMonths, .earlierMonths: break
-        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
     }
 
     /// The composer's wording and call for a note about `noting`'s task. The
@@ -285,109 +233,13 @@ struct TasksContent: View {
             }
         }
     }
-
-    /// What opens Today when Omnesis has suggestions waiting: the way to
-    /// them, held under the segment bar above the list, so however long the
-    /// day it never scrolls out of reach.
-    @ViewBuilder
-    private var banner: some View {
-        if !model.loading, model.loadError == nil || !model.tasks.isEmpty,
-           experimental, model.selected == .today,
-           let text = TaskJournal.reviewBannerText(suggested: model.counts.suggested) {
-            TaskReviewBanner(text: text) { Task { await model.select(.suggested) } }
-                .padding(.horizontal, Theme.Spacing.lg)
-                .padding(.vertical, Theme.Spacing.sm)
-        }
-    }
-
-    /// What closes the list on the views a person fills: how tasks get there.
-    @ViewBuilder
-    private var footer: some View {
-        if !model.loading, model.loadError == nil || !model.tasks.isEmpty {
-            if TaskJournal.showsCaptureHint(for: model.selected) {
-                TaskCaptureHint()
-                    .padding(.horizontal, Theme.Spacing.lg)
-                    .padding(.top, Theme.Spacing.lg)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func rows(for model: TasksModel) -> some View {
-        if model.loading, model.tasks.isEmpty {
-            ProgressView()
-                .tint(Theme.accent)
-                .frame(maxWidth: .infinity, minHeight: 200)
-        } else if let error = model.loadError, model.tasks.isEmpty {
-            GatewayErrorView(
-                context: "load tasks",
-                error: error,
-                onRetry: { Task { await model.load() } }
-            )
-            .frame(minHeight: GatewayErrorView.minScrollHeight)
-        } else if model.sections.isEmpty {
-            TaskEmptyState(view: model.selected)
-        } else {
-            // One list, not one per section: see `TaskJournal.entries`.
-            ForEach(model.entries) { entry in
-                switch entry {
-                case .heading(_, let title, let count):
-                    TaskSectionHeader(title: title, count: count)
-                case .task(let task):
-                    row(task)
-                }
-            }
-            if model.selected == .done, model.canLoadMoreDone {
-                Button {
-                    Task { await model.loadMoreDone() }
-                } label: {
-                    HStack(spacing: Theme.Spacing.sm) {
-                        if model.loadingMore { ProgressView().controlSize(.small) }
-                        Text(model.loadingMore ? "Loading…" : "Show older")
-                    }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.accent)
-                    .frame(maxWidth: .infinity, minHeight: Theme.tapTarget)
-                }
-                .buttonStyle(.plain)
-                .disabled(model.loadingMore)
-            }
-        }
-    }
 }
 
-@available(iOS 17.0, *)
-extension TasksContent {
-    /// One task's line, with the divider under it.
-    fileprivate func row(_ task: TaskRecord) -> some View {
-        VStack(spacing: 0) {
-            TaskRowView(
-                task: task,
-                view: model.selected,
-                today: model.today,
-                busy: model.busyIds.contains(task.id),
-                showsBrainProposals: experimental,
-                fanOpen: fan.task?.id == task.id,
-                onOpen: { onOpen(task) },
-                onBullet: { Task { await model.tapBullet(task) } },
-                onAction: { action in Task { await model.perform(action, on: task) } },
-                onDocument: onDocument,
-                onFanAction: { run($0, on: task) }
-            )
-            // The whole row is where a long press opens the fan.
-            .background {
-                GeometryReader { geometry in
-                    Color.clear.preference(
-                        key: TaskRowFrameKey.self,
-                        value: [task.id: geometry.frame(in: .named(TaskFanOverlay.space))]
-                    )
-                }
-            }
-            Divider()
-                .overlay(Theme.borderLight)
-                .padding(.leading, TaskRowView.textInset)
-        }
-    }
+/// What the read-ahead of the views beside the selected one waits on.
+private struct ReadAhead: Hashable {
+    let selected: TaskViewKind
+    let invalidations: Int
+    let experimental: Bool
 }
 
 // MARK: - Segment bar
@@ -466,108 +318,6 @@ struct TaskSegmentBar: View {
     }
 }
 
-// MARK: - Page furniture
-
-/// The page's own heading, the way a journal page is headed by its date:
-/// today's long date on Today, the month on Month.
-@available(iOS 17.0, *)
-private struct TaskPageHeading: View {
-    let view: TaskViewKind
-    let today: String
-    let tasks: [TaskRecord]
-
-    var body: some View {
-        if let title {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .accessibilityAddTraits(.isHeader)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Theme.Spacing.lg)
-            .padding(.top, Theme.Spacing.lg)
-            .padding(.bottom, Theme.Spacing.md)
-        }
-    }
-
-    private var title: String? {
-        let schedule = TaskSchedule()
-        guard let date = schedule.date(fromDay: today) else { return nil }
-        switch view {
-        case .today: return date.formatted(.dateTime.weekday(.wide).day().month(.wide))
-        case .month: return date.formatted(.dateTime.month(.wide).year())
-        default: return nil
-        }
-    }
-
-    private var subtitle: String? {
-        guard view == .today else { return nil }
-        let open = tasks.filter { !$0.isResolved }.count
-        let done = tasks.filter { $0.state == .done }.count
-        var parts: [String] = []
-        parts.append(open == 1 ? "1 to do" : "\(open) to do")
-        if done > 0 { parts.append("\(done) done") }
-        return parts.joined(separator: " · ")
-    }
-}
-
-@available(iOS 17.0, *)
-private struct TaskSectionHeader: View {
-    let title: String
-    let count: Int
-
-    var body: some View {
-        HStack(spacing: Theme.Spacing.sm) {
-            Text(title.uppercased())
-                .font(.caption.weight(.semibold))
-                .tracking(0.5)
-                .foregroundStyle(Theme.textSecondary)
-            Text("\(count)")
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(Theme.textMuted)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Theme.Spacing.lg)
-        .padding(.top, Theme.Spacing.lg)
-        .padding(.bottom, Theme.Spacing.xs)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
-    }
-}
-
-@available(iOS 17.0, *)
-private struct TaskEmptyState: View {
-    let view: TaskViewKind
-
-    var body: some View {
-        let copy = TaskJournal.emptyState(for: view)
-        VStack(spacing: Theme.Spacing.sm) {
-            Image(systemName: view == .suggested ? "sparkles" : "checklist")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(Theme.textMuted)
-                .accessibilityHidden(true)
-            Text(copy.title)
-                .font(.headline)
-                .foregroundStyle(Theme.textPrimary)
-            Text(copy.detail)
-                .font(.subheadline)
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, Theme.Spacing.xl)
-        .padding(.top, 56)
-        .accessibilityElement(children: .combine)
-    }
-}
-
 // MARK: - Footer
 
 /// A note composer open for a task, with the id its note is saved under.
@@ -589,15 +339,6 @@ struct TaskFanPreview {
     var mode: TaskFanSession.Mode = .main
     /// The target the finger has slid onto; nil leaves it on the press point.
     var highlight: TaskFanAction?
-}
-
-/// Where each row sits in `TaskFanOverlay.space`, by task id.
-private struct TaskRowFrameKey: PreferenceKey {
-    static let defaultValue: [String: CGRect] = [:]
-
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
-    }
 }
 
 #if DEBUG
