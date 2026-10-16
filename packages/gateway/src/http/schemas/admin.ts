@@ -312,6 +312,12 @@ export const sourceResyncBody = z.object({
 });
 export type SourceResyncBody = z.infer<typeof sourceResyncBody>;
 
+// POST /admin/sources/:id/legacy-rows
+export const sourceLegacyRowsBody = z.object({
+  action: z.enum(["claim", "drop"]),
+});
+export type SourceLegacyRowsBody = z.infer<typeof sourceLegacyRowsBody>;
+
 // PATCH /admin/sources/:id
 export const patchSourceBody = z.object({
   config: z.record(z.string(), z.unknown()).optional(),

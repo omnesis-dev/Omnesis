@@ -17,6 +17,7 @@ import { reauthCommand } from "./reauth.js";
 import { debugCommand } from "./debug.js";
 import { reindexMissingCommand } from "./reindex-missing.js";
 import { importHistoryCommand } from "./import-history.js";
+import { legacyRowsCommand } from "./legacy-rows.js";
 
 export const sourcesCommand = defineCommand({
   meta: {
@@ -41,6 +42,7 @@ export const sourcesCommand = defineCommand({
     debug: debugCommand,
     "reindex-missing": reindexMissingCommand,
     "import-history": importHistoryCommand,
+    "legacy-rows": legacyRowsCommand,
   },
   // When no subcommand: behave like `sources list` (preserves existing UX).
   async run(ctx) {

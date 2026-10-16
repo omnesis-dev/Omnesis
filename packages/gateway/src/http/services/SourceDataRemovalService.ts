@@ -4,9 +4,13 @@
 import { createLogger } from "@omnesis/core";
 import { RowKeyError } from "@omnesis/source-sdk";
 import { epochScope, type SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
-import { HttpError } from "../errors.js";
+import { HttpError, ServiceUnavailableError } from "../errors.js";
 import type Database from "better-sqlite3";
-import type { AnalyticsDb } from "../../analytics-db.js";
+import type {
+  AnalyticsDb,
+  LegacyOwnershipAction,
+  LegacyOwnershipTable,
+} from "../../analytics-db.js";
 import type { IndexWriteGate } from "../../indexer/index-write-gate.js";
 import type { WriteGate } from "../../write-gate.js";
 
@@ -36,6 +40,40 @@ export class SourceDataRemovalService {
       }
       throw error;
     }
+  }
+
+  /** The rows of the source's shared analytics tables that no account has claimed. */
+  async unattributedLegacyRows(sourceId: string): Promise<LegacyOwnershipTable[]> {
+    return this.requireAnalytics().unattributedLegacyRows(sourceId);
+  }
+
+  /**
+   * Claim or drop those rows under source-exclusive authority, so a removal or
+   * resync of the source never interleaves with the settlement. The call is
+   * bounded; what it reports as remaining is settled by calling it again.
+   */
+  async settleLegacyRows(
+    sourceId: string,
+    action: LegacyOwnershipAction,
+  ): Promise<LegacyOwnershipTable[]> {
+    const analyticsDb = this.requireAnalytics();
+    const settle = () => analyticsDb.settleLegacyRows(sourceId, action);
+    try {
+      return await (this.deps.sourceWriteEpochFence
+        ? this.deps.sourceWriteEpochFence.runSourceExclusive(sourceId, settle)
+        : settle());
+    } catch (error) {
+      if (error instanceof RowKeyError) {
+        throw new HttpError(409, "ANALYTICS_OWNERSHIP_UNRESOLVED", error.message);
+      }
+      throw error;
+    }
+  }
+
+  private requireAnalytics(): AnalyticsDb {
+    if (!this.deps.analyticsDb)
+      throw new ServiceUnavailableError("analytics store is not available");
+    return this.deps.analyticsDb;
   }
 
   /** Throw the one error, or every error at once, so a partial cleanup is never silent. */

@@ -32,7 +32,13 @@ import {
   type AnalyticsConnectionPoolOptions,
 } from "./analytics/connection-pool.js";
 import { AnalyticsCatalogStore } from "./analytics/catalog-store.js";
-import { AnalyticsTableManager, type AnalyticsReplicaHooks } from "./analytics/table-manager.js";
+import {
+  AnalyticsTableManager,
+  type AnalyticsReplicaHooks,
+  type LegacyOwnershipAction,
+  type LegacyOwnershipTable,
+  type OwnershipRepairTick,
+} from "./analytics/table-manager.js";
 import {
   AnalyticsTemporalProjectionStore,
   type AnalyticsTemporalProjectionCoverageRow,
@@ -278,6 +284,24 @@ export class AnalyticsDb {
     return dropped;
   }
 
+  /** Legacy rows no account has claimed, per table the source writes. */
+  unattributedLegacyRows(sourceId: string): Promise<LegacyOwnershipTable[]> {
+    return this.tables.unattributedLegacyRows(sourceId);
+  }
+
+  /** One bounded attribution batch per pending table; see `AnalyticsTableManager.repairPendingOwnership`. */
+  repairPendingOwnership(): Promise<OwnershipRepairTick> {
+    return this.tables.repairPendingOwnership();
+  }
+
+  /** Claim those rows for the source's account, or drop them; see `AnalyticsTableManager.settleLegacyRows`. */
+  settleLegacyRows(
+    sourceId: string,
+    action: LegacyOwnershipAction,
+  ): Promise<LegacyOwnershipTable[]> {
+    return this.tables.settleLegacyRows(sourceId, action);
+  }
+
   /** Call under source-exclusive authority before deleting source config or other stores. */
   prepareSourceRemoval(sourceId: string, streamId?: string): Promise<void> {
     return this.tables.prepareSourceRemoval(sourceId, streamId);
@@ -495,3 +519,8 @@ export class AnalyticsDb {
 
 export { InvalidAnalyticsRecentCursorError } from "./analytics/query-runner.js";
 export type { AnalyticsRecentCursor } from "./analytics/query-runner.js";
+export type {
+  LegacyOwnershipAction,
+  LegacyOwnershipTable,
+  OwnershipRepairTick,
+} from "./analytics/table-manager.js";

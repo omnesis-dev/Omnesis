@@ -1297,6 +1297,18 @@
           <a href="#several-devices">Sources on several devices</a>. When a source reports an error
           instead, start from <a href="/docs/operating#troubleshooting">Troubleshooting</a>.
         </p>
+        <p>
+          Accounts of one source type that write the same analytics table can leave rows from before
+          Omnesis recorded which account wrote them. A table only one account has ever written
+          labels them as that account's by itself, in the background, a batch at a time, whether or
+          not the account syncs again. In a table several accounts share, syncing never waits on
+          such a row: a deletion or a snapshot that names it leaves it in place, and the account
+          that still holds the record labels it whenever it syncs that record again.
+          <code>omnesis sources legacy-rows &lt;id&gt;</code> lists what remains;
+          <code>--claim</code> marks those rows as the source's account, for rows no other account
+          still syncs, and <code>--drop</code> deletes them. The CLI asks first; pass
+          <code>--yes</code> in scripts.
+        </p>
 
         <h3 id="removing-a-source">Removing a source</h3>
         <p>

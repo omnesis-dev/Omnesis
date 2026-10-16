@@ -107,6 +107,7 @@ import {
   SourceModeTransitionCoordinator,
   type SourceModeTransitionAdoption,
 } from "./SourceModeTransitionCoordinator.js";
+import type { LegacyOwnershipAction, LegacyOwnershipTable } from "../../analytics-db.js";
 import type { AccountDescriptor } from "@omnesis/source-sdk";
 import type { SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import type {
@@ -2641,6 +2642,24 @@ export class SourceService {
 
   getById(id: string) {
     return getSource(this.deps.db, id as ReturnType<typeof SourceId>);
+  }
+
+  /** The rows of the source's shared analytics tables that no account has claimed. */
+  unattributedLegacyRows(id: SourceId): Promise<LegacyOwnershipTable[]> {
+    this.requireSource(id);
+    return this.deps.sourceDataRemoval.unattributedLegacyRows(id);
+  }
+
+  /** Claim or drop them; see `SourceDataRemovalService.settleLegacyRows`. */
+  settleLegacyRows(id: SourceId, action: LegacyOwnershipAction): Promise<LegacyOwnershipTable[]> {
+    this.requireSource(id);
+    return this.deps.sourceDataRemoval.settleLegacyRows(id, action);
+  }
+
+  private requireSource(id: SourceId): void {
+    if (!getSource(this.deps.db, id)) {
+      throw new HttpError(404, "SOURCE_NOT_FOUND", `source ${id} not found`);
+    }
   }
 
   /** Source-meta map keyed by both full sourceId and source-type. */
