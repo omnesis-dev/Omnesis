@@ -2475,7 +2475,7 @@ const brainTasks = z
     autoApply: z
       .boolean()
       .describe(
-        "Apply a Brain change to one of your own tasks directly when it is sure: the change is a completion, an addition to a description Omnesis wrote, or a deadline a source states, it touches nothing you wrote yourself, and the entailment verifier confirms the quoted evidence establishes it. Each such change is recorded in the task's history and can be undone. False makes every change a proposal you confirm.",
+        "Let the Brain keep your own tasks current: a new title or description applies directly unless you wrote that field (an addition to your description also applies), and a completion or deadline applies when the entailment verifier confirms the quoted evidence establishes it. Striking a task and changes to what you wrote stay proposals. Each applied change is recorded in the task's history and can be undone. False makes every change a proposal you confirm.",
       )
       .optional(),
   })

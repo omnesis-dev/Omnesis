@@ -759,6 +759,12 @@ describe("brain bench: tasks", () => {
     const struck = await bench.obs.task(gym.task!.id);
     expect(struck.task).toMatchObject({ state: "open", proposedChange: { kind: "strike" } });
     expect(bench.entailmentCalls.some((c) => c.claim?.includes("gym") === true)).toBe(false);
+
+    // The user can refuse a proposal, keeping the task as it is.
+    const kept = await act(gym.task!.id, { action: "keep" });
+    expect(kept.body.receipt.text).toBe(`Kept as is: ${GYM_TASK}`);
+    expect(kept.body.task).toMatchObject({ state: "open", proposedChange: null });
+    expect((await act(gym.task!.id, { action: "keep" })).status).toBe(400);
   }, 240_000);
 
   test("a title the user edited is never changed on its own", async () => {
@@ -775,17 +781,19 @@ describe("brain bench: tasks", () => {
     expect(detail.history.some((e) => e.kind === "auto_applied")).toBe(false);
   }, 240_000);
 
-  test("a proposal on an accepted suggestion can be refused, keeping the task as it is", async () => {
+  test("a new title on an accepted suggestion applies on its own and undo restores it", async () => {
     await bench.pushAndSettle([{ ...RENAME, at: NOON }]);
-    const accepted = (await view("today")).find((t) => t.title === ACCEPTED_TITLE)!;
-    expect(accepted.proposedChange).toMatchObject({
-      kind: "edit",
-      fields: { title: "Return the signed venue hire agreement" },
-    });
-    const kept = await act(accepted.id, { action: "keep" });
-    expect(kept.body.receipt.text).toBe(`Kept as is: ${ACCEPTED_TITLE}`);
-    expect(kept.body.task).toMatchObject({ title: ACCEPTED_TITLE, proposedChange: null });
-    expect((await act(accepted.id, { action: "keep" })).status).toBe(400);
+    const renamed = (await view("today")).find(
+      (t) => t.title === "Return the signed venue hire agreement",
+    )!;
+    expect(renamed.proposedChange).toBeNull();
+    // Context needs no proof: the verifier is not asked about a new title.
+    expect(bench.entailmentCalls.some((c) => c.claim?.includes("venue hire") === true)).toBe(false);
+    const detail = await bench.obs.task(renamed.id);
+    expect(detail.history[0]).toMatchObject({ kind: "auto_applied", change: "edit" });
+
+    expect((await bench.obs.undoTask(detail.undoSeq!)).status).toBe(200);
+    expect((await bench.obs.task(renamed.id)).task.title).toBe(ACCEPTED_TITLE);
   }, 240_000);
 
   test("decay schedules checks for Brain suggestions and never for the user's own tasks", async () => {

@@ -554,14 +554,14 @@ export function readTaskAuthorship(
   };
 }
 
-/** A verified Brain change Omnesis applies to one of the user's own tasks. */
+/** A Brain change Omnesis applies on its own to one of the user's own tasks. */
 export interface AutoAppliedTaskChange {
   kind: "complete" | "edit";
   /** For `edit`: the new values. */
-  fields?: { description?: string; deadline?: unknown };
+  fields?: { title?: string; description?: string; deadline?: unknown };
   /** Why, in one sentence, citing what changed. */
   reason: string;
-  /** Documents whose quotes established the change. */
+  /** Documents behind the change. */
   evidence: string[];
   runId: string;
   /** The task's newest event when the change was judged; null when it had none. */
@@ -573,7 +573,7 @@ export type AutoApplyTaskResult =
   | { applied: false; reason: "not_found" | "not_owned" | "stale" | "invalid" };
 
 /**
- * Apply a verified Brain change to one of the user's own tasks and record it
+ * Apply a Brain change to one of the user's own tasks and record it
  * as an `auto_applied` event the user can undo. The change was judged
  * against the task as it stood at `basedOnSeq`: when the task has changed
  * since (the user edited, reopened or undid something meanwhile), nothing is
@@ -599,6 +599,7 @@ export function autoApplyTaskChange(
         return { applied: false, reason: "invalid" };
       updateOpenLoop(db, loop.id, { state: "done", proposedChange: null }, now);
     } else {
+      if (fields.title !== undefined) changed.push("title");
       if (fields.description !== undefined) changed.push("description");
       if (fields.deadline !== undefined) changed.push("deadline");
       if (changed.length === 0) return { applied: false, reason: "invalid" };
@@ -606,6 +607,7 @@ export function autoApplyTaskChange(
         db,
         loop.id,
         {
+          ...(fields.title !== undefined ? { title: fields.title } : {}),
           ...(fields.description !== undefined ? { description: fields.description } : {}),
           ...(fields.deadline !== undefined ? { deadline: fields.deadline } : {}),
         },

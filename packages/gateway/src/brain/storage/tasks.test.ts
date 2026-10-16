@@ -494,7 +494,7 @@ describe("Brain changes Omnesis applies on its own", () => {
     expect(readTaskAuthorship(db, id).authored.has("state")).toBe(true);
   });
 
-  test("an edit sets only the description and deadline, and undo restores both", () => {
+  test("an edit sets only the fields it names, and undo restores them", () => {
     const id = acceptedSuggestion("The plumber sent a quote.");
     const result = autoApplyTaskChange(
       db,
@@ -502,6 +502,7 @@ describe("Brain changes Omnesis applies on its own", () => {
       change(id, {
         kind: "edit",
         fields: {
+          title: "Accept the plumber's quote",
           description: "The plumber sent a quote. It is valid until Friday.",
           deadline: { type: "by", date: "2026-03-13" },
         },
@@ -511,19 +512,25 @@ describe("Brain changes Omnesis applies on its own", () => {
     expect(result).toMatchObject({ applied: true, resolved: false });
     expect(getOpenLoop(db, id)).toMatchObject({
       state: "open",
+      title: "Accept the plumber's quote",
       description: "The plumber sent a quote. It is valid until Friday.",
       deadline: { type: "by", date: "2026-03-13" },
     });
     const event = listOpenLoopLedger(db, id).at(-1)!.event!;
-    expect(event.change).toEqual({ kind: "edit", fields: ["description", "deadline"] });
+    expect(event.change).toEqual({ kind: "edit", fields: ["title", "description", "deadline"] });
     expect(listOpenLoopLedger(db, id).at(-1)!.note).toMatch(/^Updated by Omnesis: /);
 
     ok(apply({ kind: "undo", seq: listOpenLoopLedger(db, id).at(-1)!.seq }, NOW + 2000));
     expect(getOpenLoop(db, id)).toMatchObject({
+      title: "Reply to the plumber about the quote",
       description: "The plumber sent a quote.",
       deadline: null,
     });
-    expect([...readTaskAuthorship(db, id).authored].sort()).toEqual(["deadline", "description"]);
+    expect([...readTaskAuthorship(db, id).authored].sort()).toEqual([
+      "deadline",
+      "description",
+      "title",
+    ]);
   });
 
   test("a task that changed after the change was judged is left alone", () => {

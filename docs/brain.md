@@ -719,25 +719,29 @@ chronologically coherent synthesis.
 ## Changing the user's own tasks
 
 A loop the user owns — one they wrote, one from a note, or an accepted
-suggestion — is their task, and a Brain change to its state, title,
-description or deadline is a proposal they confirm or keep, unless Omnesis is
-sure. `open_loop_update` then carries `evidence`: the fact behind the change,
-whether a source states it (`explicit`) or the run concluded it (`inferred`),
-and verbatim quotes from the documents that establish it.
+suggestion — is their task. Accepting a suggestion is where the user decides
+whether something is worth tracking; after that, keeping the task current is
+the Brain's job, so most changes apply on their own and only those that take
+that decision back or override the user's own words are proposals they
+confirm or keep. `open_loop_update` carries `reason` and, for a fact,
+`evidence`: the fact behind the change, whether a source states it
+(`explicit`) or the run concluded it (`inferred`), and verbatim quotes from
+the documents that establish it.
 
-Being sure takes a deterministic policy and then a verdict
-(`brain/tasks/auto-apply.ts`). The policy admits only a completion, an
-addition to the description, or a new deadline, each on explicit evidence,
-and nothing the user wrote: the title, description and deadline they gave a
-task they created, any field they edited, the state of a task they reopened,
-and any change Omnesis applied that they undid. Striking, a new title,
-rewriting a description, clearing a deadline and scheduling are always
-proposals. An admitted change builds a claim from what it does — the stated
-fact plus the task it completes, the words a description gains, the fact
-behind a deadline — and the entailment verifier must find the quotes
-establish it. Any other verdict, a quote that is not in its document, no
-verifier assigned, or a verifier outage leaves the change a proposal, and the
-tool result says why.
+The policy is deterministic (`brain/tasks/auto-apply.ts`). Striking a task
+is always a proposal. Context applies freely: a new title or description
+where the user did not write that field, an addition to a description they
+did write, and clearing a deadline Omnesis set. Facts need proof: a
+completion, or a deadline the user did not set, needs explicit evidence, and
+the policy builds a claim from it — the stated fact plus the task it
+completes, or the fact behind the deadline — which the entailment verifier
+must find the quotes establish. Any other verdict, a quote that is not in its
+document, no verifier assigned, or a verifier outage leaves a fact a
+proposal, and the tool result says why. What the user wrote stays theirs:
+the title, description and deadline they gave a task they created, any field
+they edited, the state of a task they reopened, and any change Omnesis
+applied that they undid; a change to one of those (other than an addition to
+their description) is a proposal.
 
 An applied change is an `auto_applied` task event carrying its reason,
 evidence documents and the values it replaced, so `/tasks/undo` reverts it.

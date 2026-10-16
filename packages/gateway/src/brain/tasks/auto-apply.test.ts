@@ -25,16 +25,9 @@ const DEADLINE = { type: "by", date: "2026-11-02" };
 
 type Proposal = Pick<ProposedTaskChange, "kind" | "fields">;
 
-const ACTIONS: Array<{ name: string; proposal: Proposal; field: TaskAuthoredField }> = [
+/** Changes that rest on a fact: they apply only on an entailment verdict. */
+const FACTS: Array<{ name: string; proposal: Proposal; field: TaskAuthoredField }> = [
   { name: "complete", proposal: { kind: "complete" }, field: "state" },
-  {
-    name: "description addition",
-    proposal: {
-      kind: "edit",
-      fields: { description: "Invoice for the spring clean. Paid by bank transfer." },
-    },
-    field: "description",
-  },
   {
     name: "deadline set",
     proposal: { kind: "edit", fields: { deadline: DEADLINE } },
@@ -62,7 +55,7 @@ function plan(
 }
 
 describe("the auto-apply policy", () => {
-  for (const action of ACTIONS) {
+  for (const action of FACTS) {
     for (const userAuthored of [false, true]) {
       for (const verdict of VERDICTS) {
         const applies = !userAuthored && verdict === "entailment";
@@ -77,6 +70,50 @@ describe("the auto-apply policy", () => {
     }
   }
 
+  test("context applies without evidence or a verifier where the user did not write it", () => {
+    const context: Proposal[] = [
+      { kind: "edit", fields: { title: "Pay the window cleaner by card" } },
+      { kind: "edit", fields: { description: "Paid by card." } },
+      { kind: "edit", fields: { description: `${LOOP.description} Paid by card.` } },
+      { kind: "edit", fields: { deadline: null } },
+    ];
+    for (const proposal of context) {
+      const planned = plan(proposal, { evidence: undefined });
+      expect(planned).toEqual({ eligible: true, change: proposal });
+      expect(decideTaskAutoApply(planned, null)).toEqual({ apply: true, change: proposal });
+    }
+  });
+
+  test("an addition to the user's own description applies; a rewrite of it is proposed", () => {
+    const addition: Proposal = {
+      kind: "edit",
+      fields: { description: `${LOOP.description} Paid by bank transfer.` },
+    };
+    expect(decideTaskAutoApply(plan(addition, { authored: ["description"] }), null)).toEqual({
+      apply: true,
+      change: addition,
+    });
+    expect(
+      plan(
+        { kind: "edit", fields: { description: "Paid by card." } },
+        { authored: ["description"] },
+      ),
+    ).toEqual({ eligible: false, why: "the user wrote this description" });
+  });
+
+  test("the user's title and deadline are theirs to change", () => {
+    expect(
+      plan(
+        { kind: "edit", fields: { title: "Pay the window cleaner by card" } },
+        { authored: ["title"] },
+      ),
+    ).toEqual({ eligible: false, why: "the user wrote this title" });
+    expect(plan({ kind: "edit", fields: { deadline: null } }, { authored: ["deadline"] })).toEqual({
+      eligible: false,
+      why: "the user set this deadline",
+    });
+  });
+
   test("striking is always a proposal, whatever the evidence", () => {
     for (const verdict of VERDICTS)
       expect(decideTaskAutoApply(plan({ kind: "strike" }), verdict)).toEqual({
@@ -85,89 +122,59 @@ describe("the auto-apply policy", () => {
       });
   });
 
-  test("a title change is always a proposal, user-authored or not", () => {
-    for (const authored of [[], ["title"]] as TaskAuthoredField[][])
-      expect(
-        plan({ kind: "edit", fields: { title: "Pay the window cleaner by card" } }, { authored }),
-      ).toEqual({ eligible: false, why: "a new title is always proposed" });
+  test("a fact on an inference, on no evidence, or with auto-apply turned off is a proposal", () => {
+    for (const fact of FACTS) {
+      expect(plan(fact.proposal, { evidence: { ...EXPLICIT, basis: "inferred" } })).toEqual({
+        eligible: false,
+        why: "the change rests on an inference",
+      });
+      expect(plan(fact.proposal, { evidence: undefined })).toEqual({
+        eligible: false,
+        why: "no evidence was stated",
+      });
+    }
+    expect(
+      plan(
+        { kind: "edit", fields: { title: "Pay the window cleaner by card" } },
+        { enabled: false },
+      ),
+    ).toEqual({ eligible: false, why: "automatic task changes are turned off" });
   });
 
-  test("an inference, no evidence, or auto-apply turned off is a proposal", () => {
-    expect(plan({ kind: "complete" }, { evidence: { ...EXPLICIT, basis: "inferred" } })).toEqual({
-      eligible: false,
-      why: "the change rests on an inference",
-    });
-    expect(plan({ kind: "complete" }, { evidence: undefined })).toEqual({
-      eligible: false,
-      why: "no evidence was stated",
-    });
-    expect(plan({ kind: "complete" }, { enabled: false })).toEqual({
-      eligible: false,
-      why: "automatic task changes are turned off",
-    });
-  });
-
-  test("no verifier is a proposal", () => {
+  test("no verifier keeps a fact a proposal", () => {
     expect(decideTaskAutoApply(plan({ kind: "complete" }), null)).toEqual({
       apply: false,
       why: "the evidence could not be verified",
     });
   });
 
-  test("rewriting a description or removing a deadline is a proposal", () => {
-    expect(plan({ kind: "edit", fields: { description: "Paid by card." } })).toEqual({
-      eligible: false,
-      why: "rewriting a description is always proposed",
-    });
-    expect(plan({ kind: "edit", fields: { deadline: null } })).toEqual({
-      eligible: false,
-      why: "removing a deadline is always proposed",
-    });
-  });
-
-  test("one ineligible field keeps the whole edit a proposal", () => {
+  test("one field the user wrote keeps the whole edit a proposal", () => {
     expect(
       plan(
-        { kind: "edit", fields: { deadline: DEADLINE, description: "Paid by card." } },
-        { authored: [] },
-      ).eligible,
-    ).toBe(false);
-    expect(
-      plan(
-        {
-          kind: "edit",
-          fields: { deadline: DEADLINE, description: `${LOOP.description} Paid by card.` },
-        },
-        { authored: ["description"] },
+        { kind: "edit", fields: { title: "Pay the window cleaner by card", deadline: DEADLINE } },
+        { authored: ["deadline"] },
       ),
-    ).toEqual({ eligible: false, why: "the user wrote this description" });
+    ).toEqual({ eligible: false, why: "the user set this deadline" });
   });
 
-  test("the claim binds the stated fact to the change it justifies", () => {
+  test("the claim binds the stated fact to the change it justifies, and covers only facts", () => {
     expect(plan({ kind: "complete" })).toEqual({
       eligible: true,
       change: { kind: "complete" },
       claim:
         "The window cleaner invoice was paid in full today. So this is done: Pay the window cleaner.",
     });
-    // A description addition is judged on the words it adds.
-    expect(plan(ACTIONS[1]!.proposal)).toMatchObject({
+    const mixed: Proposal = {
+      kind: "edit",
+      fields: { title: "Pay the window cleaner by card", deadline: DEADLINE },
+    };
+    expect(plan(mixed)).toEqual({
       eligible: true,
-      claim: "Paid by bank transfer.",
+      change: mixed,
+      claim: "The window cleaner invoice was paid in full today.",
     });
-    expect(
-      plan({
-        kind: "edit",
-        fields: { deadline: DEADLINE, description: `${LOOP.description} Paid by card.` },
-      }),
-    ).toEqual({
-      eligible: true,
-      change: {
-        kind: "edit",
-        fields: { deadline: DEADLINE, description: `${LOOP.description} Paid by card.` },
-      },
-      claim: "Paid by card. The window cleaner invoice was paid in full today.",
-    });
+    // A context change that rides along with a fact still waits on its verdict.
+    expect(decideTaskAutoApply(plan(mixed), "neutral").apply).toBe(false);
   });
 });
 

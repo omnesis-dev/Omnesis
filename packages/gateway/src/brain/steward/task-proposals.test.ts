@@ -485,23 +485,29 @@ describe("open_loop_update applies a verified change to the user's own task", ()
     expect(getOpenLoop(db, "loop_t")!.proposedChange?.kind).toBe("strike");
   });
 
-  test("a description addition is judged on the added words", async () => {
+  test("a new title or description applies without asking the verifier", async () => {
     const result = structured(
       await update({
         id: "loop_t",
-        description: "Invoice from the sound engineer. Paid in full.",
-        reason: "The receipt confirms payment.",
-        evidence: evidence(),
+        title: "Settle the sound engineer's invoice",
+        description: "The sound engineer invoiced for the budget review.",
+        reason: "The invoice names who it is from and what it covers.",
       }),
     );
     expect(result.resultType).toBe("open_loop.change_applied");
-    expect(claims).toEqual(["Paid in full."]);
-    expect(getOpenLoop(db, "loop_t")!.description).toBe(
-      "Invoice from the sound engineer. Paid in full.",
-    );
+    expect(claims).toEqual([]);
+    expect(getOpenLoop(db, "loop_t")).toMatchObject({
+      title: "Settle the sound engineer's invoice",
+      description: "The sound engineer invoiced for the budget review.",
+      proposedChange: null,
+    });
+    expect(listOpenLoopLedger(db, "loop_t").at(-1)!.event).toMatchObject({
+      kind: "auto_applied",
+      change: { kind: "edit", fields: ["title", "description"] },
+    });
   });
 
-  test("a description the user wrote is never changed on its own", async () => {
+  test("the user's description gains additions on its own, but a rewrite is proposed", async () => {
     applyTaskCommand(
       db,
       {
@@ -513,15 +519,24 @@ describe("open_loop_update applies a verified change to the user's own task", ()
       },
       nowMs - 10_000,
     );
-    const result = structured(
+    const rewrite = structured(
+      await update({
+        id: "loop_t",
+        description: "Paid in full.",
+        reason: "The receipt confirms payment.",
+      }),
+    );
+    expect(rewrite.data.notAppliedBecause).toBe("the user wrote this description");
+    expect(getOpenLoop(db, "loop_t")!.description).toBe("My own words.");
+
+    const addition = structured(
       await update({
         id: "loop_t",
         description: "My own words. Paid in full.",
         reason: "The receipt confirms payment.",
-        evidence: evidence(),
       }),
     );
-    expect(result.data.notAppliedBecause).toBe("the user wrote this description");
-    expect(getOpenLoop(db, "loop_t")!.description).toBe("My own words.");
+    expect(addition.resultType).toBe("open_loop.change_applied");
+    expect(getOpenLoop(db, "loop_t")!.description).toBe("My own words. Paid in full.");
   });
 });

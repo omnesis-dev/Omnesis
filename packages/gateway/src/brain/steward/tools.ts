@@ -266,8 +266,8 @@ export interface CognitionToolDeps {
    */
   checkRecord?: CheckRecord;
   /**
-   * Apply a verified Brain change to one of the user's own tasks directly
-   * instead of proposing it (config `brain.tasks.autoApply`). Absent or
+   * Apply a Brain change to one of the user's own tasks directly, under the
+   * auto-apply policy, instead of proposing it (config `brain.tasks.autoApply`). Absent or
    * false, every such change is a proposal.
    */
   taskAutoApply?: boolean;
@@ -1563,7 +1563,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .strict()
         .optional()
         .describe(
-          "For a change to the user's own task (userTask: true): the fact behind it and the verbatim quotes that establish it. A completion, an addition to the description, or a deadline a source states is applied directly once the quotes are verified to establish it; otherwise the change is proposed.",
+          "For a change to the user's own task (userTask: true): the fact behind it and the verbatim quotes that establish it. A new title or description applies directly unless the user wrote that field (an addition to their description also applies). A completion or a new deadline applies directly once the quotes are verified to establish it. Striking a task, and anything else that overrides what the user wrote, is proposed for the user to confirm.",
         ),
     })
     .strict();
@@ -1716,7 +1716,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           evidence,
         });
         const verdict =
-          plan.eligible && evidence
+          plan.eligible && plan.claim !== undefined && evidence
             ? await verifyTaskEvidence(deps, evidence.quotes, plan.claim, ctx.abortSignal)
             : null;
         const decision = decideTaskAutoApply(plan, verdict?.verdict ?? null);
@@ -1784,7 +1784,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           ...(applied
             ? {
                 applied:
-                  "The evidence was verified: your change was applied to the user's task and shown in its history, where the user can undo it.",
+                  "Your change was applied to the user's task and shown in its history, where the user can undo it.",
               }
             : proposal
               ? {

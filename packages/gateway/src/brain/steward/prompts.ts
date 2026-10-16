@@ -869,7 +869,7 @@ function buildDigestRunPrompt(
     ...(autoAppliedLines.length > 0
       ? [
           "",
-          `Tasks Omnesis changed on its own since the last brief, each verified against its source (the user can undo any of them in Tasks). Mention them together in ONE short line, not one per task:\n${autoAppliedLines.join("\n")}`,
+          `Tasks Omnesis changed on its own since the last brief (the user can undo any of them in Tasks). Mention them together in ONE short line, not one per task:\n${autoAppliedLines.join("\n")}`,
         ]
       : []),
     deltaPrime,
