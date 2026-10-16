@@ -35,6 +35,7 @@ import {
   linkReconcileTask,
   interactionScoresRefreshTask,
   peopleCountsRefreshTask,
+  mergeCandidatesDetectTask,
   mergeRulesEvalTask,
   peopleBackfillTask,
   tokenIdentityClassifyTask,
@@ -281,6 +282,78 @@ describe("people and auto-detect convergence chain", () => {
 
     expect(outcome).toEqual({ kind: "done", value: { idle: true, successful: true } });
     expect(kicked).toEqual([autoDetectTask(opts).name]);
+  });
+});
+
+describe("mergeCandidatesDetectTask — completion report", () => {
+  function makeDetectOpts(proposals: number, approved: number) {
+    const meta = { inFlight: false };
+    const opts = {
+      writeGate: {
+        pruneSuppressedMergeCandidates: vi.fn(async () => ({ pruned: 0 })),
+        upsertMergeCandidates: vi.fn(async () => ({
+          inserted: proposals,
+          refreshed: 0,
+          skipped: 0,
+        })),
+        reconcilePendingMergeCandidates: vi.fn(async () => ({ deleted: 0 })),
+        autoApproveHighConfidenceCandidates: vi.fn(async () => ({ approved })),
+      },
+      ioGate: {
+        mergeRulesMeta: vi.fn(async () => ({
+          dirtyVersion: meta.inFlight ? 2 : 1,
+          lastEvaluatedVersion: 1,
+        })),
+        interactionScoresMeta: vi.fn(async () => ({ dirtyVersion: 1, lastComputedVersion: 1 })),
+        fetchMergeCandidatesData: vi.fn(async () => ({})),
+      },
+      cpuGate: {
+        scoreMergeCandidates: vi.fn(async () =>
+          Array.from({ length: proposals }, () => ({
+            sideA: { aliasType: "email", alias: "maya.reeves@example.com" },
+            sideB: { aliasType: "lid", alias: "github:maya-reeves" },
+          })),
+        ),
+      },
+      log,
+      mergeCandidatesDetectIntervalMs: 300_000,
+      mergeCandidatesDetectIdleDelayMs: 600_000,
+      trackers: { mergeCandidatesDetect: trackerStub() },
+    } as unknown as BackfillTaskOptsInternal;
+    return { opts, meta };
+  }
+
+  test("a scoring tick reports how many candidates it auto-approved", async () => {
+    const { opts } = makeDetectOpts(2, 1);
+    const outcome = await mergeCandidatesDetectTask(opts).run(undefined, ctx);
+
+    expect(outcome).toEqual({
+      kind: "done",
+      value: { idle: false, detected: true, approved: 1 },
+    });
+  });
+
+  test("a scoring tick with no proposals still reports a completed detection", async () => {
+    const { opts } = makeDetectOpts(0, 0);
+    const outcome = await mergeCandidatesDetectTask(opts).run(undefined, ctx);
+
+    expect(outcome).toEqual({
+      kind: "done",
+      value: { idle: true, detected: true, approved: 0 },
+    });
+    expect(opts.writeGate.autoApproveHighConfidenceCandidates).not.toHaveBeenCalled();
+  });
+
+  test("a tick deferred by an in-flight graph reports no detection", async () => {
+    const { opts, meta } = makeDetectOpts(1, 1);
+    const task = mergeCandidatesDetectTask(opts);
+    await task.run(undefined, ctx);
+    meta.inFlight = true;
+
+    const deferred = await task.run(undefined, ctx);
+
+    expect(deferred).toEqual({ kind: "done", value: { idle: true } });
+    expect(opts.cpuGate.scoreMergeCandidates).toHaveBeenCalledOnce();
   });
 });
 

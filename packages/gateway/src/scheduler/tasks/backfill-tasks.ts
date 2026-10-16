@@ -848,10 +848,13 @@ export function autoDetectTask(
 // — guarantees we score against a steady-state graph instead of one
 // where active merges haven't materialized yet. When either is dirty,
 // the task returns idle so the next tick uses the (longer) idle delay.
+// A tick that scored the graph reports `detected` with the number of
+// candidates it auto-approved, so a caller driving the task can tell a
+// deferred tick from a completed one.
 
 export function mergeCandidatesDetectTask(
   opts: BackfillTaskOptsInternal,
-): PeriodicTask<unknown, IdleResult> {
+): PeriodicTask<unknown, IdleResult & { detected?: true; approved?: number }> {
   const {
     writeGate,
     ioGate,
@@ -925,7 +928,7 @@ export function mergeCandidatesDetectTask(
         lastDetectedAtMs = Date.now();
         if (proposals.length === 0) {
           trackers.mergeCandidatesDetect.recordSweepCompleted();
-          return { idle: pruned === 0 };
+          return { idle: pruned === 0, detected: true as const, approved: 0 };
         }
         const result = await writeGate.upsertMergeCandidates(proposals);
         // Reconcile pending → latest output: drop rows no longer proposed (heals
@@ -949,7 +952,7 @@ export function mergeCandidatesDetectTask(
             `merge candidates detect: ${proposals.length} proposals → ${result.inserted} new, ${result.refreshed} refreshed, ${result.skipped} decided, ${approved} auto-approved in ${tookMs}ms (compute=${computedMs}ms)`,
           );
         }
-        return { idle: false };
+        return { idle: false, detected: true as const, approved };
       });
     },
   };
