@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 // @ts-expect-error Plain-JavaScript portal module.
 import { decisionAuditPurposes, decisionAuditQuery, LegacyDecisionAuditCard } from "./knowledge-decision-audit.js";
 it("offers every knowledge judgement purpose, including pre-run review timing", () => {
-  expect(decisionAuditPurposes.map(([value]: [string, string]) => value)).toEqual(["", "discovery", "impact", "review", "urgency", "worth-gate", "record-check"]);
+  expect(decisionAuditPurposes.map(([value]: [string, string]) => value)).toEqual(["", "discovery", "impact", "review", "urgency", "worth-gate", "record-check", "task-check"]);
 });
 it("passes purpose and page cursor to the server without a client-only page filter", () => {
   expect(decisionAuditQuery("review", { limit: 20, cursor: "next" })).toEqual({ purpose: "review", limit: 20, cursor: "next" });
