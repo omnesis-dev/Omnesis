@@ -50,6 +50,8 @@ import { WorthGate, WORTH_GATE_SPEND_MECHANISM } from "./worth-gate/gate.js";
 import { RecordCheck } from "./record-check/check.js";
 import { RECORD_CHECK_SPEND_MECHANISM } from "./record-check/rubric.js";
 import { recordDecisionSpend } from "./decision-call.js";
+import { TaskChecks, TASK_CHECK_SPEND_MECHANISM } from "./tasks/task-checks.js";
+import { settleTaskProposals } from "./tasks/settle-proposals.js";
 import { cognitionSpendDay } from "./storage/spend.js";
 import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
 import type { ChatBackend, ToolHandle } from "@omnesis/agent";
@@ -433,6 +435,23 @@ export async function bootBriefs(deps: {
       rq.scheduler.schedule(maintenance.task);
       rq.backgroundJobs.registerAll([maintenance.job]);
       const { createCognitionRuntime } = await import("./steward/runtime.js");
+      const taskChecks = rq.getDecision
+        ? new TaskChecks({
+            getDecision: rq.getDecision,
+            recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
+            recordSpend: (modelId, inputTokens) =>
+              recordDecisionSpend(
+                deps.writeGate,
+                cognitionSpendDay((rq.clock ?? Date.now)()),
+                TASK_CHECK_SPEND_MECHANISM,
+                modelId,
+                inputTokens,
+              ),
+            clock: rq.clock ?? Date.now,
+            idGen: () => crypto.randomUUID(),
+            log: log.child("task-check"),
+          })
+        : undefined;
       runtimeSeams = await createCognitionRuntime({
         knowledge,
         db: rq.db,
@@ -471,6 +490,7 @@ export async function bootBriefs(deps: {
               }),
             }
           : {}),
+        ...(taskChecks ? { taskChecks } : {}),
         ...(rq.cognition.policyStore ? { policyStore: rq.cognition.policyStore } : {}),
         getSettings: rq.getSettings,
         ...(rq.getOperatorInstructions
@@ -480,6 +500,20 @@ export async function bootBriefs(deps: {
         ...(rq.clock ? { clock: rq.clock } : {}),
         log,
       });
+      // A proposal waiting on a task was judged when it was made; settle the
+      // ones the current policy would apply, or that no longer change anything.
+      void settleTaskProposals({
+        db: rq.db,
+        writeGate: deps.writeGate,
+        autoApply: rq.getSettings().tasks.autoApply,
+        ...(taskChecks ? { taskChecks } : {}),
+        clock: rq.clock ?? Date.now,
+        log: log.child("tasks"),
+      }).catch((err: unknown) =>
+        log.warn(
+          `Settling waiting task proposals failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
     }
     const buildTools = rq.buildTools ?? runtimeSeams.buildTools;
     const promptBuilder = rq.promptBuilder ?? runtimeSeams.promptBuilder;

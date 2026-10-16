@@ -11,7 +11,7 @@ import { DecisionInputInspection, KnowledgeDecisionCard } from "./cognition-know
 export const decisionAuditPurposes = [
   ["", "All judgements"], ["discovery", "Discovery admission"], ["impact", "Change impact"],
   ["review", "Review timing"], ["urgency", "Scheduling urgency"],
-  ["worth-gate", "Worth admission"], ["record-check", "Record check"],
+  ["worth-gate", "Worth admission"], ["record-check", "Record check"], ["task-check", "Task check"],
 ];
 export function decisionAuditQuery(purpose, { limit, cursor }) {
   return { ...(purpose ? { purpose } : {}), limit, ...(cursor ? { cursor } : {}) };

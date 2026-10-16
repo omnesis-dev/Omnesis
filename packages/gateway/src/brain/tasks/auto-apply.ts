@@ -24,7 +24,36 @@
  * undo it; undoing it makes that field the user's.
  */
 
-import type { OpenLoopRow, ProposedTaskChange, TaskAuthoredField } from "../storage/types.js";
+import type {
+  OpenLoopRow,
+  OpenLoopState,
+  ProposedTaskChange,
+  TaskAuthoredField,
+} from "../storage/types.js";
+
+/**
+ * The proposal a run's update makes to one of the user's own tasks, or null
+ * when the update changes nothing the user owns. Resolving proposes
+ * completion or striking; other field changes propose an edit. A snooze is
+ * not proposed: when to do a task is the user's call.
+ */
+export function taskProposalFor(
+  loop: Pick<OpenLoopRow, "state" | "title" | "description" | "deadline">,
+  change: { state?: OpenLoopState; title?: string; description?: string; deadline?: unknown },
+): Pick<ProposedTaskChange, "kind" | "fields"> | null {
+  if (change.state === "done" && loop.state !== "done") return { kind: "complete" };
+  if (change.state === "dismissed" && loop.state !== "dismissed") return { kind: "strike" };
+  const fields: NonNullable<ProposedTaskChange["fields"]> = {};
+  if (change.title !== undefined && change.title !== loop.title) fields.title = change.title;
+  if (change.description !== undefined && change.description !== loop.description)
+    fields.description = change.description;
+  if (
+    change.deadline !== undefined &&
+    JSON.stringify(change.deadline) !== JSON.stringify(loop.deadline)
+  )
+    fields.deadline = change.deadline;
+  return Object.keys(fields).length > 0 ? { kind: "edit", fields } : null;
+}
 
 /** The Brain's account of why a task changes. */
 export interface TaskChangeEvidence {

@@ -18,6 +18,7 @@ import {
   proposeTaskChange,
   readTaskAuthorship,
   userAuthoredTaskFields,
+  withdrawTaskProposal,
   type AutoAppliedTaskChange,
   type TaskCommand,
   type TaskCommandResult,
@@ -531,6 +532,42 @@ describe("Brain changes Omnesis applies on its own", () => {
       "description",
       "title",
     ]);
+  });
+
+  test("an applied change supersedes the proposal waiting on the task", () => {
+    const id = acceptedSuggestion();
+    const proposal = {
+      kind: "edit" as const,
+      fields: { title: "Call the plumber" },
+      reason: "An older source.",
+      evidence: [],
+      runId: "run_1",
+      proposedAt: NOW + 100,
+    };
+    expect(proposeTaskChange(db, id, proposal, NOW + 100)).toBe(true);
+    const edit = change(id, {
+      kind: "edit",
+      fields: { description: "The quote is valid until Friday." },
+    });
+    expect(autoApplyTaskChange(db, id, edit, NOW + 1000)).toMatchObject({ applied: true });
+    expect(getOpenLoop(db, id)!.proposedChange).toBeNull();
+  });
+
+  test("a waiting proposal is withdrawn only while it is still the one recorded", () => {
+    const id = acceptedSuggestion();
+    const proposal = {
+      kind: "edit" as const,
+      fields: { title: "Call the plumber" },
+      reason: "An older source.",
+      evidence: [],
+      runId: "run_1",
+      proposedAt: NOW + 100,
+    };
+    proposeTaskChange(db, id, proposal, NOW + 100);
+    expect(withdrawTaskProposal(db, id, NOW + 99)).toBe(false);
+    expect(getOpenLoop(db, id)!.proposedChange).not.toBeNull();
+    expect(withdrawTaskProposal(db, id, NOW + 100)).toBe(true);
+    expect(getOpenLoop(db, id)!.proposedChange).toBeNull();
   });
 
   test("a task that changed after the change was judged is left alone", () => {

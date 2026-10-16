@@ -20,11 +20,19 @@ import { directWriteGate } from "../../write-gate.js";
 import { createObservation, getObservation } from "../storage/observations.js";
 import { createOpenLoop, getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
 import { applyTaskCommand } from "../storage/tasks.js";
+import { taskProposalFor } from "../tasks/auto-apply.js";
+import { TaskChecks } from "../tasks/task-checks.js";
 import { createOpenLoopMirror } from "./mirror.js";
-import { buildCognitionOwnTools, taskProposalFor } from "./tools.js";
+import { buildCognitionOwnTools } from "./tools.js";
+import type { CognitionDecisionRecord } from "../storage/decisions.js";
 import type { OpenLoopRow, TaskOrigin } from "../storage/types.js";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
-import type { EntailCapability, EntailVerdict, ToolResult } from "@omnesis/core";
+import type {
+  DecisionCapability,
+  EntailCapability,
+  EntailVerdict,
+  ToolResult,
+} from "@omnesis/core";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -343,7 +351,37 @@ describe("open_loop_update applies a verified change to the user's own task", ()
     dispose() {},
   };
 
-  function build(options: { autoApply?: boolean; verifier?: boolean } = {}): void {
+  // The decision model behind the task checks: a score per question, or an outage.
+  let scores: Record<string, number | "outage">;
+  let asked: string[];
+  let ledger: CognitionDecisionRecord[];
+  const decision: DecisionCapability = {
+    modelId: "scripted-decision",
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async decide(request) {
+      const [id] = Object.keys(request.questions);
+      asked.push(id!);
+      const score = scores[id!];
+      if (score === undefined || score === "outage") throw new Error("decision offline");
+      return { model: "scripted-decision", answers: { [id!]: { type: "score", score } } };
+    },
+    dispose() {},
+  };
+  const taskChecks = (withModel = true) =>
+    new TaskChecks({
+      getDecision: () => (withModel ? decision : null),
+      recordDecision: async (record) => {
+        ledger.push(record);
+      },
+      recordSpend: async () => {},
+      clock: () => nowMs,
+      idGen: () => randomUUID(),
+      log,
+    });
+
+  function build(
+    options: { autoApply?: boolean; verifier?: boolean; checks?: TaskChecks } = {},
+  ): void {
     const writeGate = directWriteGate(db);
     tools = buildCognitionOwnTools({
       db,
@@ -355,6 +393,7 @@ describe("open_loop_update applies a verified change to the user's own task", ()
       runId: "run_auto_1",
       idGen: () => randomUUID(),
       taskAutoApply: options.autoApply ?? true,
+      ...(options.checks ? { taskChecks: options.checks } : {}),
       ...(options.verifier === false
         ? {}
         : { getEntailmentVerifier: () => Promise.resolve(verifier) }),
@@ -408,6 +447,7 @@ describe("open_loop_update applies a verified change to the user's own task", ()
         description: "Invoice from the sound engineer.",
         confidence: 0.8,
         importance: 0.5,
+        docs: [docId],
       },
       nowMs - 60_000,
     );
@@ -418,6 +458,9 @@ describe("open_loop_update applies a verified change to the user's own task", ()
     );
     verdict = "entailment";
     claims = [];
+    scores = {};
+    asked = [];
+    ledger = [];
     build();
   });
   afterEach(() => {
@@ -538,5 +581,105 @@ describe("open_loop_update applies a verified change to the user's own task", ()
     );
     expect(addition.resultType).toBe("open_loop.change_applied");
     expect(getOpenLoop(db, "loop_t")!.description).toBe("My own words. Paid in full.");
+  });
+  const rename = () =>
+    update({
+      id: "loop_t",
+      title: "Settle the sound engineer's invoice",
+      reason: "The invoice names who it is from.",
+    });
+
+  test("a new title applies when the decision model confirms it names the same task", async () => {
+    scores = { same_task: 3 };
+    build({ checks: taskChecks() });
+    expect(structured(await rename()).resultType).toBe("open_loop.change_applied");
+    expect(getOpenLoop(db, "loop_t")!.title).toBe("Settle the sound engineer's invoice");
+    expect(ledger).toEqual([
+      expect.objectContaining({
+        purpose: "task-check",
+        lane: "same_task",
+        documentId: docId,
+        recordId: "loop_t",
+        verdict: "pass",
+        requestJson: null,
+      }),
+    ]);
+  });
+
+  test.each([
+    [0, "the new title may describe a different task"],
+    ["outage" as const, "whether the new title still names the same task could not be checked"],
+  ])("a title scored %s stays a proposal", async (score, why) => {
+    scores = { same_task: score };
+    build({ checks: taskChecks() });
+    const result = structured(await rename());
+    expect(result.resultType).toBe("open_loop.change_proposed");
+    expect(result.data.notAppliedBecause).toBe(why);
+    expect(getOpenLoop(db, "loop_t")).toMatchObject({
+      title: "Pay the budget review invoice",
+      proposedChange: { kind: "edit", fields: { title: "Settle the sound engineer's invoice" } },
+    });
+  });
+
+  test("without a decision model a title applies unchecked, and a description never asks", async () => {
+    build({ checks: taskChecks(false) });
+    expect(structured(await rename()).resultType).toBe("open_loop.change_applied");
+    build({ checks: taskChecks() });
+    const described = structured(
+      await update({
+        id: "loop_t",
+        description: "The sound engineer invoiced for the budget review.",
+        reason: "The invoice says what it covers.",
+      }),
+    );
+    expect(described.resultType).toBe("open_loop.change_applied");
+    expect(asked).toEqual([]);
+  });
+
+  test("a note that repeats the task's history is left out of it", async () => {
+    const append = (note: string) =>
+      tools.find((t) => t.name === "open_loop_ledger_append")!.invoke({ id: "loop_t", note }, CTX);
+    build({ checks: taskChecks() });
+    const before = listOpenLoopLedger(db, "loop_t").length;
+    scores = { adds_new: 0 };
+    const repeated = structured(await append("Searched again; still no reply."));
+    expect(repeated).toMatchObject({
+      resultType: "open_loop.ledger_unchanged",
+      data: { recorded: false },
+    });
+    expect(listOpenLoopLedger(db, "loop_t")).toHaveLength(before);
+    scores = { adds_new: 1 };
+    expect(structured(await append("The engineer replied with a revised amount.")).resultType).toBe(
+      "open_loop.ledger_appended",
+    );
+    scores = { adds_new: "outage" };
+    expect(structured(await append("A second invoice arrived.")).resultType).toBe(
+      "open_loop.ledger_appended",
+    );
+    expect(listOpenLoopLedger(db, "loop_t")).toHaveLength(before + 2);
+    expect(ledger.map((entry) => entry.verdict)).toEqual(["skip", "pass", "unavailable"]);
+  });
+
+  test("notes on a loop the user has not accepted are not checked", async () => {
+    createOpenLoop(
+      db,
+      {
+        id: "loop_s",
+        createdByRun: "r0",
+        title: "Review the Q4 budget",
+        description: "",
+        confidence: 0.8,
+        importance: 0.5,
+      },
+      nowMs - 60_000,
+    );
+    build({ checks: taskChecks() });
+    const result = structured(
+      await tools
+        .find((t) => t.name === "open_loop_ledger_append")!
+        .invoke({ id: "loop_s", note: "Nothing new." }, CTX),
+    );
+    expect(result.resultType).toBe("open_loop.ledger_appended");
+    expect(asked).toEqual([]);
   });
 });

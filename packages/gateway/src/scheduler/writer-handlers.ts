@@ -80,6 +80,7 @@ import {
 import {
   applyTaskCommand,
   autoApplyTaskChange,
+  withdrawTaskProposal,
   proposeTaskChange,
   type AutoAppliedTaskChange,
   type TaskCommand,
@@ -1816,6 +1817,8 @@ export const writerHandlers = {
     proposeTaskChange(db, loopId, proposal, now),
   "cognition.taskAutoApply": (db: Db, loopId: string, change: AutoAppliedTaskChange, now: number) =>
     autoApplyTaskChange(db, loopId, change, now),
+  "cognition.taskProposalWithdraw": (db: Db, loopId: string, proposedAt: number) =>
+    withdrawTaskProposal(db, loopId, proposedAt),
   "cognition.observationPrune": (db: Db, olderThan: number, now: number) =>
     pruneClosedObservations(db, olderThan, now),
   "cognition.morningBriefItems": (

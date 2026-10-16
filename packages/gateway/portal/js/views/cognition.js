@@ -1099,7 +1099,11 @@ function decisionVerdict(d) {
   return { label: d.verdict, color: "#94a3b8", sentence: null };
 }
 
-const DECISION_PURPOSE_LABEL = { "worth-gate": "worth gate", "record-check": "record check" };
+const DECISION_PURPOSE_LABEL = {
+  "worth-gate": "worth gate",
+  "record-check": "record check",
+  "task-check": "task check",
+};
 
 const fmtScore = (n) => (typeof n === "number" ? n.toFixed(2) : "—");
 const fmtPct = (n) => (typeof n === "number" ? `${Math.round(n * 100)}%` : "—");

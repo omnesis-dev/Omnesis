@@ -295,15 +295,19 @@ export function listKnowledgeDecisionAudit(db: Database.Database, limit: number)
   )();
 }
 
+/** Purposes recorded in the run ledger (`cognition_decisions`) rather than the knowledge ledger. */
+type LegacyDecisionPurpose = "worth-gate" | "record-check" | "task-check";
+const LEGACY_PURPOSES: readonly string[] = ["worth-gate", "record-check", "task-check"];
+
 export interface KnowledgeDecisionAuditOptions {
-  purpose?: KnowledgeDecisionPurpose | "worth-gate" | "record-check";
+  purpose?: KnowledgeDecisionPurpose | LegacyDecisionPurpose;
   cursor?: string;
   limit?: number;
 }
 
 interface LegacyAuditRow {
   id: string;
-  purpose: "worth-gate" | "record-check";
+  purpose: LegacyDecisionPurpose;
   score: number | null;
   threshold: number;
   runId: string;
@@ -376,7 +380,7 @@ export function listKnowledgeDecisionAuditPage(
     const knowledge = predicate("knowledge"),
       legacy = predicate("legacy");
     const knowledgeRows =
-      !purpose || !["worth-gate", "record-check"].includes(purpose)
+      !purpose || !LEGACY_PURPOSES.includes(purpose)
         ? db
             .prepare<
               Record<string, string | number>,
@@ -388,7 +392,7 @@ export function listKnowledgeDecisionAuditPage(
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cognition_decisions'")
       .get();
     const legacyRows =
-      hasLegacy && (!purpose || ["worth-gate", "record-check"].includes(purpose))
+      hasLegacy && (!purpose || LEGACY_PURPOSES.includes(purpose))
         ? db
             .prepare<
               Record<string, string | number>,

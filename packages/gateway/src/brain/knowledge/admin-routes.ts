@@ -68,6 +68,7 @@ export function mountKnowledgeAdminRoutes(
           "urgency",
           "worth-gate",
           "record-check",
+          "task-check",
         ] as const),
         cursor: c.req.query("cursor"),
       }),

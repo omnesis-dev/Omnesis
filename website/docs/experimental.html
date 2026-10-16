@@ -556,7 +556,11 @@
           A change Brain applied reads <strong>Marked done by Omnesis</strong> or
           <strong>Updated by Omnesis</strong> in the task's history, with its reason and an
           <strong>Undo</strong>; undoing it also keeps Brain from making that change on its own
-          again, and the next morning brief mentions such changes in one line. Set
+          again, and the next morning brief mentions such changes in one line. When a decision model
+          is assigned, a new title applies on its own only after it is checked to still name the
+          same task, and a note that only repeats a task's history is left out of it. Proposals
+          still waiting when Brain starts are checked again: one that no longer changes anything is
+          dropped, and one Brain would now apply on its own is applied. Set
           <code>brain.tasks.autoApply</code> to <code>false</code> to have every change proposed.
           Your own tasks never decay. Without experimental mode, neither the Suggested view nor
           proposed changes appear.

@@ -12,6 +12,7 @@ import {
 import {
   applyTaskCommand,
   autoApplyTaskChange,
+  withdrawTaskProposal,
   proposeTaskChange,
   type AutoAppliedTaskChange,
   type AutoApplyTaskResult,
@@ -2011,6 +2012,8 @@ export interface WriteGate extends KnowledgeWriteGate {
     change: AutoAppliedTaskChange,
     now: number,
   ): Promise<AutoApplyTaskResult>;
+  /** Drop a task's waiting proposal if it is still the one made at `proposedAt`. */
+  withdrawTaskProposal(loopId: string, proposedAt: number): Promise<boolean>;
   /** Forget a redacted morning brief's items. */
   clearMorningBriefMessageItems(messageId: string): Promise<number>;
   /** Queue notes captured since the note agent started; returns how many. */
@@ -2771,6 +2774,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("cognition.taskPropose", [loopId, proposal, now]),
     autoApplyTaskChange: (loopId, change, now) =>
       call("cognition.taskAutoApply", [loopId, change, now]),
+    withdrawTaskProposal: (loopId, proposedAt) =>
+      call("cognition.taskProposalWithdraw", [loopId, proposedAt]),
     pruneClosedObservations: (olderThan, now) =>
       call("cognition.observationPrune", [olderThan, now]),
     replaceMorningBriefItems: (day, runId, observationIds) =>
@@ -3459,6 +3464,8 @@ export function directWriteGate(db: Db): WriteGate {
       proposeTaskChange(db, loopId, proposal, now),
     autoApplyTaskChange: async (loopId, change, now) =>
       autoApplyTaskChange(db, loopId, change, now),
+    withdrawTaskProposal: async (loopId, proposedAt) =>
+      withdrawTaskProposal(db, loopId, proposedAt),
     pruneClosedObservations: async (olderThan, now) => pruneClosedObservations(db, olderThan, now),
     replaceMorningBriefItems: async (day, runId, observationIds) =>
       replaceMorningBriefItems(db, day, runId, observationIds),

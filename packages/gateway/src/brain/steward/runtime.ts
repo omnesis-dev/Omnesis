@@ -105,6 +105,7 @@ import type { DerivationStage } from "../../domain/DocumentDerivation.js";
 import type { ResolvedBrainSettings } from "../config.js";
 import type { CognitionRunExecutionContext } from "../run-driver.js";
 import type { RecordCheck } from "../record-check/check.js";
+import type { TaskChecks } from "../tasks/task-checks.js";
 
 type Db = Database.Database;
 
@@ -215,6 +216,8 @@ export interface CognitionToolsetDeps {
    * read per toolset build. Omitted, every such change is a proposal.
    */
   getTaskAutoApply?: () => boolean;
+  /** Decision-model checks on Brain writes to the user's own tasks. Omitted, none run. */
+  taskChecks?: TaskChecks;
   validateAnnotationEvidence?: AnnotationToolDeps["validateAnnotationEvidence"];
   /**
    * The record check, bound per background run to the lanes it covers.
@@ -425,6 +428,7 @@ function ownToolsInput(
       : {}),
     ...(deps.getEntailmentVerifier ? { getEntailmentVerifier: deps.getEntailmentVerifier } : {}),
     ...(deps.getTaskAutoApply ? { taskAutoApply: deps.getTaskAutoApply() } : {}),
+    ...(deps.taskChecks ? { taskChecks: deps.taskChecks } : {}),
     ...(opts.triggeringLoopId !== undefined ? { triggeringLoopId: opts.triggeringLoopId } : {}),
     ...(opts.consumption ? { consumption: opts.consumption } : {}),
     ...(deps.idGen ? { idGen: deps.idGen } : {}),
@@ -487,6 +491,8 @@ export interface CognitionRuntimeDeps {
   validateAnnotationEvidence?: AnnotationToolDeps["validateAnnotationEvidence"];
   /** The record check on new background annotations. Optional — absent saves them unchecked. */
   recordCheck?: RecordCheck;
+  /** Decision-model checks on Brain writes to the user's own tasks. Optional. */
+  taskChecks?: TaskChecks;
   /**
    * The observation pipeline: the morning recheck's judgement seams, the
    * note-time scorer and the morning brief sender. Absent (storage-only
@@ -608,6 +614,7 @@ export async function createCognitionRuntime(
       : {}),
     ...(deps.getEntailmentVerifier ? { getEntailmentVerifier: deps.getEntailmentVerifier } : {}),
     getTaskAutoApply: () => deps.getSettings().tasks.autoApply,
+    ...(deps.taskChecks ? { taskChecks: deps.taskChecks } : {}),
     ...(deps.recordCheck ? { recordCheck: deps.recordCheck } : {}),
     ...(deps.observations ? { createObservationScorer: deps.observations.createScorer } : {}),
     clock,

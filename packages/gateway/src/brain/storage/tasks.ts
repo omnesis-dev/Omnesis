@@ -574,7 +574,8 @@ export type AutoApplyTaskResult =
 
 /**
  * Apply a Brain change to one of the user's own tasks and record it
- * as an `auto_applied` event the user can undo. The change was judged
+ * as an `auto_applied` event the user can undo. It supersedes any proposal
+ * still waiting on the task. The change was judged
  * against the task as it stood at `basedOnSeq`: when the task has changed
  * since (the user edited, reopened or undid something meanwhile), nothing is
  * applied and the caller proposes the change instead.
@@ -610,6 +611,7 @@ export function autoApplyTaskChange(
           ...(fields.title !== undefined ? { title: fields.title } : {}),
           ...(fields.description !== undefined ? { description: fields.description } : {}),
           ...(fields.deadline !== undefined ? { deadline: fields.deadline } : {}),
+          proposedChange: null,
         },
         now,
       );
@@ -632,6 +634,21 @@ export function autoApplyTaskChange(
       now,
     );
     return { applied: true, seq, resolved: change.kind === "complete" };
+  })();
+}
+
+/**
+ * Drop the proposal waiting on a task, when it is still the one recorded at
+ * `proposedAt`. Used for a proposal that no longer changes anything.
+ */
+export function withdrawTaskProposal(db: Db, loopId: string, proposedAt: number): boolean {
+  return db.transaction(() => {
+    const loop = getOpenLoop(db, loopId);
+    if (!loop || loop.proposedChange?.proposedAt !== proposedAt) return false;
+    db.prepare<[string]>("UPDATE open_loops SET proposed_change_json = NULL WHERE id = ?").run(
+      loopId,
+    );
+    return true;
   })();
 }
 

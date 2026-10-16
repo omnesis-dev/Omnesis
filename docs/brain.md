@@ -750,6 +750,23 @@ the verifier answers turns it back into a proposal. The next morning brief
 names the changes applied since the last one in a single line.
 `brain.tasks.autoApply: false` makes every change a proposal.
 
+When a decision model is assigned, two typed checks (`brain/tasks/task-checks.ts`)
+weigh what a run already chose to write. A new title that would apply on its
+own must first be scored as naming the same task; a lower score or a model
+outage leaves it a proposal. A note a run appends to one of the user's own
+tasks is scored against the task and its eight latest notes, and a note that
+only repeats them is not recorded, so the task's history stays readable; an
+outage keeps the note. Verdicts land in the decision ledger as `task-check`
+by score alone, anchored to one of the task's documents. Notes on loops the
+user has not accepted are never checked.
+
+A proposal is judged when it is made, but the task and the policy move on
+while it waits. When the Brain starts, it settles waiting proposals: one that
+no longer changes anything is withdrawn, an edit the policy now applies on its
+own is applied as an undoable `auto_applied` event, and the rest keep waiting.
+A completion or deadline stays a proposal, since its evidence quotes are not
+kept. An applied change also replaces any proposal still waiting on that task.
+
 ## Bounding the spend
 
 Everything is measured in **tokens and runs**. The Brain reports no figure in

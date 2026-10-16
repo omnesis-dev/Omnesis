@@ -121,8 +121,10 @@ import { readTaskAuthorship } from "../storage/tasks.js";
 import {
   decideTaskAutoApply,
   planTaskAutoApply,
+  taskProposalFor,
   type TaskEvidenceVerdict,
 } from "../tasks/auto-apply.js";
+import { TASK_NOTE_HISTORY, type TaskChecks } from "../tasks/task-checks.js";
 import { jointContextualEvidence } from "./annotation-gate-evidence.js";
 import { assessPersonWithdrawal } from "./person-withdrawal.js";
 import { PersonProfileReads } from "./person-profile-reads.js";
@@ -271,6 +273,12 @@ export interface CognitionToolDeps {
    * false, every such change is a proposal.
    */
   taskAutoApply?: boolean;
+  /**
+   * Decision-model checks on writes to the user's own tasks: whether a new
+   * title still names the same task before it applies on its own, and whether
+   * a note adds anything to the task's history. Absent, neither runs.
+   */
+  taskChecks?: TaskChecks;
   /**
    * Per-run surfaced-prior tracker (consumption provenance). Search results,
    * prompt-inlined priors and self-memory become candidates that a later
@@ -1719,7 +1727,30 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           plan.eligible && plan.claim !== undefined && evidence
             ? await verifyTaskEvidence(deps, evidence.quotes, plan.claim, ctx.abortSignal)
             : null;
-        const decision = decideTaskAutoApply(plan, verdict?.verdict ?? null);
+        let decision = decideTaskAutoApply(plan, verdict?.verdict ?? null);
+        const newTitle = decision.apply ? decision.change.fields?.title : undefined;
+        if (decision.apply && newTitle !== undefined && deps.taskChecks) {
+          const same = await deps.taskChecks.sameTask(
+            {
+              runId,
+              loopId: id,
+              documentId: existing.docs[0] ?? null,
+              before: { title: existing.title, description: existing.description },
+              after: {
+                title: newTitle,
+                description: decision.change.fields?.description ?? existing.description,
+              },
+            },
+            ctx.abortSignal,
+          );
+          if (same === "different")
+            decision = { apply: false, why: "the new title may describe a different task" };
+          else if (same === "unavailable")
+            decision = {
+              apply: false,
+              why: "whether the new title still names the same task could not be checked",
+            };
+        }
         if (decision.apply) {
           const result = await writeGate.autoApplyTaskChange(
             id,
@@ -1829,11 +1860,37 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
     schema: ledgerAppendSchema,
     mutates: true,
     summarize: (args) => (args as { id?: string })?.id,
-    async invoke(rawArgs): Promise<ToolResult> {
+    async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = ledgerAppendSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
       const { id, note } = parsed.data;
-      if (!getOpenLoop(db, id)) return notFound("open loop", id);
+      const loop = getOpenLoop(db, id);
+      if (!loop) return notFound("open loop", id);
+      // The user reads their own task's history: a note that only repeats it stays out.
+      if (deps.taskChecks && isOwnedTask(loop)) {
+        const recentNotes = listOpenLoopLedger(db, id, {
+          order: "desc",
+          limit: TASK_NOTE_HISTORY,
+        }).map((entry) => entry.note);
+        const isNew = await deps.taskChecks.noteIsNew(
+          {
+            runId,
+            loopId: id,
+            documentId: loop.docs[0] ?? null,
+            task: { title: loop.title, description: loop.description },
+            recentNotes,
+            note,
+          },
+          ctx.abortSignal,
+        );
+        if (!isNew)
+          return ok("open_loop.ledger_unchanged", {
+            loopId: id,
+            recorded: false,
+            message:
+              "Not recorded: the task's history already says this. Nothing to retry; continue with the run.",
+          });
+      }
       await writeGate.appendOpenLoopLedger(id, { runId, note }, clock());
       await mirror.refresh(id);
       return ok("open_loop.ledger_appended", { loopId: id, runId, note });
@@ -4611,28 +4668,4 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
     personAnnotationRetract,
     personAnnotationSupersede,
   ];
-}
-
-/**
- * The proposal a run's update makes to one of the user's own tasks, or null
- * when the update changes nothing the user owns. Resolving proposes
- * completion or striking; other field changes propose an edit. A snooze is
- * not proposed: when to do a task is the user's call.
- */
-export function taskProposalFor(
-  loop: OpenLoopRow,
-  change: { state?: OpenLoopState; title?: string; description?: string; deadline?: unknown },
-): Pick<ProposedTaskChange, "kind" | "fields"> | null {
-  if (change.state === "done" && loop.state !== "done") return { kind: "complete" };
-  if (change.state === "dismissed" && loop.state !== "dismissed") return { kind: "strike" };
-  const fields: NonNullable<ProposedTaskChange["fields"]> = {};
-  if (change.title !== undefined && change.title !== loop.title) fields.title = change.title;
-  if (change.description !== undefined && change.description !== loop.description)
-    fields.description = change.description;
-  if (
-    change.deadline !== undefined &&
-    JSON.stringify(change.deadline) !== JSON.stringify(loop.deadline)
-  )
-    fields.deadline = change.deadline;
-  return Object.keys(fields).length > 0 ? { kind: "edit", fields } : null;
 }
