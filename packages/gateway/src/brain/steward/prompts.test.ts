@@ -2880,4 +2880,7 @@ test("separates actor and quoted context from current obligations in the shared 
   );
   expect(WIKI_AUTHORING_GUIDANCE).toContain("Open with the latest supported observation");
   expect(WIKI_AUTHORING_GUIDANCE).toContain("do not transfer a result, failure or date");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "Write the title, headings and prose of a page in one language",
+  );
 });
