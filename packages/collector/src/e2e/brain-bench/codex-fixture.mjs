@@ -164,19 +164,9 @@ function run(thread, inputs) {
               !node.claims.every((claim) => /^legacy(?:-context-\d+)?$/.test(claim.id))
             )
               return finish(thread, "Owner needs an explicit factual repair decision.");
-            // Read-side verification/review timestamps are engine-owned.
-            const metadata = Object.fromEntries(
-              [
-                "importance",
-                "volatility",
-                "uncertainty",
-                "activity",
-                "nextReviewAt",
-                "checkpointAt",
-              ]
-                .filter((key) => Object.hasOwn(node.metadata, key))
-                .map((key) => [key, node.metadata[key]]),
-            );
+            // A node read's metadata and claims are already the editable shape;
+            // references live under readOnly.
+            const refs = new Map(node.readOnly.claims.map((claim) => [claim.id, claim.refs]));
             const save = () =>
               call(
                 thread,
@@ -190,13 +180,12 @@ function run(thread, inputs) {
                     markdown: node.markdown,
                     expectedRevision: node.revision,
                     inputVersions: item.inputVersions,
-                    metadata,
+                    metadata: node.metadata,
                     claims: node.claims.map((claim) => ({
-                      id: claim.id,
-                      supportLogic: claim.supportLogic,
-                      validFrom: claim.validFrom,
-                      validUntil: claim.validUntil,
-                      relations: Object.fromEntries(claim.refs.map((ref) => [ref, "context"])),
+                      ...claim,
+                      relations: Object.fromEntries(
+                        (refs.get(claim.id) ?? []).map((ref) => [ref, "context"]),
+                      ),
                     })),
                   },
                   inputFingerprint: item.inputFingerprint,

@@ -1088,12 +1088,12 @@ test("stale loop maintenance reads canonical prose before retaining unchanged co
     claims: [
       {
         id: "legacy",
-        refs: ["source:fixture"],
         supportLogic: "all",
         validFrom: null,
         validUntil: null,
       },
     ],
+    readOnly: { claims: [{ id: "legacy", refs: ["source:fixture"] }] },
   };
   const frontier = {
     name: "knowledge_next_frontier",
