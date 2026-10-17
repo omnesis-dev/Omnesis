@@ -22,6 +22,8 @@
  *   agent.error            → attach error to the in-flight turn
  */
 
+import { EPHEMERAL_CARD_TOOLS, SILENT_CARD_TOOLS } from "./tool-card-table.js";
+
 export const initialState = () => ({
   client: null,
   sessionId: null,
@@ -142,65 +144,18 @@ export const initialState = () => ({
  * Both usages key off this single set.
  */
 export const EPHEMERAL_TOOLS = new Set([
+  // Visible only until `agent.subagent.spawned` replaces it with the stable
+  // worker row.
   "spawn_subagent",
-  "search_loops",
-  "fetch_loop",
-  "list_loops",
-  "entity_context",
-  "search_documents",
-  "fetch_document",
-  // Batch retrieval tools: each renders live as N per-child ephemeral cards
-  // (parts.js projects `part.children`), dropped from resumed history like the
-  // singular ephemeral tools they wrap.
-  "search_many",
-  "fetch_many",
-  "run_sql",
-  "trace_connections",
-  "lookup_people",
-  "lookup_document_by_url",
-  // The steward toolset, reachable from the Morning brief conversation.
-  // Ephemeral in the INTERACTIVE conversation only: dropped from resumed
-  // history here, rendered live as a self-dismissing generic action card
-  // (parts.js EPHEMERAL_ACTION_TOOLS). The cognition page's run transcripts
-  // render through their own static path and keep every call visible.
-  "open_loop_search",
-  "open_loop_fetch",
-  "open_loop_create",
-  "open_loop_update",
-  "open_loop_delete",
-  "open_loop_ledger_append",
-  "observation_list",
-  "observation_note",
-  "observation_withdraw",
-  "observation_suppress",
-  "temporal_annotation_add",
-  "temporal_annotation_update",
-  "temporal_annotation_delete",
-  "temporal_query",
-  "time_index_add",
-  "time_index_update",
-  "time_index_delete",
-  "time_index_query",
-  "notes_append",
-  "notes_rewrite",
-  "annotate_durable",
-  // Durable memory tools used by the interactive agent. They remain in the
-  // persisted model transcript, but their live UI cards are transient and
-  // are omitted from normal resumed conversation history.
-  "conversation_memory_evidence",
-  "annotation_search",
-  "annotation_revise",
-  "annotation_retract",
-  "annotation_supersede",
-  "annotate_person",
-  "person_annotation_revise",
-  "person_annotation_retract",
-  "person_annotation_supersede",
-  "schedule_agent_run",
+  // Every tool whose card reads as ephemeral in the shared tool-card table,
+  // the batch retrieval tools included: they render live as N per-child
+  // ephemeral cards and are dropped from resumed history like the singular
+  // tools they wrap.
+  ...EPHEMERAL_CARD_TOOLS,
 ]);
 
 /** Tool calls that are plumbing rather than user-facing transcript content. */
-export const SILENT_TOOLS = new Set(["plan", "join_subagents"]);
+export const SILENT_TOOLS = SILENT_CARD_TOOLS;
 
 /**
  * Batch retrieval tools render live as N concurrent per-child cards, but they

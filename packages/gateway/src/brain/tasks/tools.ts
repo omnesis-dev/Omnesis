@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { summaryExcerpt, type ToolHandle } from "@omnesis/agent";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { getObservation } from "../storage/observations.js";
 import { getOpenLoop } from "../storage/open-loops.js";
@@ -23,7 +24,6 @@ import {
 } from "../storage/tasks.js";
 import { isOwnedTask } from "../storage/types.js";
 import { TASK_VIEWS, TaskQueryService, type TaskItem } from "./views.js";
-import type { ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
 import type { TaskService } from "./service.js";
 import type { WriteGate } from "../../write-gate.js";
@@ -144,6 +144,10 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
     description:
       "List the user's tasks, or find one by text. Read this before changing a task so you use its id.",
     schema: listSchema,
+    summarize: (args) => {
+      const a = (args ?? {}) as { query?: unknown; view?: unknown };
+      return typeof a.query === "string" ? a.query : typeof a.view === "string" ? a.view : "";
+    },
     async invoke(raw): Promise<ToolResult> {
       const parsed = listSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
@@ -191,6 +195,10 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       "Add a task to the user's tasks because they asked for it. Check task_list first so you never add a task that already exists.",
     schema: createSchema,
     mutates: true,
+    summarize: (args) => {
+      const title = (args as { title?: unknown } | null)?.title;
+      return typeof title === "string" ? title : "";
+    },
     async invoke(raw): Promise<ToolResult> {
       const parsed = createSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
@@ -251,7 +259,11 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       "Change one of the user's tasks because they said so. The change applies at once; tell the user what changed in one short line, which they can undo.",
     schema: updateSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => {
+      const a = (args ?? {}) as { id?: unknown; title?: unknown };
+      if (typeof a.title === "string" && a.title) return a.title;
+      return typeof a.id === "string" ? (getOpenLoop(deps.db, a.id)?.title ?? "") : "";
+    },
     async invoke(raw): Promise<ToolResult> {
       const parsed = updateSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
@@ -320,6 +332,7 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       "Undo a task change you made in this conversation, by the undoSeq its receipt returned.",
     schema: undoSchema,
     mutates: true,
+    summarize: () => "",
     async invoke(raw): Promise<ToolResult> {
       const parsed = undoSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
@@ -353,6 +366,12 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       "The user does not want to hear about a morning brief item: stop it from appearing again. To keep similar items out of future briefs, also record the preference on the user's self memory.",
     schema: suppressSchema,
     mutates: true,
+    summarize: (args) => {
+      const id = (args as { id?: unknown } | null)?.id;
+      return typeof id === "string"
+        ? summaryExcerpt(getObservation(deps.db, id)?.summary ?? "")
+        : "";
+    },
     async invoke(raw): Promise<ToolResult> {
       const parsed = suppressSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");

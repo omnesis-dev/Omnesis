@@ -12,10 +12,12 @@
  */
 
 import { html } from "htm/preact";
-import { createAgentToolRenderer, flattenTrailDocs, normaliseRow, formatSqlCell } from "../../shared/agent-ui/tools.js";
+import { createAgentToolRenderer, documentRead, flattenTrailDocs, normaliseRow, formatSqlCell } from "../../shared/agent-ui/tools.js";
 import { EphemeralHeader, EPHEMERAL_HOLD_MS, EPHEMERAL_FADE_MS, EPHEMERAL_SEARCH_RESULTS_MAX, EPHEMERAL_SQL_ROWS_MAX } from "../../shared/agent-ui/lifecycle.js";
 import { SEARCH_GLYPH, DOC_GLYPH, SQL_GLYPH, TRAIL_GLYPH, BOLT_GLYPH, PEOPLE_GLYPH, LINK_GLYPH, LOOP_GLYPH, CLOCK_GLYPH } from "../../shared/agent-ui/glyphs.js";
 import { actionToolLabel } from "../../shared/agent-ui/actions.js";
+import { EPHEMERAL_CARD_TOOLS, SILENT_CARD_TOOLS, toolCardLabel } from "../../shared/agent-ui/tool-card-table.js";
+import { toolCardGlyph } from "../../shared/agent-ui/tool-cards.js";
 export { ephemeralResultArrived } from "../../shared/agent-ui/lifecycle.js";
 
 import { useState, useRef, useEffect } from "preact/hooks";
@@ -257,8 +259,7 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       // transcript recorded before they were removed still reopens
       // without an empty card where a background fetch used to be.
       if (
-        part.tool === "plan" ||
-        part.tool === "join_subagents" ||
+        SILENT_CARD_TOOLS.has(part.tool) ||
         part.tool === "triggers_list" ||
         part.tool === "trigger_get" ||
         part.tool === "trigger_firings"
@@ -295,7 +296,7 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       ) {
         return html`<${StaticToolCard} key=${key} call=${part} />`;
       }
-      if (live && (part.tool === "search_many" || part.tool === "fetch_many" || EPHEMERAL_TOOLS.has(part.tool) || EPHEMERAL_ACTION_TOOLS.has(part.tool))) {
+      if (live && (EPHEMERAL_TOOLS.has(part.tool) || EPHEMERAL_CARD_TOOLS.has(part.tool))) {
         return sharedTools.renderToolPart(part, key, dispatch);
       }
       return html`<${ToolCallChip} key=${key} call=${part} citations=${citations} />`;
@@ -398,6 +399,7 @@ const EPHEMERAL_TOOLS = new Set([
   "spawn_subagent",
   "search_documents",
   "fetch_document",
+  "knowledge_fetch",
   "run_sql",
   "trace_connections",
   "lookup_people",
@@ -412,47 +414,6 @@ const EPHEMERAL_TOOLS = new Set([
 // StaticToolCard too. Kept out of EPHEMERAL_TOOLS so live streams keep the
 // generic action card and resume/drop behavior stays exactly as it was.
 const STATIC_CARD_TOOLS = new Set(["temporal_query", "open_loop_search", "open_loop_fetch"]);
-
-// Background actions without a dedicated card. Live interactive streams
-// render these through the generic EphemeralActionCard;
-// static renders (sub-agent folds, cognition run transcripts) deliberately
-// do NOT — there they stay persistent ToolCallChips so every call is
-// inspectable. The reducer's EPHEMERAL_TOOLS (agent-reducer.js) separately
-// drops them from resumed interactive history.
-const EPHEMERAL_ACTION_TOOLS = new Set([
-  "open_loop_search",
-  "open_loop_fetch",
-  "open_loop_create",
-  "open_loop_update",
-  "open_loop_delete",
-  "open_loop_ledger_append",
-  "observation_list",
-  "observation_note",
-  "observation_withdraw",
-  "observation_suppress",
-  "temporal_annotation_add",
-  "temporal_annotation_update",
-  "temporal_annotation_delete",
-  "temporal_query",
-  // Rolling aliases preserved in stored experimental conversations.
-  "time_index_add",
-  "time_index_update",
-  "time_index_delete",
-  "time_index_query",
-  "notes_append",
-  "notes_rewrite",
-  "annotate_durable",
-  "conversation_memory_evidence",
-  "annotation_search",
-  "annotation_revise",
-  "annotation_retract",
-  "annotation_supersede",
-  "annotate_person",
-  "person_annotation_revise",
-  "person_annotation_retract",
-  "person_annotation_supersede",
-  "schedule_agent_run",
-]);
 
 function docHref(documentId) {
   return `/portal/doc/${encodeURIComponent(documentId)}`;
@@ -628,12 +589,13 @@ function StaticToolCard({ call }) {
           ),
         );
     }
-  } else if (tool === "fetch_document") {
-    glyph = DOC_GLYPH;
-    label = "Open document";
+  } else if (tool === "fetch_document" || tool === "knowledge_fetch") {
+    glyph = toolCardGlyph(tool);
+    label = toolCardLabel(tool);
     arg = "";
-    const ref = call.result?.kind === "document" ? call.result.ref : null;
-    if (call.result?.kind === "document") matched = true;
+    const read = documentRead(call.result);
+    const ref = read?.ref ?? null;
+    if (read) matched = true;
     if (ref) {
       const opened = html`
         <span class="agent-ephemeral-result-icon">${sourceIcon(ref.sourceId, { size: 11 })}</span>
@@ -1284,15 +1246,7 @@ function ToolCallChip({ call }) {
 }
 
 export function prettyToolName(tool) {
-  switch (tool) {
-    case "trace_connections": return "Trace connections";
-    // Task tools change the owner's journal, so they stay visible as chips.
-    case "task_list":         return "Check tasks";
-    case "task_create":       return "Add a task";
-    case "task_update":       return "Update a task";
-    case "task_undo":         return "Undo a task change";
-    default:                  return tool;
-  }
+  return toolCardLabel(tool);
 }
 
 function renderToolResult(result) {

@@ -311,6 +311,8 @@ export async function bootBriefs(deps: {
     });
     deps.runQueue.scheduler.schedule(cleanup.task);
     deps.runQueue.backgroundJobs.registerAll([cleanup.job]);
+    const { seedKnowledgeSourceMeta } = await import("./knowledge/source-identity.js");
+    await seedKnowledgeSourceMeta(deps.writeGate);
   }
   if (!experimentalEnabled()) return status;
   await seedOpenLoopSourceMeta(deps.writeGate);

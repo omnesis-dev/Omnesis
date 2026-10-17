@@ -1,0 +1,322 @@
+{
+  "search_many": {
+    "presentation": "ephemeral",
+    "label": "Search",
+    "icon": "search"
+  },
+  "search_documents": {
+    "presentation": "ephemeral",
+    "label": "Search",
+    "icon": "search"
+  },
+  "fetch_many": {
+    "presentation": "ephemeral",
+    "label": "Open document",
+    "icon": "document",
+    "scrollsContent": true
+  },
+  "fetch_document": {
+    "presentation": "ephemeral",
+    "label": "Open document",
+    "icon": "document",
+    "scrollsContent": true
+  },
+  "knowledge_fetch": {
+    "presentation": "ephemeral",
+    "label": "Read wiki page",
+    "icon": "wiki",
+    "scrollsContent": true
+  },
+  "run_sql": {
+    "presentation": "ephemeral",
+    "label": "Run SQL",
+    "icon": "sql"
+  },
+  "trace_connections": {
+    "presentation": "ephemeral",
+    "label": "Trace connections",
+    "icon": "trail"
+  },
+  "entity_context": {
+    "presentation": "ephemeral",
+    "label": "Gather context",
+    "icon": "trail"
+  },
+  "lookup_people": {
+    "presentation": "ephemeral",
+    "label": "Find people",
+    "icon": "people"
+  },
+  "lookup_document_by_url": {
+    "presentation": "ephemeral",
+    "label": "Look up URL",
+    "icon": "link"
+  },
+  "search_loops": {
+    "presentation": "ephemeral",
+    "label": "Search loops",
+    "icon": "loop"
+  },
+  "fetch_loop": {
+    "presentation": "ephemeral",
+    "label": "Open loop",
+    "icon": "loop"
+  },
+  "list_loops": {
+    "presentation": "ephemeral",
+    "label": "List loops",
+    "icon": "loop"
+  },
+  "temporal_query": {
+    "presentation": "ephemeral",
+    "label": "Check dates",
+    "icon": "date"
+  },
+  "annotate": {
+    "presentation": "citation"
+  },
+  "annotate_many": {
+    "presentation": "citation"
+  },
+  "cite_record": {
+    "presentation": "citation"
+  },
+  "spawn_subagent": {
+    "presentation": "subagent"
+  },
+  "join_subagents": {
+    "presentation": "silent"
+  },
+  "plan": {
+    "presentation": "silent"
+  },
+  "watches_list": {
+    "presentation": "silent"
+  },
+  "watch_get": {
+    "presentation": "silent"
+  },
+  "watch_probe": {
+    "presentation": "ephemeral",
+    "label": "Test watch",
+    "icon": "watch"
+  },
+  "watch_create": {
+    "presentation": "persistent",
+    "icon": "watch"
+  },
+  "watch_update": {
+    "presentation": "persistent",
+    "icon": "watch"
+  },
+  "watch_delete": {
+    "presentation": "persistent",
+    "label": "Delete watch",
+    "icon": "watch"
+  },
+  "task_list": {
+    "presentation": "ephemeral",
+    "label": "Check tasks",
+    "icon": "task"
+  },
+  "task_create": {
+    "presentation": "persistent",
+    "label": "Add a task",
+    "icon": "task"
+  },
+  "task_update": {
+    "presentation": "persistent",
+    "label": "Update a task",
+    "icon": "task"
+  },
+  "task_undo": {
+    "presentation": "persistent",
+    "label": "Undo a task change",
+    "icon": "task"
+  },
+  "conversation_memory_evidence": {
+    "presentation": "ephemeral",
+    "label": "Prepare memory",
+    "icon": "memory"
+  },
+  "annotation_search": {
+    "presentation": "ephemeral",
+    "label": "Search memory",
+    "icon": "memory"
+  },
+  "annotate_durable": {
+    "presentation": "ephemeral",
+    "label": "Remember document",
+    "icon": "memory"
+  },
+  "annotation_revise": {
+    "presentation": "ephemeral",
+    "label": "Update document memory",
+    "icon": "memory"
+  },
+  "annotation_retract": {
+    "presentation": "ephemeral",
+    "label": "Forget document memory",
+    "icon": "memory"
+  },
+  "annotation_supersede": {
+    "presentation": "ephemeral",
+    "label": "Replace document memory",
+    "icon": "memory"
+  },
+  "annotate_person": {
+    "presentation": "ephemeral",
+    "label": "Remember person",
+    "icon": "memory"
+  },
+  "person_annotation_revise": {
+    "presentation": "ephemeral",
+    "label": "Update person memory",
+    "icon": "memory"
+  },
+  "person_annotation_retract": {
+    "presentation": "ephemeral",
+    "label": "Forget person memory",
+    "icon": "memory"
+  },
+  "person_annotation_supersede": {
+    "presentation": "ephemeral",
+    "label": "Replace person memory",
+    "icon": "memory"
+  },
+  "open_loop_search": {
+    "presentation": "ephemeral",
+    "label": "Search loops",
+    "icon": "loop"
+  },
+  "open_loop_fetch": {
+    "presentation": "ephemeral",
+    "label": "Open loop",
+    "icon": "loop"
+  },
+  "open_loop_create": {
+    "presentation": "ephemeral",
+    "label": "Create loop",
+    "icon": "loop"
+  },
+  "open_loop_update": {
+    "presentation": "ephemeral",
+    "label": "Update loop",
+    "icon": "loop"
+  },
+  "open_loop_delete": {
+    "presentation": "ephemeral",
+    "label": "Delete loop",
+    "icon": "loop"
+  },
+  "open_loop_ledger_append": {
+    "presentation": "ephemeral",
+    "label": "Note on loop",
+    "icon": "loop"
+  },
+  "observation_list": {
+    "presentation": "ephemeral",
+    "label": "List brief items",
+    "icon": "observation"
+  },
+  "observation_note": {
+    "presentation": "ephemeral",
+    "label": "Note brief item",
+    "icon": "observation"
+  },
+  "observation_withdraw": {
+    "presentation": "ephemeral",
+    "label": "Withdraw brief item",
+    "icon": "observation"
+  },
+  "observation_suppress": {
+    "presentation": "ephemeral",
+    "label": "Mute brief item",
+    "icon": "observation"
+  },
+  "temporal_annotation_add": {
+    "presentation": "ephemeral",
+    "label": "Add date note",
+    "icon": "date"
+  },
+  "temporal_annotation_update": {
+    "presentation": "ephemeral",
+    "label": "Update date note",
+    "icon": "date"
+  },
+  "temporal_annotation_delete": {
+    "presentation": "ephemeral",
+    "label": "Remove date note",
+    "icon": "date"
+  },
+  "notes_append": {
+    "presentation": "ephemeral",
+    "label": "Append notes",
+    "icon": "notes"
+  },
+  "notes_edit": {
+    "presentation": "ephemeral",
+    "label": "Edit notes",
+    "icon": "notes"
+  },
+  "notes_rewrite": {
+    "presentation": "ephemeral",
+    "label": "Rewrite notes",
+    "icon": "notes"
+  },
+  "schedule_agent_run": {
+    "presentation": "ephemeral",
+    "label": "Schedule follow-up",
+    "icon": "schedule"
+  },
+  "knowledge_list": {
+    "presentation": "ephemeral",
+    "label": "List wiki pages",
+    "icon": "wiki"
+  },
+  "knowledge_links": {
+    "presentation": "ephemeral",
+    "label": "Read wiki links",
+    "icon": "wiki"
+  },
+  "knowledge_link": {
+    "presentation": "ephemeral",
+    "label": "Link wiki pages",
+    "icon": "wiki"
+  },
+  "knowledge_history": {
+    "presentation": "ephemeral",
+    "label": "Read wiki history",
+    "icon": "wiki"
+  },
+  "knowledge_reference": {
+    "presentation": "ephemeral",
+    "label": "Check references",
+    "icon": "wiki"
+  },
+  "knowledge_evidence": {
+    "presentation": "ephemeral",
+    "label": "Record evidence",
+    "icon": "wiki"
+  },
+  "knowledge_candidates": {
+    "presentation": "ephemeral",
+    "label": "Review page ideas",
+    "icon": "wiki"
+  },
+  "knowledge_candidate_decide": {
+    "presentation": "ephemeral",
+    "label": "Decide on a page idea",
+    "icon": "wiki"
+  },
+  "knowledge_propose_page": {
+    "presentation": "ephemeral",
+    "label": "Propose wiki page",
+    "icon": "wiki"
+  },
+  "knowledge_save": {
+    "presentation": "ephemeral",
+    "label": "Save wiki page",
+    "icon": "wiki"
+  }
+}

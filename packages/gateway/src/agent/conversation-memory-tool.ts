@@ -25,6 +25,7 @@ export function buildConversationMemoryEvidenceTool(
       "Persist this conversation and obtain its evidence document ID and user-authored messages for durable memory. Quote only the returned user text when remembering something the user told you. Takes no arguments. If unavailable, do not claim the memory was saved.",
     schema,
     mutates: true,
+    summarize: () => "",
     async invoke(args) {
       if (!schema.safeParse(args).success) {
         return { kind: "error", code: "invalid_args", message: "This tool takes no arguments." };

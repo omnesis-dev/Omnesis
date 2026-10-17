@@ -68,8 +68,7 @@ export function createEntityContextTool(deps: EntityContextToolDeps): ToolHandle
     summarize(args: unknown): string | undefined {
       if (!args || typeof args !== "object") return undefined;
       const a = args as Record<string, unknown>;
-      if (typeof a.kind !== "string" || typeof a.id !== "string") return undefined;
-      return `${a.kind}:${a.id}`;
+      return typeof a.kind === "string" ? a.kind : "";
     },
     async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = entityContextArgsSchema.safeParse(rawArgs);

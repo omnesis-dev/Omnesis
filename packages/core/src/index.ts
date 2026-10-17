@@ -1045,6 +1045,12 @@ export type {
   AgentProviderFailureDetail,
   Citation,
 } from "./agent-protocol.js";
+export {
+  AGENT_TOOL_CARDS,
+  type AgentToolCard,
+  type AgentToolIcon,
+  type AgentToolPresentation,
+} from "./agent-tool-cards.js";
 
 // Terminal UX primitives: inline images + OSC 8 hyperlinks, iTerm2-only.
 // Every function returns a string that can be concatenated into normal

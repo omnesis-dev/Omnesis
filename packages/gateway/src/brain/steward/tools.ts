@@ -32,6 +32,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { TEMPORAL_KINDS } from "@omnesis/core";
+import { summaryExcerpt } from "@omnesis/agent";
 import { raceAbort } from "../decision-call.js";
 import { readKnowledgeSourceRevision } from "../knowledge/source-revision.js";
 import { annotationEntailmentFailures } from "../../inference/annotation-entailment.js";
@@ -62,6 +63,7 @@ import {
   decisionPayloadErasureGeneration,
 } from "../decision-payload.js";
 import { getOpenLoop, listOpenLoopLedger, searchOpenLoopsLexical } from "../storage/open-loops.js";
+import { getPersonNames } from "../../data/repositories/PersonRepository.js";
 import { searchRetiredLoopsLexical } from "../storage/retired-loops.js";
 import {
   findOpenObservationsForLoops,
@@ -150,6 +152,40 @@ import type {
   OpenLoopState,
   ProposedTaskChange,
 } from "../storage/types.js";
+
+// Tool-call summaries: the human words a card shows for the call — a loop's
+// title, a memory's text, a document's title — never an opaque id. Each lookup
+// is one indexed read; a missing row summarizes as nothing.
+function summaryField(args: unknown, key: string): string | undefined {
+  const value = (args as Record<string, unknown> | null)?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+function loopTitleSummary(db: Database.Database, args: unknown): string {
+  const id = summaryField(args, "id");
+  return id ? (getOpenLoop(db, id)?.title ?? "") : "";
+}
+function docAnnotationSummary(db: Database.Database, args: unknown): string {
+  const id = summaryField(args, "id");
+  return id ? summaryExcerpt(getDocAnnotation(db, id)?.claimText ?? "") : "";
+}
+function personAnnotationSummary(db: Database.Database, args: unknown): string {
+  const id = summaryField(args, "id");
+  return id ? summaryExcerpt(getPersonAnnotation(db, id)?.claimText ?? "") : "";
+}
+function temporalAnnotationSummary(db: Database.Database, args: unknown): string {
+  const id = summaryField(args, "annotationId");
+  return id ? summaryExcerpt(getTemporalAnnotationById(db, id)?.sentence ?? "") : "";
+}
+function documentTitleSummary(db: Database.Database, id: string): string {
+  return (
+    db
+      .prepare<[string], { title: string | null }>("SELECT title FROM documents WHERE id = ?")
+      .get(id)?.title ?? ""
+  );
+}
+function personNameSummary(db: Database.Database, id: string): string {
+  return getPersonNames(db, [id]).get(id) ?? "";
+}
 
 type Db = Database.Database;
 
@@ -1354,6 +1390,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "Fetch one open loop's full JSON — every field plus the complete " +
       "run-stamped ledger history and attached-observation summaries.",
     schema: openLoopFetchSchema,
+    summarize: (args) => loopTitleSummary(db, args),
     // eslint-disable-next-line @typescript-eslint/require-await -- sync sqlite reads behind the async ToolHandle contract
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = openLoopFetchSchema.safeParse(rawArgs);
@@ -1599,7 +1636,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "importance and decay checks always apply directly.",
     schema: openLoopUpdateSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => summaryField(args, "title") ?? loopTitleSummary(db, args),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = openLoopUpdateSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -1859,7 +1896,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "partial work instead of duplicating it). Bumps last_update.",
     schema: ledgerAppendSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => loopTitleSummary(db, args),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = ledgerAppendSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -1915,7 +1952,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "are deleted with it.",
     schema: openLoopDeleteSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => loopTitleSummary(db, args),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = openLoopDeleteSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -1955,7 +1992,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "last three days. Read this before noting an observation so you never note the same " +
       "thing twice; supersede an outdated one instead.",
     schema: observationListSchema,
-    // eslint-disable-next-line @typescript-eslint/require-await -- sync sqlite reads behind the async ToolHandle contract
+
+    summarize: () => "",
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = observationListSchema.safeParse(rawArgs ?? {});
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2134,6 +2172,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "no longer matters. It is dropped and never shown.",
     schema: observationWithdrawSchema,
     mutates: true,
+    summarize: () => "",
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = observationWithdrawSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2198,6 +2237,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "the cap. Only an append beyond twice the cap is refused.",
     schema: notesAppendSchema,
     mutates: true,
+    summarize: (args) => summaryExcerpt(summaryField(args, "text") ?? ""),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = notesAppendSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2251,6 +2291,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "future runs will be given. Keep only durable, still-true lessons.",
     schema: notesRewriteSchema,
     mutates: true,
+    summarize: () => "",
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = notesRewriteSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2292,6 +2333,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "pass a longer span to disambiguate, or an empty newText to delete.",
     schema: notesEditSchema,
     mutates: true,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "newText") || summaryField(args, "oldText") || ""),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = notesEditSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -2737,7 +2780,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "truly distinct.",
     schema: temporalAnnotationAddSchema,
     mutates: true,
-    summarize: (args) => (args as { when?: string })?.when,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "sentence") ?? summaryField(args, "when") ?? ""),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = temporalAnnotationAddSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3032,7 +3076,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "fails to show; pass `evidence` whenever the edit derives from a document.",
     schema: temporalAnnotationUpdateSchema,
     mutates: true,
-    summarize: (args) => (args as { annotationId?: string })?.annotationId,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "sentence") ?? temporalAnnotationSummary(db, args)),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = temporalAnnotationUpdateSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3146,7 +3191,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       "Deterministic temporal projections are read-only and cannot be targeted.",
     schema: temporalAnnotationDeleteSchema,
     mutates: true,
-    summarize: (args) => (args as { annotationId?: string })?.annotationId,
+    summarize: (args) => temporalAnnotationSummary(db, args),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = temporalAnnotationDeleteSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3359,7 +3404,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "only in your own prior annotations.",
     schema: annotateDurableSchema,
     mutates: true,
-    summarize: (args) => (args as { claimType?: string })?.claimType,
+    summarize: (args) => summaryExcerpt(summaryField(args, "claimText") ?? ""),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = annotateDurableSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3642,7 +3687,8 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "certainty. To change the grounding itself, retract and re-annotate.",
     schema: annotationReviseSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "claimText") ?? docAnnotationSummary(db, args)),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = annotationReviseSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3772,7 +3818,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "conclusion. It leaves active memory; retained synthesis is marked withdrawn and dependents require repair. Privacy deletion is a separate source-removal action.",
     schema: annotationRetractSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => docAnnotationSummary(db, args),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = annotationRetractSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3810,7 +3856,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "annotate_durable with supersedes instead.",
     schema: annotationSupersedeSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => docAnnotationSummary(db, args),
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = annotationSupersedeSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -3903,9 +3949,15 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "compare the whole profile and keep the most useful supported context, not the first page.",
     schema: annotationSearchSchema,
     mutates: false,
-    summarize: (args) =>
-      (args as { docId?: string; personId?: string })?.docId ??
-      (args as { docId?: string; personId?: string })?.personId,
+    summarize: (args) => {
+      const docId = summaryField(args, "docId");
+      const personId = summaryField(args, "personId");
+      return docId
+        ? documentTitleSummary(db, docId)
+        : personId
+          ? personNameSummary(db, personId)
+          : "";
+    },
     async invoke(rawArgs): Promise<ToolResult> {
       const parsed = annotationSearchSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -4036,7 +4088,12 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "re-grounded, never facts.",
     schema: annotatePersonSchema,
     mutates: true,
-    summarize: (args) => (args as { claimType?: string })?.claimType,
+    summarize: (args) => {
+      const personId = summaryField(args, "personId");
+      const name = personId ? personNameSummary(db, personId) : "";
+      const text = summaryExcerpt(summaryField(args, "claimText") ?? "");
+      return name && text ? `${name}: ${text}` : name || text;
+    },
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = annotatePersonSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -4318,7 +4375,8 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "to re-ground on different quotes, use annotate_person with supersedes after reading the complete profile. Useful older scope must survive unless its omission is a justified editorial choice.",
     schema: personAnnotationReviseSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) =>
+      summaryExcerpt(summaryField(args, "claimText") ?? personAnnotationSummary(db, args)),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = personAnnotationReviseSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -4546,7 +4604,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "weakened should be revised with lower confidence instead.",
     schema: personAnnotationRetractSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => personAnnotationSummary(db, args),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = personAnnotationRetractSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);
@@ -4596,7 +4654,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "annotate_person with supersedes instead.",
     schema: personAnnotationSupersedeSchema,
     mutates: true,
-    summarize: (args) => (args as { id?: string })?.id,
+    summarize: (args) => personAnnotationSummary(db, args),
     async invoke(rawArgs, ctx): Promise<ToolResult> {
       const parsed = personAnnotationSupersedeSchema.safeParse(rawArgs);
       if (!parsed.success) return invalidArgs(parsed.error);

@@ -3,6 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { summaryExcerpt, type ToolHandle } from "@omnesis/agent";
 import { decisionPayloadErasureGeneration } from "../decision-payload.js";
 import { PersonProfileReads } from "../steward/person-profile-reads.js";
 import {
@@ -33,7 +34,6 @@ import { LOOP_FIELD_REFERENCE_GUIDANCE } from "./references.js";
 import { assertKnowledgeSavePreflight } from "./save-preflight.js";
 import { ClaimMarkupError } from "./claims.js";
 import type { CheckRecord } from "../record-check/check.js";
-import type { ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
 import type { KnowledgeService } from "./service.js";
 import type { KnowledgeEngine, KnowledgeFrontierView } from "./engine.js";
@@ -130,12 +130,21 @@ function tool<S extends z.ZodType>(
   schema: S,
   mutates: boolean,
   run: (input: z.output<S>, signal?: AbortSignal) => unknown | Promise<unknown>,
+  summarize?: (input: z.output<S>) => string,
 ): ToolHandle {
   return {
     name,
     description,
     schema,
     mutates,
+    ...(summarize
+      ? {
+          summarize(args: unknown): string | undefined {
+            const parsed = schema.safeParse(args);
+            return parsed.success ? summarize(parsed.data) : undefined;
+          },
+        }
+      : {}),
     async invoke(args, invocation): Promise<ToolResult> {
       const parsed = schema.safeParse(args);
       if (!parsed.success)
@@ -232,6 +241,11 @@ export function buildKnowledgeTools(
             },
           },
     );
+  // Tool-call summaries name pages by title, never by opaque id.
+  const nodeTitle = (nodeId: string): string =>
+    service.deps.db
+      .prepare<[string], { title: string }>("SELECT title FROM knowledge_nodes WHERE id = ?")
+      .get(nodeId.startsWith("wiki:") ? nodeId.slice(5) : nodeId)?.title ?? "";
   const tools: ToolHandle[] = [
     tool(
       "knowledge_candidates",
@@ -265,6 +279,7 @@ export function buildKnowledgeTools(
             );
           },
         ),
+      (input) => input.status ?? "",
     ),
     tool(
       "knowledge_candidate_decide",
@@ -295,6 +310,7 @@ export function buildKnowledgeTools(
           ? reconciliation.accept(result, fence, [`candidate:${result.id}`])
           : result;
       },
+      (input) => input.status,
     ),
     tool(
       "knowledge_links",
@@ -302,6 +318,7 @@ export function buildKnowledgeTools(
       z.object({ id }).strict(),
       false,
       (input) => listKnowledgeLinks(service.deps.db, input.id),
+      (input) => nodeTitle(input.id),
     ),
     tool(
       "knowledge_link",
@@ -324,6 +341,7 @@ export function buildKnowledgeTools(
         .strict(),
       true,
       (input) => service.deps.writeGate["knowledge.link"](input, runFence, service.deps.clock()),
+      (input) => [nodeTitle(input.fromId), nodeTitle(input.toId)].filter(Boolean).join(" → "),
     ),
     tool(
       "knowledge_fetch",
@@ -356,6 +374,7 @@ export function buildKnowledgeTools(
         publicationReads.nodeRead(result);
         return result;
       },
+      (input) => nodeTitle(input.id),
     ),
     tool(
       "knowledge_list",
@@ -393,6 +412,7 @@ export function buildKnowledgeTools(
               publicationReads.library();
           },
         ),
+      (input) => (input.kind ? input.kind.replace(/_/g, " ") : ""),
     ),
     tool(
       "knowledge_reference",
@@ -426,6 +446,7 @@ export function buildKnowledgeTools(
         dependencyReceipts.rememberReference(result);
         return result;
       },
+      (input) => ("refs" in input ? `${input.refs.length} references` : "1 reference"),
     ),
     tool(
       "knowledge_history",
@@ -452,6 +473,7 @@ export function buildKnowledgeTools(
       ]),
       false,
       (input) => service.history(input),
+      (input) => nodeTitle(input.id),
     ),
     tool(
       "knowledge_evidence",
@@ -472,6 +494,7 @@ export function buildKnowledgeTools(
         dependencyReceipts.rememberReference(result);
         return result;
       },
+      (input) => summaryExcerpt(input.quote),
     ),
     tool(
       "knowledge_propose_page",
@@ -514,6 +537,7 @@ export function buildKnowledgeTools(
           ? reconciliation.accept(result, fence, [`candidate:${result.id}`])
           : result;
       },
+      (input) => input.title,
     ),
     tool(
       "knowledge_save",
@@ -754,6 +778,7 @@ export function buildKnowledgeTools(
           verificationSummary: savedProofFeedback(service.deps.db, accepted.node),
         };
       },
+      (input) => input.node.title,
     ),
   ];
   if (context.engine && context.batchId) {

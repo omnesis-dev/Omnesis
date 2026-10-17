@@ -198,8 +198,8 @@ export function createListLoopsTool(deps: LoopToolDeps): ToolHandle {
       "even an untruncated list is not a complete inventory of real-world " +
       "obligations. READ-ONLY; an empty list is a successful result.",
     schema: listLoopsArgsSchema,
-    summarize(): string | undefined {
-      return undefined;
+    summarize(): string {
+      return "";
     },
     async invoke(rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const parsed = listLoopsArgsSchema.safeParse(rawArgs);

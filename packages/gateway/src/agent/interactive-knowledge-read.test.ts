@@ -156,3 +156,10 @@ it("rejects invalid input and preserves unrelated tools unchanged", async () => 
   const unrelated = { ...f.canonical, name: "knowledge_save" };
   expect(adaptInteractiveKnowledgeReads([unrelated], f.registry, true)[0]).toBe(unrelated);
 });
+
+it("keeps the page-title summary the canonical read gives its call", () => {
+  const { canonical } = setup();
+  const titled: ToolHandle = { ...canonical, summarize: () => "Experiment" };
+  const [tool] = adaptInteractiveKnowledgeReads([titled], [], true);
+  expect(tool!.summarize?.({ id: "page" })).toBe("Experiment");
+});

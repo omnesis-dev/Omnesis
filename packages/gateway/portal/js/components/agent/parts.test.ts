@@ -123,6 +123,50 @@ describe("ephemeral card layout lifecycle", () => {
     });
   });
 
+  it("reads a wiki page live: its title while pending, then its lines scrolling, then gone", async () => {
+    const pending = {
+      kind: "tool", toolCallId: "wiki-1", tool: "knowledge_fetch",
+      args: { id: "candidate_pottery", editing: false }, argsSummary: "Pottery workshop", result: null,
+    };
+    await renderTurn([pending]);
+    const card = () => host!.querySelector(".agent-ephemeral");
+    expect(card()!.textContent).toContain("Read wiki page");
+    expect(card()!.textContent).toContain("Pottery workshop");
+    expect(card()!.textContent).not.toContain("candidate_pottery");
+    expect(card()!.querySelector(".kn-link-icon, svg")).not.toBeNull();
+
+    await act(async () => {
+      render(h(MessageBubble, {
+        turn: {
+          role: "assistant",
+          parts: [{
+            ...pending,
+            result: {
+              kind: "document.batch",
+              items: [{
+                kind: "document",
+                ref: { documentId: "wiki-doc", sourceId: "brain-knowledge", title: "Pottery workshop" },
+                document: { id: "wiki-doc", title: "Pottery workshop", content: "Opens at nine.\n\nBring clay." },
+              }],
+            },
+          }],
+          done: false,
+          citationCount: 0,
+        },
+        citations: [],
+        dispatch,
+      }), host!);
+    });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect([...host!.querySelectorAll(".agent-ephemeral-doc-line")].map((n) => n.textContent)).toEqual([
+      "Opens at nine.",
+      "Bring clay.",
+    ]);
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(host!.querySelector(".agent-ephemeral")).toBeNull();
+    expect(dispatch).toHaveBeenCalledWith({ kind: "ephemeral-tail-flush", toolCallId: "wiki-1" });
+  });
+
   it("removes every projected child DOM node of a dismissed batch card", async () => {
     await renderTurn([
       { kind: "text", text: "" },
@@ -701,6 +745,31 @@ describe("renderPart — after-the-fact card affordances", () => {
       }),
     );
     expect(resultLinks()).toEqual(["/portal/doc/doc-9"]);
+  });
+
+  it("reads a wiki page as a document: its glyph, label and linked title", async () => {
+    await renderStatic(
+      toolPart(
+        "knowledge_fetch",
+        {
+          kind: "document.batch",
+          items: [
+            {
+              kind: "document",
+              ref: { documentId: "wiki-1", sourceId: "brain-knowledge", title: "Pottery workshop" },
+              document: { id: "wiki-1", title: "Pottery workshop", content: "Opens at nine." },
+            },
+          ],
+        },
+        { id: "candidate_pottery" },
+      ),
+    );
+    expect(host!.textContent).toContain("Read wiki page");
+    expect(host!.querySelector(".agent-ephemeral-doc-title")?.textContent).toContain(
+      "Pottery workshop",
+    );
+    expect(resultLinks()).toEqual(["/portal/doc/wiki-1"]);
+    expect(host!.textContent).not.toContain("candidate_pottery");
   });
 
   it("links trail documents and URL-lookup matches", async () => {

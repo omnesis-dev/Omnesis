@@ -50,6 +50,8 @@ export {
   type ToolCaller,
   type ToolContext,
   UNATTRIBUTED_CALLER,
+  summarizeToolArgs,
+  summaryExcerpt,
   wrapEvent,
 } from "./backend.js";
 

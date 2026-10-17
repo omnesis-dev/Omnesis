@@ -586,6 +586,12 @@ export function toolArgsUnparseableResult(parseError: string, raw: string): Tool
   };
 }
 
+/** A one-line excerpt for a tool-call summary: whitespace collapsed, capped with an ellipsis. */
+export function summaryExcerpt(text: string, max = 60): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+}
+
 /**
  * Render a tool's args as a one-line summary. Lives server-side so every
  * renderer (portal / iOS / CLI) shows the same chip text. The tool itself
