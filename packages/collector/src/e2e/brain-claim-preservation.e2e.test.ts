@@ -176,6 +176,11 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",
+      // The scripted saves below reuse the frontier's wiki collection receipt.
+      // A parallel maintenance run that writes any wiki node or candidate in
+      // between would turn the expected claim refusal into revision_conflict,
+      // so runs are serialized: no other run can move the collection.
+      workerConcurrency: 1,
       knowledge: { soonDelay: "1s", routineDelay: "6h" },
     },
     behaviors: {
