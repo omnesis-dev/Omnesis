@@ -72,12 +72,7 @@ import {
   createGatewayTrailPort,
 } from "./ports.js";
 import { createGatewayWatchPort, type WatchFiringRecord } from "./watch-port.js";
-import {
-  AgentService,
-  composeAgentPromptForProfile,
-  type AgentAnswerNotification,
-  type AgentPromptContext,
-} from "./service.js";
+import { AgentService, type AgentAnswerNotification, type AgentPromptContext } from "./service.js";
 import { StoredConversationReader } from "./conversation-reader.js";
 import {
   buildSystemPrompt,
@@ -439,7 +434,6 @@ export function createAgentService(
     });
     if (root.support.length) {
       rootSnapshots.set(prompt, root);
-      rootSnapshots.set(composeAgentPromptForProfile(prompt, "voice"), root);
       while (rootSnapshots.size > 256) rootSnapshots.delete(rootSnapshots.keys().next().value!);
     }
     return prompt;

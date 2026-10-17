@@ -197,6 +197,11 @@ export interface AgentServiceDeps {
    */
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
+  /**
+   * Fact-checks Answer API candidates (`/answer`, MCP Answer, watch firings)
+   * before they reach the privacy reviewer. Interactive conversations are
+   * never checked or rewritten: what the agent writes is what the user sees.
+   */
   grounding?: {
     enabled?: () => boolean;
     getVerifier: AnswerGroundingOptions["getVerifier"];
@@ -1396,7 +1401,6 @@ export class AgentService {
               this.dailyBriefView(sessionId, history),
           }
         : {}),
-      finalizer: this.answerFinalizer(systemPrompt, undefined, undefined, opts.timeZone),
       timeZone: opts.timeZone,
       caller: opts.caller,
     });
@@ -1598,11 +1602,9 @@ export class AgentService {
     prompt: string,
     reads = this.citationReads,
     document = this.documentPort,
-    timeZone?: string,
   ): TurnFinalizerFactory | undefined {
     if (!this.grounding || this.grounding.enabled?.() === false) return undefined;
     return createAnswerGroundingFinalizer({
-      timeZone,
       reads,
       document,
       ...(document === this.documentPort ? { loops: this.loopRead } : {}),
@@ -1666,7 +1668,6 @@ export class AgentService {
       tools: [...this.buildInteractiveTools(sessionId, profile)],
       systemPrompt,
       initialHistory: entry.session.historySnapshot(),
-      finalizer: this.answerFinalizer(systemPrompt, undefined, undefined, entry.session.timeZone),
       timeZone: entry.session.timeZone,
       caller: entry.session.caller,
     });
@@ -3210,12 +3211,7 @@ export class AgentService {
     // in different zones.
     const parentZone = this.sessions.get(input.sessionId)?.session.timeZone;
     const finalPrompt = await this.resolveChatPrompt("interactive", { timeZone: parentZone });
-    const groundingFinalizer = this.answerFinalizer(finalPrompt, undefined, undefined, parentZone);
     const finalizer = new AgentSession({
-      finalizer: groundingFinalizer
-        ? (identity) =>
-            groundingFinalizer({ ...identity, question: input.query, priorUserStatements: [] })
-        : undefined,
       // Keep the parent session id in tool context, so normal annotate_many
       // events and their durable Timeline records belong to the parent turn.
       sessionId: input.sessionId,

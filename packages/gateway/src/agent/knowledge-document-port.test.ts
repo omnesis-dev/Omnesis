@@ -354,7 +354,7 @@ it("preserves bounded joint provenance through loop tool protocol and model seri
     sourceCreatedAt: "2026-01-01",
   });
   expect(serialized.loop.knowledgeContext.guidance).toContain(
-    "support group governed by supportLogic",
+    "References sharing a claimId support that claim together under its supportLogic",
   );
 });
 
@@ -499,14 +499,17 @@ it("exports complete qualified current support without promoting unverified ance
       knowledgeContext: { guidance: string; verifiedSupport: Array<{ ref: string; text: string }> };
     }
   ).knowledgeContext;
-  expect(context.guidance).toContain("Only the current qualified statements in verifiedSupport");
-  expect(context.guidance).toContain("without rereading every underlying document");
-  expect(context.guidance).toContain("Other page prose is orientation");
-  expect(context.guidance).toContain("Navigation is not support");
-  expect(context.guidance).toContain("check relevant later evidence when currentness matters");
-  expect(context.guidance).toContain("record creation or modification");
-  expect(context.guidance).toContain("synthesis creation or maintenance");
-  expect(context.guidance).toContain("not proof that every assertion describes the present world");
+  expect(context.guidance).toContain("This is a summary Omnesis wrote, not a source.");
+  expect(context.guidance).toContain(
+    "provenance.items gives the documentId (with matching claimId) each rests on; read those with fetch_many",
+  );
+  expect(context.guidance).toContain("verifiedSupport lists statements individually checked");
+  expect(context.guidance).toContain("other prose is orientation");
+  expect(context.guidance).toContain("Navigation links are for finding related pages, not support");
+  expect(context.guidance).toContain("check later evidence when currentness matters");
+  expect(context.guidance).toContain("when a record was created or changed");
+  expect(context.guidance).toContain("when it was written or maintained");
+  expect(context.guidance).toContain("not that every statement still describes today");
   expect(context.guidance).not.toContain("Source dates describe source events");
   const child = context.verifiedSupport.find((item) => item.ref.endsWith("#claim:child"));
   expect(JSON.parse(JSON.parse(child!.text).statement)).toMatchObject({
@@ -991,4 +994,64 @@ it.each([
     ).run();
   const result = await createGatewayLoopReadPort(db).fetch("excluded-loop");
   expect(result?.knowledgeContext?.verifiedSupport ?? []).toEqual([]);
+});
+
+// A puppet of the interactive agent answering "when does the observatory
+// open?": it reads the maintained page, then follows the claim it uses to the
+// source document named in what the model actually sees, and answers from that.
+it("lets an interactive wiki read be followed to the source behind a claim", async () => {
+  page("overview");
+  const documentPort = createGatewayDocumentPort(db);
+  const reads = new CitationReads();
+  const tools = buildBuiltinTools({
+    citationReads: reads,
+    ports: {
+      document: documentPort,
+      search: {
+        search: async () => {
+          throw new Error("Search is not used");
+        },
+      },
+    },
+  });
+  const service = new KnowledgeService({
+    db,
+    writeGate: directKnowledgeGate(db),
+    getSettings: () => resolveBrainSettings(),
+    getEntailmentVerifier: () => Promise.resolve(null),
+    clock: () => 100,
+    log: createLogger("knowledge-trail-test"),
+  });
+  const [knowledgeFetch] = adaptInteractiveKnowledgeReads(
+    buildKnowledgeTools(service, { runId: "interactive-trail-test" }).filter(
+      (tool) => tool.name === "knowledge_fetch",
+    ),
+    tools,
+    documentPort.supportsKnowledgeAliases === true,
+  );
+  const fetchMany = tools.find((tool) => tool.name === "fetch_many")!;
+
+  const pageRead = JSON.parse(
+    serializeToolResultForModel(await knowledgeFetch!.invoke({ id: "wiki:overview" }, context)),
+  );
+  const provenance = pageRead.items[0].document.knowledgeContext.provenance;
+  const claim = provenance.claims.find((c: { excerpt: string }) =>
+    c.excerpt.includes("opens Saturday"),
+  );
+  const sources = provenance.items
+    .filter((item: { claimId: string }) => item.claimId === claim.id)
+    .map((item: { documentId: string }) => ({ documentId: item.documentId }));
+  expect(sources).toEqual([{ documentId: "evidence" }]);
+
+  const sourceRead = JSON.parse(
+    serializeToolResultForModel(await fetchMany.invoke({ documents: sources }, context)),
+  );
+  expect(sourceRead.items[0].document).toMatchObject({
+    id: "evidence",
+    content: "The observatory opens Saturday.",
+  });
+  expect(reads.snapshot(context).map((row) => row.documentId)).toEqual([
+    "projection-overview",
+    "evidence",
+  ]);
 });

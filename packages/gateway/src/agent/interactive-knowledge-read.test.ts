@@ -11,7 +11,6 @@ import {
 } from "@omnesis/agent";
 import { KNOWLEDGE_SOURCE_ID } from "../brain/knowledge/source-meta.js";
 import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
-import { createAnswerGroundingFinalizer } from "./answer-grounding.js";
 
 const identity = { sessionId: "session", messageId: "turn" };
 function setup(available = true, aliases = true) {
@@ -71,27 +70,6 @@ it.each(["page", "wiki:page"])(
       { documentId: "projection", version: "v1", full: true, spans: [] },
     ]);
     expect(f.reads.snapshot({ ...identity, messageId: "other" })).toEqual([]);
-    const verify = vi.fn().mockResolvedValue({ label: "entailment" });
-    const finalizer = createAnswerGroundingFinalizer({
-      reads: f.reads,
-      document: f.document,
-      getVerifier: async () => ({ verify, dispose() {} }),
-      repair: vi.fn(),
-      diagnostic: vi.fn(),
-    })({ ...identity, question: "What color is it?" });
-    finalizer.observe({
-      type: "agent.tool.result",
-      payload: { ...identity, toolCallId: "wiki", durationMs: 0, result },
-    });
-    expect(
-      await finalizer.finalize({
-        draft: "The prism is green.",
-        overflow: false,
-        signal: new AbortController().signal,
-      }),
-    ).toBe("The prism is green.");
-    expect(verify).toHaveBeenCalledTimes(1);
-    expect(verify.mock.calls[0]![0].evidence).toContain("The prism is green.");
   },
 );
 

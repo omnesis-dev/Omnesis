@@ -1184,17 +1184,21 @@ relevant current pages, selects useful navigation, or explains why none fits the
 
 ### Experimental answer grounding
 
-When the experimental Brain is active, source/wiki/loop answers use an experimental
-grounding check. The main agent buffers candidate prose
-while tools continue to report progress. Before releasing prose, the assigned
+When the experimental Brain is active, Answer candidates (the `/answer` API, MCP
+Answer and watch-firing answers) use an experimental grounding check. Interactive
+conversations, including Deep Research replies, are never checked or rewritten: the
+reply streams to the user as the agent writes it. Instead, the interactive agent's
+instructions treat the root, wiki pages, annotations and loop summaries as summaries to
+navigate from: it reads the relevant page and follows the claims its answer uses to their
+source documents (`knowledgeContext.provenance`) before answering. For an Answer, the agent buffers
+candidate prose while tools continue to report progress. Before releasing prose, the assigned
 entailment verifier checks the complete answer against a bounded packet of
 actually read source spans, qualified current wiki claims, the captured root
 context, attributed user statements, and successful operation receipts. A missing
 completion record is not evidence that an action remains unfinished. The packet
 is not an exhaustive search of the corpus.
 
-The same boundary protects interactive replies and Answer candidates; external
-privacy review still runs independently. One fresh completion without tools may
+External privacy review still runs independently. One fresh completion without tools may
 repair an unsupported answer, followed by one recheck. Unavailable verification,
 changed source/proof authority, or an oversized packet yields explicit uncertainty, preserving
 acknowledgments of completed tool operations. Original source documents are not
