@@ -1510,6 +1510,7 @@ export class AgentService {
               .filter((tool) => !RUN_LOOP_WRITE_TOOLS.has(tool.name)),
             this.tools,
             this.documentPort.supportsKnowledgeAliases === true,
+            this.documentPort.knowledgePageRef?.bind(this.documentPort),
           )
         : [];
     const taskTools = this.taskTools?.(sessionId) ?? [];

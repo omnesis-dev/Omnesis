@@ -1055,3 +1055,52 @@ it("lets an interactive wiki read be followed to the source behind a claim", asy
     "evidence",
   ]);
 });
+
+// Search returns a maintained page under its projection's document id; the
+// interactive read must open the page from that id, and only a page.
+it("opens a maintained page from its search hit's document id, and nothing else", async () => {
+  page("overview");
+  const documentPort = createGatewayDocumentPort(db);
+  const reads = new CitationReads();
+  const tools = buildBuiltinTools({
+    citationReads: reads,
+    ports: {
+      document: documentPort,
+      search: {
+        search: async () => {
+          throw new Error("Search is not used");
+        },
+      },
+    },
+  });
+  const service = new KnowledgeService({
+    db,
+    writeGate: directKnowledgeGate(db),
+    getSettings: () => resolveBrainSettings(),
+    getEntailmentVerifier: () => Promise.resolve(null),
+    clock: () => 100,
+    log: createLogger("knowledge-hit-test"),
+  });
+  const canonical = buildKnowledgeTools(service, { runId: "interactive-hit-test" }).filter(
+    (tool) => tool.name === "knowledge_fetch",
+  );
+  const [tool] = adaptInteractiveKnowledgeReads(
+    canonical,
+    tools,
+    documentPort.supportsKnowledgeAliases === true,
+    documentPort.knowledgePageRef?.bind(documentPort),
+  );
+  expect(tool!.summarize?.({ id: "projection-overview" })).toBe("overview");
+  expect(await tool!.invoke({ id: "projection-overview" }, context)).toMatchObject({
+    kind: "document.batch",
+    items: [{ kind: "document", ref: { documentId: "projection-overview" } }],
+  });
+  const other = { ...context, messageId: "non-page" };
+  expect(await tool!.invoke({ id: "evidence" }, other)).toMatchObject({
+    kind: "error",
+    code: "knowledge_read_unavailable",
+  });
+  expect(reads.snapshot(other)).toEqual([]);
+  expect(documentPort.knowledgePageRef?.("evidence")).toBeNull();
+  expect(documentPort.knowledgePageRef?.("projection-overview")).toBe("wiki:overview");
+});

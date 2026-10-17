@@ -33,6 +33,7 @@ import { checkKnowledgeOutcome, KnowledgeOutcomeRejected } from "./outcome-check
 import { LOOP_FIELD_REFERENCE_GUIDANCE } from "./references.js";
 import { assertKnowledgeSavePreflight } from "./save-preflight.js";
 import { ClaimMarkupError } from "./claims.js";
+import { knowledgePageRefForDocument } from "./document-context.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type { ToolResult } from "@omnesis/core";
 import type { KnowledgeService } from "./service.js";
@@ -242,10 +243,27 @@ export function buildKnowledgeTools(
           },
     );
   // Tool-call summaries name pages by title, never by opaque id.
-  const nodeTitle = (nodeId: string): string =>
-    service.deps.db
+  // A page may be named by its node id, a wiki: reference or its search hit's document id.
+  const nodeTitle = (nodeId: string): string => {
+    const db = service.deps.db;
+    const id = nodeId.startsWith("wiki:") ? nodeId.slice(5) : nodeId;
+    const byNode = db
       .prepare<[string], { title: string }>("SELECT title FROM knowledge_nodes WHERE id = ?")
-      .get(nodeId.startsWith("wiki:") ? nodeId.slice(5) : nodeId)?.title ?? "";
+      .get(id)?.title;
+    if (byNode !== undefined) return byNode;
+    let ref: string | null;
+    try {
+      ref = knowledgePageRefForDocument(db, nodeId);
+    } catch {
+      // A summary is display-only; a store without the corpus tables shows none.
+      return "";
+    }
+    return ref
+      ? (db
+          .prepare<[string], { title: string }>("SELECT title FROM knowledge_nodes WHERE id = ?")
+          .get(ref.slice(5))?.title ?? "")
+      : "";
+  };
   const tools: ToolHandle[] = [
     tool(
       "knowledge_candidates",

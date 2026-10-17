@@ -33,6 +33,8 @@ export function adaptInteractiveKnowledgeReads(
   tools: readonly ToolHandle[],
   readTools: readonly ToolHandle[],
   supportsKnowledgeAliases: boolean,
+  /** Maps a maintained page's search-hit document id to its `wiki:` reference. */
+  pageRefForDocument?: (documentId: string) => string | null,
 ): ToolHandle[] {
   const fetchMany = readTools.find((tool) => tool.name === "fetch_many");
   return tools.map((tool): ToolHandle => {
@@ -40,8 +42,8 @@ export function adaptInteractiveKnowledgeReads(
     return {
       ...tool,
       description:
-        "Read a maintained wiki or root page using its exact bare node ID or a wiki:<nodeId> " +
-        "reference without a claim selector. Normal reads return " +
+        "Read a maintained wiki or root page using its exact bare node ID, a wiki:<nodeId> " +
+        "reference without a claim selector, or the documentId of its search hit. Normal reads return " +
         "the same document.batch result as fetch_many, including qualified knowledgeContext " +
         "and a turn-bound citation read. This does not read cited original documents. " +
         "Other record kinds use fetch_loop or scoped people/document/search tools. " +
@@ -59,7 +61,7 @@ export function adaptInteractiveKnowledgeReads(
         if (!parsed.success) return unavailable();
         if (parsed.data.editing === true) return tool.invoke(rawArgs, context);
         if (!fetchMany || !supportsKnowledgeAliases) return unavailable();
-        const documentId = pageAlias(parsed.data.id);
+        const documentId = pageRefForDocument?.(parsed.data.id) ?? pageAlias(parsed.data.id);
         if (!documentId) return unavailable();
         // Alias resolution itself restricts to wiki/root, applies authorization,
         // and never falls back to a raw canonical row or an arbitrary source ID.

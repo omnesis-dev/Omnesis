@@ -125,6 +125,11 @@ export interface DocumentPort {
   readonly requiresCitationRead?: boolean;
   /** This adapter resolves canonical wiki links through the same authorized corpus read. */
   readonly supportsKnowledgeAliases?: boolean;
+  /**
+   * The `wiki:<nodeId>` reference of a maintained wiki or root page, given the
+   * document id its search hit carries; null for any other document.
+   */
+  knowledgePageRef?(documentId: string): string | null;
   fetch(
     documentId: string,
     opts?: { includeNeighbors?: boolean },

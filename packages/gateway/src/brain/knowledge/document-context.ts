@@ -44,6 +44,24 @@ function projectionId(db: Db, nodeId: string): string | null {
   return row && isKnowledgeDocumentReadable(db, row.id) ? row.id : null;
 }
 
+/**
+ * A maintained wiki or root page's `wiki:<nodeId>` reference from the id of its
+ * corpus projection — the id a search hit carries. Null for every other document.
+ */
+export function knowledgePageRefForDocument(db: Db, documentId: string): string | null {
+  if (
+    !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'").get()
+  )
+    return null;
+  const node = db
+    .prepare<
+      [string, string, string],
+      { id: string }
+    >("SELECT n.id FROM documents d JOIN knowledge_nodes n ON n.id=d.external_id WHERE d.id=? AND d.provider_id=? AND d.source_id=? AND n.kind IN ('wiki','root') AND json_extract(n.fields_json,'$.withdrawn') IS NOT 1 LIMIT 1")
+    .get(documentId, KNOWLEDGE_PROVIDER_ID, KNOWLEDGE_SOURCE_ID);
+  return node ? `wiki:${node.id}` : null;
+}
+
 export function resolveKnowledgeDocumentAlias(db: Db, id: string): string | null {
   if (!id.startsWith("wiki:")) return id;
   if (!/^wiki:[A-Za-z0-9_-]{1,128}$/.test(id)) return null;

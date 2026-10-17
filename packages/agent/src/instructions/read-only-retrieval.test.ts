@@ -19,7 +19,9 @@ describe("maintained knowledge retrieval", () => {
     expect(guidance).toContain(
       "When a question touches something they name — a person, project, place, plan or product — read the maintained page before answering",
     );
-    expect(guidance).toContain("exact `ref` values of relevant root `relatedPages` entries");
+    expect(guidance).toContain(
+      "exact `ref` values of relevant root `relatedPages` entries, listed maintained pages",
+    );
     expect(guidance).toContain("into `fetch_many` as `documents[].documentId`");
     expect(guidance).toContain("open its `documentId`");
     expect(guidance).toContain("A title, snippet or summary does not replace that read.");

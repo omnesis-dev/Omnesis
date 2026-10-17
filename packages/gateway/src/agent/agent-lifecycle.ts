@@ -56,6 +56,7 @@ import {
   captureKnowledgeRootContext,
   isCapturedKnowledgeRootSupportCurrent,
 } from "../brain/knowledge/root-context.js";
+import { renderKnowledgePageDirectory } from "../brain/knowledge/page-directory.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
 import {
   ConversationReadStateService,
@@ -423,7 +424,7 @@ export function createAgentService(
       experimental,
       selfMemory,
       selfPersonId,
-      knowledgeRootContext: root.text,
+      knowledgeRootContext: restricted ? root.text : root.text + renderKnowledgePageDirectory(db),
       memoryWrites: options.memoryWrites === true && !restricted,
       temporal: !restricted,
       operatorInstructions,

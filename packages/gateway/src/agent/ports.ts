@@ -33,6 +33,7 @@ import { readSourceEvidenceAuthority } from "../sources/evidence-authority.js";
 import { readFreshKnowledgeProjection } from "../brain/knowledge/projection-read.js";
 import {
   readFreshKnowledgeDocumentContext,
+  knowledgePageRefForDocument,
   readKnowledgeDocumentContext,
   resolveKnowledgeDocumentAlias,
 } from "../brain/knowledge/document-context.js";
@@ -432,6 +433,7 @@ export function createGatewayDocumentPort(
   return {
     supportsKnowledgeAliases: true,
     requiresCitationRead: true,
+    knowledgePageRef: (documentId) => knowledgePageRefForDocument(db, documentId),
     async fetch(
       documentId: string,
       opts?: { includeNeighbors?: boolean },
