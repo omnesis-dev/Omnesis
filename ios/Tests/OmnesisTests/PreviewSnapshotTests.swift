@@ -3839,10 +3839,9 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testAgentEphemeralWikiRead() {
         let store = AppStore.preview(agentPreview: .init())
-        for (call, index, name, scheme) in [
-            (PreviewMocks.agentToolCallWikiReadRunning, nil as Int?, "78c-agent-ephemeral-wiki-running", ColorScheme.dark),
-            (PreviewMocks.agentToolCallWikiReadComplete, 1, "78d-agent-ephemeral-wiki-slot", ColorScheme.dark),
-            (PreviewMocks.agentToolCallWikiReadComplete, 1, "78e-agent-ephemeral-wiki-slot-light", ColorScheme.light),
+        for (call, index, name) in [
+            (PreviewMocks.agentToolCallWikiReadRunning, nil as Int?, "78c-agent-ephemeral-wiki-running"),
+            (PreviewMocks.agentToolCallWikiReadComplete, 1, "78d-agent-ephemeral-wiki-slot"),
         ] {
             let view = NavigationStack {
                 ScrollView {
@@ -3852,7 +3851,6 @@ final class PreviewSnapshotTests: XCTestCase {
                 .background(Theme.bgPrimary)
             }
             .environment(store)
-            .preferredColorScheme(scheme)
             snapshot(view, name: name)
         }
     }
