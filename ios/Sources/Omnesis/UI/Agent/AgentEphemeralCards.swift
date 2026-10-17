@@ -4,48 +4,6 @@
 import Foundation
 
 /// Display verbs for ephemeral actions, with a readable fallback for unknown tools.
-enum AgentEphemeralActionLabel {
-    static func label(for tool: String) -> String {
-        labels[tool] ?? tool
-    }
-
-    private static let labels = [
-        "open_loop_search": "Search loops",
-        "open_loop_fetch": "Open loop",
-        "open_loop_create": "Create loop",
-        "open_loop_update": "Update loop",
-        "open_loop_delete": "Delete loop",
-        "open_loop_ledger_append": "Note on loop",
-        "observation_list": "List brief items",
-        "observation_note": "Note brief item",
-        "observation_withdraw": "Withdraw brief item",
-        "observation_suppress": "Mute brief item",
-        "temporal_query": "Check dates",
-        "time_index_query": "Check dates",
-        "temporal_annotation_add": "Add date note",
-        "time_index_add": "Add date note",
-        "temporal_annotation_update": "Update date note",
-        "time_index_update": "Update date note",
-        "temporal_annotation_delete": "Remove date note",
-        "time_index_delete": "Remove date note",
-        "notes_append": "Append notes",
-        "notes_rewrite": "Rewrite notes",
-        "conversation_memory_evidence": "Prepare memory",
-        "annotation_search": "Search memory",
-        "annotate_durable": "Remember document",
-        "annotation_revise": "Update document memory",
-        "annotation_retract": "Forget document memory",
-        "annotation_supersede": "Replace document memory",
-        "annotate_person": "Remember person",
-        "person_annotation_revise": "Update person memory",
-        "person_annotation_retract": "Forget person memory",
-        "person_annotation_supersede": "Replace person memory",
-        "schedule_agent_run": "Schedule follow-up",
-        "list_loops": "List loops",
-        "entity_context": "Gather context",
-    ]
-}
-
 /// SQL cards have two independently arriving inputs: arguments start the
 /// query reveal, while the result starts the row reveal and dismissal. Keep
 /// both in the task identity so a result that lands after the query phase
@@ -557,8 +515,13 @@ struct AgentEphemeralDocumentCard: View {
     }
 
     private var docRef: AgentDocRef? {
-        if case .document(let ref, _, _) = call.result { return ref }
-        return nil
+        agentDocumentRead(call.result)?.ref
+    }
+
+    /// A wiki read's page title, which the gateway summarized the call with,
+    /// stands in the header until the page itself lands.
+    private var pendingTitle: String? {
+        call.tool == "knowledge_fetch" && !call.argsSummary.isEmpty ? call.argsSummary : nil
     }
 
     /// Cap the rotation length. A long PDF or email body can carry
@@ -571,7 +534,7 @@ struct AgentEphemeralDocumentCard: View {
     /// flash empty slots and break the cadence — skip them so the
     /// rotation reads continuously. Capped at `maxLinesToReveal`.
     private var contentLines: [String] {
-        if case .document(_, let content, _) = call.result, let content {
+        if let content = agentDocumentRead(call.result)?.content {
             return Array(
                 content
                     .split(separator: "\n", omittingEmptySubsequences: false)
@@ -648,8 +611,8 @@ struct AgentEphemeralDocumentCard: View {
     private var cardContent: some View {
         AgentInlineActivity {
             AgentInlineHeader(
-                glyph: "doc.text",
-                label: "Open document",
+                glyph: AgentToolCards.symbol(for: call.tool),
+                label: AgentToolCards.label(for: call.tool),
                 showSpinner: !hasResult
             ) {
                 if let ref = docRef {
@@ -662,6 +625,12 @@ struct AgentEphemeralDocumentCard: View {
                             .truncationMode(.middle)
                         AgentLoopChip(loops: ref.openLoops)
                     }
+                } else if let pendingTitle {
+                    Text(pendingTitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             if hasResult, !contentLines.isEmpty {
@@ -1926,36 +1895,11 @@ struct AgentEphemeralActionCard: View {
     /// Human verb for each background action; the raw name for anything
     /// unrecognized, so a future tool still reads sanely.
     static func label(for tool: String) -> String {
-        AgentEphemeralActionLabel.label(for: tool)
+        AgentToolCards.label(for: tool)
     }
 
     static func glyph(for tool: String) -> String {
-        switch tool {
-        case "open_loop_search", "open_loop_fetch", "open_loop_create",
-             "open_loop_update", "open_loop_delete", "open_loop_ledger_append":
-            "arrow.triangle.2.circlepath"
-        case "observation_list", "observation_note", "observation_withdraw", "observation_suppress":
-            "sunrise"
-        case "temporal_query", "temporal_annotation_add", "temporal_annotation_update",
-             "temporal_annotation_delete", "time_index_query", "time_index_add",
-             "time_index_update", "time_index_delete":
-            "calendar"
-        case "notes_append", "notes_rewrite":
-            "note.text"
-        case "conversation_memory_evidence", "annotation_search",
-             "annotate_durable", "annotation_revise", "annotation_retract",
-             "annotation_supersede", "annotate_person", "person_annotation_revise",
-             "person_annotation_retract", "person_annotation_supersede":
-            "brain.head.profile"
-        case "schedule_agent_run":
-            "clock.arrow.circlepath"
-        case "list_loops":
-            "arrow.triangle.2.circlepath"
-        case "entity_context":
-            "point.3.connected.trianglepath.dotted"
-        default:
-            "wrench.and.screwdriver"
-        }
+        AgentToolCards.symbol(for: tool)
     }
 }
 
@@ -2057,6 +2001,32 @@ func agentEphemeralCardHandles(_ call: AgentToolCall) -> Bool {
         }
         .background(Theme.bgPrimary)
     }
+    .environment(AppStore.preview())
+    .preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
+#Preview("Read wiki page — running") {
+    ScrollView {
+        AgentEphemeralDocumentCard(call: PreviewMocks.agentToolCallWikiReadRunning, freeze: true)
+            .padding()
+    }
+    .background(Theme.bgPrimary)
+    .environment(AppStore.preview())
+    .preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
+#Preview("Read wiki page — slot on line #2 (frozen)") {
+    ScrollView {
+        AgentEphemeralDocumentCard(
+            call: PreviewMocks.agentToolCallWikiReadComplete,
+            initialIndex: 1,
+            freeze: true
+        )
+        .padding()
+    }
+    .background(Theme.bgPrimary)
     .environment(AppStore.preview())
     .preferredColorScheme(.dark)
 }

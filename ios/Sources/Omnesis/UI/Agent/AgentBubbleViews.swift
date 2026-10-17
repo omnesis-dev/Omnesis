@@ -573,9 +573,7 @@ struct AgentPartView: View {
                     AgentCitingPill(count: agentAnnotateManyPillCount(call))
                 }
             } else if call.tool == "cite_record"
-                || call.tool == "plan"
-                || call.tool == "watches_list"
-                || call.tool == "watch_get"
+                || AgentToolCards.silentTools.contains(call.tool)
                 || call.tool == "triggers_list"
                 || call.tool == "trigger_get"
                 || call.tool == "trigger_firings" {
@@ -603,7 +601,7 @@ struct AgentPartView: View {
                 switch call.tool {
                 case "search_documents":
                     AgentEphemeralSearchCard(call: call, freeze: freeze)
-                case "fetch_document":
+                case "fetch_document", "knowledge_fetch":
                     AgentEphemeralDocumentCard(call: call, freeze: freeze)
                 case "search_many", "fetch_many":
                     // A batch retrieval tool: project one live per-child
@@ -770,34 +768,11 @@ struct AgentToolCallView: View {
 }
 
 private func prettyToolName(_ tool: String) -> String {
-    switch tool {
-    case "search_documents": "Search"
-    case "fetch_document": "Open document"
-    case "trace_connections": "Trace connections"
-    case "run_sql": "Run SQL"
-    case "search_loops": "Search loops"
-    case "fetch_loop": "Open loop"
-    case "list_loops": "List loops"
-    case "entity_context": "Gather context"
-    case "task_list": "Check tasks"
-    case "task_create": "Add a task"
-    case "task_update": "Update a task"
-    case "task_undo": "Undo a task change"
-    default: tool
-    }
+    AgentToolCards.label(for: tool)
 }
 
 private func toolSymbol(_ tool: String) -> String {
-    switch tool {
-    case "search_documents": "magnifyingglass"
-    case "fetch_document": "doc.text"
-    case "trace_connections": "point.3.connected.trianglepath.dotted"
-    case "run_sql": "tablecells"
-    case "search_loops", "fetch_loop", "list_loops": "arrow.triangle.2.circlepath"
-    case "entity_context": "point.3.connected.trianglepath.dotted"
-    case "task_list", "task_create", "task_update", "task_undo": "checklist"
-    default: "wrench.and.screwdriver"
-    }
+    AgentToolCards.symbol(for: tool)
 }
 
 // MARK: - Previews

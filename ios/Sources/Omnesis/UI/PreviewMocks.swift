@@ -3652,6 +3652,49 @@ enum PreviewMocks {
         durationMs: 6854
     )
 
+    /// A wiki read while it runs: the gateway summarized the call with the
+    /// page's title, so the card names the page before it lands.
+    static let agentToolCallWikiReadRunning = AgentToolCall(
+        toolCallId: "tu_wiki_running",
+        tool: "knowledge_fetch",
+        args: JSONAny(value: ["id": "candidate_pottery", "editing": false] as [String: Any]),
+        argsSummary: "Pottery workshop",
+        argsKnown: true,
+        result: nil,
+        durationMs: nil
+    )
+
+    /// A settled wiki read: the `document.batch` shape `fetch_many` returns.
+    static let agentToolCallWikiReadComplete = AgentToolCall(
+        toolCallId: "tu_wiki_complete",
+        tool: "knowledge_fetch",
+        args: JSONAny(value: ["id": "candidate_pottery", "editing": false] as [String: Any]),
+        argsSummary: "Pottery workshop",
+        argsKnown: true,
+        result: .documentBatch(items: [
+            .document(
+                ref: AgentDocRef(
+                    documentId: "wiki-pottery",
+                    sourceType: "brain-knowledge",
+                    sourceId: "brain-knowledge",
+                    documentType: "knowledge",
+                    title: "Pottery workshop",
+                    snippet: "The pottery workshop runs on Friday evenings.",
+                    ts: 1_725_500_000_000,
+                    people: []
+                ),
+                content: """
+                ## Overview
+                The pottery workshop runs on Friday evenings at the community studio.
+                Bring clay and an apron.
+                The kiln is booked for the last week of the month.
+                """,
+                neighbors: []
+            ),
+        ]),
+        durationMs: 22
+    )
+
     static let agentToolCallDocumentComplete = AgentToolCall(
         toolCallId: "tu_doc_complete",
         tool: "fetch_document",

@@ -3154,53 +3154,11 @@ struct AgentResearchPanel: Equatable, Identifiable {
 /// the causality gate key off this single set. Mirrors the portal's
 /// `EPHEMERAL_TOOLS`.
 @available(iOS 17.0, *)
-let agentEphemeralTools: Set<String> = [
+let agentEphemeralTools: Set<String> = AgentToolCards.ephemeralTools.union([
     // Visible only until `agent.subagent.spawned` replaces it with the stable
     // worker row; also dropped from rebuilt history.
     "spawn_subagent",
-    "search_documents",
-    "fetch_document",
-    // Batch retrieval tools: each renders live as N per-child ephemeral cards
-    // (AgentPartView projects `call.children`), dropped from resumed history
-    // like the singular ephemeral tools they wrap.
-    "search_many",
-    "fetch_many",
-    "run_sql",
-    "trace_connections",
-    "lookup_people",
-    "lookup_document_by_url",
-    "search_loops",
-    "fetch_loop",
-    "list_loops",
-    "entity_context",
-    // The steward toolset.
-    // These are quick background actions the agent narrates in prose —
-    // their cards flash by live (AgentEphemeralActionCard) and are never
-    // rebuilt into resumed history.
-    "open_loop_search",
-    "open_loop_fetch",
-    "open_loop_create",
-    "open_loop_update",
-    "open_loop_delete",
-    "open_loop_ledger_append",
-    "observation_list",
-    "observation_note",
-    "observation_withdraw",
-    "observation_suppress",
-    "temporal_query",
-    "temporal_annotation_add",
-    "temporal_annotation_update",
-    "temporal_annotation_delete",
-    // Rollout compatibility for persisted turns from older gateways.
-    "time_index_add",
-    "time_index_update",
-    "time_index_delete",
-    "time_index_query",
-    "notes_append", "notes_rewrite", "annotate_durable",
-    "conversation_memory_evidence", "annotation_search", "annotation_revise", "annotation_retract",
-    "annotation_supersede", "annotate_person", "person_annotation_revise",
-    "person_annotation_retract", "person_annotation_supersede", "schedule_agent_run",
-]
+])
 
 /// Orchestration calls that never own durable transcript content.
 @available(iOS 17.0, *)
