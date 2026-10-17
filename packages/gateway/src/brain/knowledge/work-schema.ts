@@ -238,6 +238,12 @@ export function createKnowledgeWorkTables(db: Database.Database): void {
       WHERE retrieval_reconsider_at IS NOT NULL;
       CREATE INDEX IF NOT EXISTS knowledge_organization_retrieval_identity
       ON knowledge_organization_cohorts(input_fingerprint,policy_version,retrieval_reconsidered);`);
+    // A subject cohort is grouped around an important tracked outcome no wiki
+    // covers; the loop id records which subject it was and paces the next one.
+    if (!columns.some((column) => column.name === "subject_loop_id"))
+      db.exec("ALTER TABLE knowledge_organization_cohorts ADD COLUMN subject_loop_id TEXT");
+    db.exec(`CREATE INDEX IF NOT EXISTS knowledge_organization_subject
+      ON knowledge_organization_cohorts(subject_loop_id,created_at) WHERE subject_loop_id IS NOT NULL`);
   })();
   db.transaction(() => {
     const columns = db

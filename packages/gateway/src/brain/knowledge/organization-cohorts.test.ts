@@ -3,6 +3,7 @@
 
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createBriefsStorageTables } from "../storage/schema.js";
 import { reconsiderPublishedRetrieval } from "./retrieval-reconsideration.js";
 import { completeOrganizationBatch } from "./organization-writer.js";
 import { purgeKnowledgeBySource, advanceKnowledgeCascade } from "./storage-invalidation.js";
@@ -777,5 +778,147 @@ describe("excluded sources", () => {
       excludedSources: ["source-b"],
     })!;
     expect(Object.keys(selection.sourceVersions).sort()).toEqual(["a", "c"]);
+  });
+});
+
+describe("subject cohorts for important outcomes without a page", () => {
+  const DAY = 86_400_000;
+  const NOW = 200 * DAY;
+  beforeEach(() => {
+    createBriefsStorageTables(db);
+    db.exec("CREATE TABLE people(id TEXT PRIMARY KEY,is_self BOOLEAN DEFAULT FALSE)");
+    db.prepare("INSERT INTO people VALUES('me',1)").run();
+  });
+  function outcome(
+    id: string,
+    importance: number,
+    docs: string[],
+    people: string[] = [],
+    state = "open",
+    lastUpdate = NOW - DAY,
+  ) {
+    db.prepare(
+      `INSERT INTO open_loops(id,created_by_run,state,confidence,importance,title,created_at,last_update)
+      VALUES(?,'fixture',?,0.9,?,?,?,?)`,
+    ).run(id, state, importance, `Outcome ${id}`, lastUpdate, lastUpdate);
+    for (const doc of docs) {
+      if (!db.prepare("SELECT 1 FROM documents WHERE id=?").get(doc)) evidence(doc);
+      db.prepare("INSERT INTO open_loop_docs VALUES(?,?)").run(id, doc);
+    }
+    for (const person of people)
+      db.prepare("INSERT INTO open_loop_people VALUES(?,?,'involved')").run(id, person);
+  }
+  function selectSubject(now = NOW) {
+    return selectOrganizationCohort(db, {
+      now,
+      intervalMs: 100 * DAY,
+      retryMs: 30 * DAY,
+      subjectIntervalMs: DAY,
+    });
+  }
+  function admitSubject(now = NOW, id = "subject-cohort") {
+    const selection = selectSubject(now)!;
+    db.prepare(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES(?,?,?,'routine','pending',?,?)",
+    ).run(`batch-${id}`, `run-${id}`, "fingerprint", now, now);
+    expect(
+      createOrganizationCohort(
+        db,
+        {
+          ...selection,
+          id,
+          batchId: `batch-${id}`,
+          intervalMs: 100 * DAY,
+          retryMs: 30 * DAY,
+          subjectIntervalMs: DAY,
+        },
+        now,
+      ),
+    ).toBe(true);
+    return getOrganizationCohortForBatch(db, `batch-${id}`)!;
+  }
+
+  it("groups an important uncovered matter's outcomes by a specific person, anchored on the most important", () => {
+    outcome("memorial", 0.85, ["vet-invoice", "memorial-proof"], ["sitter"]);
+    outcome("thank-sitter", 0.7, ["sitter-message"], ["sitter", "me"]);
+    outcome("minor", 0.3, ["newsletter"], ["sitter"]);
+    const selection = selectSubject()!;
+    expect(selection.subjectLoopId).toBe("memorial");
+    expect(Object.keys(selection.sourceVersions).sort()).toEqual([
+      "memorial-proof",
+      "sitter-message",
+      "vet-invoice",
+    ]);
+    const cohort = admitSubject();
+    expect(cohort.subjectLoopId).toBe("memorial");
+  });
+
+  it("does not join matters through the owner or a person on many outcomes", () => {
+    outcome("party", 0.9, ["party-rsvp", "party-venue"], ["partner"]);
+    for (let i = 0; i < 6; i++) outcome(`errand-${i}`, 0.7, [`errand-doc-${i}`], ["partner", "me"]);
+    const selection = selectSubject()!;
+    expect(selection.subjectLoopId).toBe("party");
+    expect(Object.keys(selection.sourceVersions).sort()).toEqual(["party-rsvp", "party-venue"]);
+  });
+
+  it("skips outcomes a wiki already cites, unimportant or stale ones, and ranks larger matters first", () => {
+    // Each excluded matter has two outcomes, so it would outrank the threads if selected.
+    outcome("covered", 0.95, ["covered-a", "covered-b"], ["covered-person"]);
+    outcome("covered-2", 0.95, ["covered-c"], ["covered-person"]);
+    saveKnowledgeNode(
+      db,
+      {
+        id: "covering-page",
+        kind: "wiki",
+        title: "Covered matter",
+        markdown: '<claim id="c" refs="source:covered-a">The matter is covered.</claim>',
+        expectedRevision: 0,
+        inputVersions: { "source:covered-a": "v1" },
+      },
+      NOW,
+    );
+    outcome("covered-3", 0.95, ["covered-d"], ["covered-person"]);
+    db.prepare("INSERT INTO open_loop_docs VALUES('covered-3','covered-a')").run();
+    outcome("stale", 0.95, ["stale-a", "stale-b"], ["stale-person"], "open", NOW - 200 * DAY);
+    outcome("stale-2", 0.95, ["stale-c"], ["stale-person"], "open", NOW - 200 * DAY);
+    outcome("dismissed", 0.95, ["dismissed-a"], ["dismissed-person"], "dismissed");
+    outcome("dismissed-2", 0.95, ["dismissed-b"], ["dismissed-person"], "dismissed");
+    outcome("minor", 0.6, ["minor-a"], ["minor-person"]);
+    outcome("minor-2", 0.6, ["minor-b"], ["minor-person"]);
+    outcome("minor-3", 0.6, ["minor-c"], ["minor-person"]);
+    outcome("single", 0.9, ["single-a", "single-b"]);
+    outcome("thread-1", 0.75, ["thread-a", "shared-doc"]);
+    outcome("thread-2", 0.75, ["shared-doc", "thread-b"]);
+    expect(selectSubject()!.subjectLoopId).toMatch(/^thread-/);
+  });
+
+  it("paces subject cohorts and does not regroup a subject before its retry interval", () => {
+    outcome("first", 0.9, ["first-a", "first-b"]);
+    outcome("second", 0.8, ["second-a", "second-b"]);
+    admitSubject();
+    db.prepare("UPDATE knowledge_organization_cohorts SET status='completed'").run();
+    db.prepare("UPDATE knowledge_batches SET status='completed'").run();
+    // Within the subject interval no subject is offered; chronological cohorts still are.
+    expect(selectSubject(NOW + DAY - 1)?.subjectLoopId).toBeUndefined();
+    const next = selectSubject(NOW + DAY)!;
+    expect(next.subjectLoopId).toBe("second");
+    admitSubject(NOW + DAY, "second-cohort");
+    db.prepare("UPDATE knowledge_organization_cohorts SET status='completed'").run();
+    db.prepare("UPDATE knowledge_batches SET status='completed'").run();
+    expect(selectSubject(NOW + 2 * DAY)?.subjectLoopId).toBeUndefined();
+    expect(selectSubject(NOW + 31 * DAY)?.subjectLoopId).toBe("first");
+  });
+
+  it("admits a subject cohort over evidence chronological cohorts already reviewed", () => {
+    outcome("matter", 0.9, ["matter-a", "matter-b"]);
+    admit(
+      NOW,
+      "chronological",
+      selectOrganizationCohort(db, { now: NOW, intervalMs: 100, retryMs: 30 * DAY })!,
+    );
+    db.prepare("UPDATE knowledge_organization_cohorts SET status='completed'").run();
+    db.prepare("UPDATE knowledge_batches SET status='completed'").run();
+    expect(selectSubject(NOW + 1)?.subjectLoopId).toBe("matter");
+    expect(admitSubject(NOW + 1).sourceVersions).toEqual({ "matter-a": "v1", "matter-b": "v1" });
   });
 });

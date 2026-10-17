@@ -35,12 +35,16 @@ export class KnowledgeOrganization {
     // Restarting costs one read, while persisted cohorts retain model admission backoff.
     if (now < this.nextSelectionAt) return 0;
     this.nextSelectionAt = now + Math.max(1000, Math.min(60000, cfg.routineDelayMs));
+    // Subjects are paced like soon work: an important matter without a page
+    // should not wait behind the routine cadence of chronological cohorts.
+    const subjectIntervalMs = Math.max(60000, cfg.soonDelayMs);
     const selection = selectOrganizationCohort(deps.db, {
       now,
       limit: Math.min(8, cfg.maxSeeds),
       intervalMs: Math.max(60000, cfg.routineDelayMs),
       retryMs: Math.max(60000, cfg.maxReviewIntervalMs),
       excludedSources: deps.getSettings().excludedSources,
+      subjectIntervalMs,
     });
     if (!selection) return 0;
     const ids = Object.keys(selection.sourceVersions);
@@ -75,6 +79,7 @@ export class KnowledgeOrganization {
           workPrefix: this.context.id("kw"),
           intervalMs: Math.max(60000, cfg.routineDelayMs),
           retryMs: Math.max(60000, cfg.maxReviewIntervalMs),
+          subjectIntervalMs,
           regionNodeIds,
           frontier,
         },
@@ -122,6 +127,7 @@ export class KnowledgeOrganization {
       id: cohort.id,
       inputFingerprint: cohort.inputFingerprint,
       sourceIds: Object.keys(cohort.sourceVersions),
+      ...(cohort.subjectLoopId ? { subject: { loopRef: `loop:${cohort.subjectLoopId}` } } : {}),
       readyToComplete: !deps.db
         .prepare(
           "SELECT 1 FROM knowledge_frontier WHERE batch_id=? AND status IN ('pending','offered','deferred') LIMIT 1",

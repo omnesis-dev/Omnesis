@@ -623,6 +623,21 @@ document annotation or an unpublished candidate. The source floor applies to
 publication, not existing-page repairs or the compact root, and does not prove
 coherent synthesis by itself. Cohort membership creates no dependency edges.
 
+Chronological cohorts group whatever was considered together, so a matter
+whose evidence arrives over months may never meet in one. A **subject cohort**
+groups instead the interpreted evidence of an important tracked outcome no wiki
+covers yet: an outcome with importance of at least 0.7, open or completed and
+updated within 120 days, none of whose documents or loop record a wiki claim
+cites. Such outcomes join one subject when they share a document or a person
+on at most six outcomes (the owner, and people on many outcomes, would merge
+unrelated matters); subjects rank by the summed importance of their outcomes.
+The frontier's organization metadata then names the leading outcome as
+`subject.loopRef`, and the agent decides whether the enduring matter behind it
+deserves a page, belongs in an existing one, or yields no page. Subject cohorts
+are paced at most one per `soonDelay` (minimum one minute), are retried per
+subject after `maxReviewInterval`, and use only evidence already considered,
+so they never admit additional history.
+
 Page proposals require initial `knowledge_list({kind:"wiki"})` and
 `knowledge_candidates({})` reads without status or cursor filters. On a collection
 conflict, refresh both and reconsider the scope before retrying. A refused proposal
