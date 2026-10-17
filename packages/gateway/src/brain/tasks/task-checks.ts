@@ -83,7 +83,10 @@ interface TaskChecksDeps {
 export interface TaskRef {
   runId: string;
   loopId: string;
-  /** One of the task's documents, which anchors the ledger row; null when it has none. */
+  /**
+   * The document the check is about, which anchors the ledger row: one of the
+   * task's documents, else the source behind the change; null when there is none.
+   */
   documentId: string | null;
 }
 
@@ -156,30 +159,37 @@ export class TaskChecks {
     const verdict: DecisionVerdict =
       judgement.score === null ? "unavailable" : judgement.score >= threshold ? "pass" : "skip";
     if (input.documentId === null) return verdict;
-    await this.deps.recordDecision({
-      id: `dec_${this.deps.idGen()}`,
-      runId: input.runId,
-      documentId: input.documentId,
-      subjectDocumentId: input.documentId,
-      purpose: "task-check",
-      lane: questionId,
-      rubricVersion: TASK_CHECK_RUBRIC_VERSION,
-      contentHash: null,
-      requestedModelId: decision.modelId,
-      modelId: judgement.modelId,
-      requestJson: null,
-      responseJson: null,
-      score: judgement.score,
-      threshold,
-      verdict,
-      error: judgement.error,
-      reusedFrom: null,
-      recordId: input.loopId,
-      enforced: true,
-      latencyMs: judgement.latencyMs,
-      inputTokens: judgement.inputTokens,
-      createdAt: this.deps.clock(),
-    });
+    // The verdict stands whether or not its ledger row lands.
+    await this.deps
+      .recordDecision({
+        id: `dec_${this.deps.idGen()}`,
+        runId: input.runId,
+        documentId: input.documentId,
+        subjectDocumentId: input.documentId,
+        purpose: "task-check",
+        lane: questionId,
+        rubricVersion: TASK_CHECK_RUBRIC_VERSION,
+        contentHash: null,
+        requestedModelId: decision.modelId,
+        modelId: judgement.modelId,
+        requestJson: null,
+        responseJson: null,
+        score: judgement.score,
+        threshold,
+        verdict,
+        error: judgement.error,
+        reusedFrom: null,
+        recordId: input.loopId,
+        enforced: true,
+        latencyMs: judgement.latencyMs,
+        inputTokens: judgement.inputTokens,
+        createdAt: this.deps.clock(),
+      })
+      .catch((error: unknown) => {
+        this.deps.log.warn(
+          `Task check verdict for ${input.loopId} not recorded: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     return verdict;
   }
 }

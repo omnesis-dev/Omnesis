@@ -21,6 +21,8 @@ describe("settleTaskProposals", () => {
   let path: string;
   let db: Database.Database;
   let sameTaskScore: number;
+  let recorded: Array<{ documentId: string; recordId: string | null }>;
+  let failRecord: boolean;
 
   const checks = new TaskChecks({
     getDecision: (): DecisionCapability => ({
@@ -32,7 +34,11 @@ describe("settleTaskProposals", () => {
         }),
       dispose() {},
     }),
-    recordDecision: () => Promise.resolve(),
+    recordDecision: (record) =>
+      failRecord
+        ? Promise.reject(new Error("ledger unavailable"))
+        : (recorded.push({ documentId: record.documentId, recordId: record.recordId }),
+          Promise.resolve()),
     recordSpend: () => Promise.resolve(),
     clock: () => nowMs,
     idGen: () => randomUUID(),
@@ -62,11 +68,15 @@ describe("settleTaskProposals", () => {
     );
   }
 
-  function propose(id: string, change: Pick<ProposedTaskChange, "kind" | "fields">): void {
+  function propose(
+    id: string,
+    change: Pick<ProposedTaskChange, "kind" | "fields">,
+    evidence: string[] = [],
+  ): void {
     proposeTaskChange(
       db,
       id,
-      { ...change, reason: "A newer source.", evidence: [], runId: "run_old", proposedAt: nowMs },
+      { ...change, reason: "A newer source.", evidence, runId: "run_old", proposedAt: nowMs },
       nowMs - 40_000,
     );
   }
@@ -75,6 +85,8 @@ describe("settleTaskProposals", () => {
     path = `/tmp/omnesis-test-${randomUUID()}.db`;
     db = createDatabase(path);
     sameTaskScore = 3;
+    recorded = [];
+    failRecord = false;
   });
   afterEach(() => {
     db.close();
@@ -132,5 +144,20 @@ describe("settleTaskProposals", () => {
     for (const id of ["loop_c", "loop_d", "loop_e", "loop_f"])
       expect(getOpenLoop(db, id)!.proposedChange).not.toBeNull();
     expect(getOpenLoop(db, "loop_e")!.description).toBe("My own words.");
+  });
+
+  test("a task without documents records its title check against the proposal's source", async () => {
+    task("loop_g", "Do the 10K");
+    propose("loop_g", { kind: "edit", fields: { title: "Run the harbour 10K" } }, ["doc_entry"]);
+    expect(await settle()).toEqual({ applied: 1, withdrawn: 0 });
+    expect(recorded).toEqual([{ documentId: "doc_entry", recordId: "loop_g" }]);
+  });
+
+  test("a verdict whose ledger row fails still decides the proposal", async () => {
+    task("loop_h", "Do the 10K");
+    propose("loop_h", { kind: "edit", fields: { title: "Run the harbour 10K" } }, ["doc_entry"]);
+    failRecord = true;
+    expect(await settle()).toEqual({ applied: 1, withdrawn: 0 });
+    expect(getOpenLoop(db, "loop_h")!.title).toBe("Run the harbour 10K");
   });
 });

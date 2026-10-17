@@ -74,15 +74,17 @@ export async function settleTaskProposals(
       const same = await deps.taskChecks.sameTask({
         runId: proposal.runId,
         loopId: id,
-        documentId: loop.docs[0] ?? null,
+        documentId: loop.docs[0] ?? proposal.evidence[0] ?? null,
         before: { title: loop.title, description: loop.description },
         after: {
           title,
           description: decision.change.fields?.description ?? loop.description,
         },
       });
-      if (same === "different" || same === "unavailable")
+      if (same === "different" || same === "unavailable") {
         decision = { apply: false, why: "the new title was not confirmed as the same task" };
+        deps.log.info(`Task ${id} keeps its proposed new title waiting: task check ${same}`);
+      }
     }
     if (!decision.apply) continue;
     const result = await deps.writeGate.autoApplyTaskChange(

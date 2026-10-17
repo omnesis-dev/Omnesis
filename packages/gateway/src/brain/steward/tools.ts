@@ -1734,7 +1734,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
             {
               runId,
               loopId: id,
-              documentId: existing.docs[0] ?? null,
+              documentId: existing.docs[0] ?? evidenceDocs[0] ?? null,
               before: { title: existing.title, description: existing.description },
               after: {
                 title: newTitle,
@@ -1876,7 +1876,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           {
             runId,
             loopId: id,
-            documentId: loop.docs[0] ?? null,
+            documentId: loop.docs[0] ?? deps.seedDocIds?.[0] ?? null,
             task: { title: loop.title, description: loop.description },
             recentNotes,
             note,

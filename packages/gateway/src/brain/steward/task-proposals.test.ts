@@ -380,7 +380,12 @@ describe("open_loop_update applies a verified change to the user's own task", ()
     });
 
   function build(
-    options: { autoApply?: boolean; verifier?: boolean; checks?: TaskChecks } = {},
+    options: {
+      autoApply?: boolean;
+      verifier?: boolean;
+      checks?: TaskChecks;
+      seedDocIds?: string[];
+    } = {},
   ): void {
     const writeGate = directWriteGate(db);
     tools = buildCognitionOwnTools({
@@ -394,6 +399,7 @@ describe("open_loop_update applies a verified change to the user's own task", ()
       idGen: () => randomUUID(),
       taskAutoApply: options.autoApply ?? true,
       ...(options.checks ? { taskChecks: options.checks } : {}),
+      ...(options.seedDocIds ? { seedDocIds: options.seedDocIds } : {}),
       ...(options.verifier === false
         ? {}
         : { getEntailmentVerifier: () => Promise.resolve(verifier) }),
@@ -658,6 +664,44 @@ describe("open_loop_update applies a verified change to the user's own task", ()
     );
     expect(listOpenLoopLedger(db, "loop_t")).toHaveLength(before + 2);
     expect(ledger.map((entry) => entry.verdict)).toEqual(["skip", "pass", "unavailable"]);
+  });
+
+  test("a task without documents anchors its checks to the source the run is reading", async () => {
+    createOpenLoop(
+      db,
+      {
+        id: "loop_n",
+        createdByRun: "r0",
+        title: "Sort out the invoice",
+        description: "",
+        confidence: 0.8,
+        importance: 0.5,
+      },
+      nowMs - 60_000,
+    );
+    applyTaskCommand(
+      db,
+      { surface: "tasks", runId: "user:tasks", kind: "accept", id: "loop_n" },
+      nowMs - 50_000,
+    );
+    build({ checks: taskChecks(), seedDocIds: [docId] });
+    scores = { same_task: 3, adds_new: 1 };
+    expect(
+      structured(
+        await update({
+          id: "loop_n",
+          title: "Pay the budget review invoice",
+          reason: "The receipt names the invoice.",
+        }),
+      ).resultType,
+    ).toBe("open_loop.change_applied");
+    await tools
+      .find((t) => t.name === "open_loop_ledger_append")!
+      .invoke({ id: "loop_n", note: "The receipt arrived." }, CTX);
+    expect(ledger.map((entry) => [entry.lane, entry.documentId, entry.recordId])).toEqual([
+      ["same_task", docId, "loop_n"],
+      ["adds_new", docId, "loop_n"],
+    ]);
   });
 
   test("notes on a loop the user has not accepted are not checked", async () => {
