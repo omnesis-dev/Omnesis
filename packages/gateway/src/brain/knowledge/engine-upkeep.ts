@@ -179,8 +179,16 @@ export class KnowledgeUpkeep {
       "CASE WHEN n.kind='wiki' THEN COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),n.created_at) ELSE MAX(COALESCE(json_extract(n.metadata_json,'$.lastVerifiedAt'),n.created_at),COALESCE(json_extract(n.metadata_json,'$.lastReviewedAt'),n.created_at)) END";
     const maximum = `${last}+${cfg.maxReviewIntervalMs}`;
     // A completed but unverified review is still an attempt. Bound retries without
-    // moving lastVerifiedAt or pretending its claims became current.
+    // moving lastVerifiedAt or pretending its claims became current. A claim the
+    // verifier cannot confirm stays unverified however often it is reviewed, so
+    // each further attempt since the last meaningful review doubles the wait, up
+    // to the maximum review interval; a verified review moves that baseline and
+    // starts the sequence again.
     const retryAfter = Math.max(60_000, cfg.soonDelayMs);
+    const retryCap = Math.max(retryAfter, cfg.maxReviewIntervalMs);
+    const reviewRetryAt = `(SELECT MAX(w.updated_at)+MIN(${retryCap},${retryAfter}*(1<<MIN(30,COUNT(*)-1)))
+      FROM knowledge_work w WHERE w.subject_kind='node' AND w.subject_id=n.id AND w.reason='review'
+      AND w.status='completed' AND w.updated_at>=${last})`;
     const hasLoops = !!this.deps.db
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_loops'")
       .get();
@@ -254,7 +262,7 @@ export class KnowledgeUpkeep {
       WHERE (n.kind!='root' OR ${proofPolicyDue}) AND NOT (${historicalLoop}) AND NOT (${retiredAnnotations}) AND n.kind!='observation' AND COALESCE(json_extract(n.fields_json,'$.withdrawn'),0)!=1 AND review_due<=@now
       AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='node' AND w.subject_id=n.id AND w.status IN ('pending','batched'))
       AND NOT ${knowledgeWorkParkedSql("'node'", "n.id", "CAST(n.revision AS TEXT)", "'review'")}
-      AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='node' AND w.subject_id=n.id AND w.reason='review' AND w.status='completed' AND w.updated_at>${now - retryAfter})
+      AND COALESCE(${reviewRetryAt},0)<=@now
       AND NOT EXISTS(SELECT 1 FROM knowledge_discovery_targets t
         JOIN knowledge_batch_regions r ON r.node_id='source:'||t.source_id
         JOIN knowledge_batches b ON b.id=r.batch_id AND b.status NOT IN ('completed','abandoned')
