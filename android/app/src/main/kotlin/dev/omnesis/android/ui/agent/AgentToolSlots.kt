@@ -561,8 +561,11 @@ fun AgentEphemeralDocumentCard(
     initialIndex: Int? = null,
     freeze: Boolean = false,
 ) {
-    val result = call.result as? AgentToolResult.DocumentResult
+    val result = agentDocumentRead(call.result)
     val ref = result?.ref
+    // A wiki read's page title, which the gateway summarized the call with, stands in the
+    // header until the page itself lands.
+    val pendingTitle = call.argsSummary.takeIf { call.tool == "knowledge_fetch" && it.isNotBlank() }
     val lines = result?.document?.content
         ?.split("\n")
         ?.filter { it.isNotBlank() }
@@ -576,10 +579,19 @@ fun AgentEphemeralDocumentCard(
         freeze = freeze,
     ) { currentIndex ->
         AgentInlineHeader(
-            glyph = Icons.Outlined.Description,
-            label = "Open document",
+            glyph = AgentToolCards.icon(call.tool),
+            label = AgentToolCards.label(call.tool),
             showSpinner = call.result == null,
         ) {
+            if (ref == null && pendingTitle != null) {
+                Text(
+                    middleTruncate(pendingTitle, 36),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = OmTheme.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (ref != null) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),

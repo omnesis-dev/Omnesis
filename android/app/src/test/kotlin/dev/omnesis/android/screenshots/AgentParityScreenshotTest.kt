@@ -1573,6 +1573,51 @@ class AgentParityScreenshotTest {
         }()
     }
 
+    // --- a wiki read: the shared document card, titled while pending ---
+
+    @Composable
+    private fun wikiReadCard(settled: Boolean) {
+        slotHost {
+            AgentEphemeralDocumentCard(
+                call = AgentToolCall(
+                    toolCallId = "w1", tool = "knowledge_fetch",
+                    args = args("id" to "candidate_pottery"),
+                    argsSummary = "Pottery workshop",
+                    argsKnown = true,
+                    result = if (!settled) null else AgentToolResult.DocumentBatch(
+                        listOf(
+                            AgentToolResult.DocumentResult(
+                                ref = AgentDocRef(
+                                    documentId = "wiki-pottery",
+                                    sourceType = "brain-knowledge",
+                                    sourceId = "brain-knowledge",
+                                    title = "Pottery workshop",
+                                ),
+                                document = AgentToolResult.DocumentResult.DocBody(
+                                    content = "## Overview\nThe pottery workshop runs on Friday evenings at the community studio.\nBring clay and an apron.",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                catalog = catalog, onFlushEphemeral = {},
+                initialIndex = if (settled) 1 else null, freeze = true,
+            )
+        }()
+    }
+
+    @Test
+    fun agent_ephemeral_wiki_running_dark() =
+        capture("agent_parity_ephemeral_wiki_running_dark", dark = true) { wikiReadCard(settled = false) }
+
+    @Test
+    fun agent_ephemeral_wiki_slot_dark() =
+        capture("agent_parity_ephemeral_wiki_slot_dark", dark = true) { wikiReadCard(settled = true) }
+
+    @Test
+    fun agent_ephemeral_wiki_slot_light() =
+        capture("agent_parity_ephemeral_wiki_slot_light", dark = false) { wikiReadCard(settled = true) }
+
     // --- batch retrieval (search_many / fetch_many): one per-child card each ---
 
     @Composable

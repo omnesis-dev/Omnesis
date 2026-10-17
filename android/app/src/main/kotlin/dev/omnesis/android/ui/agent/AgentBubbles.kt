@@ -30,14 +30,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.Build
-import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Checklist
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Hub
-import androidx.compose.material.icons.outlined.Loop
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -539,8 +531,7 @@ internal fun ToolCard(
         call.tool == "annotate" ||
             call.tool == "annotate_many" ||
             call.tool == "cite_record" ||
-            call.tool == "plan" ||
-            call.tool == "join_subagents" ||
+            call.tool in AgentToolCards.silentTools ||
             call.tool == "triggers_list" ||
             call.tool == "trigger_get" ||
             call.tool == "trigger_firings" -> Unit
@@ -554,7 +545,8 @@ internal fun ToolCard(
 
         call.tool in AgentReducer.EPHEMERAL_TOOLS -> when (call.tool) {
             "search_documents" -> AgentEphemeralSearchCard(call, catalog, onFlushEphemeral, freeze = freeze)
-            "fetch_document" -> AgentEphemeralDocumentCard(call, catalog, onFlushEphemeral, freeze = freeze)
+            "fetch_document", "knowledge_fetch" ->
+                AgentEphemeralDocumentCard(call, catalog, onFlushEphemeral, freeze = freeze)
             "run_sql" -> AgentEphemeralSqlCard(call, catalog, onFlushEphemeral, freeze = freeze)
             "trace_connections" -> AgentEphemeralTrailCard(call, catalog, onFlushEphemeral, freeze = freeze)
             "lookup_people" -> AgentEphemeralPeopleCard(call, onFlushEphemeral, freeze = freeze)
@@ -667,64 +659,6 @@ private fun annotateManyCount(call: AgentToolCall): Int {
     return fromArgs ?: call.children.size.takeIf { it > 0 } ?: 1
 }
 
-private fun prettyToolName(tool: String): String = when (tool) {
-    "search_documents" -> "Search"
-    "fetch_document" -> "Open document"
-    "trace_connections" -> "Trace connections"
-    "run_sql" -> "Run SQL"
-    "search_loops" -> "Search loops"
-    "fetch_loop" -> "Open loop"
-    "list_loops" -> "List loops"
-    "entity_context" -> "Gather context"
-    "conversation_memory_evidence" -> "Prepare memory"
-    "annotation_search" -> "Search memory"
-    "annotate_durable" -> "Remember document"
-    "annotation_revise" -> "Update document memory"
-    "annotation_retract" -> "Forget document memory"
-    "annotation_supersede" -> "Replace document memory"
-    "annotate_person" -> "Remember person"
-    "person_annotation_revise" -> "Update person memory"
-    "person_annotation_retract" -> "Forget person memory"
-    "person_annotation_supersede" -> "Replace person memory"
-    "open_loop_search" -> "Search loops"
-    "open_loop_fetch" -> "Open loop"
-    "open_loop_create" -> "Create loop"
-    "open_loop_update" -> "Update loop"
-    "open_loop_delete" -> "Delete loop"
-    "open_loop_ledger_append" -> "Note on loop"
-    "task_list" -> "Check tasks"
-    "task_create" -> "Add a task"
-    "task_update" -> "Update a task"
-    "task_undo" -> "Undo a task change"
-    "observation_suppress" -> "Mute a brief item"
-    "notes_append" -> "Append notes"
-    "notes_rewrite" -> "Rewrite notes"
-    "schedule_agent_run" -> "Schedule follow-up"
-    "temporal_query", "time_index_query" -> "Check dates"
-    "temporal_annotation_add", "time_index_add" -> "Add date note"
-    "temporal_annotation_update", "time_index_update" -> "Update date note"
-    "temporal_annotation_delete", "time_index_delete" -> "Remove date note"
-    else -> tool
-}
+private fun prettyToolName(tool: String): String = AgentToolCards.label(tool)
 
-private fun toolIcon(tool: String): ImageVector = when (tool) {
-    "search_documents" -> Icons.Outlined.Search
-    "fetch_document" -> Icons.Outlined.Description
-    "trace_connections" -> Icons.Outlined.Hub
-    "run_sql" -> Icons.Outlined.TableChart
-    "search_loops", "fetch_loop", "list_loops",
-    "open_loop_search", "open_loop_fetch", "open_loop_create", "open_loop_update",
-    "open_loop_delete", "open_loop_ledger_append" -> Icons.Outlined.Loop
-    "task_list", "task_create", "task_update", "task_undo" -> Icons.Outlined.Checklist
-    "observation_suppress", "notes_append", "notes_rewrite" -> Icons.Outlined.Description
-    "schedule_agent_run" -> Icons.Outlined.CalendarMonth
-    "entity_context" -> Icons.Outlined.Hub
-    "conversation_memory_evidence", "annotation_search",
-    "annotate_durable", "annotation_revise", "annotation_retract",
-    "annotation_supersede", "annotate_person", "person_annotation_revise",
-    "person_annotation_retract", "person_annotation_supersede" -> Icons.Outlined.Hub
-    "temporal_query", "temporal_annotation_add", "temporal_annotation_update",
-    "temporal_annotation_delete", "time_index_query", "time_index_add",
-    "time_index_update", "time_index_delete" -> Icons.Outlined.CalendarMonth
-    else -> Icons.Outlined.Build
-}
+private fun toolIcon(tool: String): ImageVector = AgentToolCards.icon(tool)

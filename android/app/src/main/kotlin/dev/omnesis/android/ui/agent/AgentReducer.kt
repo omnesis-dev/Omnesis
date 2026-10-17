@@ -27,32 +27,9 @@ import kotlinx.serialization.json.jsonPrimitive
 object AgentReducer {
 
     /** Tools whose cards auto-dismiss; turn-extending events are gated behind their dismissal. */
-    val EPHEMERAL_TOOLS = setOf(
+    val EPHEMERAL_TOOLS: Set<String> = AgentToolCards.ephemeralTools + setOf(
         // Visible only until SubagentSpawned replaces it with the stable worker row.
         "spawn_subagent",
-        "search_documents", "fetch_document", "run_sql",
-        "trace_connections", "lookup_people", "lookup_document_by_url",
-        "search_loops", "fetch_loop", "list_loops", "entity_context",
-        "open_loop_search", "open_loop_fetch", "open_loop_create", "open_loop_update",
-        "open_loop_delete", "open_loop_ledger_append",
-        "observation_suppress",
-        "notes_append", "notes_rewrite", "annotate_durable", "schedule_agent_run",
-        "conversation_memory_evidence", "annotation_search",
-        "annotation_revise", "annotation_retract", "annotation_supersede",
-        "annotate_person", "person_annotation_revise", "person_annotation_retract",
-        "person_annotation_supersede",
-        "temporal_query",
-        "temporal_annotation_add", "temporal_annotation_update", "temporal_annotation_delete",
-        // Stored transcripts and rolling upgrades can still carry the old names.
-        "time_index_query", "time_index_add", "time_index_update", "time_index_delete",
-        // Batch retrieval: each renders live as N per-child ephemeral cards (the renderer
-        // projects `AgentToolCall.children`) and — like the singular cards they wrap — is dropped
-        // from resumed history. But a batch parent does NOT act as a causality gate (it is in
-        // [BATCH_EPHEMERAL_TOOLS], excluded via [actsAsGate]): its children each animate on their
-        // own lifecycle, so there is no single card to drive a parent flush, and the answer text
-        // streams as soon as the batch result lands. `annotate_many` is NOT here: it is silent,
-        // like `annotate`.
-        "search_many", "fetch_many",
     )
 
     /**
