@@ -120,8 +120,6 @@ export interface AnswerGroundingDiagnostic {
 }
 
 export interface AnswerGroundingOptions {
-  /** Same caller zone as the reasoning session; absent/invalid uses the prompt host fallback. */
-  timeZone?: string;
   reads: CitationReads;
   document: DocumentPort;
   loops?: LoopReadPort;
@@ -571,7 +569,8 @@ export function createAnswerGroundingFinalizer(
             });
           const context = JSON.stringify({
             kind: "source-grounded assistant answer",
-            callerClock: renderCallerZoneBlock(options.timeZone),
+            // An Answer has no caller at a device: the host's zone, marked as a default.
+            callerClock: renderCallerZoneBlock(undefined),
             question: identity.question,
             interpretation:
               "For a tracking snapshot, require explicit as-of recorded-state framing; current real-world obligations or exhaustive life inventories are not established by stored candidates. Ranking is stored importance with an arbitrary stable tie-break. Check all factual assertions and relationships, actor attribution, time and currentness. A missing completion record does not prove an action remains unfinished. Advice requires supported factual premises, not proof a future action happened. Tracked records describe system state, not independent proof of real-world currentness. Action receipts establish only the reported tool operation, not the truth of stored user content. Temporal query and person lookup results (including annotation and event breadcrumbs) are discovery/navigation only in this packet, not factual evidence or proof of absence. Factual assertions discovered through them require the observed source evidence; otherwise omit or qualify them. The user question supports acknowledgments of what they said, not unstated external facts. Nonfactual conversation need not assert source facts. For a purely conversational response, the user message is the witness for the conversational trigger; it does not establish unstated factual premises.",

@@ -28,12 +28,14 @@ const stubSearch: SearchPort = {
 const stubDocument: DocumentPort = { fetch: async () => null };
 
 /** Records the turn the session hands the backend, then ends the turn. */
-function recordingService(onVerification?: (context: string) => void): {
+function recordingService(onVerification?: () => void): {
   service: AgentService;
   seen: () => TurnInput | undefined;
+  streamed: () => string;
   turnComplete: Promise<void>;
 } {
   let seen: TurnInput | undefined;
+  let streamed = "";
   let resolveTurn!: () => void;
   const turnComplete = new Promise<void>((resolve) => {
     resolveTurn = resolve;
@@ -66,9 +68,9 @@ function recordingService(onVerification?: (context: string) => void): {
       ? {
           grounding: {
             getVerifier: async () => ({
-              verify: async (input: { context?: string }) => {
-                onVerification(input.context ?? "");
-                return { label: "entailment" as const };
+              verify: async () => {
+                onVerification();
+                return { label: "neutral" as const };
               },
               dispose() {},
             }),
@@ -78,11 +80,12 @@ function recordingService(onVerification?: (context: string) => void): {
     // The turn is over when its end event reaches the broadcast — this service
     // has no transcript store, so there is no persistence hook to wait on.
     broadcastEvent: (event) => {
+      if (event.type === "agent.text.delta") streamed += event.payload.delta;
       if (event.type === "agent.message.end") resolveTurn();
     },
     sessionIdGen: () => "S_1",
   });
-  return { service, seen: () => seen, turnComplete };
+  return { service, seen: () => seen, streamed: () => streamed, turnComplete };
 }
 
 async function turnFor(caller?: ToolCaller): Promise<TurnInput | undefined> {
@@ -113,18 +116,19 @@ describe("the audience a conversation speaks for", () => {
   });
 });
 
-it("carries the session caller zone through the service into answer verification", async () => {
-  let context = "";
-  const { service, turnComplete } = recordingService((value) => {
-    context = value;
+// Answer grounding fact-checks Answer API candidates only. A conversation's
+// reply reaches the user exactly as the agent wrote it, streamed live.
+it("never checks or rewrites a conversation reply, even with grounding configured", async () => {
+  let verifications = 0;
+  const { service, streamed, turnComplete } = recordingService(() => {
+    verifications++;
   });
   try {
-    const { sessionId } = await service.createSession("token:test", {
-      timeZone: "Pacific/Auckland",
-    });
+    const { sessionId } = await service.createSession("token:test", {});
     service.sendMessage("token:test", sessionId, "Hello.");
     await turnComplete;
-    expect(JSON.parse(context).callerClock).toContain("Pacific/Auckland");
+    expect(streamed()).toBe("Hello.");
+    expect(verifications).toBe(0);
   } finally {
     await service.dispose();
   }
