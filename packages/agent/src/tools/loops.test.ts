@@ -169,11 +169,18 @@ describe("list_loops", () => {
       expect((res.data as { truncated: boolean }).truncated).toBe(true);
   });
 
-  it("accepts the max limit (100) but rejects above it — schema matches the advertised ceiling", async () => {
-    const ok = await createListLoopsTool({ port: makePort() }).invoke({ limit: 100 }, ctx);
-    expect(ok.kind).toBe("structured");
-    const tooBig = await createListLoopsTool({ port: makePort() }).invoke({ limit: 101 }, ctx);
-    expect(tooBig.kind).toBe("error");
+  it("reads a limit above the advertised ceiling (100) as the ceiling", async () => {
+    let seenLimit: number | undefined;
+    const port = makePort({
+      async list(limit): Promise<LoopListPortResult> {
+        seenLimit = limit;
+        return { durationMs: 1, truncated: false, loops: [] };
+      },
+    });
+    const tooBig = await createListLoopsTool({ port }).invoke({ limit: 500 }, ctx);
+    expect(tooBig.kind).toBe("structured");
+    expect(seenLimit).toBe(100);
+    expect((await createListLoopsTool({ port }).invoke({ limit: 0 }, ctx)).kind).toBe("error");
   });
 
   it("forwards the default limit (30) to the port when none is given", async () => {

@@ -13,6 +13,7 @@
  */
 
 import { z } from "zod";
+import { cappedLimit } from "./limit.js";
 
 import type { ToolResult } from "@omnesis/core";
 
@@ -34,11 +35,7 @@ const searchLoopsArgsSchema = z
         "Free-form match against the tracked obligations — a person, a topic, " +
           'a thing owed or awaited. Examples: "deposit refund", "the notary", "Maya".',
       ),
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .max(SEARCH_LOOPS_MAX_LIMIT)
+    limit: cappedLimit(SEARCH_LOOPS_MAX_LIMIT)
       .optional()
       .describe("Cap loops returned (default 10)."),
   })
@@ -64,11 +61,7 @@ const listLoopsArgsSchema = z
       .describe(
         "navigation selects records to fetch and supplies no factual/count evidence. snapshot explicitly captures an as-of inventory of stored tracking state for counts, absence or rank questions; never a complete list of real-world obligations.",
       ),
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .max(LIST_LOOPS_MAX_LIMIT)
+    limit: cappedLimit(LIST_LOOPS_MAX_LIMIT)
       .optional()
       .describe("Cap loops returned (default 30, max 100; most-important first)."),
   })

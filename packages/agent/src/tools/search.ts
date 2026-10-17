@@ -14,6 +14,7 @@
  */
 
 import { z } from "zod";
+import { cappedLimit } from "./limit.js";
 
 import { UnsupportedSearchFilterError, type SearchPort } from "./types.js";
 import type { ToolResult } from "@omnesis/core";
@@ -56,7 +57,7 @@ export function buildSearchDocumentsArgsSchema() {
           .optional(),
       })
       .optional(),
-    limit: z.number().int().min(1).max(50).optional(),
+    limit: cappedLimit(50).optional(),
   });
 }
 

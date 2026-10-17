@@ -351,7 +351,9 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   // filing them under it would teach exactly the wrong provenance — and the
   // three carry different authority, which is the point of the section.
   const timeSection = input.temporal
-    ? `${renderTemporalRetrievalGuidance()}\n\nEvery \`start\` / \`endExclusive\` comes back as a UTC instant; the \`timeZone\` argument bounds the *window* rather than restating results. Convert instants using the caller-zone rules above.`
+    ? `${renderTemporalRetrievalGuidance()}\n\nEvery \`start\` / \`endExclusive\` comes back as a UTC instant; the \`timeZone\` argument bounds the *window* rather than restating results. Convert instants using the caller-zone rules above.
+
+When the user's Tasks are available, a \`temporal_query\` window that includes today also returns \`tasks\` — the user's own Tasks for today: planned for today, carried over, or due — and \`now\`, the current time. Their Tasks are part of every "what's on today / on my plate" answer, never something to find by searching. Lead with what is still ahead of \`now\`: open tasks and the events still to come. Mention earlier events only briefly as done or earlier, and never present one that has passed as upcoming.`
     : "";
 
   // Automations are experimental on every client, and the agent's tools for

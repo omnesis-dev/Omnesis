@@ -65,6 +65,7 @@ import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
 import { AgentTurnCompleter } from "../inference/agent-turn-completer.js";
 import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
+import { withTodaysTasks } from "./temporal-with-tasks.js";
 import { createAnswerGroundingFinalizer, type AnswerGroundingOptions } from "./answer-grounding.js";
 import { normalizeAnswerProse } from "./answer-prose.js";
 import { CITATION_GROUNDING } from "./citation-grounding.js";
@@ -1517,12 +1518,12 @@ export class AgentService {
     // The broader profile shares annotation consumption with loop/brief writes.
     // Preserve those handles so their provenance tracker sees every memory read.
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
-    const base = [
+    const base = withTodaysTasks([
       ...this.tools,
       ...memory.filter((tool) => !experimentalNames.has(tool.name)),
       ...experimental,
       ...taskTools,
-    ];
+    ]);
     // A voice answer is spoken, never rendered, so the Timeline the citation
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that

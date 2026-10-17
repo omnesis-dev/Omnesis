@@ -632,3 +632,12 @@ test("binds interactive citations to the exact supporting source version", () =>
   expect(prompt).toContain("You may cite a maintained synthesis you read");
   expect(prompt).toContain("qualify or omit a claim its cited evidence cannot support");
 });
+
+test("makes the user's Tasks part of every today answer, led by what is still ahead", () => {
+  const prompt = buildSystemPrompt({ temporal: true });
+  expect(prompt).toContain("also returns `tasks` — the user's own Tasks for today");
+  expect(prompt).toContain("never something to find by searching");
+  expect(prompt).toContain("Lead with what is still ahead of `now`");
+  expect(prompt).toContain("never present one that has passed as upcoming");
+  expect(buildSystemPrompt({})).not.toContain("Lead with what is still ahead of `now`");
+});
