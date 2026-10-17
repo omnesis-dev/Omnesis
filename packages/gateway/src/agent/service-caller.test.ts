@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AgentService } from "./service.js";
-import type { AgentEvent } from "@omnesis/core";
+import type { AgentEvent, AgentTextDeltaEvent } from "@omnesis/core";
 import type { ChatBackend, DocumentPort, SearchPort, ToolCaller, TurnInput } from "@omnesis/agent";
 
 const stubSearch: SearchPort = {
@@ -80,7 +80,8 @@ function recordingService(onVerification?: () => void): {
     // The turn is over when its end event reaches the broadcast — this service
     // has no transcript store, so there is no persistence hook to wait on.
     broadcastEvent: (event) => {
-      if (event.type === "agent.text.delta") streamed += event.payload.delta;
+      if (event.type === "agent.text.delta")
+        streamed += (event.payload as AgentTextDeltaEvent).delta;
       if (event.type === "agent.message.end") resolveTurn();
     },
     sessionIdGen: () => "S_1",
