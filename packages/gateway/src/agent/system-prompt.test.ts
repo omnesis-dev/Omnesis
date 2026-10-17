@@ -618,6 +618,11 @@ test("answers first, in the assistant's own voice, with no talk of its machinery
   expect(prompt).toContain("**Small talk gets a small reply.**");
   expect(prompt).toContain("with no tools");
   expect(prompt).toContain("Don't caveat a check you could still make — make it");
+  expect(prompt).toContain("**Notice a false or odd premise.**");
+  expect(prompt).toContain("say so in one short clause, then give what is useful");
+  expect(prompt).toContain("Never answer around a premise you know is wrong");
+  expect(prompt).toContain("**No boilerplate caveats.**");
+  expect(prompt).toContain("Say a limitation once in a conversation");
   expect(prompt).not.toContain("I'm built for your personal corpus");
 });
 
