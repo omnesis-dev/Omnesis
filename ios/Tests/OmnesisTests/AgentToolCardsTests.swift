@@ -87,8 +87,8 @@ final class AgentToolCardsTests: XCTestCase {
     func testAWikiReadIsTheFirstDocumentOfItsBatch() throws {
         let data = Data("""
         {"kind":"document.batch","items":[{"kind":"error","code":"not_found","message":"gone"},
-        {"kind":"document","ref":{"documentId":"wiki-doc","sourceType":"brain-knowledge","sourceId":"brain-knowledge","title":"Pottery workshop"},
-        "document":{"title":"Pottery workshop","content":"Opens at nine."}}]}
+        {"kind":"document","ref":{"documentId":"wiki-doc","sourceType":"brain-knowledge",
+        "sourceId":"brain-knowledge","title":"Pottery workshop"},"document":{"title":"Pottery workshop","content":"Opens at nine."}}]}
         """.utf8)
         let result = try JSONDecoder().decode(AgentToolResult.self, from: data)
         let read = try XCTUnwrap(agentDocumentRead(result))
