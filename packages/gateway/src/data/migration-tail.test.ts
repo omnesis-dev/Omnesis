@@ -60,7 +60,7 @@ const TAIL_VERSIONS = Array.from(
  */
 const WOUND_BACK = [
   172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
-  191, 192, 193, 194, 195, 196, 197, 198, 199, 200,
+  191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201,
 ];
 
 let dir: string;
@@ -125,6 +125,29 @@ function undoVocabulary(db: Db): void {
     .all();
   if (pendingVoiceColumns.some((row) => row.name === "allow_vocabulary"))
     db.exec("ALTER TABLE voice_note_transcriptions DROP COLUMN allow_vocabulary");
+}
+
+/** Undo migration 201: every decision-ledger row names a run and a document. */
+function undoDecisionAnchors(db: Db): void {
+  const columns = `id, run_id, document_id, subject_document_id, purpose, lane, rubric_version,
+    content_hash, requested_model_id, model_id, score, threshold, verdict, error, reused_from,
+    record_id, enforced, latency_ms, input_tokens, created_at, request_json, response_json`;
+  db.exec(`CREATE TABLE cognition_decisions_wound (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    subject_document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL, lane TEXT NOT NULL, rubric_version TEXT NOT NULL, content_hash TEXT,
+    requested_model_id TEXT NOT NULL, model_id TEXT, score REAL, threshold REAL NOT NULL,
+    verdict TEXT NOT NULL, error TEXT, reused_from TEXT, record_id TEXT,
+    enforced INTEGER NOT NULL DEFAULT 1, latency_ms INTEGER, input_tokens INTEGER,
+    created_at INTEGER NOT NULL, request_json TEXT, response_json TEXT
+  )`);
+  db.exec(`INSERT INTO cognition_decisions_wound (${columns}) SELECT ${columns}
+    FROM cognition_decisions
+    WHERE run_id IS NOT NULL AND document_id IS NOT NULL AND subject_document_id IS NOT NULL`);
+  db.exec("DROP TABLE cognition_decisions");
+  db.exec("ALTER TABLE cognition_decisions_wound RENAME TO cognition_decisions");
 }
 
 /** Undo migration 200: no ignored suggestions, and notes name no task. */
@@ -216,6 +239,7 @@ function undoKnowledge(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  undoDecisionAnchors(db);
   undoTaskSuggestions(db);
   undoNoteAgent(db);
   undoTaskFields(db);

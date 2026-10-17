@@ -4,19 +4,24 @@
 import { isKnowledgeEvidenceReadable } from "./knowledge/storage-source-fence.js";
 import type Database from "better-sqlite3";
 
-/** Legacy audit content is hidden before the physical source deletion sweep. */
+/**
+ * Legacy audit content is hidden before the physical source deletion sweep.
+ * A decision no document anchors has no source to fence here; its exact input
+ * lives only in the payload store, which fences its own subjects.
+ */
 export function areDecisionSourcesReadable(
   db: Database.Database,
-  decision: { documentId: string; subjectDocumentId: string },
+  decision: { documentId: string | null; subjectDocumentId: string | null },
 ): boolean {
   return [decision.documentId, decision.subjectDocumentId].every(
     (id) =>
-      isKnowledgeEvidenceReadable(db, id) &&
-      !db
-        .prepare(
-          "SELECT 1 FROM knowledge_cascade_jobs WHERE kind='purge' AND target_kind='source' AND target_id=?",
-        )
-        .get(id),
+      id === null ||
+      (isKnowledgeEvidenceReadable(db, id) &&
+        !db
+          .prepare(
+            "SELECT 1 FROM knowledge_cascade_jobs WHERE kind='purge' AND target_kind='source' AND target_id=?",
+          )
+          .get(id)),
   );
 }
 

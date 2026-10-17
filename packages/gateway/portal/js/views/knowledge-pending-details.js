@@ -6,7 +6,7 @@ import { LoadMore } from "../components/load-more.js";
 import { useCursorPage } from "../lib/use-cursor-page.js";
 import { getKnowledgePendingWork } from "../api.js";
 import { DecisionSubject } from "./knowledge-decision-subject.js";
-import { KnowledgeDecisionCard } from "./cognition-knowledge-decisions.js";
+import { DecisionCard } from "../components/decision-card.js";
 
 export function pendingWorkQuery(group, paging) {
   return { reason: group.reason, tier: group.tier, ...(group.readiness ? { readiness: group.readiness } : {}), ...paging };
@@ -19,7 +19,7 @@ function PendingGroupContents({ group }) {
     ${!page.loading && !page.error && !page.items.length && html`<p class="cognition-dim">No inputs remain in this pending group.</p>`}
     ${page.items.map((work) => html`<details class="cognition-decision-details" key=${work.id}>
       <summary><${DecisionSubject} subject=${work.subjectRef} /> · Eligible ${new Date(work.dueAt).toLocaleString()}</summary>
-      ${work.decisions.items.length ? work.decisions.items.map((item) => html`<${KnowledgeDecisionCard} key=${item.id} decision=${item} showSubject=${false} />`)
+      ${work.decisions.items.length ? work.decisions.items.map((item) => html`<${DecisionCard} key=${item.id} decision=${item} layout="compact" showSubject=${false} />`)
         : html`<p class="cognition-dim">No recorded judgement is associated with this work. This does not establish that a gate was bypassed.</p>`}
       ${work.decisions.truncated && html`<p class="cognition-dim">Additional recorded checks are not shown.</p>`}
     </details>`)}

@@ -35,10 +35,11 @@ import {
 } from "../../scheduler/tasks/backfill-helpers.js";
 import { periodicJob } from "../../background-jobs/scheduler-job.js";
 import { QueueTracker } from "../../background-jobs/trackers.js";
-import { askScore } from "../../brain/decision-call.js";
+import { askScore, type ScoreJudgement } from "../../brain/decision-call.js";
 import {
   EMAIL_WORTH_QUESTIONS,
   EMAIL_WORTH_QUESTION_ID,
+  EMAIL_WORTH_THRESHOLD,
   WORTH_GATE_RUBRIC_VERSION,
   passesWorthThreshold,
 } from "../../worth/rubric.js";
@@ -49,6 +50,7 @@ import type { WriteGate } from "../../write-gate.js";
 import type { BackgroundJobsRegistry } from "../../background-jobs/registry.js";
 import type { ResolvedDateEnrichmentSettings } from "./config.js";
 import type { WorthAnswer } from "../../worth/answers.js";
+import type { CognitionDecisionRecord } from "../../brain/storage/decisions.js";
 import type {
   MentionJudgementDeferral,
   MentionJudgementRecord,
@@ -145,13 +147,18 @@ export function mentionWorthGateTask(
             return { idle: true };
           }
 
-          const { records, deferrals, answers, failed } = await judge(
+          const { records, deferrals, answers, decisions, failed } = await judge(
             pending,
             decision,
             judgeDeps,
             clock,
           );
-          const settled = await writeGate.applyMentionJudgements(records, deferrals, answers);
+          const settled = await writeGate.applyMentionJudgements(
+            records,
+            deferrals,
+            answers,
+            decisions,
+          );
           judged += settled;
           tracker.recordTick(settled);
           if (failed > 0) {
@@ -176,11 +183,13 @@ async function judge(
   records: MentionJudgementRecord[];
   deferrals: MentionJudgementDeferral[];
   answers: WorthAnswer[];
+  decisions: CognitionDecisionRecord[];
   failed: number;
 }> {
   const records: MentionJudgementRecord[] = [];
   const deferrals: MentionJudgementDeferral[] = [];
   const answers: WorthAnswer[] = [];
+  const decisions: CognitionDecisionRecord[] = [];
   const deferral = (p: PendingMentionJudgement): MentionJudgementDeferral => ({
     documentId: p.documentId,
     generation: p.generation,
@@ -247,6 +256,7 @@ async function judge(
         { recordSpend: deps.recordSpend, log: deps.log, timeoutMs: CALL_TIMEOUT_MS },
       );
       const score = reply.score;
+      decisions.push(mentionDecision(first, decision, reply, deps.idGen(), clock()));
       if (score === null) {
         failed += group.length;
         deferrals.push(...group.map(deferral));
@@ -266,7 +276,46 @@ async function judge(
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, groups.length) }, worker));
-  return { records, deferrals, answers, failed };
+  return { records, deferrals, answers, decisions, failed };
+}
+
+/**
+ * The decision-ledger row of one call. It runs outside any Brain run, so it
+ * names no run; the request, which quotes the email's opening, is kept on the
+ * row under the email's privacy fence until retention clears it.
+ */
+function mentionDecision(
+  ask: Ask,
+  decision: DecisionCapability,
+  reply: ScoreJudgement,
+  id: string,
+  now: number,
+): CognitionDecisionRecord {
+  return {
+    id: `dec_${id}`,
+    runId: null,
+    documentId: ask.documentId,
+    subjectDocumentId: ask.subjectDocumentId,
+    purpose: "mention-worth",
+    lane: "date-mentions",
+    rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+    contentHash: ask.contentHash,
+    requestedModelId: decision.modelId,
+    modelId: reply.score === null ? null : reply.modelId,
+    requestJson: reply.requestJson,
+    responseJson: reply.responseJson,
+    score: reply.score,
+    threshold: EMAIL_WORTH_THRESHOLD,
+    verdict:
+      reply.score === null ? "unavailable" : passesWorthThreshold(reply.score) ? "pass" : "skip",
+    error: reply.error,
+    reusedFrom: null,
+    recordId: null,
+    enforced: true,
+    latencyMs: reply.latencyMs,
+    inputTokens: reply.inputTokens,
+    createdAt: now,
+  };
 }
 
 export interface BootMentionWorthGateDeps extends Omit<MentionWorthGateDeps, "tracker"> {

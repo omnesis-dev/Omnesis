@@ -37,7 +37,7 @@ import { CalibrationTab } from "./cognition-calibration.js";
 import { KnowledgeMaintenanceTab } from "./cognition-maintenance.js";
 import { KnowledgeTab } from "./cognition-knowledge.js";
 import { BootstrapTab } from "./cognition-bootstrap.js";
-import { DecisionInputInspection, ContextualDecisions } from "./cognition-knowledge-decisions.js";
+import { DecisionCard, DecisionList } from "../components/decision-card.js";
 import { ObservationsTab, observationStateColor } from "./cognition-observations.js";
 
 // Developer mode for this page, mirrored from `CognitionView`'s `developer`
@@ -1027,7 +1027,7 @@ function RunDetail({ id }) {
         ${run && html`<${Field} label="Attempts">${run.attempts}</${Field}>
           <${Field} label="Dedupe key">${run.dedupeKey ? html`<code>${run.dedupeKey}</code>` : "—"}</${Field}>`}
       ${decisions.length > 0 && html`<details class="cognition-decision-details"><summary>Admission and record checks (${decisions.length})</summary><${DecisionSection} decisions=${decisions} /></details>`}
-      <${ContextualDecisions} title="Synthesis checks" decisions=${data.knowledgeDecisions} audit=${data.knowledgeDecisionAudit} />
+      <${DecisionList} title="Synthesis checks" decisions=${data.knowledgeDecisions} audit=${data.knowledgeDecisionAudit} />
 
       <h3 class="cognition-section">Transcript${transcripts.length > 1 ? "s" : ""} (${transcripts.length})</h3>
       <${TranscriptSlot} id=${id} transcripts=${transcripts} gated=${status === "gated"} />
@@ -1051,217 +1051,7 @@ export function TranscriptSlot({ id, transcripts, gated }) {
   return html`<div class="debug-empty">No transcript stored for this run.</div>`;
 }
 
-// ── Decision model (the worth gate's and the record check's judgements) ──
-
-const UNAVAILABLE_COLOR = "#fdba74";
-
-/**
- * How a verdict reads, by what the decision was for. The worth gate judges the
- * run's document before any agent turn; the record check judges a record the
- * run was about to save, and may only be observing (`enforced` false).
- */
-function decisionVerdict(d) {
-  if (d.purpose === "record-check") {
-    if (d.verdict === "pass") {
-      return { label: "allowed", color: "#86efac", sentence: "Gate allowed this record." };
-    }
-    if (d.verdict === "skip") {
-      return d.enforced
-        ? { label: "blocked", color: "#d2a8ff", sentence: "Gate blocked this save attempt." }
-        : {
-            label: "would reject",
-            color: "#d2a8ff",
-            sentence: "Shadow check: would reject; did not block saving.",
-          };
-    }
-    if (d.verdict === "unavailable") {
-      return {
-        label: "unavailable",
-        color: UNAVAILABLE_COLOR,
-        sentence: "Allowed without a verdict; no usable decision score was recorded.",
-      };
-    }
-  } else if (d.purpose === "worth-gate") {
-    if (d.verdict === "pass") {
-      return { label: "pass", color: "#86efac", sentence: "Admitted for agent review." };
-    }
-    if (d.verdict === "skip") {
-      return { label: "skip", color: "#d2a8ff", sentence: "Gate declined admission for this attempt." };
-    }
-    if (d.verdict === "unavailable") {
-      return {
-        label: "unavailable",
-        color: UNAVAILABLE_COLOR,
-        sentence: "Admitted for agent review without a verdict.",
-      };
-    }
-  }
-  return { label: d.verdict, color: "#94a3b8", sentence: null };
-}
-
-const DECISION_PURPOSE_LABEL = {
-  "worth-gate": "worth gate",
-  "record-check": "record check",
-  "task-check": "task check",
-};
-
-const fmtScore = (n) => (typeof n === "number" ? n.toFixed(2) : "—");
-const fmtPct = (n) => (typeof n === "number" ? `${Math.round(n * 100)}%` : "—");
-
-/**
- * The criterion a probability key names: score answers key their levels
- * "0", "1", …, which index the question's criteria. Any other key (a choice
- * option) is its own label.
- */
-function levelLabel(key, criteria) {
-  const index = /^\d+$/.test(key) ? Number(key) : NaN;
-  const text = Array.isArray(criteria) ? criteria[index] : criteria?.[key];
-  const described = typeof text === "string" ? text : text == null ? null : JSON.stringify(text);
-  return { head: key, text: described };
-}
-
-/** Instructions or criteria: prose as prose, a structured reference as JSON. */
-function decisionText(value) {
-  if (value == null) return null;
-  return typeof value === "string" ? value : html`<code>${JSON.stringify(value)}</code>`;
-}
-
-/** Stored state and questions; privacy-redacted source context is labeled by the caller. */
-function DecisionRequest({ request }) {
-  const state = request.state;
-  const stateFields = state && typeof state === "object" && !Array.isArray(state) ? Object.entries(state) : null;
-  return html`
-    <div class="cognition-decision-request">
-      <div class="cognition-decision-sub">State</div>
-      ${stateFields
-        ? stateFields.map(
-            ([key, value]) => html`<div key=${key} class="cognition-decision-state">
-              <span class="cognition-decision-state-key">${key}</span>
-              <span class="cognition-decision-state-value">${typeof value === "string" ? value : JSON.stringify(value)}</span>
-            </div>`,
-          )
-        : html`<pre class="cognition-decision-pre">${typeof state === "string" ? state : JSON.stringify(state, null, 2)}</pre>`}
-      ${Object.entries(request.questions ?? {}).map(
-        ([qid, q]) => html`<div key=${qid}>
-          <div class="cognition-decision-sub">Question <code>${qid}</code> · ${q.type}</div>
-          <div class="cognition-decision-instructions">${decisionText(q.instructions)}</div>
-          ${Array.isArray(q.criteria)
-            ? html`<ol class="cognition-decision-criteria" start="0">
-                ${q.criteria.map((c, i) => html`<li key=${i}>${decisionText(c)}</li>`)}
-              </ol>`
-            : q.criteria
-            ? html`<ul class="cognition-decision-criteria">
-                ${Object.entries(q.criteria).map(
-                  ([k, c]) => html`<li key=${k}><strong>${k}</strong>${c == null ? "" : html` — ${decisionText(c)}`}</li>`,
-                )}
-              </ul>`
-            : null}
-        </div>`,
-      )}
-    </div>
-  `;
-}
-
-/** What the decision model answered: the score and its per-level probabilities. */
-function DecisionAnswer({ response, request }) {
-  return html`
-    <div class="cognition-decision-answer">
-      ${response.model ? html`<div class="cognition-dim">answered by <code>${response.model}</code></div>` : null}
-      ${Object.entries(response.answers ?? {}).map(([qid, a]) => {
-        const criteria = request?.questions?.[qid]?.criteria;
-        const probabilities = Object.entries(a.probabilities ?? {});
-        return html`<div key=${qid}>
-          <div class="cognition-decision-sub">
-            <code>${qid}</code> ·
-            ${a.type === "score"
-              ? html` score ${fmtScore(a.score)}`
-              : a.type === "noul"
-              ? html` yes ${fmtPct(a.noul)}`
-              : html` ${a.choice}`}
-            ${typeof a.confidence === "number" ? html` · confidence ${fmtPct(a.confidence)}` : null}
-          </div>
-          ${probabilities.length > 0
-            ? html`<div class="cognition-decision-bars">
-                ${probabilities.map(([key, p]) => {
-                  const level = levelLabel(key, criteria);
-                  return html`<div key=${key} class="cognition-decision-bar" title=${level.text ?? key}>
-                    <span class="cognition-decision-bar-label">
-                      <strong>${level.head}</strong>${level.text ? html` ${level.text}` : null}
-                    </span>
-                    <span class="cognition-decision-bar-track">
-                      <span class="cognition-decision-bar-fill" style=${`width:${Math.max(0, Math.min(100, p * 100))}%;`}></span>
-                    </span>
-                    <span class="cognition-decision-bar-pct">${fmtPct(p)}</span>
-                  </div>`;
-                })}
-              </div>`
-            : null}
-        </div>`;
-      })}
-    </div>
-  `;
-}
-
-/** One decision-model judgement made for a run. Exported for tests. */
-export function DecisionCard({ decision: d }) {
-  const verdict = decisionVerdict(d);
-  const subject = d.subjectDoc ?? d.subjectDocumentId;
-  const recordText = d.request?.state?.record;
-  const contextRedacted = d.request?.state?.document_context?.redacted === true;
-  return html`
-    <div class="cognition-decision">
-      <div class="cognition-decision-head">
-        <${Pill} color=${verdict.color}>${verdict.label}</${Pill}>
-        <span class="cognition-decision-score">
-          score <strong>${fmtScore(d.score)}</strong> ${d.score == null ? "" : d.score >= d.threshold ? "≥" : "<"} threshold ${fmtScore(d.threshold)}
-        </span>
-        <span class="cognition-dim">${DECISION_PURPOSE_LABEL[d.purpose] ?? d.purpose} · ${d.lane}</span>
-      </div>
-      ${verdict.sentence ? html`<div class="cognition-decision-sentence">${verdict.sentence}</div>` : null}
-      ${d.error ? html`<div class="debug-error" style="margin:6px 0;">⚠️ ${d.error}</div>` : null}
-      ${d.purpose === "record-check"
-        ? html`<${Field} label="Record">
-              ${typeof recordText === "string" ? html`<span class="cognition-decision-record">${recordText}</span> ` : null}
-              <code>${d.recordId}</code>
-            </${Field}>
-            <${Field} label="From"><${DocChip} doc=${subject} /></${Field}>`
-        : html`<${Field} label="Judged">
-        ${d.inheritedFromParent
-          ? html`the document that contains it <${DocChip} doc=${subject} />
-              <span class="cognition-dim"> — this attachment inherits its email's judgement</span>`
-          : html`<${DocChip} doc=${subject} />`}
-      </${Field}>`}
-      ${d.reusedFrom
-        ? html`<${Field} label="Reused">
-            decision <code>${d.reusedFrom}</code>
-            <span class="cognition-dim"> — same content under the same rubric, so no model call was made</span>
-          </${Field}>`
-        : null}
-      <${Field} label="Model">${d.modelId ? html`<code>${d.modelId}</code>` : "—"}</${Field}>
-      <${Field} label="Rubric"><code>${d.rubricVersion}</code></${Field}>
-      <${Field} label="Latency">${typeof d.latencyMs === "number" ? `${d.latencyMs} ms` : "—"}</${Field}>
-      <${Field} label="Input tokens">${typeof d.inputTokens === "number" ? d.inputTokens.toLocaleString() : "—"}</${Field}>
-      <${Field} label="Decided">${fmtTs(d.createdAt)}</${Field}>
-      ${!d.request && !d.reusedFrom && html`<p class="cognition-dim">No model request is retained for this judgement.</p>`}
-      ${!d.response && !d.reusedFrom && html`<p class="cognition-dim">No model answer is retained for this judgement.</p>`}
-      ${d.inputInspection === true && html`<${DecisionInputInspection} id=${d.id} legacy=${true} />`}
-      ${d.request
-        ? html`<details class="cognition-decision-details">
-            <summary>Recorded request</summary>
-            ${contextRedacted && html`<p class="cognition-dim">Source context was redacted from this retained request; it is not an exact replay of the model input.</p>`}
-            <${DecisionRequest} request=${d.request} />
-          </details>`
-        : null}
-      ${d.response
-        ? html`<details class="cognition-decision-details">
-            <summary>Recorded answer</summary>
-            ${contextRedacted && html`<p class="cognition-dim">Only the resulting score was retained; this is not the complete model answer.</p>`}
-            <${DecisionAnswer} response=${d.response} request=${d.request} />
-          </details>`
-        : null}
-    </div>
-  `;
-}
+// ── Decision model ──
 
 /** Every decision-model judgement for a run, or nothing when none was made. Exported for tests. */
 export function DecisionSection({ decisions }) {

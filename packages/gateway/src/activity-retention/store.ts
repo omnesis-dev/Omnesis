@@ -127,7 +127,9 @@ export function pruneActivityRetentionBatch(
  * keeps its verdict and score but loses the request and answer text it was
  * audited with (the request carries the opening of an email body). Rows nothing
  * reuses are deleted instead: an unavailable verdict, which carries no answer,
- * and every record-check verdict, which judged one record once.
+ * and every record-check, task-check, mention-worth and find-route verdict,
+ * which nothing reads back (a mention's reusable answer lives in the shared
+ * worth answers).
  * Returns the rows changed, so a full batch reports more work.
  */
 function pruneCognitionDecisions(db: Db, cutoff: number, limit: number): number {
@@ -137,7 +139,8 @@ function pruneCognitionDecisions(db: Db, cutoff: number, limit: number): number 
         `DELETE FROM cognition_decisions
           WHERE id IN (
             SELECT id FROM cognition_decisions
-             WHERE (verdict = 'unavailable' OR purpose = 'record-check') AND created_at < ?
+             WHERE (verdict = 'unavailable' OR purpose IN ('record-check', 'task-check', 'mention-worth', 'find-route'))
+               AND created_at < ?
              ORDER BY created_at, id
              LIMIT ?
           )`,

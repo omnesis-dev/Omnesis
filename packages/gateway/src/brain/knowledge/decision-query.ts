@@ -4,6 +4,7 @@
 import { BadRequestError, NotFoundError } from "../../http/errors.js";
 import { decodePageCursor, encodePageCursor } from "../../http/pagination-cursor.js";
 import { areDecisionSourcesReadable } from "../decision-read-privacy.js";
+import { DECISION_PURPOSES, type DecisionPurpose } from "../storage/decisions.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { readKnowledgeDecisionDebug } from "./decision-debug.js";
 import { knowledgeHash } from "./storage-validation.js";
@@ -296,8 +297,8 @@ export function listKnowledgeDecisionAudit(db: Database.Database, limit: number)
 }
 
 /** Purposes recorded in the run ledger (`cognition_decisions`) rather than the knowledge ledger. */
-type LegacyDecisionPurpose = "worth-gate" | "record-check" | "task-check";
-const LEGACY_PURPOSES: readonly string[] = ["worth-gate", "record-check", "task-check"];
+type LegacyDecisionPurpose = DecisionPurpose;
+const LEGACY_PURPOSES: readonly string[] = DECISION_PURPOSES;
 
 export interface KnowledgeDecisionAuditOptions {
   purpose?: KnowledgeDecisionPurpose | LegacyDecisionPurpose;
@@ -310,31 +311,41 @@ interface LegacyAuditRow {
   purpose: LegacyDecisionPurpose;
   score: number | null;
   threshold: number;
-  runId: string;
+  runId: string | null;
   modelId: string | null;
   rubricVersion: string;
   createdAt: number;
   latencyMs: number | null;
   inputTokens: number | null;
-  documentId: string;
-  subjectDocumentId: string;
+  documentId: string | null;
+  subjectDocumentId: string | null;
   verdict: string;
   enforced: number;
   reusedFrom: string | null;
+  lane: string;
+  recordId: string | null;
+  error: string | null;
 }
 const legacyProjection = `id,purpose,score,threshold,run_id AS runId,model_id AS modelId,rubric_version AS rubricVersion,
   created_at AS createdAt,latency_ms AS latencyMs,input_tokens AS inputTokens,document_id AS documentId,
-  subject_document_id AS subjectDocumentId,verdict,enforced,reused_from AS reusedFrom`;
+  subject_document_id AS subjectDocumentId,verdict,enforced,reused_from AS reusedFrom,lane,
+  record_id AS recordId,error`;
 function legacyAuditView(db: Database.Database, row: LegacyAuditRow) {
-  const { documentId, subjectDocumentId, ...metadata } = row;
+  const { documentId, subjectDocumentId, error, ...metadata } = row;
   const readable = areDecisionSourcesReadable(db, { documentId, subjectDocumentId });
   return {
     ...metadata,
+    error: readable ? error : null,
     kind: "legacy" as const,
-    scoreScale: "ordinal-0-3" as const,
+    // The model's own ordinal levels, which differ by question.
+    scoreScale: "ordinal" as const,
     subjectDocumentId: readable ? subjectDocumentId : null,
-    subjectRef: readable ? readDecisionSubjectRef(db, `source:${subjectDocumentId}`) : null,
-    runAvailable: !!db.prepare("SELECT 1 FROM cognition_runs WHERE id=?").get(row.runId),
+    subjectRef:
+      readable && subjectDocumentId !== null
+        ? readDecisionSubjectRef(db, `source:${subjectDocumentId}`)
+        : null,
+    runAvailable:
+      row.runId !== null && !!db.prepare("SELECT 1 FROM cognition_runs WHERE id=?").get(row.runId),
     enforced: !!row.enforced,
     inputInspection: true,
   };

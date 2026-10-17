@@ -13,14 +13,17 @@
  *   not already say? A note that only repeats them is left out of the task's
  *   history, which the user reads.
  *
- * Each verdict goes to the decision ledger by score alone, anchored to one of
- * the task's documents; the task text it judged is not retained there. A task
- * with no document leaves no ledger row.
+ * Every verdict the model returns, or fails to, gets a decision-ledger row on
+ * the run that asked, anchored to a document when one grounds the check. The
+ * exact question and answer are kept in the decision payload store under the
+ * task's knowledge node and that document, so erasing either erases them.
  */
 
 import { askScore } from "../decision-call.js";
+import { captureOwnerDecisionPayload, type DecisionPayloadCapture } from "../decision-payload.js";
 import type { DecisionCapability, DecisionQuestion, Logger } from "@omnesis/core";
 import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
+import type Database from "better-sqlite3";
 
 export const TASK_CHECK_SPEND_MECHANISM = "task-check";
 export const TASK_CHECK_RUBRIC_VERSION = "task-check-v1";
@@ -74,9 +77,31 @@ interface TaskChecksDeps {
   getDecision: () => DecisionCapability | null;
   recordDecision: (record: CognitionDecisionRecord) => Promise<void>;
   recordSpend: (modelId: string, inputTokens: number) => Promise<void>;
+  /**
+   * The privacy subjects the check's exact input is kept under; undefined
+   * keeps the verdict without its input.
+   */
+  capturePayload?: (input: TaskRef) => DecisionPayloadCapture | undefined;
   clock: () => number;
   idGen: () => string;
   log: Logger;
+}
+
+/**
+ * The subjects a task check reads: the task's knowledge node, whose privacy
+ * ancestry covers the task's documents, and the document grounding the check.
+ */
+export function taskCheckPayloadCapture(
+  db: Database.Database,
+  input: TaskRef,
+): DecisionPayloadCapture | undefined {
+  return (
+    captureOwnerDecisionPayload(
+      db,
+      { kind: "loop", id: input.loopId },
+      input.documentId === null ? [] : [input.documentId],
+    ) ?? undefined
+  );
 }
 
 /** The run asking and the task it writes to. */
@@ -85,7 +110,8 @@ export interface TaskRef {
   loopId: string;
   /**
    * The document the check is about, which anchors the ledger row: one of the
-   * task's documents, else the source behind the change; null when there is none.
+   * task's documents, else the source behind the change; null when there is
+   * none, and the row then names only the task.
    */
   documentId: string | null;
 }
@@ -149,6 +175,7 @@ export class TaskChecks {
   ): Promise<DecisionVerdict> {
     const decision = this.deps.getDecision();
     if (!decision) return "unavailable";
+    const payloadCapture = this.capture(input);
     const judgement = await askScore(decision, { state, questions }, questionId, {
       recordSpend: this.deps.recordSpend,
       log: this.deps.log,
@@ -158,7 +185,6 @@ export class TaskChecks {
     if (signal?.aborted) throw signal.reason;
     const verdict: DecisionVerdict =
       judgement.score === null ? "unavailable" : judgement.score >= threshold ? "pass" : "skip";
-    if (input.documentId === null) return verdict;
     // The verdict stands whether or not its ledger row lands.
     await this.deps
       .recordDecision({
@@ -174,6 +200,16 @@ export class TaskChecks {
         modelId: judgement.modelId,
         requestJson: null,
         responseJson: null,
+        ...(payloadCapture
+          ? {
+              payloadCapture,
+              payload: {
+                requestJson: judgement.requestJson,
+                responseJson: judgement.responseJson,
+                error: judgement.error,
+              },
+            }
+          : {}),
         score: judgement.score,
         threshold,
         verdict,
@@ -191,6 +227,17 @@ export class TaskChecks {
         );
       });
     return verdict;
+  }
+
+  private capture(input: TaskRef): DecisionPayloadCapture | undefined {
+    try {
+      return this.deps.capturePayload?.(input);
+    } catch (error) {
+      this.deps.log.warn(
+        `Task check input for ${input.loopId} not captured: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
   }
 }
 

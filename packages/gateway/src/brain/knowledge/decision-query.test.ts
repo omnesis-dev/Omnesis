@@ -101,7 +101,7 @@ it("keeps legacy judgements discoverable after run pruning and pages cross-ledge
         kind: "legacy",
         runAvailable: false,
         inputInspection: true,
-        scoreScale: "ordinal-0-3",
+        scoreScale: "ordinal",
         subjectDocumentId: "doc_demo",
         subjectRef: {
           kind: "source",

@@ -21,7 +21,7 @@ describe("settleTaskProposals", () => {
   let path: string;
   let db: Database.Database;
   let sameTaskScore: number;
-  let recorded: Array<{ documentId: string; recordId: string | null }>;
+  let recorded: Array<{ documentId: string | null; recordId: string | null }>;
   let failRecord: boolean;
 
   const checks = new TaskChecks({

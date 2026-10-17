@@ -50,7 +50,11 @@ import { WorthGate, WORTH_GATE_SPEND_MECHANISM } from "./worth-gate/gate.js";
 import { RecordCheck } from "./record-check/check.js";
 import { RECORD_CHECK_SPEND_MECHANISM } from "./record-check/rubric.js";
 import { recordDecisionSpend } from "./decision-call.js";
-import { TaskChecks, TASK_CHECK_SPEND_MECHANISM } from "./tasks/task-checks.js";
+import {
+  TaskChecks,
+  TASK_CHECK_SPEND_MECHANISM,
+  taskCheckPayloadCapture,
+} from "./tasks/task-checks.js";
 import { settleTaskProposals } from "./tasks/settle-proposals.js";
 import { cognitionSpendDay } from "./storage/spend.js";
 import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
@@ -439,6 +443,7 @@ export async function bootBriefs(deps: {
         ? new TaskChecks({
             getDecision: rq.getDecision,
             recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
+            capturePayload: (input) => taskCheckPayloadCapture(rq.db, input),
             recordSpend: (modelId, inputTokens) =>
               recordDecisionSpend(
                 deps.writeGate,

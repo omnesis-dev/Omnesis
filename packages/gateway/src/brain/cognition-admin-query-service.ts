@@ -49,6 +49,7 @@ import { readCognitionNotes } from "./storage/notes.js";
 import { listRetiredLoops } from "./storage/retired-loops.js";
 import {
   decisionVerdictsForRuns,
+  listDecisionsForRecord,
   listDecisionsForRun,
   type CognitionDecisionRecord,
   type DecisionVerdict,
@@ -412,7 +413,7 @@ export class CognitionAdminQueryService {
       const decision = this.db
         .prepare<
           [string],
-          { documentId: string; subjectDocumentId: string }
+          { documentId: string | null; subjectDocumentId: string | null }
         >("SELECT document_id AS documentId,subject_document_id AS subjectDocumentId FROM cognition_decisions WHERE id=?")
         .get(id);
       if (!decision) throw new NotFoundError("Decision not found");
@@ -435,7 +436,9 @@ export class CognitionAdminQueryService {
         ...new Set(
           decisions
             .filter((decision) => areDecisionSourcesReadable(this.db, decision))
-            .map((decision) => decision.subjectDocumentId),
+            .flatMap((decision) =>
+              decision.subjectDocumentId === null ? [] : [decision.subjectDocumentId],
+            ),
         ),
       ]),
     )();
@@ -468,45 +471,14 @@ export class CognitionAdminQueryService {
   }
 
   /** The decision model's salience judgements of one observation, newest first. */
-  observationDecisions(observationId: string) {
-    return this.db
-      .prepare<
-        [string],
-        {
-          id: string;
-          run_id: string;
-          purpose: string;
-          lane: string;
-          model_id: string | null;
-          score: number | null;
-          threshold: number;
-          verdict: string;
-          error: string | null;
-          response_json: string | null;
-          created_at: number;
-        }
-      >(
-        `SELECT id, run_id, purpose, lane, model_id, score, threshold, verdict, error, response_json, created_at
-           FROM cognition_decisions
-          WHERE purpose = 'observation-salience' AND record_id = ?
-          ORDER BY created_at DESC LIMIT 20`,
-      )
-      .all(observationId)
-      .map((row) => ({
-        id: row.id,
-        runId: row.run_id,
-        purpose: row.purpose,
-        lane: row.lane,
-        modelId: row.model_id,
-        score: row.score,
-        threshold: row.threshold,
-        verdict: row.verdict,
-        error: row.error,
-        answers: row.response_json
-          ? ((JSON.parse(row.response_json) as { answers?: unknown }).answers ?? null)
-          : null,
-        createdAt: row.created_at,
-      }));
+  observationDecisions(observationId: string): CognitionDecisionRecord[] {
+    return this.db.transaction(() =>
+      listDecisionsForRecord(this.db, "observation-salience", observationId, 20).map((decision) =>
+        areDecisionSourcesReadable(this.db, decision)
+          ? decision
+          : { ...decision, requestJson: null, responseJson: null, error: null },
+      ),
+    )();
   }
 
   activityReader(): RunActivityReader | undefined {

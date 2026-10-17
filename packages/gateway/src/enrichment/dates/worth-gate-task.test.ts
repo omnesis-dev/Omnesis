@@ -9,6 +9,7 @@ import { WORTH_GATE_RUBRIC_VERSION } from "../../worth/rubric.js";
 import { DATE_ENRICHMENT_DEFAULTS } from "./config.js";
 import { mentionWorthGateTask } from "./worth-gate-task.js";
 import type { WorthAnswer } from "../../worth/answers.js";
+import type { CognitionDecisionRecord } from "../../brain/storage/decisions.js";
 import type {
   MentionJudgementDeferral,
   MentionJudgementRecord,
@@ -66,6 +67,7 @@ function build(opts: {
   const applied: MentionJudgementRecord[] = [];
   const deferred: MentionJudgementDeferral[] = [];
   const answered: WorthAnswer[] = [];
+  const decisions: CognitionDecisionRecord[] = [];
   const requeued: string[] = [];
   const spend: Array<{ modelId: string; inputTokens: number }> = [];
   const tracker = new QueueTracker();
@@ -74,7 +76,8 @@ function build(opts: {
       fetchPendingMentionJudgements: async () => opts.batches.shift() ?? [],
     },
     writeGate: {
-      applyMentionJudgements: async (records, deferrals, answers) => {
+      applyMentionJudgements: async (records, deferrals, answers, ledger = []) => {
+        decisions.push(...ledger);
         applied.push(...records);
         deferred.push(...deferrals);
         answered.push(...answers);
@@ -95,7 +98,7 @@ function build(opts: {
     idGen: () => "id-1",
     log,
   });
-  return { task, applied, deferred, answered, requeued, spend };
+  return { task, applied, deferred, answered, decisions, requeued, spend };
 }
 
 describe("mentionWorthGateTask", () => {
@@ -227,6 +230,35 @@ describe("mentionWorthGateTask", () => {
     expect(deferred).toEqual([
       { documentId: "failing", generation: 3, nextAttemptAt: 42 + 240_000 },
     ]);
+  });
+
+  it("ledgers every call it makes, an outage included, with no run", async () => {
+    const decision = scripted({ fine: 2 });
+    const { task, decisions } = build({
+      decision,
+      batches: [
+        [
+          { ...ask("failing"), state: { ...STATE, subject: "unanswered" } },
+          { ...ask("fine"), state: { ...STATE, subject: "fine" } },
+          { documentId: "att", generation: 1, attempts: 0, kind: "wait" },
+        ],
+      ],
+    });
+    await tick(task);
+    expect(
+      decisions.map((d) => [d.documentId, d.purpose, d.verdict, d.score, d.runId]).sort(),
+    ).toEqual([
+      ["failing", "mention-worth", "unavailable", null, null],
+      ["fine", "mention-worth", "pass", 2, null],
+    ]);
+    expect(decisions.find((d) => d.documentId === "fine")).toMatchObject({
+      subjectDocumentId: "fine",
+      contentHash: "hash-fine",
+      rubricVersion: WORTH_GATE_RUBRIC_VERSION,
+      modelId: "jev-test",
+      inputTokens: 1000,
+    });
+    expect(decisions.find((d) => d.documentId === "failing")?.error).toContain("503");
   });
 
   it("rests when nothing in reach could be settled", async () => {

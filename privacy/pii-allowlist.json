@@ -10644,7 +10644,6 @@
         "packages/core/src/people-utils.test.ts",
         "packages/gateway/portal/js/lib/watch-dag.test.ts",
         "packages/gateway/portal/js/views/agent-reducer.test.ts",
-        "packages/gateway/portal/js/views/cognition-decisions.test.ts",
         "packages/gateway/portal/js/views/deep-research-cassette.test.ts",
         "packages/gateway/portal/js/views/privacy-answer-comparison.test.ts",
         "packages/gateway/portal/js/views/watch-debug.test.ts",
@@ -12091,11 +12090,6 @@
       "value": "About Workshop",
       "paths": ["packages/gateway/portal/js/views/cognition-knowledge.test.ts"],
       "reason": "Static UI assertion for an invented workshop document title, not a person."
-    },
-    {
-      "value": "Score Unavailable",
-      "paths": ["packages/gateway/portal/js/views/cognition-knowledge-decisions.test.ts"],
-      "reason": "Static decision-inspector UI label assertion, not a person."
     },
     {
       "value": "The Brain",

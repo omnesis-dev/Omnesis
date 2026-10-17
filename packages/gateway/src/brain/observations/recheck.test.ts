@@ -413,7 +413,7 @@ describe("recheckObservations", () => {
       expect(ledger.every((d) => d.verdict === "unavailable" && d.score === null)).toBe(true);
     });
 
-    test("ledgers every judgement against the first cited document", async () => {
+    test("ledgers every judgement, against the first cited document when there is one", async () => {
       note("obs_ship", { citations: [docB, docA] });
       note("obs_hold");
       note("obs_uncited", { citations: [] });
@@ -424,7 +424,13 @@ describe("recheckObservations", () => {
       });
       await run(deps({ getDecision: () => decision }));
       const ledger = listDecisionsForRun(db, RUN);
-      expect(ledger).toHaveLength(2);
+      expect(ledger).toHaveLength(3);
+      expect(ledger.find((d) => d.recordId === "obs_uncited")).toMatchObject({
+        documentId: null,
+        subjectDocumentId: null,
+        requestJson: null,
+        verdict: "pass",
+      });
       expect(ledger.find((d) => d.recordId === "obs_ship")).toMatchObject({
         purpose: "observation-salience",
         lane: "recheck",

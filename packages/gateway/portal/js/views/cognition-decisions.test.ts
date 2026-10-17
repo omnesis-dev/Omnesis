@@ -15,6 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 import * as cognition from "./cognition.js";
+import { DecisionCard } from "../components/decision-card.js";
 
 function expandToHostNodes(vnode, out = []) {
   if (vnode == null || typeof vnode === "boolean") return out;
@@ -144,162 +145,15 @@ describe("runs list — the worth gate", () => {
 });
 
 describe("run detail — the Decision model section", () => {
-  it("labels historical redacted record inputs and score-only answers without claiming exact capture", () => {
-    const text = flatText(cognition.DecisionCard({ decision: decision({ purpose: "record-check", request: { ...REQUEST, state: { record: "Workshop note", document_context: { redacted: true, replayable: false } } } }) }));
-    expect(text).toContain("Recorded request");
-    expect(text).toContain("Source context was redacted");
-    expect(text).toContain("Only the resulting score was retained");
-    const missing = flatText(cognition.DecisionCard({ decision: decision({ request: null, response: null }) }));
-    expect(missing).toContain("No model request is retained");
-    expect(missing).toContain("No model answer is retained");
-  });
   it("is absent when no decision was made", () => {
     expect(expandToHostNodes(cognition.DecisionSection({ decisions: [] }))).toHaveLength(0);
   });
 
-  it("shows a skip with its score against the threshold, model, latency, tokens and rubric", () => {
-    const text = flatText(cognition.DecisionSection({ decisions: [decision()] }));
-    expect(text).toContain("Decision model");
-    expect(text).toContain("skip");
-    expect(text).toContain("score 0.21 < threshold 1.08");
-    expect(text).toContain("Gate declined admission for this attempt");
-    expect(text).toContain("jev-1.13.0");
-    expect(text).toContain("412 ms");
-    expect(text).toContain("356");
-    expect(text).toContain("email-worth-v1");
-    expect(text).toContain("your weekly digest is here");
-  });
-
-  it("carries the exact request — state and the four criteria levels — and the answer's probabilities", () => {
-    const nodes = expandToHostNodes(cognition.DecisionCard({ decision: decision() }));
-    const summaries = nodes.filter((n) => n.tag === "summary").map((n) => n.text);
-    expect(summaries).toEqual(["Recorded request", "Recorded answer"]);
-    const text = nodes.map((n) => n.text).join(" ");
-    expect(text).toContain("news@example.com");
-    expect(text).toContain("Ten new templates this week.");
-    expect(text).toContain("How much would an assistant want to record");
-    const levels = nodes.find((n) => n.tag === "ol" && n.class.includes("cognition-decision-criteria"));
-    expect(levels).toBeDefined();
-    expect(nodes.filter((n) => n.tag === "li")).toHaveLength(4);
-    expect(text).toContain("confidence 83%");
-    const bars = nodes.filter((n) => n.class === "cognition-decision-bar-fill");
-    expect(bars.map((b) => b.style)).toEqual(["width:82%;", "width:15%;", "width:2%;", "width:1%;"]);
-    // Each probability is named by the criterion it scores.
-    expect(text).toContain("Nothing: a newsletter or a promotion.");
-    expect(text).toContain("82%");
-  });
-
-  it("names the document an attachment was judged by", () => {
-    const text = flatText(
-      cognition.DecisionCard({
-        decision: decision({
-          verdict: "pass",
-          score: 2.4,
-          documentId: "doc-attachment",
-          subjectDocumentId: "doc-parent",
-          inheritedFromParent: true,
-          subjectDoc: { id: "doc-parent", title: "Venue booking for the Q4 review", sourceType: null },
-        }),
-      }),
-    );
-    expect(text).toContain("pass");
-    expect(text).toContain("score 2.40 ≥ threshold 1.08");
-    expect(text).toContain("Admitted for agent review");
-    expect(text).not.toContain("turn went ahead");
-    expect(text).toContain("the document that contains it");
-    expect(text).toContain("Venue booking for the Q4 review");
-    expect(text).toContain("inherits its email's judgement");
-  });
-
-  it("points a reused decision at the one it repeated, with no request of its own", () => {
-    const nodes = expandToHostNodes(
-      cognition.DecisionCard({ decision: decision({ reusedFrom: "dec_0", request: null, response: null, latencyMs: null, inputTokens: null }) }),
-    );
-    const text = nodes.map((n) => n.text).join(" ");
-    expect(text).toContain("dec_0");
-    expect(text).toContain("no model call was made");
-    expect(nodes.filter((n) => n.tag === "summary")).toHaveLength(0);
-  });
-
-  it("shows why the decision model was unavailable, and the request that failed", () => {
-    const nodes = expandToHostNodes(
-      cognition.DecisionCard({
-        decision: decision({ verdict: "unavailable", score: null, response: null, error: "TypeSafe returned HTTP 503" }),
-      }),
-    );
-    const text = nodes.map((n) => n.text).join(" ");
-    expect(text).toContain("unavailable");
-    expect(text).toContain("Admitted for agent review without a verdict");
-    expect(nodes.find((n) => n.class.includes("debug-error")).text).toContain("TypeSafe returned HTTP 503");
-    expect(nodes.filter((n) => n.tag === "summary").map((n) => n.text)).toEqual(["Recorded request"]);
-  });
-
-  it("never reads a decision of an unknown purpose as a worth-gate verdict", () => {
-    const text = flatText(cognition.DecisionCard({ decision: decision({ purpose: "future-check", verdict: "pass" }) }));
-    expect(text).toContain("pass");
-    expect(text).not.toContain("Worth a run");
-    expect(text).toContain("future-check");
-  });
-
-  describe("a record check", () => {
-    const recordCheck = (over = {}) =>
-      decision({
-        id: "dec_rc",
-        purpose: "record-check",
-        verdict: "skip",
-        score: 0.12,
-        threshold: 0.81,
-        rubricVersion: "record-belongs-v1",
-        recordId: "ta_example",
-        enforced: false,
-        subjectDoc: { id: "doc-mail", title: "Studio Northstar opens a new cycle room", sourceType: null },
-        request: {
-          model: "jev-1.13.0",
-          state: {
-            record_type: "timeline",
-            record_kind: "event",
-            record: "Studio Northstar says its new cycle room opens on 3 October 2026.",
-          },
-          questions: { belongs: { type: "score", instructions: "How much does `record` belong?", criteria: CRITERIA } },
-        },
-        response: { model: "jev-1.13.0", answers: { belongs: { type: "score", score: 0.12 } } },
-        ...over,
-      });
-
-    it("shows the record it judged, its id and the document it came from", () => {
-      const text = flatText(cognition.DecisionCard({ decision: recordCheck() }));
-      expect(text).toContain("record check · bootstrap");
-      expect(text).toContain("Studio Northstar says its new cycle room opens on 3 October 2026.");
-      expect(text).toContain("ta_example");
-      expect(text).toContain("Studio Northstar opens a new cycle room");
-      expect(text).not.toContain("the document that contains it");
-    });
-
-    it("distinguishes a shadow rejection from a blocked save attempt", () => {
-      const observing = flatText(cognition.DecisionCard({ decision: recordCheck() }));
-      expect(observing).toContain("would reject");
-      expect(observing).toContain("did not block saving");
-      const enforced = flatText(cognition.DecisionCard({ decision: recordCheck({ enforced: true }) }));
-      expect(enforced).toContain("blocked");
-      expect(enforced).toContain("Gate blocked this save attempt");
-      expect(enforced).not.toContain("did not block saving");
-    });
-
-    it("still names the record id and its document once retention cleared the request", () => {
-      const text = flatText(cognition.DecisionCard({ decision: recordCheck({ request: null, response: null }) }));
-      expect(text).toContain("ta_example");
-      expect(text).toContain("Studio Northstar opens a new cycle room");
-      expect(text).not.toContain("undefined");
-    });
-
-    it("reports admission without asserting the later writer saved a record", () => {
-      expect(flatText(cognition.DecisionCard({ decision: recordCheck({ verdict: "pass", score: 2.6 }) }))).toContain(
-        "Gate allowed this record",
-      );
-      expect(
-        flatText(cognition.DecisionCard({ decision: recordCheck({ verdict: "unavailable", score: null, response: null }) })),
-      ).toContain("Allowed without a verdict");
-    });
+  it("heads the run's judgements and renders each through the shared decision card", () => {
+    const section = cognition.DecisionSection({ decisions: [decision(), decision({ id: "dec_2" })] });
+    expect(flatText(section)).toContain("Decision model (2)");
+    const cards = section.flat(Infinity).filter((node) => node?.type === DecisionCard);
+    expect(cards.map((card) => card.props.decision.id)).toEqual(["dec_1", "dec_2"]);
   });
 
   it("says plainly that a gated run has no transcript because no agent turn ran", () => {

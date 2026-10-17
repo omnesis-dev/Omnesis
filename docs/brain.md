@@ -756,9 +756,11 @@ own must first be scored as naming the same task; a lower score or a model
 outage leaves it a proposal. A note a run appends to one of the user's own
 tasks is scored against the task and its eight latest notes, and a note that
 only repeats them is not recorded, so the task's history stays readable; an
-outage keeps the note. Verdicts land in the decision ledger as `task-check`
-by score alone, anchored to one of the task's documents. Notes on loops the
-user has not accepted are never checked.
+outage keeps the note. Every verdict, an outage included, is a `task-check`
+row in the decision ledger on the run that asked, anchored to a document when
+one grounds the check; the exact question and answer are kept in the decision
+payload store under the task's knowledge node. Notes on loops the user has not
+accepted are never checked.
 
 A proposal is judged when it is made, but the task and the policy move on
 while it waits. When the Brain starts, it settles waiting proposals: one that
@@ -766,6 +768,21 @@ no longer changes anything is withdrawn, an edit the policy now applies on its
 own is applied as an undoable `auto_applied` event, and the rest keep waiting.
 A completion or deadline stays a proposal, since its evidence quotes are not
 kept. An applied change also replaces any proposal still waiting on that task.
+
+## Auditing the decision model
+
+Every call to the decision model writes one ledger row, whatever it returns:
+the worth gate, the record check, the task checks, observation salience and,
+outside any Brain run, the date-mention gate (`mention-worth`) and search
+routing (`find-route`) in `cognition_decisions`; discovery, impact, review and
+urgency in `knowledge_decisions`. A row names its run, its document and the
+record it judged where they exist and leaves them null otherwise. Debug →
+Cognition shows each one through the portal's single decision card
+(`components/decision-card.js`, marked with the scale icon): on its run, in
+the retained decision history (filterable by purpose), on its maintenance
+batch, page or pending work, and on its observation. The card loads the exact
+request and answer on demand from the payload store, or the row's retained
+copy where no exact capture exists.
 
 ## Bounding the spend
 

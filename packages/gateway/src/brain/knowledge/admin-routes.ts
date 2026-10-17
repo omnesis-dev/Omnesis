@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { DECISION_PURPOSES } from "../storage/decisions.js";
 import { BadRequestError } from "../../http/errors.js";
 import { scope } from "../../http/scope.js";
 import { enumParam, limitParam } from "../admin-http-shared.js";
@@ -66,9 +67,7 @@ export function mountKnowledgeAdminRoutes(
           "impact",
           "review",
           "urgency",
-          "worth-gate",
-          "record-check",
-          "task-check",
+          ...DECISION_PURPOSES,
         ] as const),
         cursor: c.req.query("cursor"),
       }),

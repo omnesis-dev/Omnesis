@@ -7,6 +7,7 @@ import { createKnowledgeTables, saveKnowledgeNode } from "./knowledge/storage.js
 import { createBriefsStorageTables } from "./storage/schema.js";
 import {
   captureDecisionPayloadSubjects,
+  captureOwnerDecisionPayload,
   createDecisionPayloadTables,
   decisionPayloadErasureGeneration,
   readDecisionPayload,
@@ -32,6 +33,24 @@ beforeEach(() => {
   createDecisionPayloadTables(db);
 });
 afterEach(() => db.close());
+
+it("captures a Brain record's decision under its knowledge node and the documents it read", () => {
+  db.prepare(
+    `INSERT INTO knowledge_nodes(id,kind,owner_id,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at)
+     VALUES('loop_node','loop','loop_fixture','Book the hall','','',1,1,'h','current','{}','{}',1,1)`,
+  ).run();
+  const capture = captureOwnerDecisionPayload(db, { kind: "loop", id: "loop_fixture" }, ["first"]);
+  expect(capture?.subjects).toEqual(
+    expect.arrayContaining([
+      { kind: "node", id: "loop_node" },
+      { kind: "source", id: "first" },
+    ]),
+  );
+  expect(captureOwnerDecisionPayload(db, { kind: "observation", id: "obs_none" })).toBeNull();
+  expect(
+    captureOwnerDecisionPayload(db, { kind: "observation", id: "obs_none" }, ["second"])?.subjects,
+  ).toEqual([{ kind: "source", id: "second" }]);
+});
 function sourceCapture() {
   return captureDecisionPayloadSubjects(
     db,

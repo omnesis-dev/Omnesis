@@ -18150,6 +18150,80 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Decision card: one judgement by the decision model, everywhere ───────── */
+.decision-card {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+.decision-card--compact {
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.decision-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+summary.decision-card-head {
+  cursor: pointer;
+  list-style-position: outside;
+}
+.decision-card--compact[open] > summary.decision-card-head {
+  margin-bottom: 6px;
+}
+.decision-icon {
+  flex: none;
+  color: var(--accent);
+}
+.decision-card-title {
+  color: var(--text-primary);
+}
+.decision-card-score {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.decision-card-sentence {
+  margin: 6px 0 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.decision-card-error {
+  margin: 6px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--danger);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.decision-card-when {
+  margin-left: auto;
+  font-size: 12px;
+}
+.decision-verdict {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+}
+.decision-verdict--pass { color: var(--success); }
+.decision-verdict--skip { color: var(--type-event); }
+.decision-verdict--warn { color: var(--warning); }
+.decision-verdict--neutral { color: var(--text-secondary); }
+.decision-list > h3 {
+  font-size: 13px;
+  margin: 12px 0 6px;
+}
+
 /* ── Tell Omnesis (quick capture) ─────────────────────────────────────────── */
 /* The typed sibling of the mobile capture screens: one composer, one button.
    The left-aligned column bounds both the composer and the notes for reading. */

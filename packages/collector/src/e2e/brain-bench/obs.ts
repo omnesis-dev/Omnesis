@@ -117,12 +117,13 @@ export interface GateDecisionDto {
   threshold: number;
   modelId: string | null;
   rubricVersion: string;
-  documentId: string;
-  subjectDocumentId: string;
+  /** Null when no document anchors the decision (a task, a search). */
+  documentId: string | null;
+  subjectDocumentId: string | null;
   inheritedFromParent: boolean;
   subjectDoc: AdminDocRef | null;
   reusedFrom: string | null;
-  /** The record a record-check decision judged; null for a document judgement. */
+  /** The record a record, task or salience decision judged; null for a document judgement. */
   recordId: string | null;
   /** False when the verdict was only observed (a record check in shadow mode). */
   enforced: boolean;
@@ -132,6 +133,8 @@ export interface GateDecisionDto {
   createdAt: string;
   request: { model?: string; state: unknown; questions: unknown } | null;
   response: { model: string; answers: Record<string, unknown> } | null;
+  /** Whether `/admin/brain/decisions/:id` serves its request and answer. */
+  inputInspection: boolean;
 }
 
 /**

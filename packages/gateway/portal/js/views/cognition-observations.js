@@ -38,6 +38,7 @@ import {
   fmtTs,
   useLoader,
 } from "./cognition.js";
+import { DecisionList } from "../components/decision-card.js";
 
 // ── Pure helpers (exported for tests) ────────────────────────────────
 
@@ -217,29 +218,6 @@ function ClaimList({ claims }) {
   </div>`;
 }
 
-function DecisionList({ decisions }) {
-  if (!decisions || decisions.length === 0) return html`<div class="debug-empty">No salience judgements recorded.</div>`;
-  return html`<div>
-    ${decisions.map((d) => html`<div key=${d.id} class="cognition-decision">
-      <div class="cognition-decision-head">
-        <${Pill} color=${d.verdict === "pass" ? "#86efac" : d.verdict === "unavailable" ? "#fdba74" : "#d2a8ff"}>${d.verdict}</${Pill}>
-        <span class="cognition-decision-score">
-          score <strong>${typeof d.score === "number" ? d.score.toFixed(2) : "—"}</strong> · threshold ${typeof d.threshold === "number" ? d.threshold.toFixed(2) : "—"}
-        </span>
-        <span class="cognition-dim">${d.lane}</span>
-      </div>
-      ${d.error && html`<div class="debug-error" style="margin:6px 0;">⚠️ ${d.error}</div>`}
-      <${Field} label="Run"><${EntityId} kind="run" id=${d.runId} /></${Field}>
-      <${Field} label="Model">${d.modelId ? html`<code>${d.modelId}</code>` : "—"}</${Field}>
-      <${Field} label="Decided">${fmtTs(d.createdAt)}</${Field}>
-      ${d.answers != null && html`<details class="cognition-decision-details">
-        <summary>Recorded answers</summary>
-        <pre class="cognition-mono">${JSON.stringify(d.answers, null, 2)}</pre>
-      </details>`}
-    </div>`)}
-  </div>`;
-}
-
 /**
  * One observation: its scores, claims, the brief message it shipped in,
  * related loops, the run that noted it, and every salience decision. The
@@ -290,7 +268,7 @@ export function ObservationDetail({ id, content = null, embedded = false }) {
       <${Field} label="Updated">${fmtTs(o.updatedAt)}</${Field}>
       ${o.closedAt && html`<${Field} label="Closed">${fmtTs(o.closedAt)}</${Field}>`}
       <h3 class="cognition-section">Salience decisions (${decisions?.length ?? 0})</h3>
-      <${DecisionList} decisions=${decisions} />
+      <${DecisionList} decisions=${decisions ?? []} showSubject=${false} emptyText="No salience judgements recorded." />
       <details class="debug-operations-advanced"><summary>Advanced</summary>
         <${Field} label="Id"><span class="cognition-mono">${o.id}</span></${Field}>
       </details>

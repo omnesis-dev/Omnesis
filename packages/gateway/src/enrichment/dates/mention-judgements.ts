@@ -30,6 +30,10 @@ import { documentsMetadataCodec } from "../../data/json-columns.js";
 import { resolveContainingDocument } from "../../domain/LinkGraphService.js";
 import { findWorthAnswer, recordWorthAnswers, type WorthAnswer } from "../../worth/answers.js";
 import {
+  insertCognitionDecision,
+  type CognitionDecisionRecord,
+} from "../../brain/storage/decisions.js";
+import {
   EMAIL_BODY_CHARS,
   WORTH_GATED_DOCUMENT_TYPE,
   emailWorthState,
@@ -223,8 +227,9 @@ export interface MentionJudgementDeferral {
 }
 
 /**
- * Record the worth answers the gate asked for, settle judgements and push back
- * the ones that must wait, in one transaction. A row changes only while it is
+ * Record the worth answers the gate asked for and its decision-ledger rows,
+ * settle judgements and push back the ones that must wait, in one
+ * transaction. A row changes only while it is
  * still pending at the generation the gate fetched: a document re-extracted
  * meanwhile is judged again for its new content, and one that lost its
  * mentions has no row.
@@ -237,6 +242,7 @@ export function applyMentionJudgements(
   records: readonly MentionJudgementRecord[],
   deferrals: readonly MentionJudgementDeferral[] = [],
   answers: readonly WorthAnswer[] = [],
+  decisions: readonly CognitionDecisionRecord[] = [],
 ): number {
   const settle = db.prepare(
     `UPDATE date_mention_judgements
@@ -257,6 +263,7 @@ export function applyMentionJudgements(
   let settled = 0;
   db.transaction(() => {
     recordWorthAnswers(db, answers);
+    for (const decision of decisions) insertCognitionDecision(db, decision);
     for (const r of records) {
       const changed = settle.run(
         r.verdict,

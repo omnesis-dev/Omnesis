@@ -136,6 +136,28 @@ export function captureDecisionPayloadSubjects(
   })();
 }
 
+/**
+ * Subjects for a decision about one Brain record (a task or an observation):
+ * its knowledge node, whose ancestry covers the record's sources, plus any
+ * documents the decision read directly. Null when nothing can fence it.
+ */
+export function captureOwnerDecisionPayload(
+  db: Database.Database,
+  owner: { kind: "loop" | "observation"; id: string },
+  sourceIds: readonly string[] = [],
+): DecisionPayloadCapture | null {
+  const generation = decisionPayloadErasureGeneration(db);
+  const nodeIds = table(db, "knowledge_nodes")
+    ? db
+        .prepare<[string, string], { id: string }>(
+          "SELECT id FROM knowledge_nodes WHERE kind=? AND COALESCE(owner_id,id)=?",
+        )
+        .all(owner.kind, owner.id)
+        .map((row) => row.id)
+    : [];
+  return captureDecisionPayloadSubjects(db, { nodeIds, sourceIds }, generation);
+}
+
 /** Shared exact request/result store; subject indexes erase multi-source and derived inputs. */
 export function createDecisionPayloadTables(db: Database.Database): void {
   db.transaction(() => {

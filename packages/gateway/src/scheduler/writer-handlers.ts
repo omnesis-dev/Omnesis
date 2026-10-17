@@ -1003,7 +1003,8 @@ export const writerHandlers = {
     records: MentionJudgementRecord[],
     deferrals: MentionJudgementDeferral[],
     answers: WorthAnswer[],
-  ) => applyMentionJudgements(db, records, deferrals, answers),
+    decisions: CognitionDecisionRecord[] = [],
+  ) => applyMentionJudgements(db, records, deferrals, answers, decisions),
   "db.requeueStaleMentionJudgements": (db: Db, rubricVersion: string, limit: number) =>
     requeueStaleMentionJudgements(db, rubricVersion, limit),
   // Drain of source-declared forward-reference edges: resolve parked

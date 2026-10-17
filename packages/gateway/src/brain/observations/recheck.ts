@@ -18,6 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 import { raceAbort } from "../decision-call.js";
+import { captureOwnerDecisionPayload, type DecisionPayloadCapture } from "../decision-payload.js";
 import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
 import { observationEvidenceContext } from "../observation-evidence-context.js";
 import { containsNormalizedForContent } from "../quote-match.js";
@@ -267,6 +268,7 @@ export async function recheckObservations(
       continue;
     let scores = observation.scores ?? observation.notedScores;
     if (decision) {
+      const payloadCapture = salienceDecisionCapture(deps.db, observation);
       const judged = await judgeSalience(
         decision,
         {
@@ -296,6 +298,7 @@ export async function recheckObservations(
           threshold: thresholds.minConsequence,
           lane: "recheck",
           now,
+          payloadCapture,
         },
       );
       if (judged.scores.consequence !== null) scores = judged.scores;
@@ -334,7 +337,29 @@ export async function recheckObservations(
   return { shipped: candidates, held, dropped };
 }
 
-/** Ledger one salience judgement against the observation's first cited document. */
+/**
+ * The subjects a salience judgement reads: the observation's knowledge node
+ * and its cited documents. Captured before the judgement reads them.
+ */
+export function salienceDecisionCapture(
+  db: Database.Database,
+  observation: Pick<ObservationRow, "id" | "citations">,
+): DecisionPayloadCapture | undefined {
+  return (
+    captureOwnerDecisionPayload(
+      db,
+      { kind: "observation", id: observation.id },
+      observation.citations,
+    ) ?? undefined
+  );
+}
+
+/**
+ * Ledger one salience judgement, anchored to the observation's first cited
+ * document. An observation that cites none (one the user wrote) leaves the
+ * row's anchors empty; its request and answer then live only in the payload
+ * store, fenced by the observation's node.
+ */
 export async function recordSalienceDecision(
   deps: { recordDecision: (record: CognitionDecisionRecord) => Promise<void> },
   input: {
@@ -345,10 +370,10 @@ export async function recordSalienceDecision(
     threshold: number;
     lane: "note" | "recheck";
     now: number;
+    payloadCapture?: DecisionPayloadCapture;
   },
 ): Promise<void> {
-  const documentId = input.observation.citations[0];
-  if (!documentId) return;
+  const documentId = input.observation.citations[0] ?? null;
   const { judgement } = input.judged;
   await deps.recordDecision({
     id: `decision_${randomUUID()}`,
@@ -361,8 +386,18 @@ export async function recordSalienceDecision(
     contentHash: null,
     requestedModelId: judgement.modelId,
     modelId: judgement.score === null ? null : judgement.modelId,
-    requestJson: judgement.requestJson,
-    responseJson: judgement.responseJson,
+    requestJson: documentId === null ? null : judgement.requestJson,
+    responseJson: documentId === null ? null : judgement.responseJson,
+    ...(input.payloadCapture
+      ? {
+          payloadCapture: input.payloadCapture,
+          payload: {
+            requestJson: judgement.requestJson,
+            responseJson: judgement.responseJson,
+            error: judgement.error,
+          },
+        }
+      : {}),
     score: judgement.score,
     threshold: input.threshold,
     verdict: judgement.score === null ? "unavailable" : input.verdict === "ship" ? "pass" : "skip",

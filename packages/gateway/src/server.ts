@@ -1688,6 +1688,7 @@ export function createServer(
         searchPipeline: opts?.searchPipeline,
         getDecision: opts?.getDecision ?? (() => null),
         recordDecisionSpend: opts?.recordFindDecisionSpend,
+        recordDecision: (record) => w.recordCognitionDecision(record),
         getAgentService: () => opts?.agentRouteDeps?.agentService ?? opts?.agentService ?? null,
       }),
     }),

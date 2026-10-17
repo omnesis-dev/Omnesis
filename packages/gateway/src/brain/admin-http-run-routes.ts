@@ -107,8 +107,15 @@ export function mountCognitionRunAdminRoutes(ctx: CognitionAdminRouteContext): v
     const knowledgeDecisionAudit = query.knowledgeDecisionsForRun(id);
     const subjectRefs = new Map(query.decisionSubjectRefs(decisions).map((ref) => [ref.id, ref]));
     return c.json({
-      run: enriched ? { ...enriched, gateVerdict: decisions.at(-1)?.verdict ?? null } : enriched,
-      decisions: decisions.map((d) => decisionDto(d, subjectRefs.get(d.subjectDocumentId))),
+      run: enriched
+        ? {
+            ...enriched,
+            gateVerdict: decisions.findLast((d) => d.purpose === "worth-gate")?.verdict ?? null,
+          }
+        : enriched,
+      decisions: decisions.map((d) =>
+        decisionDto(d, d.subjectDocumentId ? subjectRefs.get(d.subjectDocumentId) : undefined),
+      ),
       knowledgeDecisions: knowledgeDecisionAudit.items,
       knowledgeDecisionAudit: {
         truncated: knowledgeDecisionAudit.truncated,

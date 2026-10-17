@@ -239,6 +239,7 @@ export function decisionDto(
 ) {
   return {
     id: decision.id,
+    runId: decision.runId,
     purpose: decision.purpose,
     lane: decision.lane,
     verdict: decision.verdict,
@@ -259,7 +260,9 @@ export function decisionDto(
     createdAt: iso(decision.createdAt),
     request: parseJsonOrNull(decision.requestJson),
     response: parseJsonOrNull(decision.responseJson),
-    inputInspection: decision.purpose === "record-check",
+    // The inspection endpoint serves the exact payload where one was captured
+    // and the row's own retained copy otherwise.
+    inputInspection: true,
   };
 }
 

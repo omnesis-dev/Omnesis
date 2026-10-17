@@ -174,7 +174,16 @@ describe("brain bench: task checks", () => {
     const detail = await bench.obs.task(taskId);
     expect(detail.task).toMatchObject({ title: REFINED_TITLE, proposedChange: null });
     expect(detail.history[0]).toMatchObject({ kind: "auto_applied", change: "edit" });
-    expect(await taskChecksOf(docId!)).toEqual([expect.objectContaining({ verdict: "pass" })]);
+    const checks = await taskChecksOf(docId!);
+    expect(checks).toEqual([
+      expect.objectContaining({ verdict: "pass", recordId: taskId, inputInspection: true }),
+    ]);
+    // The exact question the model was asked is inspectable from the run.
+    const inspected = await bench.harness.gatewayJson<{
+      input: { availability: string; request: { questions: Record<string, unknown> } | null };
+    }>(`/admin/brain/decisions/${encodeURIComponent(checks[0]!.id)}`);
+    expect(inspected.input.availability).toBe("available");
+    expect(Object.keys(inspected.input.request!.questions)).toEqual(["same_task"]);
   }, 240_000);
 
   test("a note that repeats the task's history is left out of it", async () => {

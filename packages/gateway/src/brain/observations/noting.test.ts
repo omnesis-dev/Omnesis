@@ -177,12 +177,20 @@ describe("createObservationScorer", () => {
     expect(decisions[0]).toMatchObject({ verdict: "unavailable", score: null, modelId: null });
   });
 
-  test("an uncited observation is scored but not ledgered", async () => {
+  test("an uncited observation is ledgered with no document and no retained request", async () => {
     const { decision } = scripted({ consequence: 2, timing: 1, already_known: 0 });
     const score = createObservationScorer(deps(decision), "run_note");
     const result = await score(input({ citations: [] }));
     expect(result.scores?.consequence).toBe(2);
-    expect(decisions).toEqual([]);
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      purpose: "observation-salience",
+      documentId: null,
+      subjectDocumentId: null,
+      requestJson: null,
+      responseJson: null,
+      score: 2,
+    });
   });
 
   test("the decision model is resolved fresh on every call", async () => {

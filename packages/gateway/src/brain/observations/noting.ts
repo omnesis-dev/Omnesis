@@ -11,7 +11,7 @@
  * with no decision model still has something to rank by.
  */
 
-import { observationSources, recordSalienceDecision } from "./recheck.js";
+import { observationSources, recordSalienceDecision, salienceDecisionCapture } from "./recheck.js";
 import {
   judgeSalience,
   salienceVerdict,
@@ -58,6 +58,10 @@ export function createObservationScorer(
   return async (input) => {
     const decision = deps.getDecision();
     if (!decision) return { scores: null, wouldPushAt: null };
+    const payloadCapture = salienceDecisionCapture(deps.db, {
+      id: input.id,
+      citations: [...input.citations],
+    });
     const judged = await judgeSalience(
       decision,
       {
@@ -82,6 +86,7 @@ export function createObservationScorer(
         threshold: deps.thresholds().minConsequence,
         lane: "note",
         now: input.notedAt,
+        payloadCapture,
       },
     );
     if (judged.scores.consequence === null) return { scores: null, wouldPushAt: null };

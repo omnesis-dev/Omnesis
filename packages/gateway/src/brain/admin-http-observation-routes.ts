@@ -4,6 +4,7 @@
 import { NotFoundError } from "../http/errors.js";
 import { scope } from "../http/scope.js";
 import {
+  decisionDto,
   enumParam,
   iso,
   limitParam,
@@ -91,10 +92,9 @@ export function mountCognitionObservationAdminRoutes(ctx: CognitionAdminRouteCon
         const loop = query.getLoop(id);
         return { id, title: loop?.title ?? null, state: loop?.state ?? null };
       }),
-      decisions: query.observationDecisions(observation.id).map((decision) => ({
-        ...decision,
-        createdAt: iso(decision.createdAt),
-      })),
+      decisions: query
+        .observationDecisions(observation.id)
+        .map((decision) => decisionDto(decision, undefined)),
       provenance: query.provenance(observation.createdByRun),
     });
   });

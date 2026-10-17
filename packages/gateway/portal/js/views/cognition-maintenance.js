@@ -4,7 +4,7 @@ import { PendingWorkDetails } from "./knowledge-pending-details.js";
 import { html } from "htm/preact";
 import { KnowledgeDecisionAudit } from "./knowledge-decision-audit.js";
 import { DecisionContextDetails } from "./knowledge-decision-context.js";
-import { ContextualDecisions } from "./cognition-knowledge-decisions.js";
+import { DecisionList } from "../components/decision-card.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { navigate } from "../lib/router.js";
 import { LoadMore } from "../components/load-more.js";
@@ -54,7 +54,8 @@ export function WaitingWork({ status, reason, tier }) {
     </div>`}
   </section>`;
 }
-function BatchDetail({ id, summary }) {
+/** One maintenance batch: its inputs, their outcomes and the checks behind them. Exported for tests. */
+export function BatchDetail({ id, summary }) {
   const [names, setNames] = useState({});
   const [references, setReferences] = useState({});
   const [state, setState] = useState({ loading: true });
@@ -110,7 +111,7 @@ function BatchDetail({ id, summary }) {
         <${DecisionContextDetails} key=${item.inputFingerprint} contextKey=${item.nodeId} title=${names[item.nodeId] ?? "Input checks"} decisions=${decisionsForFrontierItem(result.decisions?.items ?? [], frontier, item)} />
         <span class=${`km-node-result ${item.status === "changed" ? "is-changed" : ""}`}>${resultLabel(item.status)}</span>
       </li>`)}</ul>` : html`<p class="kn-caption">No checks recorded for this batch.</p>`}
-      ${(result.decisions?.items ?? []).some((decision) => !frontier.some((item) => decisionsForFrontierItem([decision], frontier, item).length)) && html`<${ContextualDecisions} title="Other batch checks" decisions=${result.decisions.items.filter((decision) => !frontier.some((item) => decisionsForFrontierItem([decision], frontier, item).length))} audit=${result.decisions} />`}
+      ${(result.decisions?.items ?? []).some((decision) => !frontier.some((item) => decisionsForFrontierItem([decision], frontier, item).length)) && html`<${DecisionList} title="Other batch checks" decisions=${result.decisions.items.filter((decision) => !frontier.some((item) => decisionsForFrontierItem([decision], frontier, item).length))} audit=${result.decisions} />`}
     </div>
   </section>`;
 }
