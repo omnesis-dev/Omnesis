@@ -50,6 +50,7 @@ const organizationSchema = z.object({
   id: z.string(),
   inputFingerprint: z.string(),
   sourceIds: z.array(z.string()),
+  subject: z.object({ loopRef: z.string() }).optional(),
   readyToComplete: z.boolean(),
 });
 const frontierSchema = z

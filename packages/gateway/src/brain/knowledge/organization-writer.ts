@@ -24,6 +24,7 @@ export function startOrganizationBatch(
     workPrefix: string;
     intervalMs: number;
     retryMs: number;
+    subjectIntervalMs?: number;
     regionNodeIds: string[];
     frontier: KnowledgeFrontierInput[];
   },
