@@ -161,7 +161,7 @@ function publishedRetry(
 }
 
 /** Outcomes at least this important can seed a subject cohort. */
-export const SUBJECT_MIN_IMPORTANCE = 0.7;
+export const SUBJECT_MIN_IMPORTANCE = 0.6;
 /** How far back an outcome's last update still makes its subject current. */
 export const SUBJECT_WINDOW_MS = 120 * 86_400_000;
 /** A person on more outcomes than this is not specific enough to join subjects. */

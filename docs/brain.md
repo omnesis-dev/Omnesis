@@ -626,7 +626,7 @@ coherent synthesis by itself. Cohort membership creates no dependency edges.
 Chronological cohorts group whatever was considered together, so a matter
 whose evidence arrives over months may never meet in one. A **subject cohort**
 groups instead the interpreted evidence of an important tracked outcome no wiki
-covers yet: an outcome with importance of at least 0.7, open or completed and
+covers yet: an outcome with importance of at least 0.6, open or completed and
 updated within 120 days, none of whose documents or loop record a wiki claim
 cites. Such outcomes join one subject when they share a document or a person
 on at most six outcomes (the owner, and people on many outcomes, would merge

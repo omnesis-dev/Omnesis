@@ -840,7 +840,7 @@ describe("subject cohorts for important outcomes without a page", () => {
 
   it("groups an important uncovered matter's outcomes by a specific person, anchored on the most important", () => {
     outcome("memorial", 0.85, ["vet-invoice", "memorial-proof"], ["sitter"]);
-    outcome("thank-sitter", 0.7, ["sitter-message"], ["sitter", "me"]);
+    outcome("thank-sitter", 0.6, ["sitter-message"], ["sitter", "me"]);
     outcome("minor", 0.3, ["newsletter"], ["sitter"]);
     const selection = selectSubject()!;
     expect(selection.subjectLoopId).toBe("memorial");
@@ -883,9 +883,9 @@ describe("subject cohorts for important outcomes without a page", () => {
     outcome("stale-2", 0.95, ["stale-c"], ["stale-person"], "open", NOW - 200 * DAY);
     outcome("dismissed", 0.95, ["dismissed-a"], ["dismissed-person"], "dismissed");
     outcome("dismissed-2", 0.95, ["dismissed-b"], ["dismissed-person"], "dismissed");
-    outcome("minor", 0.6, ["minor-a"], ["minor-person"]);
-    outcome("minor-2", 0.6, ["minor-b"], ["minor-person"]);
-    outcome("minor-3", 0.6, ["minor-c"], ["minor-person"]);
+    outcome("minor", 0.5, ["minor-a"], ["minor-person"]);
+    outcome("minor-2", 0.5, ["minor-b"], ["minor-person"]);
+    outcome("minor-3", 0.5, ["minor-c"], ["minor-person"]);
     outcome("single", 0.9, ["single-a", "single-b"]);
     outcome("thread-1", 0.75, ["thread-a", "shared-doc"]);
     outcome("thread-2", 0.75, ["shared-doc", "thread-b"]);
