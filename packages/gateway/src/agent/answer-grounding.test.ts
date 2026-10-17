@@ -25,7 +25,6 @@ import type { EntailCapability } from "@omnesis/core";
 const identity = { sessionId: "session", messageId: "turn", question: "What happened?" };
 function setup(
   options: {
-    timeZone?: string;
     body?: string;
     sourceEvidenceAuthority?: {
       policy: "attributed_utterances";
@@ -60,7 +59,6 @@ function setup(
   const getVerifier = vi.fn(async (_signal?: AbortSignal) => ({ verify, dispose() {} }));
   const diagnostics: AnswerGroundingDiagnostic[] = [];
   const finalizer = createAnswerGroundingFinalizer({
-    timeZone: options.timeZone,
     reads,
     document,
     ...(options.root
@@ -1019,41 +1017,13 @@ it("releases through actual source-bound segment parsing without copied source q
   expect(complete).toHaveBeenCalledTimes(1);
 });
 
-it("carries the caller clock contract into both verification and powerless repair without changing source timestamps", async () => {
-  const body = "The observatory opens at 2032-07-08T16:30:00Z.";
-  const f = setup({ timeZone: "America/New_York", body });
-  f.verify
-    .mockResolvedValueOnce({ label: "neutral" })
-    .mockResolvedValueOnce({ label: "entailment" });
-  f.repair.mockResolvedValueOnce("The observatory opens at 12:30 on 8 July 2032.");
-  expect(
-    await f.finalizer.finalize({
-      ...input,
-      draft: "The observatory opens at 16:30 on 8 July 2032.",
-    }),
-  ).toBe("The observatory opens at 12:30 on 8 July 2032.");
-  for (const [request] of f.verify.mock.calls) {
-    const context = JSON.parse(request.context!);
-    expect(context.callerClock).toContain("America/New_York");
-    expect(context.callerClock).toContain("both need converting");
-    expect(context.callerClock).toContain("allDay");
-    expect(request.evidence).toContain("2032-07-08T16:30:00Z");
-    expect(request.evidence).not.toContain("2032-07-08T12:30:00Z");
-  }
-  const repair = JSON.parse(f.repair.mock.calls[0]![0].split("\n").at(-1)!);
-  expect(JSON.parse(repair.context).callerClock).toContain("America/New_York");
+it("gives an Answer the host's clock, marked as a default", async () => {
+  const f = setup();
+  await f.finalizer.finalize(input);
+  const clock = JSON.parse(f.verify.mock.calls[0]![0].context!).callerClock;
+  expect(clock).toBe(renderCallerZoneBlock(undefined));
+  expect(clock).toContain("gateway host's");
 });
-
-it.each([undefined, "not/a-real-zone"])(
-  "uses the initial prompt's host fallback for an absent or invalid caller zone: %s",
-  async (timeZone) => {
-    const f = setup({ timeZone });
-    await f.finalizer.finalize(input);
-    const clock = JSON.parse(f.verify.mock.calls[0]![0].context!).callerClock;
-    expect(clock).toBe(renderCallerZoneBlock(timeZone));
-    expect(clock).toContain("gateway host's");
-  },
-);
 
 it.each(["full", "partial", "changed-proof", "same-bytes-changed-proof"] as const)(
   "uses stable qualified authority only for a complete page after maintenance: %s",
