@@ -1010,6 +1010,10 @@ it.each([
     "assessment_schema, annotationFailure=candidate_span",
   ],
   [
+    new AnnotationAssessmentError("witness_outside_authority", "scripted-judge", "stitched"),
+    "assessment_schema, annotationFailure=witness_outside_authority, witnessMiss=stitched",
+  ],
+  [
     Object.assign(new AnnotationAssessmentError("coverage", "scripted-judge"), {
       annotationFailure: "Sensitive source text",
     }),

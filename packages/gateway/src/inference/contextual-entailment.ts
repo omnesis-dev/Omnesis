@@ -150,6 +150,62 @@ export function hasAuthorizedWitness(evidence: string): (quote: string) => boole
   };
 }
 
+/**
+ * How far a quote the witness check refused is from the evidence, as a closed
+ * literal that logs can carry without any content. Diagnostic only: acceptance
+ * stays with `hasAuthorizedWitness`.
+ *
+ * - `folded`: it matches once typography, case and Unicode forms are folded;
+ * - `stitched`: its pieces either side of an ellipsis each match that way;
+ * - `absent`: neither.
+ */
+export type WitnessMiss = "folded" | "stitched" | "absent";
+
+const WITNESS_MISS_ORDER: readonly WitnessMiss[] = ["folded", "stitched", "absent"];
+
+function foldWitnessText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[‘’‚‛′`´]/gu, "'")
+    .replace(/[“”„‟″«»]/gu, '"')
+    .replace(/[‐-―−]/gu, "-")
+    .toLowerCase()
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+/** The furthest miss among the quotes `hasAuthorizedWitness` refuses; undefined when none is refused. */
+export function witnessMiss(evidence: string, quotes: readonly string[]): WitnessMiss | undefined {
+  const authorized = hasAuthorizedWitness(evidence);
+  const refused = quotes.filter((quote) => !authorized(quote));
+  if (!refused.length) return undefined;
+  const sources = witnessAuthorities(evidence).map((source) => ({
+    wholeStatementOnly: source.wholeStatementOnly === true,
+    text: foldWitnessText(source.text),
+  }));
+  const matches = (text: string, whole: boolean) =>
+    text.length > 0 &&
+    sources.some((source) =>
+      source.wholeStatementOnly ? whole && source.text === text : source.text.includes(text),
+    );
+  const classify = (quote: string): WitnessMiss => {
+    const folded = foldWitnessText(quote);
+    if (matches(folded, true)) return "folded";
+    const pieces = folded
+      .split(/\.{3,}/u)
+      .map((piece) => piece.trim())
+      .filter(Boolean);
+    return pieces.length > 1 && pieces.every((piece) => matches(piece, false))
+      ? "stitched"
+      : "absent";
+  };
+  return refused
+    .map(classify)
+    .reduce((worst, miss) =>
+      WITNESS_MISS_ORDER.indexOf(miss) > WITNESS_MISS_ORDER.indexOf(worst) ? miss : worst,
+    );
+}
+
 /** Shared bounded decoder; diagnostics never expose raw response or thinking text. */
 function decodeContextualAssessments(text: string) {
   if (text.length > MAX_RESPONSE_CHARS) return null;

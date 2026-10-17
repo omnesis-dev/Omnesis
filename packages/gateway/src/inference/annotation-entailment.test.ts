@@ -5,6 +5,7 @@ import {
   assessAnnotationEntailment,
   AnnotationAssessmentError,
   annotationAssessmentFailure,
+  annotationWitnessMiss,
   annotationEntailmentFailures,
   annotationEntailmentPrompt,
   parseAnnotationEntailment,
@@ -296,7 +297,7 @@ describe("closed annotation diagnostics", () => {
     [response([{ ...row(), evidenceQuotes: [] }]), { failure: "positive_witness_missing" }],
     [
       response([{ ...row(), evidenceQuotes: ["unobserved"] }]),
-      { failure: "witness_outside_authority" },
+      { failure: "witness_outside_authority", witnessMiss: "absent" },
     ],
     [{ ...response(), placementSupport: undefined }, { failure: "placement_schema" }],
     [
@@ -315,7 +316,7 @@ describe("closed annotation diagnostics", () => {
           evidenceQuotes: ["unobserved"],
         },
       },
-      { failure: "witness_outside_authority" },
+      { failure: "witness_outside_authority", witnessMiss: "absent" },
     ],
   ])("reports a closed obstruction while preserving wrapper verdicts", (value, expected) => {
     expect(assess(value)).toEqual(expected);
@@ -396,13 +397,70 @@ describe("closed annotation diagnostics", () => {
       verifiedReferences: [],
       limitation: "Scope",
     });
-    expect(assess(response(), claim, evidence)).toEqual({ failure: "witness_outside_authority" });
+    expect(assess(response(), claim, evidence)).toEqual({
+      failure: "witness_outside_authority",
+      witnessMiss: "absent",
+    });
     const attributed = JSON.stringify({
       sources: [],
       verifiedReferences: [{ text: "Recorded statement: " + claim, wholeStatementOnly: true }],
       limitation: "Attribution",
     });
-    expect(assess(response(), claim, attributed)).toEqual({ failure: "witness_outside_authority" });
+    expect(assess(response(), claim, attributed)).toEqual({
+      failure: "witness_outside_authority",
+      witnessMiss: "absent",
+    });
+  });
+
+  it.each([
+    ["\u201cThe mosaic is green\u201d \u2014 the plinth is square.", "folded"],
+    ["THE MOSAIC IS   GREEN", "folded"],
+    ["The mosaic is green \u2026 square.", "stitched"],
+    ["The mosaic is green... the plinth is square.", "stitched"],
+    ["The mosaic is red.", "absent"],
+    ["The mosaic is green \u2026 the dome is gold.", "absent"],
+  ])("names how far a refused witness %j is from the evidence", (quote, miss) => {
+    const evidence = '"The mosaic is green" - the plinth is square.';
+    expect(
+      assess(response([{ ...row(), evidenceQuotes: [evidence, quote] }]), claim, evidence),
+    ).toEqual({ failure: "witness_outside_authority", witnessMiss: miss });
+  });
+
+  it("names the furthest miss and leaves an indivisible statement unstitched", () => {
+    const evidence = "The mosaic is green; the plinth is square.";
+    const quotes = ["the mosaic is green; the plinth is square.", "The dome is gold."];
+    expect(assess(response([{ ...row(), evidenceQuotes: quotes }]), claim, evidence)).toEqual({
+      failure: "witness_outside_authority",
+      witnessMiss: "absent",
+    });
+    const attributed = JSON.stringify({
+      sources: [],
+      verifiedReferences: [{ text: claim, wholeStatementOnly: true }],
+      limitation: "Attribution",
+    });
+    const stitched = { ...row(), evidenceQuotes: ["The mosaic is green \u2026 square."] };
+    expect(assess(response([stitched]), claim, attributed)).toEqual({
+      failure: "witness_outside_authority",
+      witnessMiss: "absent",
+    });
+    const recased = { ...row(), evidenceQuotes: [claim.toUpperCase()] };
+    expect(assess(response([recased]), claim, attributed)).toEqual({
+      failure: "witness_outside_authority",
+      witnessMiss: "folded",
+    });
+  });
+
+  it("reads back only a closed witness miss literal", () => {
+    const error = new AnnotationAssessmentError(
+      "witness_outside_authority",
+      "scripted-model",
+      "folded",
+    );
+    expect(annotationWitnessMiss(error)).toBe("folded");
+    expect(annotationWitnessMiss(new AnnotationAssessmentError("coverage", "m"))).toBeUndefined();
+    Object.defineProperty(error, "witnessMiss", { value: "secret canary", configurable: true });
+    expect(annotationWitnessMiss(error)).toBeUndefined();
+    expect(annotationWitnessMiss({ witnessMiss: "folded" })).toBeUndefined();
   });
 
   it("only exposes fixed own-data diagnostic literals, never raw provider text or accessors", () => {

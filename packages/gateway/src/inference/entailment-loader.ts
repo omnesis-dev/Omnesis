@@ -289,7 +289,11 @@ export class LlmJudgeEntailmentVerifier implements EntailCapability {
           ].join("\n\n");
           continue;
         }
-        throw new AnnotationAssessmentError(annotation.failure, this.deps.completer.modelId);
+        throw new AnnotationAssessmentError(
+          annotation.failure,
+          this.deps.completer.modelId,
+          annotation.witnessMiss,
+        );
       }
       if (contextual) {
         const category = answerRequest

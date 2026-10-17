@@ -6,6 +6,8 @@ import {
   ContextualAssessmentError,
   CONTEXTUAL_EVIDENCE_MAX_BYTES,
   hasAuthorizedWitness,
+  witnessMiss,
+  type WitnessMiss,
 } from "./contextual-entailment.js";
 import type { EntailVerdict } from "@omnesis/core";
 
@@ -26,12 +28,14 @@ const annotationFailureSchema = z.enum([
 export type AnnotationAssessmentFailure = z.infer<typeof annotationFailureSchema>;
 export type AnnotationAssessmentResult =
   | { label: EntailVerdict["label"] }
-  | { failure: AnnotationAssessmentFailure };
+  | { failure: AnnotationAssessmentFailure; witnessMiss?: WitnessMiss };
+const witnessMissSchema = z.enum(["folded", "stitched", "absent"]);
 
 export class AnnotationAssessmentError extends ContextualAssessmentError {
   constructor(
     readonly annotationFailure: AnnotationAssessmentFailure,
     modelId: string,
+    readonly witnessMiss?: WitnessMiss,
   ) {
     super("assessment_schema", modelId);
     this.name = "AnnotationAssessmentError";
@@ -45,6 +49,15 @@ export function annotationAssessmentFailure(
   if (!(error instanceof AnnotationAssessmentError)) return undefined;
   const parsed = annotationFailureSchema.safeParse(
     Object.getOwnPropertyDescriptor(error, "annotationFailure")?.value,
+  );
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Only the closed `witnessMiss` literals may enter logs. */
+export function annotationWitnessMiss(error: unknown): WitnessMiss | undefined {
+  if (!(error instanceof AnnotationAssessmentError)) return undefined;
+  const parsed = witnessMissSchema.safeParse(
+    Object.getOwnPropertyDescriptor(error, "witnessMiss")?.value,
   );
   return parsed.success ? parsed.data : undefined;
 }
@@ -244,21 +257,26 @@ export function assessAnnotationEntailment(
   const supportFailure = (item: {
     verdict: string;
     evidenceQuotes: string[];
-  }): AnnotationAssessmentFailure | undefined => {
+  }): AnnotationAssessmentResult | undefined => {
     if (item.verdict !== "supported" || item.evidenceQuotes.length === 0)
-      return "positive_witness_missing";
-    if (!item.evidenceQuotes.every((quote) => authorized(quote)))
-      return "witness_outside_authority";
+      return { failure: "positive_witness_missing" };
+    if (!item.evidenceQuotes.every((quote) => authorized(quote))) {
+      const miss = witnessMiss(evidence, item.evidenceQuotes);
+      return {
+        failure: "witness_outside_authority",
+        ...(miss === undefined ? {} : { witnessMiss: miss }),
+      };
+    }
     return undefined;
   };
   for (const item of read.valid) {
     const failure = supportFailure(item);
-    if (failure) return { failure };
+    if (failure) return failure;
   }
   if (!read.placement.success) return { failure: "placement_schema" };
   if (read.placement.data.verdict !== "not_applicable") {
     const failure = supportFailure(read.placement.data);
-    if (failure) return { failure };
+    if (failure) return failure;
   }
   return { label: "entailment" };
 }

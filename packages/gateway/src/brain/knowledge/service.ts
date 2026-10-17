@@ -5,6 +5,7 @@
 import {
   annotationEntailmentFailures,
   annotationAssessmentFailure,
+  annotationWitnessMiss,
 } from "../../inference/annotation-entailment.js";
 import {
   ANNOTATION_CONTEXT_VERIFIER,
@@ -349,12 +350,13 @@ export class KnowledgeService {
             const category =
               error instanceof ContextualAssessmentError ? error.category : "verifier_unavailable";
             const annotationFailure = annotationAssessmentFailure(error);
+            const witnessMiss = annotationWitnessMiss(error);
             unavailable = true;
             // Correlate with stored claims or tool proposals without logging their identifiers/text.
             // The ordinal distinguishes separately assessed alternatives for any-support claims.
             try {
               this.deps.log.warn(
-                `Knowledge claim verification unavailable; retaining unverified claim (category=${category}${annotationFailure ? `, annotationFailure=${annotationFailure}` : ""}, target=${knowledgeHash([input.id, claim.id])}, fingerprint=${fingerprint}, evidence=${evidenceIndex + 1}/${pieces.length})`,
+                `Knowledge claim verification unavailable; retaining unverified claim (category=${category}${annotationFailure ? `, annotationFailure=${annotationFailure}` : ""}${witnessMiss ? `, witnessMiss=${witnessMiss}` : ""}, target=${knowledgeHash([input.id, claim.id])}, fingerprint=${fingerprint}, evidence=${evidenceIndex + 1}/${pieces.length})`,
               );
             } catch {
               // Diagnostics must not change the unavailable verification outcome.
