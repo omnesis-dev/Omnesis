@@ -220,7 +220,9 @@ it("keeps actual root wiki navigation after stripping claim tags, deduplicated a
     { id: "detail", title: "Workshop detail", ref: "wiki:detail" },
   ]);
   expect(renderKnowledgeRootContext(db)).not.toContain("Unrelated page");
-  expect(renderKnowledgeRootContext(db)).toContain("navigation to maintained detail, not proof");
+  expect(renderKnowledgeRootContext(db)).toContain(
+    "read the linked page (relatedPages and inline wiki: links) and the sources behind the claims you use",
+  );
   delete payload.relatedPages;
   const context = renderKnowledgeRootContext(db);
   const framingLength = context.length - context.split("\n").at(-1)!.length;
