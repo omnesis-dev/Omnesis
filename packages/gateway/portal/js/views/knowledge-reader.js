@@ -14,6 +14,7 @@ import {
   internalKnowledgeHref,
 } from "./knowledge-claim-markdown.js";
 import { KnowledgeConnections } from "./knowledge-connections.js";
+import { KnowledgeStaleNotice } from "./knowledge-stale-notice.js";
 import { knowledgeHistoryComparisons, KnowledgeHistoryRevision } from "./knowledge-history.js";
 
 export const knowledgePath = (id) => `/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`;
@@ -153,12 +154,7 @@ export function KnowledgeDetail({
     <div class="kn-reader-body">
       ${activeTab === "overview" &&
       html`${node.validity === "stale" &&
-      html`<aside class="kn-notice">
-        <strong>Some context needs another look.</strong>
-        <p>
-          Supporting information has changed. Treat this page as provisional until it is reviewed.
-        </p>
-      </aside>`}${node.kind === "root" &&
+      html`<${KnowledgeStaleNotice} causes=${node.staleCauses} />`}${node.kind === "root" &&
       html`<p class="kn-root-note">
         The compact overview your agents use to stay oriented. Details live in the pages it connects
         to.

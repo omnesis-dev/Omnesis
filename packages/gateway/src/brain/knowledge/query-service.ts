@@ -38,6 +38,7 @@ import {
 import { listKnowledgeNodeRevisions } from "./storage-history.js";
 import { listKnowledgeFrontier } from "./work.js";
 import { listKnowledgeLinks } from "./links.js";
+import { readKnowledgeStaleCauses } from "./stale-causes.js";
 import type Database from "better-sqlite3";
 
 /** Operator diagnostics use canonical fenced reads, never the search projection. */
@@ -66,6 +67,7 @@ export class KnowledgeQueryService {
         claims: getKnowledgeClaims(this.db, id),
         dependencies: getKnowledgeDependencies(this.db, id),
         links: listKnowledgeLinks(this.db, id),
+        staleCauses: node.validity === "stale" ? readKnowledgeStaleCauses(this.db, node) : null,
       };
     })();
   }

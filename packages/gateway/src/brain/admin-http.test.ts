@@ -24,6 +24,7 @@ import { createToken } from "../data/repositories/TokenRepository.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { insertTemporalAnnotation } from "../enrichment/temporal-annotations/storage.js";
 import { recordKnowledgeDecision } from "./knowledge/decision-storage.js";
+import { saveKnowledgeNode } from "./knowledge/storage.js";
 import { recordRunAttribution } from "./storage/run-attribution.js";
 import { createMutableClock } from "./virtual-clock.js";
 import { createObservation, transitionObservation } from "./storage/observations.js";
@@ -867,6 +868,47 @@ describe("GET /admin/brain/runs", () => {
         attempts: 2,
         replaces: null,
         refusalCodes: [],
+      },
+    });
+  });
+});
+
+describe("GET /admin/brain/knowledge/:id", () => {
+  test("a stale page names the changed source documents behind it", async () => {
+    seedDocument("doc_agenda", { title: "Workshop agenda", sourceId: "notes:test-account" });
+    saveKnowledgeNode(
+      db,
+      {
+        id: "wiki_agenda",
+        kind: "wiki",
+        title: "Workshop plan",
+        markdown: '<claim id="start" refs="source:doc_agenda">The workshop starts Friday.</claim>',
+        expectedRevision: 0,
+        inputVersions: { "source:doc_agenda": "hash-doc_agenda" },
+      },
+      1000,
+    );
+    const current = (await (await get("/admin/brain/knowledge/wiki_agenda")).json()) as {
+      staleCauses: unknown;
+    };
+    expect(current.staleCauses).toBeNull();
+    db.prepare("UPDATE documents SET content_hash='hash-revised' WHERE id='doc_agenda'").run();
+    const response = await get("/admin/brain/knowledge/wiki_agenda");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      validity: "stale",
+      staleCauses: {
+        total: 1,
+        reason: null,
+        items: [
+          {
+            kind: "source",
+            id: "doc_agenda",
+            title: "Workshop agenda",
+            sourceId: "notes:test-account",
+            change: "changed",
+          },
+        ],
       },
     });
   });

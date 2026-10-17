@@ -405,6 +405,28 @@
 .kn-notice p {
   margin: 5px 0 0;
 }
+.kn-stale-causes {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+.kn-stale-cause {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.kn-stale-cause a,
+.kn-stale-cause-unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.kn-stale-cause-unavailable,
+.kn-stale-cause-note,
+.kn-stale-causes-more {
+  color: var(--text-secondary);
+}
 .kn-section-intro {
   margin-bottom: 22px;
 }

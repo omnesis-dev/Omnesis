@@ -360,7 +360,12 @@ it("preserves document identity after canonical withdrawal physically removes th
 
 it("resolves an intentionally withdrawn person's authoritative subject through current merges and hides unavailable people", () => {
   personNote();
-  db.prepare("INSERT INTO documents VALUES('evidence','Printed instructions','v1')").run();
+  db.exec(
+    "ALTER TABLE documents ADD COLUMN title TEXT; ALTER TABLE documents ADD COLUMN source_id TEXT;",
+  );
+  db.prepare(
+    "INSERT INTO documents(id,content,content_hash) VALUES('evidence','Printed instructions','v1')",
+  ).run();
   db.prepare("DELETE FROM knowledge_nodes WHERE id='note-node'").run();
   convertKnowledgeOwner(db, "person_annotation", "note-owner", 20);
   db.prepare("UPDATE knowledge_nodes SET fields_json=? WHERE id='note-owner'").run(
