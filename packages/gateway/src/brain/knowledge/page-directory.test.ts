@@ -4,10 +4,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase } from "../../db.js";
 import { buildKnowledgeDocumentInput } from "./mirror.js";
-import { renderKnowledgePageDirectory } from "./page-directory.js";
+import { namedPagesNote, pagesNamedIn, renderKnowledgePageDirectory } from "./page-directory.js";
 import { KNOWLEDGE_PROVIDER_ID } from "./source-meta.js";
 import { saveKnowledgeNode } from "./storage.js";
 import type Database from "better-sqlite3";
@@ -104,4 +104,45 @@ it("stays within its character budget and says nothing when no page fits", () =>
   expect(bounded.length).toBeLessThanOrEqual(budget);
   expect(listed(bounded).length).toBeLessThan(listed(full).length);
   expect(renderKnowledgePageDirectory(db, 50)).toBe("");
+});
+
+describe("pages a message names", () => {
+  it("matches a whole title or its head, as whole words, ignoring case and accents", () => {
+    page("product", "Omnesis", 100);
+    page("lease", "prism workshop: lease and deposit", 200);
+    page("cafe", "café lighting renovation", 300);
+    expect(pagesNamedIn(db, "Hey what is omnesis?")).toEqual([
+      { title: "Omnesis", ref: "wiki:product" },
+    ]);
+    expect(pagesNamedIn(db, "Any news on the PRISM WORKSHOP?")).toEqual([
+      { title: "prism workshop: lease and deposit", ref: "wiki:lease" },
+    ]);
+    expect(pagesNamedIn(db, "where are we with the CAFE LIGHTING renovation")).toEqual([
+      { title: "café lighting renovation", ref: "wiki:cafe" },
+    ]);
+    expect(pagesNamedIn(db, "is omnesisx a thing?")).toEqual([]);
+    expect(pagesNamedIn(db, "thanks!")).toEqual([]);
+  });
+
+  it("names at most three pages, longest name first, and only readable ones", () => {
+    page("a", "garden", 100);
+    page("b", "garden shed build", 200);
+    page("c", "shed", 300);
+    page("d", "build permit", 400);
+    page("hidden", "garden shed build notes", 500, "wiki", false);
+    expect(pagesNamedIn(db, "garden shed build permit notes").map((named) => named.ref)).toEqual([
+      "wiki:b",
+      "wiki:d",
+      "wiki:a",
+    ]);
+  });
+
+  it("writes a note naming the pages to open, or nothing", () => {
+    page("product", "Omnesis", 100);
+    const note = namedPagesNote(db, "what is Omnesis?");
+    expect(note).toContain("[Omnesis note, not from the user]");
+    expect(note).toContain("Open each with knowledge_fetch");
+    expect(note).toContain('{"title":"Omnesis","ref":"wiki:product"}');
+    expect(namedPagesNote(db, "what's for dinner?")).toBe("");
+  });
 });

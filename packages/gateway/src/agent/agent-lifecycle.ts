@@ -56,7 +56,7 @@ import {
   captureKnowledgeRootContext,
   isCapturedKnowledgeRootSupportCurrent,
 } from "../brain/knowledge/root-context.js";
-import { renderKnowledgePageDirectory } from "../brain/knowledge/page-directory.js";
+import { namedPagesNote, renderKnowledgePageDirectory } from "../brain/knowledge/page-directory.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
 import {
   ConversationReadStateService,
@@ -441,6 +441,7 @@ export function createAgentService(
   };
   return new AgentService({
     backendFactory,
+    namedPagesNote: (message) => namedPagesNote(db, message),
     ...(deps.getGroundingVerifier
       ? {
           grounding: {

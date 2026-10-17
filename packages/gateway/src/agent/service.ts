@@ -199,6 +199,11 @@ export interface AgentServiceDeps {
   backendFactory: (role: CapabilityRole) => ChatBackend | null;
   ports: ToolPorts;
   /**
+   * A model-only note for a conversation turn whose message names maintained
+   * pages, telling the agent to open them first; empty when none is named.
+   */
+  namedPagesNote?: (message: string) => string;
+  /**
    * Fact-checks Answer API candidates (`/answer`, MCP Answer, watch firings)
    * before they reach the privacy reviewer. Interactive conversations are
    * never checked or rewritten: what the agent writes is what the user sees.
@@ -864,6 +869,7 @@ export class AgentService {
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
   private readonly citationReads = new CitationReads();
+  private readonly namedPagesNote: AgentServiceDeps["namedPagesNote"];
   private readonly grounding: AgentServiceDeps["grounding"];
   private readonly loopRead: ToolPorts["loopRead"];
   private readonly documentPort: DocumentPort;
@@ -1058,6 +1064,7 @@ export class AgentService {
         ...(deps.subagents.deepResearch ? { caps: deps.subagents.deepResearch } : {}),
       });
     }
+    this.namedPagesNote = deps.namedPagesNote;
     this.grounding = deps.grounding;
     this.loopRead = deps.ports.loopRead;
     this.tools = buildBuiltinTools({
@@ -2855,7 +2862,11 @@ export class AgentService {
     });
     let started: ReturnType<AgentSession["send"]>;
     try {
-      started = entry.session.send(text, { signal: opts.signal });
+      const modelNote = this.namedPagesNote?.(text);
+      started = entry.session.send(text, {
+        signal: opts.signal,
+        ...(modelNote ? { modelNote } : {}),
+      });
     } catch (err) {
       if (this.activeTurnReplays.get(sessionId)?.generation === replayGeneration) {
         this.activeTurnReplays.delete(sessionId);

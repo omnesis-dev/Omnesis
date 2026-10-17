@@ -38,6 +38,41 @@ function newSession(events: AgentEvent[]): {
 }
 
 describe("AgentSession", () => {
+  it("gives a turn's model note to the model only, never to history or listeners", async () => {
+    const seen: string[] = [];
+    const backend: ChatBackend = {
+      name: "recording",
+      model: "recording",
+      async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
+        seen.push(input.userMessage);
+        yield {
+          type: "agent.message.end",
+          payload: {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            stopReason: "end_turn",
+          },
+        };
+      },
+    };
+    const session = new AgentSession({
+      sessionId: "S",
+      backend,
+      tools: [],
+      systemPrompt: "test",
+      idGen: () => "M",
+    });
+    const captured: AgentEvent[] = [];
+    session.subscribe((event) => captured.push(event));
+    await session.send("what is the observatory?", { modelNote: "Open wiki:observatory first." })
+      .completion;
+    await session.send("thanks").completion;
+
+    expect(seen).toEqual(["what is the observatory?\n\nOpen wiki:observatory first.", "thanks"]);
+    expect(JSON.stringify(session.historySnapshot())).not.toContain("wiki:observatory");
+    expect(JSON.stringify(captured)).not.toContain("wiki:observatory");
+  });
+
   it("includes an empty assistant in a live snapshot before the first delta", async () => {
     const gate = Promise.withResolvers<void>();
     const backend: ChatBackend = {

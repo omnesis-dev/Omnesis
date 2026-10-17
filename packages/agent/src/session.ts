@@ -132,6 +132,11 @@ export interface SendOptions {
    * Only profiling callers set this; every other turn leaves it absent.
    */
   llmProbe?: LlmProbe;
+  /**
+   * Context the host adds for the model on this turn only, after the user's
+   * text. It is never broadcast, shown, or kept in the conversation's history.
+   */
+  modelNote?: string;
 }
 
 export type Subscriber = (event: AgentEvent) => void;
@@ -502,7 +507,7 @@ export class AgentSession {
             sessionId: this.sessionId,
             messageId: turn.messageId,
             history: priorHistory,
-            userMessage: text,
+            userMessage: opts.modelNote ? `${text}\n\n${opts.modelNote}` : text,
             tools: this.tools,
             timeZone: this.zone,
             caller: this.speaksFor,
