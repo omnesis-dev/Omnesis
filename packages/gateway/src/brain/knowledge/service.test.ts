@@ -1004,7 +1004,18 @@ it.each([
     new ContextualAssessmentError("witness_outside_authority", "scripted-judge"),
     "witness_outside_authority",
   ],
-  [new Error("Sensitive source text must not enter operational logs"), "verifier_unavailable"],
+  [
+    new Error("Sensitive source text must not enter operational logs"),
+    "verifier_unavailable, cause=unknown",
+  ],
+  [
+    new DOMException("Sensitive source text", "TimeoutError"),
+    "verifier_unavailable, cause=timeout",
+  ],
+  [
+    Object.assign(new Error("Sensitive source text"), { status: 429 }),
+    "verifier_unavailable, cause=rate_limited",
+  ],
   [
     new AnnotationAssessmentError("candidate_span", "scripted-judge"),
     "assessment_schema, annotationFailure=candidate_span",

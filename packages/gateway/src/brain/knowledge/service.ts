@@ -17,7 +17,7 @@ import {
 } from "../../inference/contextual-entailment.js";
 import { raceAbort } from "../decision-call.js";
 import { assertWikiRepairAssessment } from "./wiki-factual-repair.js";
-import { KnowledgeVerificationTimeoutError } from "./verification-failure.js";
+import { KnowledgeVerificationTimeoutError, verificationFailure } from "./verification-failure.js";
 import { CONTEXTUAL_VERIFIER, knowledgeClaimContexts } from "./claim-context.js";
 import { assertKnowledgeDependencyVersion, knowledgeHash } from "./storage-validation.js";
 import { assertKnowledgeSavePreflight } from "./save-preflight.js";
@@ -351,12 +351,14 @@ export class KnowledgeService {
               error instanceof ContextualAssessmentError ? error.category : "verifier_unavailable";
             const annotationFailure = annotationAssessmentFailure(error);
             const witnessMiss = annotationWitnessMiss(error);
+            const cause =
+              category === "verifier_unavailable" ? verificationFailure(error).category : undefined;
             unavailable = true;
             // Correlate with stored claims or tool proposals without logging their identifiers/text.
             // The ordinal distinguishes separately assessed alternatives for any-support claims.
             try {
               this.deps.log.warn(
-                `Knowledge claim verification unavailable; retaining unverified claim (category=${category}${annotationFailure ? `, annotationFailure=${annotationFailure}` : ""}${witnessMiss ? `, witnessMiss=${witnessMiss}` : ""}, target=${knowledgeHash([input.id, claim.id])}, fingerprint=${fingerprint}, evidence=${evidenceIndex + 1}/${pieces.length})`,
+                `Knowledge claim verification unavailable; retaining unverified claim (category=${category}${annotationFailure ? `, annotationFailure=${annotationFailure}` : ""}${witnessMiss ? `, witnessMiss=${witnessMiss}` : ""}${cause ? `, cause=${cause}` : ""}, target=${knowledgeHash([input.id, claim.id])}, fingerprint=${fingerprint}, evidence=${evidenceIndex + 1}/${pieces.length})`,
               );
             } catch {
               // Diagnostics must not change the unavailable verification outcome.
