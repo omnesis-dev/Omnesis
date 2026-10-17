@@ -173,7 +173,7 @@ struct TaskEditorSheet: View {
     }
 
     /// A labelled control on one line: the label leading, the control trailing.
-    private func field<Control: View>(_ label: String, @ViewBuilder control: () -> Control) -> some View {
+    private func field(_ label: String, @ViewBuilder control: () -> some View) -> some View {
         HStack {
             Text(label).foregroundStyle(Theme.textPrimary)
             Spacer(minLength: Theme.Spacing.md)
@@ -183,7 +183,7 @@ struct TaskEditorSheet: View {
     }
 
     /// A row that opens something: its content leading, a chevron trailing.
-    private func linkRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    private func linkRow(@ViewBuilder _ content: () -> some View) -> some View {
         HStack(spacing: Theme.Spacing.md) {
             content()
             Spacer(minLength: Theme.Spacing.sm)

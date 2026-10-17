@@ -361,7 +361,10 @@ final class TasksInteractionUITests: XCTestCase {
     func testTheDetailsListDocumentsAndKeepTheirControls() {
         text(Fixture.marathon).tap()
         XCTAssertTrue(app.navigationBars["Task"].waitForExistence(timeout: 5), "the details did not open")
-        XCTAssertTrue(app.otherElements["tasks.editor"].exists || app.scrollViews["tasks.editor"].exists, "the details are not the flat sheet")
+        XCTAssertTrue(
+            app.otherElements["tasks.editor"].exists || app.scrollViews["tasks.editor"].exists,
+            "the details are not the flat sheet"
+        )
         XCTAssertTrue(app.staticTexts["DOCUMENTS"].exists, "no Documents section")
         let documents = app.buttons.matching(identifier: "tasks.editor.document")
         XCTAssertEqual(documents.count, 5, "the details do not list the task's five documents")
@@ -369,7 +372,10 @@ final class TasksInteractionUITests: XCTestCase {
         let deadline = app.switches["Has a deadline"]
         XCTAssertTrue(deadline.exists, "no deadline toggle")
         deadline.switches.firstMatch.tap()
-        XCTAssertTrue(wait { (self.app.switches["Has a deadline"].value as? String) == "1" }, "the deadline toggle did not turn on")
+        XCTAssertTrue(
+            wait { (self.app.switches["Has a deadline"].value as? String) == "1" },
+            "the deadline toggle did not turn on"
+        )
         XCTAssertTrue(app.staticTexts["Kind"].exists, "turning the deadline on showed no kind")
 
         let form = documents.element(boundBy: 0)
