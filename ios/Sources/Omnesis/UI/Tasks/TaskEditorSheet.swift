@@ -24,6 +24,7 @@ struct TaskEditorSheet: View {
     let onSave: (TaskAction) async -> Bool
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppStore.self) private var store: AppStore?
     @State private var draft: TaskEditDraft
     @State private var saving = false
 
@@ -42,61 +43,107 @@ struct TaskEditorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("Title", text: $draft.title, axis: .vertical)
-                        .lineLimit(1 ... 4)
-                    TextField("Details", text: $draft.description, axis: .vertical)
-                        .lineLimit(2 ... 8)
-                }
-                Section("Plan") {
-                    Picker("When", selection: $draft.plan) {
-                        ForEach(TaskEditDraft.Plan.allCases, id: \.self) { plan in
-                            Text(plan.label).tag(plan)
-                        }
-                    }
-                    if draft.plan == .day {
-                        DatePicker("Day", selection: $draft.planDate, displayedComponents: .date)
-                    } else if draft.plan == .month {
-                        DatePicker("Month", selection: $draft.planDate, displayedComponents: .date)
-                        Text("Planned for \(draft.planDate.formatted(.dateTime.month(.wide).year()))")
-                            .font(.footnote)
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        TextField("Title", text: $draft.title, axis: .vertical)
+                            .lineLimit(1 ... 4)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .padding(.vertical, Theme.Spacing.md)
+                        rule
+                        TextField("Details", text: $draft.description, axis: .vertical)
+                            .lineLimit(2 ... 8)
+                            .font(.system(size: 15))
                             .foregroundStyle(Theme.textSecondary)
+                            .padding(.vertical, Theme.Spacing.md)
                     }
-                }
-                Section("Deadline") {
-                    Toggle("Has a deadline", isOn: $draft.hasDeadline)
-                    if draft.hasDeadline {
-                        Picker("Kind", selection: $draft.deadlineKind) {
-                            Text("Due by").tag(TaskDeadline.Kind.by)
-                            Text("Around").tag(TaskDeadline.Kind.approximate)
-                            Text("On the day").tag(TaskDeadline.Kind.onDay)
-                        }
-                        DatePicker("Date", selection: $draft.deadlineDate, displayedComponents: .date)
-                    }
-                }
-                if !task.documents.isEmpty {
-                    Section("Documents") {
-                        ForEach(task.documents) { document in
-                            NavigationLink(value: Route.document(id: document.id, title: document.title)) {
-                                Label(
-                                    document.title.isEmpty ? "Untitled document" : document.title,
-                                    systemImage: "doc.text"
-                                )
+                    FlatSection("Plan") {
+                        VStack(spacing: 0) {
+                            field("When") {
+                                Picker("When", selection: $draft.plan) {
+                                    ForEach(TaskEditDraft.Plan.allCases, id: \.self) { plan in
+                                        Text(plan.label).tag(plan)
+                                    }
+                                }
+                            }
+                            if draft.plan == .day {
+                                rule
+                                field("Day") {
+                                    DatePicker("Day", selection: $draft.planDate, displayedComponents: .date)
+                                }
+                            } else if draft.plan == .month {
+                                rule
+                                field("Month") {
+                                    DatePicker("Month", selection: $draft.planDate, displayedComponents: .date)
+                                }
+                                Text("Planned for \(draft.planDate.formatted(.dateTime.month(.wide).year()))")
+                                    .font(.footnote)
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.bottom, Theme.Spacing.sm)
                             }
                         }
                     }
-                }
-                if model != nil {
-                    Section {
-                        NavigationLink(value: Route.history) {
-                            Label("History", systemImage: "clock.arrow.circlepath")
+                    FlatSection("Deadline") {
+                        VStack(spacing: 0) {
+                            Toggle("Has a deadline", isOn: $draft.hasDeadline)
+                                .foregroundStyle(Theme.textPrimary)
+                                .frame(minHeight: Theme.tapTarget)
+                            if draft.hasDeadline {
+                                rule
+                                field("Kind") {
+                                    Picker("Kind", selection: $draft.deadlineKind) {
+                                        Text("Due by").tag(TaskDeadline.Kind.by)
+                                        Text("Around").tag(TaskDeadline.Kind.approximate)
+                                        Text("On the day").tag(TaskDeadline.Kind.onDay)
+                                    }
+                                }
+                                rule
+                                field("Date") {
+                                    DatePicker("Date", selection: $draft.deadlineDate, displayedComponents: .date)
+                                }
+                            }
+                        }
+                    }
+                    if !task.documents.isEmpty {
+                        FlatSection("Documents", trailing: "\(task.documents.count)") {
+                            VStack(spacing: 0) {
+                                ForEach(Array(task.documents.enumerated()), id: \.element.id) { index, document in
+                                    if index > 0 { rule }
+                                    NavigationLink(value: Route.document(id: document.id, title: document.title)) {
+                                        documentRow(document)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("tasks.editor.document")
+                                }
+                            }
+                        }
+                    }
+                    if model != nil {
+                        VStack(spacing: 0) {
+                            rule
+                            NavigationLink(value: Route.history) {
+                                linkRow {
+                                    Image(systemName: "clock.arrow.circlepath")
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(Theme.textSecondary)
+                                        .frame(width: 22)
+                                    Text("History")
+                                        .foregroundStyle(Theme.textPrimary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            rule
                         }
                     }
                 }
+                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.bottom, Theme.Spacing.xl)
             }
-            .scrollContentBackground(.hidden)
-            .background(Theme.bgPrimary)
+            .scrollDismissesKeyboard(.interactively)
+            .background(Theme.bgPrimary.ignoresSafeArea())
+            .accessibilityIdentifier("tasks.editor")
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .history:
@@ -107,6 +154,7 @@ struct TaskEditorSheet: View {
             }
             .navigationTitle("Task")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -116,6 +164,54 @@ struct TaskEditorSheet: View {
                         .disabled(saving || draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+        }
+    }
+
+    /// The hairline between rows, the flat layout's only separator.
+    private var rule: some View {
+        Rectangle().fill(Theme.borderLight).frame(height: 1)
+    }
+
+    /// A labelled control on one line: the label leading, the control trailing.
+    private func field<Control: View>(_ label: String, @ViewBuilder control: () -> Control) -> some View {
+        HStack {
+            Text(label).foregroundStyle(Theme.textPrimary)
+            Spacer(minLength: Theme.Spacing.md)
+            control().labelsHidden()
+        }
+        .frame(minHeight: Theme.tapTarget)
+    }
+
+    /// A row that opens something: its content leading, a chevron trailing.
+    private func linkRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: Theme.Spacing.md) {
+            content()
+            Spacer(minLength: Theme.Spacing.sm)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textMuted)
+        }
+        .frame(minHeight: Theme.tapTarget)
+        .contentShape(Rectangle())
+    }
+
+    /// A document the task refers to, under the same source icon the task's
+    /// row in the list shows for it. Without a store (a bare preview) there
+    /// is no icon to look up, and the title alone names the document.
+    private func documentRow(_ document: TaskDocument) -> some View {
+        linkRow {
+            Group {
+                if let store {
+                    SourceIconView(sourceId: document.sourceId, store: store, size: 22)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: 22, height: 22)
+            Text(document.title.isEmpty ? "Untitled document" : document.title)
+                .foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
         }
     }
 
@@ -137,6 +233,7 @@ struct TaskEditorSheet: View {
 @available(iOS 17.0, *)
 #Preview("TaskEditorSheet") {
     TaskEditorSheet(task: PreviewMocks.taskProposal, today: "2026-10-14") { _ in true }
+        .environment(AppStore.preview(sourceIconByType: ["gmail": PreviewMocks.agentSourceLayoutIcon]))
 }
 
 @available(iOS 17.0, *)

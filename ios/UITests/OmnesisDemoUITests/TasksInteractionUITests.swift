@@ -350,9 +350,45 @@ final class TasksInteractionUITests: XCTestCase {
     func testTappingTheTextOpensDetails() {
         text(Fixture.marathon).tap()
         XCTAssertTrue(app.navigationBars["Task"].waitForExistence(timeout: 5), "the details did not open")
-        XCTAssertTrue(app.staticTexts["Documents"].exists || app.buttons["Marathon entry form.pdf"].exists, "no documents in the details")
+        XCTAssertTrue(app.staticTexts["DOCUMENTS"].exists || app.buttons["Marathon entry form.pdf"].exists, "no documents in the details")
         app.navigationBars["Task"].buttons["Cancel"].tap()
         XCTAssertTrue(circle(complete: Fixture.marathon).waitForExistence(timeout: 5), "opening details changed the task")
+    }
+
+    /// The details sheet is flat on the page background and lists each
+    /// document as a row that opens it; the deadline toggle, History and
+    /// Cancel still do what they say, and nothing about the task changes.
+    func testTheDetailsListDocumentsAndKeepTheirControls() {
+        text(Fixture.marathon).tap()
+        XCTAssertTrue(app.navigationBars["Task"].waitForExistence(timeout: 5), "the details did not open")
+        XCTAssertTrue(app.otherElements["tasks.editor"].exists || app.scrollViews["tasks.editor"].exists, "the details are not the flat sheet")
+        XCTAssertTrue(app.staticTexts["DOCUMENTS"].exists, "no Documents section")
+        let documents = app.buttons.matching(identifier: "tasks.editor.document")
+        XCTAssertEqual(documents.count, 5, "the details do not list the task's five documents")
+
+        let deadline = app.switches["Has a deadline"]
+        XCTAssertTrue(deadline.exists, "no deadline toggle")
+        deadline.switches.firstMatch.tap()
+        XCTAssertTrue(wait { (self.app.switches["Has a deadline"].value as? String) == "1" }, "the deadline toggle did not turn on")
+        XCTAssertTrue(app.staticTexts["Kind"].exists, "turning the deadline on showed no kind")
+
+        let form = documents.element(boundBy: 0)
+        XCTAssertTrue(form.label.contains("Marathon entry form.pdf"), "the first document row is \(form.label)")
+        XCTAssertTrue(reveal(form), "the first document is not on screen")
+        form.tap()
+        XCTAssertTrue(app.navigationBars.buttons["Task"].waitForExistence(timeout: 5), "the document did not open over the details")
+        app.navigationBars.buttons["Task"].tap()
+        XCTAssertTrue(app.navigationBars["Task"].waitForExistence(timeout: 5), "going back did not return to the details")
+
+        let history = app.buttons["History"]
+        XCTAssertTrue(reveal(history), "History is not on screen")
+        history.tap()
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5), "History did not open")
+        app.navigationBars["History"].buttons["Task"].tap()
+        XCTAssertTrue(app.navigationBars["Task"].waitForExistence(timeout: 5), "going back did not return to the details")
+
+        app.navigationBars["Task"].buttons["Cancel"].tap()
+        XCTAssertTrue(circle(complete: Fixture.marathon).waitForExistence(timeout: 5), "cancelling the details changed the task")
     }
 
     // MARK: - Helpers

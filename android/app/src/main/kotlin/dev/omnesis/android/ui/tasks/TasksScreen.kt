@@ -162,7 +162,7 @@ fun TasksScreen(
         ModalBottomSheet(
             onDismissRequest = vm::closeEditor,
             sheetState = sheet,
-            containerColor = OmTheme.colors.bgSecondary,
+            containerColor = OmTheme.colors.bgPrimary,
         ) {
             TaskEditorContent(
                 initial = remember(task) { TaskEditorDraft.from(task, vm.localDay) },
@@ -172,6 +172,12 @@ fun TasksScreen(
                     if (edit == null) vm.closeEditor() else vm.saveEdit(task, edit)
                 },
                 onHistory = { vm.openHistory(task) },
+                documents = task.documents,
+                iconFor = vm::iconFor,
+                onOpenDocument = { document ->
+                    vm.closeEditor()
+                    onOpenDocument(document.id)
+                },
             )
         }
     }
@@ -181,7 +187,7 @@ fun TasksScreen(
         ModalBottomSheet(
             onDismissRequest = vm::closeHistory,
             sheetState = sheet,
-            containerColor = OmTheme.colors.bgSecondary,
+            containerColor = OmTheme.colors.bgPrimary,
         ) {
             TaskHistoryContent(history, onUndo = { vm.undoFromHistory(history) })
         }

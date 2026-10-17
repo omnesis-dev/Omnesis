@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -35,7 +36,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -48,17 +48,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.omnesis.android.designsystem.components.OmSpinner
-import dev.omnesis.android.designsystem.theme.OmRadius
+import dev.omnesis.android.designsystem.components.SourceIcon
+import dev.omnesis.android.designsystem.components.SourceIconModel
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.transport.dto.TaskDocumentDto
 import dev.omnesis.android.transport.dto.TaskEventDto
+import dev.omnesis.android.ui.document.FlatSectionHeader
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -71,9 +79,10 @@ import java.util.Locale
 private enum class PickerTarget { PLAN_DAY, DEADLINE }
 
 /**
- * A task's details, opened by tapping its text: its title, description, when it is planned (a
- * day, a month, someday or not at all) and its deadline, then its history a tap away. Saving
- * sends only what changed, so an edit never overwrites a value it did not show differently.
+ * A task's details, opened by tapping its text, laid flat on the page background: its title,
+ * description, when it is planned (a day, a month, someday or not at all) and its deadline, the
+ * documents it refers to under their sources' icons, then its history a tap away. Saving sends
+ * only what changed, so an edit never overwrites a value it did not show differently.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,6 +92,10 @@ fun TaskEditorContent(
     onSave: (TaskEditorDraft) -> Unit,
     /** Opens the task's history; null (a preview) offers none. */
     onHistory: (() -> Unit)? = null,
+    documents: List<TaskDocumentDto> = emptyList(),
+    /** Resolves a source id to its icon through the source catalog, as the task's row does. */
+    iconFor: (String) -> SourceIconModel = { SourceIconModel() },
+    onOpenDocument: (TaskDocumentDto) -> Unit = {},
 ) {
     val c = OmTheme.colors
     var draft by remember(initial) { mutableStateOf(initial) }
@@ -109,22 +122,22 @@ fun TaskEditorContent(
                 Text("Save", fontWeight = FontWeight.SemiBold)
             }
         }
-        OutlinedTextField(
+        FlatTextField(
             value = draft.title,
             onValueChange = { draft = draft.copy(title = it) },
-            label = { Text("Title") },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(OmRadius.large),
+            placeholder = "Title",
+            textStyle = MaterialTheme.typography.titleMedium.copy(color = c.textPrimary, fontWeight = FontWeight.SemiBold),
         )
-        OutlinedTextField(
+        HorizontalDivider(color = c.borderLight)
+        FlatTextField(
             value = draft.description,
             onValueChange = { draft = draft.copy(description = it) },
-            label = { Text("Details") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
-            shape = RoundedCornerShape(OmRadius.large),
+            placeholder = "Details",
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = c.textSecondary),
+            minLines = 2,
         )
 
-        FieldLabel("When")
+        FlatSectionHeader("Plan")
         Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
             listOf(
                 TaskPlan.NONE to "Anytime",
@@ -147,7 +160,7 @@ fun TaskEditorContent(
             TaskPlan.NONE, TaskPlan.SOMEDAY -> Unit
         }
 
-        FieldLabel("Deadline")
+        FlatSectionHeader("Deadline")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
                 ValueRow(
@@ -159,6 +172,39 @@ fun TaskEditorContent(
             if (draft.deadline != null) {
                 IconButton(onClick = { draft = draft.copy(deadline = null) }) {
                     Icon(Icons.Outlined.Close, contentDescription = "Remove deadline", tint = c.textSecondary)
+                }
+            }
+        }
+        if (documents.isNotEmpty()) {
+            FlatSectionHeader("Documents", trailing = documents.size.toString())
+            Column {
+                documents.forEachIndexed { index, document ->
+                    if (index > 0) HorizontalDivider(color = c.borderLight)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .clickable(role = Role.Button, onClickLabel = "Open document") { onOpenDocument(document) }
+                            .testTag("tasks.editor.document"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SourceIcon(iconFor(document.sourceId), size = 22.dp)
+                        Spacer(Modifier.width(OmSpacing.md))
+                        Text(
+                            document.title.ifBlank { "Untitled document" },
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = c.textPrimary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(
+                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = c.textMuted,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
         }
@@ -181,6 +227,7 @@ fun TaskEditorContent(
                     modifier = Modifier.size(18.dp),
                 )
             }
+            HorizontalDivider(color = c.borderLight)
         }
     }
 
@@ -218,15 +265,32 @@ fun TaskEditorContent(
     }
 }
 
+/**
+ * A text field drawn flat on the page: no box or underline of its own, its placeholder in the
+ * muted colour while it is empty. The rows around it carry the separators.
+ */
 @Composable
-private fun FieldLabel(text: String) {
-    Text(
-        text.uppercase(),
-        fontSize = 11.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.6.sp,
-        color = OmTheme.colors.textMuted,
-        modifier = Modifier.padding(top = OmSpacing.xs),
+private fun FlatTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    textStyle: TextStyle,
+    minLines: Int = 1,
+) {
+    val c = OmTheme.colors
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        textStyle = textStyle,
+        minLines = minLines,
+        cursorBrush = SolidColor(c.accent),
+        modifier = Modifier.fillMaxWidth().padding(vertical = OmSpacing.md).semantics { contentDescription = placeholder },
+        decorationBox = { inner ->
+            Box {
+                if (value.isEmpty()) Text(placeholder, style = textStyle.copy(color = c.textMuted))
+                inner()
+            }
+        },
     )
 }
 
@@ -251,14 +315,11 @@ private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun ValueRow(text: String, onClick: () -> Unit, muted: Boolean = false) {
     val c = OmTheme.colors
-    val shape = RoundedCornerShape(OmRadius.large)
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(shape)
-            .border(1.dp, c.border, shape)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = OmSpacing.md, vertical = 14.dp),
+            .heightIn(min = 48.dp)
+            .clickable(role = Role.Button, onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Outlined.Event, contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(18.dp))
@@ -271,9 +332,8 @@ private fun ValueRow(text: String, onClick: () -> Unit, muted: Boolean = false) 
 private fun MonthStepper(month: String?, onChange: (String) -> Unit) {
     val c = OmTheme.colors
     val current = month?.let { runCatching { YearMonth.parse(it) }.getOrNull() } ?: YearMonth.now()
-    val shape = RoundedCornerShape(OmRadius.large)
     Row(
-        Modifier.fillMaxWidth().clip(shape).border(1.dp, c.border, shape),
+        Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = { onChange(current.minusMonths(1).toString()) }) {

@@ -7736,15 +7736,16 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "315-task-history")
     }
 
-    /// The details sheet a tap on a task's text opens: its fields prefilled
-    /// from a task with a plan and a deadline, its documents, and History.
+    /// The details sheet a tap on a task's text opens: flat on the page
+    /// background, its fields prefilled from a task with a plan and a
+    /// deadline, each document under its source's icon, and History.
     func testTaskEditor() {
         let view = TaskEditorSheet(
             task: PreviewMocks.taskProposal,
             today: "2026-10-14",
             model: .fixture(tasks: [PreviewMocks.taskProposal])
         ) { _ in true }
-            .environment(AppStore.preview())
+            .environment(AppStore.preview(sourceIconByType: ["gmail": PreviewMocks.agentSourceLayoutIcon]))
         snapshot(view, name: "316-task-editor", size: CGSize(width: 393, height: 1100))
     }
 

@@ -354,21 +354,46 @@ class TasksScreenshotTest {
         )
     }
 
+    /** The sheets sit on the page background, as the screen presents them. */
     @Composable
     private fun Sheet(content: @Composable () -> Unit) {
-        Box(Modifier.fillMaxSize().background(OmTheme.colors.bgSecondary)) { content() }
+        Box(Modifier.fillMaxSize().background(OmTheme.colors.bgPrimary)) { content() }
     }
 
-    private val editing = planned.copy(description = "Ask about the Thursday slot.", dueDay = "2026-10-16")
+    private val editing = planned.copy(
+        description = "Ask about the Thursday slot.",
+        dueDay = "2026-10-16",
+        documents = listOf(
+            TaskDocumentDto("d_quote", "Stellar Sound — -12.99 GBP", "bank:current"),
+            TaskDocumentDto("d_reply", "Re: Availability next week", "mail:inbox"),
+            TaskDocumentDto("d_note", "Piano service history", "notes:local"),
+        ),
+    )
 
     @Test
     fun tasks_editor_dark() = capture("tasks_editor_dark", dark = true) {
-        Sheet { TaskEditorContent(TaskEditorDraft.from(editing, today), onCancel = {}, onSave = {}, onHistory = {}) }
+        Sheet {
+            TaskEditorContent(
+                TaskEditorDraft.from(editing, today),
+                onCancel = {},
+                onSave = {},
+                onHistory = {},
+                documents = editing.documents,
+            )
+        }
     }
 
     @Test
     fun tasks_editor_light() = capture("tasks_editor_light", dark = false) {
-        Sheet { TaskEditorContent(TaskEditorDraft.from(editing, today), onCancel = {}, onSave = {}) }
+        Sheet {
+            TaskEditorContent(
+                TaskEditorDraft.from(editing, today),
+                onCancel = {},
+                onSave = {},
+                onHistory = {},
+                documents = editing.documents,
+            )
+        }
     }
 
     @Test
