@@ -10,6 +10,7 @@ import {
   listTemporalAnnotationsAwaitingRefile,
   listUngroundedTemporalAnnotationsForDoc,
 } from "../../enrichment/temporal-annotations/storage.js";
+import { echoKeyError, knowledgeNodeView } from "./node-view.js";
 import { FrontierEditingReceipts } from "./frontier-editing-receipts.js";
 import { assertCurationDeferral } from "./curation-deferral.js";
 import { PersonEditorialReview } from "./person-review.js";
@@ -40,8 +41,8 @@ import type { KnowledgeEngine, KnowledgeFrontierView } from "./engine.js";
 
 const id = z.string().min(1).max(256);
 const versions = z.record(z.string(), z.union([z.string(), z.number().int().nonnegative()]));
-const claimState = z
-  .object({
+const claimState = z.strictObject(
+  {
     id,
     supportLogic: z
       .enum(["all", "any"])
@@ -76,10 +77,11 @@ const claimState = z
       .optional()
       .nullable()
       .describe("Omit to retain the existing bound; null clears it."),
-  })
-  .strict();
-const proposal = z
-  .object({
+  },
+  { error: echoKeyError("claim") },
+);
+const proposal = z.strictObject(
+  {
     id,
     kind: z.enum(["wiki", "root", "loop", "doc_annotation", "person_annotation"]),
     ownerId: id.nullable().optional(),
@@ -111,18 +113,21 @@ const proposal = z
         "Existing root only: name each previously linked readable wiki deliberately omitted, with a local orientation, association, replacement or budget reason. Retained links need no entry. Factual repair does not require dropping independently useful navigation; links never establish facts. Unavailable targets need no removal entry.",
       ),
     metadata: z
-      .object({
-        importance: z.number().min(0).max(1).optional(),
-        volatility: z.number().min(0).max(1).optional(),
-        uncertainty: z.number().min(0).max(1).optional(),
-        activity: z.enum(["active", "quiet", "historical"]).optional(),
-        nextReviewAt: z.number().optional().nullable(),
-        checkpointAt: z.number().optional().nullable(),
-      })
-      .strict()
+      .strictObject(
+        {
+          importance: z.number().min(0).max(1).optional(),
+          volatility: z.number().min(0).max(1).optional(),
+          uncertainty: z.number().min(0).max(1).optional(),
+          activity: z.enum(["active", "quiet", "historical"]).optional(),
+          nextReviewAt: z.number().optional().nullable(),
+          checkpointAt: z.number().optional().nullable(),
+        },
+        { error: echoKeyError("metadata") },
+      )
       .optional(),
-  })
-  .strict();
+  },
+  { error: echoKeyError("node") },
+);
 
 function tool<S extends z.ZodType>(
   name: string,
@@ -345,7 +350,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_fetch",
-      "Read a synthesis node. A complete fetch records exact whole-node and returned claim versions for knowledge_save support; it does not read their original source evidence. Set editing=true only to repair its tagged claims; normal reading strips tags.",
+      "Read a synthesis node. A complete fetch records exact whole-node and returned claim versions for knowledge_save support; it does not read their original source evidence. Set editing=true only to repair its tagged claims; normal reading strips tags. Its metadata and claims hold exactly the fields knowledge_save accepts on node.metadata and node.claims; references, verification and review state are under readOnly and are never sent back.",
       z.object({ id, editing: z.boolean().default(false) }).strict(),
       false,
       (input) => {
@@ -372,7 +377,7 @@ export function buildKnowledgeTools(
           return node;
         })();
         publicationReads.nodeRead(result);
-        return result;
+        return result ? knowledgeNodeView(result) : null;
       },
       (input) => nodeTitle(input.id),
     ),

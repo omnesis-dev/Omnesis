@@ -8,6 +8,7 @@ import {
   decisionPayloadErasureGeneration,
 } from "../decision-payload.js";
 import { brainSourceInclusionSql } from "../source-exclusion.js";
+import { knowledgeNodeView, type KnowledgeNodeView } from "./node-view.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { WIKI_CURATION_TASK } from "./wiki-authoring.js";
 import { knowledgeOrganizationVersion } from "./organization-context.js";
@@ -110,7 +111,7 @@ export interface KnowledgeFrontierView {
       instruction: string;
     };
     candidates?: ReturnType<typeof organizationCandidatesForSource>;
-    node?: ReturnType<KnowledgeService["fetch"]>;
+    node?: KnowledgeNodeView | null;
     orientation?: ReturnType<KnowledgeService["list"]>;
     recoverableNavigation?: RecoverableNavigation;
     review?: boolean;
@@ -203,6 +204,12 @@ export class KnowledgeEngine {
       contentTruncated: source.content.length > cap,
     };
   }
+  /** A stored node as the steward reads it in a frontier offer. */
+  private nodeView(id: string): KnowledgeNodeView | null {
+    const node = this.deps.service.fetch(id, true);
+    return node ? knowledgeNodeView(node) : null;
+  }
+
   private roots(): Set<string> {
     return new Set(
       this.deps.db
@@ -691,7 +698,7 @@ export class KnowledgeEngine {
                 },
                 candidates: organizationCandidatesForSource(this.deps.db, item.nodeId.slice(7)),
               }
-            : { node: this.deps.service.fetch(item.nodeId, true) }),
+            : { node: this.nodeView(item.nodeId) }),
           ...(this.roots().has(item.nodeId)
             ? { orientation: this.orientation(), maintenanceGoal: "root_orientation" as const }
             : {}),

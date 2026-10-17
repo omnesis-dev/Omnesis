@@ -145,12 +145,12 @@ describe("source interpretations", () => {
       claims: [
         {
           id: "legacy",
-          refs: ["source:document"],
           supportLogic: "all",
           validFrom: null,
           validUntil: null,
         },
       ],
+      readOnly: { claims: [{ id: "legacy", refs: ["source:document"] }] },
     };
     const item = { ...source, id: "owner", source: undefined, node };
     const offered = frontier([item]);
@@ -195,16 +195,19 @@ describe("source interpretations", () => {
         markdown: '<claim id="legacy" refs="source:document">Workshop</claim>',
         revision: 1,
         validity: "current",
-        metadata: { importance: 0.5, lastVerifiedAt: 100 },
+        metadata: { importance: 0.5 },
         claims: [
           {
             id: "legacy",
-            refs: ["source:document"],
             supportLogic: "all",
             validFrom: null,
             validUntil: null,
           },
         ],
+        readOnly: {
+          review: { lastVerifiedAt: 100 },
+          claims: [{ id: "legacy", refs: ["source:document"] }],
+        },
       },
     };
     const plan = preserveCurrentOwner(item, ctx, []);
@@ -236,6 +239,7 @@ describe("source interpretations", () => {
         validity: "current",
         claims: [],
         metadata: {},
+        readOnly: { claims: [] },
       },
     };
     expect(preserveCurrentOwner(item, ctx, []).calls[0]?.args).toMatchObject({
@@ -468,6 +472,7 @@ it("inspects the actual library before preserving an empty root orientation", ()
       validity: "current",
       metadata: {},
       claims: [],
+      readOnly: { claims: [] },
     },
   };
   const plan = preserveCurrentOwner(item, ctx, []);
@@ -493,12 +498,12 @@ it("reads every current profile page before an explicitly scheduled person revie
       claims: [
         {
           id: "legacy",
-          refs: ["source:document"],
           supportLogic: "all",
           validFrom: null,
           validUntil: null,
         },
       ],
+      readOnly: { claims: [{ id: "legacy", refs: ["source:document"] }] },
     },
   };
   const offered = frontier([item]);

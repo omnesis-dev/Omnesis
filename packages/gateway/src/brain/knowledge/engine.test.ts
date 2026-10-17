@@ -2795,7 +2795,9 @@ it("keeps untouched eligible claims pending after a partial page save", async ()
   expect(next.done).toBe(false);
   const second = next.items.find((item) => item.id === "partial")!;
   expect(second.pendingClaimIds).toEqual(["second"]);
-  expect(second.node!.claims.find((claim) => claim.id === "second")!.verification).toBe("stale");
+  expect(second.node!.readOnly.claims.find((claim) => claim.id === "second")!.verification).toBe(
+    "stale",
+  );
   await engine.saveNode(
     batch.id,
     batch.runId,

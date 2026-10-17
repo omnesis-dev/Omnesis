@@ -19,7 +19,6 @@ import {
 const temporalPage = z.object({ hasMoreInvalidated: z.boolean() }).passthrough();
 const legacyClaim = z.object({
   id: z.string().regex(/^legacy(?:-context-\d+)?$/),
-  refs: z.array(z.string()),
   supportLogic: z.enum(["all", "any"]),
   validFrom: z.number().nullable(),
   validUntil: z.number().nullable(),
@@ -56,7 +55,11 @@ export const preserveCurrentOwner: KnowledgePuppetPolicy["plan"] = (item, _ctx, 
   )
     return { calls: [] };
   const claims = z.array(legacyClaim).safeParse(node.claims);
-  if (!claims.success) return { calls: [] };
+  const refs = z
+    .object({ claims: z.array(z.object({ id: z.string(), refs: z.array(z.string()) })) })
+    .safeParse(node.readOnly);
+  if (!claims.success || !refs.success) return { calls: [] };
+  const claimRefs = new Map(refs.data.claims.map((claim) => [claim.id, claim.refs]));
   const profileCalls: PuppetPlan["calls"] = [];
   if (node.kind === "person_annotation" && item.review === true) {
     const subject = z.object({ subjectId: z.string().min(1) }).parse(node.canonicalFields);
@@ -103,9 +106,11 @@ export const preserveCurrentOwner: KnowledgePuppetPolicy["plan"] = (item, _ctx, 
           expectedRevision: node.revision,
           inputVersions: item.inputVersions,
           claims: [
-            ...claims.data.map(({ refs, ...state }) => ({
+            ...claims.data.map((state) => ({
               ...state,
-              relations: Object.fromEntries(refs.map((ref) => [ref, "context"])),
+              relations: Object.fromEntries(
+                (claimRefs.get(state.id) ?? []).map((ref) => [ref, "context"]),
+              ),
             })),
             ...covered.addedClaims,
           ],
