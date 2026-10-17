@@ -2304,7 +2304,41 @@ describe("knowledge coordinator", () => {
     await engine.tick();
     expect(batchFor("overdue")).toBeUndefined();
     expect(getKnowledgeNode(db, "overdue")!.metadata.lastVerifiedAt).toBe(verification);
-    now += Math.max(60_000, settings.knowledge.soonDelayMs);
+    const retry = Math.max(60_000, settings.knowledge.soonDelayMs);
+    now += retry;
+    await engine.tick();
+    const second = batchFor("overdue");
+    expect(second).toBeDefined();
+    const again = (await engine.next(second.id, second.runId)).items.find(
+      (item) => item.id === "overdue",
+    )!;
+    await engine.saveNode(
+      second.id,
+      second.runId,
+      again.id,
+      again.inputFingerprint,
+      {
+        id: "overdue",
+        kind: "wiki",
+        title: "Overdue context",
+        markdown,
+        expectedRevision: again.node!.revision,
+        inputVersions: { "source:input": "v1" },
+      },
+      again.pendingClaimIds,
+      {
+        batchId: second.id,
+        runId: second.runId,
+        placementLibrary: { collection: "wiki", revision: 0 },
+      },
+      { status: "standalone", reason: "Self-contained workshop reference." },
+    );
+    expect((await engine.next(second.id, second.runId)).done).toBe(true);
+    // A second unverified review waits twice as long before the next attempt.
+    now += retry;
+    await engine.tick();
+    expect(batchFor("overdue")).toBeUndefined();
+    now += retry;
     await engine.tick();
     expect(batchFor("overdue")).toBeDefined();
   });
