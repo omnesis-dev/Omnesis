@@ -636,6 +636,76 @@ describe("annotation-only atomic assessment", () => {
     });
     expect(stubborn.prompts).toHaveLength(2);
   });
+  describe("a supported verdict without an authorized witness", () => {
+    const withAssertion = (change: { verdict?: string; evidenceQuotes: string[] }) => {
+      const value = JSON.parse(reply) as { assertions: Array<Record<string, unknown>> };
+      Object.assign(value.assertions[0]!, change);
+      return JSON.stringify(value);
+    };
+    const invented = withAssertion({ evidenceQuotes: ["the bank confirmed the transfer"] });
+    const scripted = (...replies: string[]) => {
+      const prompts: string[] = [];
+      const completer: EntailmentCompleter = {
+        modelId: "fake-judge",
+        // eslint-disable-next-line @typescript-eslint/require-await
+        complete: async (prompt) => {
+          prompts.push(prompt);
+          return { text: replies.shift() ?? invented, usage: null };
+        },
+        dispose: () => {},
+      };
+      return { completer, prompts };
+    };
+
+    test("gets one repair call, and an exact quote then verifies", async () => {
+      const { completer, prompts } = scripted(invented, reply);
+      expect((await judge(completer).verify(input)).label).toBe("entailment");
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain("not exact authorized witnesses");
+      expect(prompts[1]).not.toContain("the bank confirmed the transfer");
+      expect(prompts[1]!.endsWith(annotationEntailmentPrompt(input))).toBe(true);
+    });
+
+    test("a missing quote gets the same repair", async () => {
+      const { completer, prompts } = scripted(withAssertion({ evidenceQuotes: [] }), reply);
+      expect((await judge(completer).verify(input)).label).toBe("entailment");
+      expect(prompts[1]).toContain("not exact authorized witnesses");
+    });
+
+    test("a repair that finds no witness is a neutral verdict", async () => {
+      const { completer, prompts } = scripted(
+        invented,
+        withAssertion({ verdict: "unsupported", evidenceQuotes: [] }),
+      );
+      expect((await judge(completer).verify(input)).label).toBe("neutral");
+      expect(prompts).toHaveLength(2);
+    });
+
+    test("a repair that still quotes outside the witnesses stays unverified", async () => {
+      const { completer, prompts } = scripted(invented, invented, reply);
+      await expect(judge(completer).verify(input)).rejects.toMatchObject({
+        name: "AnnotationAssessmentError",
+        annotationFailure: "witness_outside_authority",
+        witnessMiss: "absent",
+      });
+      expect(prompts).toHaveLength(2);
+    });
+
+    test("one repair is the whole budget, whichever failure came first", async () => {
+      const partial = JSON.parse(invented) as {
+        assertions: Array<{ spans: Array<{ text: string; occurrence: number }> }>;
+      };
+      partial.assertions[0]!.spans = [
+        { text: INPUT.claim.split(" ").slice(0, -1).join(" "), occurrence: 0 },
+      ];
+      const { completer, prompts } = scripted(JSON.stringify(partial), invented, reply);
+      await expect(judge(completer).verify(input)).rejects.toMatchObject({
+        annotationFailure: "witness_outside_authority",
+      });
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain("outside every assertion's spans");
+    });
+  });
   test("MiniCheck refuses unsupported atomic assessment before paid inference", async () => {
     const completer = fakeCompleter("Yes");
     await expect(judge(completer, "minicheck").verify(input)).rejects.toThrow("unavailable");

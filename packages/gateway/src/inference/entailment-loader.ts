@@ -191,6 +191,17 @@ export interface LlmJudgeEntailmentVerifierDeps {
   recordUsage?: (usage: EntailmentUsage) => void;
 }
 
+/** Repair for spans that left claim words uncovered; none when every word is covered. */
+function uncoveredWordsRepair(missing: readonly string[]): string | undefined {
+  return missing.length
+    ? `A prior response left these words of the claim outside every assertion's spans: ${missing.map((word) => JSON.stringify(word)).join(", ")}. Decompose the unchanged claim again so the spans together cover each of them, and reassess every assertion from the unchanged input below; do not preserve any prior verdict.`
+    : undefined;
+}
+
+/** Repair for a supported verdict whose evidence quotes are missing or not authorized witnesses. */
+const WITNESS_REPAIR =
+  "A prior response gave a supported verdict whose evidenceQuotes were missing or were not exact authorized witnesses. For selected_quote frames only selectedQuotes are witnesses; whole_source authorizes its actual source fields; verifiedReferences authorize their text. Surrounding text, titles, metadata, framing and the proposed claim are never witnesses. Reassess every assertion and the placement from the unchanged input below: quote only exact substrings of authorized witnesses, character for character, and return unsupported wherever no authorized witness states it. Do not preserve any prior verdict.";
+
 /**
  * EntailCapability over a text completer: render the configured prompt style,
  * parse the answer defensively, report usage. Throws on an unparseable
@@ -275,18 +286,21 @@ export class LlmJudgeEntailmentVerifier implements EntailCapability {
               : parseJudgeLabel(text);
       if (label !== null) return { label, raw: text.trim() };
       if (annotation && "failure" in annotation) {
-        // Atomic annotations get one repair call only when the spans left claim
-        // words uncovered, a gap the engine can name exactly; any other
-        // malformed output stays unverified.
-        const missing =
-          annotation.failure === "coverage" && attempt === 0
-            ? uncoveredClaimWords(text, claim)
-            : [];
-        if (missing.length) {
-          attemptPrompt = [
-            `A prior response left these words of the claim outside every assertion's spans: ${missing.map((word) => JSON.stringify(word)).join(", ")}. Decompose the unchanged claim again so the spans together cover each of them, and reassess every assertion from the unchanged input below; do not preserve any prior verdict.`,
-            prompt,
-          ].join("\n\n");
+        // Atomic annotations get one repair call for a gap the engine can name
+        // exactly: claim words the spans left uncovered, or a supported verdict
+        // whose quotes are not authorized witnesses. The repaired response is
+        // held to the same checks; any other malformed output stays unverified.
+        const repair =
+          attempt !== 0
+            ? undefined
+            : annotation.failure === "coverage"
+              ? uncoveredWordsRepair(uncoveredClaimWords(text, claim))
+              : annotation.failure === "witness_outside_authority" ||
+                  annotation.failure === "positive_witness_missing"
+                ? WITNESS_REPAIR
+                : undefined;
+        if (repair) {
+          attemptPrompt = [repair, prompt].join("\n\n");
           continue;
         }
         throw new AnnotationAssessmentError(
