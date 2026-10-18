@@ -5,15 +5,22 @@
  * Turn a resolved `transcriber` assignment into a concrete capability —
  * the transcription analog of `loadCompletionFromResolved`.
  *
- * Only local Whisper (and the synthetic replay transcriber for tests) are
- * supported. HTTP and Anthropic assignments resolve to null with a log:
- * transcription is local-only by design (audio is biometric, it never
- * leaves the machine).
+ * Backends:
+ *   - `local`  → in-process whisper.cpp (`smart-whisper`).
+ *   - `http`   → an OpenAI-compatible transcription endpoint declared in
+ *                `inference.backends`, such as a GPU whisper server. The
+ *                inference URL policy keeps it on loopback unless the
+ *                operator allows remote inference.
+ *   - `replay` → the synthetic transcriber for tests.
+ *
+ * The chat-agent backends (Anthropic, Codex, Claude Code) offer no
+ * transcription model and resolve to null with a log.
  */
 
 import { createLogger, assertNever } from "@omnesis/core";
 import { WhisperTranscriber, whisperDepsAvailable } from "./whisper-transcriber.js";
 import { SyntheticTranscriber } from "./synthetic-transcriber.js";
+import { HttpTranscriber } from "./http-transcriber.js";
 import type { ResolvedAssignment, TranscribeCapability } from "@omnesis/core";
 import type {
   WhisperModuleLoader,
@@ -34,6 +41,10 @@ export interface LoadTranscriberDeps {
   spawnWorker?: WhisperWorkerSpawner;
   /** Injectable audio decoder (tests). */
   decodeAudio?: AudioDecoder;
+  /** Resolve the bearer token for an HTTP backend (the registry owns the keys). */
+  getBackendApiKey?: (backendKey: string) => string | undefined;
+  /** Injectable `fetch` for the HTTP backend (tests). */
+  fetchFn?: typeof fetch;
 }
 
 export async function loadTranscriberFromResolved(
@@ -65,21 +76,34 @@ export async function loadTranscriberFromResolved(
     case "replay":
       return new SyntheticTranscriber();
     case "http":
-      log.warn(
-        `HTTP transcriber backends are not supported yet (assignment "${resolved.backendKey}/${resolved.model}") — transcription is local-only.`,
-      );
-      return null;
+      if (!resolved.model) {
+        log.warn(
+          `Transcriber HTTP backend "${resolved.backendKey}" has no model — set one in the assignment.`,
+        );
+        return null;
+      }
+      return new HttpTranscriber({
+        url: resolved.url,
+        apiPathPrefix: resolved.apiPathPrefix,
+        model: resolved.model,
+        apiKey: deps.getBackendApiKey?.(resolved.backendKey),
+        allowRemoteInference: resolved.allowRemoteInference,
+        fetchFn: deps.fetchFn,
+        decodeAudio: deps.decodeAudio,
+      });
     case "anthropic":
-      log.warn("Anthropic does not offer a transcription model — transcription is local-only.");
+      log.warn(
+        "Anthropic does not offer a transcription model — assign a local Whisper model or an HTTP transcription backend.",
+      );
       return null;
     case "codex":
       log.warn(
-        "Codex does not provide an audio-transcription backend — transcription is local-only.",
+        "Codex does not provide an audio-transcription backend — assign a local Whisper model or an HTTP transcription backend.",
       );
       return null;
     case "claude-code":
       log.warn(
-        "Claude Code does not provide an audio-transcription backend — transcription is local-only.",
+        "Claude Code does not provide an audio-transcription backend — assign a local Whisper model or an HTTP transcription backend.",
       );
       return null;
     case "disabled":

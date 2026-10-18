@@ -122,6 +122,8 @@ export {
   fetchWithInferenceUrlPolicy,
 } from "./inference-url-policy.js";
 
+export { fetchAllowingSlowResponse } from "./slow-response-fetch.js";
+
 export type {
   InferenceAddressClass,
   InferenceFetchPolicy,

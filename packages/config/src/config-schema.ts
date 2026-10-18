@@ -3187,6 +3187,9 @@ const inferenceAssignmentsObject = z
     // from `agent`: selecting a reviewer must never change the conversational
     // model assignment, and an omitted reviewer fails closed at the gate.
     "privacy-reviewer": assignmentValue.optional(),
+    // Speech-to-text. A catalog Whisper model id (run in-process through
+    // whisper.cpp), `"<httpBackend>/<model>"` (an OpenAI-compatible
+    // transcription server, such as a GPU whisper server), or `"replay"`.
     transcriber: assignmentValue.optional(),
     // OCR. Besides `"<httpBackend>/<model>"` (a vLLM / llama-server
     // vision model) and `"replay"`, accepts the built-in runtimes

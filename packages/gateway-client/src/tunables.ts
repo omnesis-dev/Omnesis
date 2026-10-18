@@ -32,6 +32,14 @@ export const DEFAULT_WS_HEARTBEAT_TIMEOUT_MS = 90_000;
 export const OCR_RESPONSE_GRACE_MS = 15_000;
 
 /**
+ * How long past the gateway's longest transcription (`MAX_TRANSCRIPTION_MS`)
+ * the client keeps waiting for a transcript. The gateway transcribes one
+ * recording at a time, so the margin also covers a request waiting behind
+ * another; a request still unanswered after it is retried on a later sync.
+ */
+export const TRANSCRIBE_RESPONSE_GRACE_MS = 5 * 60_000;
+
+/**
  * Pause new OCR requests once they keep reaching the deadline, so a page full
  * of attachments the backend cannot read in time stops occupying it while
  * primary source documents continue to drain.

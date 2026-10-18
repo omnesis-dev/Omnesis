@@ -82,8 +82,12 @@ export interface TranscriptionResult {
 export interface TranscribeCapability {
   readonly name: string;
   readonly modelId: string;
-  /** Known vocabulary adapter runtime; absent means hints are unsupported. */
-  readonly vocabularyRuntime?: "smart-whisper";
+  /**
+   * Known vocabulary adapter runtime; absent means hints are unsupported.
+   * `smart-whisper` is the in-process whisper.cpp binding; `openai-prompt` is
+   * the `prompt` field of an OpenAI-compatible transcription endpoint.
+   */
+  readonly vocabularyRuntime?: "smart-whisper" | "openai-prompt";
   transcribe(
     audio: Uint8Array,
     mimeType: string,
@@ -100,6 +104,8 @@ export interface TranscribeCapability {
       vocabulary?: import("../transcription.js").TranscriptionVocabulary;
       /** Conservative hint token budget, capped by the recognizer adapter. */
       maxPromptTokens?: number;
+      /** Aborted when nobody is waiting for the transcript any more. */
+      signal?: AbortSignal;
     },
   ): Promise<TranscriptionResult>;
   dispose(): Promise<void>;

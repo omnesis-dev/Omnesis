@@ -620,7 +620,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             setting is off also asks for confirmation before saving the assignment. The permission
             applies to all configured remote inference backends on this gateway. Depending on their
             roles, they receive messages, conversation context, relevant Omnesis data, tool results,
-            document chunks, search queries, or images.
+            document chunks, search queries, images, or recorded audio.
           </p>
         </div>
         <p>
@@ -705,12 +705,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           builds in bounded background batches; transcription does not wait for a full build. When
           an extraction update requires a rebuild, the gateway temporarily supplies no hints while
           it clears the old dictionary, then repopulates it incrementally. Evidence and spelling
-          refreshes enroll bounded pages without clearing the available dictionary. Gateway Whisper
-          uses these hints locally. Paired mobile apps with bulk corpus read access can also fetch a
-          small dictionary for on-device speech recognition, independently of the gateway dictation
-          setting. Apps keep hints in memory, refresh due hints in the background on foreground or
-          status activity after 30 minutes, and stop using them after 24 hours without a successful
-          refresh. Recording never waits for a dictionary request. Setting the flag to
+          refreshes enroll bounded pages without clearing the available dictionary. The gateway's
+          local Whisper model uses these hints, and so does an HTTP transcription backend on the
+          gateway's own machine; a transcription backend on another machine never receives them.
+          Paired mobile apps with bulk corpus read access can also fetch a small dictionary for
+          on-device speech recognition, independently of the gateway dictation setting. Apps keep
+          hints in memory, refresh due hints in the background on foreground or status activity
+          after 30 minutes, and stop using them after 24 hours without a successful refresh.
+          Recording never waits for a dictionary request. Setting the flag to
           <code>false</code> stops vocabulary computation and hint lookup; connected apps clear
           cached hints when they observe the change. Pairing changes also clear the cache. Switching
           the flag back on resumes the backlog. Vocabulary entries may remain after their source
@@ -720,7 +722,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           The local engine depends on the role. The <code>embedder</code> runs a GGUF model in the
           gateway through node-llama-cpp, on the GPU through Metal on Apple Silicon. The
           <code>transcriber</code> runs whisper.cpp in a separate process, so a crash in the native
-          code cannot take the gateway down. The <code>ocr</code> role has three local runtimes:
+          code cannot take the gateway down; it uses the GPU through Metal on Apple Silicon and the
+          CPU elsewhere. The <code>ocr</code> role has three local runtimes:
           <code>apple-vision</code> (macOS, with the Swift toolchain installed),
           <code>tesseract</code> (with the <code>tesseract</code> binary installed), and
           <code>gguf</code>, a llama.cpp vision model you supply, run through
@@ -733,6 +736,40 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           GGUF model; to keep it on your machine, point it at a local OpenAI-compatible server such
           as Ollama, llama-server or vLLM.
         </p>
+        <p>
+          To transcribe on an NVIDIA or other GPU, run an OpenAI-compatible transcription server on
+          it, such as whisper.cpp's <code>whisper-server</code> built with CUDA or Vulkan, or vLLM
+          serving a Whisper model. Add it as a backend and assign the <code>transcriber</code> role
+          to <code>&lt;backend&gt;/&lt;model&gt;</code>. The gateway decodes each recording and
+          sends it to the server's <code>/v1/audio/transcriptions</code> endpoint as a 16 kHz WAV
+          file. A server on another machine needs remote inference enabled. Whichever engine runs
+          it, one recording gets up to 30 minutes, which a long recording on a CPU can need, and the
+          gateway stops the work when the collector that asked stops waiting.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >whisper-server -m ggml-large-v3-turbo.bin --port 8003 --inference-path
+                /v1/audio/transcriptions</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis backend add whisper-gpu http://127.0.0.1:8003</span>
+            </p>
+            <p class="tight t-ok">✔ Backend whisper-gpu added (http://127.0.0.1:8003)</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis model assign transcriber whisper-gpu/whisper-large-v3-turbo</span
+              >
+            </p>
+            <p class="tight t-ok">✔ Assigned transcriber = whisper-gpu/whisper-large-v3-turbo</p>
+          </div>
+        </div>
         <p>
           <code>omnesis model assign</code> covers every role, so the terminal and the portal's
           <strong>Settings → Models</strong> tab configure the same set. Assigning

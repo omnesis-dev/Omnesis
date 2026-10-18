@@ -43,6 +43,7 @@ import {
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
+import { computeTranscriptionTimeoutMs } from "./deadline.js";
 import type { TranscribeCapability, TranscriptionResult } from "@omnesis/core";
 
 const log = createLogger("gateway:transcribe:whisper");
@@ -54,35 +55,6 @@ const DEFAULT_OFFLOAD_SECONDS = 300;
 
 /** Sample rate of the decoded PCM (see `decodeToPcm16kMono`); samples ÷ rate = seconds. */
 const PCM_SAMPLE_RATE = 16_000;
-
-/**
- * Per-request wall-clock budget, derived from the clip's actual duration rather
- * than a flat number. It is `LOAD_BUDGET + MS_PER_AUDIO_SEC × durationSec`,
- * floored for tiny clips and ceiled so a truly hung native call (the segfault
- * sibling: it doesn't crash, it just never returns) is still killed + respawned
- * rather than wedging the serialized queue.
- *
- * A flat budget was wrong in two ways: it didn't account for the ~50s cold
- * reload after idle-offload, and it didn't scale with length — so a long voice
- * note on CPU (no GPU on this class of host) blew the budget mid-inference and
- * was dropped. Deriving from duration makes it correct on a fast GPU and a slow
- * CPU alike. `MS_PER_AUDIO_SEC` is a generous multiple of whisper.cpp's CPU
- * throughput (~sub-realtime warm), so it's a true hang-catcher, not a perf gate.
- */
-const WHISPER_LOAD_BUDGET_MS = 90_000;
-const WHISPER_MS_PER_AUDIO_SEC = 3_000;
-const WHISPER_MIN_TIMEOUT_MS = 120_000;
-const WHISPER_MAX_TIMEOUT_MS = 1_800_000;
-
-/**
- * Compute the per-request timeout (ms) for a clip of `durationSec` seconds,
- * raised to a caller's `minTimeoutMs`, within the same ceiling.
- */
-export function computeWhisperTimeoutMs(durationSec: number, minTimeoutMs = 0): number {
-  const budget =
-    WHISPER_LOAD_BUDGET_MS + Math.ceil(Math.max(durationSec, 0) * WHISPER_MS_PER_AUDIO_SEC);
-  return Math.min(Math.max(budget, WHISPER_MIN_TIMEOUT_MS, minTimeoutMs), WHISPER_MAX_TIMEOUT_MS);
-}
 
 /** A spawned worker process — minimal surface the supervisor drives. */
 export interface WhisperWorkerProcess {
@@ -342,7 +314,7 @@ export class WhisperTranscriber implements TranscribeCapability {
     // killed mid-transcribe — raised to the caller's `minTimeoutMs`.
     const timeoutMs =
       this.requestTimeoutMs ??
-      computeWhisperTimeoutMs(pcm.length / PCM_SAMPLE_RATE, opts?.minTimeoutMs);
+      computeTranscriptionTimeoutMs(pcm.length / PCM_SAMPLE_RATE, opts?.minTimeoutMs);
     return new Promise<TranscriptionResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         // A hung whisper.cpp call: reject this request, kill the worker (which

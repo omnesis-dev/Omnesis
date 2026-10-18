@@ -31,6 +31,7 @@
     "bonjour-service": "^1.4.4",
     "libphonenumber-js": "^1.13.13",
     "turndown": "^7",
+    "undici": "^8.10.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {

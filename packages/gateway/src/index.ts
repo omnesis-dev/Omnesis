@@ -1767,22 +1767,24 @@ const tlsLifecycle = new TlsLifecycleService({
   onRotation: (fingerprintSha256) => advertiser?.setFingerprint(fingerprintSha256),
 });
 
-// Speech-to-text service. Lazily loads the assigned Whisper model on first use
-// and self-heals when the assignment changes. Resolves through the same
-// InferenceRegistry as every other capability.
+// Speech-to-text service. Lazily loads the assigned transcriber (a local
+// Whisper model or an HTTP transcription backend) on first use and self-heals
+// when the assignment changes. Resolves through the same InferenceRegistry as
+// every other capability; HTTP backends get their bearer token from it.
 const transcriptionVocabularyService = new TranscriptionVocabularyService({
   ioGate,
   getSettings: () => resolveVocabularySettings(configStore.get()),
 });
 const transcribeService = new TranscribeService({
   resolveAssignment: () => inferenceRegistry.resolve("transcriber"),
+  deps: { getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key) },
   vocabulary: {
     enabled: () => transcriptionVocabularyService.enabled(),
     getDictionary: (context) => transcriptionVocabularyService.getDictionary(context),
     maxPromptTokens: () => transcriptionVocabularyService.maxPromptTokens(),
   },
 });
-// Start the Whisper runtime probe now, off the boot path, so the first
+// Start the local Whisper runtime probe now, off the boot path, so the first
 // `/status` poll already knows whether dictation can run.
 transcribeService.readiness();
 

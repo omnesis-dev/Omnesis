@@ -9,6 +9,16 @@ const vocabulary = (...entries: [string, number][]) => ({
 });
 
 describe("adaptTranscriptionVocabulary", () => {
+  test("bounds an OpenAI-compatible prompt like the local binding and ignores unknown runtimes", () => {
+    const ranked = vocabulary(["Northstar", 10], ["QX", 2]);
+    expect(
+      adaptTranscriptionVocabulary(ranked, { runtime: "openai-prompt", maxPromptTokens: 13 }),
+    ).toEqual(
+      adaptTranscriptionVocabulary(ranked, { runtime: "smart-whisper", maxPromptTokens: 13 }),
+    );
+    expect(adaptTranscriptionVocabulary(ranked, { runtime: "cloud-recognizer" })).toBeUndefined();
+  });
+
   test("selects the highest ranked phrases without truncating a phrase", () => {
     const result = adaptTranscriptionVocabulary(
       vocabulary(["lower", 1], ["Northstar", 10], ["too long to fit", 5], ["QX", 2]),

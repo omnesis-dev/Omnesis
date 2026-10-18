@@ -89,6 +89,19 @@ describe("POST /inference/transcribe", () => {
     expect(body.available).toBe(false);
   });
 
+  test("skips the transcription when the client has stopped waiting", async () => {
+    const gone = new AbortController();
+    gone.abort();
+    const res = await app.request("/inference/transcribe", {
+      method: "POST",
+      headers: { authorization: `Bearer ${WRITE_TOKEN}`, "content-type": "audio/ogg" },
+      body: enc("nobody is listening") as unknown as BodyInit,
+      signal: gone.signal,
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { available: boolean }).available).toBe(false);
+  });
+
   test("rejects an empty body with 400", async () => {
     const res = await post(new Uint8Array(0));
     expect(res.status).toBe(400);

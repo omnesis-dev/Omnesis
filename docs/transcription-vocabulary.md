@@ -117,9 +117,13 @@ support rather than lifetime count for the same reason.
 
 The recognizer adapter packs complete terms and phrases, removes redundant
 components, and respects its declared runtime budget. Budget is a ceiling, not a
-target that must be filled. The local Whisper binding uses UTF-8 bytes as a
-conservative token-count bound because it does not expose its tokenizer. Dictionary
-recall and packed-prompt recall are therefore separate measurements.
+target that must be filled. Two runtimes take hints: the local Whisper binding's
+initial prompt and the `prompt` field of an OpenAI-compatible transcription
+backend. Neither exposes its tokenizer, so both use UTF-8 bytes as a conservative
+token-count bound, within Whisper's 224-token prompt limit. An HTTP backend
+receives hints only when it is on loopback; a backend on another machine
+transcribes without them. Dictionary recall and packed-prompt recall are
+therefore separate measurements.
 
 Writer work commits at most 32 term contributions per transaction and can yield
 between transactions. Profile opportunities are bounded by the document's capped

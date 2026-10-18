@@ -3,7 +3,12 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { createLogger, toErrorMessage } from "@omnesis/core";
+import {
+  MAX_TRANSCRIPTION_MS,
+  createLogger,
+  fetchAllowingSlowResponse,
+  toErrorMessage,
+} from "@omnesis/core";
 import { SyncError } from "@omnesis/types";
 import { DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS, type OmnesisConfig } from "@omnesis/config";
 import {
@@ -11,6 +16,7 @@ import {
   DEFAULT_OCR_TIMEOUT_COOLDOWN_MS,
   OCR_RESPONSE_GRACE_MS,
   OCR_TIMEOUTS_BEFORE_COOLDOWN,
+  TRANSCRIBE_RESPONSE_GRACE_MS,
   DEFAULT_UPSERT_CHUNK,
   DEFAULT_UPSERT_CHUNK_BYTES,
 } from "./tunables.js";
@@ -126,6 +132,7 @@ export class HttpGatewayClient implements GatewayClient {
   private ocrRequestTimeoutMs: number;
   private readonly ocrTimeoutCooldownMs: number;
   private readonly ocrResponseGraceMs: number;
+  private readonly transcribeRequestTimeoutMs: number;
   private readonly sourceWriteEpoch = new AsyncLocalStorage<{
     sourceId: SourceId;
     writeEpoch: number;
@@ -143,6 +150,8 @@ export class HttpGatewayClient implements GatewayClient {
       ocrTimeoutCooldownMs?: number;
       /** How long past the OCR deadline to wait for the gateway's answer. */
       ocrResponseGraceMs?: number;
+      /** How long to wait for a transcript before giving the request up. */
+      transcribeRequestTimeoutMs?: number;
       /** Revalidate peer compatibility before each request, including retries. */
       beforeRequest?: () => Promise<void>;
     },
@@ -157,6 +166,10 @@ export class HttpGatewayClient implements GatewayClient {
       opts?.ocrTimeoutCooldownMs ?? DEFAULT_OCR_TIMEOUT_COOLDOWN_MS,
     );
     this.ocrResponseGraceMs = opts?.ocrResponseGraceMs ?? OCR_RESPONSE_GRACE_MS;
+    this.transcribeRequestTimeoutMs = validateTimerMs(
+      "transcribeRequestTimeoutMs",
+      opts?.transcribeRequestTimeoutMs ?? MAX_TRANSCRIPTION_MS + TRANSCRIBE_RESPONSE_GRACE_MS,
+    );
   }
 
   private async request(path: string, options: RequestInit = {}) {
@@ -338,7 +351,10 @@ export class HttpGatewayClient implements GatewayClient {
     // doesn't silently drop audio attachments from a durable index.
     //
     // Sends raw bytes (no base64 inflation) with the audio MIME type as
-    // Content-Type; the gateway holds them only for the request.
+    // Content-Type; the gateway holds them only for the request. The gateway
+    // owns the transcription deadline, which for a long recording on a slow
+    // host runs to many minutes; the client waits past it and only cuts the
+    // request off itself when the gateway does not answer at all.
     const qs = opts?.language ? `?language=${encodeURIComponent(opts.language)}` : "";
     let contextHeader = opts?.context
       ? encodeURIComponent(JSON.stringify(opts.context))
@@ -347,28 +363,49 @@ export class HttpGatewayClient implements GatewayClient {
       // Optional context must not prevent an otherwise valid audio upload.
       contextHeader = undefined;
     }
-    const res = await this.inferenceFetch(
-      "/inference/transcribe",
-      qs,
-      audio,
-      mimeType,
-      "transcribe",
-      undefined,
-      contextHeader ? { "x-omnesis-transcription-context": contextHeader } : undefined,
-    );
-    if (res === null) return null;
-    const data = (await res.json()) as {
-      available?: boolean;
-      text?: unknown;
-      language?: unknown;
-      durationSec?: unknown;
-    };
-    if (data.available === false || typeof data.text !== "string") return null;
-    return {
-      text: data.text,
-      language: typeof data.language === "string" ? data.language : undefined,
-      durationSec: typeof data.durationSec === "number" ? data.durationSec : undefined,
-    };
+    const controller = new AbortController();
+    let timedOut = false;
+    const deadlineMs = this.transcribeRequestTimeoutMs;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, deadlineMs);
+    timeout.unref();
+    try {
+      const res = await this.inferenceFetch(
+        "/inference/transcribe",
+        qs,
+        audio,
+        mimeType,
+        "transcribe",
+        controller.signal,
+        contextHeader ? { "x-omnesis-transcription-context": contextHeader } : undefined,
+      );
+      if (res === null) return null;
+      const data = (await res.json()) as {
+        available?: boolean;
+        text?: unknown;
+        language?: unknown;
+        durationSec?: unknown;
+      };
+      if (data.available === false || typeof data.text !== "string") return null;
+      return {
+        text: data.text,
+        language: typeof data.language === "string" ? data.language : undefined,
+        durationSec: typeof data.durationSec === "number" ? data.durationSec : undefined,
+      };
+    } catch (err) {
+      if (timedOut) {
+        throw new SyncError(
+          "transient",
+          `transcribe request got no answer within ${deadlineMs}ms`,
+          { cause: err },
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /**
@@ -503,7 +540,7 @@ export class HttpGatewayClient implements GatewayClient {
     let res: Response;
     try {
       await this.beforeRequest?.();
-      res = await fetch(`${this.baseUrl}${path}${qs}`, {
+      res = await fetchAllowingSlowResponse(`${this.baseUrl}${path}${qs}`, {
         method: "POST",
         headers: {
           ...extraHeaders,

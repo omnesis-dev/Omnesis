@@ -809,6 +809,7 @@ export type {
   TranscriptionVocabulary,
   TranscriptionVocabularyEntry,
 } from "./transcription.js";
+export { MAX_TRANSCRIPTION_MS } from "./transcription.js";
 
 export type { OcrFn, OcrResult } from "./ocr.js";
 
@@ -1111,6 +1112,7 @@ export {
   assertInferenceUrlAllowed,
   classifyInferenceIp,
   fetchWithInferenceUrlPolicy,
+  fetchAllowingSlowResponse,
   BACKGROUND_RATE_LIMIT_PATIENCE,
   rateLimitRetryDelayMs,
   retryRateLimitedRequest,

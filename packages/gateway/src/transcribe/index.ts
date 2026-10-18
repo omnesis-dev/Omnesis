@@ -6,6 +6,7 @@
  *
  *   - `TranscribeService`    — capability lifecycle + serialized inference.
  *   - `WhisperTranscriber`   — local whisper.cpp backend (smart-whisper).
+ *   - `HttpTranscriber`      — OpenAI-compatible transcription server backend.
  *   - `SyntheticTranscriber` — deterministic replay backend for tests.
  *   - `loadTranscriberFromResolved` — resolved assignment → capability.
  *   - `decodeToPcm16kMono`   — ffmpeg-static audio → PCM decode.
@@ -29,6 +30,8 @@ export type {
   AudioDecoder,
   WhisperTranscriberOptions,
 } from "./whisper-transcriber.js";
+export { HttpTranscriber } from "./http-transcriber.js";
+export type { HttpTranscriberOptions } from "./http-transcriber.js";
 export { SyntheticTranscriber } from "./synthetic-transcriber.js";
 export { loadTranscriberFromResolved } from "./loader.js";
 export type { LoadTranscriberDeps } from "./loader.js";

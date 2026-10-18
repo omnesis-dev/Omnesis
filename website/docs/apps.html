@@ -854,9 +854,9 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         <p>
           The iOS and Android apps turn what you say to Tell Omnesis into text with the phone's own
           recognizer. With gateway dictation on, they also send the recording with the note, and
-          your gateway's <strong>Transcriber</strong> model — the same local Whisper model that
-          transcribes voice notes from your sources — transcribes it again and replaces the phone's
-          text with its own. It applies to Tell Omnesis only:
+          your gateway's <strong>Transcriber</strong> — the same model that transcribes voice notes
+          from your sources — transcribes it again and replaces the phone's text with its own. It
+          applies to Tell Omnesis only:
         </p>
         <ul>
           <li>
@@ -898,12 +898,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
 
         <p>
           When <code>inference.transcriptionVocabulary.enabled</code> is explicitly set to
-          <code>true</code>, personal vocabulary hints can improve both gateway Whisper and the
-          apps' on-device recognition, including voice questions to the agent and notes captured
-          with gateway dictation off. This setting is disabled by default. The apps fetch hints in
-          the background, keep them in memory for offline use for up to 24 hours, and refresh them
-          opportunistically after 30 minutes when returning to the foreground or refreshing gateway
-          status. Starting a recording never waits for hints. See
+          <code>true</code>, personal vocabulary hints can improve both the gateway's transcriber
+          and the apps' on-device recognition, including voice questions to the agent and notes
+          captured with gateway dictation off. This setting is disabled by default. The apps fetch
+          hints in the background, keep them in memory for offline use for up to 24 hours, and
+          refresh them opportunistically after 30 minutes when returning to the foreground or
+          refreshing gateway status. Starting a recording never waits for hints. See
           <a href="/docs/operating">Operating Omnesis</a> for vocabulary behavior.
         </p>
         <p>

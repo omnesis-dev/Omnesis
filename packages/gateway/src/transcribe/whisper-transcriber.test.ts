@@ -5,7 +5,6 @@ import { describe, test, expect, vi } from "vitest";
 import {
   WhisperTranscriber,
   whisperDepsAvailable,
-  computeWhisperTimeoutMs,
   type WhisperWorkerProcess,
   type WhisperWorkerSpawner,
 } from "./whisper-transcriber.js";
@@ -247,30 +246,6 @@ describe("whisperDepsAvailable", () => {
         throw new Error("Cannot find module 'smart-whisper'");
       }),
     ).toBe(false);
-  });
-});
-
-describe("computeWhisperTimeoutMs", () => {
-  test("floors tiny / zero / negative clips at the minimum", () => {
-    expect(computeWhisperTimeoutMs(0)).toBe(120_000);
-    expect(computeWhisperTimeoutMs(1)).toBe(120_000); // 90_000 + 3_000 < 120_000 floor
-    expect(computeWhisperTimeoutMs(-5)).toBe(120_000);
-  });
-
-  test("scales above the floor with clip duration", () => {
-    // A 112s note (the kind that died at a flat 120s): 90_000 + 112*3_000 = 426_000.
-    expect(computeWhisperTimeoutMs(112)).toBe(426_000);
-    expect(computeWhisperTimeoutMs(300)).toBe(990_000);
-  });
-
-  test("ceils absurd durations at the hang-catcher maximum", () => {
-    expect(computeWhisperTimeoutMs(100_000)).toBe(1_800_000);
-  });
-
-  test("a caller's minimum raises the deadline, within the same ceiling", () => {
-    expect(computeWhisperTimeoutMs(13, 300_000)).toBe(300_000);
-    expect(computeWhisperTimeoutMs(300, 300_000)).toBe(990_000);
-    expect(computeWhisperTimeoutMs(13, 10 * 60 * 60_000)).toBe(1_800_000);
   });
 });
 
