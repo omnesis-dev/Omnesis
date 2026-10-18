@@ -22,6 +22,7 @@
 import {
   createLogger,
   InferenceUrlPolicyError,
+  normalizeTimeZone,
   type AgentEvent,
   type AgentMessageEndEvent,
   type AgentTerminalFailure,
@@ -33,6 +34,7 @@ import {
 
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE, OUTPUT_TRUNCATED_MESSAGE } from "./turn-outcome.js";
 import { FINALIZATION_DRAFT_LIMIT, type TurnFinalizerFactory } from "./finalization.js";
+import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import type {
   AssistantPart,
   ChatBackend,
@@ -46,6 +48,24 @@ import type {
 } from "./backend.js";
 
 const log = createLogger("agent:session");
+
+/**
+ * A session with a caller zone shows the model each instant's local time in
+ * tool output (`serializeToolResultForModel`). Whatever the model copies from
+ * that output into a tool call — a quote, a SQL literal, a note — reaches the
+ * tool without those annotations, as the source stored it.
+ */
+function withStoredTimesInArguments(handle: ToolHandle): ToolHandle {
+  const wrapped: ToolHandle = Object.assign(
+    Object.create(Object.getPrototypeOf(handle) as object) as ToolHandle,
+    handle,
+    {
+      invoke: (args: unknown, ctx: Parameters<ToolHandle["invoke"]>[1]) =>
+        handle.invoke(stripLocalTimeAnnotationsDeep(args), ctx),
+    },
+  );
+  return wrapped;
+}
 
 /**
  * Who stopped a turn. `user` is the person pressing Stop; `system` is
@@ -166,7 +186,9 @@ export class AgentSession {
     this.sessionId = opts.sessionId;
     this.backend = opts.backend;
     this.finalizer = opts.finalizer;
-    this.tools = opts.tools;
+    this.tools = normalizeTimeZone(opts.timeZone)
+      ? opts.tools.map(withStoredTimesInArguments)
+      : opts.tools;
     this.systemPrompt = opts.systemPrompt;
     this.idGen = opts.idGen ?? defaultIdGen;
     this.zone = opts.timeZone;

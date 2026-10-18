@@ -30,7 +30,11 @@ export {
   type AgentTurnOutcome,
 } from "./turn-outcome.js";
 
-export { serializeToolResultForModel } from "./tool-result-text.js";
+export {
+  serializeToolResultForModel,
+  type ToolResultSerializationOptions,
+} from "./tool-result-text.js";
+export { annotateLocalTimes } from "./local-times.js";
 
 export {
   DEFAULT_MAX_TOOL_ITERATIONS,

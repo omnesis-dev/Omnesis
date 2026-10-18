@@ -347,6 +347,24 @@ describe("buildSystemPrompt — the caller's time zone", () => {
     expect(morning).not.toContain("22:45");
   });
 
+  // Tool output carries each instant's local time in the caller's zone, so the
+  // prompt points the model at that annotation instead of asking it to convert.
+  test("shows the annotation tools write for the caller's zone", () => {
+    const tokyo = buildSystemPrompt({ now: instant, timeZone: "Asia/Tokyo" });
+    expect(tokyo).toContain(
+      "`2026-08-02T18:40:00Z (03:40 Mon 3 Aug, Asia/Tokyo)` is **03:40** to the user",
+    );
+    expect(tokyo).toContain("never the hour inside the timestamp");
+    const london = buildSystemPrompt({ now: instant, timeZone: "Europe/London" });
+    expect(london).toContain("(19:40 Sun 2 Aug, Europe/London)` is **19:40**");
+  });
+
+  test("asks for conversion when no zone came from the client, since nothing is annotated", () => {
+    const prompt = buildSystemPrompt({ now: instant });
+    expect(prompt).not.toContain("in parentheses after each instant");
+    expect(prompt).toContain("both need converting");
+  });
+
   // `buildSystemPrompt` takes a plain string, and `Intl` throws on a zone it
   // cannot resolve — so the builder normalizes rather than trusting its caller.
   test("survives an unresolvable zone and uses the ordinary fallback", () => {

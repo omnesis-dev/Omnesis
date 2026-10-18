@@ -53,6 +53,7 @@ import {
   type ToolHandle,
   type TurnInput,
 } from "./backend.js";
+import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE } from "./turn-outcome.js";
@@ -904,7 +905,9 @@ class ClaudeCodeTurn {
     const tool = stringField(params, "name") ?? "";
     const meta = asRecord(params?._meta);
     const callId = stringField(meta, "claudecode/toolUseId") ?? `claude_code_${randomUUID()}`;
-    const rawArgs = params?.arguments ?? {};
+    // Validated as the tool will receive them: without the local-time
+    // annotations the model may have copied from tool output.
+    const rawArgs = stripLocalTimeAnnotationsDeep(params?.arguments ?? {});
     if (this.completed) {
       return mcpToolResult({ kind: "error", code: "stale_tool_call", message: "turn has ended" });
     }
@@ -973,7 +976,7 @@ class ClaudeCodeTurn {
     this.queue.push(
       wrapEvent("agent.tool.result", { ...base, result, durationMs: Date.now() - start }),
     );
-    return mcpToolResult(result);
+    return mcpToolResult(result, this.opts.input.timeZone);
   }
 
   onExit(code: number | null, sig: NodeJS.Signals | null): void {
@@ -1429,7 +1432,12 @@ export function convertToolsToMcp(
 /** The turn's user message: the replayed transcript, plus inline images. */
 export function claudeCodeUserContent(input: TurnInput): Array<Record<string, unknown>> {
   return [
-    { type: "text", text: renderTranscriptUserInput(input.history, input.userMessage) },
+    {
+      type: "text",
+      text: renderTranscriptUserInput(input.history, input.userMessage, {
+        timeZone: input.timeZone,
+      }),
+    },
     ...(input.images ?? []).flatMap(({ url }): Array<Record<string, unknown>> => {
       const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
       if (match) {
@@ -1442,9 +1450,9 @@ export function claudeCodeUserContent(input: TurnInput): Array<Record<string, un
   ];
 }
 
-function mcpToolResult(result: ToolResult): Record<string, unknown> {
+function mcpToolResult(result: ToolResult, timeZone?: string): Record<string, unknown> {
   return {
-    content: [{ type: "text", text: serializeToolResultForModel(result) }],
+    content: [{ type: "text", text: serializeToolResultForModel(result, { timeZone }) }],
     isError: toolResultHasErrors(result),
   };
 }

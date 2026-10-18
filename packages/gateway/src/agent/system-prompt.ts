@@ -20,6 +20,7 @@
  */
 
 import {
+  annotateLocalTimes,
   renderCognitionRetrievalGuidance,
   renderReadOnlyRetrievalPlaybook,
   renderRetrievalContext,
@@ -168,6 +169,18 @@ export function rendersTimeline(profile: "interactive" | "answer" | "voice"): bo
 }
 
 /**
+ * Tool output annotates every instant with its wall-clock time in the caller's
+ * zone (see `annotateLocalTimes`), so the model reads the local time rather
+ * than converting it. The example is rendered by the same function, so it
+ * shows exactly what the tools write for this zone.
+ */
+function renderAnnotatedConversion(zone: string): string {
+  const example = annotateLocalTimes("2026-08-02T18:40:00Z", zone);
+  const clock = /\((\d{2}:\d{2}) /u.exec(example)?.[1] ?? "";
+  return `**Every clock time you say is a wall-clock time in \`${zone}\`.** Tools write that time in parentheses after each instant they return: \`${example}\` is **${clock}** to the user. Say the time in the parentheses, never the hour inside the timestamp, which is UTC or whatever offset the data was stored with. An instant (\`…Z\` or \`…+HH:MM\`) that arrives without the parenthesis still needs converting to \`${zone}\` yourself. The two cases below override the parenthesis.`;
+}
+
+/**
  * The "where and when the user is" block — the zone the agent must render
  * every wall-clock time in, plus the rules for the two entry shapes that must
  * not simply be converted.
@@ -199,6 +212,9 @@ export function renderCallerZoneBlock(timeZone?: string, now: Date = new Date())
     day: "numeric",
   });
   const utcOffset = utcOffsetLabel(now, zone);
+  const conversion = callerZone
+    ? renderAnnotatedConversion(zone)
+    : `**Every clock time you say is a wall-clock time in \`${zone}\`.** Tools hand you machine timestamps, and those are almost never already in that form: \`…Z\` and \`…+HH:MM\` are both *instants*, both need converting, and the second one's offset is whatever the data happened to be stored with, not the user's. Repeating the hour you read in a timestamp is a wrong answer, not a formatting slip.`;
   const provenance = callerZone
     ? "Their client reported this zone when the conversation opened — this is where **they** are, not where the gateway sits."
     : "No zone came from their client, so this is the **gateway host's** and may not be theirs. Treat it as a default: if the user says or implies they are somewhere else, believe them over this line.";
@@ -210,13 +226,13 @@ ${provenance}
 - **Time zone**: \`${zone}\` — UTC${utcOffset} on the date below
 - **Their date**: **${todayLocal}**
 
-**Every clock time you say is a wall-clock time in \`${zone}\`.** Tools hand you machine timestamps, and those are almost never already in that form: \`…Z\` and \`…+HH:MM\` are both *instants*, both need converting, and the second one's offset is whatever the data happened to be stored with, not the user's. \`2026-08-02T18:40:00Z\` in a UTC+01:00 zone is **19:40** to the user — repeating the \`18:40\` you read is a wrong answer, not a formatting slip.
+${conversion}
 
 A time written the way a person writes one — "doors at 7:40pm", "14:00 Paris time", a subject line saying "Thursday 9am" — is already a wall clock at the event. Quote it; don't re-derive it.
 
 Two things must NOT simply be converted:
 
-- An entry marked \`allDay\` is a **day**, not a moment. Its \`start\` is a midnight, and converting that into another zone lands on the wrong date. Name the day and give no clock time.
+- An entry marked \`allDay\` is a **day**, not a moment. Its \`start\` is a midnight, and converting that into another zone lands on the wrong date. Name the day and give no clock time, ignoring any local time written after its \`start\`.
 - An entry carrying its **own** \`timeZone\`, different from \`${zone}\`, is happening somewhere else — a flight landing, a call hosted abroad. Give the time on the clock *at that place* and name it ("lands 14:20 local in Tokyo"). Converting a foreign arrival into the user's home zone is the wrong answer even when the arithmetic is right.
 
 Otherwise say the bare time: "19:40", not "18:40 UTC" and not "19:40 BST". Name a zone only for an event in a different one, or when the user is asking about zones.

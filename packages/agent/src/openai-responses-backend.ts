@@ -43,7 +43,10 @@ import {
 } from "@omnesis/core";
 
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
-import { serializeToolResultForModel } from "./tool-result-text.js";
+import {
+  serializeToolResultForModel,
+  type ToolResultSerializationOptions,
+} from "./tool-result-text.js";
 import { isOpenAIApiEndpoint, modelReasoningRequestFields } from "./model-reasoning-wire.js";
 import {
   childEventHooks,
@@ -195,6 +198,7 @@ export class OpenAIResponsesBackend implements ChatBackend {
       input.history,
       input.userMessage,
       input.systemPrompt,
+      { timeZone },
     );
 
     const totalUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
@@ -828,7 +832,7 @@ export class OpenAIResponsesBackend implements ChatBackend {
         nextItems.push({
           type: "function_call_output",
           call_id: r.call.callId,
-          output: serializeToolResultForModel(r.result),
+          output: serializeToolResultForModel(r.result, { timeZone }),
         });
       }
 
@@ -1028,6 +1032,7 @@ export function convertHistoryToResponsesInput(
   history: ReadonlyArray<ChatMessage>,
   userMessage: string,
   systemPrompt: string,
+  serialization: ToolResultSerializationOptions = {},
 ): { instructions: string; input: ResponsesInputItem[] } {
   const items: ResponsesInputItem[] = [];
 
@@ -1041,7 +1046,7 @@ export function convertHistoryToResponsesInput(
           items.push({
             type: "function_call_output",
             call_id: part.toolCallId,
-            output: serializeToolResultForModel(part.result),
+            output: serializeToolResultForModel(part.result, serialization),
           });
         }
       }

@@ -27,6 +27,8 @@
 
 import { normalizeForQuoteMatch } from "@omnesis/core";
 
+import { stripLocalTimeAnnotations } from "../local-times.js";
+
 /** One quote's verification outcome. */
 export interface QuoteVerification {
   /** The quote as the prior agent attributed it (verbatim). */
@@ -48,7 +50,9 @@ export interface QuoteVerificationReport {
 /**
  * Verify that each `quote` appears (per `normalizeForQuoteMatch`) in
  * `documentText`. Empty or whitespace-only quotes are treated as **not**
- * present — a citation must carry actual quoted text to be verifiable.
+ * present — a citation must carry actual quoted text to be verifiable. A
+ * quote copied from model-facing tool output may carry the local-time
+ * annotations that output adds; it also matches with those removed.
  */
 export function verifyQuotes(
   documentText: string,
@@ -57,7 +61,8 @@ export function verifyQuotes(
   const haystack = normalizeForQuoteMatch(documentText);
   const results: QuoteVerification[] = quotes.map((quote) => {
     const needle = normalizeForQuoteMatch(quote);
-    const present = needle.length > 0 && haystack.includes(needle);
+    const stored = normalizeForQuoteMatch(stripLocalTimeAnnotations(quote));
+    const present = needle.length > 0 && (haystack.includes(needle) || haystack.includes(stored));
     return { quote, present };
   });
   const mismatches = results.filter((r) => !r.present).map((r) => r.quote);

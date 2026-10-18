@@ -44,7 +44,10 @@ const log = createLogger("agent:anthropic");
 const UNKNOWN_MODEL_MAX_TOKENS = 4_096;
 export const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 256;
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
-import { serializeToolResultForModel } from "./tool-result-text.js";
+import {
+  serializeToolResultForModel,
+  type ToolResultSerializationOptions,
+} from "./tool-result-text.js";
 import { thinkingBudgetTokens } from "./thinking-budget.js";
 import {
   childEventHooks,
@@ -258,7 +261,7 @@ export class AnthropicBackend implements ChatBackend {
     }));
     const handles = new Map<string, ToolHandle>(input.tools.map((h) => [h.name, h]));
 
-    const messages: MessageParam[] = convertHistoryToAnthropic(input.history);
+    const messages: MessageParam[] = convertHistoryToAnthropic(input.history, { timeZone });
     messages.push({ role: "user", content: input.userMessage });
 
     // Start pessimistic: a stream that never emits `message_delta` (e.g. the
@@ -761,7 +764,7 @@ export class AnthropicBackend implements ChatBackend {
           toolResultBlocks.push({
             type: "tool_result",
             tool_use_id: r.use.id,
-            content: serializeToolResultForModel(r.result),
+            content: serializeToolResultForModel(r.result, { timeZone }),
             is_error: toolResultHasErrors(r.result) ? true : undefined,
           });
         }
@@ -1049,11 +1052,14 @@ export function supportsAdaptiveThinking(model: string): boolean {
   return false;
 }
 
-export function convertHistoryToAnthropic(history: ReadonlyArray<ChatMessage>): MessageParam[] {
+export function convertHistoryToAnthropic(
+  history: ReadonlyArray<ChatMessage>,
+  serialization: ToolResultSerializationOptions = {},
+): MessageParam[] {
   const out: MessageParam[] = [];
   for (const msg of history) {
     if (msg.role === "user") {
-      const content: ContentBlockParam[] = msg.parts.map((p) => convertUserPart(p));
+      const content: ContentBlockParam[] = msg.parts.map((p) => convertUserPart(p, serialization));
       out.push({ role: "user", content });
     } else {
       const content: ContentBlockParam[] = [];
@@ -1071,12 +1077,15 @@ export function convertHistoryToAnthropic(history: ReadonlyArray<ChatMessage>): 
   return out;
 }
 
-function convertUserPart(part: UserPart): ContentBlockParam {
+function convertUserPart(
+  part: UserPart,
+  serialization: ToolResultSerializationOptions,
+): ContentBlockParam {
   if (part.kind === "text") return { type: "text", text: part.text };
   return {
     type: "tool_result",
     tool_use_id: part.toolCallId,
-    content: serializeToolResultForModel(part.result),
+    content: serializeToolResultForModel(part.result, serialization),
     is_error: toolResultHasErrors(part.result) ? true : undefined,
   };
 }

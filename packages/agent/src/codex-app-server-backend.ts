@@ -34,6 +34,7 @@ import {
 
 import { readJsonRpcLines, encodeJsonRpcLine } from "./json-rpc-lines.js";
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
+import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import {
@@ -410,7 +411,12 @@ export class CodexAppServerRuntime {
         {
           threadId,
           input: [
-            { type: "text", text: renderTranscriptUserInput(input.history, input.userMessage) },
+            {
+              type: "text",
+              text: renderTranscriptUserInput(input.history, input.userMessage, {
+                timeZone: input.timeZone,
+              }),
+            },
             ...(input.images ?? []).map(({ url }) => ({ type: "image", url })),
           ],
           approvalPolicy: "never",
@@ -693,7 +699,9 @@ export class CodexAppServerRuntime {
   ): Promise<unknown> {
     const callId = stringField(p, "callId") ?? "codex_tool_call";
     const tool = stringField(p, "tool") ?? "";
-    const rawArgs = p?.arguments ?? {};
+    // Validated as the tool will receive them: without the local-time
+    // annotations the model may have copied from tool output.
+    const rawArgs = stripLocalTimeAnnotationsDeep(p?.arguments ?? {});
     state.toolCalls += 1;
     const handle = state.handles.get(tool);
     const parsedArgs = handle ? handle.schema.safeParse(rawArgs) : null;
@@ -775,7 +783,12 @@ export class CodexAppServerRuntime {
 
     return {
       success: !toolResultHasErrors(result),
-      contentItems: [{ type: "inputText", text: serializeToolResultForModel(result) }],
+      contentItems: [
+        {
+          type: "inputText",
+          text: serializeToolResultForModel(result, { timeZone: state.timeZone }),
+        },
+      ],
     };
   }
 

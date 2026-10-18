@@ -561,6 +561,42 @@ describe("AnthropicBackend", () => {
     );
   });
 
+  it("shows the model each instant's local time in the turn's zone", async () => {
+    const result: ToolResult = {
+      kind: "structured",
+      resultType: "document",
+      data: { content: "**When:** 2026-10-18T17:28:00Z" },
+    } as ToolResult;
+    const tool = fakeToolHandle("fetch_document", () => result);
+    const { client, calls } = stubClient([
+      toolUseStream("fetch_document", { documentId: "cal-1" }),
+      textOnlyStream(["18:28."]),
+    ]);
+    const backend = new AnthropicBackend({ apiKey: "test", model: "claude-test", client });
+    const events: AgentEvent[] = [];
+    for await (const event of backend.runTurn(
+      baseInput({ tools: [tool], timeZone: "Europe/London" }),
+    )) {
+      events.push(event);
+    }
+
+    const lastUser = calls[1]!.messages.at(-1);
+    const block = Array.isArray(lastUser?.content) ? lastUser.content[0] : undefined;
+    expect(String(block && "content" in block ? block.content : "")).toContain(
+      "2026-10-18T17:28:00Z (18:28 Sun 18 Oct, Europe/London)",
+    );
+    // The durable result clients and history read stays as stored.
+    const durable = events.find((event) => event.type === "agent.tool.result");
+    expect(durable?.payload).toMatchObject({ result });
+
+    const restored = convertHistoryToAnthropic(
+      [{ role: "user", parts: [{ kind: "tool_result", toolCallId: "tc", result }] }],
+      { timeZone: "Asia/Tokyo" },
+    );
+    const restoredBlock = (restored[0]!.content as Array<{ content?: unknown }>)[0]!;
+    expect(String(restoredBlock.content)).toContain("(02:28 Mon 19 Oct, Asia/Tokyo)");
+  });
+
   it("marks a batch containing a child error as an error for the model", async () => {
     const tool = fakeToolHandle("annotate_many", () => ({
       kind: "annotate.batch",
