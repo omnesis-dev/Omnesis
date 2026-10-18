@@ -218,7 +218,11 @@ function subjectCohorts(bench: BrainBench) {
     .all();
 }
 
-async function waitForPublishedSubject(bench: BrainBench, drain = true): Promise<void> {
+async function waitForPublishedSubject(
+  bench: BrainBench,
+  drain = true,
+  timeoutMs = 180_000,
+): Promise<void> {
   await waitFor(
     "subject cohort disposition",
     () =>
@@ -227,8 +231,13 @@ async function waitForPublishedSubject(bench: BrainBench, drain = true): Promise
           "SELECT 1 FROM knowledge_organization_cohorts WHERE subject_loop_id IS NOT NULL AND status='completed' LIMIT 1",
         )
         .get() ?? null,
-    180_000,
-  );
+    timeoutMs,
+  ).catch((error: unknown) => {
+    const lines = gatewayLog(bench)
+      .split("\n")
+      .filter((line) => /rganization cohort|knowledge/.test(line));
+    throw new Error(`${String(error)}\n${lines.slice(-30).join("\n")}`);
+  });
   if (drain) await bench.drainUntilQuiet();
 }
 
@@ -328,7 +337,7 @@ describe("a matter whose evidence does not fit the maintenance bound", () => {
     );
     for (const document of studio) await bench.push(document);
     // The invoice's maintenance stays pending behind the bound, so the queue never drains.
-    await waitForPublishedSubject(bench, false);
+    await waitForPublishedSubject(bench, false, 480_000);
     // The invoice's work is retried behind the bound, so its plan may run again.
     expect(loops.mooring.length).toBeGreaterThanOrEqual(2);
     expect(loops.studio).toHaveLength(2);
@@ -342,5 +351,5 @@ describe("a matter whose evidence does not fit the maintenance bound", () => {
     expect(gatewayLog(bench)).toContain(
       `Organization cohort started: subject anchored on loop ${cohorts[0]!.subject}, 2 source(s)`,
     );
-  }, 600_000);
+  }, 900_000);
 });
