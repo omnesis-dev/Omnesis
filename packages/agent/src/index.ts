@@ -320,5 +320,4 @@ export type {
   EntityContextSeed,
   EntityContextSeedKind,
 } from "./tools/types.js";
-export type { TurnFinalizer, TurnFinalizerFactory } from "./finalization.js";
 export { CitationReads } from "./tools/citation-reads.js";

@@ -40,7 +40,7 @@ import type { ToolHandle } from "../backend.js";
 import type { ToolPorts } from "./types.js";
 
 export interface BuiltinToolsOptions {
-  /** Optional shared evidence-exposure ledger for a host finalization policy. */
+  /** The documents each turn has read, for a port that requires a read before a citation. */
   citationReads?: CitationReads;
   ports: ToolPorts;
   /** Default limit for search_documents (default: 8). */

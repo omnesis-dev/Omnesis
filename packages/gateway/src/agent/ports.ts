@@ -435,12 +435,17 @@ export function createGatewayDocumentPort(
     maxStoredDocumentBytes?: number;
     /** Neighbours follow the graph context policy search graph context uses. */
     graphContext?: boolean;
+    /**
+     * Refuse a citation of a document this turn has not fetched. Background
+     * Brain runs only: a conversation cites what it found without re-reading.
+     */
+    requireCitationRead?: boolean;
   },
   authorization?: CorpusAuthorization,
 ): DocumentPort {
   return {
     supportsKnowledgeAliases: true,
-    requiresCitationRead: true,
+    requiresCitationRead: options?.requireCitationRead === true,
     knowledgePageRef: (documentId) => knowledgePageRefForDocument(db, documentId),
     async fetch(
       documentId: string,

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { FsConversationStore, deriveTitle, type ConversationRecord } from "./conversation-store.js";
 import { originIsPermanent } from "./conversation-retention.js";
+import { paginateVisibleConversationMessages } from "./service.js";
 
 import type { ChatMessage } from "@omnesis/agent";
 
@@ -277,6 +278,37 @@ describe("FsConversationStore", () => {
         messageCount: 3,
       }),
     ]);
+  });
+
+  it("keeps a retired anchored thread's seed hidden from its readers", async () => {
+    const d = tmpDir();
+    dirs.push(d);
+    mkdirSync(join(d, "conversations"), { recursive: true });
+    const seed: ChatMessage[] = [
+      { role: "user", parts: [{ kind: "text", text: "Background run prompt" }] },
+      { role: "assistant", parts: [{ kind: "text", text: "Background run notes" }] },
+    ];
+    await writeFile(
+      join(d, "conversations", "retired.json"),
+      JSON.stringify({
+        ...rec({ id: "retired" }),
+        origin: { kind: "brief", runId: "run_1", seedMessageCount: seed.length },
+        messages: [...seed, { role: "user", parts: [{ kind: "text", text: "A reply" }] }],
+      }),
+      "utf8",
+    );
+    const loaded = await new FsConversationStore(join(d, "conversations")).load("retired");
+    expect(loaded?.originUnrecognized).toBe(true);
+    expect(loaded?.unrecognizedSeedMessageCount).toBe(2);
+    const page = paginateVisibleConversationMessages(
+      loaded!.messages,
+      loaded!.origin,
+      50,
+      undefined,
+      loaded!.unrecognizedSeedMessageCount,
+    );
+    expect(page.messageCount).toBe(1);
+    expect(JSON.stringify(page.messages)).not.toContain("Background run");
   });
 
   it("rebuilds the summary index when a transcript is missing from it", async () => {

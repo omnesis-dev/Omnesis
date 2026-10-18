@@ -333,7 +333,7 @@ async function waitForPartialBackfill(proxy: IndexerWorkerProxy): Promise<void> 
 }
 
 describe("indexer worker boot persistence", () => {
-  test("publishes completed pages while a later page is still embedding without advancing the scan watermark", async () => {
+  test("does not advance the scan watermark while a later page is still embedding", async () => {
     const paths = createFixture([
       makeDocument("page-first", "An invented workshop inventory contains paper and markers."),
       makeDocument("page-second", "An invented workshop inventory contains brushes and canvas."),
@@ -352,15 +352,11 @@ describe("indexer worker boot persistence", () => {
       await proxy.whenReady();
       await fakeEmbedder.holds[0]!.started;
       const indexDb = openIndexDb(paths.indexDbPath, { readonly: true });
-      const reader = UsearchReadHandle.open(paths.usearchIndexPath, EMBED_DIM);
       try {
         expect(getIndexedDocumentCount(indexDb)).toBe(1);
-        expect(reader.size()).toBe(1);
-        expect(getUsearchSavedSeq(indexDb)).toBe(getVectorWriteSeq(indexDb));
         expect(getWatermark(indexDb, "last_updated_at")).toBeNull();
         expect(getWatermark(indexDb, "published_scan_boundary")).toBeNull();
       } finally {
-        reader.close();
         indexDb.close();
       }
       fakeEmbedder.holds[0]!.release();

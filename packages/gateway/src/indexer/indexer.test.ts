@@ -755,36 +755,21 @@ describe("Indexer", () => {
   });
 
   describe("pagination + pipelining across multiple pages", () => {
-    test("publishes only committed page batches and retries an interrupted publication without skipping pending documents", async () => {
+    test("indexes every page of a multi-page run and reports the scanned boundary", async () => {
       source.documents = [
         makeDoc("a", "First invented inventory."),
         makeDoc("b", "Second invented inventory."),
         makeDoc("c", "Third invented inventory."),
       ];
-      const snapshots: number[] = [];
-      let fail = true;
       const paged = new Indexer(db, source, new DocumentChunker(), embedder, {
         pageSize: 1,
         betweenPageSleepMs: 0,
-        onPageCommitted: () => {
-          snapshots.push(getIndexedDocumentCount(db));
-          expect(getWatermark(db, "last_updated_at")).toBeNull();
-          if (fail) {
-            fail = false;
-            throw new Error("scripted publication failure");
-          }
-        },
       });
-      await expect(paged.indexUpdated()).rejects.toThrow("scripted publication failure");
-      expect(snapshots).toEqual([1]);
-      expect(getIndexedDocument(db, "b")).toBeNull();
-      expect(getIndexedDocument(db, "c")).toBeNull();
       await expect(paged.indexUpdated()).resolves.toMatchObject({
-        indexed: 2,
+        indexed: 3,
         errors: 0,
         scannedThrough: source.documents[0]!.updatedAt,
       });
-      expect(snapshots).toEqual([1, 2, 3]);
       expect(getIndexedDocumentCount(db)).toBe(3);
     });
 

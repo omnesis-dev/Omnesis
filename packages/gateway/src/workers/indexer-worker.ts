@@ -642,18 +642,6 @@ async function handleInit(init: IndexerInit): Promise<void> {
       betweenPageSleepMs: init.indexerBetweenPageSleepMs,
       dbWriteBatchSize: init.dbWriteBatchSize,
       indexWriteOptions: { usearch: usearchHandle },
-      onPageCommitted: () => {
-        const pendingDeletes = preparePendingVectorDeletes(
-          indexDb,
-          usearchHandle,
-          PENDING_VECTOR_DELETE_BATCH,
-        );
-        const error = persistGraphAfterSourcePurges("committed index page", pendingDeletes);
-        if (error) throw new Error(`index publication failed: ${error}`);
-        // Page writes already update materialized counts atomically. Rebuilding
-        // all per-source date ranges here would scan the corpus on every page;
-        // the existing phase-end refresh owns that full reconciliation.
-      },
     });
 
     log(

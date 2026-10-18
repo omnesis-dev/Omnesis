@@ -861,7 +861,8 @@ it("uses exact emitted offsets without upgrading earlier reads across freshness 
 it("persists an authorized alias citation as a canonical conversation edge", async () => {
   page("observatory-guide");
   document("conversation", "omnesis-chat", "Observatory discussion");
-  const port = createGatewayDocumentPort(db);
+  // A background-run port: a citation needs a read of the cited page first.
+  const port = createGatewayDocumentPort(db, undefined, { requireCitationRead: true });
   const tools = buildBuiltinTools({
     ports: {
       document: port,

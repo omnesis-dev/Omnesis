@@ -76,8 +76,8 @@ export function withTodaysTasks(
         if (args && typeof args === "object" && "cursor" in args && args.cursor) return result;
         const data = result.data as { window?: TemporalWindow };
         if (!data.window) return result;
-        const list = await taskList.invoke({ view: "today" }, context);
-        if (list.kind !== "structured") return result;
+        const list = await taskList.invoke({ view: "today" }, context).catch(() => null);
+        if (list?.kind !== "structured") return result;
         const tasks = list.data as TaskListData;
         if (!covers(data.window, tasks.today)) return result;
         return {

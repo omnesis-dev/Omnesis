@@ -192,9 +192,10 @@ describe("createGatewayDocumentPort.fetch", () => {
       title: "Prism log",
       content: "The prism glows.",
     });
-    const port = createGatewayDocumentPort(db);
+    const port = createGatewayDocumentPort(db, undefined, { requireCitationRead: true });
     const before = await port.fetch("doc-receipt");
     expect(port.requiresCitationRead).toBe(true);
+    expect(createGatewayDocumentPort(db).requiresCitationRead).toBe(false);
     expect(before?.readSnapshot?.documentId).toBe("doc-receipt");
     db.prepare("UPDATE documents SET title='Other heading' WHERE id='doc-receipt'").run();
     db.prepare("UPDATE documents SET title='Prism log' WHERE id='doc-receipt'").run();

@@ -489,8 +489,8 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // the gate in.
       brain: brainGate,
       // Apps that predate the Morning brief open a Briefs screen when this
-      // reads active; that screen's routes are gone, so it always reads off.
-      briefs: { ...brainGate, visible: false, active: false },
+      // reads enabled or active; that screen's routes are gone, so it always reads off.
+      briefs: { ...brainGate, enabled: false, visible: false, active: false },
       // Tell Omnesis voice notes: whether the setting may show,
       // whether the operator switched it on, whether a runnable transcriber is
       // assigned, and whether the mobile apps should send a voice note's audio

@@ -95,6 +95,11 @@ export interface ConversationRecord {
    */
   originUnrecognized?: boolean;
   /**
+   * The seed length that unsupported origin declared, so readers keep hiding
+   * the seed transcript (a retired brief thread's Brain run). Never persisted.
+   */
+  unrecognizedSeedMessageCount?: number;
+  /**
    * Permanent conversation-level failure kept outside model-visible history.
    * V1 sets this only when the selected model's context window is exhausted;
    * clients render the transcript read-only and offer a fresh conversation.
@@ -333,7 +338,12 @@ export class FsConversationStore implements ConversationStore {
       const origin = parseOrigin(parsed.origin);
       if (origin) parsed.origin = origin;
       else {
-        if (isUnknownAnchorShape(parsed.origin)) parsed.originUnrecognized = true;
+        if (isUnknownAnchorShape(parsed.origin)) {
+          parsed.originUnrecognized = true;
+          const seed = (parsed.origin as { seedMessageCount?: unknown }).seedMessageCount;
+          if (typeof seed === "number" && Number.isInteger(seed) && seed > 0)
+            parsed.unrecognizedSeedMessageCount = seed;
+        }
         delete parsed.origin;
       }
       const terminalFailure = agentConversationTerminalFailureSchema.safeParse(

@@ -557,6 +557,7 @@ export async function createCognitionRuntime(
     search: ports.createGatewaySearchPort(deps.searchPipeline, deps.syncStatus, deps.db),
     document: ports.createGatewayDocumentPort(deps.db, deps.syncStatus, {
       graphContext: deps.searchPipeline.agentSearchV2Enabled,
+      requireCitationRead: true,
     }),
     documentByUrl: ports.createGatewayDocumentByUrlPort(deps.db, deps.syncStatus),
     trail: ports.createGatewayTrailPort(deps.db, deps.analyticsDb, {

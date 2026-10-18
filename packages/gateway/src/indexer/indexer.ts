@@ -104,7 +104,6 @@ export class Indexer {
   private loggedFailedDocIds = new Set<string>();
   /** Set to true to cooperatively abort in-flight indexing work (shutdown). */
   private stopping = false;
-  private onPageCommitted?: () => void;
   private indexWriteOptions?: import("./db.js").IndexWriteOptions;
 
   constructor(
@@ -132,8 +131,6 @@ export class Indexer {
       betweenPageSleepMs?: number;
       /** Docs per batch DB transaction. Default 50. */
       dbWriteBatchSize?: number;
-      /** Publish completed page writes without advancing the scan watermark. */
-      onPageCommitted?: () => void;
       /** Optional usearch HNSW handle for dual-index writes. */
       indexWriteOptions?: import("./db.js").IndexWriteOptions;
     },
@@ -144,7 +141,6 @@ export class Indexer {
     this.betweenPageSleepMs = opts?.betweenPageSleepMs ?? DEFAULT_BETWEEN_PAGE_SLEEP_MS;
     this.dbWriteBatchSize = opts?.dbWriteBatchSize ?? DEFAULT_DB_WRITE_BATCH_SIZE;
     this.indexWriteOptions = opts?.indexWriteOptions;
-    this.onPageCommitted = opts?.onPageCommitted;
     if (this.dataCutoff) {
       log.info(`Data cutoff: ${this.dataCutoff}`);
     }
@@ -226,12 +222,6 @@ export class Indexer {
     let hasMore = true;
     let lastProgressLog = 0;
     const newFailedIds = new Set<string>();
-    let publishedWrites = 0;
-    const publishPage = () => {
-      if (indexed + updated <= publishedWrites) return;
-      this.onPageCommitted?.();
-      publishedWrites = indexed + updated;
-    };
 
     // Pipelining state: the in-flight embed promise from the previous
     // page, plus the prepared data it operates on. Resolved and written
@@ -466,7 +456,6 @@ export class Indexer {
       // page's embed result (if any). This ensures writes happen in
       // page order.
       await flushPendingEmbed();
-      publishPage();
 
       if (toEmbed.length > 0 && !this.stopping) {
         const allInputs = toEmbed.flatMap(({ chunks }) => chunks.map((c) => c.embeddingInput));
@@ -508,7 +497,6 @@ export class Indexer {
     // Flush the last page's embed (the loop only flushes at the top of
     // the *next* iteration, so the final page is still pending here).
     await flushPendingEmbed();
-    publishPage();
 
     // Cooperative shutdown: persist any watermark progress and bail before
     // retry/reconcile work that would keep the disposed embedder busy.
@@ -611,7 +599,6 @@ export class Indexer {
       const docs = await this.source.getByIds(page);
       const docsById = new Map(docs.map((d) => [d.id, d]));
       const indexedStates = getIndexedDocumentStates(this.db, page);
-      const indexedBeforePage = indexed;
 
       for (const docId of page) {
         if (this.stopping) break;
@@ -653,7 +640,6 @@ export class Indexer {
           }
         }
       }
-      if (indexed > indexedBeforePage) this.onPageCommitted?.();
     }
 
     // Keep only the ones that still failed
@@ -807,7 +793,6 @@ export class Indexer {
           recordIndexDegraded(this.db, doc.id, doc.sourceId, truncated, dropped);
         }
         indexed += writeBatch.length;
-        if (writeBatch.length > 0) this.onPageCommitted?.();
       }
 
       // Periodic progress logging

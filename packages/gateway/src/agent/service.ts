@@ -1718,6 +1718,7 @@ export class AgentService {
         record.origin,
         options.limit,
         options.before,
+        record.unrecognizedSeedMessageCount,
       ),
       model: record.model,
       backend: record.backend,
@@ -2788,7 +2789,15 @@ export class AgentService {
     });
     let started: ReturnType<AgentSession["send"]>;
     try {
-      const modelNote = this.namedPagesNote?.(text);
+      // A hint only: a failure to name pages must never fail the user's send.
+      let modelNote = "";
+      try {
+        modelNote = this.namedPagesNote?.(text) ?? "";
+      } catch (err) {
+        log.warn(
+          `named pages note failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       started = entry.session.send(text, {
         signal: opts.signal,
         ...(modelNote ? { modelNote } : {}),
@@ -3663,11 +3672,13 @@ export function paginateVisibleConversationMessages(
   origin: ConversationOrigin | undefined,
   limit: number,
   before?: number,
+  /** Seed of an origin this gateway no longer recognizes; hidden all the same. */
+  unrecognizedSeed = 0,
 ): Omit<
   ConversationMessagePage,
   "model" | "backend" | "origin" | "terminalFailure" | "lastTurnFailure"
 > {
-  const seed = origin?.kind === "watch_firing" ? (origin.seedMessageCount ?? 0) : 0;
+  const seed = origin?.kind === "watch_firing" ? (origin.seedMessageCount ?? 0) : unrecognizedSeed;
   const seedMessageCount = Math.min(messages.length, Math.max(0, seed));
   const visible = messages.slice(seedMessageCount);
   const safeLimit = Math.max(0, Math.floor(limit));
