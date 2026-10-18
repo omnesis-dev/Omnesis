@@ -216,8 +216,9 @@ describe("buildSystemPrompt — citation surface", () => {
     expect(prompt).toContain("instead of quietly answering a different question");
     expect(prompt).toContain("set aside part of the question you can't match");
     expect(prompt).toContain(
-      "a question built on something impossible or fictional gets one plain sentence",
+      "even when the useful part is obvious and the premise reads as a joke",
     );
+    expect(prompt).toContain("Naming a false premise is not hedging");
     expect(prompt).toContain("exactly as the source gives them");
   });
 });
