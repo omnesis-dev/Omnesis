@@ -3418,7 +3418,7 @@ const inference = z
     allowRemoteInference: z
       .boolean()
       .describe(
-        "Permit HTTP inference backends whose resolved address is not loopback. Off by default so document chunks, queries, prompts, and OCR images stay local unless explicitly opted in.",
+        "Permit HTTP inference backends whose resolved address is not loopback. Off by default so document chunks, queries, prompts, OCR images, and recorded audio stay local unless explicitly opted in.",
       )
       .optional(),
     codex: z

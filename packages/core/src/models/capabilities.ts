@@ -75,8 +75,8 @@ export interface TranscriptionResult {
 /**
  * Speech-to-text. Takes raw audio bytes (any container/codec — the backend
  * owns decoding) plus the MIME type, and returns the transcript. Backends:
- * a local Whisper model (whisper.cpp), or a deterministic synthetic
- * transcriber for tests. Unlike the other capabilities this one consumes
+ * a local Whisper model (whisper.cpp), an OpenAI-compatible HTTP
+ * transcription server, or a deterministic synthetic transcriber for tests. Unlike the other capabilities this one consumes
  * binary input, so it is the single seam where audio enters the model layer.
  */
 export interface TranscribeCapability {

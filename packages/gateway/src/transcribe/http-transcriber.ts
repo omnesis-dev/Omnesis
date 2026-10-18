@@ -9,6 +9,8 @@
  *
  * The audio is decoded to 16 kHz mono PCM first and sent as a WAV file, the
  * one format every such server accepts, whatever container the source used.
+ * A recording longer than ten minutes is sent as consecutive chunks that each
+ * fit a 25 MB upload limit, and their transcripts are joined.
  *
  * The assignment names an HTTP backend declared in `inference.backends`. Every
  * request goes through the inference URL policy: a loopback backend works by
@@ -28,7 +30,7 @@ import {
   normalizeApiPathPrefix,
   retryRateLimitedRequest,
 } from "@omnesis/core";
-import { decodeToPcm16kMono } from "./audio-decode.js";
+import { PCM_SAMPLE_RATE, decodeToPcm16kMono, type AudioDecoder } from "./audio-decode.js";
 import { computeTranscriptionTimeoutMs } from "./deadline.js";
 import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
 import type {
@@ -36,11 +38,8 @@ import type {
   TranscriptionResult,
   TranscriptionVocabulary,
 } from "@omnesis/core";
-import type { AudioDecoder } from "./whisper-transcriber.js";
 
 const log = createLogger("gateway:transcribe:http");
-
-const PCM_SAMPLE_RATE = 16_000;
 
 export interface HttpTranscriberOptions {
   /** Base URL of the OpenAI-compatible backend, without the API path prefix. */
@@ -93,6 +92,9 @@ export class HttpTranscriber implements TranscribeCapability {
   ): Promise<TranscriptionResult> {
     const pcm = await this.decodeAudio(audio, mimeType);
     const durationSec = pcm.length / PCM_SAMPLE_RATE;
+    // A container with no samples has no speech to send; a server would
+    // refuse the empty file and the recording would be retried forever.
+    if (pcm.length === 0) return { text: "", durationSec: 0 };
 
     const fields: Array<[string, string]> = [
       ["model", this.model],
@@ -104,24 +106,43 @@ export class HttpTranscriber implements TranscribeCapability {
       ? await this.vocabularyPrompt(opts.vocabulary, opts.maxPromptTokens)
       : undefined;
     if (prompt) fields.push(["prompt", prompt]);
+
+    const timeout = AbortSignal.timeout(
+      computeTranscriptionTimeoutMs(durationSec, opts?.minTimeoutMs),
+    );
+    const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+    const texts: string[] = [];
+    let language: string | undefined;
+    for (const chunk of splitPcm(pcm)) {
+      const part = await this.transcribeChunk(chunk, fields, signal);
+      if (part.text) texts.push(part.text);
+      language ??= part.language;
+    }
+    const text = texts.join(" ");
+    log.debug(
+      `Transcribed ${durationSec.toFixed(1)}s of audio via ${this.model} → ${text.length} chars`,
+    );
+    return { text, ...(language ? { language } : {}), durationSec };
+  }
+
+  private async transcribeChunk(
+    pcm: Float32Array,
+    fields: ReadonlyArray<readonly [string, string]>,
+    signal: AbortSignal,
+  ): Promise<{ text: string; language?: string }> {
     const { body, contentType } = encodeMultipart(fields, {
       name: "file",
       filename: "audio.wav",
       contentType: "audio/wav",
       data: encodeWav(pcm),
     });
-
     const headers: Record<string, string> = { "Content-Type": contentType };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
-    const timeout = AbortSignal.timeout(
-      computeTranscriptionTimeoutMs(durationSec, opts?.minTimeoutMs),
-    );
-    const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     const res = await retryRateLimitedRequest(
       () =>
         fetchWithInferenceUrlPolicy(
           this.endpoint,
-          { method: "POST", headers, body: body as unknown as BodyInit, signal },
+          { method: "POST", headers, body, signal },
           { allowRemoteInference: this.allowRemoteInference, fetchFn: this.fetchFn },
         ),
       {
@@ -136,8 +157,9 @@ export class HttpTranscriber implements TranscribeCapability {
     if (!res.ok) {
       // Drain the body without keeping it: a backend can echo the request,
       // and the request is the user's speech. Every refusal is retried on a
-      // later sync — the audio decoded cleanly, so a refusal points at the
-      // backend (a wrong model id, an overloaded server), not at this note.
+      // later sync — the audio decoded cleanly and fits the upload limit, so a
+      // refusal points at the backend (a wrong model id, an overloaded
+      // server), not at this recording.
       await res.text().catch(() => "");
       throw new Error(`transcription backend ${this.model} refused the audio (HTTP ${res.status})`);
     }
@@ -145,14 +167,9 @@ export class HttpTranscriber implements TranscribeCapability {
     if (typeof json.text !== "string") {
       throw new Error(`transcription backend ${this.model} returned no text`);
     }
-    const text = json.text.trim();
-    log.debug(
-      `Transcribed ${durationSec.toFixed(1)}s of audio via ${this.model} → ${text.length} chars`,
-    );
     return {
-      text,
+      text: json.text.trim(),
       ...(typeof json.language === "string" ? { language: json.language } : {}),
-      durationSec,
     };
   }
 
@@ -173,6 +190,46 @@ export class HttpTranscriber implements TranscribeCapability {
   }
 
   async dispose(): Promise<void> {}
+}
+
+/**
+ * Longest audio sent in one request. Ten minutes of 16 kHz 16-bit WAV is
+ * 19.2 MB, under the 25 MB upload limit OpenAI and vLLM apply.
+ */
+export const MAX_CHUNK_SAMPLES = 600 * PCM_SAMPLE_RATE;
+/** How far back from a chunk's limit to look for a quiet place to split. */
+const SPLIT_SEARCH_SAMPLES = 10 * PCM_SAMPLE_RATE;
+/** 20 ms frames: short enough to land in the gap between two words. */
+const SPLIT_FRAME_SAMPLES = 320;
+
+/**
+ * Split PCM into chunks of at most `MAX_CHUNK_SAMPLES`, each ending at the
+ * quietest 20 ms frame in its last ten seconds so a split rarely cuts a word.
+ */
+export function splitPcm(pcm: Float32Array): Float32Array[] {
+  const chunks: Float32Array[] = [];
+  let start = 0;
+  while (pcm.length - start > MAX_CHUNK_SAMPLES) {
+    const limit = start + MAX_CHUNK_SAMPLES;
+    let split = limit;
+    let quietest = Infinity;
+    for (
+      let frame = limit - SPLIT_SEARCH_SAMPLES;
+      frame + SPLIT_FRAME_SAMPLES <= limit;
+      frame += SPLIT_FRAME_SAMPLES
+    ) {
+      let energy = 0;
+      for (let i = frame; i < frame + SPLIT_FRAME_SAMPLES; i += 1) energy += pcm[i]! * pcm[i]!;
+      if (energy < quietest) {
+        quietest = energy;
+        split = frame + SPLIT_FRAME_SAMPLES / 2;
+      }
+    }
+    chunks.push(pcm.subarray(start, split));
+    start = split;
+  }
+  chunks.push(pcm.subarray(start));
+  return chunks;
 }
 
 /** 16-bit little-endian mono WAV for 16 kHz float PCM in [-1, 1]. */
@@ -203,7 +260,7 @@ export function encodeWav(pcm: Float32Array): Uint8Array {
 export function encodeMultipart(
   fields: ReadonlyArray<readonly [string, string]>,
   file: { name: string; filename: string; contentType: string; data: Uint8Array },
-): { body: Uint8Array; contentType: string } {
+): { body: Uint8Array<ArrayBuffer>; contentType: string } {
   const boundary = `omnesis-${randomUUID()}`;
   const parts: Buffer[] = [];
   for (const [name, value] of fields) {

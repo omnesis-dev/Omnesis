@@ -5,13 +5,8 @@ import { serve } from "@hono/node-server";
 import Database from "better-sqlite3";
 import { ProviderId, SourceId, SyncError } from "@omnesis/types";
 import { isAnalyticsLeaseRejection, type IngestAnalyticsResponse } from "@omnesis/source-sdk";
-import { MAX_TRANSCRIPTION_MS } from "@omnesis/core";
 import { HttpGatewayClient, chunkDocuments } from "./http-gateway-client.js";
-import {
-  DEFAULT_UPSERT_CHUNK,
-  DEFAULT_UPSERT_CHUNK_BYTES,
-  TRANSCRIBE_RESPONSE_GRACE_MS,
-} from "./tunables.js";
+import { DEFAULT_UPSERT_CHUNK, DEFAULT_UPSERT_CHUNK_BYTES } from "./tunables.js";
 import type { DocumentInput } from "@omnesis/types";
 import type { Server } from "node:http";
 type Db = Database.Database;
@@ -499,10 +494,6 @@ describe("HttpGatewayClient.transcribe", () => {
       kind: "transient",
       message: expect.stringMatching(/no answer within/),
     });
-  });
-
-  test("waits longer than Node's built-in five-minute response limit by default", () => {
-    expect(MAX_TRANSCRIPTION_MS + TRANSCRIBE_RESPONSE_GRACE_MS).toBeGreaterThan(300_000);
   });
 });
 

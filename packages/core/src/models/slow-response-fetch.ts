@@ -13,16 +13,31 @@
  * response deadline. Callers must bound the request themselves with an
  * `AbortSignal`.
  *
- * The package's `fetch` does not recognise the built-in `FormData`, so a
- * multipart body must be sent already encoded.
+ * The package loads on first use, so a process that never makes such a
+ * request does not pay for it. Its `fetch` does not recognise the built-in
+ * `FormData`, so a multipart body must be sent already encoded, and it does
+ * not follow `HTTP(S)_PROXY` settings that the built-in `fetch` can.
  */
 
-import { Agent, fetch as undiciFetch } from "undici";
+type Undici = typeof import("undici");
 
-const noResponseDeadline = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+let client: Promise<{ fetch: Undici["fetch"]; dispatcher: InstanceType<Undici["Agent"]> }> | null =
+  null;
 
-export const fetchAllowingSlowResponse: typeof fetch = (input, init) =>
-  undiciFetch(input as Parameters<typeof undiciFetch>[0], {
-    ...(init as Parameters<typeof undiciFetch>[1]),
-    dispatcher: noResponseDeadline,
-  }) as unknown as Promise<Response>;
+function undiciClient() {
+  client ??= import("undici").then(({ Agent, fetch }) => ({
+    fetch,
+    dispatcher: new Agent({ headersTimeout: 0, bodyTimeout: 0 }),
+  }));
+  return client;
+}
+
+// undici's request and response types are structurally the platform's but
+// declared separately, so they are bridged with casts.
+export const fetchAllowingSlowResponse: typeof fetch = async (input, init) => {
+  const { fetch: undiciFetch, dispatcher } = await undiciClient();
+  return (await undiciFetch(input as Parameters<Undici["fetch"]>[0], {
+    ...(init as Parameters<Undici["fetch"]>[1]),
+    dispatcher,
+  })) as unknown as Response;
+};

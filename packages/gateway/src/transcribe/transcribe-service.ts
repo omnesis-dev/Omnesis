@@ -18,6 +18,7 @@
  * infra.
  */
 
+import { createHash } from "node:crypto";
 import { createLogger, assertNever } from "@omnesis/core";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
 import { whisperDepsAvailable } from "./whisper-transcriber.js";
@@ -34,15 +35,25 @@ const log = createLogger("gateway:transcribe");
 /** Reject audio larger than this. Voice notes are tiny; this guards against abuse. */
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
-/** Stable signature for a resolved assignment, to detect config changes. */
-function signatureOf(resolved: ResolvedAssignment): string {
+/**
+ * Stable signature for a resolved assignment, to detect config changes. The
+ * http arm folds in everything a backend edit can change under the same
+ * backendKey — url, path prefix, the egress flag and an API-key fingerprint —
+ * so moving or re-keying a transcription server reloads the transcriber.
+ */
+function signatureOf(resolved: ResolvedAssignment, apiKey: string | undefined): string {
   switch (resolved.kind) {
     case "local":
       return `local:${resolved.catalogId}:${resolved.modelPath}:${resolved.available}`;
     case "replay":
       return `replay:${resolved.fixture ?? ""}`;
-    case "http":
-      return `http:${resolved.backendKey}:${resolved.model}:${resolved.available}:${resolved.allowRemoteInference}`;
+    case "http": {
+      const keyPrint = createHash("sha256")
+        .update(apiKey ?? "")
+        .digest("hex")
+        .slice(0, 8);
+      return `http:${resolved.backendKey}:${resolved.url}:${resolved.apiPathPrefix ?? ""}:${resolved.model}:${resolved.available}:${resolved.allowRemoteInference}:${keyPrint}`;
+    }
     case "anthropic":
       return `anthropic:${resolved.catalogId}:${resolved.available}`;
     case "codex":
@@ -139,7 +150,10 @@ export class TranscribeService {
 
   private async ensureCapability(): Promise<TranscribeCapability | null> {
     const resolved = this.resolveAssignment();
-    const signature = signatureOf(resolved);
+    const signature = signatureOf(
+      resolved,
+      resolved.kind === "http" ? this.deps.getBackendApiKey?.(resolved.backendKey) : undefined,
+    );
     if (this.current && this.current.signature === signature) {
       return this.current.capability;
     }

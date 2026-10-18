@@ -346,12 +346,12 @@ de-duplicating by `name@version`. It includes optional production dependencies
 (e.g. platform-specific native binaries), so multiple platform variants of the
 same library each appear as a distinct entry.
 
-**519 distinct third-party production packages**, grouped by their declared SPDX
+**520 distinct third-party production packages**, grouped by their declared SPDX
 license expression:
 
 | Count | License (as declared in package metadata)            |
 | ----: | ---------------------------------------------------- |
-|   370 | MIT                                                  |
+|   371 | MIT                                                  |
 |    38 | Apache-2.0                                           |
 |    30 | ISC                                                  |
 |    16 | BSD-3-Clause                                         |

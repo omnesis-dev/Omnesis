@@ -752,15 +752,15 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd"
-                >whisper-server -m ggml-large-v3-turbo.bin --port 8003 --inference-path
+                >whisper-server -m ggml-large-v3-turbo.bin --inference-path
                 /v1/audio/transcriptions</span
               >
             </p>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis backend add whisper-gpu http://127.0.0.1:8003</span>
+              <span class="t-cmd">omnesis backend add whisper-gpu http://127.0.0.1:8080</span>
             </p>
-            <p class="tight t-ok">✔ Backend whisper-gpu added (http://127.0.0.1:8003)</p>
+            <p class="tight t-ok">✔ Backend whisper-gpu added (http://127.0.0.1:8080)</p>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd"

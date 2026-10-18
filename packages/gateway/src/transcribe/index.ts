@@ -27,7 +27,6 @@ export type {
   WhisperModuleLoader,
   WhisperWorkerSpawner,
   WhisperWorkerProcess,
-  AudioDecoder,
   WhisperTranscriberOptions,
 } from "./whisper-transcriber.js";
 export { HttpTranscriber } from "./http-transcriber.js";
@@ -36,3 +35,4 @@ export { SyntheticTranscriber } from "./synthetic-transcriber.js";
 export { loadTranscriberFromResolved } from "./loader.js";
 export type { LoadTranscriberDeps } from "./loader.js";
 export { decodeToPcm16kMono, resolveFfmpegPath, AudioDecodeError } from "./audio-decode.js";
+export type { AudioDecoder } from "./audio-decode.js";

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import type { TranscribeCapability } from "@omnesis/core";
+
 /** Vocabulary selection is recognizer-independent; this adapter owns runtime limits. */
 export interface RankedTranscriptionVocabulary {
   entries: readonly { text: string; score: number }[];
@@ -19,7 +21,9 @@ export interface WhisperVocabularyHint {
 export const WHISPER_MAX_PROMPT_TOKENS = 224;
 
 /** Runtimes whose prompt this adapter knows how to bound. */
-const PROMPT_RUNTIMES = new Set(["smart-whisper", "openai-prompt"]);
+const PROMPT_RUNTIMES: ReadonlySet<string> = new Set<
+  NonNullable<TranscribeCapability["vocabularyRuntime"]>
+>(["smart-whisper", "openai-prompt"]);
 
 /**
  * Pack complete, high-ranked phrases into a Whisper initial prompt.

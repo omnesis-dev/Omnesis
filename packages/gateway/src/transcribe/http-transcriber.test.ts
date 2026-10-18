@@ -2,7 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test } from "vitest";
-import { HttpTranscriber, encodeMultipart, encodeWav } from "./http-transcriber.js";
+import {
+  HttpTranscriber,
+  MAX_CHUNK_SAMPLES,
+  encodeMultipart,
+  encodeWav,
+  splitPcm,
+} from "./http-transcriber.js";
 import type { TranscriptionVocabulary } from "@omnesis/core";
 
 interface Captured {
@@ -144,6 +150,40 @@ describe("HttpTranscriber", () => {
     await expect(transcriber.transcribe(audio, "audio/ogg")).rejects.toThrow(/returned no text/);
   });
 
+  test("sends a long recording in chunks that fit an upload limit and joins their text", async () => {
+    let n = 0;
+    const { requests, fetchFn } = backend(() => Response.json({ text: ` part ${++n} ` }));
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "m",
+      fetchFn,
+      decodeAudio: async () => new Float32Array(MAX_CHUNK_SAMPLES * 2 + 16_000).fill(0.1),
+    });
+    const result = await transcriber.transcribe(audio, "audio/ogg");
+    expect(requests).toHaveLength(3);
+    for (const request of requests) {
+      const file = request.form.get("file") as File;
+      expect(file.size).toBeLessThan(25 * 1024 * 1024);
+    }
+    expect(result.text).toBe("part 1 part 2 part 3");
+    expect(result.durationSec).toBe(1201);
+  });
+
+  test("audio with no samples is an empty transcript without a request", async () => {
+    const { requests, fetchFn } = backend();
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "m",
+      fetchFn,
+      decodeAudio: async () => new Float32Array(0),
+    });
+    await expect(transcriber.transcribe(audio, "audio/ogg")).resolves.toEqual({
+      text: "",
+      durationSec: 0,
+    });
+    expect(requests).toHaveLength(0);
+  });
+
   test("stops waiting when the caller does", async () => {
     let started!: () => void;
     const requestStarted = new Promise<void>((resolve) => (started = resolve));
@@ -163,6 +203,24 @@ describe("HttpTranscriber", () => {
     await requestStarted;
     caller.abort(new Error("caller left"));
     await expect(pending).rejects.toThrow("caller left");
+  });
+});
+
+describe("splitPcm", () => {
+  test("keeps a recording within the limit whole", () => {
+    const pcm = new Float32Array(MAX_CHUNK_SAMPLES);
+    expect(splitPcm(pcm)).toHaveLength(1);
+  });
+
+  test("splits at the quietest moment near each limit, losing no samples", () => {
+    const pcm = new Float32Array(MAX_CHUNK_SAMPLES + 32_000).fill(0.5);
+    const silenceAt = MAX_CHUNK_SAMPLES - 5 * 16_000;
+    pcm.fill(0, silenceAt, silenceAt + 640);
+    const chunks = splitPcm(pcm);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]!.length).toBeGreaterThanOrEqual(silenceAt);
+    expect(chunks[0]!.length).toBeLessThanOrEqual(silenceAt + 640);
+    expect(chunks[0]!.length + chunks[1]!.length).toBe(pcm.length);
   });
 });
 

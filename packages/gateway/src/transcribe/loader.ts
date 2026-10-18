@@ -22,11 +22,8 @@ import { WhisperTranscriber, whisperDepsAvailable } from "./whisper-transcriber.
 import { SyntheticTranscriber } from "./synthetic-transcriber.js";
 import { HttpTranscriber } from "./http-transcriber.js";
 import type { ResolvedAssignment, TranscribeCapability } from "@omnesis/core";
-import type {
-  WhisperModuleLoader,
-  WhisperWorkerSpawner,
-  AudioDecoder,
-} from "./whisper-transcriber.js";
+import type { WhisperModuleLoader, WhisperWorkerSpawner } from "./whisper-transcriber.js";
+import type { AudioDecoder } from "./audio-decode.js";
 
 const log = createLogger("gateway:transcribe:loader");
 

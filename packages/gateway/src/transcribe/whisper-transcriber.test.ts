@@ -191,6 +191,35 @@ describe("WhisperTranscriber (subprocess supervisor)", () => {
     await transcriber.dispose();
   });
 
+  test("a caller that stops waiting gets a rejection and the worker is killed, then respawns", async () => {
+    const stuck = new FakeWorker();
+    const next = new FakeWorker();
+    next.onRequest = (req) => next.emit({ type: "result", id: req.id, text: "after" });
+    const transcriber = new WhisperTranscriber({
+      modelPath: "/m.bin",
+      modelId: "whisper-tiny",
+      spawnWorker: (() => {
+        const workers = [stuck, next];
+        return () => workers.shift()!;
+      })(),
+      decodeAudio: async () => new Float32Array(16_000),
+      requestTimeoutMs: 60_000,
+    });
+    const caller = new AbortController();
+    stuck.onRequest = () => caller.abort(new Error("caller left"));
+    setTimeout(() => stuck.emitReady(), 0);
+    await expect(
+      transcriber.transcribe(new Uint8Array([1]), "audio/ogg", { signal: caller.signal }),
+    ).rejects.toThrow("caller left");
+    expect(stuck.killed).toBe(true);
+
+    setTimeout(() => next.emitReady(), 0);
+    await expect(transcriber.transcribe(new Uint8Array([1]), "audio/ogg")).resolves.toMatchObject({
+      text: "after",
+    });
+    await transcriber.dispose();
+  });
+
   test("a per-request worker error rejects only that call, keeping the worker alive", async () => {
     const w = new FakeWorker();
     let n = 0;

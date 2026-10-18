@@ -34,8 +34,10 @@ export const OCR_RESPONSE_GRACE_MS = 15_000;
 /**
  * How long past the gateway's longest transcription (`MAX_TRANSCRIPTION_MS`)
  * the client keeps waiting for a transcript. The gateway transcribes one
- * recording at a time, so the margin also covers a request waiting behind
- * another; a request still unanswered after it is retried on a later sync.
+ * recording at a time and its deadline starts when a recording's turn comes,
+ * so this margin absorbs a short wait behind others. A request still
+ * unanswered after it is given up and retried on a later sync; the gateway
+ * then skips or stops the work it was doing for it.
  */
 export const TRANSCRIBE_RESPONSE_GRACE_MS = 5 * 60_000;
 

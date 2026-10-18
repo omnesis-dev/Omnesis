@@ -89,6 +89,33 @@ describe("TranscribeService", () => {
     });
   });
 
+  test("moving or re-keying the http backend reloads the transcriber", async () => {
+    let assignment: ResolvedAssignment = httpAssignment;
+    let apiKey = "first";
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    const svc = new TranscribeService({
+      resolveAssignment: () => assignment,
+      deps: {
+        getBackendApiKey: () => apiKey,
+        decodeAudio: async () => new Float32Array(16_000),
+        fetchFn: (async (input: string | URL | Request, init?: RequestInit) => {
+          seen.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+          return Response.json({ text: "ok" });
+        }) as typeof fetch,
+      },
+    });
+    await svc.transcribe(enc("a"), "audio/ogg");
+    apiKey = "second";
+    await svc.transcribe(enc("b"), "audio/ogg");
+    assignment = { ...httpAssignment, url: "http://127.0.0.1:9009" };
+    await svc.transcribe(enc("c"), "audio/ogg");
+    expect(seen).toEqual([
+      { url: "http://127.0.0.1:8003/v1/audio/transcriptions", auth: "Bearer first" },
+      { url: "http://127.0.0.1:8003/v1/audio/transcriptions", auth: "Bearer second" },
+      { url: "http://127.0.0.1:9009/v1/audio/transcriptions", auth: "Bearer second" },
+    ]);
+  });
+
   test("a chat-agent backend assignment resolves to no transcriber", async () => {
     const anthropic: ResolvedAssignment = {
       role: "transcriber",
