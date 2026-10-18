@@ -28,7 +28,7 @@ const stubSearch: SearchPort = {
 const stubDocument: DocumentPort = { fetch: async () => null };
 
 /** Records the turn the session hands the backend, then ends the turn. */
-function recordingService(onVerification?: () => void): {
+function recordingService(reply?: string): {
   service: AgentService;
   seen: () => TurnInput | undefined;
   streamed: () => string;
@@ -45,10 +45,10 @@ function recordingService(onVerification?: () => void): {
     model: "recording",
     async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
       seen = input;
-      if (onVerification)
+      if (reply)
         yield {
           type: "agent.text.delta",
-          payload: { sessionId: input.sessionId, messageId: input.messageId, delta: "Hello." },
+          payload: { sessionId: input.sessionId, messageId: input.messageId, delta: reply },
         };
       yield {
         type: "agent.message.end",
@@ -64,19 +64,6 @@ function recordingService(onVerification?: () => void): {
     backendFactory: () => backend,
     ports: { search: stubSearch, document: stubDocument },
     systemPrompt: "test",
-    ...(onVerification
-      ? {
-          grounding: {
-            getVerifier: async () => ({
-              verify: async () => {
-                onVerification();
-                return { label: "neutral" as const };
-              },
-              dispose() {},
-            }),
-          },
-        }
-      : {}),
     // The turn is over when its end event reaches the broadcast — this service
     // has no transcript store, so there is no persistence hook to wait on.
     broadcastEvent: (event) => {
@@ -117,19 +104,15 @@ describe("the audience a conversation speaks for", () => {
   });
 });
 
-// Answer grounding fact-checks Answer API candidates only. A conversation's
-// reply reaches the user exactly as the agent wrote it, streamed live.
-it("never checks or rewrites a conversation reply, even with grounding configured", async () => {
-  let verifications = 0;
-  const { service, streamed, turnComplete } = recordingService(() => {
-    verifications++;
-  });
+// A conversation's reply reaches the user exactly as the agent wrote it,
+// streamed live.
+it("streams a conversation reply unchanged", async () => {
+  const { service, streamed, turnComplete } = recordingService("Hello.");
   try {
     const { sessionId } = await service.createSession("token:test", {});
-    service.sendMessage("token:test", sessionId, "Hello.");
+    service.sendMessage("token:test", sessionId, "Hi.");
     await turnComplete;
     expect(streamed()).toBe("Hello.");
-    expect(verifications).toBe(0);
   } finally {
     await service.dispose();
   }

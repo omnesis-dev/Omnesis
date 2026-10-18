@@ -42,7 +42,6 @@ import {
 import {
   AgentSession,
   CitationReads,
-  type TurnFinalizerFactory,
   buildBuiltinTools,
   CITATION_TOOL_NAMES,
   selectDocumentCitationTools,
@@ -63,10 +62,8 @@ import {
 } from "@omnesis/agent";
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
-import { AgentTurnCompleter } from "../inference/agent-turn-completer.js";
 import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
 import { withTodaysTasks } from "./temporal-with-tasks.js";
-import { createAnswerGroundingFinalizer, type AnswerGroundingOptions } from "./answer-grounding.js";
 import { normalizeAnswerProse } from "./answer-prose.js";
 import { CITATION_GROUNDING } from "./citation-grounding.js";
 import {
@@ -204,16 +201,6 @@ export interface AgentServiceDeps {
    */
   namedPagesNote?: (message: string) => string;
   /**
-   * Fact-checks Answer API candidates (`/answer`, MCP Answer, watch firings)
-   * before they reach the privacy reviewer. Interactive conversations are
-   * never checked or rewritten: what the agent writes is what the user sees.
-   */
-  grounding?: {
-    enabled?: () => boolean;
-    getVerifier: AnswerGroundingOptions["getVerifier"];
-    promptSupport?: (prompt: string) => AnswerGroundingOptions["promptSupport"];
-  };
-  /**
    * Sub-agent orchestration config. When omitted, the `spawn_subagent`
    * tool is not wired — a plain agent with no nesting. When present, the
    * service builds a {@link SubagentService} and exposes the subagent port to
@@ -261,8 +248,6 @@ export interface AgentServiceDeps {
   externalAnswerScope?: (authorization: CorpusAuthorization) => Promise<{
     tools: readonly ToolHandle[];
     systemPrompt: string;
-    groundingReads?: CitationReads;
-    groundingDocument?: DocumentPort;
   }>;
   /**
    * Optional broadcast hook. The gateway wires this to the WS server's
@@ -870,8 +855,6 @@ export class AgentService {
   private readonly tools: ReadonlyArray<ToolHandle>;
   private readonly citationReads = new CitationReads();
   private readonly namedPagesNote: AgentServiceDeps["namedPagesNote"];
-  private readonly grounding: AgentServiceDeps["grounding"];
-  private readonly loopRead: ToolPorts["loopRead"];
   private readonly documentPort: DocumentPort;
   private readonly searchRecordPort: ToolPorts["record"];
   private readonly systemPrompt:
@@ -881,8 +864,6 @@ export class AgentService {
     | ((authorization: CorpusAuthorization) => Promise<{
         tools: readonly ToolHandle[];
         systemPrompt: string;
-        groundingReads?: CitationReads;
-        groundingDocument?: DocumentPort;
       }>)
     | undefined;
   private readonly broadcastEvent: ((event: WsEvent) => void) | undefined;
@@ -1065,8 +1046,6 @@ export class AgentService {
       });
     }
     this.namedPagesNote = deps.namedPagesNote;
-    this.grounding = deps.grounding;
-    this.loopRead = deps.ports.loopRead;
     this.tools = buildBuiltinTools({
       citationReads: this.citationReads,
       ports: { ...deps.ports, ...(subagentPort ? { subagent: subagentPort } : {}) },
@@ -1604,54 +1583,6 @@ export class AgentService {
       // persist through the .finally collapses that to one write per
       // user-send, which avoids two concurrent `tmp+rename` against the
       // same JSON file racing for the same tmp suffix.
-    });
-  }
-
-  private answerFinalizer(
-    prompt: string,
-    reads = this.citationReads,
-    document = this.documentPort,
-  ): TurnFinalizerFactory | undefined {
-    if (!this.grounding || this.grounding.enabled?.() === false) return undefined;
-    return createAnswerGroundingFinalizer({
-      reads,
-      document,
-      ...(document === this.documentPort ? { loops: this.loopRead } : {}),
-      promptSupport: this.grounding.promptSupport?.(prompt),
-      getVerifier: this.grounding.getVerifier,
-      repair: async (repairPrompt, signal) => {
-        const backend = this.backendFactory("agent");
-        if (!backend) throw new Error("Repair model unavailable");
-        const completer = new AgentTurnCompleter({ backend });
-        try {
-          const result = await completer.completeWithUsage(repairPrompt, { signal });
-          if (result.usage)
-            this.recordSpend?.({
-              mechanism: "answer-grounding-repair",
-              modelId: backend.model,
-              usage: {
-                inputTokens: result.usage.promptTokens,
-                outputTokens: result.usage.completionTokens,
-              },
-              completed: true,
-            });
-          return result.text;
-        } finally {
-          await completer.dispose();
-        }
-      },
-      // No rejected prose, evidence, or free-text verifier reasons in logs.
-      diagnostic: (value) =>
-        log.info(
-          `Answer grounding ${value.status}: ${value.reason}; attempts=${value.attempts}; evidence=${value.evidenceCount}${value.freshnessFailure ? `; freshness=${value.freshnessFailure}` : ""}${value.inventoryFailure ? `; inventory=${value.inventoryFailure}` : ""}`,
-          {
-            messageId: value.messageId,
-            checks: value.checks,
-            repairTrigger: value.repairTrigger,
-            selectionIncomplete: value.selectionIncomplete,
-            ...(value.sourceFailure ? { sourceFailure: value.sourceFailure } : {}),
-          },
-        ),
     });
   }
 
@@ -2637,11 +2568,6 @@ export class AgentService {
         ? `${basePrompt}${FIRING_EVIDENCE_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`
         : `${basePrompt}${READ_ONLY_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`,
       initialHistory,
-      finalizer: this.answerFinalizer(
-        basePrompt,
-        externalScope?.groundingReads,
-        externalScope?.groundingDocument,
-      ),
       // An Answer is a task: its caller waits on the task, not on each token,
       // so a quota that resets in a minute should delay it rather than fail it.
       rateLimitPatience: BACKGROUND_RATE_LIMIT_PATIENCE,

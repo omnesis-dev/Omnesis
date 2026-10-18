@@ -1337,8 +1337,6 @@ searchPipeline.setTemporalIndex(
 );
 
 const agentLifecycle = new AgentLifecycle({
-  getGroundingVerifier: (signal) => entailmentService.get(signal),
-  isGroundingEnabled: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps).active,
   inferenceRegistry,
   config,
   configStore,

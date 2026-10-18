@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { CitationReads } from "@omnesis/agent";
-import { createAnswerGroundingFinalizer, GROUNDING_CHANGED } from "../../agent/answer-grounding.js";
 import Database from "better-sqlite3";
 import { beforeEach, afterEach, expect, it } from "vitest";
 import {
@@ -213,49 +211,6 @@ it("refuses malformed or oversized private selections rather than substituting c
     }),
   ).toBe(false);
 });
-
-it.each([false, true])(
-  "rechecks real captured root proof after asynchronous finalization (changed proof: %s)",
-  async (changeProof) => {
-    const captured = captureKnowledgeRootContext(db);
-    const finalizer = createAnswerGroundingFinalizer({
-      reads: new CitationReads(),
-      document: { fetch: async () => null },
-      promptSupport: {
-        evidence: captured.support,
-        current: () => isCapturedKnowledgeRootSupportCurrent(db, captured),
-      },
-      getVerifier: async () => ({
-        verify: async () => {
-          await Promise.resolve();
-          if (changeProof)
-            db.exec(
-              "UPDATE knowledge_claims SET fingerprint='changed-during-check' WHERE id='shape'",
-            );
-          else
-            save({
-              markdown:
-                '<claim id="shape" refs="source:record">The prism has six faces.</claim>\n\n[Catalogue](wiki:catalogue)',
-            });
-          return { label: "entailment" as const };
-        },
-        dispose() {},
-      }),
-      repair: async () => {
-        throw new Error("No repair expected");
-      },
-      diagnostic() {},
-    })({
-      sessionId: "fixture-session",
-      messageId: "fixture-message",
-      question: "Describe the prism.",
-    });
-    const draft = "The prism has six faces.";
-    expect(
-      await finalizer.finalize({ draft, overflow: false, signal: new AbortController().signal }),
-    ).toBe(changeProof ? GROUNDING_CHANGED : draft);
-  },
-);
 
 it("refuses original-source ABA after same-byte restoration and successful reproof", () => {
   recordKnowledgeSourceChange(db, { documentId: "record", contentHash: "v1" }, 11);

@@ -1189,30 +1189,22 @@ describe("the gates a conversation's own turns wait behind", () => {
   });
 });
 
-describe("experimental answer grounding finalization", () => {
-  it("uses the shared finalizer before returning an Answer candidate", async () => {
+// The candidate the agent writes is what it returns: no second model checks or
+// rewrites it before the privacy reviewer sees it.
+describe("Answer candidate", () => {
+  it("is the agent's own reply, produced in one model turn", async () => {
     const backend = new RecordingBackend();
     const service = new AgentService({
       backendFactory: () => backend,
       ports: { search: stubSearch, document: stubDocument },
       systemPrompt: "test",
-      grounding: {
-        getVerifier: async () => ({
-          verify: async () => ({ label: "neutral" as const }),
-          dispose() {},
-        }),
-      },
     });
     try {
       const candidate = await service.generateReadOnlyAnswerCandidate(
         "Which calibration is complete?",
       );
-      expect(candidate.answer).toContain("couldn’t verify");
-      expect(candidate.answer).not.toContain("Reply to");
-      expect(backend.turns).toHaveLength(2);
-      expect(backend.turns[1]?.tools).toEqual([]);
-      expect(backend.turns[1]?.history).toEqual([]);
-      expect(backend.turns[1]?.finalAnswerOnly).toBe(true);
+      expect(candidate.answer).toContain("Reply to");
+      expect(backend.turns).toHaveLength(1);
     } finally {
       await service.dispose();
     }

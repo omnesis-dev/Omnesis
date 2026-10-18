@@ -1231,162 +1231,23 @@ make this investigation list incomplete. These hints grant no evidence or editin
 do not restore links automatically, and do not alter root scheduling. The agent investigates
 relevant current pages, selects useful navigation, or explains why none fits the orientation.
 
-### Experimental answer grounding
+### Grounding interactive answers
 
-When the experimental Brain is active, Answer candidates (the `/answer` API, MCP
-Answer and watch-firing answers) use an experimental grounding check. Interactive
-conversations, including Deep Research replies, are never checked or rewritten: the
-reply streams to the user as the agent writes it. Instead, the interactive agent's
-instructions treat the root, wiki pages, annotations and loop summaries as summaries to
-navigate from: it reads the relevant page and follows the claims its answer uses to their
-source documents (`knowledgeContext.provenance`) before answering. For an Answer, the agent buffers
-candidate prose while tools continue to report progress. Before releasing prose, the assigned
-entailment verifier checks the complete answer against a bounded packet of
-actually read source spans, qualified current wiki claims, the captured root
-context, attributed user statements, and successful operation receipts. A missing
-completion record is not evidence that an action remains unfinished. The packet
-is not an exhaustive search of the corpus.
-
-External privacy review still runs independently. One fresh completion without tools may
-repair an unsupported answer, followed by one recheck. Unavailable verification,
-changed source/proof authority, or an oversized packet yields explicit uncertainty, preserving
-acknowledgments of completed tool operations. Original source documents are not
-fetched merely because a wiki refers to them. Full fetched wiki support includes
-its section and enclosing-claim qualifiers; unverified or stale prose cannot
-supply proof. Loop inventory freshness compares the complete observed summaries,
-membership and truncation flag; incidental ordering among equal-importance rows
-does not invalidate an answer. Individually fetched loop details remain strictly
-fenced, including their recorded history and proof context. If only originally
-observed loop tracking fields or history change, the finalizer may reread those
-same records and spend the existing single tool-free repair allowance on the
-explicitly refreshed observations. The inventory membership, truncation, source
-associations and proof context must remain unchanged (only the loop projection’s
-top-level storage revision may advance with otherwise identical authority); this acquires no new source
-proof and replays no actions. At most two semantic checks are initiated, including
-checks whose results become stale. A second change, lost access, or exhausted
-repair allowance stops with a message that supporting information changed or
-became unavailable. All source, privacy and proof fences remain in force. Content-free grounding diagnostics
-identify the failed freshness boundary (source/root authority, loop inventory, proof,
-associations, revision or repeated change). A failed document receipt additionally records
-its opaque document and turn IDs, materialization or recheck stage, comparison mode,
-closed mismatch category, and whether repair or inventory discard had occurred.
-Titles, source text, comparison hashes and rejected prose are not logged. These fields
-identify the failed receipt without implying which factual claim changed.
-
-Temporal queries and person lookups are navigation, not proof: when a turn also actually reads sources,
-wikis or loops, its factual reply is still checked against that observed evidence.
-Claims supported only by temporal rows or person annotation/event breadcrumbs need
-an original source read or qualification; missing lookup results never establish
-absence. Turns with only these navigation reads remain outside the rollout, even
-if a root wiki was injected. Lookup prose is not included as factual proof.
-
-The rollout does not cover mixed turns that read analytics,
-event trails, or subagent findings. Those turns retain existing answer
-behavior and record `not_applicable`, never a verified result. This is not a
-universal or adversarially non-bypassable answer guard. Supporting those surfaces
-requires their own observed-value and privacy receipts.
-
-The complete evidence and interpretation packet shares the contextual verifier’s
-256 KiB limit. When full observed sources exceed it, deterministic selection
-prioritizes exact citation anchors and draft/question matches, retaining whole
-paragraphs and adjacent qualifications. The observed opening paragraph and
-enclosing Markdown headings remain interpretation-only framing; they cannot
-supply independent selected-quote witnesses. Overlapping ranges merge; reduced sources
-are explicit selected-quote evidence, never summaries. Up to eight windows per
-source are allocated in stable rounds; excessively large or unbroken passages
-may be omitted. Selection work is bounded independently of model cost.
-Qualified wiki statements and their inherited context remain indivisible. All
-selected sources are judged together against the whole answer, including
-relationships; no independent per-source verdict can validate a cross-source join.
-The verifier is told selection is incomplete and cannot establish absence or
-currentness. Missing support still causes repair or uncertainty, and original
-read-version/privacy fences remain enforced. Larger accepted packets can materially
-increase token cost and latency. Tracked records and execution receipts are
-included once as scoped evidence, not duplicated as interpretation context.
-
-Stored contextual proofs carry a verifier-policy marker. An authority-policy change
-invalidates reuse of older wiki/root and annotation proofs as supporting evidence;
-ordinary maintenance must verify them again before they can support new claims.
-This does not erase source discovery coverage or rewrite stored content. Reviews
-remain bounded by the existing cadence and budget. Active wiki, root and annotation
-claims with an outdated positive-proof marker are gradually admitted for required
-policy repair within `maxReviewsPerTick`, without a relevance decision. At run admission, current verifier-policy repairs receive one reserved synthesis slot per four admissions alongside the root/organization slot. When all classes are ready, ordinary work retains at least half the slots; unused shares never idle workers. Current bound review targets determine eligibility, not model-provided reasons. A root repair consumes both shares. The durable three-admission window counts continuations and same-clock claims, survives restart, and contains no corpus identifiers. Reactive precedence, budget limits, backoff and active-region exclusions still apply. This admission reservation covers verifier-policy repairs; outcome-policy reviews retain ordinary tier scheduling. Existing
-pending work, retry backoff and historical-owner exclusions still apply. Root
-pages enter this review path only for proof-policy repair. A marker bump does not
-reset source coverage or enqueue an unbounded rebootstrap.
-
-Wiki/root and loop contextual verification uses request-bound source segment IDs
-instead of requiring the model to copy source quotations. Authorized source
-strings appear once as exact segments; all surrounding interpretation fields and
-qualifications remain in the packet. Whole sources, selected quotations and
-ordinary qualified references may be partitioned into contiguous segments of at
-most 2,048 characters, preserving the prior substring authority. Attributed
-utterances marked `wholeStatementOnly` remain indivisible; overlong utterances
-are withheld rather than split. Context and administrative framing receive no
-witness IDs. Each positive assessment must name known unique IDs; a valid ID
-establishes neither relevance nor entailment by itself. Responses must echo an
-exact 128-bit correlation token derived from the full original-input hash.
-Proof/cache identity retains the complete original inputs. Neither altered nor
-missing response tokens are repaired or accepted. The serialized packet is
-bounded to 262,144 bytes, at most 1,024 segments and 16 selected IDs per assessment;
-oversized packets are unavailable, not silently cropped. Contextual proof policy
-v5 requires ordinary bounded repair of older v4 proofs; it does not upgrade them
-in place. Annotation atomic and Answer verification retain separate protocols.
-Scripted checks establish transport and authority enforcement, not semantic accuracy.
-
-Contextual verification retries one malformed protocol response at most, using
-the same claim, evidence and interpretation with strict witness validation. A valid
-negative judgement or transport failure is never retried by this mechanism. Both
-completed inference attempts count toward usage. Cancellation prevents release and
-further attempts; a provider request already in flight can still finish and incur
-cost. This protocol retry is separate from the single answer repair, so an answer
-with repair can require up to four verifier completions.
-
-This adds verification latency and can withhold a correct answer when the
-available evidence packet is incomplete. The implementation records only
-content-free outcome diagnostics, including at most two check outcomes, validated
-negative assessment facets without reason text, probability-threshold outcomes,
-repair trigger and whether evidence selection was incomplete. A failed freshness
-recheck does not retain an accepted semantic label. These fields distinguish
-semantic rejection, protocol failure and recheck failure without recording the
-unsupported assertion itself; rejected draft prose and verifier feedback
-remain turn-local rather than becoming durable conversation content. It is not
-a guarantee of factual correctness: model verification can still misjudge support.
-
-The single powerless Answer repair receives complete validated negative reasons
-(at most two facets of 4,096 characters), without copying them into outcome logs.
-It also receives citation-only page and claim references from fully observed,
-qualified maintained-page reads. This metadata is bounded to 32 pages, 16 claim
-references per page and 16 KiB; omitted metadata is marked incomplete. It supplies
-no factual witnesses and never enters the verifier's evidence packet. Existing
-read, proof and privacy checks still run before accepting the repaired answer.
-
-Mixed answers cannot bypass experimental answer grounding by also invoking an unsupported
-read surface. If a turn combines observed source or loop reads with an unsupported result,
-it returns an explicit verification limitation rather than unchecked prose. Normal interactive `knowledge_fetch` reads of wiki/root pages use the existing authorized
-`fetch_many` document pipeline and its turn-bound qualified proof/citation receipt. Normal reads
-accept a bare node ID or an exact selector-free `wiki:<nodeId>` reference, including a root
-page; other reference kinds and claim selectors are refused. Canonical
-`editing=true` snapshots remain available for edits, but are not qualified answer evidence;
-a turn containing their unbound prose holds factual release. Background editing is unchanged.
-Unavailable or non-wiki normal reads never fall back to raw canonical prose. Pure unsupported-only
-queries retain their existing behavior without a verification stamp.
-
-Answer verification uses a separate source-bound witness protocol: engine-assigned IDs
-identify exact authorized text segments, so the verifier does not have to reproduce source
-escaping or Markdown. Whole-source paragraphs retain all surrounding context; selected
-quotes and qualified synthesis statements remain indivisible. Interpretation-only context
-receives no witness IDs. Responses bind to the exact request and unknown IDs fail closed.
-This reduces mechanical quote-copy failures without making ID selection proof of semantic
-entailment: the model must still assess every factual clause and cross-source relationship.
-Annotation and wiki proof protocols are unchanged. The existing evidence budget, privacy
-and freshness fences, cancellation, usage accounting and bounded retry remain in force.
+No second pass checks or rewrites what the agent says to someone talking to it:
+conversations in the portal and apps, Deep Research replies, and Answer candidates
+(the `/answer` API, MCP Answer and watch-firing answers) are all exactly what the
+agent wrote. Answer candidates still pass the privacy reviewer, which decides what
+may leave the machine, not whether the answer is true. Grounding comes from the
+agent's instructions alone: they treat the root, wiki pages, annotations and loop
+summaries as summaries to navigate from, so the agent reads the relevant page and
+follows the claims its answer uses to their source documents
+(`knowledgeContext.provenance`) before answering.
 
 ### Loop navigation and tracking snapshots
 
 `list_loops` defaults to `mode: "navigation"`: summaries help choose records to open,
 but supply no factual evidence or collection-completeness authority. Relevant `fetch_loop`
-and source/wiki reads ground the answer. Navigation alone cannot bypass answer grounding.
+and source/wiki reads ground the answer.
 An unrelated newly tracked record does not invalidate an answer about the records actually
 opened; the original navigation rows still retain privacy/erasure checks.
 
@@ -1395,19 +1256,8 @@ The engine captures observation time, accessible open/snoozed scope, stable impo
 ordering, requested limit, rows and truncation atomically. Answers carry visible historical
 framing. Counts are exact only for an untruncated stored snapshot, never for real-world
 obligations: source discovery and maintenance may still be incomplete. Original-member
-access, source generations and proof/association authority remain fenced across verification;
-new collection members are not silently substituted. Fetched-detail freshness remains strict.
-Receipts are turn-bound and bounded; eviction, unavailable authority or oversized observations
-hold release. The semantic verifier still decides whether prose respects this limited authority.
-
-If only snapshot proof or association authority changes, the finalizer may discard the entire
-snapshot and spend its existing single tool-free repair on independently read source, qualified
-wiki/root, or fetched-detail evidence. The original exact receipt, turn identity, every original
-owner's availability/privacy and original source generations must still pass atomically, including
-sources whose associations were removed. All snapshot counts, rankings and unread summaries are
-removed from the repair's evidence; the repair cannot fetch new material. Snapshot-only answers
-cannot use this recovery. The repaired answer still needs normal semantic verification and strict
-source/root/detail checks afterward; another change does not grant another repair.
+access is checked when a snapshot receipt is validated; new collection members are not
+silently substituted. Receipts are turn-bound and bounded.
 
 ### Complete source reads
 
@@ -1438,7 +1288,7 @@ separate completion behavior.
 
 ### Complete page reads during maintenance
 
-Answer grounding keeps exact byte-version receipts for source documents, partial
+Citation receipts record exact byte versions of source documents, partial
 page reads and citations. A complete current wiki or root read also binds its
 canonical meaning, qualified claim proofs and dependency state. That authority can
 survive a projection refresh that changes only revision banners or maintenance
@@ -1505,7 +1355,7 @@ The gateway keeps its own conversation history searchable, but a prior assistant
 answer is not an independent source of world facts. A source-owned projection
 binds actual user/assistant utterance ranges to the persisted transcript body;
 rendered speaker labels, generated seed prompts and tool results cannot establish
-those roles. Wiki claim verification and answer grounding consume complete,
+those roles. Wiki claim verification consumes complete,
 attributed speech statements rather than the raw dialogue as factual evidence.
 User reports remain user testimony; questions are not affirmative facts. Assistant
 utterances support historical statements about what the assistant said, not

@@ -30,7 +30,6 @@ import {
   experimentalVisible,
   CLOUD_EGRESS_DISABLED_REASON,
   type CapabilityRole,
-  type EntailCapability,
   type Logger,
 } from "@omnesis/core";
 import { CONFIG_DEFAULTS } from "@omnesis/config";
@@ -52,10 +51,7 @@ import { PrivacyReviewer } from "../privacy/reviewer.js";
 import { cognitionSpendDay } from "../brain/storage/spend.js";
 import { toCognitionRunUsage } from "../brain/run-driver.js";
 import { renderOperatorInstructionsSection } from "../instructions/render.js";
-import {
-  captureKnowledgeRootContext,
-  isCapturedKnowledgeRootSupportCurrent,
-} from "../brain/knowledge/root-context.js";
+import { captureKnowledgeRootContext } from "../brain/knowledge/root-context.js";
 import { namedPagesNote, renderKnowledgePageDirectory } from "../brain/knowledge/page-directory.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
 import {
@@ -153,8 +149,6 @@ export interface AgentServiceDeps {
    */
   getOperatorInstructions?: () => string;
   getKnowledgeRootMaxChars?: () => number;
-  getGroundingVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
-  isGroundingEnabled?: () => boolean;
 }
 
 /**
@@ -390,7 +384,6 @@ export function createAgentService(
         .map((source) => source.type),
     ),
   ];
-  const rootSnapshots = new Map<string, ReturnType<typeof captureKnowledgeRootContext>>();
   const buildLiveSystemPrompt = async (
     context: AgentPromptContext,
     options: {
@@ -433,32 +426,11 @@ export function createAgentService(
       // Source-restricted grants receive no graph context on their searches.
       graphContext: !restricted && searchPipeline.agentSearchV2Enabled,
     });
-    if (root.support.length) {
-      rootSnapshots.set(prompt, root);
-      while (rootSnapshots.size > 256) rootSnapshots.delete(rootSnapshots.keys().next().value!);
-    }
     return prompt;
   };
   return new AgentService({
     backendFactory,
     namedPagesNote: (message) => namedPagesNote(db, message),
-    ...(deps.getGroundingVerifier
-      ? {
-          grounding: {
-            getVerifier: deps.getGroundingVerifier,
-            enabled: deps.isGroundingEnabled,
-            promptSupport: (prompt: string) => {
-              const captured = rootSnapshots.get(prompt);
-              return captured
-                ? {
-                    evidence: captured.support,
-                    current: () => isCapturedKnowledgeRootSupportCurrent(db, captured),
-                  }
-                : undefined;
-            },
-          },
-        }
-      : {}),
     ports: {
       // `db` is passed so the agent search port can attach the 1-hop
       // breadcrumb to top hits when graph context is off.
@@ -533,14 +505,14 @@ export function createAgentService(
         "lookup_document_by_url",
         "annotate_many",
       ]);
-      const groundingReads = new CitationReads();
-      const groundingDocument = createGatewayDocumentPort(db, syncStatus, undefined, authorization);
+      const citationReads = new CitationReads();
+      const document = createGatewayDocumentPort(db, syncStatus, undefined, authorization);
       const tools = buildBuiltinTools({
-        citationReads: groundingReads,
+        citationReads,
         experimental: false,
         ports: {
           search: createGatewaySearchPort(searchPipeline, syncStatus, db, authorization),
-          document: groundingDocument,
+          document,
           documentByUrl: createGatewayDocumentByUrlPort(db, syncStatus, authorization),
         },
       }).filter((tool) => safeNames.has(tool.name));
@@ -550,8 +522,6 @@ export function createAgentService(
       );
       return {
         tools,
-        groundingReads,
-        groundingDocument,
         systemPrompt: `${base}\n\n${renderSourceRestrictedAnswerSection(permittedSourceTypes(authorization))}`,
       };
     },
@@ -624,8 +594,6 @@ export function createAgentService(
 /** Everything {@link AgentLifecycle} needs beyond the agent's own ports. */
 export interface AgentLifecycleDeps {
   inferenceRegistry: InferenceRegistry;
-  getGroundingVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
-  isGroundingEnabled?: () => boolean;
   /** Config snapshot the initial boot resolves the agent from. */
   config: ReturnType<ConfigStore["get"]>;
   /** Read fresh on each swap (assignment + credentials may have changed). */
@@ -932,8 +900,6 @@ export class AgentLifecycle {
     return createAgentService(
       {
         db: this.deps.db,
-        getGroundingVerifier: this.deps.getGroundingVerifier,
-        isGroundingEnabled: this.deps.isGroundingEnabled,
         getKnowledgeRootMaxChars: () =>
           this.deps.configStore.get().brain?.knowledge?.rootMaxChars ?? 8000,
         searchPipeline: this.deps.searchPipeline,
