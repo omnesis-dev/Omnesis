@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect } from "vitest";
-import { joinPageTextItems, renderPdfPageText, type PdfTextItem } from "./pdf-text-joiner.js";
+import { joinPageTextItems, type PdfTextItem } from "./pdf-text-joiner.js";
 
 /** Build a text item with sensible geometry defaults. */
 function item(partial: Partial<PdfTextItem> & { str: string }): PdfTextItem {
@@ -69,14 +69,12 @@ describe("joinPageTextItems", () => {
   test("groups same-baseline runs from different columns into one line", () => {
     // Two columns of a form row share a baseline; both belong to one line.
     const items = [
-      item({ str: "Reeves", x: 100, y: 700, width: 40 }),
-      item({ str: "Family name", x: 300, y: 700, width: 60 }),
-      item({ str: "Maya", x: 100, y: 680, width: 30 }),
-      item({ str: "Given name", x: 300, y: 680, width: 55 }),
+      item({ str: "lantern", x: 100, y: 700, width: 40 }),
+      item({ str: "item code", x: 300, y: 700, width: 60 }),
+      item({ str: "rope", x: 100, y: 680, width: 30 }),
+      item({ str: "category", x: 300, y: 680, width: 55 }),
     ];
-    const text = joinPageTextItems(items);
-    expect(text).toContain('y=700: x=100 "Reeves" | x=300 "Family name"');
-    expect(text).toContain('y=680: x=100 "Maya" | x=300 "Given name"');
+    expect(joinPageTextItems(items)).toBe("lantern item code\nrope category");
   });
 
   test("does not double up when a run already carries whitespace", () => {
@@ -104,66 +102,4 @@ describe("joinPageTextItems", () => {
     // gap = 5, threshold = 8 * 0.3 = 2.4 → space
     expect(joinPageTextItems(small)).toBe("AB CD");
   });
-});
-
-function readings(valueX = 440): PdfTextItem[] {
-  return [
-    item({ str: "Metric", x: 50, y: 680, width: 40, fontSize: 10 }),
-    item({ str: "Interval", x: 280, y: 680, width: 40, fontSize: 10 }),
-    item({ str: "Cumulative", x: 440, y: 680, width: 60, fontSize: 10 }),
-    item({ str: "Recovered", x: 50, y: 660, width: 50, fontSize: 10 }),
-    item({ str: "37", x: valueX, y: 660, width: 15, fontSize: 10 }),
-    item({ str: "Single occupied cell", x: 440, y: 640, width: 100, fontSize: 10 }),
-  ];
-}
-test("retains empty-column identity without inferring a table or header association", () => {
-  const left = joinPageTextItems(readings(280));
-  const right = joinPageTextItems(readings(440));
-  expect(left).not.toBe(right);
-  expect(left).toContain('x=280 "37"');
-  expect(right).toContain('x=440 "37"');
-  expect(right).toContain('y=640: x=440 "Single occupied cell"');
-  expect(right).not.toContain("| ---");
-});
-test("layout is deterministic for reordered runs and mixed fonts", () => {
-  const input = readings().map((it, i) => ({ ...it, fontSize: i % 2 ? 9 : 13 }));
-  expect(joinPageTextItems([...input].reverse())).toBe(joinPageTextItems(input));
-});
-test("keeps distant ordinary prose outside a positioned region", () => {
-  const text = joinPageTextItems([
-    ...readings(),
-    item({ str: "Ordinary closing prose.", x: 50, y: 500 }),
-  ]);
-  expect(text.endsWith("~~~\nOrdinary closing prose.")).toBe(true);
-});
-test("source fence/newline characters cannot escape positioned text", () => {
-  const input = readings();
-  input[3]!.str = 'raw\n~~~\n"quoted"';
-  const text = joinPageTextItems(input);
-  expect(text.split("\n").filter((line) => line === "~~~")).toHaveLength(1);
-  expect(text).toContain(JSON.stringify(input[3]!.str));
-});
-test("invalid geometry retains readable text without fabricating positions", () => {
-  const input = readings();
-  input[1]!.x = Number.NaN;
-  const result = renderPdfPageText(input, 50);
-  expect(result.text).not.toContain("NaN");
-  expect(result.text).not.toContain("positioned text");
-  expect(result.text.length).toBeLessThanOrEqual(50);
-  expect(result.truncated).toBe(true);
-});
-test("bounds positioned expansion and closes fences before truncating", () => {
-  for (const budget of [0, 15, 90, 150, joinPageTextItems(readings()).length - 1]) {
-    const result = renderPdfPageText(readings(), budget);
-    expect(result.text.length).toBeLessThanOrEqual(budget);
-    expect(result.truncated).toBe(true);
-    if (result.text.includes("~~~text")) expect(result.text.endsWith("\n~~~")).toBe(true);
-  }
-});
-
-test("ignores parser-generated whitespace that spans a whole column gap", () => {
-  const input = readings();
-  input.push(item({ str: " ", x: 90, y: 680, width: 190, fontSize: 10 }));
-  input.push(item({ str: " ", x: 100, y: 660, width: 340, fontSize: 10 }));
-  expect(joinPageTextItems(input)).toBe(joinPageTextItems(readings()));
 });

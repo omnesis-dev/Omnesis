@@ -4,8 +4,7 @@
 import { extractTextItems } from "unpdf";
 import pdf from "pdf-parse";
 import { createLogger, type OcrFn, type OcrResult } from "@omnesis/core";
-import { renderPdfPageText } from "./pdf-text-joiner.js";
-import { truncatePdfText } from "./pdf-positioned-text.js";
+import { joinPageTextItems } from "./pdf-text-joiner.js";
 import type { ExtractionResult } from "./types.js";
 
 const log = createLogger("attachments:pdf");
@@ -38,8 +37,7 @@ export async function extractPdfText(
 ): Promise<ExtractionResult | null> {
   const maxLen = opts?.maxTextLength ?? 512_000;
 
-  const native = await perPageNativeText(data, maxLen);
-  const perPage = native?.pages;
+  const perPage = await perPageNativeText(data);
 
   // unpdf couldn't read the page structure (encrypted / corrupt / non-PDF):
   // fall back to pdf-parse for any text layer, then whole-PDF OCR.
@@ -63,11 +61,11 @@ export async function extractPdfText(
     return null;
   }
 
-  const sparse = native!.sparsePages;
+  const sparse = perPage.flatMap((t, i) => (t.trim().length < PAGE_TEXT_MIN_CHARS ? [i] : []));
 
   // Every page has a real text layer, or OCR isn't wired → native text only.
   if (sparse.length === 0 || !opts?.ocr) {
-    return assemble(perPage, perPage.length, maxLen, 0, false, native!.truncated);
+    return assemble(perPage, perPage.length, maxLen, 0);
   }
 
   // OCR only the image-only pages; the gateway returns page-aligned `pageTexts`.
@@ -77,10 +75,10 @@ export async function extractPdfText(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`Sparse-page PDF OCR failed, keeping native text (non-fatal): ${msg}`);
-    return assemble(perPage, perPage.length, maxLen, 0, true, native!.truncated);
+    return assemble(perPage, perPage.length, maxLen, 0, true);
   }
   if (ocrResult === null) {
-    return assemble(perPage, perPage.length, maxLen, 0, true, native!.truncated);
+    return assemble(perPage, perPage.length, maxLen, 0, true);
   }
   const pageTexts = ocrResult?.pageTexts;
 
@@ -93,10 +91,7 @@ export async function extractPdfText(
   if (!Array.isArray(pageTexts) || pageTexts.length !== perPage.length) {
     const ocrText = (ocrResult?.text ?? (pageTexts ?? []).join("\n\n")).trim();
     if (!ocrText) {
-      return (
-        assemble(perPage, perPage.length, maxLen, 0, false, native!.truncated) ??
-        ocrNoText(perPage.length)
-      );
+      return assemble(perPage, perPage.length, maxLen, 0) ?? ocrNoText(perPage.length);
     }
     log.warn(
       `PDF page-count mismatch (native=${perPage.length}, ocr=${pageTexts?.length ?? 0}) — appending OCR text instead of per-page interleave`,
@@ -105,12 +100,12 @@ export async function extractPdfText(
       .map((p) => p.trim())
       .filter(Boolean)
       .join("\n\n");
-    return assemble([nativeText, ocrText], perPage.length, maxLen, 1, false, native!.truncated);
+    return assemble([nativeText, ocrText], perPage.length, maxLen, 1);
   }
 
   let ocrPageCount = 0;
   const merged = perPage.map((native, i) => {
-    if (!sparse.includes(i)) return native.trim();
+    if (native.trim().length >= PAGE_TEXT_MIN_CHARS) return native.trim();
     const ocrText = (pageTexts[i] ?? "").trim();
     if (ocrText) ocrPageCount++;
     return ocrText;
@@ -119,10 +114,7 @@ export async function extractPdfText(
   log.debug(
     `PDF extracted: ${perPage.length} pages, ${ocrPageCount} OCR'd (of ${sparse.length} image-only)`,
   );
-  return (
-    assemble(merged, perPage.length, maxLen, ocrPageCount, false, native!.truncated) ??
-    ocrNoText(perPage.length)
-  );
+  return assemble(merged, perPage.length, maxLen, ocrPageCount) ?? ocrNoText(perPage.length);
 }
 
 function ocrNoText(pages?: number): ExtractionResult {
@@ -135,10 +127,7 @@ function ocrNoText(pages?: number): ExtractionResult {
  * per page (empty string for an image-only page), or null when the PDF can't be
  * parsed at all (encrypted, corrupt) so the caller can fall back.
  */
-async function perPageNativeText(
-  data: Uint8Array,
-  maxLength: number,
-): Promise<{ pages: string[]; truncated: boolean; sparsePages: number[] } | null> {
+async function perPageNativeText(data: Uint8Array): Promise<string[] | null> {
   try {
     // PDF.js may transfer and detach the parser input buffer. Keep the caller's
     // bytes intact for pdf-parse fallback and sparse-page/whole-PDF OCR. Always
@@ -149,28 +138,7 @@ async function perPageNativeText(
       log.debug(`unpdf: 0 pages (${data.length} bytes)`);
       return null;
     }
-    let remaining = maxLength;
-    let truncated = false;
-    const sparsePages: number[] = [];
-    const rendered = pages.map((pageItems, pageIndex) => {
-      if (remaining <= 0) {
-        truncated = true;
-        return "";
-      }
-      // Geometry labels are extraction framing, not evidence of a usable native
-      // text layer. Conversely, exhausted output budgets must not request OCR.
-      let nativeChars = 0;
-      for (const item of pageItems) {
-        nativeChars += item.str.trim().length;
-        if (nativeChars >= PAGE_TEXT_MIN_CHARS) break;
-      }
-      if (nativeChars < PAGE_TEXT_MIN_CHARS) sparsePages.push(pageIndex);
-      const page = renderPdfPageText(pageItems, remaining);
-      truncated ||= page.truncated;
-      remaining = page.truncated ? 0 : Math.max(0, remaining - page.text.length - 2);
-      return page.text.trim();
-    });
-    return { pages: rendered, truncated, sparsePages };
+    return pages.map((pageItems) => joinPageTextItems(pageItems).trim());
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("encrypt") || msg.includes("password")) {
@@ -192,7 +160,6 @@ function assemble(
   maxLen: number,
   ocrPageCount: number,
   ocrIncomplete = false,
-  nativeTruncated = false,
 ): ExtractionResult | null {
   let text = pages
     .map((p) => p.trim())
@@ -200,9 +167,9 @@ function assemble(
     .join("\n\n")
     .trim();
   if (!text) return null;
-  let truncated = nativeTruncated;
+  let truncated = false;
   if (text.length > maxLen) {
-    text = truncatePdfText(text, maxLen);
+    text = text.slice(0, maxLen);
     truncated = true;
   }
   const extra =
