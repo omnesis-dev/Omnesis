@@ -28,6 +28,7 @@ import {
   createLogger,
   InferenceUrlPolicyError,
   experimentalVisible,
+  hostTimeZone,
   makeEvent,
   type AgentConversationTerminalFailure,
   type AgentEvent,
@@ -2569,6 +2570,10 @@ export class AgentService {
         ? `${basePrompt}${FIRING_EVIDENCE_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`
         : `${basePrompt}${READ_ONLY_ANSWER_PROMPT}${ANSWER_CITATIONS_PROMPT}`,
       initialHistory,
+      // The prompt's default zone: tool results then carry each instant's
+      // local time beside it, so the model reads clock times instead of
+      // converting UTC by hand.
+      timeZone: hostTimeZone(),
       // An Answer is a task: its caller waits on the task, not on each token,
       // so a quota that resets in a minute should delay it rather than fail it.
       rateLimitPatience: BACKGROUND_RATE_LIMIT_PATIENCE,

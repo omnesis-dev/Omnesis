@@ -736,7 +736,16 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
     // hands either path a mutating or network-reaching tool has to redden
     // here.
     await service.generateReadOnlyAnswerCandidate("An ordinary question.", []);
-    expect(backend.turns[0]?.tools).toEqual(backend.turns[1]?.tools);
+    // Each session wraps its tools for its time zone, so compare what the
+    // model is offered rather than the wrapper objects.
+    const offered = (turn: (typeof backend.turns)[number] | undefined) =>
+      turn?.tools.map(({ name, description, schema, mutates }) => ({
+        name,
+        description,
+        schema,
+        mutates,
+      }));
+    expect(offered(backend.turns[0])).toEqual(offered(backend.turns[1]));
     expect(backend.turns[0]?.tools.length).toBeGreaterThan(0);
     expect(backend.turns[0]?.userMessage).toContain("doc_fictional_signal");
     expect(backend.turns[0]?.userMessage).toContain("The rehearsal moved to Thursday.");
