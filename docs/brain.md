@@ -260,7 +260,8 @@ claim is searched against the knowledge mirrors; current annotations and pages t
 share at least three distinctive terms with it, rest on a document the draft does
 not cite, and that the run has neither read nor written are returned in a one-time
 refusal per page per run, so the run states the corrected fact or keeps a claim
-nothing bears on. The check is advisory and saves without it when search fails.
+nothing bears on. The check is advisory and saves without it when search fails;
+it sees a record once the record's mirror has been indexed.
 After an annotation is created or revised, current pages that share its matter and
 do not cite it have their next review brought forward through the ordinary review
 gate, and the write's result names them; in a source discovery the run can target
