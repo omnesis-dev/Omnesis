@@ -630,8 +630,8 @@ export class BrainObs {
   /**
    * Latest successful interpretation run, retaining its actual shared-batch
    * identity. An organization cohort run also completes discovery for each
-   * member source it offers, but a member was interpreted by an earlier run
-   * and the cohort run never reads it again, so that completion is skipped.
+   * member source it offers, but a member was interpreted by an earlier run,
+   * so the cohort run's completion of it is not its interpretation.
    */
   async interpretationForSource(docId: string): Promise<RunDto> {
     for (const run of await this.runsForSource(docId)) {
