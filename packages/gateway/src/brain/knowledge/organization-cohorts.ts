@@ -38,6 +38,8 @@ export interface OrganizationCohortSelection {
   inputFingerprint: string;
   /** Set when the cohort is grouped around an important outcome no wiki covers. */
   subjectLoopId?: string;
+  /** Set when the selection reopens a completed cohort after a published search gap. */
+  publicationRetry?: true;
 }
 export interface OrganizationCohort extends OrganizationCohortSelection {
   id: string;
@@ -56,6 +58,8 @@ export interface OrganizationCohortOptions {
   subjectIntervalMs?: number;
   /** Subjects (by anchor outcome) the caller could not start lately; passed over. */
   skipSubjects?: ReadonlySet<string>;
+  /** Other selections (by input fingerprint) the caller could not start lately; passed over. */
+  skipFingerprints?: ReadonlySet<string>;
   /** Receives the subject pass's counts, for reporting why it offered nothing. */
   subjectTally?: SubjectCohortTally;
 }
@@ -132,10 +136,16 @@ function publicationRetryConsumed(db: Database.Database, inputFingerprint: strin
 function publishedRetry(
   db: Database.Database,
   now: number,
-  ownBatchId = "",
-  limit = 8,
-  excludedSources: readonly string[] = [],
+  options: {
+    ownBatchId?: string;
+    limit?: number;
+    excludedSources?: readonly string[];
+    /** Only the retry with this fingerprint: admission confirms the one selected. */
+    matching?: string;
+    skip?: ReadonlySet<string>;
+  } = {},
 ): OrganizationCohort | null {
+  const { ownBatchId = "", limit = 8, excludedSources = [] } = options;
   const removed = db
     .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='removed_sources'")
     .get();
@@ -154,12 +164,19 @@ function publishedRetry(
         ON w.subject_id=m.source_id AND w.subject_kind='source'
         WHERE m.cohort_id=c.id AND w.status IN ('pending','batched')
           AND (w.batch_id IS NULL OR w.batch_id!=?))
+      -- Parked work answers a new batch's enqueue with the parked row, so a
+      -- member parked at its revision could never be admitted again.
+      AND NOT EXISTS(SELECT 1 FROM knowledge_organization_members m WHERE m.cohort_id=c.id
+        AND ${knowledgeWorkParkedSql("'source'", "m.source_id", "m.content_hash")})
       ORDER BY c.retrieval_reconsider_at,c.id LIMIT 32`,
     )
     .all(now, KNOWLEDGE_DISCOVERY_POLICY, limit, ...included.params, ownBatchId);
   for (const row of rows) {
     const cohort = getOrganizationCohort(db, row.id);
-    if (cohort && isOrganizationCohortCurrent(db, cohort)) return cohort;
+    if (!cohort) continue;
+    if (options.matching !== undefined && cohort.inputFingerprint !== options.matching) continue;
+    if (options.skip?.has(cohort.inputFingerprint)) continue;
+    if (isOrganizationCohortCurrent(db, cohort)) return cohort;
   }
   return null;
 }
@@ -480,9 +497,17 @@ export function selectOrganizationCohort(
   if (hasActiveCohort(db)) return null;
   const limit = Math.max(2, Math.min(8, Math.trunc(options.limit ?? 8)));
   const excluded = options.excludedSources ?? [];
-  const retry = publishedRetry(db, options.now, "", limit, excluded);
+  const retry = publishedRetry(db, options.now, {
+    limit,
+    excludedSources: excluded,
+    skip: options.skipFingerprints,
+  });
   if (retry)
-    return { sourceVersions: retry.sourceVersions, inputFingerprint: retry.inputFingerprint };
+    return {
+      sourceVersions: retry.sourceVersions,
+      inputFingerprint: retry.inputFingerprint,
+      publicationRetry: true,
+    };
   const subject = selectSubjectCohort(db, options, limit);
   if (subject) return subject;
   const cadenceElapsed = cadenceReady(db, options.now, options.intervalMs);
@@ -548,7 +573,10 @@ export function selectOrganizationCohort(
   }
   if (selected.length < 2) return null;
   const sourceVersions = Object.fromEntries(selected.map((row) => [row.id, row.revision]));
-  return { sourceVersions, inputFingerprint: fingerprint(sourceVersions) };
+  const inputFingerprint = fingerprint(sourceVersions);
+  // The same inputs would be selected again; they wait out the caller's back-off.
+  if (options.skipFingerprints?.has(inputFingerprint)) return null;
+  return { sourceVersions, inputFingerprint };
 }
 
 /** Call in the same transaction that reserves the actual maintenance regions. */
@@ -565,8 +593,13 @@ export function createOrganizationCohort(
 ): boolean {
   return db.transaction(() => {
     const entries = Object.entries(input.sourceVersions);
-    const retry = publishedRetry(db, now, input.batchId);
-    const isPublicationRetry = retry?.inputFingerprint === input.inputFingerprint;
+    // Match the selected retry by fingerprint: an earlier retry the selection
+    // skipped (excluded sources, a member it could not admit) must not decide.
+    const retry = publishedRetry(db, now, {
+      ownBatchId: input.batchId,
+      matching: input.inputFingerprint,
+    });
+    const isPublicationRetry = retry !== null;
     // A subject cohort regroups evidence chronological cohorts already saw, so
     // it is paced and retried per subject rather than per member revision.
     const subject = input.subjectLoopId;

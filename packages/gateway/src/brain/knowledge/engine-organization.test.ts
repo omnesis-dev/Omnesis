@@ -10,13 +10,14 @@ import { createKnowledgeWorkTables } from "./work-schema.js";
 import { KNOWLEDGE_DISCOVERY_POLICY, recordKnowledgeCoverage } from "./discovery.js";
 import { directKnowledgeGate } from "./writer.js";
 import { KnowledgeOrganization } from "./engine-organization.js";
+import { narrowOrganizationSelection } from "./organization-cohorts.js";
 import type { Logger } from "@omnesis/core";
 import type { KnowledgeEngineDeps } from "./engine.js";
 
 const DAY = 86_400_000;
 const settings = resolveBrainSettings({
   bootstrap: { enabled: false },
-  knowledge: { soonDelay: "1m", routineDelay: "6h" },
+  knowledge: { soonDelay: "5m", routineDelay: "6h" },
 });
 let db: Database.Database;
 let now: number;
@@ -126,18 +127,15 @@ describe("starting subject organization cohorts", () => {
     expect(cohorts()[0]!.members).toHaveLength(2);
   });
 
-  it("passes over a subject that cannot fit so the next subject starts instead of starving", async () => {
+  it("passes over a subject that cannot fit so the next subject starts on the same tick", async () => {
     outcome("oversized", 0.95, ["oversized-a", "oversized-b"]);
     region("oversized-a", settings.knowledge.maxVisitedPerSeed + 1);
     region("oversized-b", settings.knowledge.maxVisitedPerSeed + 1);
     outcome("next", 0.7, ["next-a", "next-b"]);
-    expect(await organization.plan()).toBe(0);
-    expect(cohorts()).toEqual([]);
-    expect(logged()).toContainEqual(
-      "Organization cohort not started: subject anchored on loop oversized, 2 source(s), reason region_limit; passing over the subject for 21600000ms",
-    );
-    now += 60_000;
     expect(await organization.plan()).toBe(1);
+    expect(logged()).toContainEqual(
+      "Organization cohort not started: subject anchored on loop oversized, 2 source(s), reason region_limit; passing over it for 21600000ms",
+    );
     expect(cohorts()).toEqual([{ subject: "next", members: ["next-a", "next-b"] }]);
   });
 
@@ -153,5 +151,52 @@ describe("starting subject organization cohorts", () => {
     now += 6 * 3_600_000;
     await organization.plan();
     expect(logged()).toEqual([report, report]);
+  });
+
+  it("passes over a publication retry that conflicts, so a subject starts on the same tick", async () => {
+    // A completed cohort reopened by a published search gap.
+    const docs = ["retry-a", "retry-b"];
+    for (const doc of docs) {
+      db.prepare("INSERT INTO documents VALUES(?,?,?,'{}')").run(doc, `source-${doc}`, "v1");
+      recordKnowledgeCoverage(
+        db,
+        {
+          subjectId: doc,
+          inputRevision: "v1",
+          phase: "organization",
+          policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+          status: "considered",
+        },
+        1,
+      );
+    }
+    const { inputFingerprint } = narrowOrganizationSelection(
+      { sourceVersions: { "retry-a": "v1", "retry-b": "v1" }, inputFingerprint: "" },
+      docs,
+    );
+    db.prepare(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('kb-old','cog-old','f','routine','completed',1,1)",
+    ).run();
+    db.prepare(
+      `INSERT INTO knowledge_organization_cohorts(id,batch_id,input_fingerprint,policy_version,status,retry_at,created_at,updated_at,retrieval_reconsider_at)
+      VALUES('ko-old','kb-old',?,?,'completed',?,1,1,1)`,
+    ).run(inputFingerprint, KNOWLEDGE_DISCOVERY_POLICY, now + 30 * DAY);
+    for (const doc of docs)
+      db.prepare("INSERT INTO knowledge_organization_members VALUES('ko-old',?,'v1')").run(doc);
+    // Another active batch holds part of the retry's region.
+    db.prepare(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('kb-busy','cog-busy','f','routine','running',1,1)",
+    ).run();
+    db.prepare("INSERT INTO knowledge_batch_regions VALUES('kb-busy','source:retry-a')").run();
+    outcome("matter", 0.9, ["matter-a", "matter-b"]);
+
+    expect(await organization.plan()).toBe(1);
+    expect(logged()).toContainEqual(
+      "Organization cohort not started: retry, 2 source(s), reason revision_conflict (Maintenance region overlaps an active batch); passing over it for 300000ms",
+    );
+    expect(cohorts()).toEqual([
+      { subject: null, members: docs },
+      { subject: "matter", members: ["matter-a", "matter-b"] },
+    ]);
   });
 });

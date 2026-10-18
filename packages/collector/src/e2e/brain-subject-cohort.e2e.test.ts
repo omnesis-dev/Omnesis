@@ -61,7 +61,10 @@ interface Scenario {
  * first document. Only the garden studio subject publishes a page; any other
  * cohort declines. The mooring invoice also supports several minor outcomes.
  */
-async function startScenario(knowledge: Record<string, unknown>): Promise<Scenario> {
+async function startScenario(
+  knowledge: Record<string, unknown>,
+  { mooringOutcomes = true }: { mooringOutcomes?: boolean } = {},
+): Promise<Scenario> {
   const versions: Record<string, string> = {};
   const loops: Scenario["loops"] = { studio: [], mooring: [] };
   const subjects: string[] = [];
@@ -98,6 +101,7 @@ async function startScenario(knowledge: Record<string, unknown>): Promise<Scenar
                     }),
                   )
                 : [];
+            if (matter === "mooring" && !mooringOutcomes) return { calls: [] };
             // Two important outcomes about one matter, joined by the document they share.
             return {
               calls: [
@@ -351,5 +355,75 @@ describe("a matter whose evidence does not fit the maintenance bound", () => {
     expect(gatewayLog(bench)).toContain(
       `Organization cohort started: subject anchored on loop ${cohorts[0]!.subject}, 2 source(s)`,
     );
+  }, 900_000);
+});
+
+describe("a publication retry that cannot start", () => {
+  let scenario: Scenario;
+  beforeAll(async () => {
+    // The mooring documents yield no outcomes here: they only form the retry.
+    scenario = await startScenario({}, { mooringOutcomes: false });
+  }, 300_000);
+  afterAll(async () => {
+    await scenario?.bench.destroy();
+  }, 60_000);
+
+  it("passes over a retry that conflicts so a subject still publishes", async () => {
+    const { bench, loops } = scenario;
+    for (const document of mooring) await bench.push(document);
+    const declined = await waitFor(
+      "the mooring documents' chronological cohort",
+      () =>
+        bench.sql
+          .prepare<[], { id: string; member: string }>(
+            `SELECT c.id,MIN(m.source_id) AS member FROM knowledge_organization_cohorts c
+            JOIN knowledge_organization_members m ON m.cohort_id=c.id
+            WHERE c.subject_loop_id IS NULL AND c.status='completed' GROUP BY c.id LIMIT 1`,
+          )
+          .get() ?? null,
+      180_000,
+    );
+    // A published search gap reopens it, while another active batch holds part
+    // of its region, so every attempt to start it conflicts.
+    bench.withWriteHandle((db) => {
+      db.prepare(
+        "UPDATE knowledge_organization_cohorts SET retrieval_reconsider_at=0 WHERE id=?",
+      ).run(declined.id);
+      // A queued run keeps the batch from being recovered as orphaned.
+      const later = Date.now() + 365 * 86_400_000;
+      db.prepare(
+        `INSERT INTO cognition_runs(id,kind,payload_json,dedupe_key,status,attempts,next_attempt_at,enqueued_at,cycle_anchor_at)
+        VALUES('cog_fixture_busy','synthesis','{}',NULL,'pending',0,?,?,?)`,
+      ).run(later, Date.now(), Date.now());
+      db.prepare(
+        `INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at)
+        VALUES('kb_fixture_busy','cog_fixture_busy','fixture','routine','running',0,0)`,
+      ).run();
+      db.prepare(
+        "INSERT INTO knowledge_batch_regions(batch_id,node_id) VALUES('kb_fixture_busy',?)",
+      ).run(`source:${declined.member}`);
+    });
+    await waitFor(
+      "the conflicting retry passed over",
+      () =>
+        /Organization cohort not started: retry, 2 source\(s\), reason revision_conflict \(Maintenance region overlaps an active batch\); passing over it/.exec(
+          gatewayLog(bench),
+        ),
+      180_000,
+    ).catch((error: unknown) => {
+      const lines = gatewayLog(bench)
+        .split("\n")
+        .filter((line) => /rganization cohort|abandon/i.test(line));
+      throw new Error(`${String(error)}\n${lines.slice(-20).join("\n")}`);
+    });
+    for (const document of studio) await bench.push(document);
+    await waitForPublishedSubject(bench, false, 300_000);
+    const cohorts = subjectCohorts(bench);
+    expect(cohorts).toHaveLength(1);
+    expect(loops.studio).toContain(cohorts[0]!.subject);
+    expect(JSON.parse(cohorts[0]!.outcome!)).toMatchObject({
+      outcome: "organized",
+      targetIds: [wikiId],
+    });
   }, 900_000);
 });

@@ -639,14 +639,19 @@ subject after `maxReviewInterval`, and use only evidence already considered,
 so they never admit additional history. Every uncovered subject is judged on
 each pass, so subjects waiting their retry or lacking two considered documents
 never hide a lower-ranked one. A subject sheds its least recently attached
-documents until the joint maintenance region fits `maxVisitedPerSeed`; one that
-still cannot start (fewer than two documents fit, or a conflict with work
-already admitted) is passed over for `routineDelay` (`soonDelay` after a
-conflict) so the next subject or a chronological cohort takes the slot.
+documents until the joint maintenance region fits `maxVisitedPerSeed`. Any
+selection that still cannot start (a subject with fewer than two documents
+that fit, a publication retry or chronological cohort whose region does not
+fit, or a conflict with work already admitted) is passed over for
+`routineDelay` (`soonDelay` after a conflict), and the next candidate is tried
+on the same tick, so a failing retry never holds the subject pass. A
+publication retry is never reopened while one of its members has work parked
+at its revision.
 
 The gateway log names each cohort start (`Organization cohort started:` with
 its kind, anchor loop id and source count), each selected cohort that did not
-start and why (`Organization cohort not started:`), and, when the subject pass
+start and why (`Organization cohort not started:`, with the kind `subject`,
+`retry` or `chronological` and, for a conflict, the refusing check), and, when the subject pass
 offers nothing, its counts (`Subject organization cohorts: none started;`):
 important outcomes, those without a page, subjects, and how many wait their
 retry, were passed over, or lack considered documents. A repeated report is

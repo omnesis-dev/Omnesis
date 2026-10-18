@@ -1037,3 +1037,77 @@ describe("subject cohorts for important outcomes without a page", () => {
     ]);
   });
 });
+
+describe("publication retries that cannot be admitted", () => {
+  /** A completed cohort whose published search gap reopens it at `reconsiderAt`. */
+  function reopened(id: string, docs: string[], reconsiderAt: number, createdAt = 50) {
+    for (const doc of docs) evidence(doc);
+    const { sourceVersions, inputFingerprint } = narrowOrganizationSelection(
+      { sourceVersions: Object.fromEntries(docs.map((doc) => [doc, "v1"])), inputFingerprint: "" },
+      docs,
+    );
+    db.prepare(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES(?,?,'fingerprint','routine','completed',?,?)",
+    ).run(`batch-${id}`, `run-${id}`, createdAt, createdAt);
+    db.prepare(
+      `INSERT INTO knowledge_organization_cohorts(id,batch_id,input_fingerprint,policy_version,status,retry_at,created_at,updated_at,retrieval_reconsider_at)
+      VALUES(?,?,?,?,'completed',10000,?,?,?)`,
+    ).run(
+      id,
+      `batch-${id}`,
+      inputFingerprint,
+      KNOWLEDGE_DISCOVERY_POLICY,
+      createdAt,
+      createdAt,
+      reconsiderAt,
+    );
+    for (const doc of docs)
+      db.prepare("INSERT INTO knowledge_organization_members VALUES(?,?,'v1')").run(id, doc);
+    return { sourceVersions, inputFingerprint };
+  }
+
+  it("never reopens a retry with a member parked at its revision", () => {
+    reopened("stuck", ["parked-a", "parked-b"], 90);
+    expect(select(100)?.publicationRetry).toBe(true);
+    db.prepare(
+      `INSERT INTO knowledge_work(id,subject_id,subject_kind,reason,input_revision,input_changed_at,tier,due_at,created_at,updated_at,status,last_error)
+      VALUES('parked','parked-a','source','review','v1',1,'routine',1,1,1,'deferred','parked')`,
+    ).run();
+    expect(select(100)?.publicationRetry).toBeUndefined();
+  });
+
+  it("admits the selected retry when an earlier one is passed over", () => {
+    const first = reopened("first", ["first-a", "first-b"], 90);
+    const second = reopened("second", ["second-a", "second-b"], 95, 99);
+    const selection = selectOrganizationCohort(db, {
+      now: 100,
+      intervalMs: 100,
+      retryMs: 500,
+      skipFingerprints: new Set([first.inputFingerprint]),
+    })!;
+    expect(selection).toMatchObject({ ...second, publicationRetry: true });
+    // Only the retry identity admits it: the cadence and review interval would refuse.
+    admit(100, "second-retry", selection);
+    const reopenedAt = db.prepare<[], { id: string; at: number | null }>(
+      "SELECT id,retrieval_reconsider_at AS at FROM knowledge_organization_cohorts WHERE id IN ('first','second') ORDER BY id",
+    );
+    expect(reopenedAt.all()).toEqual([
+      { id: "first", at: 90 },
+      { id: "second", at: null },
+    ]);
+  });
+
+  it("does not offer chronological inputs the caller passed over", () => {
+    evidence("fresh-a");
+    evidence("fresh-b");
+    const selection = select()!;
+    expect(
+      selectOrganizationCohort(db, {
+        now: 100,
+        intervalMs: 100,
+        retryMs: 500,
+        skipFingerprints: new Set([selection.inputFingerprint]),
+      }),
+    ).toBeNull();
+  });
+});

@@ -43,10 +43,14 @@ type Settings = ReturnType<KnowledgeEngineDeps["getSettings"]>["knowledge"];
 /** Explicit joint discovery grouping; cohort membership never adds graph edges. */
 export class KnowledgeOrganization {
   private nextSelectionAt = 0;
-  /** Subjects that could not start, by anchor outcome, until they may be tried again. */
+  /**
+   * Selections that could not start, until they may be tried again: subjects
+   * by anchor outcome, other selections (retries, chronological cohorts) by
+   * input fingerprint.
+   */
   private readonly passedOver = new Map<string, number>();
   /** The last line logged per report kind, so a repeated state is not logged every tick. */
-  private readonly lastReports = new Map<"drop" | "subjects", { key: string; at: number }>();
+  private readonly lastReports = new Map<"subjects", { key: string; at: number }>();
   constructor(private readonly context: OrganizationContext) {}
   async plan(): Promise<number> {
     const { deps } = this.context;
@@ -57,7 +61,25 @@ export class KnowledgeOrganization {
     // Restarting costs one read, while persisted cohorts retain model admission backoff.
     if (now < this.nextSelectionAt) return 0;
     this.nextSelectionAt = now + Math.max(1000, Math.min(60000, cfg.routineDelayMs));
-    for (const [loopId, until] of this.passedOver) if (until <= now) this.passedOver.delete(loopId);
+    for (const [key, until] of this.passedOver) if (until <= now) this.passedOver.delete(key);
+    // A selection that cannot start is passed over and the next candidate is
+    // tried on the same tick, so a failing selection never consumes the tick
+    // that a later candidate (a subject behind a retry) could have used.
+    for (let attempt = 0; attempt < MAX_SELECTIONS_PER_TICK; attempt++) {
+      const outcome = await this.attempt(now, cfg);
+      if (outcome !== "dropped") return outcome;
+    }
+    return 0;
+  }
+
+  private async attempt(now: number, cfg: Settings): Promise<0 | 1 | "dropped"> {
+    const { deps } = this.context;
+    const skipped = (prefix: string) =>
+      new Set(
+        [...this.passedOver.keys()]
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => key.slice(prefix.length)),
+      );
     // Subjects are paced like soon work: an important matter without a page
     // should not wait behind the routine cadence of chronological cohorts.
     const subjectIntervalMs = Math.max(60000, cfg.soonDelayMs);
@@ -69,7 +91,8 @@ export class KnowledgeOrganization {
       retryMs: Math.max(60000, cfg.maxReviewIntervalMs),
       excludedSources: deps.getSettings().excludedSources,
       subjectIntervalMs,
-      skipSubjects: new Set(this.passedOver.keys()),
+      skipSubjects: skipped(SUBJECT_KEY),
+      skipFingerprints: skipped(FINGERPRINT_KEY),
       subjectTally: tally,
     });
     if (tally.evaluated && !selection?.subjectLoopId) this.reportSubjects(tally, now, cfg);
@@ -95,7 +118,7 @@ export class KnowledgeOrganization {
       );
     } catch (error) {
       if (error instanceof KnowledgeStorageError && error.code === "revision_conflict")
-        return this.drop(selection, "revision_conflict", now, cfg);
+        return this.drop(selection, "revision_conflict", now, cfg, error.message);
       throw error;
     }
     const count = Object.keys(chosen.sourceVersions).length;
@@ -169,30 +192,36 @@ export class KnowledgeOrganization {
   }
 
   /**
-   * A subject that cannot start is passed over so the next subject, or a
-   * chronological cohort, gets the slot; without that the same subject would
-   * be selected again on every tick. A conflict with work already admitted
-   * (an overlapping region, evidence picked up meanwhile) clears by itself,
-   * so it waits one subject interval; a region that does not fit waits a
-   * routine delay.
+   * A selection that cannot start is passed over so the next candidate (a
+   * subject, a chronological cohort) gets the slot; without that the same
+   * selection would be chosen again on every tick and hold every cohort kind
+   * selected after it. A conflict with work already admitted (an overlapping
+   * region, evidence picked up meanwhile) can clear by itself, so it waits one
+   * subject interval; a region that does not fit waits a routine delay. The
+   * conflict's own message (a fixed string, never content) says which check
+   * refused it.
    */
   private drop(
     selection: OrganizationCohortSelection,
     reason: OrganizationDropReason,
     now: number,
     cfg: Settings,
-  ): 0 {
+    detail?: string,
+  ): "dropped" {
     const retryMs = Math.max(
       60000,
       reason === "revision_conflict" ? cfg.soonDelayMs : cfg.routineDelayMs,
     );
-    if (selection.subjectLoopId) this.passedOver.set(selection.subjectLoopId, now + retryMs);
-    const message = `Organization cohort not started: ${describe(selection)}, ${Object.keys(selection.sourceVersions).length} source(s), reason ${reason}`;
-    if (selection.subjectLoopId)
-      this.context.deps.log.info(`${message}; passing over the subject for ${retryMs}ms`);
-    else if (this.due("drop", `${selection.inputFingerprint}:${reason}`, now, retryMs))
-      this.context.deps.log.info(message);
-    return 0;
+    this.passedOver.set(
+      selection.subjectLoopId
+        ? `${SUBJECT_KEY}${selection.subjectLoopId}`
+        : `${FINGERPRINT_KEY}${selection.inputFingerprint}`,
+      now + retryMs,
+    );
+    this.context.deps.log.info(
+      `Organization cohort not started: ${describe(selection)}, ${Object.keys(selection.sourceVersions).length} source(s), reason ${reason}${detail ? ` (${detail})` : ""}; passing over it for ${retryMs}ms`,
+    );
+    return "dropped";
   }
 
   /** Says why the subject pass offered nothing, when that changes or once per routine delay. */
@@ -205,7 +234,7 @@ export class KnowledgeOrganization {
     );
   }
 
-  private due(kind: "drop" | "subjects", key: string, now: number, intervalMs: number): boolean {
+  private due(kind: "subjects", key: string, now: number, intervalMs: number): boolean {
     const last = this.lastReports.get(kind);
     if (last?.key === key && now < last.at + intervalMs) return false;
     this.lastReports.set(kind, { key, at: now });
@@ -254,8 +283,12 @@ export class KnowledgeOrganization {
   }
 }
 
+/** Bounds the selections one tick tries after earlier ones could not start. */
+const MAX_SELECTIONS_PER_TICK = 3;
+const SUBJECT_KEY = "subject:";
+const FINGERPRINT_KEY = "fingerprint:";
+
 function describe(selection: OrganizationCohortSelection): string {
-  return selection.subjectLoopId
-    ? `subject anchored on loop ${selection.subjectLoopId}`
-    : "chronological";
+  if (selection.subjectLoopId) return `subject anchored on loop ${selection.subjectLoopId}`;
+  return selection.publicationRetry ? "retry" : "chronological";
 }
