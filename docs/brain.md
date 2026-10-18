@@ -636,7 +636,23 @@ The frontier's organization metadata then names the leading outcome as
 deserves a page, belongs in an existing one, or yields no page. Subject cohorts
 are paced at most one per `soonDelay` (minimum one minute), are retried per
 subject after `maxReviewInterval`, and use only evidence already considered,
-so they never admit additional history.
+so they never admit additional history. Every uncovered subject is judged on
+each pass, so subjects waiting their retry or lacking two considered documents
+never hide a lower-ranked one. A subject sheds its least recently attached
+documents until the joint maintenance region fits `maxVisitedPerSeed`; one that
+still cannot start (fewer than two documents fit, or a conflict with work
+already admitted) is passed over for `routineDelay` (`soonDelay` after a
+conflict) so the next subject or a chronological cohort takes the slot.
+
+The gateway log names each cohort start (`Organization cohort started:` with
+its kind, anchor loop id and source count), each selected cohort that did not
+start and why (`Organization cohort not started:`), and, when the subject pass
+offers nothing, its counts (`Subject organization cohorts: none started;`):
+important outcomes, those without a page, subjects, and how many wait their
+retry, were passed over, or lack considered documents. A repeated report is
+logged once per `routineDelay`. `GET /admin/brain/knowledge/status` returns
+`organization`: cohort counts by kind (`subject` or `chronological`), status
+and outcome.
 
 Page proposals require initial `knowledge_list({kind:"wiki"})` and
 `knowledge_candidates({})` reads without status or cursor filters. On a collection

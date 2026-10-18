@@ -10,6 +10,7 @@ import {
   type PendingKnowledgeWorkOptions,
 } from "./pending-work-query.js";
 import { readKnowledgeSubjectRef } from "./subject-ref.js";
+import { readOrganizationCohortSummary } from "./organization-cohorts.js";
 import {
   readKnowledgeBatch,
   readKnowledgeBatches,
@@ -109,6 +110,8 @@ export class KnowledgeQueryService {
         .get(),
       // Legacy owners converted, and those the sweep set aside by reason.
       conversion: readLegacyConversionStatus(this.db),
+      // Joint organization cohorts by kind (subject or chronological), status and outcome.
+      organization: readOrganizationCohortSummary(this.db),
     };
   }
   nodeDecisions(id: string) {

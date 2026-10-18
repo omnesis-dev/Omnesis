@@ -54,6 +54,10 @@ export interface OrganizationCohortOptions {
   excludedSources?: readonly string[];
   /** Pace of subject cohorts; absent disables them. */
   subjectIntervalMs?: number;
+  /** Subjects (by anchor outcome) the caller could not start lately; passed over. */
+  skipSubjects?: ReadonlySet<string>;
+  /** Receives the subject pass's counts, for reporting why it offered nothing. */
+  subjectTally?: SubjectCohortTally;
 }
 function fingerprint(versions: Record<string, string>): string {
   return createHash("sha256")
@@ -166,8 +170,44 @@ export const SUBJECT_MIN_IMPORTANCE = 0.6;
 export const SUBJECT_WINDOW_MS = 120 * 86_400_000;
 /** A person on more outcomes than this is not specific enough to join subjects. */
 const SUBJECT_PERSON_MAX_LOOPS = 6;
-/** Bounds the clusters inspected for eligible evidence on one tick. */
-const SUBJECT_MAX_CLUSTERS = 24;
+
+/**
+ * What one subject pass saw, in counts only. Filled when the pass runs (the
+ * subject cadence is ready and no publication retry comes first), so a pass
+ * that offers no cohort can say why without naming any matter.
+ */
+export interface SubjectCohortTally {
+  evaluated: boolean;
+  /** Important outcomes updated within the window that cite documents. */
+  important: number;
+  /** Of those, outcomes no wiki claim covers. */
+  uncovered: number;
+  /** Subjects the uncovered outcomes form. */
+  subjects: number;
+  /** Subjects grouped recently, or still pending, that wait their retry interval. */
+  waiting: number;
+  /** Subjects the caller passed over after a failed start. */
+  skipped: number;
+  /** Subjects with fewer than two documents already considered for organization. */
+  lackingEvidence: number;
+  /** Documents attached to the subjects lacking evidence. */
+  lackingDocuments: number;
+  /** Of those documents, the ones already considered for organization. */
+  lackingConsidered: number;
+}
+export function newSubjectCohortTally(): SubjectCohortTally {
+  return {
+    evaluated: false,
+    important: 0,
+    uncovered: 0,
+    subjects: 0,
+    waiting: 0,
+    skipped: 0,
+    lackingEvidence: 0,
+    lackingDocuments: 0,
+    lackingConsidered: 0,
+  };
+}
 
 function subjectCadenceReady(db: Database.Database, now: number, intervalMs: number): boolean {
   const latest = db
@@ -189,6 +229,10 @@ function subjectDue(db: Database.Database, loopId: string, now: number): boolean
     )
     .get(loopId, now);
 }
+
+/** Important outcomes updated within the window that cite at least one document. */
+const IMPORTANT_LOOP_SQL = `l.state IN ('open','snoozed','done') AND l.importance>=? AND l.last_update>=?
+  AND EXISTS(SELECT 1 FROM open_loop_docs d WHERE d.loop_id=l.id)`;
 
 /**
  * Wiki claims that cite the outcome, or any of its documents, already cover it.
@@ -214,20 +258,28 @@ const UNCOVERED_LOOP_SQL = `NOT EXISTS(SELECT 1 FROM open_loop_docs o
 function uncoveredSubjects(
   db: Database.Database,
   now: number,
-): Array<{ anchor: string; loops: string[]; score: number }> {
+  tally?: SubjectCohortTally,
+): Array<{ anchor: string; loops: string[]; documents: number; score: number }> {
   if (
     !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_loops'").get() ||
     !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_loop_people'").get()
   )
     return [];
+  const since = now - SUBJECT_WINDOW_MS;
+  if (tally)
+    tally.important = db
+      .prepare<
+        [number, number],
+        { n: number }
+      >(`SELECT COUNT(*) AS n FROM open_loops l WHERE ${IMPORTANT_LOOP_SQL}`)
+      .get(SUBJECT_MIN_IMPORTANCE, since)!.n;
   const loops = db
     .prepare<[number, number], { id: string; importance: number; last_update: number }>(
       `SELECT l.id,l.importance,l.last_update FROM open_loops l
-      WHERE l.state IN ('open','snoozed','done') AND l.importance>=? AND l.last_update>=?
-      AND EXISTS(SELECT 1 FROM open_loop_docs d WHERE d.loop_id=l.id)
-      AND ${UNCOVERED_LOOP_SQL}`,
+      WHERE ${IMPORTANT_LOOP_SQL} AND ${UNCOVERED_LOOP_SQL}`,
     )
-    .all(SUBJECT_MIN_IMPORTANCE, now - SUBJECT_WINDOW_MS);
+    .all(SUBJECT_MIN_IMPORTANCE, since);
+  if (tally) tally.uncovered = loops.length;
   if (!loops.length) return [];
   const parent = new Map(loops.map((loop) => [loop.id, loop.id]));
   const find = (id: string): string => {
@@ -250,8 +302,11 @@ function uncoveredSubjects(
     )
     .all();
   const firstByKey = new Map<string, string>();
+  const documentKeys = new Map<string, string[]>();
   for (const { loop_id: loopId, key } of links) {
     if (!ids.has(loopId)) continue;
+    if (key.startsWith("doc:"))
+      documentKeys.set(loopId, [...(documentKeys.get(loopId) ?? []), key]);
     const first = firstByKey.get(key);
     if (first) join(loopId, first);
     else firstByKey.set(key, loopId);
@@ -270,17 +325,66 @@ function uncoveredSubjects(
       return {
         anchor: anchor.id,
         loops: members.map((member) => member.id),
+        documents: new Set(members.flatMap((member) => documentKeys.get(member.id) ?? [])).size,
         score: members.reduce((sum, member) => sum + member.importance, 0),
       };
     })
     .sort((a, b) => b.score - a.score || a.anchor.localeCompare(b.anchor));
 }
 
+interface SubjectEvidence {
+  id: string;
+  revision: string;
+  attached: number;
+}
+
+/**
+ * The documents of these outcomes that already passed organization discovery
+ * at their current revision and are free for a cohort, read in one pass so
+ * every subject can be judged without a query per subject.
+ */
+function consideredSubjectEvidence(
+  db: Database.Database,
+  loopIds: readonly string[],
+  excluded: readonly string[],
+): Map<string, SubjectEvidence[]> {
+  const included = brainSourceInclusionSql(excluded, "d.source_id");
+  const removed = !!db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='removed_sources'")
+    .get();
+  const rows = db
+    .prepare<unknown[], SubjectEvidence & { loop: string }>(
+      `SELECT o.loop_id AS loop,d.id,${knowledgeSourceRevisionSql()} AS revision,o.rowid AS attached
+      FROM open_loop_docs o JOIN documents d ON d.id=o.doc_id
+      LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id
+      WHERE o.loop_id IN (SELECT value FROM json_each(?)) AND COALESCE(r.deleted,0)=0
+      AND d.source_id NOT IN (?,?) AND ${included.sql}
+      ${removed ? "AND NOT EXISTS(SELECT 1 FROM removed_sources s WHERE s.id=d.source_id)" : ""}
+      AND EXISTS(SELECT 1 FROM knowledge_discovery_coverage c WHERE c.subject_id=d.id
+        AND c.input_revision=${knowledgeSourceRevisionSql()} AND c.phase='organization'
+        AND c.policy_version=? AND c.status='considered')
+      AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='source' AND w.subject_id=d.id AND w.status IN ('pending','batched'))
+      AND NOT ${knowledgeWorkParkedSql("'source'", "d.id", knowledgeSourceRevisionSql())}`,
+    )
+    .all(
+      JSON.stringify(loopIds),
+      KNOWLEDGE_SOURCE_ID,
+      OPEN_LOOP_SOURCE_ID,
+      ...included.params,
+      KNOWLEDGE_DISCOVERY_POLICY,
+    );
+  const byLoop = new Map<string, SubjectEvidence[]>();
+  for (const { loop, ...row } of rows) byLoop.set(loop, [...(byLoop.get(loop) ?? []), row]);
+  return byLoop;
+}
+
 /**
  * One cohort over the interpreted evidence of the most important subject no
  * wiki covers yet. Chronological cohorts group whatever was read together, so
  * a matter whose evidence spans months may never meet in one; this lets the
- * Brain notice it and decide whether it deserves a page.
+ * Brain notice it and decide whether it deserves a page. Every subject is
+ * judged, so subjects that wait, were passed over or lack evidence never hide
+ * a lower-ranked one that could start.
  */
 function selectSubjectCohort(
   db: Database.Database,
@@ -289,36 +393,45 @@ function selectSubjectCohort(
 ): OrganizationCohortSelection | null {
   if (options.subjectIntervalMs === undefined) return null;
   if (!subjectCadenceReady(db, options.now, options.subjectIntervalMs)) return null;
-  const excluded = options.excludedSources ?? [];
-  const included = brainSourceInclusionSql(excluded, "d.source_id");
-  const removed = !!db
-    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='removed_sources'")
-    .get();
-  const evidence = db.prepare<unknown[], { id: string; revision: string }>(
-    `SELECT d.id,${knowledgeSourceRevisionSql()} AS revision,MAX(o.rowid) AS attached FROM open_loop_docs o
-    JOIN documents d ON d.id=o.doc_id
-    LEFT JOIN knowledge_source_revisions r ON r.document_id=d.id
-    WHERE o.loop_id IN (SELECT value FROM json_each(?)) AND COALESCE(r.deleted,0)=0
-    AND d.source_id NOT IN (?,?) AND ${included.sql}
-    ${removed ? "AND NOT EXISTS(SELECT 1 FROM removed_sources s WHERE s.id=d.source_id)" : ""}
-    AND NOT EXISTS(SELECT 1 FROM knowledge_work w WHERE w.subject_kind='source' AND w.subject_id=d.id AND w.status IN ('pending','batched'))
-    AND NOT ${knowledgeWorkParkedSql("'source'", "d.id", knowledgeSourceRevisionSql())}
-    GROUP BY d.id ORDER BY attached DESC,d.id LIMIT 64`,
+  const tally = options.subjectTally ?? newSubjectCohortTally();
+  tally.evaluated = true;
+  const subjects = uncoveredSubjects(db, options.now, tally);
+  tally.subjects = subjects.length;
+  if (!subjects.length) return null;
+  const evidence = consideredSubjectEvidence(
+    db,
+    subjects.flatMap((subject) => subject.loops),
+    options.excludedSources ?? [],
   );
-  for (const subject of uncoveredSubjects(db, options.now).slice(0, SUBJECT_MAX_CLUSTERS)) {
-    if (!subjectDue(db, subject.anchor, options.now)) continue;
-    const rows = evidence
-      .all(
-        JSON.stringify(subject.loops),
-        KNOWLEDGE_SOURCE_ID,
-        OPEN_LOOP_SOURCE_ID,
-        ...included.params,
-      )
+  for (const subject of subjects) {
+    if (options.skipSubjects?.has(subject.anchor)) {
+      tally.skipped++;
+      continue;
+    }
+    if (!subjectDue(db, subject.anchor, options.now)) {
+      tally.waiting++;
+      continue;
+    }
+    const byDocument = new Map<string, SubjectEvidence>();
+    for (const loop of subject.loops)
+      for (const row of evidence.get(loop) ?? []) {
+        const seen = byDocument.get(row.id);
+        if (!seen || seen.attached < row.attached) byDocument.set(row.id, row);
+      }
+    // The most recently attached evidence leads, as the outcome's current state does.
+    const rows = [...byDocument.values()]
+      .sort((a, b) => b.attached - a.attached || a.id.localeCompare(b.id))
       .filter(
-        (row) => current(db, row.id, row.revision) && !inActiveCohort(db, row.id, row.revision),
+        (row) =>
+          isKnowledgeEvidenceReadable(db, row.id) && !inActiveCohort(db, row.id, row.revision),
       )
       .slice(0, limit);
-    if (rows.length < 2) continue;
+    if (rows.length < 2) {
+      tally.lackingEvidence++;
+      tally.lackingDocuments += subject.documents;
+      tally.lackingConsidered += byDocument.size;
+      continue;
+    }
     const sourceVersions = Object.fromEntries(rows.map((row) => [row.id, row.revision]));
     return {
       sourceVersions,
@@ -327,6 +440,25 @@ function selectSubjectCohort(
     };
   }
   return null;
+}
+
+/**
+ * The same selection over a subset of its sources, for a caller that must
+ * shed sources whose maintenance region does not fit. The subset keeps the
+ * selection's subject and gets its own fingerprint.
+ */
+export function narrowOrganizationSelection(
+  selection: OrganizationCohortSelection,
+  sourceIds: readonly string[],
+): OrganizationCohortSelection {
+  const sourceVersions = Object.fromEntries(
+    sourceIds.map((id) => [id, selection.sourceVersions[id]!]),
+  );
+  return {
+    sourceVersions,
+    inputFingerprint: fingerprint(sourceVersions),
+    ...(selection.subjectLoopId ? { subjectLoopId: selection.subjectLoopId } : {}),
+  };
 }
 
 function inActiveCohort(db: Database.Database, id: string, revision: string): boolean {
@@ -692,4 +824,30 @@ export function abandonOrganizationCohort(
       )
       .run(now, batchId).changes > 0
   );
+}
+
+/** Organization cohorts by kind, status and recorded outcome; counts only. */
+export function readOrganizationCohortSummary(db: Database.Database): Array<{
+  kind: "subject" | "chronological";
+  status: OrganizationCohort["status"];
+  outcome: string | null;
+  count: number;
+  lastCreatedAt: number;
+}> {
+  return db
+    .prepare<
+      [],
+      {
+        kind: "subject" | "chronological";
+        status: OrganizationCohort["status"];
+        outcome: string | null;
+        count: number;
+        lastCreatedAt: number;
+      }
+    >(
+      `SELECT CASE WHEN subject_loop_id IS NULL THEN 'chronological' ELSE 'subject' END AS kind,
+      status,json_extract(outcome_json,'$.outcome') AS outcome,COUNT(*) AS count,MAX(created_at) AS lastCreatedAt
+      FROM knowledge_organization_cohorts GROUP BY 1,2,3 ORDER BY 1,2,3`,
+    )
+    .all();
 }

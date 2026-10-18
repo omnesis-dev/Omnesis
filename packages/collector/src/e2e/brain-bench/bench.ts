@@ -171,6 +171,11 @@ export interface BrainBenchOptions {
    * for that.
    */
   extraGatewayConfig?: Record<string, unknown>;
+  /**
+   * The gateway log file's level. The harness keeps it at `warn`; a test that
+   * asserts on an info line (`harness.getGatewayLogPath()`) raises it.
+   */
+  gatewayLogLevel?: "info" | "debug";
   /** Wire the deterministic fake embedder (needed for semantic reconcile paths). */
   embedder?: boolean;
   /** Wire the fake APNs server (needed to assert morning brief notifications). */
@@ -309,6 +314,7 @@ export class BrainBench {
         ...(decision ? { OMNESIS_TYPESAFE_API_KEY: BENCH_TYPESAFE_KEY } : {}),
         // Replayed conversation turns are paced for demos by default.
         ...(opts.agent === "replay" ? { OMNESIS_AGENT_REPLAY_IMMEDIATE: "1" } : {}),
+        ...(opts.gatewayLogLevel ? { OMNESIS_LOG_LEVEL: opts.gatewayLogLevel } : {}),
       },
       extraInference: {
         ...opts.extraInference,

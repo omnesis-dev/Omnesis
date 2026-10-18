@@ -22,6 +22,9 @@ import {
   getOrganizationCohortForBatch,
   abandonOrganizationCohort,
   isOrganizationCohortCurrent,
+  narrowOrganizationSelection,
+  newSubjectCohortTally,
+  readOrganizationCohortSummary,
 } from "./organization-cohorts.js";
 
 let db: Database.Database;
@@ -920,5 +923,117 @@ describe("subject cohorts for important outcomes without a page", () => {
     db.prepare("UPDATE knowledge_batches SET status='completed'").run();
     expect(selectSubject(NOW + 1)?.subjectLoopId).toBe("matter");
     expect(admitSubject(NOW + 1).sourceVersions).toEqual({ "matter-a": "v1", "matter-b": "v1" });
+  });
+  it("judges every subject, so ones lacking evidence or waiting never hide a lower-ranked one", () => {
+    // Thirty higher-ranked matters whose documents were never considered for organization.
+    for (let i = 0; i < 30; i++) {
+      const loop = `unread-${String(i).padStart(2, "0")}`;
+      outcome(loop, 0.95, []);
+      for (const doc of [`${loop}-a`, `${loop}-b`]) {
+        db.prepare("INSERT INTO documents VALUES(?,?,?,'{}')").run(doc, `source-${doc}`, "v1");
+        db.prepare("INSERT INTO open_loop_docs VALUES(?,?)").run(loop, doc);
+      }
+    }
+    outcome("waiting", 0.9, ["waiting-a", "waiting-b"]);
+    admitSubject();
+    db.prepare("UPDATE knowledge_organization_cohorts SET status='completed'").run();
+    db.prepare("UPDATE knowledge_batches SET status='completed'").run();
+    outcome("readable", 0.7, ["readable-a", "readable-b"]);
+    outcome("next", 0.65, ["next-a", "next-b"]);
+    const tally = newSubjectCohortTally();
+    const selection = selectOrganizationCohort(db, {
+      now: NOW + DAY,
+      intervalMs: 100 * DAY,
+      retryMs: 30 * DAY,
+      subjectIntervalMs: DAY,
+      subjectTally: tally,
+    })!;
+    expect(selection.subjectLoopId).toBe("readable");
+    expect(tally).toMatchObject({ evaluated: true, waiting: 1, skipped: 0, lackingEvidence: 30 });
+    expect(tally).toMatchObject({ lackingDocuments: 60, lackingConsidered: 0 });
+
+    // A subject the caller could not start is passed over for the next one.
+    const passed = newSubjectCohortTally();
+    expect(
+      selectOrganizationCohort(db, {
+        now: NOW + DAY,
+        intervalMs: 100 * DAY,
+        retryMs: 30 * DAY,
+        subjectIntervalMs: DAY,
+        skipSubjects: new Set(["readable"]),
+        subjectTally: passed,
+      })!.subjectLoopId,
+    ).toBe("next");
+    expect(passed.skipped).toBe(1);
+  });
+
+  it("counts why no subject started: none important, all covered, or evidence not yet considered", () => {
+    const tallied = () => {
+      const tally = newSubjectCohortTally();
+      selectOrganizationCohort(db, {
+        now: NOW,
+        intervalMs: 100 * DAY,
+        retryMs: 30 * DAY,
+        subjectIntervalMs: DAY,
+        subjectTally: tally,
+      });
+      return tally;
+    };
+    outcome("minor", 0.5, ["minor-a", "minor-b"]);
+    expect(tallied()).toMatchObject({ evaluated: true, important: 0, uncovered: 0, subjects: 0 });
+    outcome("covered", 0.9, ["covered-a", "covered-b"]);
+    saveKnowledgeNode(
+      db,
+      {
+        id: "covering-page",
+        kind: "wiki",
+        title: "Covered matter",
+        markdown: '<claim id="c" refs="source:covered-a">The matter is covered.</claim>',
+        expectedRevision: 0,
+        inputVersions: { "source:covered-a": "v1" },
+      },
+      NOW,
+    );
+    expect(tallied()).toMatchObject({ important: 1, uncovered: 0, subjects: 0 });
+    outcome("half-read", 0.9, ["read-a"]);
+    db.prepare("INSERT INTO documents VALUES('unread-b','source-unread-b','v1','{}')").run();
+    db.prepare("INSERT INTO open_loop_docs VALUES('half-read','unread-b')").run();
+    expect(tallied()).toMatchObject({
+      important: 2,
+      uncovered: 1,
+      subjects: 1,
+      lackingEvidence: 1,
+      lackingDocuments: 2,
+      lackingConsidered: 1,
+    });
+  });
+
+  it("narrows a selection to the sources that fit, keeping its subject and admission", () => {
+    outcome("matter", 0.9, ["matter-a", "matter-b", "matter-c"]);
+    const selection = selectSubject()!;
+    const narrowed = narrowOrganizationSelection(selection, ["matter-a", "matter-b"]);
+    expect(narrowed.subjectLoopId).toBe("matter");
+    expect(narrowed.sourceVersions).toEqual({ "matter-a": "v1", "matter-b": "v1" });
+    expect(narrowed.inputFingerprint).not.toBe(selection.inputFingerprint);
+    db.prepare(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('batch-narrow','run-narrow','fingerprint','routine','pending',?,?)",
+    ).run(NOW, NOW);
+    expect(
+      createOrganizationCohort(
+        db,
+        {
+          ...narrowed,
+          id: "narrow",
+          batchId: "batch-narrow",
+          intervalMs: 100 * DAY,
+          retryMs: 30 * DAY,
+          subjectIntervalMs: DAY,
+        },
+        NOW,
+      ),
+    ).toBe(true);
+    expect(readOrganizationCohortSummary(db)).toEqual([
+      { kind: "subject", status: "pending", outcome: null, count: 1, lastCreatedAt: NOW },
+    ]);
   });
 });
