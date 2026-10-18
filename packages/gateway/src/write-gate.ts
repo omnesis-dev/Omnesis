@@ -517,6 +517,7 @@ import {
   finalizeCognitionRun,
   recordSettledCognitionRun,
   cancelPendingCognitionRunsByDedupeKeys,
+  retractUnclaimedCognitionRunsByDedupeKeys,
   pullForwardReadyCognitionRun,
   cancelScheduledRunsForLoop,
   addToCognitionEngineCounter,
@@ -1653,8 +1654,10 @@ export interface WriteGate extends KnowledgeWriteGate {
     }>,
     activeDerivationStageIds: readonly DerivationStageId[],
   ): Promise<number>;
-  /** Drop pending runs by dedupe key (decay-sweep retractions). */
+  /** Drop pending runs by dedupe key, claimed or not (sweeps' crash-residue cleanup). */
   cancelPendingCognitionRuns(dedupeKeys: string[]): Promise<number>;
+  /** Withdraw never-claimed pending runs by dedupe key (decay-sweep retractions). */
+  retractUnclaimedCognitionRuns(dedupeKeys: string[]): Promise<number>;
   /**
    * Cascade-cancel a resolved/deleted loop's never-claimed
    * `schedule_agent_run` checks (linked via the payload `loopId`).
@@ -2638,6 +2641,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     pullForwardCognitionRuns: (entries, activeDerivationStageIds) =>
       call("cognition.pullForward", [entries, activeDerivationStageIds]),
     cancelPendingCognitionRuns: (dedupeKeys) => call("cognition.cancelPending", [dedupeKeys]),
+    retractUnclaimedCognitionRuns: (dedupeKeys) => call("cognition.retractUnclaimed", [dedupeKeys]),
     cancelScheduledRunsForLoop: (loopId) => call("cognition.cancelScheduledForLoop", [loopId]),
     setCognitionEngineState: (key, value) => call("cognition.engineStateSet", [key, value]),
     addToCognitionEngineCounter: (key, delta) => call("cognition.engineCounterAdd", [key, delta]),
@@ -3296,6 +3300,8 @@ export function directWriteGate(db: Db): WriteGate {
     },
     cancelPendingCognitionRuns: async (dedupeKeys) =>
       cancelPendingCognitionRunsByDedupeKeys(db, dedupeKeys),
+    retractUnclaimedCognitionRuns: async (dedupeKeys) =>
+      retractUnclaimedCognitionRunsByDedupeKeys(db, dedupeKeys),
     cancelScheduledRunsForLoop: async (loopId) => cancelScheduledRunsForLoop(db, loopId),
     setCognitionEngineState: async (key, value) => {
       setCognitionEngineState(db, key, value);

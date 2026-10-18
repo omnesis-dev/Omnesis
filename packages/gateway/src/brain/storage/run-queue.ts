@@ -1213,12 +1213,12 @@ export function recordSettledCognitionRun(db: Db, input: RecordSettledCognitionR
 }
 
 /**
- * Drop pending rows by dedupe key — used by the decay sweep to retract
- * scheduled status-checks whose loop is no longer eligible (closed,
- * deleted, privacy-cascaded). A row already claimed and in flight is
- * still `pending`, so this can race a running check; the decay prompt is
- * built from live loop state at claim time and degrades to a no-op when
- * the loop is gone. Returns the number of rows dropped.
+ * Drop pending rows by dedupe key, claimed or not — the sweeps' cleanup of
+ * attempts-exhausted crash residue, which the drainer can never claim again.
+ * A row already claimed and in flight is still `pending`, so a caller must
+ * only name keys it knows are not executing; to withdraw scheduled work use
+ * {@link retractUnclaimedCognitionRunsByDedupeKeys}. Returns the number of
+ * rows dropped.
  */
 export function cancelPendingCognitionRunsByDedupeKeys(
   db: Db,
@@ -1230,6 +1230,36 @@ export function cancelPendingCognitionRunsByDedupeKeys(
     .prepare<string[]>(
       `DELETE FROM cognition_runs
        WHERE status = 'pending' AND dedupe_key IN (${placeholders})`,
+    )
+    .run(...dedupeKeys).changes;
+}
+
+/**
+ * Withdraw scheduled runs by dedupe key, sparing any row that has ever been
+ * claimed — the decay sweep's retraction of status-checks whose loop is no
+ * longer open (closed, deleted, privacy-cascaded).
+ *
+ * The queue keeps no running status on disk: an executing run is a `pending`
+ * row with `last_attempt_at` set. A decay check that dismisses its own loop
+ * makes its key ineligible while it is still executing, so a blind delete
+ * would remove the row before the drain settles it and the run would vanish
+ * from the queue's history. `last_attempt_at` is written only by a claim and
+ * a fold never clears it, so this guard holds whatever the attempt counter
+ * says, and the writer orders it against a concurrent claim. A claimed row
+ * left behind settles on its own: the decay prompt is built from live loop
+ * state at claim time and degrades to a no-op when the loop is gone. Returns
+ * the number of rows dropped.
+ */
+export function retractUnclaimedCognitionRunsByDedupeKeys(
+  db: Db,
+  dedupeKeys: readonly string[],
+): number {
+  if (dedupeKeys.length === 0) return 0;
+  const placeholders = dedupeKeys.map(() => "?").join(", ");
+  return db
+    .prepare<string[]>(
+      `DELETE FROM cognition_runs
+       WHERE status = 'pending' AND last_attempt_at IS NULL AND dedupe_key IN (${placeholders})`,
     )
     .run(...dedupeKeys).changes;
 }

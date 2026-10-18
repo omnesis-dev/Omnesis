@@ -136,6 +136,7 @@ export {
   finalizeCognitionRun,
   recordSettledCognitionRun,
   cancelPendingCognitionRunsByDedupeKeys,
+  retractUnclaimedCognitionRunsByDedupeKeys,
   pullForwardReadyCognitionRun,
   cancelScheduledRunsForLoop,
   type EnqueueCognitionRunInput,

@@ -447,6 +447,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "cognition.recordSettledRun", priority: "user" },
   { name: "cognition.pullForward", priority: "background" },
   { name: "cognition.cancelPending", priority: "background" },
+  { name: "cognition.retractUnclaimed", priority: "background" },
   { name: "cognition.cancelScheduledForLoop", priority: "background" },
   { name: "cognition.engineStateSet", priority: "background" },
   { name: "cognition.recordCognitionSpend", priority: "background" },

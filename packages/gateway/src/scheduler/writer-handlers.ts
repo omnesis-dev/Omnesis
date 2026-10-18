@@ -473,6 +473,7 @@ import {
   finalizeCognitionRun,
   recordSettledCognitionRun,
   cancelPendingCognitionRunsByDedupeKeys,
+  retractUnclaimedCognitionRunsByDedupeKeys,
   pullForwardReadyCognitionRun,
   cancelScheduledRunsForLoop,
   setCognitionEngineState,
@@ -1494,6 +1495,8 @@ export const writerHandlers = {
   },
   "cognition.cancelPending": (db: Db, dedupeKeys: string[]) =>
     cancelPendingCognitionRunsByDedupeKeys(db, dedupeKeys),
+  "cognition.retractUnclaimed": (db: Db, dedupeKeys: string[]) =>
+    retractUnclaimedCognitionRunsByDedupeKeys(db, dedupeKeys),
   "cognition.cancelScheduledForLoop": (db: Db, loopId: string) =>
     cancelScheduledRunsForLoop(db, loopId),
   "cognition.engineStateSet": (db: Db, key: string, value: string): void =>

@@ -120,7 +120,7 @@ export interface DecaySweepWriteOps {
     input: EnqueueCognitionRunInput,
     now: number,
   ): Promise<EnqueueCognitionRunResult>;
-  cancelPendingCognitionRuns(dedupeKeys: string[]): Promise<number>;
+  retractUnclaimedCognitionRuns(dedupeKeys: string[]): Promise<number>;
   setCognitionEngineState(key: string, value: string): Promise<void>;
 }
 
@@ -172,13 +172,14 @@ export async function runDecaySweepPass(deps: DecaySweepDeps): Promise<DecaySwee
 
   // Retract pending checks for loops that are no longer open (closed,
   // deleted, privacy-cascaded) — the run would only burn a model call to
-  // discover there is nothing to check.
+  // discover there is nothing to check. A check already claimed is left to
+  // settle: it may be the very run that closed its loop.
   const eligibleKeys = new Set(loops.map((l) => decayCheckRunDedupeKey(l.id)));
   const staleKeys = listPendingCognitionDedupeKeys(deps.db, DECAY_CHECK_DEDUPE_PREFIX).filter(
     (key) => !eligibleKeys.has(key),
   );
   const cancelled =
-    staleKeys.length > 0 ? await deps.writeGate.cancelPendingCognitionRuns(staleKeys) : 0;
+    staleKeys.length > 0 ? await deps.writeGate.retractUnclaimedCognitionRuns(staleKeys) : 0;
 
   await deps.writeGate.setCognitionEngineState(
     COGNITION_DECAY_SWEPT_VERSION_KEY,

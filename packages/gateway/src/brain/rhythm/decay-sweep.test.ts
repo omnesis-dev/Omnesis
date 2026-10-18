@@ -18,11 +18,14 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import {
-  cancelPendingCognitionRunsByDedupeKeys,
+  retractUnclaimedCognitionRunsByDedupeKeys,
   claimDueCognitionRuns,
   enqueueCognitionRun,
+  finalizeCognitionRun,
+  getCognitionRun,
   type EnqueueCognitionRunInput,
 } from "../storage/run-queue.js";
+import { cognitiveWorkflowIdForRun } from "../cognition/workflows.js";
 import { setCognitionEngineState } from "../storage/engine-state.js";
 import {
   appendOpenLoopLedger,
@@ -133,9 +136,9 @@ describe("decay sweep", () => {
       writeCalls += 1;
       return enqueueCognitionRun(db, input, now);
     },
-    cancelPendingCognitionRuns: async (keys: string[]) => {
+    retractUnclaimedCognitionRuns: async (keys: string[]) => {
       writeCalls += 1;
-      return cancelPendingCognitionRunsByDedupeKeys(db, keys);
+      return retractUnclaimedCognitionRunsByDedupeKeys(db, keys);
     },
     setCognitionEngineState: async (key: string, value: string) => {
       writeCalls += 1;
@@ -309,6 +312,37 @@ describe("decay sweep", () => {
     const result = await sweep();
     expect(result.cancelled).toBe(1);
     expect(pendingCheck(loopId)).toBeNull();
+  });
+
+  test("a check that closes its own loop is never retracted from under it", async () => {
+    const loopId = seedLoop(10_000);
+    await sweep();
+    clockNow = 10_100;
+    const [claimed] = claimDueCognitionRuns(db, { now: clockNow });
+    expect(claimed?.payload).toEqual({ decayCheckLoopId: loopId });
+
+    // The in-flight check dismisses its loop, and a sweep tick lands before
+    // the drain settles the run.
+    updateOpenLoop(db, loopId, { state: "dismissed" }, clockNow);
+    const result = await sweep();
+    expect(result.swept).toBe(true);
+    expect(result.cancelled).toBe(0);
+    expect(pendingCheck(loopId)).not.toBeNull();
+
+    finalizeCognitionRun(db, {
+      runId: claimed!.id,
+      now: clockNow + 1,
+      day: "2026-01-01",
+      mechanism: cognitiveWorkflowIdForRun(claimed!.kind, claimed!.payload),
+      modelId: null,
+      usage: null,
+      claimedPayloadJson: claimed!.payloadJson,
+      outcome: { kind: "completed" },
+    });
+    expect(getCognitionRun(db, claimed!.id)).toMatchObject({
+      status: "completed",
+      dedupeKey: decayCheckRunDedupeKey(loopId),
+    });
   });
 
   test("a deleted loop gets its pending check retracted", async () => {
