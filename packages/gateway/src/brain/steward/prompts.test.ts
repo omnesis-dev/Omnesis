@@ -2884,4 +2884,7 @@ test("separates actor and quoted context from current obligations in the shared 
   expect(WIKI_AUTHORING_GUIDANCE).toContain(
     "Write the title, headings and prose of a page in one language",
   );
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "When sources give one quantity different values (a fee, price, balance, size or date), never state both as facts.",
+  );
 });
