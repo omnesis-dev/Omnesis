@@ -14,7 +14,7 @@
 
 import { buildPage, clampLimit } from "@omnesis/types";
 import { scope } from "../http/scope.js";
-import { NotFoundError, StalePageCursorError } from "../http/errors.js";
+import { NotFoundError } from "../http/errors.js";
 import {
   nextProductLoopPageCursor,
   parseProductLoopFilter,
@@ -74,16 +74,18 @@ export function mountLoopRoutes(app: RouteApp, opts: MountLoopRoutesOpts): void 
     requireActive();
     const state = parseProductLoopFilter(c.req.query("state"));
     const limit = clampLimit(c.req.query("limit"), { default: 50, max: 100 });
-    const revision = productLoops.paginationRevision();
-    const cursor = parseProductLoopPageCursor(c.req.query("cursor"), state, revision);
     const states = productLoopStates(state);
-    const probe = productLoops.list({
-      ...(states ? { states } : {}),
-      orderBy: "importance",
-      limit: limit + 1,
-      ...(cursor ? { afterImportance: cursor } : {}),
+    const { revision, probe } = productLoops.readListPage(() => {
+      const revision = productLoops.paginationRevision();
+      const cursor = parseProductLoopPageCursor(c.req.query("cursor"), state, revision);
+      const probe = productLoops.list({
+        ...(states ? { states } : {}),
+        orderBy: "importance",
+        limit: limit + 1,
+        ...(cursor ? { afterImportance: cursor } : {}),
+      });
+      return { revision, probe };
     });
-    if (productLoops.paginationRevision() !== revision) throw new StalePageCursorError();
     const hasMore = probe.length > limit;
     const page = hasMore ? probe.slice(0, limit) : probe;
     const last = page.at(-1);

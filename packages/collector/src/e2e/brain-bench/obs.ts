@@ -20,25 +20,6 @@
 import { sleep } from "../briefs-scorecard.js";
 import type { SyntheticE2EHarness } from "../synth-harness.js";
 
-const MAX_STALE_RUN_PAGE_RETRIES = 5;
-
-function isStalePageCursor(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const response = error as Error & { status?: unknown; body?: unknown };
-  if (response.status !== 409 || typeof response.body !== "string") return false;
-  try {
-    const body = JSON.parse(response.body) as unknown;
-    return (
-      typeof body === "object" &&
-      body !== null &&
-      "code" in body &&
-      (body as { code?: unknown }).code === "STALE_PAGE_CURSOR"
-    );
-  } catch {
-    return false;
-  }
-}
-
 // ── wire shapes (the fields bench assertions actually read) ─────────────────
 
 /** One phase's discovery outcomes for a month of the corpus. */
@@ -433,6 +414,28 @@ export interface PageOf<T> {
   pageInfo?: { nextCursor?: string | null; hasMore?: boolean };
 }
 
+/**
+ * True when `steps` complete discovery for the source outside an organization
+ * cohort: the frontier that offered it did not list it as a cohort member.
+ */
+function interpretedSource(steps: readonly ExecutedTool[], docId: string): boolean {
+  let cohortMembers: readonly unknown[] = [];
+  for (const step of steps) {
+    if (step.tool === "knowledge_next_frontier") {
+      const organization = step.result?.data?.organization as { sourceIds?: unknown } | undefined;
+      cohortMembers = Array.isArray(organization?.sourceIds) ? organization.sourceIds : [];
+    } else if (
+      step.tool === "knowledge_discovery_complete" &&
+      step.args.id === `source:${docId}` &&
+      step.result?.kind === "structured" &&
+      !cohortMembers.includes(docId)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class BrainObs {
   constructor(private readonly h: SyntheticE2EHarness) {}
 
@@ -476,15 +479,7 @@ export class BrainObs {
   async runs(
     opts: { kind?: string; status?: string; order?: string; limit?: number } = {},
   ): Promise<PageOf<RunDto>> {
-    const path = `/admin/brain/runs${this.q({ limit: 200, ...opts })}`;
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await this.h.gatewayJson(path);
-      } catch (error) {
-        if (attempt >= MAX_STALE_RUN_PAGE_RETRIES || !isStalePageCursor(error)) throw error;
-        await sleep(10);
-      }
-    }
+    return this.h.gatewayJson(`/admin/brain/runs${this.q({ limit: 200, ...opts })}`);
   }
 
   async run(id: string): Promise<{
@@ -632,12 +627,17 @@ export class BrainObs {
     return matches;
   }
 
-  /** Latest successful interpretation run, retaining its actual shared-batch identity. */
+  /**
+   * Latest successful interpretation run, retaining its actual shared-batch
+   * identity. An organization cohort run also completes discovery for each
+   * member source it offers, but a member was interpreted by an earlier run
+   * and the cohort run never reads it again, so that completion is skipped.
+   */
   async interpretationForSource(docId: string): Promise<RunDto> {
-    const runs = await this.runsForSource(docId);
-    const run = runs[0];
-    if (!run) throw new Error(`no successful maintenance interpretation for source ${docId}`);
-    return run;
+    for (const run of await this.runsForSource(docId)) {
+      if (interpretedSource(await this.executedTools(run.id), docId)) return run;
+    }
+    throw new Error(`no successful maintenance interpretation for source ${docId}`);
   }
 
   /** The `<diff>` block a data run's prompt carried, if any. */

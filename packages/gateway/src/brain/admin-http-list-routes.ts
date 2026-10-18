@@ -254,35 +254,36 @@ export function mountCognitionListAdminRoutes(
   app.get("/admin/brain/coverage", scope.admin(), (c) => {
     requireVisible();
     const limit = limitParam(c.req.query("limit"), "limit", 100, 500);
-    const revision = query.paginationRevision("cognition-coverage");
-    const cursor = decodePageCursor(c.req.query("cursor"), "cognition-coverage", (payload) => {
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-      const value = payload as Record<string, unknown>;
-      if (
-        typeof value.lastProgressAt !== "number" ||
-        !Number.isFinite(value.lastProgressAt) ||
-        typeof value.sourceId !== "string" ||
-        typeof value.workflowId !== "string" ||
-        typeof value.workflowVersion !== "number" ||
-        !Number.isSafeInteger(value.workflowVersion) ||
-        typeof value.revision !== "number" ||
-        !Number.isSafeInteger(value.revision)
-      ) {
-        return null;
-      }
-      if (value.revision !== revision) throw new StalePageCursorError();
-      return {
-        lastProgressAt: value.lastProgressAt,
-        sourceId: value.sourceId,
-        workflowId: value.workflowId,
-        workflowVersion: value.workflowVersion,
-      };
-    });
-    if (query.paginationRevision("cognition-coverage") !== revision)
-      throw new StalePageCursorError();
-    const probe = query.listCoverage({
-      limit: limit + 1,
-      ...(cursor ? { before: cursor } : {}),
+    const { revision, probe } = query.readListPage(() => {
+      const revision = query.paginationRevision("cognition-coverage");
+      const cursor = decodePageCursor(c.req.query("cursor"), "cognition-coverage", (payload) => {
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+        const value = payload as Record<string, unknown>;
+        if (
+          typeof value.lastProgressAt !== "number" ||
+          !Number.isFinite(value.lastProgressAt) ||
+          typeof value.sourceId !== "string" ||
+          typeof value.workflowId !== "string" ||
+          typeof value.workflowVersion !== "number" ||
+          !Number.isSafeInteger(value.workflowVersion) ||
+          typeof value.revision !== "number" ||
+          !Number.isSafeInteger(value.revision)
+        ) {
+          return null;
+        }
+        if (value.revision !== revision) throw new StalePageCursorError();
+        return {
+          lastProgressAt: value.lastProgressAt,
+          sourceId: value.sourceId,
+          workflowId: value.workflowId,
+          workflowVersion: value.workflowVersion,
+        };
+      });
+      const probe = query.listCoverage({
+        limit: limit + 1,
+        ...(cursor ? { before: cursor } : {}),
+      });
+      return { revision, probe };
     });
     const hasMore = probe.length > limit;
     const rows = hasMore ? probe.slice(0, limit) : probe;

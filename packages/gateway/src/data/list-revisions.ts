@@ -175,6 +175,17 @@ export function finishLinkDeclarationUpdate(db: Db): number {
   return row.revision;
 }
 
+/**
+ * Read one page of a revision-fenced list inside a single read transaction, so
+ * the revision stamped into its next cursor and the rows on the page come from
+ * the same database snapshot. Read as separate statements, a commit landing
+ * between them would leave the page and its revision disagreeing; the fence
+ * then has no way to tell a moved list from an unlucky first page.
+ */
+export function readListPage<T>(db: Db, read: () => T): T {
+  return db.transaction(read)();
+}
+
 export function mutableListRevision(db: Db, scope: MutableListRevisionScope): number {
   return db
     .prepare<

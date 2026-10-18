@@ -16,8 +16,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
+import BetterSqlite3 from "better-sqlite3";
 import { createDatabase } from "../db.js";
 import { createServer } from "../server.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
@@ -26,6 +27,7 @@ import { insertTemporalAnnotation } from "../enrichment/temporal-annotations/sto
 import { recordKnowledgeDecision } from "./knowledge/decision-storage.js";
 import { saveKnowledgeNode } from "./knowledge/storage.js";
 import { recordRunAttribution } from "./storage/run-attribution.js";
+import { CognitionAdminQueryService } from "./cognition-admin-query-service.js";
 import { createMutableClock } from "./virtual-clock.js";
 import { createObservation, transitionObservation } from "./storage/observations.js";
 import { replaceMorningBriefItems } from "./storage/morning-brief-items.js";
@@ -760,6 +762,47 @@ describe("GET /admin/brain/runs", () => {
     ).json()) as { items: Array<{ id: string }>; pageInfo: { hasMore: boolean } };
     expect(second.items.map((run) => run.id)).toEqual(["run_later"]);
     expect(second.pageInfo.hasMore).toBe(false);
+  });
+
+  test("a first page read while another connection enqueues a run is served from one snapshot", async () => {
+    enqueueCognitionRun(db, { id: "run_old", kind: "data", payload: {} }, 1_000);
+    enqueueCognitionRun(db, { id: "run_older", kind: "data", payload: {} }, 500);
+    // The runs list is read on the route's connection while a second
+    // connection — standing in for the writer thread — commits a new run
+    // between the revision read and the row read.
+    const writer = new BetterSqlite3(dbPath);
+    const listRuns = CognitionAdminQueryService.prototype.listRuns;
+    const spy = vi
+      .spyOn(CognitionAdminQueryService.prototype, "listRuns")
+      .mockImplementationOnce(function (this: CognitionAdminQueryService, options) {
+        enqueueCognitionRun(writer, { id: "run_new", kind: "data", payload: {} }, 2_000);
+        return listRuns.call(this, options);
+      });
+    try {
+      const first = await get("/admin/brain/runs?limit=1");
+      expect(first.status).toBe(200);
+      const page = (await first.json()) as {
+        items: Array<{ id: string }>;
+        pageInfo: { nextCursor?: string };
+      };
+      expect(spy).toHaveBeenCalledTimes(1);
+      // The page and its cursor both belong to the snapshot before the commit.
+      expect(page.items.map((run) => run.id)).toEqual(["run_old"]);
+      // The list has since moved, so continuing from that cursor is refused.
+      const next = await get(
+        `/admin/brain/runs?limit=1&cursor=${encodeURIComponent(page.pageInfo.nextCursor!)}`,
+      );
+      expect(next.status).toBe(409);
+      expect(await next.json()).toMatchObject({ code: "STALE_PAGE_CURSOR" });
+      // A fresh first page sees the committed run.
+      const fresh = (await (await get("/admin/brain/runs?limit=1")).json()) as {
+        items: Array<{ id: string }>;
+      };
+      expect(fresh.items.map((run) => run.id)).toEqual(["run_new"]);
+    } finally {
+      spy.mockRestore();
+      writer.close();
+    }
   });
 
   test("decodes each kind's pending payload into a display-safe trigger", async () => {

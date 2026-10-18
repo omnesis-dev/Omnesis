@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { buildPage } from "@omnesis/types";
-import { NotFoundError, StalePageCursorError } from "../http/errors.js";
+import { NotFoundError } from "../http/errors.js";
 import { decodePageCursor, encodePageCursor } from "../http/pagination-cursor.js";
 import { scope } from "../http/scope.js";
 import {
@@ -38,14 +38,16 @@ export function mountCognitionLoopAdminRoutes(ctx: CognitionAdminRouteContext): 
     const state = enumParam(c.req.query("state"), "state", OPEN_LOOP_STATE_FILTERS);
     const limit = limitParam(c.req.query("limit"), "limit", 100, 500);
     const filters = { state: state ?? null };
-    const revision = query.paginationRevision("product-loops");
-    const cursor = timedCursor(c.req.query("cursor"), "cognition-loops", filters, revision);
-    const probe = query.listLoops({
-      ...(state ? { states: statesForFilter(state) } : {}),
-      ...(cursor ? { beforeLastUpdate: { lastUpdate: cursor.at, id: cursor.id } } : {}),
-      limit: limit + 1,
+    const { revision, probe } = query.readListPage(() => {
+      const revision = query.paginationRevision("product-loops");
+      const cursor = timedCursor(c.req.query("cursor"), "cognition-loops", filters, revision);
+      const probe = query.listLoops({
+        ...(state ? { states: statesForFilter(state) } : {}),
+        ...(cursor ? { beforeLastUpdate: { lastUpdate: cursor.at, id: cursor.id } } : {}),
+        limit: limit + 1,
+      });
+      return { revision, probe };
     });
-    if (query.paginationRevision("product-loops") !== revision) throw new StalePageCursorError();
     const hasMore = probe.length > limit;
     const loops = hasMore ? probe.slice(0, limit) : probe;
     const last = loops.at(-1);
@@ -175,23 +177,25 @@ export function mountCognitionLoopAdminRoutes(ctx: CognitionAdminRouteContext): 
     if (!query.getLoop(id)) throw new NotFoundError("Open loop not found");
     const limit = limitParam(c.req.query("limit"), "limit", 25, 100);
     const filters = { loopId: id };
-    const revision = query.paginationRevision("cognition-runs");
-    const cursor = timedCursor(
-      c.req.query("cursor"),
-      "cognition-loop-scheduled",
-      filters,
-      revision,
-    );
-    const probe = query.listRuns({
-      kinds: ["time_based"],
-      statuses: ["pending"],
-      loopId: id,
-      order: "asc",
-      orderBy: "nextAttemptAt",
-      limit: limit + 1,
-      ...(cursor ? { afterSort: { at: cursor.at, id: cursor.id } } : {}),
+    const { revision, probe } = query.readListPage(() => {
+      const revision = query.paginationRevision("cognition-runs");
+      const cursor = timedCursor(
+        c.req.query("cursor"),
+        "cognition-loop-scheduled",
+        filters,
+        revision,
+      );
+      const probe = query.listRuns({
+        kinds: ["time_based"],
+        statuses: ["pending"],
+        loopId: id,
+        order: "asc",
+        orderBy: "nextAttemptAt",
+        limit: limit + 1,
+        ...(cursor ? { afterSort: { at: cursor.at, id: cursor.id } } : {}),
+      });
+      return { revision, probe };
     });
-    if (query.paginationRevision("cognition-runs") !== revision) throw new StalePageCursorError();
     const hasMore = probe.length > limit;
     const runs = hasMore ? probe.slice(0, limit) : probe;
     const last = runs.at(-1);

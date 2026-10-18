@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { buildPage } from "@omnesis/types";
-import { NotFoundError, StalePageCursorError } from "../http/errors.js";
+import { NotFoundError } from "../http/errors.js";
 import { scope } from "../http/scope.js";
 import {
   enumParam,
@@ -52,17 +52,19 @@ export function mountCognitionRunAdminRoutes(ctx: CognitionAdminRouteContext): v
     const orderBy = order === "nextAttemptAt" ? "nextAttemptAt" : "enqueuedAt";
     const limit = limitParam(c.req.query("limit"), "limit", 50, 500);
     const filters = { kind: kind ?? null, status: status ?? null, order };
-    const revision = query.paginationRevision("cognition-runs");
-    const cursor = timedCursor(c.req.query("cursor"), "cognition-runs", filters, revision);
-    const probe = query.listRuns({
-      ...(kind ? { kinds: [kind] } : {}),
-      ...(status ? { statuses: [status] } : {}),
-      ...(cursor ? { afterSort: { at: cursor.at, id: cursor.id } } : {}),
-      order: direction,
-      orderBy,
-      limit: limit + 1,
+    const { revision, probe } = query.readListPage(() => {
+      const revision = query.paginationRevision("cognition-runs");
+      const cursor = timedCursor(c.req.query("cursor"), "cognition-runs", filters, revision);
+      const probe = query.listRuns({
+        ...(kind ? { kinds: [kind] } : {}),
+        ...(status ? { statuses: [status] } : {}),
+        ...(cursor ? { afterSort: { at: cursor.at, id: cursor.id } } : {}),
+        order: direction,
+        orderBy,
+        limit: limit + 1,
+      });
+      return { revision, probe };
     });
-    if (query.paginationRevision("cognition-runs") !== revision) throw new StalePageCursorError();
     const hasMore = probe.length > limit;
     const runs = hasMore ? probe.slice(0, limit) : probe;
     const last = runs.at(-1);
@@ -130,17 +132,19 @@ export function mountCognitionRunAdminRoutes(ctx: CognitionAdminRouteContext): v
   app.get("/admin/brain/scheduled", scope.admin(), (c) => {
     requireVisible();
     const limit = limitParam(c.req.query("limit"), "limit", 100, 500);
-    const revision = query.paginationRevision("cognition-runs");
-    const cursor = timedCursor(c.req.query("cursor"), "cognition-scheduled", {}, revision);
-    const probe = query.listRuns({
-      kinds: ["time_based"],
-      statuses: ["pending"],
-      order: "asc",
-      orderBy: "nextAttemptAt",
-      limit: limit + 1,
-      ...(cursor ? { afterSort: { at: cursor.at, id: cursor.id } } : {}),
+    const { revision, probe } = query.readListPage(() => {
+      const revision = query.paginationRevision("cognition-runs");
+      const cursor = timedCursor(c.req.query("cursor"), "cognition-scheduled", {}, revision);
+      const probe = query.listRuns({
+        kinds: ["time_based"],
+        statuses: ["pending"],
+        order: "asc",
+        orderBy: "nextAttemptAt",
+        limit: limit + 1,
+        ...(cursor ? { afterSort: { at: cursor.at, id: cursor.id } } : {}),
+      });
+      return { revision, probe };
     });
-    if (query.paginationRevision("cognition-runs") !== revision) throw new StalePageCursorError();
     const hasMore = probe.length > limit;
     const runs = hasMore ? probe.slice(0, limit) : probe;
     const last = runs.at(-1);

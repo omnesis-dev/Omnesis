@@ -12,7 +12,11 @@
 import { parseSourceKey, type CognitionDocumentRef } from "@omnesis/core";
 import { getDocumentTitlesAndSources } from "../db.js";
 import { NotFoundError } from "../http/errors.js";
-import { mutableListRevision, type MutableListRevisionScope } from "../data/list-revisions.js";
+import {
+  mutableListRevision,
+  readListPage,
+  type MutableListRevisionScope,
+} from "../data/list-revisions.js";
 import {
   listTemporalAnnotations,
   temporalAnnotationStats,
@@ -178,6 +182,11 @@ export class CognitionAdminQueryService {
 
   paginationRevision(scope: MutableListRevisionScope): number {
     return mutableListRevision(this.db, scope);
+  }
+
+  /** Run a page's revision read and row reads against one snapshot. */
+  readListPage<T>(read: () => T): T {
+    return readListPage(this.db, read);
   }
 
   pulse(now: number) {
