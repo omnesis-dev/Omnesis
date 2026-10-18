@@ -77,6 +77,11 @@ export class KnowledgeDependencyReceipts {
       this.references.delete(this.references.keys().next().value!);
   }
 
+  /** Whether this run has read the record at this exact reference. */
+  hasRead(ref: string): boolean {
+    return this.references.has(ref);
+  }
+
   complete(input: KnowledgeReceiptProposal): KnowledgeProposal {
     const versions = { ...input.inputVersions };
     const parsed = parseClaimMarkup(input.markdown);

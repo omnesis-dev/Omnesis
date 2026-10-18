@@ -35,6 +35,7 @@ import { LOOP_FIELD_REFERENCE_GUIDANCE } from "./references.js";
 import { assertKnowledgeSavePreflight } from "./save-preflight.js";
 import { ClaimMarkupError } from "./claims.js";
 import { knowledgePageRefForDocument } from "./document-context.js";
+import { RelatedKnowledgeCheck, type KnowledgeMirrorSearch } from "./related-knowledge.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type { ToolResult } from "@omnesis/core";
 import type { KnowledgeService } from "./service.js";
@@ -212,6 +213,8 @@ export function buildKnowledgeTools(
     engine?: KnowledgeEngine;
     batchId?: string;
     markTemporalPresented?: (ids: readonly string[], runId: string) => Promise<void>;
+    /** Retrieval over current knowledge, so page saves are reconciled with records they do not cite. */
+    relatedKnowledge?: KnowledgeMirrorSearch;
   },
 ): ToolHandle[] {
   const personReview = new PersonEditorialReview(
@@ -224,6 +227,13 @@ export function buildKnowledgeTools(
   );
   const publicationReads = new WikiPublicationReads(service.deps.db);
   const wikiValue = new WikiValueCheck(service, context.checkRecord);
+  const relatedKnowledge = new RelatedKnowledgeCheck(
+    service.deps.db,
+    context.relatedKnowledge,
+    context.runId,
+    (ref) => dependencyReceipts.hasRead(ref),
+    service.deps.log.child("related-knowledge"),
+  );
   const runFence = context.batchId ? { batchId: context.batchId, runId: context.runId } : undefined;
   const placementReads = runFence
     ? new WikiToolReconciliation(service.deps.db, runFence)
@@ -732,6 +742,7 @@ export function buildKnowledgeTools(
           ? publicationReads.receipt(candidate.id, input.creationAssessment)
           : undefined;
         if (candidate) assertWikiPublicationReceipt(service.deps.db, candidate.id, creationReceipt);
+        await relatedKnowledge.assert(node, input.reviewedClaimIds, signal);
         const wikiRepairAssessment = await wikiValue.assess(
           input.curationDeferral?.factualRepair
             ? {
@@ -790,6 +801,7 @@ export function buildKnowledgeTools(
                 fence,
                 outcomeFence,
               );
+        if (node.kind === "wiki") relatedKnowledge.noteSaved(result.node.id);
         const accepted =
           reconciliation && fence && node.kind === "wiki"
             ? reconciliation.acceptNode(reconciliation.accept(result, fence))

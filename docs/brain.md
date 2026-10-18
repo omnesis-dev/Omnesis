@@ -253,6 +253,18 @@ support without requiring a quote proving absence. Missing or malformed assessme
 cannot establish verified support. MiniCheck cannot check this contextual protocol
 and reports unavailable before inference; ordinary literal MiniCheck checks are unchanged.
 Contextual calls request up to 2048 output tokens and record usage even for invalid replies.
+The verifier only asks whether a claim's own citations entail it, so a page can
+repeat a figure its source got wrong even when an annotation on another document
+records the correction. Before a wiki's changed or reviewed claims are saved, each
+claim is searched against the knowledge mirrors; current annotations and pages that
+share at least three distinctive terms with it, rest on a document the draft does
+not cite, and that the run has neither read nor written are returned in a one-time
+refusal per page per run, so the run states the corrected fact or keeps a claim
+nothing bears on. The check is advisory and saves without it when search fails.
+After an annotation is created or revised, current pages that share its matter and
+do not cite it have their next review brought forward through the ordinary review
+gate, and the write's result names them; in a source discovery the run can target
+a page the annotation corrects for repair in the same batch.
 Knowledge source revisions cover body changes and source title/date changes, including
 changes that later return to an earlier value. Body content hashes still identify exact
 quotes and deduplicated content; they are separate from dependency revisions. Source

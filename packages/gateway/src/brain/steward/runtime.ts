@@ -41,6 +41,11 @@ import {
 import { buildKnowledgeTools } from "../knowledge/tools.js";
 import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
 import { withKnowledgeSourceReadReceipts } from "../knowledge/source-read-receipts.js";
+import {
+  knowledgeMirrorSearch,
+  relatedPageReviewQueue,
+  withRelatedPageHints,
+} from "../knowledge/related-knowledge.js";
 import { isParallelKnowledgeRun } from "../storage/run-queue.js";
 import { buildMaintenanceCanonicalTools } from "../knowledge/canonical-tool-fence.js";
 import { isGrantedMutation } from "../cognition/authority.js";
@@ -730,6 +735,11 @@ export async function createCognitionRuntime(
       };
       const consumption = consumptionFor(run);
       const parallel = isParallelKnowledgeRun(deps.db, run.id);
+      // Searched without the run's coverage wrapper: these reads are the
+      // engine's own, not retrieval the model based a completion on.
+      const relatedKnowledge = basePorts.search
+        ? knowledgeMirrorSearch(deps.db, basePorts.search)
+        : undefined;
       const payload =
         run.kind === "synthesis" ? parseCognitionSynthesisRunPayload(run.payload) : null;
       const tools =
@@ -782,6 +792,7 @@ export async function createCognitionRuntime(
               engine: deps.knowledge.engine,
               markTemporalPresented: (ids, runId) =>
                 deps.writeGate.markTemporalAnnotationsRefilePresented(ids, runId),
+              ...(relatedKnowledge ? { relatedKnowledge } : {}),
               ...(payload?.focus === "knowledge-maintenance" && payload.batchId
                 ? { batchId: payload.batchId }
                 : {}),
@@ -825,10 +836,21 @@ export async function createCognitionRuntime(
           },
         };
       }
+      const maintenance = payload?.focus === "knowledge-maintenance" && !!payload.batchId;
+      const hinted = deps.knowledge
+        ? withRelatedPageHints(
+            deps.db,
+            {
+              search: relatedKnowledge,
+              queueReview: relatedPageReviewQueue(deps.knowledge.service),
+              discoveryTargets: maintenance,
+              log: deps.log.child("related-knowledge"),
+            },
+            tools,
+          )
+        : tools;
       return fenceExcludedDocumentArguments(
-        payload?.focus === "knowledge-maintenance" && payload.batchId
-          ? withKnowledgeSourceReadReceipts(deps.db, tools)
-          : tools,
+        maintenance ? withKnowledgeSourceReadReceipts(deps.db, hinted) : hinted,
         sourceFence,
         existingPageCitations(deps.db),
       );
