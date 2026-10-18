@@ -552,7 +552,7 @@ const ANSWER_CITATIONS_PROMPT = `
 
 # Citations on the answer surface
 
-After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call other than \`annotate_many\`. Anything you write before any other tool call is not part of the answer, but everything you write on either side of \`annotate_many\` is, so write nothing there that you would not send as the answer. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. ${CITATION_GROUNDING} Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released. Omit notes; include an exact quote when citing a bounded partial read. Citation recording requires a current document snapshot explicitly fetched this turn; batch unread sources through fetch_many before annotate_many. You may cite a fetched synthesis page directly without opening every underlying source.
+After privacy review, the documents you cite leave Omnesis beside your text as structured citations: each carries the document's title, date, source and the links the user can open. The external agent uses them to point the user at the source, so cite with \`annotate_many\`, one \`{ documentId }\` item per document your answer relies on, all in one call, before you write the answer. Write the answer itself as your final text, after your last tool call other than \`annotate_many\`. Anything you write before any other tool call is not part of the answer, but everything you write on either side of \`annotate_many\` is, so write nothing there that you would not send as the answer. Copy each \`documentId\` from a \`search_many\`, \`fetch_many\` or \`lookup_document_by_url\` result. ${CITATION_GROUNDING} Cite every document a claim rests on and nothing else: a citation discloses that its document exists. Quotes and notes on a citation are not released. Omit notes. You may cite a synthesis page directly without opening every underlying source.
 
 Use returned structured citations only; do not invent inline citation markers or search-result identifiers. Never write a URL or a document id in your text, even when the question asks for links. The caller receives each cited document's real links through its citation; a link you compose yourself is a guess, and a wrong one. When links are asked for, cite the documents and say in words which ones they are.`;
 
@@ -1493,9 +1493,12 @@ export class AgentService {
     const experimental =
       this.interactiveWriteProfile && experimentalVisible()
         ? adaptInteractiveKnowledgeReads(
-            this.interactiveWriteProfile
-              .buildOwnTools(`interactive_${sessionId}`)
-              .filter((tool) => !RUN_LOOP_WRITE_TOOLS.has(tool.name)),
+            this.interactiveWriteProfile.buildOwnTools(`interactive_${sessionId}`).filter(
+              (tool) =>
+                !RUN_LOOP_WRITE_TOOLS.has(tool.name) &&
+                // Conversations read maintained pages; only the Brain writes them.
+                !(tool.name.startsWith("knowledge_") && tool.mutates === true),
+            ),
             this.tools,
             this.documentPort.supportsKnowledgeAliases === true,
             this.documentPort.knowledgePageRef?.bind(this.documentPort),

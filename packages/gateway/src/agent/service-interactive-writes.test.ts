@@ -111,6 +111,30 @@ describe("interactive-agent substrate write access", () => {
     expect(seenRunIds).toContain(`interactive_${sessionId}`);
   });
 
+  it("offers maintained-page reads but never the wiki write tools", async () => {
+    const { service, backend } = makeService();
+    const knowledgeTool = (name: string, mutates: boolean): ToolHandle => ({
+      name,
+      description: name,
+      mutates,
+      schema: undefined as never,
+      invoke: async () => ({ kind: "structured", resultType: "noop", data: {} }),
+    });
+    service.setInteractiveWriteProfile({
+      buildOwnTools: () => [
+        knowledgeTool("knowledge_list", false),
+        knowledgeTool("knowledge_save", true),
+        knowledgeTool("knowledge_link", true),
+      ],
+    });
+    const { sessionId } = await service.createSession("device:A");
+    service.sendMessage("device:A", sessionId, "what does the project page say?");
+    await settle();
+    expect(backend.sawTools).toContain("knowledge_list");
+    expect(backend.sawTools).not.toContain("knowledge_save");
+    expect(backend.sawTools).not.toContain("knowledge_link");
+  });
+
   it("stays read-only when no profile is installed", async () => {
     const { service, backend } = makeService();
     const { sessionId } = await service.createSession("device:A");

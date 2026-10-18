@@ -46,9 +46,7 @@ export function adaptInteractiveKnowledgeReads(
         "reference without a claim selector, or the documentId of its search hit. Normal reads return " +
         "the same document.batch result as fetch_many, including qualified knowledgeContext " +
         "and a turn-bound citation read. This does not read cited original documents. " +
-        "Other record kinds use fetch_loop or scoped people/document/search tools. " +
-        "Set editing=true with the bare node ID only to obtain the canonical tagged snapshot for knowledge_save; " +
-        "editing results are not qualified factual answer evidence.",
+        "Other record kinds use fetch_loop or scoped people/document/search tools.",
       async invoke(rawArgs, context) {
         const valid = tool.schema.safeParse(rawArgs);
         if (!valid.success)
