@@ -214,6 +214,7 @@ describe("buildSystemPrompt — citation surface", () => {
   test("tells the interactive agent to flag a reinterpreted question and keep source figures", () => {
     const prompt = buildSystemPrompt({});
     expect(prompt).toContain("instead of quietly answering a different question");
+    expect(prompt).toContain("set aside part of the question you can't match");
     expect(prompt).toContain("exactly as the source gives them");
   });
 });
