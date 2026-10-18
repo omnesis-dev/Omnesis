@@ -1122,7 +1122,7 @@ model generation from transport or pool waiting inside a capability.
 
 The existing 45-second limit remains: an unavailable configured verifier still
 saves an explicitly unverified annotation, never a verified stamp. More detailed assessments
-can cost more output tokens and can time out. Wiki and Answer proof policies are unchanged.
+can cost more output tokens and can time out. Wiki proof policies are unchanged.
 Old annotation proof-policy markers lose support authority and enter existing bounded policy
 review; historical canonical verification flags are not promoted to the new policy automatically.
 
@@ -1417,8 +1417,7 @@ Exact loop reads expose current context-verified assertions as qualified support
 including their modality, attribution and time bounds. Enclosing outcome prose
 is returned separately as interpretation constraints, never additional proof.
 Unverified siblings, tracked open state and priority do not establish present-world
-obligations or completion. Answer checks reuse these selected assertions only while
-the existing exact owner, source, privacy and proof receipts remain current.
+obligations or completion.
 
 Completed maintenance batches can settle their remaining run receipts alongside active
 region-fenced work without starting a model or adopting new source changes. This terminal

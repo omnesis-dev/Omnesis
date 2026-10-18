@@ -328,16 +328,11 @@
           of this section is about what it does with them and how to bound it.
         </p>
         <p>
-          While the experimental Brain is active, the main agent checks candidate replies against
-          actually read source, wiki and loop evidence before showing their prose. Mixed turns using
-          analytics, person lookups or subagent findings retain existing answer behavior. Temporal
-          queries are navigation: mixed source/wiki/loop answers still need support from actually
-          read evidence; temporal-only answers retain existing behavior; this is not a universal
-          factuality guard. Tools still show progress. A bounded, tool-free repair may follow an
-          unsupported draft; missing verification or changed evidence produces an uncertainty
-          response. Current wiki support retains its claim context, and external Answer privacy
-          review remains separate. This adds latency and can withhold a correct answer when the
-          available evidence is incomplete.
+          The Brain never checks or rewrites what the agent says to you. Conversations in the portal
+          and apps, and answers given to external agents, are exactly what the agent wrote; its
+          instructions tell it to read the relevant wiki page and follow the claims it uses back to
+          their source documents before answering. Answers to external agents still pass your
+          privacy review.
         </p>
         <figure class="diagram diagram-flat diagram-compact">
           <ol class="flow">
