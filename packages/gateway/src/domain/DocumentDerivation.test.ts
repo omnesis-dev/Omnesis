@@ -121,6 +121,20 @@ describe("document derivation", () => {
     expect(oldestPendingDerivationMs(db, stage, now)).toBe(3 * 3_600_000);
   });
 
+  test.each(DERIVATION_STAGES.map((stage) => [stage.column, stage] as const))(
+    "oldest-pending age for %s reads one partial index, never walks the documents",
+    (_column, stage) => {
+      const plan = db
+        .prepare<[], { detail: string }>(
+          `EXPLAIN QUERY PLAN SELECT MIN(updated_at) AS oldest FROM documents WHERE ${stage.column} IS NULL`,
+        )
+        .all()
+        .map((row) => row.detail)
+        .join(" ");
+      expect(plan).toMatch(/_pending_updated/);
+    },
+  );
+
   test("freshly invalidated old documents age from their local rewrite, not ingestion or source time", () => {
     const now = Date.parse(NOW);
     const old = new Date(now - 7 * 86_400_000).toISOString();

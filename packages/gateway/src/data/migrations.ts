@@ -4870,6 +4870,25 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "rescan documents whose dates were read from an ISO date and time",
     up: rescanIsoDateTimeMentions,
   },
+  {
+    version: 203,
+    description: "index derivation backlog age by document write time",
+    up(db) {
+      // The derivation-SLA observers report `MIN(updated_at) WHERE <col> IS
+      // NULL`. Indexes on `ingested_at` cannot serve that MIN, so SQLite walked
+      // every document on the main thread, three stages every five minutes.
+      for (const [stage, column] of [
+        ["links", "links_extracted_at"],
+        ["people", "people_resolved_at"],
+        ["dates", "dates_extracted_at"],
+      ] as const) {
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_documents_${stage}_pending_updated ON documents(updated_at) WHERE ${column} IS NULL`,
+        );
+        db.exec(`DROP INDEX IF EXISTS idx_documents_${stage}_pending_age`);
+      }
+    },
+  },
 ];
 
 /**

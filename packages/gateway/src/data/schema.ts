@@ -1382,17 +1382,17 @@ function runSchemaSetupInTxn(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_documents_links_unprocessed ON documents(id) WHERE links_extracted_at IS NULL",
   );
-  // Backlog AGE per derivation stage: `MIN(ingested_at) WHERE <col> IS NULL`
+  // Backlog AGE per derivation stage: `MIN(updated_at) WHERE <col> IS NULL`
   // is what the derivation-SLA observers report, and carrying the column in
-  // the index keeps that MIN index-only rather than a row lookup per entry.
+  // the index keeps that MIN index-only rather than a walk of every document.
   db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_documents_links_pending_age ON documents(ingested_at) WHERE links_extracted_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_documents_links_pending_updated ON documents(updated_at) WHERE links_extracted_at IS NULL",
   );
   db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_documents_people_pending_age ON documents(ingested_at) WHERE people_resolved_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_documents_people_pending_updated ON documents(updated_at) WHERE people_resolved_at IS NULL",
   );
   db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_documents_dates_pending_age ON documents(ingested_at) WHERE dates_extracted_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_documents_dates_pending_updated ON documents(updated_at) WHERE dates_extracted_at IS NULL",
   );
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_documents_dates_unprocessed ON documents(id) WHERE dates_extracted_at IS NULL",
