@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Compact, deterministic graph evidence for trusted agent search results. */
+import { instantSafeEnd } from "@omnesis/agent";
 import { GRAPH_CONTEXT_LINK_TYPES, computeContentHash } from "@omnesis/core";
 import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
 import {
@@ -113,7 +114,7 @@ const text = (s: string | null | undefined, max = 240): string | undefined =>
   s
     ? (() => {
         const clean = s.replace(/[\r\n\t]+/g, " ");
-        return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+        return clean.length > max ? `${clean.slice(0, instantSafeEnd(clean, 0, max - 1))}…` : clean;
       })()
     : undefined;
 const link = (s: string | null): string | undefined =>

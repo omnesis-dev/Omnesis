@@ -13,6 +13,7 @@
 
 import { z } from "zod";
 
+import { instantSafeEnd } from "../local-times.js";
 import type { ToolResult } from "@omnesis/core";
 
 import type { ToolContext, ToolHandle } from "../backend.js";
@@ -126,7 +127,12 @@ export function createFetchDocumentTool(deps: FetchDocumentToolDeps): ToolHandle
             args.maxContentChars ??
             deps.defaultMaxContentChars ??
             (args.contentOffset === undefined ? document.content.length : 65536);
-          observed = document.content.slice(offset, offset + limit);
+          // A page boundary inside an instant would leave its clock without
+          // its offset; such a page ends before the instant instead.
+          observed = document.content.slice(
+            offset,
+            instantSafeEnd(document.content, offset, offset + limit),
+          );
           full = offset === 0 && observed.length === document.content.length;
           const end = offset + observed.length;
           if (!full)

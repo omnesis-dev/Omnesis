@@ -17,6 +17,7 @@
 
 import { createHash } from "node:crypto";
 import {
+  instantSafeEnd,
   LOOKUP_PEOPLE_MAX_LIMIT,
   RecordPortError,
   SqlPortNotPermittedError,
@@ -332,6 +333,11 @@ function attachDocConnections(db: Db, results: DocRef[]): void {
   }
 }
 
+/** A document's first 500 characters, ending before an instant the cut would split. */
+function snippetOf(content: string): string {
+  return content.slice(0, instantSafeEnd(content, 0, 500));
+}
+
 function searchResultToDocRef(
   item: SearchResultItem,
   syncStatus: SyncStatusRegistry | undefined,
@@ -495,7 +501,7 @@ export function createGatewayDocumentPort(
           sourceId: row.sourceId,
           documentType,
           title: row.title,
-          snippet: row.content.slice(0, 500),
+          snippet: snippetOf(row.content),
           ts: parseEpochMillis(row.sourceCreatedAt),
           url,
           appUrl,
@@ -652,7 +658,7 @@ export function createGatewayDocumentByUrlPort(
         sourceId: row.sourceId,
         documentType,
         title: row.title,
-        snippet: row.content.slice(0, 500),
+        snippet: snippetOf(row.content),
         ts: parseEpochMillis(row.sourceCreatedAt),
         url: sourceUrl,
         appUrl,

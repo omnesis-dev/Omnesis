@@ -131,6 +131,52 @@ describe("model tool-result presentation", () => {
       expect(output.data.id).toBe("cal-1");
     });
 
+    it("writes a moment carried as epoch milliseconds as the instant it names", () => {
+      const hit: ToolResult = {
+        kind: "search.results",
+        query: "fitting",
+        durationMs: 3,
+        results: [
+          {
+            documentId: "msg-1",
+            sourceType: "chat",
+            sourceId: "chat:fictional",
+            snippet: "see you at the studio",
+            ts: Date.parse("2026-10-18T17:28:00Z"),
+            refCount: 1792344480000,
+          },
+        ],
+      };
+      const fired: ToolResult = {
+        kind: "structured",
+        resultType: "watch",
+        data: {
+          lastFiredAt: Date.parse("2026-10-18T08:05:00Z"),
+          ledger: [{ at: Date.parse("2026-10-17T22:30:00Z"), note: "Asked for the quote" }],
+          durationMs: 1792344480000,
+        },
+      } as ToolResult;
+      const zone = { timeZone: "Europe/London" };
+      const output = JSON.parse(serializeToolResultForModel(hit, zone));
+      expect(output.results[0].ts).toBe(
+        "2026-10-18T17:28:00.000Z (18:28 Sun 18 Oct, Europe/London)",
+      );
+      // Only a field named for a moment is one; a count keeps its value.
+      expect(output.results[0].refCount).toBe(1792344480000);
+      expect(JSON.parse(serializeToolResultForModel(fired, zone)).data).toEqual({
+        lastFiredAt: "2026-10-18T08:05:00.000Z (09:05 Sun 18 Oct, Europe/London)",
+        ledger: [
+          {
+            at: "2026-10-17T22:30:00.000Z (23:30 Sat 17 Oct, Europe/London)",
+            note: "Asked for the quote",
+          },
+        ],
+        durationMs: 1792344480000,
+      });
+      // Background work, with no caller zone, reads the result as stored.
+      expect(serializeToolResultForModel(hit)).toBe(JSON.stringify(hit));
+    });
+
     it("follows whichever zone the session carries", () => {
       const output = JSON.parse(serializeToolResultForModel(fetched, { timeZone: "Asia/Tokyo" }));
       expect(output.data.events[0].start).toBe(

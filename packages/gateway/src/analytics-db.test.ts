@@ -2849,6 +2849,23 @@ describe("AnalyticsDb", () => {
       );
       expect(result.rows[0][0]).toEqual(["1.2500", "-0.5000"]);
     });
+
+    test("a TIMESTAMPTZ reads back as its UTC instant and a DATE as its day", async () => {
+      const result = await db.executeQuery(
+        `SELECT TIMESTAMPTZ '2026-10-18 18:28:00+01' AS departs,
+                TIMESTAMPTZ '2026-10-18 17:28:00.123456+00' AS precise,
+                [TIMESTAMPTZ '1969-12-31 23:59:59.9995+00'] AS before_epoch,
+                'infinity'::TIMESTAMPTZ AS open_ended,
+                DATE '2024-03-01' AS booked_on`,
+      );
+      expect(result.rows[0]).toEqual([
+        "2026-10-18T17:28:00.000Z",
+        "2026-10-18T17:28:00.123456Z",
+        ["1969-12-31T23:59:59.999500Z"],
+        "infinity",
+        "2024-03-01",
+      ]);
+    });
   });
 });
 

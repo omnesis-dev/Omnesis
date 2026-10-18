@@ -248,12 +248,12 @@ describe("extractTextContent", () => {
         ].join("\r\n"),
       );
 
-    test("names UTC on a UTC time, so it is not read as local", async () => {
+    test("writes a UTC time as the instant it is, so it is not read as local", async () => {
       const result = await extractTextContent(
         event("DTSTART:20260930T120000Z", "DTEND:20260930T124500Z"),
         "text/calendar",
       );
-      expect(result!.text).toContain("**When:** 2026-09-30 12:00 – 2026-09-30 12:45 (UTC)");
+      expect(result!.text).toMatch(/\*\*When:\*\* 2026-09-30T12:00Z – 2026-09-30T12:45Z$/mu);
     });
 
     test("names the TZID a time is written in", async () => {
@@ -305,7 +305,7 @@ describe("extractTextContent", () => {
       expect(result!.text).not.toContain("UTC");
     });
 
-    test("names the zone of a to-do's due time", async () => {
+    test("writes a to-do's UTC due time as an instant", async () => {
       const ics = encode(
         [
           "BEGIN:VCALENDAR",
@@ -318,7 +318,7 @@ describe("extractTextContent", () => {
         ].join("\r\n"),
       );
       const result = await extractTextContent(ics, "text/calendar");
-      expect(result!.text).toContain("**Due:** 2026-10-01 17:00 (UTC)");
+      expect(result!.text).toContain("**Due:** 2026-10-01T17:00Z");
     });
 
     test("leaves a floating time without a zone", async () => {

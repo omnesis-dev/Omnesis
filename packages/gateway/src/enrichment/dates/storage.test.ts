@@ -10,6 +10,7 @@ import { createDatabase } from "../../db.js";
 import { upsertDocuments, deleteDocuments } from "../../data/repositories/DocumentRepository.js";
 import {
   addDateMentions,
+  rescanIsoDateTimeMentions,
   rescanSameDaySpansAndRestCompounds,
   applyExtractedDates,
   countExtractedDocuments,
@@ -136,6 +137,38 @@ describe("date-enrichment storage", () => {
       .all()
       .map((r) => r.external_id);
     expect(pending).toEqual(["rest-week", "tonight"]);
+  });
+
+  it("migration 202 queues only documents holding a date read from an ISO date and time", () => {
+    const date = (text: string): ExtractedDate => ({
+      kind: "date",
+      resolvedStart: "2026-11-04",
+      resolvedEnd: null,
+      timex: "",
+      relative: false,
+      text,
+      charStart: 0,
+      charEnd: text.length,
+    });
+    upsertDocuments(
+      db,
+      ["cut-instant", "plain-day", "iso-day"].map((externalId) => makeDoc({ externalId })),
+    );
+    applyExtractedDates(db, [
+      { id: docId(db, "cut-instant"), dates: [date("2026-11-04T09:15")] },
+      { id: docId(db, "plain-day"), dates: [date("4 November 2026")] },
+      { id: docId(db, "iso-day"), dates: [date("2026-11-04")] },
+    ]);
+    expect(countPendingDateExtraction(db)).toBe(0);
+    rescanIsoDateTimeMentions(db);
+    rescanIsoDateTimeMentions(db);
+    const pending = db
+      .prepare<[], { external_id: string }>(
+        "SELECT external_id FROM documents WHERE dates_extracted_at IS NULL ORDER BY external_id",
+      )
+      .all()
+      .map((r) => r.external_id);
+    expect(pending).toEqual(["cut-instant"]);
   });
 
   it("counts relative dates from the source's anchor day and flags addressed content", () => {

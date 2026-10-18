@@ -212,6 +212,7 @@ export class AppleVoicemailSource {
         mention?.phones?.[0] ?? mention?.emails?.[0] ?? (row.caller?.trim() || "Unknown caller");
       const duration = Math.max(0, row.duration ?? 0);
       totalDuration += duration;
+      // See #406 — planned: write clock times with a zone.
       lines.push(`## ${createdAt.slice(11, 16)} — ${caller} (${formatDuration(duration)})`);
       lines.push(transcript ?? "_Transcript not available._", "");
 

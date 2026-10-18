@@ -64,6 +64,7 @@ import {
   createExtractedDatesTables,
   createDatesUnprocessedIndex,
   addDateMentions,
+  rescanIsoDateTimeMentions,
   rescanSameDaySpansAndRestCompounds,
 } from "../enrichment/dates/storage.js";
 import {
@@ -4863,6 +4864,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 201,
     description: "decision ledger rows without a run or document",
     up: relaxDecisionAnchors,
+  },
+  {
+    version: 202,
+    description: "rescan documents whose dates were read from an ISO date and time",
+    up: rescanIsoDateTimeMentions,
   },
 ];
 

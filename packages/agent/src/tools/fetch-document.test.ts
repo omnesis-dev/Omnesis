@@ -155,6 +155,23 @@ describe("bounded default reads", () => {
     ).not.toHaveProperty("nextOffset");
   });
 
+  it("ends a page before an instant it would cut, and starts the next page on it", async () => {
+    const lead = `${"Fitting at the studio. ".repeat(16)}Bring the forms. `; // 385 characters
+    const timed = `${lead}**When:** 2026-10-18T17:28:00Z, doors open.`;
+    const timedPort = port(async (id) => ({ ref, document: { id, content: timed } }));
+    const tool = createFetchDocumentTool({ port: timedPort, defaultMaxContentChars: 400 });
+    const first = await tool.invoke({ documentId: "long" }, ctx);
+    if (first.kind !== "document") throw new Error("expected document");
+    const instantAt = timed.indexOf("2026-10-18T17:28:00Z");
+    expect(first.document).toMatchObject({
+      content: timed.slice(0, instantAt),
+      contentRange: { returnedCharacters: instantAt, nextOffset: instantAt },
+    });
+    const next = await tool.invoke({ documentId: "long", contentOffset: instantAt }, ctx);
+    if (next.kind !== "document") throw new Error("expected document");
+    expect((next.document as { content: string }).content).toMatch(/^2026-10-18T17:28:00Z, doors/u);
+  });
+
   it("lets an explicit range override the default and leaves short bodies whole", async () => {
     const tool = createFetchDocumentTool({ port: longPort, defaultMaxContentChars: 400 });
     const wide = await tool.invoke({ documentId: "long", maxContentChars: 2000 }, ctx);

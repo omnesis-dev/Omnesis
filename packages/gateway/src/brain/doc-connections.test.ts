@@ -133,6 +133,45 @@ describe("readDocConnections", () => {
     expect(c.temporalAnnotations).toEqual([]);
   });
 
+  test("a temporal annotation's time names its instants in UTC, its days as written", () => {
+    const docId = insertRealDoc("d-instants");
+    const cases: Array<[string, string]> = [
+      [
+        "2026-10-18T18:28:00+01:00 .. 2026-10-18T19:26:00+01:00",
+        "2026-10-18T17:28:00.000Z .. 2026-10-18T18:26:00.000Z",
+      ],
+      // Written without an offset, the clock was read in the gateway's zone.
+      ["2026-10-18T19:26", new Date("2026-10-18T19:26").toISOString()],
+      ["2026-10-18 .. 2026-10-18T09:00:00Z", "2026-10-18 .. 2026-10-18T09:00:00.000Z"],
+      ["2026-10", "2026-10"],
+    ];
+    for (const [index, [canonical]] of cases.entries()) {
+      insertTemporalAnnotation(
+        db,
+        {
+          id: `ta_instant_${index}`,
+          intervalStartMs: 1000 + index,
+          intervalEndMs: 2000 + index,
+          precision: "instant",
+          canonical,
+          sentence: `fitting ${index}`,
+          documentIds: [docId],
+          createdByRun: "r",
+        },
+        NOW,
+      );
+    }
+    const when = Object.fromEntries(
+      readDocConnections(db, docId, {
+        annotations: false,
+        temporalAnnotations: true,
+      }).temporalAnnotations.map((t) => [t.annotationId, t.when]),
+    );
+    for (const [index, [, expected]] of cases.entries()) {
+      expect(when[`ta_instant_${index}`]).toBe(expected);
+    }
+  });
+
   test("temporalAnnotations opt attaches live annotations and excludes invalidated rows", () => {
     const docId = insertRealDoc("d1");
     insertTemporalAnnotation(

@@ -166,6 +166,32 @@ export function rescanSameDaySpansAndRestCompounds(db: Db): void {
 }
 
 /**
+ * Migration 202: queue for a rescan every document holding a date read from an
+ * ISO date and time, so a phrase the recognizer cut short of its offset
+ * (`2026-10-18T17:28` out of `2026-10-18T17:28:00Z`) is stored again as the
+ * whole instant. The selection is a superset: a rescanned document whose
+ * phrases already stood whole gets the same rows back.
+ */
+export function rescanIsoDateTimeMentions(db: Db): void {
+  const has = (table: string, column: string): boolean =>
+    db
+      .prepare<[string], { name: string }>("SELECT name FROM pragma_table_info(?)")
+      .all(table)
+      .some((c) => c.name === column);
+  if (!has("documents", "dates_extracted_at") || !has("document_extracted_dates", "matched_text")) {
+    return;
+  }
+  db.exec(
+    `UPDATE documents SET dates_extracted_at = NULL
+       WHERE dates_extracted_at IS NOT NULL
+         AND id IN (
+           SELECT document_id FROM document_extracted_dates
+            WHERE matched_text GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]*'
+         )`,
+  );
+}
+
+/**
  * Partial index over un-extracted documents — the extraction pass's cheap
  * "find work" query (mirrors idx_documents_links_unprocessed). References
  * `documents.dates_extracted_at`, which the migration adds by ALTER, so this

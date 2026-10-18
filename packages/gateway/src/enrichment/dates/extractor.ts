@@ -403,6 +403,27 @@ function pickForwardValue(values: RtResolutionValue[], anchor: Date): RtResoluti
   return keyed.sort((a, b) => b.k.localeCompare(a.k))[0].v;
 }
 
+/** An ISO date and time the recognizer read, up to the minute or the second. */
+const ISO_DATE_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?$/u;
+
+/** What may follow such a date and time to make it an instant: seconds, a fraction, an offset. */
+const INSTANT_TAIL = /^(?::\d{2})?(?:[.,]\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})(?![\w:+-])/u;
+
+/**
+ * The end of a match, extended over the rest of the ISO instant it begins.
+ *
+ * The recognizer reads `2026-10-18T17:28:00Z` as `2026-10-18T17:28`: the
+ * seconds, the fraction and the offset fall outside its match. Stored as is,
+ * the phrase names a clock time in no zone, which a reader takes for a local
+ * time when it is UTC. Keeping the whole instant keeps its offset, so the
+ * phrase stays the moment the document wrote.
+ */
+function instantEnd(content: string, start: number, end: number): number {
+  if (!ISO_DATE_TIME.test(content.slice(start, end))) return end;
+  const tail = INSTANT_TAIL.exec(content.slice(end, end + 16));
+  return tail ? end + tail[0].length : end;
+}
+
 /** Normalize one recognizer result into zero or one ExtractedDate, or null when
  *  it has no concrete year (so it must be dropped). */
 function normalizeResult(
@@ -414,13 +435,14 @@ function normalizeResult(
   const values = r.resolution?.values ?? [];
   if (values.length === 0) return null;
   const subtype = subtypeOf(r.typeName);
-  const text = content.slice(r.start, r.end + 1);
+  const charEnd = instantEnd(content, r.start, r.end + 1);
+  const text = content.slice(r.start, charEnd);
   if (rules.restCompound?.test(text)) return null;
   const base = {
     relative: rules.relativeMarker.test(text),
     text,
     charStart: r.start,
-    charEnd: r.end + 1,
+    charEnd,
   };
 
   switch (subtype) {

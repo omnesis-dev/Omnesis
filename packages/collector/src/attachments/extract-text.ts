@@ -349,31 +349,35 @@ function formatDate(dt: ICAL.Time): string {
 /**
  * Clock times with the zone they are written in. An invitation usually states
  * its times in UTC or under a TZID; without the zone the reader takes the wall
- * clock for local time and lands an hour or more off. The zone is written once,
- * after the times ("… – … (UTC)"), so the pair still reads as one range; a
- * floating time is local wherever it is read and carries none.
+ * clock for local time and lands an hour or more off. A UTC time is written as
+ * the instant it is (`2026-09-30T12:00Z`), which a reader converts to their
+ * own zone. A TZID is written once, after the times ("… – … (Europe/Paris)"),
+ * so the pair still reads as one range in the place it happens; a floating
+ * time is local wherever it is read and carries none.
  */
 function formatTimedSpan(start: ICAL.Time, end: ICAL.Time | null): string {
   const startZone = zoneOf(start);
   const endZone = end ? zoneOf(end) : startZone;
-  if (!end) return `${formatDateTime(start)}${startZone ? ` (${startZone})` : ""}`;
+  const label = (zone: string | null) => (zone && zone !== UTC ? ` (${zone})` : "");
+  if (!end) return `${formatDateTime(start)}${label(startZone)}`;
   if (startZone === endZone) {
-    return `${formatDateTime(start)} – ${formatDateTime(end)}${startZone ? ` (${startZone})` : ""}`;
+    return `${formatDateTime(start)} – ${formatDateTime(end)}${label(startZone)}`;
   }
-  const label = (zone: string | null) => (zone ? ` (${zone})` : "");
   return `${formatDateTime(start)}${label(startZone)} – ${formatDateTime(end)}${label(endZone)}`;
 }
 
 function formatDateTime(dt: ICAL.Time): string {
   const date = formatDate(dt);
   const time = `${String(dt.hour).padStart(2, "0")}:${String(dt.minute).padStart(2, "0")}`;
-  return `${date} ${time}`;
+  return zoneOf(dt) === UTC ? `${date}T${time}Z` : `${date} ${time}`;
 }
+
+const UTC = "UTC";
 
 /** The zone a time is written in, or null for a floating time. */
 function zoneOf(dt: ICAL.Time): string | null {
   // A TZID with no VTIMEZONE block stays on `timezone`; the zone reads floating.
   const tzid = (dt as { timezone?: string }).timezone ?? dt.zone?.tzid;
   if (!tzid || tzid === "floating") return null;
-  return tzid === "Z" ? "UTC" : tzid;
+  return tzid === "Z" ? UTC : tzid;
 }

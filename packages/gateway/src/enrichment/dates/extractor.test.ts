@@ -131,6 +131,28 @@ describe("extractDatesFromText — emission-day drop + dedupe", () => {
   });
 });
 
+describe("extractDatesFromText — ISO instants", () => {
+  it("keeps the seconds, fraction and offset of an instant in the stored phrase", () => {
+    const cases: Array<[string, string]> = [
+      ["**When:** 2022-02-14T17:28:00Z → 2022-02-14T18:26:00Z", "2022-02-14T17:28:00Z"],
+      ["Starts 2022-02-14T21:00:00+01:00 sharp", "2022-02-14T21:00:00+01:00"],
+      ["Saved 2022-02-14T17:28:00.000Z by the export", "2022-02-14T17:28:00.000Z"],
+      ["Opens 2022-02-14T09:15+0530 locally", "2022-02-14T09:15+0530"],
+    ];
+    for (const [text, phrase] of cases) {
+      const [date] = extract(text);
+      expect(date?.text).toBe(phrase);
+      expect(date?.resolvedStart).toBe("2022-02-14");
+      expect(text.slice(date!.charStart, date!.charEnd)).toBe(phrase);
+    }
+  });
+
+  it("leaves a date and time with no offset, or one inside a longer token, as read", () => {
+    expect(extract("Doors 2022-02-14T19:30 at the hall")[0]?.text).toBe("2022-02-14T19:30");
+    expect(extract("ref 2022-02-14T19:30:00Zq7 attached")[0]?.text).toBe("2022-02-14T19:30");
+  });
+});
+
 describe("anchor independence", () => {
   it("resolves the same relative phrase differently per anchor", () => {
     const a1 = anchorFromIso("2022-01-21T00:00:00Z")!;

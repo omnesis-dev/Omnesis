@@ -103,6 +103,36 @@ export function annotateLocalTimes(text: string, timeZone: string): string {
   });
 }
 
+/** An ISO date and time, with or without its offset: the run a cut must not split. */
+const DATE_TIME_RUN =
+  /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?/gu;
+
+/** The longest such run: `2026-10-18T17:28:00.123456789+01:00`. */
+const LONGEST_DATE_TIME_RUN = 35;
+
+/**
+ * Where to end a slice of `text` that starts at `start` and should end at
+ * `end`, so that it does not cut an instant in two.
+ *
+ * A slice ending inside `2026-10-18T17:28:00Z` keeps `2026-10-18T17:28` and
+ * drops the `Z`: what is left names a clock time in no zone, which the
+ * annotator cannot place and a reader takes for local time. When `end` falls
+ * inside such a run, the slice ends just before it instead, and the next slice
+ * carries it whole. A run that begins at `start` is kept whole only if the
+ * slice can hold it; otherwise `end` stands.
+ */
+export function instantSafeEnd(text: string, start: number, end: number): number {
+  if (end <= start || end >= text.length) return end;
+  const from = Math.max(start, end - LONGEST_DATE_TIME_RUN);
+  const window = text.slice(from, end + LONGEST_DATE_TIME_RUN);
+  for (const match of window.matchAll(DATE_TIME_RUN)) {
+    const runStart = from + match.index;
+    const runEnd = runStart + match[0].length;
+    if (runStart < end && end < runEnd) return runStart > start ? runStart : end;
+  }
+  return end;
+}
+
 /**
  * Remove the annotations {@link annotateLocalTimes} writes, restoring the text
  * as stored. Used where model-supplied text must match stored text verbatim,

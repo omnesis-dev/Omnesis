@@ -35,6 +35,7 @@ function formatDuration(seconds: number): string {
  * regardless of where the collector runs or whether DST is in effect).
  * Matches `formatDisplayDate` which also renders in UTC.
  */
+// See #406 — planned: write clock times with a zone.
 function formatTime(timestampMs: number): string {
   const d = new Date(timestampMs);
   return d.toLocaleTimeString("en-GB", {
