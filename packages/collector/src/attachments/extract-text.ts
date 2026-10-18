@@ -9,6 +9,9 @@ import type { ExtractionResult } from "./types.js";
 
 const log = createLogger("attachments:text");
 
+/** The zone name an invitation time written with a trailing `Z` carries. */
+const UTC = "UTC";
+
 /**
  * Extract text from text-based attachments (plain text, CSV, HTML, Markdown, JSON, ICS).
  * Returns null if extraction fails or content is empty.
@@ -371,8 +374,6 @@ function formatDateTime(dt: ICAL.Time): string {
   const time = `${String(dt.hour).padStart(2, "0")}:${String(dt.minute).padStart(2, "0")}`;
   return zoneOf(dt) === UTC ? `${date}T${time}Z` : `${date} ${time}`;
 }
-
-const UTC = "UTC";
 
 /** The zone a time is written in, or null for a floating time. */
 function zoneOf(dt: ICAL.Time): string | null {

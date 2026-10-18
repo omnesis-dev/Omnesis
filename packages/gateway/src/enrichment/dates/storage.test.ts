@@ -139,7 +139,7 @@ describe("date-enrichment storage", () => {
     expect(pending).toEqual(["rest-week", "tonight"]);
   });
 
-  it("migration 202 queues only documents holding a date read from an ISO date and time", () => {
+  it("migration 202 queues only documents holding an ISO date and time with no offset", () => {
     const date = (text: string): ExtractedDate => ({
       kind: "date",
       resolvedStart: "2026-11-04",
@@ -152,10 +152,14 @@ describe("date-enrichment storage", () => {
     });
     upsertDocuments(
       db,
-      ["cut-instant", "plain-day", "iso-day"].map((externalId) => makeDoc({ externalId })),
+      ["cut-instant", "cut-after-word", "whole-instant", "plain-day", "iso-day"].map((externalId) =>
+        makeDoc({ externalId }),
+      ),
     );
     applyExtractedDates(db, [
       { id: docId(db, "cut-instant"), dates: [date("2026-11-04T09:15")] },
+      { id: docId(db, "cut-after-word"), dates: [date("by 2026-11-04T09:15")] },
+      { id: docId(db, "whole-instant"), dates: [date("2026-11-04T09:15:00+01:00")] },
       { id: docId(db, "plain-day"), dates: [date("4 November 2026")] },
       { id: docId(db, "iso-day"), dates: [date("2026-11-04")] },
     ]);
@@ -168,7 +172,7 @@ describe("date-enrichment storage", () => {
       )
       .all()
       .map((r) => r.external_id);
-    expect(pending).toEqual(["cut-instant"]);
+    expect(pending).toEqual(["cut-after-word", "cut-instant"]);
   });
 
   it("counts relative dates from the source's anchor day and flags addressed content", () => {

@@ -687,6 +687,15 @@ describe("agent graph search evidence", () => {
     });
   });
 
+  test("a bounded title ends before an instant its cut would split", () => {
+    const seed = doc("seed");
+    const lead = "z".repeat(225);
+    db.prepare("UPDATE documents SET title = ? WHERE id = 'seed'").run(
+      `${lead} 2026-10-18T17:28:00Z and more words after it`,
+    );
+    expect(search([seed])[0].provenance?.copies[0].title).toBe(`${lead} …`);
+  });
+
   test("prefers authoritative URLs, omits oversized links and bounds metadata", () => {
     const seed = doc("seed", { extra: { path: "x".repeat(400) } });
     db.prepare("UPDATE documents SET source_url = ?, title = ? WHERE id = 'seed'").run(

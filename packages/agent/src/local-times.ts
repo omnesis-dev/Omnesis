@@ -25,11 +25,11 @@
  */
 
 const INSTANT =
-  /(?<![\w\-/:.=?&#%+])\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})(?![\w/:+-])/gu;
+  /(?<![\w\-/:.=?&#%+])\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?(?:Z|[+-](?:0\d|1[0-4]):?\d{2})(?![\w/:+-])/gu;
 
 /** The annotation this module writes, recognised when it directly follows an instant. */
 const ANNOTATION =
-  /(?<=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})) \(\d{2}:\d{2} [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2,3}, [A-Za-z0-9_+\-/]+\)/gu;
+  /(?<=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?(?:Z|[+-](?:0\d|1[0-4]):?\d{2})) \(\d{2}:\d{2} [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2,3}, [A-Za-z0-9_+\-/]+\)/gu;
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
 
@@ -103,9 +103,12 @@ export function annotateLocalTimes(text: string, timeZone: string): string {
   });
 }
 
-/** An ISO date and time, with or without its offset: the run a cut must not split. */
-const DATE_TIME_RUN =
-  /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?/gu;
+/**
+ * An ISO date and time, with or without its offset: the run a cut must not
+ * split. Its clock is matched loosely so that a run an earlier bound already
+ * shortened (`2026-10-18T17:2`) still counts.
+ */
+const DATE_TIME_RUN = /\d{4}-\d{2}-\d{2}T[\d:.,]*(?:Z|[+-](?:0\d|1[0-4]):?\d{2})?/gu;
 
 /** The longest such run: `2026-10-18T17:28:00.123456789+01:00`. */
 const LONGEST_DATE_TIME_RUN = 35;
@@ -131,6 +134,20 @@ export function instantSafeEnd(text: string, start: number, end: number): number
     if (runStart < end && end < runEnd) return runStart > start ? runStart : end;
   }
   return end;
+}
+
+/** A date and time at the very end of a text, its offset not reached. */
+const CUT_DATE_TIME_AT_END = /\d{4}-\d{2}-\d{2}T[\d:.,]*$/u;
+
+/**
+ * `text` without a date and time it ends on before reaching an offset: the
+ * tail an upstream cut left of an instant (a fixed-width chunk ending in
+ * `2026-10-18T17:28` whose `:00Z` went to the next chunk). Kept, it would name
+ * a clock time in no zone.
+ */
+export function withoutCutInstantAtEnd(text: string): string {
+  const cut = CUT_DATE_TIME_AT_END.exec(text);
+  return cut ? text.slice(0, cut.index) : text;
 }
 
 /**

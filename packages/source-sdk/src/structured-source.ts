@@ -1698,9 +1698,10 @@ function recordFieldLabel(description: string | undefined, col: string): string 
 /**
  * Render a row's semantic time as one canonical ISO-8601 instant.
  *
- * Two things have to happen to the value the database hands back. DuckDB
- * renders a TIMESTAMPTZ as `"2026-06-03 15:59:37+01"` — space separator,
- * hour-only offset. V8 parses that leniently, but strict clients (iOS
+ * Two things have to happen to the value the database hands back. The
+ * gateway's reader spells a TIMESTAMPTZ as a UTC instant, but DuckDB's own
+ * rendering — which a value may still arrive in — is `"2026-06-03 15:59:37+01"`:
+ * space separator, hour-only offset. V8 parses that leniently, but strict clients (iOS
  * `ISO8601DateFormatter`, Android `OffsetDateTime`) do not, and the date
  * silently drops off those timelines; hence the space becomes a `T` and a bare
  * `±HH` offset is padded to `±HH:MM`.

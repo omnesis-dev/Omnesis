@@ -23,6 +23,7 @@ import {
   SqlPortNotPermittedError,
   SqlPortOverCapError,
   UnsupportedSearchFilterError,
+  withoutCutInstantAtEnd,
 } from "@omnesis/agent";
 import {
   deriveRecordCitationFields,
@@ -349,7 +350,8 @@ function searchResultToDocRef(
     sourceId: item.sourceId,
     documentType: item.documentType,
     title: item.title,
-    snippet: item.chunkText,
+    // A fixed-width chunk can end partway through an instant.
+    snippet: withoutCutInstantAtEnd(item.chunkText),
     ts: parseEpochMillis(item.sourceCreatedAt),
     url: item.sourceUrl,
     appUrl: item.appUrl,

@@ -407,7 +407,7 @@ function pickForwardValue(values: RtResolutionValue[], anchor: Date): RtResoluti
 const ISO_DATE_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?$/u;
 
 /** What may follow such a date and time to make it an instant: seconds, a fraction, an offset. */
-const INSTANT_TAIL = /^(?::\d{2})?(?:[.,]\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})(?![\w:+-])/u;
+const INSTANT_TAIL = /^(?::\d{2})?(?:[.,]\d{1,9})?(?:Z|[+-](?:0\d|1[0-4]):?\d{2})(?![\w:+-])/u;
 
 /**
  * The end of a match, extended over the rest of the ISO instant it begins.

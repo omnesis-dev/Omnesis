@@ -49,8 +49,8 @@ export { imessageDateToDate, isoToImessageNs } from "./epoch.js";
 
 /**
  * Format a Date to HH:MM string.
+ * See #406 — planned: write clock times with a zone.
  */
-// See #406 — planned: write clock times with a zone.
 function formatTime(date: Date): string {
   return date.toISOString().slice(11, 16);
 }

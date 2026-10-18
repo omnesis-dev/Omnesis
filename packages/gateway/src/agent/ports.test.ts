@@ -203,6 +203,18 @@ describe("createGatewayDocumentPort.fetch", () => {
     expect(after?.readSnapshot?.version).not.toBe(before?.readSnapshot?.version);
   });
 
+  test("a document's snippet ends before an instant its cut would split", async () => {
+    const lead = "Shelter delivery notes. ".repeat(21).slice(0, 490);
+    insertDocument({
+      id: "doc-instant",
+      sourceId: "files:test",
+      title: "Delivery",
+      content: `${lead}2026-10-18T17:28:00Z then unloading.`,
+    });
+    const out = await createGatewayDocumentPort(db).fetch("doc-instant");
+    expect(out?.ref.snippet).toBe(lead);
+  });
+
   test("emits mimeType from metadata.extra so renderers pick the file-type icon", async () => {
     insertDocument({
       id: "doc-pdf",
@@ -395,6 +407,14 @@ describe("createGatewaySearchPort.search", () => {
     const out = await port.search({ query: "budget report" });
     expect(out.results[0]?.documentId).toBe("doc-pdf");
     expect(out.results[0]?.mimeType).toBe("application/pdf");
+  });
+
+  test("drops the cut tail of an instant a chunk ends on from its snippet", async () => {
+    const port = createGatewaySearchPort(
+      fakePipeline({ ...baseItem, chunkText: "Review moved to 2026-10-18T17:28" }),
+    );
+    const out = await port.search({ query: "review" });
+    expect(out.results[0]?.snippet).toBe("Review moved to ");
   });
 
   test("leaves mimeType undefined when the search result has none", async () => {

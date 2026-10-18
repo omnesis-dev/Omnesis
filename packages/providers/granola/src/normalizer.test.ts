@@ -83,6 +83,8 @@ describe("noteToDocument", () => {
     expect(doc.content).toContain("Ship the thing");
     expect(doc.content).toContain("**Alice:** Let's start.");
     expect(doc.content).toContain("**Bob:** Sounds good.");
+    // The meeting's start is an instant, so a reader can place it in their zone.
+    expect(doc.content).toContain("> 2026-06-01T09:00Z · ");
     expect(doc.metadata.documentType).toBe("note");
     expect(doc.metadata.sourceUrl).toBe("https://granola.ai/notes/not_abc123DEF45678");
     expect(doc.contentHash).toMatch(/^[a-f0-9]{64}$/);

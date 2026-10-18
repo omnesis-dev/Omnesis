@@ -34,7 +34,7 @@ export {
   serializeToolResultForModel,
   type ToolResultSerializationOptions,
 } from "./tool-result-text.js";
-export { annotateLocalTimes, instantSafeEnd } from "./local-times.js";
+export { annotateLocalTimes, instantSafeEnd, withoutCutInstantAtEnd } from "./local-times.js";
 
 export {
   DEFAULT_MAX_TOOL_ITERATIONS,

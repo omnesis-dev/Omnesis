@@ -146,33 +146,36 @@ export function addDateMentions(db: Db): void {
  * rescanned document whose dates still stand gets the same rows back.
  */
 export function rescanSameDaySpansAndRestCompounds(db: Db): void {
-  const has = (table: string, column: string): boolean =>
-    db
-      .prepare<[string], { name: string }>("SELECT name FROM pragma_table_info(?)")
-      .all(table)
-      .some((c) => c.name === column);
-  if (!has("documents", "dates_extracted_at") || !has("document_extracted_dates", "matched_text")) {
-    return;
-  }
-  db.exec(
-    `UPDATE documents SET dates_extracted_at = NULL
-       WHERE dates_extracted_at IS NOT NULL
-         AND id IN (
-           SELECT document_id FROM document_extracted_dates
-            WHERE (kind = 'range' AND mod IS NULL AND resolved_start = resolved_end)
-               OR lower(matched_text) LIKE 'rest%'
-         )`,
+  rescanDocumentsWithDates(
+    db,
+    `(kind = 'range' AND mod IS NULL AND resolved_start = resolved_end)
+      OR lower(matched_text) LIKE 'rest%'`,
   );
 }
 
 /**
  * Migration 202: queue for a rescan every document holding a date read from an
- * ISO date and time, so a phrase the recognizer cut short of its offset
- * (`2026-10-18T17:28` out of `2026-10-18T17:28:00Z`) is stored again as the
- * whole instant. The selection is a superset: a rescanned document whose
- * phrases already stood whole gets the same rows back.
+ * ISO date and time with no offset, so a phrase the recognizer cut short of
+ * its offset (`2026-10-18T17:28` out of `2026-10-18T17:28:00Z`) is stored
+ * again as the whole instant. The selection is a superset: a document whose
+ * text really has no offset gets the same rows back.
  */
 export function rescanIsoDateTimeMentions(db: Db): void {
+  rescanDocumentsWithDates(
+    db,
+    `matched_text GLOB '*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]*'
+      AND matched_text NOT GLOB '*Z'
+      AND matched_text NOT GLOB '*[+-][0-9][0-9]:[0-9][0-9]'
+      AND matched_text NOT GLOB '*[+-][0-9][0-9][0-9][0-9]'`,
+  );
+}
+
+/**
+ * Mark for re-extraction every extracted document holding a date that matches
+ * `datePredicate` (SQL over `document_extracted_dates`). A no-op on a schema
+ * older than the date tables.
+ */
+function rescanDocumentsWithDates(db: Db, datePredicate: string): void {
   const has = (table: string, column: string): boolean =>
     db
       .prepare<[string], { name: string }>("SELECT name FROM pragma_table_info(?)")
@@ -184,10 +187,7 @@ export function rescanIsoDateTimeMentions(db: Db): void {
   db.exec(
     `UPDATE documents SET dates_extracted_at = NULL
        WHERE dates_extracted_at IS NOT NULL
-         AND id IN (
-           SELECT document_id FROM document_extracted_dates
-            WHERE matched_text GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]*'
-         )`,
+         AND id IN (SELECT document_id FROM document_extracted_dates WHERE ${datePredicate})`,
   );
 }
 
