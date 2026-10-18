@@ -36,6 +36,13 @@ const projection = `id,purpose,input_fingerprint AS inputFingerprint,score,thres
   run_id AS runId,batch_id AS batchId,node_id AS nodeId,model_id AS modelId,
   latency_ms AS latencyMs,input_tokens AS inputTokens,rubric_version AS rubricVersion,created_at AS createdAt,work_id AS workId,source_revision AS sourceRevision,scheduling_json AS schedulingJson,bypass_json AS bypassJson`;
 
+/**
+ * A frontier source node joined to its document by primary key. The node id is
+ * split instead of the document id being prefixed, so SQLite can search
+ * `documents` by id rather than scan it once per frontier row.
+ */
+const sourceDocumentJoin = "substr(f.node_id,1,7)='source:' AND d.id=substr(f.node_id,8)";
+
 /** Resolve display identity only through the current privacy fence, in the caller's snapshot. */
 export function readDecisionSubjectRef(db: Database.Database, id: string | null) {
   if (!id) return null;
@@ -137,7 +144,7 @@ function readRunDecisions(db: Database.Database, runId: string) {
     d.id,${knowledgeSourceRevisionSql()} AS contentHash,d.title,d.content,
     d.source_created_at AS sourceCreatedAt,d.source_updated_at AS sourceUpdatedAt
     FROM knowledge_batches b JOIN knowledge_frontier f ON f.batch_id=b.id
-    JOIN documents d ON f.node_id='source:'||d.id WHERE b.run_id=? AND length(d.content)<=24000 LIMIT 51`,
+    JOIN documents d ON ${sourceDocumentJoin} WHERE b.run_id=? AND length(d.content)<=24000 LIMIT 51`,
     )
     .all(runId);
   if (sources.length > 50) {
@@ -169,7 +176,7 @@ function readRunDecisions(db: Database.Database, runId: string) {
     r.last_attempt_at AS started,COALESCE(r.completed_at,253402300799999) AS finished,d.id,${knowledgeSourceRevisionSql()} AS contentHash,
     d.title,substr(d.content,1,24001) AS content,d.source_created_at AS sourceCreatedAt,d.source_updated_at AS sourceUpdatedAt
     FROM knowledge_batches b JOIN knowledge_frontier f ON f.batch_id=b.id
-    JOIN cognition_runs r ON r.id=b.run_id LEFT JOIN documents d ON f.node_id='source:'||d.id
+    JOIN cognition_runs r ON r.id=b.run_id LEFT JOIN documents d ON ${sourceDocumentJoin}
     WHERE f.node_id LIKE 'source:%' AND r.last_attempt_at<=? AND COALESCE(r.completed_at,253402300799999)>=? LIMIT 51`,
     )
     .all(run.finished, run.started);

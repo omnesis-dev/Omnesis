@@ -3,6 +3,7 @@
 
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
+import { createDatabase } from "../../db.js";
 import { createCognitionDecisionsTable } from "../storage/decisions.js";
 import { createKnowledgeDecisionTable, recordKnowledgeDecision } from "./decision-storage.js";
 import {
@@ -356,6 +357,51 @@ it("exposes an engine bypass separately from any model verdict without unavailab
       inputInspection: false,
       bypass: { reason: "request_budget_exceeded", inputBytes: 140000, budgetBytes: 131072 },
     });
+  } finally {
+    db.close();
+  }
+});
+
+it("searches documents by key when matching a finished run's frontier sources", () => {
+  const db = createDatabase(":memory:");
+  try {
+    const { entry } = fixture();
+    db.exec(`INSERT INTO cognition_runs(id,kind,next_attempt_at,enqueued_at,last_attempt_at,completed_at)
+        VALUES('run_demo','data_based',0,0,100,200);
+      INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,metadata,source_created_at,source_updated_at,ingested_at,updated_at)
+        VALUES('doc_demo','fictional','fixture-source','doc_demo','Research memo','A detailed invented research result.','version-a','{}','2026-01-01','2026-01-02','2026-01-01','2026-01-01');
+      INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at)
+        VALUES('batch_demo','run_demo','fp','routine','completed',100,200);
+      INSERT INTO knowledge_frontier(batch_id,node_id,input_fingerprint,input_versions_json,depth,status)
+        VALUES('batch_demo','source:doc_demo','fp','{"source:doc_demo":"version-a"}',0,'changed');`);
+    recordKnowledgeDecision(db, entry, 150);
+    const executed: { sql: string; args: unknown[] }[] = [];
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      const statement = prepare(sql);
+      return new Proxy(statement, {
+        get(target, key) {
+          const value = Reflect.get(target, key) as unknown;
+          if ((key !== "all" && key !== "get") || typeof value !== "function") return value;
+          return (...args: unknown[]) => {
+            executed.push({ sql, args });
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        },
+      });
+    }) as typeof db.prepare;
+    const audit = listKnowledgeDecisionsForRun(db, "run_demo");
+    db.prepare = prepare;
+    expect(audit.items).toMatchObject([{ id: entry.id, association: "historical-matched" }]);
+    const joins = executed.filter(({ sql }) => /JOIN documents d/.test(sql));
+    expect(joins).toHaveLength(2);
+    for (const { sql, args } of joins) {
+      const plan = db
+        .prepare<unknown[], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
+        .all(...args)
+        .map((row) => row.detail);
+      expect(plan.some((detail) => /^SCAN d\b/.test(detail))).toBe(false);
+    }
   } finally {
     db.close();
   }
