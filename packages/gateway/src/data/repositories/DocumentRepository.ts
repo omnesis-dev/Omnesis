@@ -45,7 +45,7 @@ import {
   bumpWipeEpoch,
   resetSiblingMemberCursors,
 } from "./SyncStateRepository.js";
-import { markSourceStatsDirty } from "./SourceStatsRepository.js";
+import { markSourceStatsDirty, recordSourceDocumentsDeleted } from "./SourceStatsRepository.js";
 import {
   applySnapshotAbsencePlan,
   clearDocumentAbsencesForArrivals,
@@ -108,6 +108,14 @@ export function prepareDocumentsForWrite(
   }));
 }
 
+/** The freshest document of one source; bound as `(sourceId, sourceId)`. */
+export const LATEST_ACTIVITY_SQL = `SELECT id, title, source_created_at, source_updated_at, ingested_at, updated_at
+   FROM documents
+  WHERE source_id = ?
+    AND updated_at = (SELECT MAX(updated_at) FROM documents WHERE source_id = ?)
+  ORDER BY source_updated_at DESC, id DESC
+  LIMIT 1`;
+
 /**
  * Recompute the materialized `latest_*` columns on `source_stats` for one
  * source from the rows that currently survive in `documents`, then write
@@ -118,8 +126,16 @@ export function prepareDocumentsForWrite(
  * cleared to NULL so `getLatestActivityBySource`'s `latest_doc_id IS NOT
  * NULL` filter drops the source instead of surfacing a deleted doc.
  *
- * Cheap: one `idx_documents_source_id_updated_at` seek + one PK-keyed
- * UPDATE. Runs on the writer handle inside the caller's transaction. The
+ * The lookup is written as two seeks on `idx_documents_source_id_updated_at`:
+ * the source's newest `updated_at` (a covering max seek), then the rows that
+ * carry exactly that value, tie-broken by `source_updated_at DESC, id DESC`.
+ * Asked as one `ORDER BY ... LIMIT 1`, SQLite is free to serve `source_id = ?`
+ * from another index and sort every row of the source, which reads each row
+ * through its content and makes the writer's cost proportional to the source
+ * rather than to the page. The two-seek form costs the same for any source
+ * size, and `DocumentRepository.test.ts` pins its plan.
+ *
+ * Runs on the writer handle inside the caller's transaction. The
  * UPDATE only touches an existing row — a source with no stats row yet
  * (never ingested) is a no-op, which is correct: there's nothing to
  * staleness-check.
@@ -132,7 +148,7 @@ export function prepareDocumentsForWrite(
 export function refreshLatestActivity(db: Db, sourceId: string): void {
   const latest = db
     .prepare<
-      [string],
+      [string, string],
       {
         id: string;
         title: string;
@@ -141,14 +157,8 @@ export function refreshLatestActivity(db: Db, sourceId: string): void {
         ingested_at: string;
         updated_at: string;
       }
-    >(
-      `SELECT id, title, source_created_at, source_updated_at, ingested_at, updated_at
-         FROM documents
-         WHERE source_id = ?
-         ORDER BY updated_at DESC, source_updated_at DESC, id DESC
-         LIMIT 1`,
-    )
-    .get(sourceId);
+    >(LATEST_ACTIVITY_SQL)
+    .get(sourceId, sourceId);
   db.prepare(
     `UPDATE source_stats
        SET latest_doc_id = ?,
@@ -441,7 +451,10 @@ export function upsertDocuments(
     // separately so its later chunks cannot land behind an indexer checkpoint
     // carrying the first chunk's older timestamp.
     const now = new Date().toISOString();
-    const acceptedDocuments: PreparedDocumentInput[] = [];
+    // Documents whose row this transaction inserted or modified. A re-sent,
+    // unchanged document leaves the source's count and freshest row as they
+    // were, so only these feed the per-source stats maintenance below.
+    const changedDocuments: PreparedDocumentInput[] = [];
     const inventorySources = new Set<string>();
     for (const doc of docs) {
       if (documentTemporalProjection && doc.sourceId !== documentTemporalProjection.sourceId) {
@@ -521,7 +534,7 @@ export function upsertDocuments(
           now: Date.now(),
         });
       acceptedDocumentCount += 1;
-      acceptedDocuments.push(doc);
+      if (stored.changes > 0) changedDocuments.push(doc);
       if (documentTemporalProjection) {
         // The document is what this transaction exists to store; its temporal
         // projections are metadata derived from it. Anything that goes wrong
@@ -581,7 +594,7 @@ export function upsertDocuments(
     } else {
       absencePlanScope = recovery.expectedScope;
     }
-    return acceptedDocuments;
+    return changedDocuments;
   });
 
   // Per-source stats maintenance. We want readers (`/portal/*`, `cli
@@ -590,8 +603,9 @@ export function upsertDocuments(
   // time ingestion marks a row dirty. Strategy:
   //
   //   1. Update `doc_count` inline via a cheap indexed `COUNT(*) WHERE
-  //      source_id = ?` — ~50ms even on 146k-row sources because
-  //      idx_documents_source covers it.
+  //      source_id = ?` over the covering `idx_documents_source_id`.
+  //      Only sources a chunk actually changed are recounted: a page of
+  //      re-sent, unchanged documents cannot move the count.
   //   2. Mark `needs_refresh = 1` so the backfill worker reconciles the
   //      heavier fields (data_size_bytes, total_units, date range) off
   //      the main thread.
@@ -600,7 +614,7 @@ export function upsertDocuments(
   const countStmt = db.prepare<[string], { count: number }>(
     "SELECT COUNT(*) AS count FROM documents WHERE source_id = ?",
   );
-  /** Run the per-touched-source stats updates for one chunk's worth of docs. */
+  /** Run the per-source stats updates for the documents a chunk changed. */
   const updateStatsForChunk = (chunk: DocumentInput[]) => {
     const touched = new Set<string>();
     for (const doc of chunk) touched.add(doc.sourceId);
@@ -636,8 +650,8 @@ export function upsertDocuments(
       // columns. Necessary because we need the ACTUAL ingested_at from
       // the documents row (which the upsert preserves on UPDATE — only
       // updated_at advances), not the input doc's would-be ingested_at.
-      // Cheap — uses idx_documents_source_id_updated_at, sub-ms each,
-      // uncontended on the writable handle.
+      // Two index seeks whatever the source's size; see
+      // `refreshLatestActivity`.
       refreshLatestActivity(db, sid);
     }
   };
@@ -648,8 +662,7 @@ export function upsertDocuments(
   // unit test.
   const token = options.token;
   if (!token) {
-    const acceptedDocuments = insertMany(documents);
-    updateStatsForChunk(acceptedDocuments);
+    updateStatsForChunk(insertMany(documents));
     return {
       remaining: [],
       rejectedSourceIds: [],
@@ -676,8 +689,7 @@ export function upsertDocuments(
   while (processed < documents.length) {
     const end = nextChunkEnd(documents, processed, chunkSize);
     const chunk = documents.slice(processed, end);
-    const acceptedDocuments = insertMany(chunk);
-    updateStatsForChunk(acceptedDocuments);
+    updateStatsForChunk(insertMany(chunk));
     processed = end;
     if (processed < documents.length && token.requested()) {
       return {
@@ -789,18 +801,18 @@ export function deleteDocuments(
     })();
     for (const r of rows) deletedIds.push(r.id);
   }
-  markSourceStatsDirty(db, sourceId);
-  // The heavy aggregation (`refreshSourceStatsRow`) does NOT touch the
-  // materialized latest_* columns, so a delete that removed this source's
-  // freshest doc would otherwise leave latest_doc_id pointing at a row
-  // that no longer exists — getLatestActivityBySource would surface a
-  // deleted doc. Recompute from the survivors (or clear when none remain).
-  refreshLatestActivity(db, sourceId);
-  // documents.id has ON DELETE CASCADE on document_links.source_doc_id,
-  // so the row count in `document_links` shifts with every document
-  // delete. Invalidate the materialized link_stats so the next
-  // refresh picks up the change.
   if (deletedIds.length > 0) {
+    recordSourceDocumentsDeleted(db, sourceId, deletedIds.length);
+    // The heavy aggregation (`refreshSourceStatsRow`) does NOT touch the
+    // materialized latest_* columns, so a delete that removed this source's
+    // freshest doc would otherwise leave latest_doc_id pointing at a row
+    // that no longer exists — getLatestActivityBySource would surface a
+    // deleted doc. Recompute from the survivors (or clear when none remain).
+    refreshLatestActivity(db, sourceId);
+    // documents.id has ON DELETE CASCADE on document_links.source_doc_id,
+    // so the row count in `document_links` shifts with every document
+    // delete. Invalidate the materialized link_stats so the next
+    // refresh picks up the change.
     markLinkStatsDirty(db);
     // document_people CASCADE-deletes too — interaction-score numerator
     // and denominator both shift, so every consumer-side score is stale.
@@ -847,7 +859,7 @@ export function cascadeOpenLoopPrivacyDeleteWithMirrors(
 export function deleteDocumentsByIds(db: Db, documentIds: readonly string[]): string[] {
   if (documentIds.length === 0) return [];
   const deletedIds: string[] = [];
-  const sourceIds = new Set<string>();
+  const removedBySource = new Map<string, number>();
   for (let i = 0; i < documentIds.length; i += DELETE_IN_LIST_CHUNK) {
     const chunk = documentIds.slice(i, i + DELETE_IN_LIST_CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
@@ -869,12 +881,12 @@ export function deleteDocumentsByIds(db: Db, documentIds: readonly string[]): st
     })();
     for (const r of rows) {
       deletedIds.push(r.id);
-      sourceIds.add(r.source_id);
+      removedBySource.set(r.source_id, (removedBySource.get(r.source_id) ?? 0) + 1);
     }
   }
   if (deletedIds.length === 0) return [];
-  for (const sourceId of sourceIds) {
-    markSourceStatsDirty(db, sourceId);
+  for (const [sourceId, removed] of removedBySource) {
+    recordSourceDocumentsDeleted(db, sourceId, removed);
     // The materialized latest_* columns can point at a row this delete just
     // removed; recompute them from the survivors.
     refreshLatestActivity(db, sourceId);
