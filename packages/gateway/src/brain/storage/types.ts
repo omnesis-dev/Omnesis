@@ -201,6 +201,10 @@ export interface TaskEvent {
     | "proposal_kept"
     /** A Brain change Omnesis applied on its own after verifying its evidence. */
     | "auto_applied"
+    /** A suggestion the interest gate made the user's task at once; undo returns it to the suggestions. */
+    | "auto_accepted"
+    /** A suggestion the interest gate kept out of the Tasks views; undo offers it. */
+    | "withheld"
     | "undone";
   /** Where the change was made. */
   surface: "tasks" | "conversation" | "note" | "brain";

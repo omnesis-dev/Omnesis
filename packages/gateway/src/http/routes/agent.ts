@@ -74,6 +74,7 @@ import type { DeviceAnswerScope } from "../../access/device-answer-scope.js";
 import type { ToolCaller } from "@omnesis/agent";
 import type { ConversationReader } from "../../agent/conversation-reader.js";
 import type { DailyBriefDetailReader } from "../../agent/daily-brief-detail.js";
+import type { BriefItemReactor } from "../../brain/observations/brief-reactions.js";
 import type { AnswerService } from "../../privacy/answer-service.js";
 import type { PrivacyReviewer } from "../../privacy/reviewer.js";
 import type { PrivacyAdminService } from "../../privacy/admin-service.js";
@@ -196,6 +197,11 @@ export interface AgentRoutesDeps {
    * Supplied where the Brain runs; absent, a brief reads as based on nothing.
    */
   dailyBriefDetail?: DailyBriefDetailReader;
+  /**
+   * Thumbs on a shipped brief item. Supplied where the Brain runs; absent, the
+   * reaction route is not mounted.
+   */
+  briefItemReaction?: BriefItemReactor;
   /**
    * Per-conversation read state, so the list can say which conversations hold
    * something the operator has not seen and any surface can say it has been

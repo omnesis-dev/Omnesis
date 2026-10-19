@@ -22,6 +22,8 @@ import type { BrainSettings } from "@omnesis/config";
 
 /** What the record check does with its verdicts, as the config spells it. */
 export type RecordCheckMode = NonNullable<NonNullable<BrainSettings["annotations"]>["recordCheck"]>;
+/** What the interest gate on new suggestions does with its verdicts, as the config spells it. */
+export type TaskProposeGateMode = NonNullable<NonNullable<BrainSettings["tasks"]>["proposeGate"]>;
 import type { CognitionBudgetSettings } from "./cognition/budget.js";
 
 /** Effective defaults, config-shaped (durations as human-readable strings). */
@@ -138,7 +140,15 @@ export const BRAIN_DEFAULTS = {
   // it triggers, which are what stop a loop resting on a prior that has since
   // died. An observation resting on a dead prior is dropped without a run.
   provenanceRecheck: { enabled: true },
-  tasks: { autoApply: true },
+  // The interest gate on new suggestions observes first (`shadow`): its
+  // verdicts land in the decision ledger while every suggestion is still
+  // offered, so the operator can see what it would have withheld or adopted
+  // before letting it.
+  tasks: { autoApply: true, proposeGate: "shadow" },
+  // The interest ledger: what the owner did on purpose, shown to the decision
+  // gates as examples. On by default because it only ever records explicit
+  // reactions; nothing is inferred from silence.
+  interest: { enabled: true },
   // Merge adjudication — the background agent's verdict pass over pending
   // person-merge candidates. Bounded by construction: one run per candidate,
   // re-run only if the candidate is re-detected, so it cannot accumulate the
@@ -374,6 +384,13 @@ export interface ResolvedBrainSettings {
   tasks: {
     /** Apply a verified change directly instead of proposing it (read per run). */
     autoApply: boolean;
+    /** What the interest gate's verdict on a new suggestion does (read per run). */
+    proposeGate: TaskProposeGateMode;
+  };
+  /** What the Brain learns from the owner's reactions. */
+  interest: {
+    /** Record reactions and show similar past ones to the decision gates (read per call). */
+    enabled: boolean;
   };
   /** The retrospective bootstrap lane (historical temporal-annotation / loop seeding). */
   bootstrap: {
@@ -615,6 +632,10 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     },
     tasks: {
       autoApply: settings?.tasks?.autoApply ?? BRAIN_DEFAULTS.tasks.autoApply,
+      proposeGate: settings?.tasks?.proposeGate ?? BRAIN_DEFAULTS.tasks.proposeGate,
+    },
+    interest: {
+      enabled: settings?.interest?.enabled ?? BRAIN_DEFAULTS.interest.enabled,
     },
     bootstrap: {
       enabled: settings?.bootstrap?.enabled ?? BRAIN_DEFAULTS.bootstrap.enabled,

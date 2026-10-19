@@ -693,6 +693,17 @@ export class AgentLifecycle {
     else delete this.routeDeps.dailyBriefDetail;
   }
 
+  /**
+   * Thumbs on a shipped brief item, for the brief reaction route. The route
+   * deps outlive a model swap, so it is set on them directly.
+   */
+  setBriefItemReactor(
+    reactor: import("../brain/observations/brief-reactions.js").BriefItemReactor | null,
+  ): void {
+    if (reactor) this.routeDeps.briefItemReaction = reactor;
+    else delete this.routeDeps.briefItemReaction;
+  }
+
   private taskTools: import("./service.js").TaskToolsProvider | null = null;
 
   setTaskToolsProvider(provider: import("./service.js").TaskToolsProvider | null): void {

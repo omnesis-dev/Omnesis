@@ -60,7 +60,7 @@ const TAIL_VERSIONS = Array.from(
  */
 const WOUND_BACK = [
   172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190,
-  191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203,
+  191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204,
 ];
 
 let dir: string;
@@ -125,6 +125,12 @@ function undoVocabulary(db: Db): void {
     .all();
   if (pendingVoiceColumns.some((row) => row.name === "allow_vocabulary"))
     db.exec("ALTER TABLE voice_note_transcriptions DROP COLUMN allow_vocabulary");
+}
+
+/** Undo migration 204: no interest ledger and no thumbs on brief items. */
+function undoInterest(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS interest_signals");
+  db.exec("DROP TABLE IF EXISTS brief_item_reactions");
 }
 
 /** Undo migration 201: every decision-ledger row names a run and a document. */
@@ -239,6 +245,7 @@ function undoKnowledge(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  undoInterest(db);
   undoDecisionAnchors(db);
   undoTaskSuggestions(db);
   undoNoteAgent(db);

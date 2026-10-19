@@ -40,7 +40,8 @@ export type DecisionVerdict = "pass" | "skip" | "unavailable";
  * What a decision was asked for: `worth-gate` judges a run's document before
  * the run, `record-check` a record a run is about to save,
  * `observation-salience` whether an observation belongs in a morning brief,
- * `task-check` a Brain write to one of the user's own tasks, `mention-worth`
+ * `task-check` a Brain write to one of the user's own tasks, `task-propose`
+ * whether a new Brain suggestion is withheld, suggested or adopted, `mention-worth`
  * whether an email's date mentions are worth recording, and `find-route`
  * whether a search needs agent research.
  */
@@ -49,6 +50,7 @@ export type DecisionPurpose =
   | "record-check"
   | "observation-salience"
   | "task-check"
+  | "task-propose"
   | "mention-worth"
   | "find-route";
 
@@ -58,6 +60,7 @@ export const DECISION_PURPOSES: readonly DecisionPurpose[] = [
   "record-check",
   "observation-salience",
   "task-check",
+  "task-propose",
   "mention-worth",
   "find-route",
 ];

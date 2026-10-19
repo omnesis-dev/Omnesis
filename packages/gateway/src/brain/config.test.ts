@@ -78,7 +78,8 @@ describe("resolveBrainSettings", () => {
       reverification: { enabled: true, intervalDays: 14, maxPerSweep: 12, batchSize: 6 },
       provenanceRecheck: { enabled: true },
       mergeAdjudication: { enabled: true },
-      tasks: { autoApply: true },
+      tasks: { autoApply: true, proposeGate: "shadow" },
+      interest: { enabled: true },
       observations: {
         minConsequence: 2,
         timelyLevel: 2,
@@ -449,6 +450,23 @@ describe("task auto-apply knob", () => {
   it("the schema accepts the block and rejects unknown keys inside it", () => {
     expect(validateConfig({ brain: { tasks: { autoApply: false } } }).ok).toBe(true);
     expect(validateConfig({ brain: { tasks: { nonsense: 1 } as never } }).ok).toBe(false);
+  });
+});
+
+describe("interest knobs", () => {
+  it("the propose gate observes by default and takes the three modes", () => {
+    expect(resolveBrainSettings(undefined).tasks.proposeGate).toBe("shadow");
+    expect(resolveBrainSettings({ tasks: { proposeGate: "enforce" } }).tasks.proposeGate).toBe(
+      "enforce",
+    );
+    expect(validateConfig({ brain: { tasks: { proposeGate: "off" } } }).ok).toBe(true);
+    expect(validateConfig({ brain: { tasks: { proposeGate: "loud" } as never } }).ok).toBe(false);
+  });
+
+  it("the ledger is on by default and can be switched off", () => {
+    expect(resolveBrainSettings(undefined).interest.enabled).toBe(true);
+    expect(resolveBrainSettings({ interest: { enabled: false } }).interest.enabled).toBe(false);
+    expect(validateConfig({ brain: { interest: { nonsense: 1 } as never } }).ok).toBe(false);
   });
 });
 

@@ -23,6 +23,7 @@ import { askScore } from "../decision-call.js";
 import { captureOwnerDecisionPayload, type DecisionPayloadCapture } from "../decision-payload.js";
 import type { DecisionCapability, DecisionQuestion, Logger } from "@omnesis/core";
 import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
+import type { InterestLookup } from "../interest/engine.js";
 import type Database from "better-sqlite3";
 
 export const TASK_CHECK_SPEND_MECHANISM = "task-check";
@@ -82,6 +83,8 @@ interface TaskChecksDeps {
    * keeps the verdict without its input.
    */
   capturePayload?: (input: TaskRef) => DecisionPayloadCapture | undefined;
+  /** The owner's past reactions, shown beside the task text. Omitted, the checks judge without them. */
+  interest?: InterestLookup;
   clock: () => number;
   idGen: () => string;
   log: Logger;

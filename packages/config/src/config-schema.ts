@@ -2478,6 +2478,23 @@ const brainTasks = z
         "Let the Brain keep your own tasks current: a new title or description applies directly unless you wrote that field (an addition to your description also applies), and a completion or deadline applies when the entailment verifier confirms the quoted evidence establishes it. Striking a task and changes to what you wrote stay proposals. Each applied change is recorded in the task's history and can be undone. False makes every change a proposal you confirm.",
       )
       .optional(),
+    proposeGate: z
+      .enum(["off", "shadow", "enforce"])
+      .describe(
+        "What the decision model's verdict on a new Brain suggestion does, judged against tasks you accepted, created and ignored before. off: every suggestion is offered. shadow: the verdict is recorded in the decision ledger and every suggestion is still offered. enforce: a suggestion clearly like ones you ignored is withheld from the Tasks views (still tracked, undoable from its history), and one clearly like tasks you accepted becomes your task at once (undoable).",
+      )
+      .optional(),
+  })
+  .strict();
+
+const brainInterest = z
+  .object({
+    enabled: z
+      .boolean()
+      .describe(
+        "Let the Brain learn what you care about from what you did on purpose — tasks you accepted, created or ignored, thumbs on morning-brief items, and what you say in the Morning brief conversation — and show the decision model similar past reactions when it ranks observations for the brief, judges a new suggestion, or schedules new evidence. False stops recording and showing them; nothing is inferred from silence either way.",
+      )
+      .optional(),
   })
   .strict();
 
@@ -3055,6 +3072,9 @@ const brain = z
       )
       .optional(),
     tasks: brainTasks.describe("How the Brain changes the tasks you own.").optional(),
+    interest: brainInterest
+      .describe("What the Brain learns from your reactions, and where it uses it.")
+      .optional(),
     judge: brainJudge.describe("Deprecated — no effect.").optional(),
     observations: brainObservations
       .describe("Observations awaiting the morning brief, and the policy that ranks them.")

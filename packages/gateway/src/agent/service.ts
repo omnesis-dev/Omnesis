@@ -482,7 +482,13 @@ export type DailyBriefContextProvider = (latest: { day: string; messageId: strin
  * Builds the task tools a conversation gets, stamped with that conversation
  * so each change records where the user asked for it.
  */
-export type TaskToolsProvider = (conversationId: string) => ToolHandle[];
+export type TaskToolsProvider = (
+  conversationId: string,
+  context: {
+    /** The conversation's origin kind (`daily_brief`, …); undefined for a plain conversation. */
+    originKind?: string;
+  },
+) => ToolHandle[];
 
 /**
  * The run's own loop writes, withheld from a conversation: there the user's
@@ -1375,7 +1381,7 @@ export class AgentService {
           // rather than relying on the model to decline. A human resuming
           // the thread later gets the ordinary toolset back.
           selectSubagentTools(this.tools)
-        : this.buildInteractiveTools(sessionId, chatProfile);
+        : this.buildInteractiveTools(sessionId, chatProfile, resumedOrigin?.kind);
     }
     const session = new AgentSession({
       sessionId,
@@ -1478,6 +1484,7 @@ export class AgentService {
   private buildInteractiveTools(
     sessionId: string,
     profile: "interactive" | "voice",
+    originKind?: string,
   ): readonly ToolHandle[] {
     const memory = this.interactiveMemoryProfile?.buildOwnTools(`interactive_${sessionId}`) ?? [];
     if (this.interactiveMemoryProfile && this.ensureConversationEvidence && this.store) {
@@ -1504,7 +1511,8 @@ export class AgentService {
             this.documentPort.knowledgePageRef?.bind(this.documentPort),
           )
         : [];
-    const taskTools = this.taskTools?.(sessionId) ?? [];
+    const taskTools =
+      this.taskTools?.(sessionId, originKind === undefined ? {} : { originKind }) ?? [];
     // The broader profile shares annotation consumption with loop/brief writes.
     // Preserve those handles so their provenance tracker sees every memory read.
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
@@ -1609,7 +1617,7 @@ export class AgentService {
     const session = new AgentSession({
       sessionId,
       backend,
-      tools: [...this.buildInteractiveTools(sessionId, profile)],
+      tools: [...this.buildInteractiveTools(sessionId, profile, entry.meta.origin?.kind)],
       systemPrompt,
       initialHistory: entry.session.historySnapshot(),
       timeZone: entry.session.timeZone,
@@ -3172,7 +3180,13 @@ export class AgentService {
       // events and their durable Timeline records belong to the parent turn.
       sessionId: input.sessionId,
       backend,
-      tools: [...this.buildInteractiveTools(input.sessionId, "interactive")],
+      tools: [
+        ...this.buildInteractiveTools(
+          input.sessionId,
+          "interactive",
+          this.sessions.get(input.sessionId)?.meta.origin?.kind,
+        ),
+      ],
       systemPrompt: finalPrompt,
       timeZone: parentZone,
     });

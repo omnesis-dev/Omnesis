@@ -58,6 +58,7 @@ import type { ResolvedBrainSettings } from "../config.js";
 import type Database from "better-sqlite3";
 import type { DiscoveryPhase } from "./discovery.js";
 import type { DerivationStage } from "../../domain/DocumentDerivation.js";
+import type { InterestLookup } from "../interest/engine.js";
 import type { Logger } from "@omnesis/core";
 
 export interface KnowledgeEngineDeps {
@@ -65,6 +66,8 @@ export interface KnowledgeEngineDeps {
   writeGate: KnowledgeWriteGate;
   service: KnowledgeService;
   decisions: KnowledgeDecisionDeps;
+  /** The owner's past reactions, shown to the urgency gate. Omitted, it judges without them. */
+  interest?: InterestLookup;
   getSettings: () => ResolvedBrainSettings;
   clock: () => number;
   log: Logger;

@@ -130,6 +130,7 @@ import { TASK_NOTE_HISTORY, type TaskChecks } from "../tasks/task-checks.js";
 import { jointContextualEvidence } from "./annotation-gate-evidence.js";
 import { assessPersonWithdrawal } from "./person-withdrawal.js";
 import { PersonProfileReads } from "./person-profile-reads.js";
+import type { InterestLookup } from "../interest/engine.js";
 import type { ObservationScoringInput, ObservationScoringResult } from "../observations/noting.js";
 import type { ConsumedAnnotationRef, RunConsumptionTracker } from "./consumption.js";
 import type { IdentityCandidate } from "../reconcile/identity-candidates.js";
@@ -315,6 +316,11 @@ export interface CognitionToolDeps {
    * a note adds anything to the task's history. Absent, neither runs.
    */
   taskChecks?: TaskChecks;
+  /**
+   * The owner's past reactions, for the gate on new suggestions
+   * (`open_loop_create`). Absent, every suggestion is offered as before.
+   */
+  interest?: InterestLookup;
   /**
    * Per-run surfaced-prior tracker (consumption provenance). Search results,
    * prompt-inlined priors and self-memory become candidates that a later

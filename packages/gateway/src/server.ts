@@ -414,6 +414,8 @@ export function createServer(
     onVoiceNoteService?: (service: import("./voice-notes/index.js").VoiceNoteService) => void;
     /** Replay-only settable briefs decision clock (backtest mirror). */
     briefsClock?: import("./brain/virtual-clock.js").MutableClock;
+    /** The interest ledger, for the Debug → Cognition tab. Omitted ⇒ the tab's routes 404. */
+    interest?: import("./brain/interest/engine.js").InterestEngine;
     /**
      * The Cognition Steward drainer's live-run registry, shared by the composition
      * root so `/admin/brain/runs` can flag the run executing right now.
@@ -1794,6 +1796,7 @@ export function createServer(
     transcriptsDir: opts?.configDir ? cognitionTranscriptsDir(opts.configDir) : undefined,
     clock: opts?.briefsClock,
     activity: opts?.cognitionActivity,
+    interest: opts?.interest,
     sweeps: opts?.sweeps,
     getSweepsEnabled: opts?.getSweepsEnabled,
     getBootstrapSettings: opts?.getBootstrapSettings,

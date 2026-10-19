@@ -36,6 +36,7 @@ import type {
   BootstrapSettingsView,
 } from "./bootstrap-status.js";
 import type { RunActivityReader } from "./cognition-admin-query-service.js";
+import type { InterestEngine } from "./interest/engine.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type { SweepService } from "./sweeps/service.js";
 import type { RouteApp } from "../http/routes/types.js";
@@ -66,6 +67,8 @@ export interface MountBrainAdminRoutesOpts {
     wipeCognitionNotes(now: number): Promise<void>;
   };
   activity?: RunActivityReader | undefined;
+  /** The interest ledger behind `/admin/brain/interest*`. Omitted, those routes are not mounted. */
+  interest?: InterestEngine | undefined;
   transcriptsDir?: string | undefined;
   clock?: (() => number) | undefined;
   getStatus?: (() => BriefsFeatureStatus) | undefined;

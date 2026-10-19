@@ -15,7 +15,9 @@
  * fields it replaced, so the latest change to a task can be undone.
  */
 
+import { randomUUID } from "node:crypto";
 import { assertNever } from "@omnesis/core";
+import { recordTaskInterest } from "./interest.js";
 import {
   appendOpenLoopLedger,
   createOpenLoop,
@@ -168,13 +170,25 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
     surface: command.surface,
     ...(command.conversationId ? { conversationId: command.conversationId } : {}),
   };
-  const record = (loopId: string, note: string, event: Omit<TaskEvent, "surface">): number =>
-    appendOpenLoopLedger(
-      db,
-      loopId,
-      { runId: command.runId, note, event: { ...event, ...origin } },
-      now,
-    );
+  // Every event lands with the interest signal it implies (see
+  // `recordTaskInterest`), in this same transaction.
+  const record = (
+    loopId: string,
+    note: string,
+    event: Omit<TaskEvent, "surface">,
+    undone?: TaskEvent,
+  ): number => {
+    const full: TaskEvent = { ...event, ...origin };
+    const seq = appendOpenLoopLedger(db, loopId, { runId: command.runId, note, event: full }, now);
+    const loop = getOpenLoop(db, loopId);
+    if (loop)
+      recordTaskInterest(
+        db,
+        { loop, event: full, seq, undone: undone ?? null, idGen: randomUUID },
+        now,
+      );
+    return seq;
+  };
 
   if (command.kind === "create") {
     if (command.scheduledFor && !isTaskSchedule(command.scheduledFor))
@@ -393,7 +407,12 @@ function undo(
   db: Db,
   command: Extract<TaskCommand, { kind: "undo" }>,
   now: number,
-  record: (loopId: string, note: string, event: Omit<TaskEvent, "surface">) => number,
+  record: (
+    loopId: string,
+    note: string,
+    event: Omit<TaskEvent, "surface">,
+    undone?: TaskEvent,
+  ) => number,
 ): TaskCommandResult {
   const entry = db
     .prepare<
@@ -447,7 +466,7 @@ function undo(
     },
     now,
   );
-  const seq = record(loop.id, "Undone", { kind: "undone", undoOf: command.seq });
+  const seq = record(loop.id, "Undone", { kind: "undone", undoOf: command.seq }, event);
   return done(db, loop.id, seq, false, wasClosed && restoresOpen, `Undone: ${loop.title}`);
 }
 

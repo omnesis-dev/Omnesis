@@ -20,6 +20,7 @@ import { createRunAttributionTable } from "./run-attribution.js";
 import { createCognitionCoverageTable } from "./coverage.js";
 import { createSweepTallyTable } from "./sweep-tally.js";
 import { createCognitionDecisionsTable } from "./decisions.js";
+import { createInterestTables } from "./interest.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 
@@ -327,6 +328,9 @@ export function createBriefsStorageTables(db: Db): void {
   // only: nothing on the selection path reads it. See `storage/coverage.ts`.
   createCognitionCoverageTable(db);
   createCognitionDecisionsTable(db);
+  // What the owner told Omnesis they care about, as signed examples the
+  // decision gates compare new items against. See `storage/interest.ts`.
+  createInterestTables(db);
 
   // Per-sweep production tallies — durable because run rows are pruned and
   // `cognition_spend` has no per-sweep dimension. See `storage/sweep-tally.ts`.

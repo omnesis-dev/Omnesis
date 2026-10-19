@@ -41,6 +41,7 @@ import type {
   ObservationScores,
 } from "../storage/types.js";
 import type { ObservationTransition } from "../storage/observations.js";
+import type { InterestLookup } from "../interest/engine.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -75,6 +76,8 @@ export interface ObservationRecheckDeps {
   recordSpend: (modelId: string, inputTokens: number) => Promise<void>;
   getEntailmentVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
   thresholds: () => SalienceThresholds;
+  /** The owner's past reactions, shown to the salience gate. Omitted, it judges without them. */
+  interest?: InterestLookup;
   clock: () => number;
   log: Logger;
 }

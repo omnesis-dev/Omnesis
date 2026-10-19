@@ -183,10 +183,18 @@ export interface CreateOpenLoopInput {
   /** Defaults to `brain`: a suggestion until the user accepts it. */
   origin?: TaskOrigin;
   scheduledFor?: TaskSchedule | null;
+  /**
+   * The interest gate's enforced verdict on a Brain suggestion: `adopt` makes
+   * it the user's task at once, `withhold` keeps it out of the Tasks views.
+   * Either is recorded as an undoable ledger event whose `before` is the
+   * plain suggestion the user would otherwise have seen.
+   */
+  proposal?: { tier: "adopt" | "withhold"; note: string };
 }
 
 export function createOpenLoop(db: Db, input: CreateOpenLoopInput, now: number): OpenLoopRow {
   const origin = input.origin ?? "brain";
+  const proposal = origin === "brain" ? input.proposal : undefined;
   db.prepare<unknown[]>(
     `INSERT INTO open_loops (
        id, created_by_run, state, confidence, importance, title, description,
@@ -214,6 +222,40 @@ export function createOpenLoop(db: Db, input: CreateOpenLoopInput, now: number):
   replaceLoopDocs(db, input.id, input.docs ?? []);
   replaceLoopPeople(db, input.id, input.actors ?? [], input.involved ?? []);
   bumpCognitionDecayDirty(db);
+  if (proposal) {
+    const suggestion = getOpenLoop(db, input.id);
+    if (!suggestion) throw new Error(`open loop ${input.id} vanished mid-create`);
+    updateOpenLoop(
+      db,
+      input.id,
+      proposal.tier === "adopt" ? { accepted: true } : { ignored: true },
+      now,
+    );
+    appendOpenLoopLedger(
+      db,
+      input.id,
+      {
+        runId: input.createdByRun,
+        note: proposal.note,
+        event: {
+          kind: proposal.tier === "adopt" ? "auto_accepted" : "withheld",
+          surface: "brain",
+          before: {
+            state: suggestion.state,
+            title: suggestion.title,
+            description: suggestion.description,
+            deadline: suggestion.deadline,
+            scheduledFor: suggestion.scheduledFor,
+            accepted: false,
+            ignored: false,
+            completionNote: suggestion.completionNote,
+            proposedChange: suggestion.proposedChange,
+          },
+        },
+      },
+      now,
+    );
+  }
   const created = getOpenLoop(db, input.id);
   if (!created) throw new Error(`open loop ${input.id} vanished mid-create`);
   return created;

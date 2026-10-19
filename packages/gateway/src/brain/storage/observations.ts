@@ -356,17 +356,17 @@ export function transitionObservation(
   );
 }
 
-/** Record what the user did about an observation, terminal or not. */
+/** Record what the user did about an observation, terminal or not; null clears it. */
 export function setObservationUserAction(
   db: Db,
   id: string,
-  userAction: string,
+  userAction: string | null,
   now: number,
 ): boolean {
   return (
     db
       .prepare<
-        [string, number, string]
+        [string | null, number, string]
       >("UPDATE observations SET user_action = ?, updated_at = ? WHERE id = ?")
       .run(userAction, now, id).changes > 0
   );

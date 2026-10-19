@@ -38,6 +38,7 @@ import { createLogger, type Logger } from "@omnesis/core";
 import { createKnowledgeTables } from "../brain/knowledge/schema.js";
 import { createKnowledgePendingReadIndexes } from "../brain/knowledge/pending-work-query.js";
 import { createKnowledgeBatchReadIndexes } from "../brain/knowledge/batch-query.js";
+import { createInterestTables } from "../brain/storage/interest.js";
 import { createKnowledgeDecisionTable } from "../brain/knowledge/decision-storage.js";
 import { installKnowledgeOwnerTriggers } from "../brain/knowledge/owner-triggers.js";
 import { createKnowledgeSourceTriggers } from "../brain/knowledge/source-triggers.js";
@@ -4869,6 +4870,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 202,
     description: "rescan documents whose dates were read from an ISO date and time",
     up: rescanIsoDateTimeMentions,
+  },
+  {
+    version: 204,
+    description: "interest ledger: the owner's reactions as examples, and thumbs on brief items",
+    up: createInterestTables,
   },
   {
     version: 203,
