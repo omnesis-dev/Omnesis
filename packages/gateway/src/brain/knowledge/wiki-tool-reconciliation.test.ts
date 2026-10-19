@@ -506,3 +506,57 @@ it("candidate settlement cannot refresh stale exclusive creation inventory", asy
     await call(entries, "knowledge_propose_page", { ...proposal, identityKey: "different-scope" }),
   ).toMatchObject({ kind: "error", code: "revision_conflict" });
 });
+
+it("refuses a new wiki that overlaps an unconsidered current page until the run reads and names it", async () => {
+  saveKnowledgeNode(
+    db,
+    {
+      id: "workshop-logistics",
+      kind: "wiki",
+      title: "Workshop logistics",
+      expectedRevision: 0,
+      markdown:
+        '<claim id="materials" refs="source:materials">The workshop materials allocation is approved.</claim>',
+      inputVersions: { "source:materials": "v2" },
+    },
+    1,
+  );
+  const search = vi.fn(async (_query: string) => ["workshop-logistics"]);
+  db.prepare(
+    "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('overlap','overlap','overlap','routine','running',1,1)",
+  ).run();
+  const entries = buildKnowledgeTools(service, {
+    runId: "overlap",
+    batchId: "overlap",
+    parallel: true,
+    relatedKnowledge: search,
+  });
+  await reconcile(entries);
+  const proposed = await call(entries, "knowledge_propose_page", proposal);
+  if (proposed.kind !== "structured") throw new Error("Expected candidate result");
+  const candidateId = (proposed.data as { id: string }).id;
+  const save = (relatedPageIds: string[]) =>
+    call(entries, "knowledge_save", {
+      node,
+      candidateId,
+      creationAssessment: { reason: "A distinct workshop planning reference.", relatedPageIds },
+    });
+  const refused = await save([]);
+  expect(refused).toMatchObject({ kind: "error", code: "claim_invalid" });
+  const message = (refused as { message: string }).message;
+  expect(message).toContain('"id":"workshop-logistics","title":"Workshop logistics"');
+  expect(message).toContain(`settle candidate ${candidateId} with knowledge_candidate_decide`);
+  // Without a maintenance engine there is no discovery completion to name.
+  expect(message).not.toContain("knowledge_discovery_complete");
+  expect(getKnowledgeNode(db, node.id)).toBeNull();
+  // Naming the page still requires reading it.
+  expect(await save(["workshop-logistics"])).toMatchObject({
+    kind: "error",
+    message: expect.stringContaining("Read every considered related wiki"),
+  });
+  await call(entries, "knowledge_fetch", { id: "workshop-logistics" });
+  expect(await save(["workshop-logistics"])).toMatchObject({
+    kind: "structured",
+    data: { node: { id: node.id, revision: 1 } },
+  });
+});

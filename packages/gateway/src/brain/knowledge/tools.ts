@@ -21,7 +21,11 @@ import { WikiToolReconciliation } from "./wiki-tool-reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
 import { fitKnowledgeFrontierItem } from "./engine-frontier.js";
 import { ORGANIZATION_REASON_CODES } from "./organization-cohorts.js";
-import { WikiPublicationReads, assertWikiPublicationReceipt } from "./wiki-publication.js";
+import {
+  WikiPublicationReads,
+  assertNoOverlappingScope,
+  assertWikiPublicationReceipt,
+} from "./wiki-publication.js";
 import { WikiValueCheck } from "./wiki-value-check.js";
 import {
   assertKnowledgeCandidateEvidenceIds,
@@ -742,6 +746,19 @@ export function buildKnowledgeTools(
           ? publicationReads.receipt(candidate.id, input.creationAssessment)
           : undefined;
         if (candidate) assertWikiPublicationReceipt(service.deps.db, candidate.id, creationReceipt);
+        if (candidate && creationReceipt && node.expectedRevision === 0 && node.kind === "wiki")
+          await assertNoOverlappingScope(
+            service.deps.db,
+            context.relatedKnowledge,
+            { id: node.id, title: node.title, markdown: node.markdown, scope: candidate.scope },
+            creationReceipt.assessment,
+            {
+              candidateId: candidate.id,
+              log: service.deps.log.child("wiki-publication"),
+              discoveryTargets: !!(context.batchId && context.engine),
+              ...(signal ? { signal } : {}),
+            },
+          );
         await relatedKnowledge.assert(node, input.reviewedClaimIds, signal);
         const wikiRepairAssessment = await wikiValue.assess(
           input.curationDeferral?.factualRepair

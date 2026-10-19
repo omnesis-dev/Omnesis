@@ -262,6 +262,13 @@ not cite, and that the run has neither read nor written are returned in a one-ti
 refusal per page per run, so the run states the corrected fact or keeps a claim
 nothing bears on. The check is advisory and saves without it when search fails;
 it sees a record once the record's mirror has been indexed.
+The library read is paged, so a run can miss the current page that already
+covers a new page's subject. Before a new wiki is published, its title, scope and
+leading claims are searched the same way; any of the three closest current pages
+that `creationAssessment.relatedPageIds` does not name is returned in a refusal.
+The run reads them and either enriches one and settles the candidate as `merged`,
+or names them with a reason the new scope is distinct and saves again. Naming a
+page still requires reading it, and the check is skipped when search fails.
 After an annotation is created or revised, current pages that share its matter and
 do not cite it have their next review brought forward through the ordinary review
 gate, and the write's result names them; in a source discovery the run can target

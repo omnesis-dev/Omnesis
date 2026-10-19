@@ -2,9 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createLogger } from "@omnesis/core";
 import { createKnowledgeTables, saveKnowledgeNode } from "./storage.js";
 import {
+  assertNoOverlappingScope,
   assertWikiPublicationReceipt,
   assertWikiSourceDiversity,
   WikiPublicationReads,
@@ -145,4 +147,91 @@ it("does not certify inventory when its read crosses a scope mutation", () => {
   expect(() =>
     reads.receipt("candidate", { reason: "Distinct topic.", relatedPageIds: [] }),
   ).toThrow("wiki_scope");
+});
+
+describe("overlapping scope", () => {
+  const draft = {
+    id: "telescope",
+    title: "Observatory telescope",
+    scope: "The reflector the observatory uses and its approved permit",
+    markdown:
+      '<claim id="design" refs="source:spec">The observatory uses a reflector telescope.</claim><claim id="permit" refs="source:permit">The observatory permit was approved.</claim>',
+  };
+  const log = createLogger("wiki-publication-test");
+  function garden() {
+    saveKnowledgeNode(
+      db,
+      {
+        id: "garden",
+        kind: "wiki",
+        title: "Garden",
+        expectedRevision: 0,
+        markdown: '<claim id="bulbs" refs="source:spec">Tulip bulbs go in before frost.</claim>',
+        inputVersions: { "source:spec": "design-v1" },
+      },
+      1,
+    );
+  }
+  const check = (
+    search: Parameters<typeof assertNoOverlappingScope>[1],
+    relatedPageIds: string[] = [],
+  ) =>
+    assertNoOverlappingScope(
+      db,
+      search,
+      draft,
+      { reason: "A distinct telescope reference.", relatedPageIds },
+      { candidateId: "candidate", log, discoveryTargets: false },
+    );
+
+  it("refuses a new page while a close current page is not named in its assessment", async () => {
+    page("instruments", "permit");
+    garden();
+    const search = vi.fn(async (_query: string) => ["garden", "instruments"]);
+    const refusal = check(search);
+    await expect(refusal).rejects.toMatchObject({ code: "claim_invalid" });
+    const message = await refusal.catch((error: Error) => error.message);
+    expect(message).toContain('"id":"instruments"');
+    expect(message).toContain('"title":"Observatory reference"');
+    expect(message).toContain('knowledge_candidate_decide({status:"merged",nodeId})');
+    expect(message).not.toContain("garden");
+    expect(message).not.toContain("knowledge_discovery_complete");
+    // The title, scope and leading claims are the queries.
+    expect(search.mock.calls.map(([query]) => query)).toEqual([
+      `${draft.title}. ${draft.scope}`,
+      `${draft.title}. The observatory uses a reflector telescope.`,
+      `${draft.title}. The observatory permit was approved.`,
+    ]);
+  });
+
+  it("publishes once the close page is named, and when no current page is close", async () => {
+    page("instruments", "permit");
+    garden();
+    await expect(check(async () => ["instruments"], ["instruments"])).resolves.toBeUndefined();
+    await expect(check(async () => ["garden"])).resolves.toBeUndefined();
+    await expect(check(async () => [])).resolves.toBeUndefined();
+    // The page being published is never its own overlap.
+    page("telescope", "permit");
+    await expect(check(async () => ["telescope"])).resolves.toBeUndefined();
+  });
+
+  it("checks only the closest pages, so naming them is enough", async () => {
+    for (const id of ["first", "second", "third", "fourth"]) page(id, "permit");
+    const search = async () => ["first", "second", "third", "fourth"];
+    await expect(check(search, ["first", "second", "third"])).resolves.toBeUndefined();
+  });
+
+  it("publishes without the check when search is unavailable", async () => {
+    page("instruments", "permit");
+    const warn = vi.spyOn(log, "warn");
+    await expect(
+      check(async () => {
+        throw new Error("index offline");
+      }),
+    ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "Overlapping wiki scopes for telescope not checked: index offline",
+    );
+    await expect(check(undefined)).resolves.toBeUndefined();
+  });
 });
