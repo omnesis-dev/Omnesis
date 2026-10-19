@@ -11,7 +11,7 @@ import {
   listUngroundedTemporalAnnotationsForDoc,
 } from "../../enrichment/temporal-annotations/storage.js";
 import { echoKeyError, knowledgeNodeView } from "./node-view.js";
-import { FrontierEditingReceipts } from "./frontier-editing-receipts.js";
+import { FrontierEditingReceipts, FrontierReceiptMissing } from "./frontier-editing-receipts.js";
 import { assertCurationDeferral } from "./curation-deferral.js";
 import { PersonEditorialReview } from "./person-review.js";
 import { readKnowledgeReferenceBatch } from "./reference-batch.js";
@@ -618,8 +618,8 @@ export function buildKnowledgeTools(
   const editWiki = async (input: z.output<typeof knowledgeEditArgs>, signal?: AbortSignal) => {
     const { edits, ...fields } = input.node;
     const ops = edits.map((edit) => edit.op).join(",");
+    const base = dependencyReceipts.editingRead(fields.id);
     try {
-      const base = dependencyReceipts.editingRead(fields.id);
       if (!base || base.revision !== fields.expectedRevision)
         throw new KnowledgeStorageError(
           "revision_conflict",
@@ -662,10 +662,21 @@ export function buildKnowledgeTools(
         error instanceof ClaimMarkupError ||
         error instanceof WikiEditError ||
         error instanceof KnowledgeOutcomeRejected
-      )
+      ) {
         wikiWrites.info(
           `Wiki edit refused on ${fields.id} (${error instanceof KnowledgeOutcomeRejected ? "not_saved" : error.code}): ${ops}`,
         );
+        // A refusal saves nothing, so the read it was made against usually
+        // still is the page. Saying so spares a full refetch before each retry.
+        // A missing fingerprint receipt is the exception: it needs a new read.
+        if (
+          !(error instanceof KnowledgeOutcomeRejected) &&
+          !(error instanceof FrontierReceiptMissing) &&
+          base?.revision === fields.expectedRevision &&
+          getKnowledgeNode(service.deps.db, fields.id)?.revision === base.revision
+        )
+          error.message += ` Nothing was saved, and this run's editing read of revision ${base.revision} is still the current page: any retry edits it at the same expectedRevision without fetching the page again.`;
+      }
       throw error;
     }
   };
@@ -972,7 +983,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_edit",
-      "Change part of an existing wiki or root page without resending it: the preferred way to correct a figure, enrich a section or add one. Use knowledge_save only to create a page or to restructure most of it. First read knowledge_fetch({id, editing:true}); node.edits apply in order to exactly that tagged markdown at node.expectedRevision. replace_section replaces a section's heading line, body and subsections (up to the next heading of the same or a higher level), including the claim tags that open just before its heading; delete_section removes it; insert_section adds tagged Markdown after or before a section, or at the start or end of the page; replace_text swaps one exact passage, claim tags included, that must occur exactly once. The resulting page then goes through every knowledge_save check unchanged, and the other node fields mean what they mean there: claims removed by an edit need node.claimRemovals, new claim refs need knowledge_reference reads or node.inputVersions, a root's dropped links need node.navigationRemovals, and maintenance needs the same frontier, fingerprint and review fields. Untouched claims keep their stored versions. A missing or ambiguous target, or a section whose edge falls inside a claim, is refused without saving; the error names the available headings or the occurrence count. Returns the new revision and the sections changed, not the page; fetch again with editing:true before another edit.",
+      "Change part of an existing wiki or root page without resending it: the preferred way to correct a figure, enrich a section or add one. Use knowledge_save only to create a page or to restructure most of it. First read knowledge_fetch({id, editing:true}); node.edits apply in order to exactly that tagged markdown at node.expectedRevision. replace_section replaces a section's heading line, body and subsections (up to the next heading of the same or a higher level), including the claim tags that open just before its heading; delete_section removes it; insert_section adds tagged Markdown after or before a section, or at the start or end of the page; replace_text swaps one exact passage, claim tags included, that must occur exactly once. The resulting page then goes through every knowledge_save check unchanged, and the other node fields mean what they mean there: claims removed by an edit need node.claimRemovals, new claim refs need knowledge_reference reads or node.inputVersions, a root's dropped links need node.navigationRemovals, and maintenance needs the same frontier, fingerprint and review fields. Untouched claims keep their stored versions. A missing or ambiguous target, or a section whose edge falls inside a claim, is refused without saving; the error names the available headings or the occurrence count. Returns the new revision and the sections changed, not the page; fetch again with editing:true before another edit. A refused edit saves nothing; when its error says this run's editing read is still the current page, a retry needs no new fetch.",
       knowledgeEditArgs,
       true,
       editWiki,
