@@ -12,7 +12,7 @@
     "@omnesis/providers-synth-common": "*",
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "files": [
     "dist"
