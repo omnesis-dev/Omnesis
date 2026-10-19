@@ -159,7 +159,9 @@ describe("scheduleTranscriptionVocabulary", () => {
   afterEach(() => vi.restoreAllMocks());
 
   function noLivePeriodicWarnings(warn: ReturnType<typeof vi.spyOn>): unknown[][] {
-    return warn.mock.calls.filter((call) => String(call[0]).includes("no live periodic"));
+    return warn.mock.calls.filter((call: unknown[]) =>
+      String(call[0]).includes("no live periodic"),
+    );
   }
 
   test("documents arriving before registration never kick a periodic that does not exist yet", async () => {
