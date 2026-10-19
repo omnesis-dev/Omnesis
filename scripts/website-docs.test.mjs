@@ -60,7 +60,7 @@ const redirects = readFileSync(join(WEBSITE, "_redirects"), "utf8");
 const idsOf = (f) => new Set([...html[f].matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
 const slug = (f) => (f === "index.html" ? "/docs/" : "/docs/" + f.replace(".html", ""));
 const REPO_URL = "https://github.com/omnesis-dev/Omnesis";
-const NAV_LINKS = ["/", "/brain", "/vision", "/docs/", "/blog/"];
+const NAV_LINKS = ["/", "/vision", "/docs/", "/blog/"];
 
 // Resolves URLs the way the Cloudflare static-asset host does
 // (html_handling): /docs/install serves docs/install.html, a trailing
@@ -305,6 +305,7 @@ describe("website docs", () => {
       if (!page.includes('src="/docs/docs.js"')) continue;
       const pathname = file === "index.html" ? "/" : `/${file.replace(".html", "")}`;
       const renderedLinks = renderChromeLinks(pathname);
+      expect(renderedLinks, file).not.toContain("/brain");
       expect(renderedLinks, file).toEqual(
         expect.arrayContaining([
           ...NAV_LINKS,
