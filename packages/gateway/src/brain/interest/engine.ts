@@ -70,7 +70,7 @@ export interface RecordInterestInput {
   observationId?: string;
   conversationId?: string;
   /** Supersede the live signals about this loop or observation first. */
-  replaces?: { loopId?: string; observationId?: string };
+  replaces?: { loopId?: string; observationId?: string; kind?: InterestKind };
 }
 
 /** What a gate asks about: the text of the thing it is judging. */
@@ -120,7 +120,11 @@ export class InterestEngine {
   }
 
   /** Take back the live signals about a loop or observation. */
-  async supersede(by: { loopId?: string; observationId?: string }): Promise<number> {
+  async supersede(by: {
+    loopId?: string;
+    observationId?: string;
+    kind?: InterestKind;
+  }): Promise<number> {
     return this.deps.writeGate.supersedeInterestSignals(by, this.deps.clock());
   }
 

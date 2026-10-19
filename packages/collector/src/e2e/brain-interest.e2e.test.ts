@@ -172,7 +172,7 @@ const METER: Noted = {
 const BINS_AGAIN: Noted = {
   marker: "council bins collection",
   externalId: "interest-council-bins-again",
-  title: "Council bins schedule",
+  title: "Council bins schedule update",
   quote: "The council bins schedule changed again.",
 };
 
@@ -507,7 +507,7 @@ describe("brain bench: the interest engine", () => {
     }>(
       `/admin/brain/interest/lookup?text=${encodeURIComponent("Approve the kitchen tiles quote")}`,
     );
-    expect(probe.result?.positive.map((p) => p.text)).toEqual([KITCHEN.task]);
+    expect(probe.result?.positive.map((p) => p.text)).toContain(KITCHEN.task);
     expect(probe.result?.negative ?? []).toEqual([]);
   }, 240_000);
 
@@ -522,7 +522,8 @@ describe("brain bench: the interest engine", () => {
       task: { title: string };
       owner_interest: { positive: Array<{ text: string; source: string }>; negative: unknown[] };
     };
-    expect(shadowState.owner_interest.positive.map((p) => p.text)).toEqual([KITCHEN.task]);
+    expect(shadowState.owner_interest.positive.map((p) => p.text)).toContain(KITCHEN.task);
+    expect(shadowState.owner_interest.positive.map((p) => p.text)).not.toContain(NEWSLETTER.task);
     expect(shadowState.owner_interest.negative).toEqual([]);
     expect(await proposeDecisionsFor(KITCHEN_SHADOW)).toEqual([
       expect.objectContaining({

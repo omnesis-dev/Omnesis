@@ -2332,6 +2332,7 @@ const taskEffects: TaskEffects = {
   ...(experimentalEnabled()
     ? { mirror: createOpenLoopMirror({ db, writeGate, log: log.child("task-mirror") }) }
     : {}),
+  interestEnabled: () => resolveBrainSettings(configStore.get().brain).interest.enabled,
 };
 const taskService = new TaskService(db, writeGate, briefsVirtualClock ?? Date.now, taskEffects);
 // The interest engine: the owner's reactions (tasks accepted, created or

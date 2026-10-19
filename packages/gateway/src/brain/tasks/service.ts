@@ -32,6 +32,11 @@ export interface TaskEffects {
     refresh(loopId: string): Promise<void>;
     remove(loopIds: readonly string[]): Promise<void>;
   };
+  /**
+   * `brain.interest.enabled`, read per command: whether an accept, create or
+   * ignore records the interest signal it implies. Omitted, it does.
+   */
+  interestEnabled?: () => boolean;
 }
 
 /** Accepting a suggestion with what the user wants to add about it. */
@@ -146,7 +151,11 @@ export class TaskService {
 
   async apply(command: TaskCommand): Promise<TaskCommandResult> {
     const now = this.clock();
-    const result = await this.writeGate.applyTaskCommand(command, now);
+    const recordInterest = this.effects?.interestEnabled?.() ?? true;
+    const result = await this.writeGate.applyTaskCommand(
+      recordInterest ? command : { ...command, recordInterest: false },
+      now,
+    );
     if (!result.ok || !this.effects) return result;
     const { mirror, writeGate } = this.effects;
     if (result.loop === null) {

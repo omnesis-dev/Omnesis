@@ -203,7 +203,7 @@ reserved; see [`TRADEMARKS.md`](TRADEMARKS.md).
 
 Two larger features are experimental: unstable research and exploration projects within the Omnesis code base, hidden unless the gateway starts with `OMNESIS_EXPERIMENTAL=1`.
 
-- **Omnesis Brain** reads your records in the background, without waiting for a question, and records what it learns: dates and deadlines buried in documents, open commitments, cited notes about documents and people, and a once-a-day morning brief of what you may want to know. It spends model tokens with nobody asking, so it has its own spend limits.
+- **Omnesis Brain** reads your records in the background, without waiting for a question, and records what it learns: dates and deadlines buried in documents, open commitments, cited notes about documents and people, and a once-a-day morning brief of what you may want to know. What you accept, ignore or give a thumbs to teaches it what you care about. It spends model tokens with nobody asking, so it has its own spend limits.
 - **Omnesis Watch** notices when a condition becomes true — an unanswered renewal notice, a trend in your health data — and can notify your phone or wake a paired agent. Each watch is a validated definition you can trial against history before turning delivery on.
 
 [Experimental](https://omnesis.dev/docs/experimental) documents both in detail. [Learn more about the Omnesis Brain →](https://omnesis.dev/brain)

@@ -657,6 +657,32 @@ describe("userAuthoredTaskFields", () => {
 });
 
 describe("interest signals from task events", () => {
+  test("a command with recordInterest false records nothing new but an undo still takes a signal back", () => {
+    const created = apply({
+      kind: "create",
+      id: "loop_quiet",
+      title: "Quiet task",
+      origin: "user",
+    });
+    expect(created.ok).toBe(true);
+    expect(listLiveInterestSignals(db)).toHaveLength(1);
+    const ignoredBrain = createOpenLoop(
+      db,
+      { id: "loop_sugg", createdByRun: "run", title: "A suggestion", confidence: 1, importance: 1 },
+      NOW,
+    );
+    const ignored = apply({ kind: "ignore", id: ignoredBrain.id, recordInterest: false });
+    expect(ignored.ok).toBe(true);
+    expect(listLiveInterestSignals(db)).toHaveLength(1);
+    const undone = apply({
+      kind: "undo",
+      seq: (created as { eventSeq: number }).eventSeq,
+      recordInterest: false,
+    });
+    expect(undone.ok).toBe(true);
+    expect(listLiveInterestSignals(db)).toHaveLength(0);
+  });
+
   const live = () => listLiveInterestSignals(db, { limit: 50 });
   const all = () => listInterestSignals(db, { limit: 50 });
 

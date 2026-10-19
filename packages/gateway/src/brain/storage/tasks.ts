@@ -44,6 +44,12 @@ export interface TaskCommandOrigin {
   /** Ledger run id: `user:tasks`, `user:conversation:<id>`, `note:<entryId>`. */
   runId: string;
   conversationId?: string;
+  /**
+   * Whether the change records the interest signal it implies (an accept,
+   * create or ignore). False while `brain.interest.enabled` is off; an undo
+   * still takes back what was recorded before.
+   */
+  recordInterest?: boolean;
 }
 
 export type TaskCommand = TaskCommandOrigin &
@@ -184,7 +190,14 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
     if (loop)
       recordTaskInterest(
         db,
-        { loop, event: full, seq, undone: undone ?? null, idGen: randomUUID },
+        {
+          loop,
+          event: full,
+          seq,
+          undone: undone ?? null,
+          record: command.recordInterest !== false,
+          idGen: randomUUID,
+        },
         now,
       );
     return seq;

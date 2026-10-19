@@ -69,6 +69,7 @@ import {
   supersedeInterestSignals,
   upsertBriefItemReaction,
   type BriefItemReaction,
+  type InterestKind,
   type InterestSignal,
   type NewInterestSignal,
   type UpsertBriefItemReactionInput,
@@ -1814,12 +1815,7 @@ export const writerHandlers = {
   "cognition.observationExpire": (db: Db, now: number): string[] => expireObservations(db, now),
   "cognition.observationDropForLoop": (db: Db, loopId: string, now: number): string[] =>
     dropObservationsForResolvedLoop(db, loopId, now),
-  "cognition.observationUserAction": (
-    db: Db,
-    id: string,
-    userAction: string | null,
-    now: number,
-  ) =>
+  "cognition.observationUserAction": (db: Db, id: string, userAction: string | null, now: number) =>
     setObservationUserAction(db, id, userAction, now),
   "noteAgent.enqueue": (db: Db, now: number) => enqueueNewNotes(db, now),
   "cognition.morningBriefItemsClear": (db: Db, messageId: string) =>
@@ -1839,7 +1835,7 @@ export const writerHandlers = {
   "interest.record": (
     db: Db,
     signal: NewInterestSignal,
-    supersede: { loopId?: string; observationId?: string } | null,
+    supersede: { loopId?: string; observationId?: string; kind?: InterestKind } | null,
   ): InterestSignal =>
     db.transaction(() => {
       if (supersede) supersedeInterestSignals(db, supersede, signal.createdAt);
@@ -1847,7 +1843,7 @@ export const writerHandlers = {
     })(),
   "interest.supersede": (
     db: Db,
-    by: { loopId?: string; observationId?: string; ledgerSeq?: number },
+    by: { loopId?: string; observationId?: string; ledgerSeq?: number; kind?: InterestKind },
     now: number,
   ): number => supersedeInterestSignals(db, by, now),
   "interest.embedding": (

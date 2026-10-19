@@ -16,6 +16,7 @@ import { directWriteGate } from "../../write-gate.js";
 import { InterestEngine } from "../interest/engine.js";
 import {
   getBriefItemReaction,
+  insertInterestSignal,
   listInterestSignals,
   listLiveInterestSignals,
 } from "../storage/interest.js";
@@ -135,6 +136,22 @@ describe("brief item reactions", () => {
     });
     expect(userAction("obs_rent")).toBe("thumbs_up");
     expect(capture).not.toHaveBeenCalled();
+  });
+
+  test("a statement that cites the item survives a changed or cleared thumbs", async () => {
+    insertInterestSignal(db, {
+      id: "sig_statement",
+      polarity: -1,
+      kind: "statement",
+      source: "statement",
+      subjectText: "rent reminders",
+      note: "Stop telling me about rent.",
+      observationId: "obs_rent",
+      createdAt: NOW - 10,
+    });
+    await react({ day: DAY, messageId: MESSAGE, observationId: "obs_rent", reaction: "up" });
+    await react({ day: DAY, messageId: MESSAGE, observationId: "obs_rent", reaction: null });
+    expect(live().map((s) => s.id)).toEqual(["sig_statement"]);
   });
 
   test("changing to not interested supersedes the thumbs up and keeps the owner's words", async () => {

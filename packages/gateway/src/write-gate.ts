@@ -11,6 +11,7 @@ import {
   supersedeInterestSignals,
   upsertBriefItemReaction,
   type BriefItemReaction,
+  type InterestKind,
   type InterestSignal,
   type NewInterestSignal,
   type UpsertBriefItemReactionInput,
@@ -2025,11 +2026,11 @@ export interface WriteGate extends KnowledgeWriteGate {
    */
   recordInterestSignal(
     signal: NewInterestSignal,
-    supersede: { loopId?: string; observationId?: string } | null,
+    supersede: { loopId?: string; observationId?: string; kind?: InterestKind } | null,
   ): Promise<InterestSignal>;
   /** Mark the live interest signals about a loop, observation or task event as superseded. */
   supersedeInterestSignals(
-    by: { loopId?: string; observationId?: string; ledgerSeq?: number },
+    by: { loopId?: string; observationId?: string; ledgerSeq?: number; kind?: InterestKind },
     now: number,
   ): Promise<number>;
   /** Store a signal's vector, or count a failed attempt (null). */

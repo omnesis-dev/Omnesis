@@ -120,7 +120,7 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
       : observation.summary;
 
     if (input.reaction === null) {
-      await deps.interest.supersede({ observationId: observation.id });
+      await deps.interest.supersede({ observationId: observation.id, kind: "observation" });
       const cleared = await deps.writeGate.setBriefItemReaction(
         { observationId: observation.id, clear: true },
         now,
@@ -157,7 +157,7 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
           });
         }
       }
-      await deps.interest.supersede({ observationId: observation.id });
+      await deps.interest.supersede({ observationId: observation.id, kind: "observation" });
     } else {
       await deps.interest.record({
         polarity: input.reaction === "up" ? 1 : -1,
@@ -166,7 +166,7 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
         subjectText,
         note: note ?? null,
         observationId: observation.id,
-        replaces: { observationId: observation.id },
+        replaces: { observationId: observation.id, kind: "observation" },
       });
     }
     const stored = await deps.writeGate.setBriefItemReaction(

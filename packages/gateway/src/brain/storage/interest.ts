@@ -226,11 +226,15 @@ export function getInterestSignal(db: Db, id: string): InterestSignal | null {
  */
 export function supersedeInterestSignals(
   db: Db,
-  by: { loopId?: string; observationId?: string; ledgerSeq?: number },
+  by: { loopId?: string; observationId?: string; ledgerSeq?: number; kind?: InterestKind },
   now: number,
 ): number {
   const where: string[] = [];
   const args: Array<string | number> = [now];
+  if (by.kind !== undefined) {
+    where.push("kind = ?");
+    args.push(by.kind);
+  }
   if (by.loopId !== undefined) {
     where.push("loop_id = ?");
     args.push(by.loopId);
@@ -243,7 +247,8 @@ export function supersedeInterestSignals(
     where.push("ledger_seq = ?");
     args.push(by.ledgerSeq);
   }
-  if (where.length === 0) return 0;
+  // `kind` alone names no signal; a scope needs the thing reacted to.
+  if (where.length === 0 || (where.length === 1 && by.kind !== undefined)) return 0;
   return db
     .prepare<
       Array<string | number>
@@ -363,24 +368,32 @@ export function recordTaskInterest(
     seq: number;
     /** For `undone`: the event that was reverted. */
     undone?: TaskEvent | null;
+    /**
+     * False while the ledger is switched off: nothing new is recorded, but an
+     * undo still takes back what an earlier reaction recorded.
+     */
+    record?: boolean;
     idGen: () => string;
   },
   now: number,
 ): InterestSignal | null {
   const { loop, event, seq } = input;
-  const emit = (polarity: InterestPolarity, source: InterestSource): InterestSignal =>
-    insertInterestSignal(db, {
-      id: `int_${input.idGen()}`,
-      polarity,
-      kind: "task",
-      source,
-      subjectText: taskSubjectText(loop),
-      note: event.note ?? null,
-      loopId: loop.id,
-      conversationId: event.conversationId ?? null,
-      ledgerSeq: seq,
-      createdAt: now,
-    });
+  const record = input.record ?? true;
+  const emit = (polarity: InterestPolarity, source: InterestSource): InterestSignal | null =>
+    !record
+      ? null
+      : insertInterestSignal(db, {
+          id: `int_${input.idGen()}`,
+          polarity,
+          kind: "task",
+          source,
+          subjectText: taskSubjectText(loop),
+          note: event.note ?? null,
+          loopId: loop.id,
+          conversationId: event.conversationId ?? null,
+          ledgerSeq: seq,
+          createdAt: now,
+        });
   switch (event.kind) {
     case "created":
       return loop.origin === "brain" ? null : emit(1, "task_created");
