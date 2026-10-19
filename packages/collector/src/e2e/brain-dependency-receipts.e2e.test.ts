@@ -293,28 +293,28 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
   const stale = executed.filter(
     (step) => step.tool === "knowledge_save" && step.result?.kind === "error",
   );
-  expect(stale).toHaveLength(3);
-  expect(stale.shift()!.result).toMatchObject({
-    code: "revision_conflict",
-    message: "Frontier item is no longer current",
-  });
+  // The refused attempts can span runs, whose listing order is not fixed.
+  const refusals = stale.map((step) => step.result as { code?: string; message?: string });
+  expect(refusals).toHaveLength(3);
+  for (const refusal of refusals) expect(refusal.code).toBe("revision_conflict");
+  const refusal = (marker: string) => {
+    const matching = refusals.filter((entry) => entry.message?.includes(marker));
+    expect(matching, marker).toHaveLength(1);
+    return matching[0]!.message!;
+  };
+  expect(refusal("Frontier item is no longer current")).toBe("Frontier item is no longer current");
   // One refusal names every unread source and the single call that reads them.
   const missing = [`source:${sourceId}`, inventoryRef];
-  expect(stale[0]!.result).toMatchObject({
-    code: "revision_conflict",
-    message: expect.stringContaining(
-      `Missing dependency version for ${missing.map((r) => JSON.stringify(r)).join(", ")} (not read in this run and no inputVersions entry).`,
-    ),
-  });
-  expect(stale[0]!.result).toMatchObject({
-    message: expect.stringContaining(
-      `in one call: knowledge_reference ${JSON.stringify({ refs: missing })}.`,
-    ),
-  });
-  expect(stale[1]!.result).toMatchObject({
-    code: "revision_conflict",
-    message: expect.stringContaining("Stale dependency version"),
-  });
+  const missingRefusal = refusal("Missing dependency version");
+  expect(missingRefusal).toContain(
+    `Missing dependency version for ${missing.map((r) => JSON.stringify(r)).join(", ")} (not read in this run and no inputVersions entry).`,
+  );
+  expect(missingRefusal).toContain(
+    `in one call: knowledge_reference ${JSON.stringify({ refs: missing })}.`,
+  );
+  expect(refusal("Stale dependency version")).toContain(
+    `Stale dependency version for ${JSON.stringify(`source:${sourceId}`)}`,
+  );
   const batchReads = executed.filter(
     (step) => step.tool === "knowledge_reference" && step.result?.kind === "structured",
   );
