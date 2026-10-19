@@ -10,6 +10,7 @@ import {
   catalogProviderForBackend,
   isDecisionRole,
   isClaudeCodeReady,
+  httpBackendModelSummary,
 } from "./backend-options.js";
 
 const PRESETS = [
@@ -436,5 +437,23 @@ describe("isAnthropicConfigured", () => {
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe("httpBackendModelSummary", () => {
+  it("counts the role's models on a backend that lists them", () => {
+    expect(httpBackendModelSummary({ status: "ok", fitCount: 1 })).toBe("1 model");
+    expect(httpBackendModelSummary({ status: "ok", fitCount: 0 })).toBe("0 models");
+  });
+
+  it("says a backend that answers without a model list doesn't list them, instead of none", () => {
+    const opts = buildModelPickerOptions(
+      overview({
+        inference: { backends: { "whisper-server": { type: "http", status: "reachable", reason: "HTTP 404" } } },
+      }),
+      "transcriber",
+    );
+    const custom = opts.find((o: { kind: string }) => o.kind === "custom");
+    expect(httpBackendModelSummary(custom)).toBe("Doesn't list its models");
   });
 });

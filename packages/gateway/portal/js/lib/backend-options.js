@@ -73,6 +73,17 @@ function httpFitCount(backend, role) {
   return filterBackendModels(backend?.modelRoles ?? {}, role).suggestedCount;
 }
 
+/**
+ * Card summary for a configured HTTP backend: how many models it serves for
+ * the role, or that it doesn't list them. A server that answers but has no
+ * model list (whisper.cpp's server, for one) would otherwise read as serving
+ * none, though it serves the model id typed into its picker.
+ */
+export function httpBackendModelSummary(opt) {
+  if (opt.status === "reachable") return "Doesn't list its models";
+  return `${opt.fitCount} model${opt.fitCount !== 1 ? "s" : ""}`;
+}
+
 /** Models a built-in CLI backend (Codex, Claude Code) advertises for a role. */
 function cliBackendFitCount(status, role) {
   if (!status?.models?.length) return 0;

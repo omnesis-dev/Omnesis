@@ -37,6 +37,7 @@ import {
   TYPESAFE_DEFAULT_MODEL,
   isDecisionRole,
   isClaudeCodeReady,
+  httpBackendModelSummary,
 } from "../lib/backend-options.js";
 import { formatBytes, fit } from "../lib/model-format.js";
 
@@ -229,13 +230,13 @@ function renderOption(opt, mode, onSelect) {
             ? "Configured"
             : "Set up this provider"
           : opt.configured
-          ? plural(opt.fitCount, "model")
+          ? httpBackendModelSummary(opt)
           : "Needs configuration"}
         muted=${!opt.configured && mode === "pick"}
         onClick=${pick}
       />`;
     case "custom":
-      return html`<${BackendOptionCard} key=${`custom-${opt.id}`} providerId=${opt.logoProviderId} fallbackGlyph=${opt.logoProviderId ? null : LOCAL_GLYPH} title=${opt.id} subtitle=${plural(opt.fitCount, "model")} onClick=${pick} />`;
+      return html`<${BackendOptionCard} key=${`custom-${opt.id}`} providerId=${opt.logoProviderId} fallbackGlyph=${opt.logoProviderId ? null : LOCAL_GLYPH} title=${opt.id} subtitle=${httpBackendModelSummary(opt)} onClick=${pick} />`;
     case "anthropic":
       return html`<${BackendOptionCard}
         key="anthropic"
