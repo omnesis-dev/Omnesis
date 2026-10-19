@@ -348,7 +348,9 @@ describe("worth gate: persisted legacy datum recovery alongside current source d
           entry.rubric_version ===
           (entry.purpose === "discovery"
             ? "knowledge-discovery-value-v7"
-            : "knowledge-decisions-v2"),
+            : entry.purpose === "urgency"
+              ? "knowledge-decisions-v3"
+              : "knowledge-decisions-v2"),
       ),
     ).toBe(true);
   });

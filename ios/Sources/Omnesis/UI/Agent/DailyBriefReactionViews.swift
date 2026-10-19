@@ -12,7 +12,8 @@ typealias DailyBriefReactionHandler = (
     _ observationId: String,
     _ reaction: DailyBriefReaction.Kind?,
     _ note: String?
-) async -> Bool
+)
+    -> Bool
 
 /// The thumbs under a brief item. Up is one tap, and a second tap clears
 /// it. Down asks which kind of wrong: "Not interested" stands at once and
@@ -140,11 +141,11 @@ struct DailyBriefReactionBar: View {
     private func completion(for capture: Capture) -> NoteCaptureCompletion {
         switch capture.purpose {
         case .whyNot:
-            return .explainingDisinterest(item.summary) { note in
+            .explainingDisinterest(item.summary) { note in
                 await onReact(item.observationId, .notInterested, note)
             }
         case .correction:
-            return .correcting(item.summary) { note in
+            .correcting(item.summary) { note in
                 let took = await onReact(item.observationId, .factualError, note)
                 if took { correctionPending = false }
                 return took

@@ -297,7 +297,8 @@ final class DailyBriefModel {
         observationId: String,
         reaction: DailyBriefReaction.Kind?,
         note: String? = nil
-    ) async -> Bool {
+    ) async
+        -> Bool {
         guard let current = item(day: day, observationId: observationId) else { return false }
         let previous = current.reaction
         setReaction(reaction.map { DailyBriefReaction(kind: $0, note: note) }, day: day, observationId: observationId)

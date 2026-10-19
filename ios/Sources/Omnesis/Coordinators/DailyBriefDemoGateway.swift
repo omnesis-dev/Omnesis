@@ -50,7 +50,8 @@ actor DailyBriefDemoGateway: DailyBriefItemsLoading {
         observationId: String,
         reaction: DailyBriefReaction.Kind?,
         note: String?
-    ) async throws -> DailyBriefReaction? {
+    ) async throws
+        -> DailyBriefReaction? {
         reactions.append(Reaction(observationId: observationId, kind: reaction, note: note))
         if refusingReactions.contains(observationId) {
             throw GatewayClient.Error.serverError(status: 503, body: #"{"error":"Reactions are unavailable"}"#)

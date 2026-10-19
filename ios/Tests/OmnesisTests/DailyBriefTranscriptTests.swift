@@ -491,7 +491,8 @@ private actor SlowReactionGateway: DailyBriefItemsLoading {
         observationId _: String,
         reaction: DailyBriefReaction.Kind?,
         note _: String?
-    ) async throws -> DailyBriefReaction? {
+    ) async throws
+        -> DailyBriefReaction? {
         let index = sent
         sent += 1
         answers[index] = reaction.map { DailyBriefReaction(kind: $0, at: Date()) }

@@ -159,8 +159,8 @@ final class DailyBriefInteractionUITests: XCTestCase {
 
     // MARK: - 5. Reactions
 
-    // The untouched item is today's last, so its thumbs are on screen above the
-    // composer as the conversation opens: no scrolling is needed to reach them.
+    /// The untouched item is today's last, so its thumbs are on screen above the
+    /// composer as the conversation opens: no scrolling is needed to reach them.
     func testThumbsUpMarksAnItemUsefulAndAgainClearsIt() {
         XCTAssertTrue(wait { self.thumbsUp(Fixture.untouchedItem).isHittable }, "the thumbs are not on screen")
         XCTAssertFalse(thumbsUp(Fixture.untouchedItem).isSelected)

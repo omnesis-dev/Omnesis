@@ -18,7 +18,8 @@ public protocol DailyBriefItemsLoading: Sendable {
         observationId: String,
         reaction: DailyBriefReaction.Kind?,
         note: String?
-    ) async throws -> DailyBriefReaction?
+    ) async throws
+        -> DailyBriefReaction?
 }
 
 /// Client for `GET /agent/conversations/:id/briefs/:day` and the reaction
@@ -80,7 +81,8 @@ public final class DailyBriefClient: DailyBriefItemsLoading {
         observationId: String,
         reaction: DailyBriefReaction.Kind?,
         note: String? = nil
-    ) async throws -> DailyBriefReaction? {
+    ) async throws
+        -> DailyBriefReaction? {
         let path = "/agent/conversations/\(percentEncode(conversationId))/briefs/\(percentEncode(day))"
             + "/items/\(percentEncode(observationId))/reaction"
         guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
