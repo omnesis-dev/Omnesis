@@ -3,7 +3,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop, getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
@@ -14,6 +14,7 @@ import { TaskService } from "./service.js";
 import { placeTask } from "./views.js";
 import type { ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
+import type { InterestEngine, RecordInterestInput } from "../interest/engine.js";
 import type Database from "better-sqlite3";
 
 const NOW = Date.parse("2026-03-10T09:00:00");
@@ -31,7 +32,13 @@ afterEach(() => {
 });
 
 let n = 0;
-function tools(opts: { ownedOnly?: boolean; observations?: boolean } = {}) {
+function tools(
+  opts: {
+    ownedOnly?: boolean;
+    observations?: boolean;
+    interest?: Pick<InterestEngine, "record">;
+  } = {},
+) {
   const gate = directWriteGate(db);
   const handles = buildTaskTools({
     db,
@@ -65,6 +72,94 @@ describe("task tools", () => {
       ["task_undo", true],
     ]);
     expect(tools({ observations: true }).handles.at(-1)?.name).toBe("observation_suppress");
+  });
+
+  test("interest_record is offered only where the engine is, and it mutates", () => {
+    expect(tools().handles.map((t) => t.name)).not.toContain("interest_record");
+    const record = vi.fn<InterestEngine["record"]>();
+    const { handles } = tools({ observations: true, interest: { record } });
+    expect(handles.map((t) => [t.name, t.mutates === true])).toEqual([
+      ["task_list", false],
+      ["task_create", true],
+      ["task_update", true],
+      ["task_undo", true],
+      ["observation_suppress", true],
+      ["interest_record", true],
+    ]);
+  });
+
+  test("interest_record writes a statement signal with the user's words", async () => {
+    const recorded: RecordInterestInput[] = [];
+    const record = vi.fn<InterestEngine["record"]>(async (input) => {
+      recorded.push(input);
+      return { id: `int_${recorded.length}` } as never;
+    });
+    const { call, handles } = tools({ interest: { record } });
+    const less = await call("interest_record", {
+      direction: "less",
+      about: "loyalty points and reward balances",
+      quote: "I don't care about points expiring.",
+      observationId: "obs_points",
+    });
+    expect(less).toEqual({
+      kind: "structured",
+      resultType: "interest.recorded",
+      data: { id: "int_1", direction: "less", about: "loyalty points and reward balances" },
+    });
+    expect(recorded[0]).toEqual({
+      polarity: -1,
+      kind: "statement",
+      source: "statement",
+      subjectText: "loyalty points and reward balances",
+      note: "I don't care about points expiring.",
+      conversationId: "c1",
+      observationId: "obs_points",
+    });
+
+    const more = await call("interest_record", { direction: "more", about: "  school events  " });
+    expect(more).toMatchObject({
+      data: { id: "int_2", direction: "more", about: "school events" },
+    });
+    expect(recorded[1]).toEqual({
+      polarity: 1,
+      kind: "statement",
+      source: "statement",
+      subjectText: "school events",
+      note: null,
+      conversationId: "c1",
+    });
+    expect(
+      handles.find((t) => t.name === "interest_record")?.summarize?.({ about: "school events" }),
+    ).toBe("school events");
+  });
+
+  test("interest_record says so when the ledger is off, and rejects bad arguments", async () => {
+    const record = vi.fn<InterestEngine["record"]>(async () => null);
+    const { call } = tools({ interest: { record } });
+    expect(await call("interest_record", { direction: "more", about: "school events" })).toEqual({
+      kind: "structured",
+      resultType: "interest.recorded",
+      data: {
+        recorded: false,
+        direction: "more",
+        about: "school events",
+        message: expect.stringContaining("off"),
+      },
+    });
+    for (const args of [
+      {},
+      { direction: "never", about: "x" },
+      { direction: "less", about: "" },
+      { direction: "less", about: "x".repeat(301) },
+      { direction: "less", about: "x", quote: "" },
+      { direction: "less", about: "x", extra: 1 },
+    ]) {
+      expect(await call("interest_record", args), JSON.stringify(args)).toMatchObject({
+        kind: "error",
+        code: "invalid_args",
+      });
+    }
+    expect(record).toHaveBeenCalledTimes(1);
   });
 
   test("create, list, update and undo, stamped with the conversation", async () => {

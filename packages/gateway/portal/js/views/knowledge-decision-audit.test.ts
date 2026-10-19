@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { decisionAuditPurposes, decisionAuditQuery } from "./knowledge-decision-audit.js";
 it("offers every judgement purpose the gateway records, after an unfiltered choice", () => {
   expect(decisionAuditPurposes.map(([value]: [string, string]) => value)).toEqual([
-    "", "discovery", "impact", "review", "urgency", "worth-gate", "record-check", "task-check",
+    "", "discovery", "impact", "review", "urgency", "worth-gate", "record-check", "task-check", "task-propose",
     "observation-salience", "mention-worth", "find-route",
   ]);
 });

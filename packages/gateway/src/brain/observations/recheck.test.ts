@@ -44,6 +44,7 @@ import {
 } from "./recheck.js";
 import { DEFAULT_SALIENCE_THRESHOLDS } from "./salience.js";
 import type { ObservationScores } from "../storage/types.js";
+import type { OwnerInterest } from "../interest/lookup.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -310,6 +311,44 @@ describe("recheckObservations", () => {
   });
 
   describe("salience", () => {
+    test("asks the interest ledger about each observation and shows the model what it finds", async () => {
+      note("obs_rent", { why: "A late payment adds a fee." });
+      note("obs_plain", { why: "" });
+      const ownerInterest: OwnerInterest = {
+        positive: [],
+        negative: [
+          {
+            text: "Rent invoice reminder",
+            note: "I pay these on the day",
+            source: "brief_not_interested",
+            ageDays: 7,
+            similarity: 0.63,
+          },
+        ],
+        statements: [],
+      };
+      const lookup = vi.fn(async ({ text }: { text: string }) =>
+        text.startsWith("obs_rent") ? ownerInterest : null,
+      );
+      const { decision, requests } = scriptedDecision({
+        obs_rent: { consequence: 1, timing: 0, already_known: 0 },
+        obs_plain: { consequence: 3, timing: 2, already_known: 0 },
+      });
+      await run(deps({ getDecision: () => decision, interest: { lookup } }));
+      expect(lookup.mock.calls.map(([q]) => q.text).sort()).toEqual([
+        "obs_plain",
+        "obs_rent\nA late payment adds a fee.",
+      ]);
+      const byObservation = Object.fromEntries(
+        requests.map((r) => [
+          (r.state as { observation: string }).observation,
+          r.state as { owner_interest?: unknown },
+        ]),
+      );
+      expect(byObservation.obs_rent!.owner_interest).toEqual(ownerInterest);
+      expect(byObservation.obs_plain).not.toHaveProperty("owner_interest");
+    });
+
     test("rescores with the decision model and ships, holds or drops by the policy", async () => {
       note("obs_ship");
       note("obs_hold");

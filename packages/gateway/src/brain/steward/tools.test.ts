@@ -334,6 +334,76 @@ describe("Cognition Steward tools", () => {
     expect(mirror!.content).toContain("Reply to the venue quote");
   });
 
+  test("open_loop_create acts on the suggestion gate's enforced tier and reports it", async () => {
+    const judged: string[] = [];
+    const gated = (tier: "adopt" | "withhold" | "suggest", enforced: boolean) =>
+      buildTools({
+        taskPropose: {
+          judge: (input) => {
+            judged.push(input.loopId);
+            return Promise.resolve({ tier, enforced, reason: `${tier} because of the ledger` });
+          },
+        } as unknown as CognitionToolDeps["taskPropose"],
+      });
+    const create = async (handles: ToolHandle[]) => {
+      const result = await findTool(handles, "open_loop_create").invoke(
+        {
+          title: "Renew the studio lease",
+          description: "An answer is due by Friday.",
+          confidence: 0.9,
+          importance: 0.7,
+        },
+        CTX,
+      );
+      const { data } = structured(result);
+      return { data, loop: getOpenLoop(db, (data.loop as { id: string }).id)! };
+    };
+
+    const withheld = await create(gated("withhold", true));
+    expect(withheld.data).toMatchObject({ proposal: "withhold", enforced: true });
+    expect(withheld.loop).toMatchObject({ ignored: true, accepted: false, state: "open" });
+    expect(listOpenLoopLedger(db, withheld.loop.id).map((e) => [e.event?.kind, e.note])).toEqual([
+      ["withheld", "withhold because of the ledger"],
+    ]);
+    expect(judged).toEqual([withheld.loop.id]);
+
+    const adopted = await create(gated("adopt", true));
+    expect(adopted.data).toMatchObject({ proposal: "adopt", enforced: true });
+    expect(adopted.loop).toMatchObject({ accepted: true, ignored: false });
+    const adoption = listOpenLoopLedger(db, adopted.loop.id);
+    expect(adoption.map((e) => e.event?.kind)).toEqual(["auto_accepted"]);
+    expect(adoption[0]!.event?.before).toMatchObject({ accepted: false, ignored: false });
+
+    // Shadow: the tier is reported but the suggestion is offered as before.
+    const shadowed = await create(gated("withhold", false));
+    expect(shadowed.data).toMatchObject({ proposal: "withhold", enforced: false });
+    expect(shadowed.loop).toMatchObject({ ignored: false, accepted: false });
+    expect(listOpenLoopLedger(db, shadowed.loop.id)).toEqual([]);
+
+    const suggested = await create(gated("suggest", true));
+    expect(suggested.data).toMatchObject({ proposal: "suggest", enforced: true });
+    expect(suggested.loop).toMatchObject({ ignored: false, accepted: false });
+
+    // No gate: offered, and the transcript says so.
+    const ungated = await create(buildTools());
+    expect(ungated.data).toMatchObject({ proposal: "suggest", enforced: false });
+  });
+
+  test("open_loop_create never loses a suggestion to a failing gate", async () => {
+    const failing = buildTools({
+      taskPropose: {
+        judge: () => Promise.reject(new Error("gate exploded")),
+      } as unknown as CognitionToolDeps["taskPropose"],
+    });
+    const result = await findTool(failing, "open_loop_create").invoke(
+      { title: "Renew the studio lease", confidence: 0.9, importance: 0.7 },
+      CTX,
+    );
+    const { data } = structured(result);
+    expect(data).toMatchObject({ proposal: "suggest", enforced: false });
+    expect(getOpenLoop(db, (data.loop as { id: string }).id)).toMatchObject({ ignored: false });
+  });
+
   test("open_loop_create resolves person refs (emails → person ids) and reports drops", async () => {
     db.prepare(
       `INSERT INTO people (id, canonical_name, source, is_self, first_seen, last_seen,

@@ -9,6 +9,7 @@ import { createDatabase } from "../../db.js";
 import { insertCognitionDecision, listDecisionsForRun } from "../storage/decisions.js";
 import { TaskChecks } from "./task-checks.js";
 import type { DecisionPayloadCapture } from "../decision-payload.js";
+import type { OwnerInterest } from "../interest/lookup.js";
 import type { CognitionDecisionRecord } from "../storage/decisions.js";
 import type Database from "better-sqlite3";
 
@@ -23,6 +24,8 @@ describe("TaskChecks ledger", () => {
   let db: Database.Database;
   let score: number | "outage";
   let records: CognitionDecisionRecord[];
+  let interest: OwnerInterest | null;
+  let lookups: string[];
   let now = 1_000;
 
   const decision: DecisionCapability = {
@@ -37,9 +40,19 @@ describe("TaskChecks ledger", () => {
     },
     dispose() {},
   };
-  const checks = (withModel = true) =>
+  const checks = (withModel = true, withInterest = false) =>
     new TaskChecks({
       getDecision: () => (withModel ? decision : null),
+      ...(withInterest
+        ? {
+            interest: {
+              lookup: (query) => {
+                lookups.push(query.text);
+                return Promise.resolve(interest);
+              },
+            },
+          }
+        : {}),
       recordDecision: (record) => {
         records.push(record);
         insertCognitionDecision(db, record);
@@ -64,6 +77,8 @@ describe("TaskChecks ledger", () => {
     path = `/tmp/omnesis-test-${randomUUID()}.db`;
     db = createDatabase(path);
     records = [];
+    interest = null;
+    lookups = [];
   });
   afterEach(() => {
     db.close();
@@ -104,6 +119,69 @@ describe("TaskChecks ledger", () => {
     expect(JSON.parse(records[0]!.payload!.responseJson!)).toMatchObject({
       answers: { same_task: { score: 3 } },
     });
+  });
+
+  test("the owner's reactions to things like the new title or the note go in the state, when there are any", async () => {
+    score = 3;
+    interest = {
+      positive: [
+        {
+          text: "Book the hall for the review",
+          source: "task_accepted",
+          ageDays: 2,
+          similarity: 0.7,
+        },
+      ],
+      negative: [],
+      statements: [],
+    };
+    await rename(checks(true, true));
+    expect(lookups).toEqual(["Book the main hall\n"]);
+    const request = () =>
+      JSON.parse(records.at(-1)!.payload!.requestJson) as { state: Record<string, unknown> };
+    expect(request().state.owner_interest).toEqual(interest);
+    expect(records.at(-1)!.rubricVersion).toBe("task-check-v2");
+
+    await checks(true, true).noteIsNew({
+      runId: "run_checks",
+      loopId: "loop_fixture",
+      documentId: null,
+      task: { title: "Book the hall", description: "" },
+      recentNotes: ["Quote requested"],
+      note: "The hall confirmed the date.",
+    });
+    expect(lookups.at(-1)).toBe("The hall confirmed the date.");
+    expect(request().state.owner_interest).toEqual(interest);
+
+    // Nothing resembling it, or no lookup at all, leaves the request without the key.
+    interest = null;
+    await rename(checks(true, true));
+    expect(request().state).not.toHaveProperty("owner_interest");
+    await rename(checks());
+    expect(request().state).not.toHaveProperty("owner_interest");
+    expect(lookups).toHaveLength(3);
+  });
+
+  test("a failing lookup leaves the check to judge without it", async () => {
+    score = 3;
+    const failing = new TaskChecks({
+      getDecision: () => decision,
+      interest: { lookup: () => Promise.reject(new Error("ledger locked")) },
+      recordDecision: (record) => {
+        records.push(record);
+        return Promise.resolve();
+      },
+      capturePayload: () => capture,
+      recordSpend: () => Promise.resolve(),
+      clock: () => (now += 1),
+      idGen: () => randomUUID(),
+      log,
+    });
+    expect(await rename(failing)).toBe("same");
+    const request = JSON.parse(records[0]!.payload!.requestJson) as {
+      state: Record<string, unknown>;
+    };
+    expect(request.state).not.toHaveProperty("owner_interest");
   });
 
   test("no decision model means no decision and no row", async () => {

@@ -10,11 +10,17 @@
  * sources and its tasks. The latest day is open, with that list expanded;
  * every earlier day folds to one summary line until it is opened. What is
  * open is remembered for as long as the conversation stays on screen.
+ *
+ * Each listed item takes a thumbs up or down. Up is one click and lands at
+ * once; down asks which kind of "not useful" it was — not interested, which
+ * teaches the Brain what to leave out, or a factual error, which goes to
+ * Omnesis as a correction note — with room for a sentence of the owner's own.
  */
 
 import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
-import { getConversationBrief } from "../../api.js";
+import { getConversationBrief, setBriefItemReaction } from "../../api.js";
+import { Modal } from "../modal.js";
 import {
   basedOnLabel,
   briefDayLabel,
@@ -34,6 +40,52 @@ const SUN = html`<svg class="brief-sun" aria-hidden="true" viewBox="0 0 24 24" w
 const CHEVRON = html`<svg class="brief-chevron" aria-hidden="true" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`;
 
 const TASK_ICON = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>`;
+
+// Lucide `thumbs-up` / `thumbs-down`.
+const THUMB_UP = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>`;
+const THUMB_DOWN = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>`;
+
+/** The two kinds of thumbs-down, as the dialog offers them. */
+export const DOWN_CHOICES = [
+  {
+    value: "not_interested",
+    title: "Not interested in this kind of thing",
+    detail: "Future briefs and task suggestions will follow this.",
+  },
+  {
+    value: "factual_error",
+    title: "Factual error",
+    detail: "Not about my interests; a correction goes to Omnesis as a note.",
+  },
+];
+
+/** The small word beside a pressed thumbs-down. */
+export function downLabel(kind) {
+  if (kind === "not_interested") return "not interested";
+  if (kind === "factual_error") return "factual error";
+  return null;
+}
+
+/** A day's detail with one item's reaction replaced. */
+export function withItemReaction(detail, observationId, reaction) {
+  if (!detail || detail.status !== "ok") return detail;
+  const items = (detail.data?.items ?? []).map((item) => {
+    if (item.observationId !== observationId) return item;
+    const { reaction: _previous, ...rest } = item;
+    return reaction ? { ...rest, reaction } : rest;
+  });
+  return { ...detail, data: { ...detail.data, items } };
+}
+
+/** The reaction the server confirmed, in the shape a brief item carries. */
+function reactionFromResponse(response) {
+  if (!response?.reaction) return null;
+  return {
+    kind: response.reaction,
+    ...(response.note ? { note: response.note } : {}),
+    ...(response.at ? { at: response.at } : {}),
+  };
+}
 
 function errorText(err) {
   return err?.serverMessage ?? err?.message ?? String(err);
@@ -59,6 +111,22 @@ export function BriefThread({ conversationId, turns, citations, dispatch, today 
   const ensure = (day) => {
     if (!details.has(day)) load(day);
   };
+  const setReaction = (day, observationId, reaction) =>
+    setDetails((prev) => new Map(prev).set(day, withItemReaction(prev.get(day), observationId, reaction)));
+
+  // The new state shows at once and the server's answer replaces it; a
+  // refusal puts the previous state back and the error is the caller's to show.
+  async function react(day, item, body) {
+    const previous = item.reaction ?? null;
+    setReaction(day, item.observationId, body.reaction ? { kind: body.reaction, ...(body.note ? { note: body.note } : {}) } : null);
+    try {
+      const response = await setBriefItemReaction(conversationId, day, item.observationId, body);
+      setReaction(day, item.observationId, reactionFromResponse(response));
+    } catch (err) {
+      setReaction(day, item.observationId, previous);
+      throw err;
+    }
+  }
 
   // The latest brief's list is open from the start, so it is fetched at once;
   // an earlier day's is fetched when the day is opened.
@@ -118,6 +186,7 @@ export function BriefThread({ conversationId, turns, citations, dispatch, today 
                     toggle(setToggledFooters, group.day);
                   }}
                   onRetry=${() => load(group.day)}
+                  onReact=${(item, body) => react(group.day, item, body)}
                 />`,
               })}
               ${rest.map((turn) => bubble(turn))}
@@ -149,7 +218,7 @@ function BriefHeader({ sentAt }) {
   </div>`;
 }
 
-function BriefFooter({ detail, open, onToggle, onRetry }) {
+function BriefFooter({ detail, open, onToggle, onRetry, onReact }) {
   if (!detail || detail.status === "loading") return null;
   if (detail.status === "error") {
     return html`<div class="brief-footer brief-footer-error" role="status">
@@ -165,24 +234,139 @@ function BriefFooter({ detail, open, onToggle, onRetry }) {
       <span>${basedOnLabel(items.length)}</span>
     </button>
     ${open && html`<ol class="brief-items">
-      ${items.map((item) => html`<li class="brief-item" key=${item.observationId}>
-        <span class="brief-item-rank">${item.rank}</span>
-        <div class="brief-item-body">
-          <p class="brief-item-summary">${item.summary}</p>
-          ${(item.sources.length > 0 || item.tasks.length > 0) && html`<div class="brief-item-chips">
-            ${item.sources.map((source) => html`<${DocChip}
-              key=${source.id}
-              className="brief-chip"
-              documentId=${source.id}
-              title=${source.title}
-              sourceId=${source.sourceType ?? ""}
-            />`)}
-            ${item.tasks.map((task) => html`<${TaskChip} key=${task.id} task=${task} />`)}
-          </div>`}
-        </div>
-      </li>`)}
+      ${items.map((item) => html`<${BriefItem} key=${item.observationId} item=${item} onReact=${onReact} />`)}
     </ol>`}
   </div>`;
+}
+
+function BriefItem({ item, onReact }) {
+  const [error, setError] = useState(null);
+  const [asking, setAsking] = useState(false);
+  const kind = item.reaction?.kind ?? null;
+  const up = kind === "up";
+  const down = kind === "not_interested" || kind === "factual_error";
+
+  // The one-click thumbs up reports its failure beside the buttons; the
+  // dialog reports its own.
+  const thumbUp = () => {
+    setError(null);
+    onReact(item, { reaction: up ? null : "up" }).catch((err) => setError(errorText(err)));
+  };
+
+  return html`<li class="brief-item">
+    <span class="brief-item-rank">${item.rank}</span>
+    <div class="brief-item-body">
+      <p class="brief-item-summary">${item.summary}</p>
+      ${(item.sources.length > 0 || item.tasks.length > 0) && html`<div class="brief-item-chips">
+        ${item.sources.map((source) => html`<${DocChip}
+          key=${source.id}
+          className="brief-chip"
+          documentId=${source.id}
+          title=${source.title}
+          sourceId=${source.sourceType ?? ""}
+        />`)}
+        ${item.tasks.map((task) => html`<${TaskChip} key=${task.id} task=${task} />`)}
+      </div>`}
+      <div class="brief-item-reactions">
+        <button
+          type="button"
+          class="brief-thumb brief-thumb-up"
+          aria-label="Useful"
+          aria-pressed=${up}
+          title=${up ? "Take back the thumbs up" : "Useful"}
+          onClick=${thumbUp}
+        >${THUMB_UP}</button>
+        <button
+          type="button"
+          class="brief-thumb brief-thumb-down"
+          aria-label="Not useful"
+          aria-pressed=${down}
+          title="Not useful"
+          onClick=${() => setAsking(true)}
+        >${THUMB_DOWN}</button>
+        ${down && html`<span class="brief-thumb-label">${downLabel(kind)}</span>`}
+        ${error && html`<span class="brief-thumb-error" role="alert">${error}</span>`}
+      </div>
+    </div>
+    ${asking && html`<${NotUsefulDialog}
+      reaction=${down ? item.reaction : null}
+      onClose=${() => setAsking(false)}
+      onSend=${(body) => onReact(item, body).then(() => setAsking(false))}
+    />`}
+  </li>`;
+}
+
+/**
+ * The thumbs-down dialog. Opens on the item's current thumbs-down when it has
+ * one, so the owner can change the kind or the note; "Remove" takes the
+ * reaction back. An error from the send stays in the dialog, the choice intact.
+ */
+function NotUsefulDialog({ reaction, onClose, onSend }) {
+  const [choice, setChoice] = useState(reaction?.kind ?? DOWN_CHOICES[0].value);
+  const [note, setNote] = useState(reaction?.note ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = (body) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    onSend(body).catch((err) => {
+      setError(errorText(err));
+      setBusy(false);
+    });
+  };
+
+  return html`<${Modal} open=${true} onClose=${onClose} title="Not useful?" size="sm">
+    <form
+      class="brief-reaction-form"
+      onSubmit=${(e) => {
+        e.preventDefault();
+        const trimmed = note.trim();
+        submit({ reaction: choice, ...(trimmed ? { note: trimmed } : {}) });
+      }}
+    >
+      <fieldset class="brief-reaction-choices" disabled=${busy}>
+        <legend class="sr-only">Why it was not useful</legend>
+        ${DOWN_CHOICES.map((option) => html`<label class="brief-reaction-option" key=${option.value}>
+          <input
+            type="radio"
+            name="brief-reaction"
+            value=${option.value}
+            checked=${choice === option.value}
+            onChange=${() => setChoice(option.value)}
+          />
+          <span class="brief-reaction-text">
+            <strong>${option.title}</strong>
+            <small>${option.detail}</small>
+          </span>
+        </label>`)}
+      </fieldset>
+      <label class="brief-reaction-note-label">
+        <span>Say more (optional)</span>
+        <textarea
+          class="brief-reaction-note"
+          rows="3"
+          maxlength="2000"
+          placeholder="What was off, or what you would rather hear about"
+          value=${note}
+          disabled=${busy}
+          onInput=${(e) => setNote(e.currentTarget.value)}
+        ></textarea>
+      </label>
+      ${error && html`<div class="modal-error" role="alert">${error}</div>`}
+      <div class="modal-actions">
+        ${reaction && html`<button
+          type="button"
+          class="btn-secondary brief-reaction-remove"
+          disabled=${busy}
+          onClick=${() => submit({ reaction: null })}
+        >Remove</button>`}
+        <button type="button" class="btn-secondary" disabled=${busy} onClick=${onClose}>Cancel</button>
+        <button type="submit" class="btn-primary" disabled=${busy}>${busy ? "Sending…" : "Send"}</button>
+      </div>
+    </form>
+  </${Modal}>`;
 }
 
 function TaskChip({ task }) {

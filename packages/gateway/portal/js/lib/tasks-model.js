@@ -268,9 +268,14 @@ const EVENT_LABELS = {
   proposal_confirmed: "Proposal confirmed",
   proposal_kept: "Proposal declined",
   auto_applied: "Updated by Omnesis",
+  auto_accepted: "Added by Omnesis",
+  withheld: "Withheld by Omnesis",
   undone: "Undone",
   note: "Note",
 };
+
+/** The changes Omnesis makes on its own, whose label names it and which undo reverts in place. */
+const OMNESIS_OWN_EVENTS = new Set(["auto_applied", "auto_accepted", "withheld"]);
 
 const SURFACE_LABELS = {
   tasks: "in Tasks",
@@ -285,6 +290,7 @@ export function historyEventLabel(event) {
   if (event.kind === "auto_applied") {
     return event.change === "complete" ? "Marked done by Omnesis" : EVENT_LABELS.auto_applied;
   }
+  if (OMNESIS_OWN_EVENTS.has(event.kind)) return EVENT_LABELS[event.kind];
   const kind = EVENT_LABELS[event.kind] ?? event.kind;
   const surface = SURFACE_LABELS[event.surface];
   const move = event.kind === "migrated" && event.to ? ` to ${event.to}` : "";
@@ -297,7 +303,9 @@ export function historyEventLabel(event) {
  */
 export function autoAppliedUndoSeq(history, undoSeq) {
   const latest = history?.[0];
-  return latest && latest.kind === "auto_applied" && latest.seq === undoSeq ? latest.seq : null;
+  return latest && OMNESIS_OWN_EVENTS.has(latest.kind) && latest.seq === undoSeq
+    ? latest.seq
+    : null;
 }
 
 /**

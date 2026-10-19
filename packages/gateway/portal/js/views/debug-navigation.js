@@ -14,6 +14,7 @@ const GROUPS = [
       { key: "calendar", label: "Timeline" },
       brain("runs", "Agent runs"),
       brain("observations", "Observations"),
+      brain("interest", "Interest"),
       brain("maintenance", "Maintenance"),
       brain("bootstrap", "Discovery"),
       brain("calibration", "Confidence & feedback"),

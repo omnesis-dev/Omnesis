@@ -28,6 +28,7 @@ import {
   compareSalience,
   judgeSalience,
   OBSERVATION_SALIENCE_RUBRIC,
+  salienceInterestQuery,
   salienceVerdict,
   type SalienceSubject,
   type SalienceThresholds,
@@ -272,6 +273,9 @@ export async function recheckObservations(
     let scores = observation.scores ?? observation.notedScores;
     if (decision) {
       const payloadCapture = salienceDecisionCapture(deps.db, observation);
+      const ownerInterest = deps.interest
+        ? await deps.interest.lookup({ text: salienceInterestQuery(observation) })
+        : null;
       const judged = await judgeSalience(
         decision,
         {
@@ -283,6 +287,7 @@ export async function recheckObservations(
           relevantUntil: observation.relevantUntil,
           sources: observationSources(deps.db, observation.citations),
           sinceNoted: sinceNoted(deps.db, observation),
+          ownerInterest,
         },
         now,
         {

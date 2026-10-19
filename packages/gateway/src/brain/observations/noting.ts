@@ -14,6 +14,7 @@
 import { observationSources, recordSalienceDecision, salienceDecisionCapture } from "./recheck.js";
 import {
   judgeSalience,
+  salienceInterestQuery,
   salienceVerdict,
   wouldHavePushed,
   type SalienceThresholds,
@@ -65,6 +66,9 @@ export function createObservationScorer(
       id: input.id,
       citations: [...input.citations],
     });
+    const ownerInterest = deps.interest
+      ? await deps.interest.lookup({ text: salienceInterestQuery(input) })
+      : null;
     const judged = await judgeSalience(
       decision,
       {
@@ -75,6 +79,7 @@ export function createObservationScorer(
         windowStart: input.windowStart,
         relevantUntil: input.relevantUntil,
         sources: observationSources(deps.db, input.citations),
+        ownerInterest,
       },
       input.notedAt,
       { recordSpend: deps.recordSpend, log: deps.log },

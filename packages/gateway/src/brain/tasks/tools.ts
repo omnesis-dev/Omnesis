@@ -26,6 +26,7 @@ import { isOwnedTask } from "../storage/types.js";
 import { TASK_VIEWS, TaskQueryService, type TaskItem } from "./views.js";
 import type { ToolResult } from "@omnesis/core";
 import type { TaskService } from "./service.js";
+import type { InterestEngine } from "../interest/engine.js";
 import type { WriteGate } from "../../write-gate.js";
 import type Database from "better-sqlite3";
 
@@ -44,6 +45,11 @@ export interface TaskToolDeps {
   ownedOnly?: boolean;
   /** Offer `observation_suppress` (the Morning brief is running). */
   observations?: boolean;
+  /**
+   * Offer `interest_record`: what the user says here about their interests
+   * is feedback on the brief. Only the Morning brief conversation passes it.
+   */
+  interest?: Pick<InterestEngine, "record">;
 }
 
 const schedule = z
@@ -352,8 +358,12 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
   };
 
   const tools = [taskList, taskCreate, taskUpdate, taskUndo];
-  if (!deps.observations) return tools;
+  if (deps.observations) tools.push(buildObservationSuppress(deps, clock));
+  if (deps.interest) tools.push(buildInterestRecord(deps.interest, deps.origin));
+  return tools;
+}
 
+function buildObservationSuppress(deps: TaskToolDeps, clock: () => number): ToolHandle {
   const suppressSchema = z
     .object({
       id: z.string().min(1).describe("Observation id, as listed in the morning brief context."),
@@ -395,5 +405,73 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       };
     },
   };
-  return [...tools, observationSuppress];
+  return observationSuppress;
+}
+
+function buildInterestRecord(
+  interest: Pick<InterestEngine, "record">,
+  origin: TaskCommandOrigin,
+): ToolHandle {
+  const recordSchema = z
+    .object({
+      direction: z
+        .enum(["more", "less"])
+        .describe(
+          "less: the user does not care about this kind of thing; more: they want more of it.",
+        ),
+      about: z
+        .string()
+        .trim()
+        .min(1)
+        .max(300)
+        .describe("The kind of thing, in the user's own terms."),
+      quote: z.string().trim().min(1).max(500).optional().describe("The user's words."),
+      observationId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("The brief item the user was talking about, when it was one."),
+    })
+    .strict();
+  return {
+    name: "interest_record",
+    description:
+      "Record what the user said they care about, or do not, so future briefs and task suggestions follow it. `about` names the kind of thing in the user's own terms; `quote` is their words. Use `less` when they say they are not interested in a kind of item, `more` when they ask for more of something. Only for what the user says in this conversation about their interests; not for facts about the world.",
+    schema: recordSchema,
+    mutates: true,
+    summarize: (args) => {
+      const about = (args as { about?: unknown } | null)?.about;
+      return typeof about === "string" ? about : "";
+    },
+    async invoke(raw): Promise<ToolResult> {
+      const parsed = recordSchema.safeParse(raw);
+      if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
+      const { direction, about, quote, observationId } = parsed.data;
+      const signal = await interest.record({
+        polarity: direction === "more" ? 1 : -1,
+        kind: "statement",
+        source: "statement",
+        subjectText: about,
+        note: quote ?? null,
+        ...(origin.conversationId !== undefined ? { conversationId: origin.conversationId } : {}),
+        ...(observationId !== undefined ? { observationId } : {}),
+      });
+      if (!signal)
+        return {
+          kind: "structured",
+          resultType: "interest.recorded",
+          data: {
+            recorded: false,
+            direction,
+            about,
+            message: "The interest ledger is off on this gateway; nothing was recorded.",
+          },
+        };
+      return {
+        kind: "structured",
+        resultType: "interest.recorded",
+        data: { id: signal.id, direction, about },
+      };
+    },
+  };
 }

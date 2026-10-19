@@ -519,12 +519,33 @@
           earlier days fold to one line until you open them.
         </p>
         <p>
+          Each item carries a thumbs up and a thumbs down. A thumbs up tells Brain this was worth
+          your morning. A thumbs down asks which of two things is wrong:
+          <strong>Not interested</strong> teaches Brain that items like this one are not worth your
+          morning and that suggestions like it are not worth making, with whatever you type or
+          dictate as your reason; <strong>Factual error</strong> says nothing about your interests,
+          marks the item disputed, and sends your correction to Omnesis as a note. Tapping a thumbs
+          again clears it. Nothing is inferred from an item you left alone.
+        </p>
+        <p>
           Reply in that conversation to act on the brief. The agent sees that morning's brief and
           its items, so “the second one” resolves, and acts on what you say with its task tools,
           stating each change in one line. “Don't tell me about this” suppresses an item for good; a
           stated preference (“I don't need reminders about newsletters”) is also remembered as a
-          fact about you, so later briefs leave similar items out. Earlier days stay in the
-          transcript but are outside the agent's context.
+          fact about you and recorded as what you care about, so later briefs and task suggestions
+          leave similar things out. Earlier days stay in the transcript but are outside the agent's
+          context.
+        </p>
+        <p>
+          What you accept, create or ignore in Tasks, the thumbs you give brief items, and what you
+          say in this conversation are the only things Brain learns your interests from. Before it
+          ranks an observation for the brief, judges a new suggestion, or decides how soon to read
+          new evidence, the decision model is shown the few past reactions most like the item in
+          front of it, with your words where you gave any.
+          <strong>Debug → Cognition → Interest</strong> lists every reaction it has recorded, lets
+          you try a lookup, and shows each suggestion verdict. Set
+          <code>brain.interest.enabled</code> to <code>false</code> to stop recording and showing
+          them.
         </p>
         <p>
           In experimental mode, <a href="/docs/apps#tasks">Tasks</a> gains a
@@ -557,6 +578,19 @@
           <code>brain.tasks.autoApply</code> to <code>false</code> to have every change proposed.
           Your own tasks never decay. Without experimental mode, neither the Suggested view nor
           proposed changes appear.
+        </p>
+        <p>
+          With a decision model assigned, every new suggestion is judged against what you did with
+          suggestions like it before: clearly like ones you ignored, it is withheld; clearly like
+          tasks you accepted or created, it is adopted as your task at once; otherwise it is
+          suggested as usual. <code>brain.tasks.proposeGate</code> sets what the verdict does.
+          <code>shadow</code>, the default, only records it, so
+          <strong>Debug → Cognition → Interest</strong> shows what would have happened.
+          <code>enforce</code> acts on it: a withheld suggestion stays tracked and comes back when
+          you undo it from its history, and an adopted one reads
+          <strong>Added by Omnesis</strong> with an <strong>Undo</strong>; undoing an adoption is
+          the strongest sign that suggestions like it are unwanted. <code>off</code> asks nothing. A
+          model outage leaves a suggestion as it is.
         </p>
         <p>
           <strong>Debug → Cognition → Observations</strong> lists observations by state, with each
@@ -1090,8 +1124,8 @@
         <p>
           Every judgement the decision model makes is recorded and shown in
           <strong>Debug → Cognition</strong> with a scale icon: worth admission, record and task
-          checks, observation salience, discovery and review timing, and, outside any Brain run,
-          date-mention worth and search routing. Open
+          checks, the suggestion gate, observation salience, discovery and review timing, and,
+          outside any Brain run, date-mention worth and search routing. Open
           <strong>Maintenance → Advanced → Retained decision history</strong> to filter them by
           kind; each one also appears on the run, page or observation it was made for, and
           <strong>Request and answer</strong> shows exactly what the model was asked and what it
@@ -1680,6 +1714,22 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
                 <td>
                   Let Brain keep your own tasks current on its own instead of proposing every change
                   (see <a href="#brain-morning-brief">Observations and the morning brief</a>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>tasks.proposeGate</code></td>
+                <td><code>shadow</code></td>
+                <td>
+                  What the verdict on a new suggestion does: <code>off</code>,
+                  <code>shadow</code> (record only) or <code>enforce</code> (withhold or adopt).
+                </td>
+              </tr>
+              <tr>
+                <td><code>interest.enabled</code></td>
+                <td>true</td>
+                <td>
+                  Record what you accept, ignore, thumb and say, and show the decision model similar
+                  past reactions.
                 </td>
               </tr>
               <tr>

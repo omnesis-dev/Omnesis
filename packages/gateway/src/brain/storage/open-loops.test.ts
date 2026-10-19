@@ -23,6 +23,7 @@ import {
   type CreateOpenLoopInput,
 } from "./open-loops.js";
 import { createObservation, getObservation, transitionObservation } from "./observations.js";
+import { applyTaskCommand } from "./tasks.js";
 
 function testDbPath(): string {
   return `/tmp/omnesis-test-${randomUUID()}.db`;
@@ -521,5 +522,103 @@ describe("open-loop repository", () => {
       transitionObservation(db, "obs_live", { state: "dropped", reason: "suppressed" }, 1_100);
       expect(listRelatedLoops(db, "olp_x")).toEqual([]);
     });
+  });
+});
+
+describe("createOpenLoop with an interest-gate proposal", () => {
+  const NOW = Date.parse("2026-03-10T09:00:00Z");
+  let path: string;
+  let db: Db;
+  beforeEach(() => {
+    path = testDbPath();
+    db = createDatabase(path);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(path);
+  });
+
+  const suggested = () =>
+    db
+      .prepare<[], { id: string }>(
+        "SELECT id FROM open_loops WHERE origin = 'brain' AND accepted = 0 AND ignored = 0",
+      )
+      .all()
+      .map((r) => r.id);
+
+  test("adopt makes the suggestion the user's task with an undoable auto_accepted event", () => {
+    const loop = createOpenLoop(
+      db,
+      loopInput({ id: "olp_adopt", proposal: { tier: "adopt", note: "Like the tasks you keep" } }),
+      NOW,
+    );
+    expect(loop).toMatchObject({ origin: "brain", accepted: true, ignored: false, state: "open" });
+    const ledger = listOpenLoopLedger(db, "olp_adopt");
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      runId: "run_1",
+      note: "Like the tasks you keep",
+      event: { kind: "auto_accepted", surface: "brain" },
+    });
+    expect(ledger[0]!.event!.before).toMatchObject({
+      state: "open",
+      title: loop.title,
+      description: loop.description,
+      accepted: false,
+      ignored: false,
+    });
+    expect(suggested()).toEqual([]);
+  });
+
+  test("withhold keeps the suggestion out of the Tasks views with a withheld event", () => {
+    const loop = createOpenLoop(
+      db,
+      loopInput({
+        id: "olp_withheld",
+        proposal: { tier: "withhold", note: "Like what you ignore" },
+      }),
+      NOW,
+    );
+    expect(loop).toMatchObject({ origin: "brain", accepted: false, ignored: true });
+    const [event] = listOpenLoopLedger(db, "olp_withheld");
+    expect(event).toMatchObject({ note: "Like what you ignore", event: { kind: "withheld" } });
+    expect(event!.event!.before).toMatchObject({ accepted: false, ignored: false });
+    expect(suggested()).toEqual([]);
+  });
+
+  test("a proposal is ignored on a task that is not a Brain suggestion", () => {
+    const loop = createOpenLoop(
+      db,
+      loopInput({ id: "olp_user", origin: "user", proposal: { tier: "withhold", note: "n/a" } }),
+      NOW,
+    );
+    expect(loop).toMatchObject({ origin: "user", accepted: true, ignored: false });
+    expect(listOpenLoopLedger(db, "olp_user")).toEqual([]);
+  });
+
+  test("undoing a withhold makes it a plain suggestion again", () => {
+    createOpenLoop(
+      db,
+      loopInput({ id: "olp_withheld", proposal: { tier: "withhold", note: "Withheld" } }),
+      NOW,
+    );
+    const [event] = listOpenLoopLedger(db, "olp_withheld");
+    const result = applyTaskCommand(
+      db,
+      { surface: "tasks", runId: "user:tasks", kind: "undo", seq: event!.seq },
+      NOW + 1000,
+    );
+    expect(result.ok).toBe(true);
+    expect(getOpenLoop(db, "olp_withheld")).toMatchObject({
+      origin: "brain",
+      accepted: false,
+      ignored: false,
+      state: "open",
+    });
+    expect(suggested()).toEqual(["olp_withheld"]);
+    expect(listOpenLoopLedger(db, "olp_withheld").map((e) => e.event?.kind)).toEqual([
+      "withheld",
+      "undone",
+    ]);
   });
 });

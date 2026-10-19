@@ -15,7 +15,8 @@ import {
 } from "../storage/morning-brief-items.js";
 import { getObservation } from "../storage/observations.js";
 import { getOpenLoop } from "../storage/open-loops.js";
-import type { DailyBriefDetail } from "../../agent/daily-brief-detail.js";
+import { listBriefItemReactions, type BriefItemReaction } from "../storage/interest.js";
+import type { DailyBriefDetail, DailyBriefItemDetail } from "../../agent/daily-brief-detail.js";
 import type { ObservationRow } from "../storage/types.js";
 import type Database from "better-sqlite3";
 
@@ -58,7 +59,7 @@ function isoOrNull(value: string): string | null {
   return Number.isNaN(ms) ? null : new Date(ms).toISOString();
 }
 
-/** One sent brief's items with their sources and tasks, and when it was sent. */
+/** One sent brief's items with their sources, tasks and reactions, and when it was sent. */
 export function readDailyBriefDetail(
   db: Database.Database,
   brief: { day: string; messageId: string },
@@ -68,6 +69,7 @@ export function readDailyBriefDetail(
   const documents = getDocumentTitlesAndSources(db, [
     ...new Set(items.flatMap((item) => item.observation.citations)),
   ]);
+  const reactions = listBriefItemReactions(db, brief.messageId);
   return {
     sentAt: sent && sent.messageId === brief.messageId ? new Date(sent.sentAt).toISOString() : null,
     items: items.map(({ rank, observation }) => ({
@@ -91,6 +93,20 @@ export function readDailyBriefDetail(
         const loop = getOpenLoop(db, id);
         return loop ? [{ id, title: loop.title, state: loop.state }] : [];
       }),
+      ...reactionOf(reactions.get(observation.id)),
     })),
+  };
+}
+
+function reactionOf(
+  reaction: BriefItemReaction | undefined,
+): Pick<DailyBriefItemDetail, "reaction"> {
+  if (!reaction) return {};
+  return {
+    reaction: {
+      kind: reaction.reaction,
+      ...(reaction.note ? { note: reaction.note } : {}),
+      at: new Date(reaction.updatedAt).toISOString(),
+    },
   };
 }

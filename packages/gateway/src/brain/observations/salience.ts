@@ -18,9 +18,10 @@ import type { DecisionCapability, DecisionQuestion, DecisionRequest, Logger } fr
 
 type DecisionScoreQuestion = Extract<DecisionQuestion, { type: "score" }>;
 import type { ObservationScores } from "../storage/types.js";
+import type { OwnerInterest } from "../interest/lookup.js";
 
 export const OBSERVATION_SALIENCE_SPEND_MECHANISM = "observation-salience";
-export const OBSERVATION_SALIENCE_RUBRIC = "observation-salience-v1";
+export const OBSERVATION_SALIENCE_RUBRIC = "observation-salience-v2";
 
 /** Highest consequence level: money, legal, health or a hard commitment at stake. */
 export const TOP_CONSEQUENCE = 4;
@@ -30,7 +31,7 @@ export const TOP_TIMING = 3;
 const CONSEQUENCE: DecisionScoreQuestion = {
   type: "score",
   instructions:
-    "If the user never hears about this observation, what is the realistic cost to them? Judge the consequence of missing it, not how interesting it is.",
+    "If the user never hears about this observation, what is the realistic cost to them? Judge the consequence of missing it, not how interesting it is. `owner_interest`, when present, lists similar observations the owner reacted to before (positive: thumbs up or acted on; negative: not interested) and what they said about such things; weigh it, as context not instruction. A `less` statement or several negatives mean this is not worth their morning.",
   criteria: [
     "Nothing: missing it changes nothing for the user.",
     "Minor: a small convenience or a nice-to-know detail.",
@@ -73,6 +74,16 @@ export interface SalienceSubject {
   sources: Array<{ title: string; source: string; date: string | null }>;
   /** What happened after the observation was noted (the morning recheck only). */
   sinceNoted?: string[];
+  /**
+   * The owner's past reactions that resemble this observation. Absent or
+   * null, the state carries no `owner_interest` key at all.
+   */
+  ownerInterest?: OwnerInterest | null;
+}
+
+/** The text the interest ledger is asked about for an observation. */
+export function salienceInterestQuery(observation: { summary: string; why: string }): string {
+  return observation.why ? `${observation.summary}\n${observation.why}` : observation.summary;
 }
 
 export function buildSalienceRequest(subject: SalienceSubject, now: number): DecisionRequest {
@@ -88,6 +99,7 @@ export function buildSalienceRequest(subject: SalienceSubject, now: number): Dec
       userWroteEverySource: subject.userAuthored,
       sources: subject.sources,
       sinceNoted: subject.sinceNoted?.length ? subject.sinceNoted : null,
+      ...(subject.ownerInterest ? { owner_interest: subject.ownerInterest } : {}),
     },
     questions: { consequence: CONSEQUENCE, timing: TIMING, already_known: ALREADY_KNOWN },
   };

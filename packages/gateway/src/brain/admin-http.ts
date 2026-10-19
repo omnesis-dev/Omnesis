@@ -7,6 +7,7 @@
  * Resource-specific route registration lives in:
  * - `admin-http-loop-routes.ts`
  * - `admin-http-observation-routes.ts`
+ * - `admin-http-interest-routes.ts`
  * - `admin-http-run-routes.ts`
  * - `admin-http-transcript-routes.ts`
  * - `admin-http-list-routes.ts`
@@ -20,6 +21,7 @@
 import { NotFoundError } from "../http/errors.js";
 import { KnowledgeQueryService } from "./knowledge/query-service.js";
 import { mountKnowledgeAdminRoutes } from "./knowledge/admin-routes.js";
+import { mountCognitionInterestAdminRoutes } from "./admin-http-interest-routes.js";
 import { mountCognitionObservationAdminRoutes } from "./admin-http-observation-routes.js";
 import { mountCognitionListAdminRoutes } from "./admin-http-list-routes.js";
 import { mountCognitionLoopAdminRoutes } from "./admin-http-loop-routes.js";
@@ -178,6 +180,8 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
   mountCognitionRunAdminRoutes(context);
   mountCognitionTranscriptAdminRoutes(context);
   mountCognitionObservationAdminRoutes(context);
+  if (opts.interest)
+    mountCognitionInterestAdminRoutes(context, { db: opts.db, interest: opts.interest });
   if (opts.sweeps) {
     mountCognitionSweepAdminRoutes(context, {
       db: opts.db,

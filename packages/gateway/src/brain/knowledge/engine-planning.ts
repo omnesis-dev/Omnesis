@@ -11,7 +11,7 @@ import {
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
 
-import { judgeKnowledge } from "./decision.js";
+import { judgeKnowledge, knowledgeUrgencyState } from "./decision.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import {
   listKnowledgePlanningWork,
@@ -106,11 +106,10 @@ export class KnowledgeBatchPlanner {
       const score = await judgeKnowledge(
         this.context.deps.decisions,
         "urgency",
-        {
-          documentId: item.subjectId,
-          title: source.title,
-          content: source.content.slice(0, 24000),
-        },
+        await knowledgeUrgencyState(
+          { documentId: item.subjectId, title: source.title, content: source.content },
+          this.context.deps.interest,
+        ),
         {
           nodeId: `source:${item.subjectId}`,
           ...(decisionId

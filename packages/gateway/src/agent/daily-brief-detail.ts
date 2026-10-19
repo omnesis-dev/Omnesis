@@ -25,6 +25,15 @@ export interface DailyBriefItemTask {
   state: string;
 }
 
+/** The owner's current thumbs on an item, when they gave one. */
+export interface DailyBriefItemReaction {
+  kind: "up" | "not_interested" | "factual_error";
+  /** Their words: why they are not interested, or the correction. */
+  note?: string;
+  /** When the reaction was last set (ISO 8601 UTC). */
+  at: string;
+}
+
 export interface DailyBriefItemDetail {
   /** The item's number as the brief showed it, from 1. */
   rank: number;
@@ -32,6 +41,7 @@ export interface DailyBriefItemDetail {
   summary: string;
   sources: DailyBriefItemSource[];
   tasks: DailyBriefItemTask[];
+  reaction?: DailyBriefItemReaction;
 }
 
 export interface DailyBriefDetail {

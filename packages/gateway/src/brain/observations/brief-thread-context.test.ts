@@ -92,6 +92,16 @@ describe("renderDailyBriefContext", () => {
     expect(text).toContain("resolve it from this list");
   });
 
+  test("tells the agent to record what the user says about their interests", () => {
+    send(["obs_venue"]);
+    const text = renderDailyBriefContext(db, { day: DAY, messageId: "msg_1" });
+    expect(text).toContain(
+      'not interested in this kind of thing → suppress the observation AND call interest_record({ direction: "less"',
+    );
+    expect(text).toContain('wants more of something → interest_record with direction "more"');
+    expect(text).toContain("conversation_memory_evidence, then annotate_person on the self person");
+  });
+
   test("an item without related loops has no task suffix", () => {
     send(["obs_venue"]);
     const text = renderDailyBriefContext(db, { day: DAY, messageId: "msg_1" });

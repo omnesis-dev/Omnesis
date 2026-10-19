@@ -3,7 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { createLogger, type DecisionCapability } from "@omnesis/core";
-import { judgeKnowledge } from "./decision.js";
+import { judgeKnowledge, knowledgeUrgencyState } from "./decision.js";
+import type { OwnerInterest } from "../interest/lookup.js";
 
 describe("knowledge decision scores", () => {
   it("distinguishes general information from personal evidence while preserving uncertainty and threshold", async () => {
@@ -134,12 +135,116 @@ describe("knowledge decision scores", () => {
         expect.objectContaining({
           purpose: "urgency",
           score: expected,
-          rubricVersion: "knowledge-decisions-v2",
+          rubricVersion: "knowledge-decisions-v3",
         }),
       );
       expect(spend).toHaveBeenCalledWith("scripted", 7);
     },
   );
+
+  it("names the urgency rubric that reads owner_interest while impact keeps its own", async () => {
+    const record = vi.fn();
+    const decision: DecisionCapability = {
+      modelId: "scripted",
+      dispose() {},
+      async decide(request) {
+        const [purpose] = Object.keys(request.questions);
+        if (purpose === "urgency")
+          expect(request.questions.urgency!.instructions).toContain("`owner_interest`");
+        return { model: "scripted", answers: { [purpose!]: { type: "score", score: 1 } } };
+      },
+    };
+    const deps = {
+      getDecision: () => decision,
+      record,
+      recordSpend: async () => {},
+      log: createLogger("test:knowledge-decision"),
+    };
+    await judgeKnowledge(deps, "urgency", { title: "Changed workshop time" });
+    await judgeKnowledge(deps, "impact", { nodeId: "node_sample" });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: "urgency", rubricVersion: "knowledge-decisions-v3" }),
+    );
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: "impact", rubricVersion: "knowledge-decisions-v2" }),
+    );
+  });
+
+  it("records an unavailable urgency verdict under the same rubric as a judged one", async () => {
+    const record = vi.fn();
+    await judgeKnowledge(
+      {
+        getDecision: () => null,
+        record,
+        recordSpend: async () => {},
+        log: createLogger("test:knowledge-decision"),
+      },
+      "urgency",
+      { title: "Changed workshop time" },
+      {
+        urgencyCapture: {
+          sourceId: "doc_sample",
+          inputRevision: "v1",
+          erasureGeneration: 0,
+          policy: {
+            immediateThreshold: 0.75,
+            soonThreshold: 0.5,
+            soonDelayMs: 1,
+            routineDelayMs: 2,
+          },
+        },
+      },
+    );
+    expect(record).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        purpose: "urgency",
+        score: null,
+        modelId: "unavailable",
+        rubricVersion: "knowledge-decisions-v3",
+      }),
+    );
+  });
+});
+
+describe("knowledgeUrgencyState", () => {
+  const source = {
+    documentId: "doc_sample",
+    title: "Workshop booking moved",
+    content: "The reserved workshop now starts on Thursday. ".repeat(600),
+  };
+  const ownerInterest: OwnerInterest = {
+    positive: [
+      { text: "Workshop booking confirmed", source: "task_created", ageDays: 5, similarity: 0.7 },
+    ],
+    negative: [],
+    statements: [],
+  };
+
+  it("asks the ledger about the title and the head of the content and adds what it finds", async () => {
+    const lookup = vi.fn(async () => ownerInterest);
+    const state = await knowledgeUrgencyState(source, { lookup });
+    expect(lookup).toHaveBeenCalledExactlyOnceWith({
+      text: `${source.title}\n${source.content.slice(0, 2000)}`,
+    });
+    expect(state).toEqual({
+      documentId: source.documentId,
+      title: source.title,
+      content: source.content.slice(0, 24000),
+      owner_interest: ownerInterest,
+    });
+  });
+
+  it("leaves the state as it was without a ledger or without anything similar in it", async () => {
+    const bare = await knowledgeUrgencyState(source, undefined);
+    expect(bare).toEqual({
+      documentId: source.documentId,
+      title: source.title,
+      content: source.content.slice(0, 24000),
+    });
+    const lookup = vi.fn(async () => null);
+    expect(await knowledgeUrgencyState(source, { lookup })).toEqual(bare);
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
 });
 
 it.each(["discovery", "impact", "review"] as const)(

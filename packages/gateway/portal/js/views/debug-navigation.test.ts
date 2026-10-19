@@ -35,10 +35,10 @@ it("offers one Cognition area with all existing view URLs", () => {
   ]);
   expect(active.items.map((item: { key: string }) => item.key)).toEqual([
     "cognition/knowledge", "calendar",
-    "cognition/runs", "cognition/observations", "cognition/maintenance", "cognition/bootstrap",
-    "cognition/calibration", "cognition/notes",
+    "cognition/runs", "cognition/observations", "cognition/interest", "cognition/maintenance",
+    "cognition/bootstrap", "cognition/calibration", "cognition/notes",
   ]);
-  for (const section of ["knowledge", "loops", "runs", "observations", "maintenance", "bootstrap"])
+  for (const section of ["knowledge", "loops", "runs", "observations", "interest", "maintenance", "bootstrap"])
     expect(debugNavigation(true, "cognition", section).active.key).toBe("cognition");
 });
 

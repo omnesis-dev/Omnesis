@@ -132,8 +132,8 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
     let noteId: string | undefined;
     if (input.reaction === "factual_error") {
       // Not a word about interest: a previous thumbs up no longer stands,
-      // and nothing replaces it.
-      await deps.interest.supersede({ observationId: observation.id });
+      // and nothing replaces it. The correction is saved first, so that when
+      // it cannot be, nothing has changed.
       if (note) {
         const notes = deps.notes();
         if (!notes)
@@ -143,10 +143,11 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
             message: "the correction could not be saved: notes are unavailable",
           };
         const previous = getBriefItemReaction(deps.db, observation.id);
-        noteId = input.noteId ?? previous?.noteId ?? undefined;
-        // A retry with the same note id finds the note already saved.
-        if (!(previous?.noteId && previous.noteId === noteId && previous.note === note)) {
-          noteId ??= randomUUID();
+        // The same correction again is the note already saved, whether the
+        // client repeats its id or omits it; new words are a new note.
+        const repeated = previous?.noteId !== null && previous?.note === note;
+        noteId = input.noteId ?? (repeated ? previous.noteId! : randomUUID());
+        if (!(repeated && previous.noteId === noteId)) {
           await notes.capture({
             id: noteId,
             text: correctionNoteText(observation.summary, note),
@@ -156,6 +157,7 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
           });
         }
       }
+      await deps.interest.supersede({ observationId: observation.id });
     } else {
       await deps.interest.record({
         polarity: input.reaction === "up" ? 1 : -1,

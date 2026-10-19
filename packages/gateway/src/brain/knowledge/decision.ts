@@ -5,14 +5,22 @@ import { askScore } from "../decision-call.js";
 import { knowledgeHash } from "./storage-validation.js";
 import type { DecisionPayloadCapture } from "../decision-payload.js";
 import type { KnowledgeUrgencyCapture, KnowledgeDecisionPayload } from "./decision-debug.js";
+import type { InterestLookup } from "../interest/engine.js";
 import type { DecisionCapability, DecisionQuestion, DecisionRequest, Logger } from "@omnesis/core";
 
 export type KnowledgeDecisionPurpose = "urgency" | "impact" | "discovery" | "review";
+/** The rubric each recorded verdict names; bumped when a question or its state changes. */
+const RUBRIC_VERSIONS: Record<KnowledgeDecisionPurpose, string> = {
+  urgency: "knowledge-decisions-v3",
+  impact: "knowledge-decisions-v2",
+  discovery: "knowledge-discovery-value-v7",
+  review: "knowledge-review-timing-v4",
+};
 const questions: Record<KnowledgeDecisionPurpose, Extract<DecisionQuestion, { type: "score" }>> = {
   urgency: {
     type: "score",
     instructions:
-      "How soon must the personal brain incorporate this evidence change? Judge consequences of waiting, not just topic importance.",
+      "How soon must the personal brain incorporate this evidence change? Judge consequences of waiting, not just topic importance. `owner_interest`, when present, lists similar things the owner reacted to before; evidence like things they wanted deserves sooner incorporation, like things they declined can wait.",
     criteria: [
       "Routine: waiting six hours has little cost.",
       "Soon: incorporation within an hour is useful.",
@@ -86,6 +94,31 @@ export interface KnowledgeDecisionDeps {
     },
   ) => Promise<void>;
 }
+/** How much of a source the urgency gate reads. */
+const URGENCY_CONTENT_CHARS = 24_000;
+/** How much of a source the interest ledger is asked about. */
+const URGENCY_INTEREST_QUERY_CHARS = 2_000;
+/**
+ * The urgency gate's state for one changed source, with the owner's past
+ * reactions when any resemble it. Without a ledger, or when nothing in it
+ * resembles the source, the state carries no `owner_interest` key.
+ */
+export async function knowledgeUrgencyState(
+  source: { documentId: string; title: string; content: string },
+  interest: InterestLookup | undefined,
+): Promise<Record<string, unknown>> {
+  const state = {
+    documentId: source.documentId,
+    title: source.title,
+    content: source.content.slice(0, URGENCY_CONTENT_CHARS),
+  };
+  const ownerInterest = interest
+    ? await interest.lookup({
+        text: `${source.title}\n${source.content.slice(0, URGENCY_INTEREST_QUERY_CHARS)}`,
+      })
+    : null;
+  return ownerInterest ? { ...state, owner_interest: ownerInterest } : state;
+}
 /** Complete generic decision input; provider-specific transport wrappers are excluded. */
 export function knowledgeDecisionRequest(
   purpose: KnowledgeDecisionPurpose,
@@ -117,7 +150,7 @@ export async function judgeKnowledge(
         ...association,
         purpose,
         inputFingerprint: knowledgeHash(state),
-        rubricVersion: "knowledge-discovery-value-v7",
+        rubricVersion: RUBRIC_VERSIONS[purpose],
         score: null,
         modelId: "unavailable",
         latencyMs: 0,
@@ -133,7 +166,7 @@ export async function judgeKnowledge(
         ...association,
         purpose,
         inputFingerprint: knowledgeHash(state),
-        rubricVersion: "knowledge-decisions-v2",
+        rubricVersion: RUBRIC_VERSIONS[purpose],
         score: null,
         modelId: "unavailable",
         latencyMs: 0,
@@ -159,12 +192,7 @@ export async function judgeKnowledge(
     ...association,
     purpose,
     inputFingerprint: knowledgeHash(state),
-    rubricVersion:
-      purpose === "review"
-        ? "knowledge-review-timing-v4"
-        : purpose === "discovery"
-          ? "knowledge-discovery-value-v7"
-          : "knowledge-decisions-v2",
+    rubricVersion: RUBRIC_VERSIONS[purpose],
     score,
     modelId: result.modelId,
     latencyMs: result.latencyMs,

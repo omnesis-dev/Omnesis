@@ -21,6 +21,7 @@ import { createDatabase, upsertDocuments } from "../../db.js";
 import { createObservationScorer, type ObservationScorerDeps } from "./noting.js";
 import { DEFAULT_SALIENCE_THRESHOLDS } from "./salience.js";
 import type { CognitionDecisionRecord } from "../storage/decisions.js";
+import type { OwnerInterest } from "../interest/lookup.js";
 import type Database from "better-sqlite3";
 
 const log = createLogger("test").child("observation-noting");
@@ -191,6 +192,33 @@ describe("createObservationScorer", () => {
       responseJson: null,
       score: 2,
     });
+  });
+
+  test("asks the interest ledger about the observation and shows the model what it finds", async () => {
+    const ownerInterest: OwnerInterest = {
+      positive: [
+        { text: "Parking permit renewal", source: "task_accepted", ageDays: 30, similarity: 0.66 },
+      ],
+      negative: [],
+      statements: [],
+    };
+    const lookup = vi.fn(async () => ownerInterest);
+    const { decision, requests } = scripted({ consequence: 2, timing: 3, already_known: 0 });
+    const score = createObservationScorer({ ...deps(decision), interest: { lookup } }, "run_note");
+    await score(input());
+    expect(lookup).toHaveBeenCalledExactlyOnceWith({
+      text: "The parking permit expires tonight.\nA fine applies tomorrow.",
+    });
+    expect(requests[0]!.state.owner_interest).toEqual(ownerInterest);
+  });
+
+  test("a ledger with nothing similar leaves the request without owner_interest", async () => {
+    const lookup = vi.fn(async () => null);
+    const { decision, requests } = scripted({ consequence: 2, timing: 3, already_known: 0 });
+    const score = createObservationScorer({ ...deps(decision), interest: { lookup } }, "run_note");
+    await score(input());
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(requests[0]!.state).not.toHaveProperty("owner_interest");
   });
 
   test("the decision model is resolved fresh on every call", async () => {

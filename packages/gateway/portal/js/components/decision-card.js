@@ -41,6 +41,7 @@ export const DECISION_PURPOSES = [
   ["worth-gate", "Worth admission"],
   ["record-check", "Record check"],
   ["task-check", "Task check"],
+  ["task-propose", "Suggestion gate"],
   ["observation-salience", "Observation salience"],
   ["mention-worth", "Date mention worth"],
   ["find-route", "Search routing"],
@@ -52,9 +53,11 @@ const KNOWLEDGE_PURPOSES = new Set(["discovery", "impact", "review", "urgency"])
 
 /**
  * What a run-ledger verdict meant for the work it judged, by purpose (and,
- * for the task check, by question). `label` is the verdict as a word,
- * `sentence` what happened because of it.
+ * for the task gates, by question). `label` is the verdict as a word,
+ * `sentence` what happened because of it. A table with an `adopted` entry
+ * reads a pass scored at or above ADOPT_SCORE as that stronger outcome.
  */
+const ADOPT_SCORE = 1.5;
 const LEDGER_OUTCOMES = {
   "worth-gate": {
     pass: ["pass", "Admitted for agent review."],
@@ -77,6 +80,14 @@ const LEDGER_OUTCOMES = {
     skip: ["repeats", "The note only repeats the task's history, so it was left out."],
     unavailable: ["unavailable", "Not judged; the note was recorded."],
   },
+  "task-propose:tier": {
+    adopted: ["adopted", "Clearly like tasks the owner accepted; made their task at once."],
+    wouldAdopt: ["would adopt", "Not acted on; offered as a suggestion."],
+    pass: ["suggested", "Offered as a suggestion."],
+    skip: ["withheld", "Clearly like suggestions the owner ignored; kept out of the Tasks views."],
+    shadowSkip: ["would withhold", "Not acted on; offered as a suggestion."],
+    unavailable: ["unavailable", "Not judged; offered as a suggestion."],
+  },
   "observation-salience": {
     pass: ["ship", "Belongs in the morning brief."],
     skip: ["hold", "Held out of the morning brief."],
@@ -98,7 +109,10 @@ function ledgerOutcome(d) {
   if (d.reusedFrom)
     return { label: d.verdict, tone: TONES[d.verdict] ?? "neutral", sentence: "Reused a prior judgement; no model call was made for this entry." };
   const table = LEDGER_OUTCOMES[`${d.purpose}:${d.lane}`] ?? LEDGER_OUTCOMES[d.purpose];
-  const key = d.verdict === "skip" && d.enforced === false ? "shadowSkip" : d.verdict;
+  const adopted = d.verdict === "pass" && table?.adopted && d.score >= ADOPT_SCORE;
+  const key = adopted
+    ? d.enforced === false ? "wouldAdopt" : "adopted"
+    : d.verdict === "skip" && d.enforced === false ? "shadowSkip" : d.verdict;
   const entry = table?.[key] ?? table?.[d.verdict];
   if (!entry) return { label: d.verdict, tone: "neutral", sentence: null };
   const tone = d.purpose === "find-route" && d.verdict === "pass" ? "neutral" : TONES[d.verdict] ?? "neutral";
@@ -207,7 +221,7 @@ function Subject({ view }) {
 
 function RecordRef({ view }) {
   if (!view.recordId) return null;
-  if (view.purpose === "task-check")
+  if (view.purpose === "task-check" || view.purpose === "task-propose")
     return html`<a href=${internalKnowledgeHref(`loop:${view.recordId}`)}>Task <code>${view.recordId}</code></a>`;
   if (view.purpose === "observation-salience")
     return html`<a href=${`/portal/debug/cognition/observations/${encodeURIComponent(view.recordId)}`}>Observation <code>${view.recordId}</code></a>`;

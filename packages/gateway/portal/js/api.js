@@ -718,6 +718,13 @@ export const getCognitionWouldPush = (query) =>
 // with its ranked observation items.
 export const getCognitionMorningBrief = (day) =>
   request("GET", "/admin/brain/morning-brief", { query: day ? { day } : {} });
+// The interest ledger: the owner's reactions as signed examples, whether each
+// has its vector, and the suggestion-gate verdicts they fed.
+export const getBrainInterest = (query = {}) => request("GET", "/admin/brain/interest", { query });
+// One lookup the way a decision gate runs it: the past reactions that
+// resemble `text`, or a null result when nothing does.
+export const probeBrainInterest = (text) =>
+  request("GET", "/admin/brain/interest/lookup", { query: { text } });
 export const getCognitionNotes = () => request("GET", "/admin/brain/notes");
 export const getKnowledgeNodes = (query) => request("GET", "/admin/brain/knowledge", { query });
 export const getKnowledgeNode = (id) => request("GET", `/admin/brain/knowledge/${encodeURIComponent(id)}`, { query: { editing: "1" } });
@@ -1592,6 +1599,17 @@ export const getConversationBrief = (conversationId, day) =>
   request(
     "GET",
     `/agent/conversations/${encodeURIComponent(conversationId)}/briefs/${encodeURIComponent(day)}`,
+  );
+/**
+ * The owner's thumbs on one item of a sent brief. `body.reaction` is "up",
+ * "not_interested", "factual_error" or null to take a reaction back; a
+ * thumbs-down may carry a `note`.
+ */
+export const setBriefItemReaction = (conversationId, day, observationId, body) =>
+  request(
+    "PUT",
+    `/agent/conversations/${encodeURIComponent(conversationId)}/briefs/${encodeURIComponent(day)}/items/${encodeURIComponent(observationId)}/reaction`,
+    { body },
   );
 
 // --- Model management ---

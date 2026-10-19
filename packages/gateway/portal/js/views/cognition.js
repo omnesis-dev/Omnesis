@@ -34,6 +34,7 @@ import {
 } from "../api.js";
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { CalibrationTab } from "./cognition-calibration.js";
+import { InterestTab } from "./cognition-interest.js";
 import { KnowledgeMaintenanceTab } from "./cognition-maintenance.js";
 import { KnowledgeTab } from "./cognition-knowledge.js";
 import { BootstrapTab } from "./cognition-bootstrap.js";
@@ -60,6 +61,7 @@ const SECTIONS = [
   { key: "notes", label: "Behavioral notes" },
   { key: "knowledge", label: "Knowledge" },
   { key: "observations", label: "Observations" },
+  { key: "interest", label: "Interest" },
   { key: "maintenance", label: "Maintenance" },
   { key: "calibration", label: "Confidence & feedback" },
   { key: "bootstrap", label: "Bootstrap" },
@@ -1296,6 +1298,10 @@ const SECTION_INTROS = {
     "Observations",
     "What agent runs noted for the morning brief, how the decision model scored each one, and whether it shipped, waits or closed.",
   ],
+  interest: [
+    "Interest",
+    "What the owner told Omnesis they care about — tasks accepted or ignored, thumbs on brief items, statements in the brief — and how the suggestion gate used it.",
+  ],
   calibration: ["Confidence & feedback", "Compare stated confidence with observed outcomes."],
   bootstrap: ["Discovery", "Build knowledge from recent evidence and deliberately explore older history."],
 };
@@ -1317,6 +1323,7 @@ export function CognitionView({ subTab, selectedId, developer = false } = {}) {
           ${section === "maintenance" && html`<${KnowledgeMaintenanceTab} selectedId=${selectedId} />`}
           ${section === "runs" && html`<${RunsTab} selectedId=${selectedId} pulse=${pulse} />`}
           ${section === "notes" && html`<${BehavioralNotesTab} />`}
+          ${section === "interest" && html`<${InterestTab} />`}
           ${section === "calibration" && html`<${CalibrationTab} />`}
           ${section === "bootstrap" && html`<${BootstrapTab} />`}
         </div>

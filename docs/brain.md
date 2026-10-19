@@ -825,10 +825,63 @@ own is applied as an undoable `auto_applied` event, and the rest keep waiting.
 A completion or deadline stays a proposal, since its evidence quotes are not
 kept. An applied change also replaces any proposal still waiting on that task.
 
+## What the user cares about
+
+The Brain learns what the user cares about only from what they did on
+purpose. Three things count: accepting, creating or ignoring a task; a thumbs
+up or down on an item of the morning brief; and what they say about their
+interests in the Morning brief conversation. Each becomes one signed example
+in the interest ledger (`interest_signals`): the text they reacted to, their
+own words when they gave any, and, once the embedder has seen it, a vector of
+that text. Nothing is inferred from silence: a suggestion nobody touched and a
+brief nobody read leave no mark. Taking a reaction back (undoing an accept,
+clearing a thumbs) supersedes the example it produced rather than deleting it.
+
+Accepting a suggestion or creating a task is a positive example; ignoring a
+suggestion is a negative one, with the reason as its note. Striking,
+completing, editing or moving a task says nothing about interest and records
+nothing. A thumbs up on a brief item is positive; a thumbs down asks which of
+two things is wrong. "Not interested" is negative, with whatever the user
+typed or dictated as its note. "Factual error" is not about interest: it marks
+the observation disputed, records no example, and saves the correction as a
+Tell Omnesis note the note agent acts on. In the Morning brief conversation
+the agent has `interest_record`, which turns "I don't care about X" or "more
+of this" into a statement example; the tool exists in no other conversation.
+
+A gate does not score the ledger; it reads it. Before it asks its question, a
+gate looks up the few examples most like the item it judges (by vector when
+both have one from the live embedder, by word overlap otherwise) and puts them
+in its state as `owner_interest`: positive examples, negative examples and
+statements, each with its similarity and age. An empty ledger, or nothing
+above the similarity floor, leaves the request exactly as it was. Three gates
+read it: observation salience at noting time and at the morning recheck,
+the task checks, and the urgency question that schedules new evidence.
+
+A fourth gate is new: `task-propose` judges every suggestion the Brain drafts
+as withhold, suggest or adopt. It is asked only when the ledger holds
+something like the suggestion, and its verdict is bounded by what it was
+shown: adopt needs a positive example or a `more` statement and no negative;
+withhold needs a negative example or a `less` statement; anything else is a
+suggestion as today. `brain.tasks.proposeGate` sets what the verdict does.
+`shadow`, the default, records it and offers the suggestion as before.
+`enforce` withholds (the loop is created ignored: tracked, out of the Tasks
+views, offered again by undoing the `withheld` event in its history) or adopts
+(created accepted, with an `auto_accepted` event the user can undo; undoing
+one is the strongest negative example the ledger records). `off` asks nothing.
+A model outage fails open to a suggestion. `brain.interest.enabled: false`
+stops recording and stops showing examples; the gates then decide as if the
+ledger were empty.
+
+Debug → Cognition → Interest shows the ledger: every example with its
+polarity, source, text and note, whether its vector is ready, and whether it
+was superseded; the thumbs on each brief; the `task-propose` verdicts; and a
+lookup box that shows what a gate would be shown for any text.
+
 ## Auditing the decision model
 
 Every call to the decision model writes one ledger row, whatever it returns:
-the worth gate, the record check, the task checks, observation salience and,
+the worth gate, the record check, the task checks, the suggestion gate
+(`task-propose`), observation salience and,
 outside any Brain run, the date-mention gate (`mention-worth`) and search
 routing (`find-route`) in `cognition_decisions`; discovery, impact, review and
 urgency in `knowledge_decisions`. A row names its run, its document and the

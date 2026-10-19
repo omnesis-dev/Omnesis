@@ -163,6 +163,14 @@ describe("row labels", () => {
     expect(historyEventLabel({ kind: "refused", surface: "tasks" })).toBe("Dismissed in Tasks");
   });
 
+  it("names a suggestion Omnesis adopted or withheld on its own, and offers undo for it", () => {
+    expect(historyEventLabel({ kind: "auto_accepted", surface: "brain" })).toBe("Added by Omnesis");
+    expect(historyEventLabel({ kind: "withheld", surface: "brain" })).toBe("Withheld by Omnesis");
+    expect(autoAppliedUndoSeq([{ kind: "auto_accepted", seq: 7 }], 7)).toBe(7);
+    expect(autoAppliedUndoSeq([{ kind: "withheld", seq: 7 }], 7)).toBe(7);
+    expect(autoAppliedUndoSeq([{ kind: "accepted", seq: 7 }], 7)).toBeNull();
+  });
+
   it("names a change Omnesis applied on its own once", () => {
     expect(historyEventLabel({ kind: "auto_applied", surface: "brain", change: "complete" })).toBe(
       "Marked done by Omnesis",

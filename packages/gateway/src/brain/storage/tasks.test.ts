@@ -11,6 +11,7 @@ import {
   listDecayCandidateLoops,
   listOpenLoopLedger,
 } from "./open-loops.js";
+import { listInterestSignals, listLiveInterestSignals, recordTaskInterest } from "./interest.js";
 import {
   applyTaskCommand,
   autoApplyTaskChange,
@@ -652,5 +653,172 @@ describe("userAuthoredTaskFields", () => {
     const edited = ok(apply({ kind: "edit", id: loop.id, fields: { title: "Call the plumber" } }));
     ok(apply({ kind: "undo", seq: edited.eventSeq! }));
     expect([...readTaskAuthorship(db, loop.id).authored]).toEqual(["title"]);
+  });
+});
+
+describe("interest signals from task events", () => {
+  const live = () => listLiveInterestSignals(db, { limit: 50 });
+  const all = () => listInterestSignals(db, { limit: 50 });
+
+  test("creating a user task records one +1 task_created signal bound to the created event", () => {
+    const result = create("Renew the passport", { description: "Before the Lisbon trip" });
+    expect(all()).toHaveLength(1);
+    expect(live()[0]).toMatchObject({
+      polarity: 1,
+      kind: "task",
+      source: "task_created",
+      subjectText: "Renew the passport\nBefore the Lisbon trip",
+      note: null,
+      loopId: result.loopId,
+      ledgerSeq: result.eventSeq,
+      createdAt: NOW,
+    });
+  });
+
+  test("a task without a description is matched by its title alone", () => {
+    create("Renew the passport");
+    expect(live()[0]?.subjectText).toBe("Renew the passport");
+  });
+
+  test("a note-created task records +1 with the note's conversation", () => {
+    ok(
+      applyTaskCommand(
+        db,
+        {
+          surface: "note",
+          runId: "note:n1",
+          conversationId: "conv_note",
+          kind: "create",
+          id: "loop_note_1",
+          origin: "note",
+          title: "Water the plants",
+        },
+        NOW,
+      ),
+    );
+    expect(live()).toHaveLength(1);
+    expect(live()[0]).toMatchObject({
+      source: "task_created",
+      polarity: 1,
+      loopId: "loop_note_1",
+      conversationId: "conv_note",
+    });
+  });
+
+  test("a Brain suggestion records nothing when created", () => {
+    const loop = brainLoop();
+    expect(all()).toEqual([]);
+    expect(
+      recordTaskInterest(
+        db,
+        { loop, event: { kind: "created", surface: "brain" }, seq: 99, idGen: randomUUID },
+        NOW,
+      ),
+    ).toBeNull();
+    expect(all()).toEqual([]);
+  });
+
+  test("accepting a suggestion records +1 task_accepted", () => {
+    const loop = brainLoop();
+    const accepted = ok(apply({ kind: "accept", id: loop.id }));
+    expect(live()).toHaveLength(1);
+    expect(live()[0]).toMatchObject({
+      polarity: 1,
+      source: "task_accepted",
+      subjectText: loop.title,
+      loopId: loop.id,
+      ledgerSeq: accepted.eventSeq,
+    });
+  });
+
+  test("ignoring a suggestion with a reason records −1 task_ignored carrying the reason", () => {
+    const loop = brainLoop();
+    const ignored = ok(apply({ kind: "ignore", id: loop.id, reason: "The plumber already came" }));
+    expect(live()).toHaveLength(1);
+    expect(live()[0]).toMatchObject({
+      polarity: -1,
+      source: "task_ignored",
+      note: "The plumber already came",
+      loopId: loop.id,
+      ledgerSeq: ignored.eventSeq,
+    });
+    const loop2 = brainLoop("Return the library books");
+    ok(apply({ kind: "ignore", id: loop2.id }));
+    expect(live().find((s) => s.loopId === loop2.id)?.note).toBeNull();
+  });
+
+  test("undoing an acceptance supersedes its signal and records no new one", () => {
+    const loop = brainLoop();
+    const accepted = ok(apply({ kind: "accept", id: loop.id }));
+    ok(apply({ kind: "undo", seq: accepted.eventSeq! }, NOW + 500));
+    expect(live()).toEqual([]);
+    expect(all()).toHaveLength(1);
+    expect(all()[0]).toMatchObject({ source: "task_accepted", supersededAt: NOW + 500 });
+  });
+
+  test("undoing an ignore supersedes its signal", () => {
+    const loop = brainLoop();
+    const ignored = ok(apply({ kind: "ignore", id: loop.id, reason: "not now" }));
+    ok(apply({ kind: "undo", seq: ignored.eventSeq! }));
+    expect(live()).toEqual([]);
+    expect(all().map((s) => s.source)).toEqual(["task_ignored"]);
+  });
+
+  test("undoing a creation supersedes the creation's signal", () => {
+    const { eventSeq } = create("Renew the passport");
+    expect(live()).toHaveLength(1);
+    ok(apply({ kind: "undo", seq: eventSeq! }));
+    expect(live()).toEqual([]);
+    expect(all().map((s) => s.source)).toEqual(["task_created"]);
+  });
+
+  test("undoing an adoption records −1 task_adopt_undone and returns the loop to the suggestions", () => {
+    const loop = createOpenLoop(
+      db,
+      {
+        id: "loop_adopted",
+        createdByRun: "run_gate",
+        title: "Reply to the plumber about the quote",
+        description: "They asked for a decision by Friday.",
+        confidence: 0.8,
+        importance: 0.6,
+        proposal: { tier: "adopt", note: "Adopted" },
+      },
+      NOW,
+    );
+    expect(loop.accepted).toBe(true);
+    const [adoption] = listOpenLoopLedger(db, loop.id);
+    expect(adoption?.event?.kind).toBe("auto_accepted");
+    expect(all()).toEqual([]);
+
+    const undone = ok(apply({ kind: "undo", seq: adoption!.seq }, NOW + 1000));
+    expect(getOpenLoop(db, loop.id)).toMatchObject({
+      origin: "brain",
+      accepted: false,
+      ignored: false,
+    });
+    expect(live()).toHaveLength(1);
+    expect(live()[0]).toMatchObject({
+      polarity: -1,
+      source: "task_adopt_undone",
+      subjectText: "Reply to the plumber about the quote\nThey asked for a decision by Friday.",
+      loopId: loop.id,
+      ledgerSeq: undone.eventSeq,
+      createdAt: NOW + 1000,
+    });
+  });
+
+  test("strike, complete, edit and migrate record nothing", () => {
+    const { loopId } = create("Renew the passport", { scheduledFor: "2026-03-12" });
+    ok(apply({ kind: "edit", id: loopId, fields: { title: "Renew both passports" } }));
+    ok(apply({ kind: "migrate", id: loopId, to: "2026-03-13" }));
+    ok(apply({ kind: "complete", id: loopId }));
+    ok(apply({ kind: "reopen", id: loopId }));
+    ok(apply({ kind: "strike", id: loopId, reason: "no longer needed" }));
+    expect(all().map((s) => s.source)).toEqual(["task_created"]);
+
+    const suggestion = brainLoop();
+    ok(apply({ kind: "strike", id: suggestion.id }));
+    expect(all()).toHaveLength(1);
   });
 });

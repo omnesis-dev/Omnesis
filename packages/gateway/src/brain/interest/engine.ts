@@ -153,20 +153,22 @@ export class InterestEngine {
 
   /**
    * Embed the signals that have no vector yet. One pass at a time; a kick
-   * during a pass schedules another. Resolves when the backlog is empty, the
-   * embedder is absent, or every remaining row has used its attempts.
+   * during a pass runs another after it, and the returned promise covers both.
+   * Resolves when the backlog is empty, the embedder is absent, or every
+   * remaining row has used its attempts.
    */
   embedBacklog(): Promise<void> {
     if (this.draining) {
       this.pendingDrain = true;
       return this.draining;
     }
-    this.draining = this.drain().finally(() => {
-      this.draining = null;
-      if (this.pendingDrain) {
+    this.draining = (async () => {
+      do {
         this.pendingDrain = false;
-        void this.embedBacklog();
-      }
+        await this.drain();
+      } while (this.pendingDrain);
+    })().finally(() => {
+      this.draining = null;
     });
     return this.draining;
   }
@@ -190,10 +192,16 @@ export class InterestEngine {
       this.queryVectors.clear();
       this.deps.log.info(`Interest ledger: ${reset} vectors from another embedder dropped`);
     }
+    // A row gets one attempt per pass, so an embedder outage costs each row
+    // one of its attempts rather than all of them.
+    const attempted = new Set<string>();
     for (;;) {
-      const batch = listUnembeddedInterestSignals(this.deps.db, EMBED_BATCH);
+      const batch = listUnembeddedInterestSignals(this.deps.db, EMBED_BATCH).filter(
+        (signal) => !attempted.has(signal.id),
+      );
       if (batch.length === 0) return;
       for (const signal of batch) {
+        attempted.add(signal.id);
         const text = signal.note ? `${signal.subjectText}\n${signal.note}` : signal.subjectText;
         try {
           const vector = await withTimeout(embedder.embedQuery(text), EMBED_TIMEOUT_MS);

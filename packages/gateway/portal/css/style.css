@@ -18844,3 +18844,25 @@ summary.decision-card-head {
 .kh-col:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -2px; }
 .kh-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 16px; font-size: .8rem; color: var(--text-secondary); }
 .kh-footer > span { max-width: 70ch; }
+
+/* ───── Cognition → Interest (views/cognition-interest.js) ───────────────── */
+.cognition-interest-probe { margin-bottom: 20px; }
+.cognition-interest-probe-input {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+.cognition-interest-probe-input:focus { outline: none; border-color: var(--accent); }
+.cognition-interest-probe-result { display: grid; gap: 10px; margin-top: 4px; }
+.cognition-interest-probe-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.cognition-interest-examples { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 4px; }
+.cognition-interest-example-text { color: var(--text-primary); }
+.cognition-interest-table td.cognition-interest-text { max-width: 480px; white-space: pre-line; overflow-wrap: anywhere; }
+.cognition-interest-table tr.cognition-interest-superseded td { opacity: 0.55; }
+.cognition-interest-backlog { color: var(--warning); }

@@ -36,7 +36,7 @@ import { z } from "zod";
 import { UNATTRIBUTED_CALLER } from "@omnesis/agent";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
-import { answerBody } from "../schemas/index.js";
+import { answerBody, briefItemReactionBody } from "../schemas/index.js";
 import {
   BadGatewayError,
   BadRequestError,
@@ -78,7 +78,8 @@ import type { BriefItemReactor } from "../../brain/observations/brief-reactions.
 import type { AnswerService } from "../../privacy/answer-service.js";
 import type { PrivacyReviewer } from "../../privacy/reviewer.js";
 import type { PrivacyAdminService } from "../../privacy/admin-service.js";
-import type { AuthContext, RouteApp } from "./types.js";
+import type { AppEnv, AuthContext, RouteApp } from "./types.js";
+import type { Context } from "hono";
 
 // Heartbeat interval for the SSE stream. Just below most proxy idle timeouts
 // (60s typical) so the connection stays warm. Hand-tuned to "infrequent but
@@ -648,9 +649,11 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     });
   });
 
-  // What one morning brief in the Morning brief conversation was based on:
-  // the observations it shipped, in its order, with their sources and tasks.
-  app.get("/agent/conversations/:id/briefs/:day", scope.admin(), async (c) => {
+  // The brief the Morning brief conversation sent on a day: the message it
+  // is in the conversation, resolved from the route's conversation and day.
+  async function resolveSentBrief(
+    c: Context<AppEnv>,
+  ): Promise<{ day: string; messageId: string; sentAt?: string }> {
     const service = requireConversationReader();
     callerOf(c);
     const id = c.req.param("id");
@@ -663,6 +666,14 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
       throw new NotFoundError(`conversation ${id} is not the Morning brief conversation`);
     const ref = rec.origin.briefs.find((brief) => brief.day === day);
     if (!ref) throw new NotFoundError(`no morning brief was sent on ${day}`);
+    return { day, messageId: ref.messageId, ...(ref.sentAt ? { sentAt: ref.sentAt } : {}) };
+  }
+
+  // What one morning brief in the Morning brief conversation was based on:
+  // the observations it shipped, in its order, with their sources and tasks.
+  app.get("/agent/conversations/:id/briefs/:day", scope.admin(), async (c) => {
+    const ref = await resolveSentBrief(c);
+    const { day } = ref;
     const detail = deps.dailyBriefDetail?.({ day, messageId: ref.messageId }) ?? {
       sentAt: null,
       items: [],
@@ -675,6 +686,36 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
       items: detail.items,
     });
   });
+
+  // The owner's thumbs on one item of a sent brief. The reactor arrives with
+  // the Brain, after these routes are mounted, so its absence is checked per
+  // request: without it the route does not exist.
+  app.put(
+    "/agent/conversations/:id/briefs/:day/items/:observationId/reaction",
+    scope.admin(),
+    validateJson(briefItemReactionBody),
+    async (c) => {
+      const react = deps.briefItemReaction;
+      if (!react) throw new NotFoundError("brief item reactions are not available");
+      const ref = await resolveSentBrief(c);
+      const observationId = c.req.param("observationId");
+      if (!observationId) throw new BadRequestError("observation id required");
+      const body = c.req.valid("json") as z.infer<typeof briefItemReactionBody>;
+      const result = await react({
+        day: ref.day,
+        messageId: ref.messageId,
+        observationId,
+        reaction: body.reaction,
+        ...(body.note !== undefined ? { note: body.note } : {}),
+        ...(body.noteId !== undefined ? { noteId: body.noteId } : {}),
+      });
+      if (!result.ok) {
+        if (result.reason === "not_an_item") throw new NotFoundError(result.message);
+        throw new ServiceUnavailableError(result.message);
+      }
+      return c.json(result.reaction);
+    },
+  );
 
   app.patch(
     "/agent/conversations/:id",

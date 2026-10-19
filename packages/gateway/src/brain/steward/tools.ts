@@ -130,6 +130,7 @@ import { TASK_NOTE_HISTORY, type TaskChecks } from "../tasks/task-checks.js";
 import { jointContextualEvidence } from "./annotation-gate-evidence.js";
 import { assessPersonWithdrawal } from "./person-withdrawal.js";
 import { PersonProfileReads } from "./person-profile-reads.js";
+import type { TaskProposeGate, TaskProposeVerdict } from "../tasks/task-propose.js";
 import type { InterestLookup } from "../interest/engine.js";
 import type { ObservationScoringInput, ObservationScoringResult } from "../observations/noting.js";
 import type { ConsumedAnnotationRef, RunConsumptionTracker } from "./consumption.js";
@@ -142,7 +143,7 @@ import type {
   TemporalPrecision,
   ToolResult,
 } from "@omnesis/core";
-import type { SearchPort, TemporalReadPort, ToolHandle } from "@omnesis/agent";
+import type { SearchPort, TemporalReadPort, ToolContext, ToolHandle } from "@omnesis/agent";
 import type { WriteGate } from "../../write-gate.js";
 import type { OpenLoopMirror } from "./mirror.js";
 import type { CheckRecord, RecordCheckInput } from "../record-check/check.js";
@@ -317,8 +318,14 @@ export interface CognitionToolDeps {
    */
   taskChecks?: TaskChecks;
   /**
-   * The owner's past reactions, for the gate on new suggestions
-   * (`open_loop_create`). Absent, every suggestion is offered as before.
+   * The gate on new suggestions (`open_loop_create`): from the owner's past
+   * reactions, whether a suggestion is adopted as their task at once, offered,
+   * or withheld. Absent, every suggestion is offered as before.
+   */
+  taskPropose?: TaskProposeGate;
+  /**
+   * The owner's past reactions, read by the gates on tasks. Absent, they
+   * judge without them.
    */
   interest?: InterestLookup;
   /**
@@ -1410,6 +1417,34 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
     },
   };
 
+  /**
+   * The suggestion gate's tier for a loop about to be created. The gate fails
+   * open on its own; this guards the tool against anything else, so a
+   * suggestion is never lost to the gate. Only the run's cancellation passes.
+   */
+  async function judgeProposal(
+    loopId: string,
+    title: string,
+    description: string,
+    docIds: readonly string[],
+    ctx: ToolContext,
+  ): Promise<TaskProposeVerdict> {
+    const offered: TaskProposeVerdict = { tier: "suggest", enforced: false, reason: "" };
+    if (!deps.taskPropose) return offered;
+    try {
+      return await deps.taskPropose.judge(
+        { runId, loopId, documentId: docIds[0] ?? null, title, description },
+        ctx.abortSignal,
+      );
+    } catch (error) {
+      if (ctx.abortSignal?.aborted) throw error;
+      log.warn(
+        `Suggestion gate failed for ${loopId}; suggesting: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return offered;
+    }
+  }
+
   // ---- open_loop_create ----
   const openLoopCreateSchema = z
     .object({
@@ -1496,6 +1531,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         outcomeFence,
       );
       if (refused) return refused;
+      const proposal = await judgeProposal(id, a.title, a.description ?? "", docs.known, ctx);
       const persisted = await writeGate.createOpenLoop(
         {
           id,
@@ -1509,6 +1545,9 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           involved: involved.known,
           docs: docs.known,
           blockedBy: blockedBy.known,
+          ...(proposal.enforced && proposal.tier !== "suggest"
+            ? { proposal: { tier: proposal.tier, note: proposal.reason } }
+            : {}),
         },
         { ...dependencyContext(dependencies.refs), outcomeFence },
         clock(),
@@ -1528,6 +1567,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       log.info(`Cognition Steward run ${runId} created open loop ${id}: ${a.title}`);
       return ok("open_loop.created", {
         loop: loopToModelJson(db, loop, { ledger: false }),
+        proposal: proposal.tier,
+        enforced: proposal.enforced,
         ...(docs.dropped.length > 0 ? { droppedDocIds: docs.dropped } : {}),
         ...(blockedBy.dropped.length > 0 ? { droppedBlockedByIds: blockedBy.dropped } : {}),
         ...(actors.dropped.length > 0 ? { droppedActors: actors.dropped } : {}),

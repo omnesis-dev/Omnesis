@@ -17,7 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import { assertNever } from "@omnesis/core";
-import { recordTaskInterest } from "./interest.js";
+import { recordTaskInterest, supersedeInterestSignals } from "./interest.js";
 import {
   appendOpenLoopLedger,
   createOpenLoop,
@@ -433,6 +433,8 @@ function undo(
   const loop = getOpenLoop(db, entry.loop_id);
   if (!loop) return fail("not_found", "the task no longer exists");
   if (event.kind === "created") {
+    // The creation's signal goes with the task: the owner took it back.
+    supersedeInterestSignals(db, { loopId: loop.id }, now);
     deleteOpenLoop(db, loop.id, { retire: false, now });
     return {
       ok: true,

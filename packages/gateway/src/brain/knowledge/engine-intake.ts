@@ -19,7 +19,7 @@ import {
 } from "./work.js";
 import { historyHorizonFloor } from "./history-horizon.js";
 import { KNOWLEDGE_DISCOVERY_POLICY, listKnowledgeDiscoveryBacklog } from "./discovery.js";
-import { judgeKnowledge } from "./decision.js";
+import { judgeKnowledge, knowledgeUrgencyState } from "./decision.js";
 import { scheduleKnowledgeChange, type MaintenanceArc } from "./planner.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
 /** Bounded writer ops one tick spends withdrawing excluded work; the rest waits a tick. */
@@ -103,11 +103,10 @@ export class KnowledgeIntake {
             ? await judgeKnowledge(
                 this.context.deps.decisions,
                 "urgency",
-                {
-                  documentId: source.id,
-                  title: source.title,
-                  content: source.content.slice(0, 24000),
-                },
+                await knowledgeUrgencyState(
+                  { documentId: source.id, title: source.title, content: source.content },
+                  this.context.deps.interest,
+                ),
                 {
                   nodeId: `source:${source.id}`,
                   ...(decisionId

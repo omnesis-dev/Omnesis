@@ -6,6 +6,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
 import { createObservation, transitionObservation } from "../storage/observations.js";
+import { upsertBriefItemReaction } from "../storage/interest.js";
 import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { readDailyBriefDetail, shippedBriefItems } from "./brief-detail.js";
@@ -114,6 +115,49 @@ describe("morning brief detail", () => {
         },
       ],
     });
+  });
+
+  test("an item carries the owner's reaction, with their note when they wrote one", () => {
+    send(["obs_offer", "obs_venue"]);
+    upsertBriefItemReaction(
+      db,
+      {
+        observationId: "obs_offer",
+        day: DAY,
+        messageId: "msg_1",
+        reaction: "not_interested",
+        note: "Loans are handled by my accountant.",
+      },
+      NOW + 1_000,
+    );
+    upsertBriefItemReaction(
+      db,
+      { observationId: "obs_venue", day: DAY, messageId: "msg_1", reaction: "up" },
+      NOW + 2_000,
+    );
+    // A reaction on another message's copy of an item is not this brief's.
+    upsertBriefItemReaction(
+      db,
+      { observationId: "obs_points", day: "2026-07-01", messageId: "msg_0", reaction: "up" },
+      NOW,
+    );
+    const items = readDailyBriefDetail(db, { day: DAY, messageId: "msg_1" }).items;
+    expect(items.map((i) => i.reaction)).toEqual([
+      {
+        kind: "not_interested",
+        note: "Loans are handled by my accountant.",
+        at: "2026-07-02T06:02:41.055Z",
+      },
+      { kind: "up", at: "2026-07-02T06:02:42.055Z" },
+    ]);
+    expect(items[1]!.reaction).not.toHaveProperty("note");
+  });
+
+  test("an item without a reaction has none", () => {
+    send(["obs_venue"]);
+    expect(readDailyBriefDetail(db, { day: DAY, messageId: "msg_1" }).items[0]).not.toHaveProperty(
+      "reaction",
+    );
   });
 
   test("a task reads its current title and state", () => {

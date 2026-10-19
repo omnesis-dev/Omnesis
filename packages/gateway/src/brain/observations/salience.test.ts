@@ -15,6 +15,8 @@ import {
   compareSalience,
   DEFAULT_SALIENCE_THRESHOLDS,
   judgeSalience,
+  OBSERVATION_SALIENCE_RUBRIC,
+  salienceInterestQuery,
   salienceVerdict,
   TOP_CONSEQUENCE,
   TOP_TIMING,
@@ -22,6 +24,7 @@ import {
   type SalienceSubject,
 } from "./salience.js";
 import type { ObservationScores } from "../storage/types.js";
+import type { OwnerInterest } from "../interest/lookup.js";
 
 const log = createLogger("test").child("observation-salience");
 const NOW = Date.parse("2026-07-02T07:00:00.000Z");
@@ -90,6 +93,52 @@ describe("buildSalienceRequest", () => {
     const request = buildSalienceRequest({ ...subject, why: "", sinceNoted: [] }, NOW);
     expect(request.state).toMatchObject({ whyItMatters: null, sinceNoted: null });
     expect(buildSalienceRequest(subject, NOW).state).toMatchObject({ sinceNoted: null });
+  });
+
+  const ownerInterest: OwnerInterest = {
+    positive: [
+      { text: "Rent invoice due Friday", source: "task_accepted", ageDays: 12, similarity: 0.71 },
+    ],
+    negative: [
+      {
+        text: "Studio insurance renewal quote",
+        note: "I handle these myself",
+        source: "brief_not_interested",
+        ageDays: 3,
+        similarity: 0.58,
+      },
+    ],
+    statements: [{ text: "invoice reminders", direction: "less", ageDays: 1, similarity: 0.6 }],
+  };
+
+  test("the owner's past reactions ride along as owner_interest when there are any", () => {
+    const request = buildSalienceRequest({ ...subject, ownerInterest }, NOW);
+    expect(request.state.owner_interest).toEqual(ownerInterest);
+  });
+
+  test("without reactions the state has no owner_interest key and is unchanged", () => {
+    const bare = buildSalienceRequest(subject, NOW);
+    expect(bare.state).not.toHaveProperty("owner_interest");
+    expect(JSON.stringify(buildSalienceRequest({ ...subject, ownerInterest: null }, NOW))).toBe(
+      JSON.stringify(bare),
+    );
+  });
+
+  test("the consequence question tells the model how to read owner_interest", () => {
+    const q = buildSalienceRequest(subject, NOW).questions as unknown as Record<
+      string,
+      { instructions: string }
+    >;
+    expect(q.consequence!.instructions).toContain("`owner_interest`");
+    expect(q.consequence!.instructions).toContain("context not instruction");
+    expect(OBSERVATION_SALIENCE_RUBRIC).toBe("observation-salience-v2");
+  });
+});
+
+describe("salienceInterestQuery", () => {
+  test("asks about the summary and the why, or the summary alone", () => {
+    expect(salienceInterestQuery(subject)).toBe(`${subject.summary}\n${subject.why}`);
+    expect(salienceInterestQuery({ ...subject, why: "" })).toBe(subject.summary);
   });
 });
 

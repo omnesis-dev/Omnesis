@@ -211,3 +211,117 @@
 .brief-task-chip.resolved .doc-chip-title {
   text-decoration: line-through;
 }
+
+/* Thumbs under each item. Quiet until hovered or pressed. */
+.brief-item-reactions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 22px;
+}
+.brief-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.brief-thumb:hover {
+  color: var(--text-primary);
+  background: var(--overlay-hover);
+}
+.brief-thumb[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.brief-thumb-label {
+  margin-left: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.brief-thumb-error {
+  margin-left: 4px;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+/* The "Not useful?" dialog. */
+.brief-reaction-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.brief-reaction-choices {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.brief-reaction-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+.brief-reaction-option:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.brief-reaction-option input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.brief-reaction-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.brief-reaction-text strong {
+  color: var(--text-primary);
+  font-size: 12.5px;
+}
+.brief-reaction-text small {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+.brief-reaction-note-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.brief-reaction-note {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.brief-reaction-note:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.brief-reaction-remove {
+  margin-right: auto;
+}

@@ -174,6 +174,24 @@ describe("run-ledger decisions", () => {
     expect(flat(task("same_task", "pass"))).not.toContain("About");
   });
 
+  it("reads the suggestion gate's three tiers from the verdict and score, and links the task", () => {
+    const propose = (over) => DecisionCard({ decision: ledger({ purpose: "task-propose", lane: "tier", threshold: 1, recordId: "loop_new", documentId: null, subjectDocumentId: null, subjectDoc: null, ...over }) });
+    const adopted = flat(propose({ verdict: "pass", score: 2 }));
+    expect(adopted).toContain("Suggestion gate");
+    expect(adopted).toContain("adopted");
+    expect(adopted).toContain("made their task at once");
+    expect(flat(propose({ verdict: "pass", score: 2, enforced: false }))).toContain("would adopt");
+    expect(flat(propose({ verdict: "pass", score: 1 }))).toContain("Offered as a suggestion");
+    expect(flat(propose({ verdict: "pass", score: 1 }))).not.toContain("adopted");
+    expect(flat(propose({ verdict: "skip", score: 0 }))).toContain("kept out of the Tasks views");
+    expect(flat(propose({ verdict: "skip", score: 0, enforced: false }))).toContain("would withhold");
+    expect(flat(propose({ verdict: "unavailable", score: null }))).toContain("Not judged; offered as a suggestion");
+    const link = hosts(propose({ verdict: "pass", score: 2 })).find((n) => n.type === "a" && String(n.props.href).includes("loop_new"));
+    expect(link).toBeDefined();
+    // A record-check pass scored high is still only allowed: no other table reads a score as adoption.
+    expect(flat(DecisionCard({ decision: ledger({ purpose: "record-check", verdict: "pass", score: 2.6, recordId: "ta_example" }) }))).not.toContain("adopted");
+  });
+
   it("covers the decisions made outside any Brain run", () => {
     const mention = flat(DecisionCard({ decision: ledger({ purpose: "mention-worth", lane: "date-mentions", verdict: "skip", runId: null }) }));
     expect(mention).toContain("Date mention worth");
@@ -283,7 +301,7 @@ describe("layouts", () => {
   it("offers every purpose the gateway records", () => {
     expect(DECISION_PURPOSES.map(([value]) => value)).toEqual([
       "discovery", "impact", "review", "urgency", "worth-gate", "record-check", "task-check",
-      "observation-salience", "mention-worth", "find-route",
+      "task-propose", "observation-salience", "mention-worth", "find-route",
     ]);
     expect(decisionView(ledger({ purpose: "find-route", lane: "direct", verdict: "pass" })).outcome.label).toBe("index search");
   });

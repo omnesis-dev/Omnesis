@@ -55,6 +55,8 @@ import {
   TASK_CHECK_SPEND_MECHANISM,
   taskCheckPayloadCapture,
 } from "./tasks/task-checks.js";
+import { TaskProposeGate, TASK_PROPOSE_SPEND_MECHANISM } from "./tasks/task-propose.js";
+import { captureOwnerDecisionPayload } from "./decision-payload.js";
 import { settleTaskProposals } from "./tasks/settle-proposals.js";
 import { cognitionSpendDay } from "./storage/spend.js";
 import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
@@ -468,6 +470,33 @@ export async function bootBriefs(deps: {
             ...(rq.interest ? { interest: rq.interest } : {}),
           })
         : undefined;
+      const taskPropose =
+        rq.getDecision && rq.interest
+          ? new TaskProposeGate({
+              getDecision: rq.getDecision,
+              getMode: () => rq.getSettings().tasks.proposeGate,
+              interest: rq.interest,
+              recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
+              // The loop's node does not exist yet, so the subjects are its documents.
+              capturePayload: (input) =>
+                captureOwnerDecisionPayload(
+                  rq.db,
+                  { kind: "loop", id: input.loopId },
+                  input.documentId === null ? [] : [input.documentId],
+                ) ?? undefined,
+              recordSpend: (modelId, inputTokens) =>
+                recordDecisionSpend(
+                  deps.writeGate,
+                  cognitionSpendDay((rq.clock ?? Date.now)()),
+                  TASK_PROPOSE_SPEND_MECHANISM,
+                  modelId,
+                  inputTokens,
+                ),
+              clock: rq.clock ?? Date.now,
+              idGen: () => crypto.randomUUID(),
+              log: log.child("task-propose"),
+            })
+          : undefined;
       runtimeSeams = await createCognitionRuntime({
         knowledge,
         db: rq.db,
@@ -507,6 +536,7 @@ export async function bootBriefs(deps: {
             }
           : {}),
         ...(taskChecks ? { taskChecks } : {}),
+        ...(taskPropose ? { taskPropose } : {}),
         ...(rq.interest ? { interest: rq.interest } : {}),
         ...(rq.cognition.policyStore ? { policyStore: rq.cognition.policyStore } : {}),
         getSettings: rq.getSettings,
