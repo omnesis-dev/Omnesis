@@ -10,6 +10,9 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { ephemeralResultArrived, MessageBubble, prettyToolName, renderPart } from "./parts.js";
 import { initialState, reducer } from "../../views/agent-reducer.js";
 
+// Card lifecycle tests use LinkeDOM; DOMPurify requires a browser window at import time.
+vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
+
 describe("ephemeralResultArrived", () => {
   it("is false until a result lands (spinner stays, rotation parked)", () => {
     expect(ephemeralResultArrived({ result: null })).toBe(false);
