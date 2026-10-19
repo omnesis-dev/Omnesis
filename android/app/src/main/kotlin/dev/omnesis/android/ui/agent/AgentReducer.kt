@@ -55,6 +55,30 @@ object AgentReducer {
     fun reduce(state: AgentChatState, event: AgentEvent): AgentChatState {
         if (event is AgentEvent.Unknown) return state
 
+        val incomingTool = when (event) {
+            is AgentEvent.ToolInputStart -> event.messageId to event.tool
+            is AgentEvent.ToolStart -> event.messageId to event.tool
+            else -> null
+        }
+        if (incomingTool != null && incomingTool.second in EPHEMERAL_TOOLS &&
+            (state.dismissToolsUntilUserMessage || incomingTool.first in state.dismissedToolMessageIds)) {
+            val id = when (event) {
+                is AgentEvent.ToolStart -> event.toolCallId
+                is AgentEvent.ToolInputStart -> event.toolCallId
+                else -> return state
+            }
+            return state.updateAssistantById(incomingTool.first) { assistant ->
+                val index = assistant.parts.indexOfLast { it is AgentPart.Tool && it.call.toolCallId == id }
+                val previous = (assistant.parts.getOrNull(index) as? AgentPart.Tool)?.call
+                    ?: AgentToolCall(id, incomingTool.second)
+                val call = if (event is AgentEvent.ToolStart) previous.copy(args = event.args, argsKnown = true,
+                    argsSummary = event.argsSummary ?: summarizeArgs(event.tool, event.args), interrupted = true, tailDismissed = true)
+                    else previous.copy(interrupted = true, tailDismissed = true)
+                if (index >= 0) assistant.replaceAt(index, AgentPart.Tool(call))
+                else assistant.copy(parts = assistant.parts + AgentPart.Tool(call))
+            }
+        }
+
         // Causality gate: park turn-extending events behind an active ephemeral tool.
         if (eventAppendsToTurn(event)) {
             val gateIdx = activeEphemeralGateIndex(state)
@@ -64,13 +88,14 @@ object AgentReducer {
         return when (event) {
             is AgentEvent.UserMessage -> {
                 val have = state.turns.any { it is AgentTurn.User && it.id == event.userMessageId }
-                if (have) state
-                else state.copy(turns = state.turns + AgentTurn.User(event.userMessageId, event.text))
+                if (have) state.copy(dismissToolsUntilUserMessage = false)
+                else state.copy(turns = state.turns + AgentTurn.User(event.userMessageId, event.text), dismissToolsUntilUserMessage = false)
             }
 
             is AgentEvent.MessageStart ->
                 state.copy(
                     turns = state.turns + AgentTurn.Assistant(id = event.messageId),
+                    dismissedToolMessageIds = if (state.dismissToolsUntilUserMessage) state.dismissedToolMessageIds + event.messageId else state.dismissedToolMessageIds,
                     busy = true,
                     lastTurnError = null,
                 )
@@ -119,7 +144,7 @@ object AgentReducer {
                 if (result is AgentToolResult.PlanUpdated) {
                     state.copy(planItems = result.items)
                 } else {
-                    var next = state.updateLastAssistant { a ->
+                    var next = state.updateAssistantById(event.messageId) { a ->
                         val idx = a.parts.indexOfLast { it is AgentPart.Tool && it.call.toolCallId == event.toolCallId }
                         if (idx < 0) {
                             a
@@ -147,12 +172,12 @@ object AgentReducer {
             // that already exists), so it bypasses the causality gate. Order is by index, not
             // arrival, so out-of-order completion still renders correctly. Mirrors the portal's
             // `agent.tool.child.start` reduction.
-            is AgentEvent.ToolChildStart -> applyToolChild(state, event.toolCallId, event.childIndex) { existing ->
+            is AgentEvent.ToolChildStart -> applyToolChild(state, event.messageId, event.toolCallId, event.childIndex) { existing ->
                 existing?.copy(tool = event.tool, argsSummary = event.argsSummary ?: existing.argsSummary)
                     ?: AgentToolChild(index = event.childIndex, tool = event.tool, argsSummary = event.argsSummary ?: "")
             }
 
-            is AgentEvent.ToolChildResult -> applyToolChild(state, event.toolCallId, event.childIndex) { existing ->
+            is AgentEvent.ToolChildResult -> applyToolChild(state, event.messageId, event.toolCallId, event.childIndex) { existing ->
                 existing?.copy(result = event.result)
                     ?: AgentToolChild(index = event.childIndex, result = event.result)
             }
@@ -309,6 +334,21 @@ object AgentReducer {
 
             is AgentEvent.Unknown -> state
         }
+    }
+
+    /** Preserve queued prose/citations before removing interrupted transient tool progress. */
+    fun dismissInterruptedTools(state: AgentChatState): AgentChatState {
+        val drained = forceFlushActiveGates(state)
+        return drained.copy(
+            dismissedToolMessageIds = drained.dismissedToolMessageIds + drained.turns.filterIsInstance<AgentTurn.Assistant>().map { it.id },
+            dismissToolsUntilUserMessage = true,
+            turns = drained.turns.map { turn ->
+                if (turn is AgentTurn.Assistant) turn.copy(parts = turn.parts.map { part ->
+                    if (part is AgentPart.Tool && part.call.tool in EPHEMERAL_TOOLS)
+                        AgentPart.Tool(part.call.copy(interrupted = true, tailDismissed = true)) else part
+                }) else turn
+            },
+        )
     }
 
     /** UI-driven: an ephemeral card's dismiss animation finished — drain its parked events. */
@@ -771,12 +811,13 @@ object AgentReducer {
      */
     private fun applyToolChild(
         state: AgentChatState,
+        messageId: String,
         toolCallId: String,
         childIndex: Int,
         upsert: (AgentToolChild?) -> AgentToolChild,
-    ): AgentChatState = state.updateLastAssistant { a ->
+    ): AgentChatState = state.updateAssistantById(messageId) { a ->
         val idx = a.parts.indexOfLast { it is AgentPart.Tool && it.call.toolCallId == toolCallId }
-        if (idx < 0) return@updateLastAssistant a
+        if (idx < 0) return@updateAssistantById a
         val call = (a.parts[idx] as AgentPart.Tool).call
         val existing = call.children.firstOrNull { it.index == childIndex }
         val merged = upsert(existing)

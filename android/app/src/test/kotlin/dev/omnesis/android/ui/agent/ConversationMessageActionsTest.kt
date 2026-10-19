@@ -54,6 +54,8 @@ class ConversationMessageActionsTest {
         val state = AgentCoordinator.UiState(hasClient = true, controlsAvailable = true,
             controls = ConversationControls(queuedMessages = queue, capabilities = ConversationCapabilities(coalescedQueue = true, queueSendNow = true)))
         compose.setContent { OmnesisTheme { QueuedConversationBubble(state) { sent = it } } }
+        compose.onNodeWithText("send now").performClick()
+        compose.runOnIdle { assertEquals(listOf("first", "second"), sent); sent = emptyList() }
         compose.onNodeWithText("Include totals\n\nKeep it concise").assertExists().performTouchInput { longClick() }
         compose.onNodeWithText("Failed message").assertDoesNotExist()
         compose.onNodeWithText("Send now").performClick()
@@ -69,5 +71,6 @@ class ConversationMessageActionsTest {
         compose.onNodeWithText("Include totals").performTouchInput { longClick() }
         compose.onNodeWithText("Copy").assertExists()
         compose.onNodeWithText("Send now").assertDoesNotExist()
+        compose.onNodeWithText("send now").assertDoesNotExist()
     }
 }

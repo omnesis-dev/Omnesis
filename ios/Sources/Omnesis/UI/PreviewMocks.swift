@@ -5049,6 +5049,25 @@ enum PreviewMocks {
         connected: true
     )
 
+    static let conversationClarificationTurn = AgentTurn.assistant(AgentAssistantTurn(
+        id: "clarification-turn",
+        parts: [
+            .text("I can compare your activity."),
+            .tool(AgentToolCall(
+                toolCallId: "clarification-call", tool: "ask_clarification",
+                args: JSONAny(value: [:]), argsSummary: "Choose a period", argsKnown: true,
+                result: .unknown(kind: "structured", raw: JSONAny(value: [
+                    "kind": "structured", "resultType": "conversation.clarification",
+                    "data": [
+                        "id": "clarification-example", "question": "Which period should I compare?",
+                        "choices": [["label": "This month"], ["label": "This year"]],
+                    ],
+                ])), durationMs: 1
+            )),
+            .text("Which period should I compare? This month or this year?"),
+        ], historyCompleted: true
+    ))
+
     static let conversationFollowupDraft = "Use this year instead, and include a short summary."
 
     static let conversationControls = ConversationControls(

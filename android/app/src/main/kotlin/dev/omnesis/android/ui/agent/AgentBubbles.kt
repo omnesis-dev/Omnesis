@@ -166,11 +166,10 @@ fun AssistantTurn(
                     )
 
                 is AgentPart.Tool ->
-                    if (turn.stopReason == null || part.call.tool !in AgentReducer.EPHEMERAL_TOOLS) {
-                        ToolCard(
-                            part.call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument,
-                            followingAnswerText = lastAnswerIndex > index,
-                        )
+                    if ((turn.stopReason == null || part.call.tool !in AgentReducer.EPHEMERAL_TOOLS || part.call.interrupted) && !isClarificationResult(part.call) && interruptedToolVisible(part.call)) {
+                        val call = if (part.call.interrupted) part.call.copy(children = part.call.children.filter { it.result is AgentToolResult.ErrorResult }) else part.call
+                        ToolCard(call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument,
+                            freeze = call.interrupted, followingAnswerText = lastAnswerIndex > index)
                     }
 
                 // A sub-agent the parent spawned via `spawn_subagent` — a

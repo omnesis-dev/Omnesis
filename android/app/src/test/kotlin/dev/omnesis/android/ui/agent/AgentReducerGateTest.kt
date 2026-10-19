@@ -41,6 +41,71 @@ class AgentReducerGateTest {
     private fun AgentChatState.texts() = parts().filterIsInstance<AgentPart.Text>()
 
     @Test
+    fun interruptDrainsDurableTailAndSuppressesLateToolsUntilNextUserTurn() {
+        var state = reduce(AgentChatState(), start(), toolStart("search", "search_documents"), toolResult("search"), text("Keep this answer"))
+        state = AgentReducer.dismissInterruptedTools(state)
+        assertEquals(listOf(AgentPart.Text("Keep this answer")), state.parts().filterNot { it is AgentPart.Tool && !interruptedToolVisible(it.call) })
+        state = reduce(state, toolStart("late", "search_documents"), toolResult("late"))
+        assertEquals(listOf(AgentPart.Text("Keep this answer")), state.parts().filterNot { it is AgentPart.Tool && !interruptedToolVisible(it.call) })
+        state = reduce(state, toolStart("citation", "annotate"))
+        assertTrue(state.parts().any { it is AgentPart.Tool && it.call.tool == "annotate" })
+        state = reduce(state, AgentEvent.UserMessage(S, "user-next", "Follow up"), AgentEvent.MessageStart(S, "next"))
+        state = reduce(state, toolStart("stale", "search_documents"))
+        assertTrue(state.parts().isEmpty())
+        state = reduce(state, AgentEvent.ToolStart(S, "next", "fresh", "search_documents", JsonNull, null))
+        assertEquals("fresh", (state.parts().single() as AgentPart.Tool).call.toolCallId)
+    }
+
+    @Test
+    fun interruptedToolRetainsLateFailuresWithoutShowingProgressAgain() {
+        var state = reduce(AgentChatState(), start(), toolStart("search", "search_documents"))
+        state = AgentReducer.dismissInterruptedTools(state)
+        assertFalse(interruptedToolVisible(state.tool("search")))
+        state = reduce(state, AgentEvent.ToolResult(S, M, "search", AgentToolResult.ErrorResult("offline", "Try again"), 1.0))
+        assertTrue(interruptedToolVisible(state.tool("search")))
+        assertTrue(state.tool("search").tailDismissed)
+        state = reduce(state, toolStart("late", "fetch_document"),
+            AgentEvent.ToolResult(S, M, "late", AgentToolResult.ErrorResult("denied", "Access denied"), 1.0))
+        assertTrue(interruptedToolVisible(state.tool("late")))
+        assertTrue(state.tool("late").interrupted)
+    }
+
+    @Test
+    fun interruptedBatchLateFailureStaysOnOriginalTurn() {
+        var state = reduce(AgentChatState(), start(), toolStart("batch", "search_many"))
+        state = AgentReducer.dismissInterruptedTools(state)
+        state = reduce(state, AgentEvent.UserMessage(S, "user-next", "Follow up"), AgentEvent.MessageStart(S, "next"),
+            AgentEvent.ToolChildResult(S, M, "batch", 0, AgentToolResult.ErrorResult("denied", "Access denied")))
+        assertTrue(state.parts().isEmpty())
+        val previous = state.turns.filterIsInstance<AgentTurn.Assistant>().first()
+        assertTrue(interruptedToolVisible((previous.parts.single() as AgentPart.Tool).call))
+    }
+
+    @Test
+    fun duplicateUserReceiptReleasesInterruptionBarrierButOldRequestStaysDismissed() {
+        val user = AgentEvent.UserMessage(S, "user", "Follow up")
+        var state = reduce(AgentChatState(), user, start())
+        state = AgentReducer.dismissInterruptedTools(state)
+        state = reduce(state, AgentEvent.MessageStart(S, "interrupted-request"))
+        state = reduce(state, user, AgentEvent.MessageStart(S, "new-request"))
+        assertFalse(state.dismissToolsUntilUserMessage)
+        assertEquals(1, state.turns.filterIsInstance<AgentTurn.User>().size)
+        state = reduce(state, AgentEvent.ToolStart(S, "interrupted-request", "late", "search_documents", JsonNull, null))
+        assertTrue(state.parts().isEmpty())
+        state = reduce(state, AgentEvent.ToolStart(S, "new-request", "fresh", "search_documents", JsonNull, null))
+        assertEquals("fresh", (state.parts().single() as AgentPart.Tool).call.toolCallId)
+    }
+
+    @Test
+    fun clarificationToolNeverRendersAnUnknownStructuredCard() {
+        val state = reduce(AgentChatState(), start(),
+            AgentEvent.ToolInputStart(S, M, "question", "ask_clarification"),
+            toolStart("question", "ask_clarification"),
+            AgentEvent.ToolResult(S, M, "question", AgentToolResult.Structured("conversation.clarification", kotlinx.serialization.json.Json.parseToJsonElement("""{"id":"q","question":"Which?","choices":[{"label":"One"},{"label":"Two"}]}""")), 1.0))
+        assertTrue(isClarificationResult((state.parts().single() as AgentPart.Tool).call))
+    }
+
+    @Test
     fun message_start_claims_the_busy_turn_and_clears_stale_action_error() {
         val state = AgentChatState(busy = false, lastTurnError = "Stop failed: offline")
 

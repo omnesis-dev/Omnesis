@@ -65,14 +65,14 @@ class ConversationSubmissionTest {
         Dispatchers.resetMain()
     }
 
-    private fun coordinator(store: AgentComposerStore = AgentComposerStore(), supported: Boolean = true, busy: Boolean = true, turns: List<AgentTurn> = emptyList()): AgentCoordinator {
+    private fun coordinator(store: AgentComposerStore = AgentComposerStore(), supported: Boolean = true, busy: Boolean = true, turns: List<AgentTurn> = emptyList(), sendNow: Boolean = false): AgentCoordinator {
         val http = OkHttpClient()
         val base = server.url("/").toString()
         return AgentCoordinator(store).also {
             coordinators += it
             it.attachForTesting(AgentClient(GatewayHttp(http, base, "example-token")), AgentEventSource(http, base, "example-token"),
                 AgentCoordinator.UiState(sessionId = "session-one", hasClient = true, controlsAvailable = supported,
-                    controls = ConversationControls(busy = busy), chat = AgentChatState(busy = busy, turns = turns), composer = store.read("", "session-one")))
+                    controls = ConversationControls(busy = busy, capabilities = dev.omnesis.android.transport.client.ConversationCapabilities(queueSendNow = sendNow)), chat = AgentChatState(busy = busy, turns = turns), composer = store.read("", "session-one")))
         }
     }
 
@@ -80,6 +80,19 @@ class ConversationSubmissionTest {
         val deadline = System.currentTimeMillis() + 5_000
         while (!predicate() && System.currentTimeMillis() < deadline) Thread.sleep(10)
         assertTrue("Expected asynchronous state to settle", predicate())
+    }
+
+    @Test fun sendNowDismissesImmediatelyAndFailureKeepsContentAndReleasesBarrier() {
+        val coord = coordinator(sendNow = true, turns = listOf(AgentTurn.Assistant("old", listOf(
+            AgentPart.Text("Saved answer"), AgentPart.Tool(AgentToolCall("search", "search_documents")),
+        ))))
+        coord.sendQueuedNow(listOf("queued"))
+        val assistant = coord.state.value.chat.turns.single() as AgentTurn.Assistant
+        assertEquals(AgentPart.Text("Saved answer"), assistant.parts.first())
+        assertFalse(interruptedToolVisible((assistant.parts.last() as AgentPart.Tool).call))
+        await { coord.state.value.chat.lastTurnError != null }
+        assertFalse(coord.state.value.chat.dismissToolsUntilUserMessage)
+        assertTrue(coord.state.value.chat.lastTurnError!!.startsWith("Could not send queued messages"))
     }
 
     @Test fun uncertainDeliverySurvivesCoordinatorRecreationAndRetriesSameId() {

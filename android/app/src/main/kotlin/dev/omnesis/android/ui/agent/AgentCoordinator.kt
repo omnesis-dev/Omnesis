@@ -145,6 +145,8 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         val sid = st.sessionId ?: return
         val c = client ?: return
         if (!st.controlsAvailable || !st.controls.capabilities.queueSendNow || submissionIds.isEmpty()) return
+        cancelEphemeralGateTimeout()
+        _state.update { it.copy(chat = AgentReducer.dismissInterruptedTools(it.chat)) }
         scope.launch {
             try {
                 val controls = c.sendQueuedNow(sid, submissionIds)
@@ -155,7 +157,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 throw error
             } catch (error: Throwable) {
                 if (client === c && _state.value.sessionId == sid) {
-                    _state.update { it.copy(chat = it.chat.copy(lastTurnError = "Could not send queued messages: ${classifyGatewayError(error)}")) }
+                    _state.update { it.copy(chat = it.chat.copy(dismissToolsUntilUserMessage = false, lastTurnError = "Could not send queued messages: ${classifyGatewayError(error)}")) }
                 }
             }
         }

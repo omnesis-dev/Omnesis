@@ -183,6 +183,30 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
         coordinator.saveDraft("", for: coordinator.composerDraftKey)
     }
 
+    func testSendNowFailureRetainsDraftQueueAndDurableAnswer() async {
+        let coordinator = coordinator()
+        coordinator.saveDraft("Unsent draft", for: coordinator.composerDraftKey)
+        ConversationControlsStub.responses["controls"] = (
+            200,
+            #"{"busy":true,"capabilities":{"queueSendNow":true},"queuedMessages":[{"id":"queued","text":"Follow-up","status":"queued"}]}"#
+        )
+        ConversationControlsStub.responses["send-now"] = (503, "Unavailable")
+        await coordinator.refreshConversationControls()
+        await coordinator.applyEventForTesting(.messageStart(sessionId: "conversation-example", messageId: "old"))
+        await coordinator.applyEventForTesting(.textDelta(sessionId: "conversation-example", messageId: "old", delta: "Durable answer"))
+        await coordinator.sendQueuedMessagesNow(submissionIds: ["queued"])
+        XCTAssertNotNil(coordinator.submissionError)
+        XCTAssertFalse(coordinator.submitting)
+        XCTAssertEqual(coordinator.conversationControls?.queued.map(\.id), ["queued"])
+        XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "Unsent draft")
+        guard case .assistant(let turn) = coordinator.turns.last else { return XCTFail("Missing answer") }
+        XCTAssertTrue(turn.parts.contains(.text("Durable answer")))
+        XCTAssertTrue(coordinator.dismissedConversationActivity.messageIds.contains("old"))
+        await coordinator.applyEventForTesting(.messageStart(sessionId: "conversation-example", messageId: "still-running"))
+        XCTAssertFalse(coordinator.dismissedConversationActivity.messageIds.contains("still-running"))
+        coordinator.saveDraft("", for: coordinator.composerDraftKey)
+    }
+
     func testNewGatewayKeepsRetryIdentityAfterAmbiguousFailure() async throws {
         let coordinator = coordinator()
         ConversationControlsStub.responses["controls"] = (200, #"{"busy":true,"queuedMessages":[],"futureField":42}"#)

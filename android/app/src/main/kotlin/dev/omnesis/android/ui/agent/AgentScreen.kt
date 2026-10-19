@@ -928,14 +928,17 @@ private fun Transcript(
                 alignMenuEnd = true,
                 onAction = if (state.canCompose) ({ onEditPrompt(turn.text) }) else null,
             ) { UserBubble(turn.text) }
-            is AgentTurn.Assistant -> ConversationMessageActions(
-                text = turn.parts.filterIsInstance<AgentPart.Text>().joinToString("\n\n") { it.text },
-            ) {
-                AssistantTurn(
-                    turn, catalog, onFlushEphemeral, onOpenDocument,
-                    citations = state.chat.citations,
-                    isStreaming = state.chat.isTurnStreaming(turn),
-                )
+            is AgentTurn.Assistant -> {
+                val presented = clarificationPresentation(turn, state.controls.pendingClarification?.id.takeIf { state.terminalFailure == null && state.liveSessionMissingReason == null })
+                ConversationMessageActions(
+                    text = turn.parts.filterIsInstance<AgentPart.Text>().joinToString("\n\n") { it.text },
+                ) {
+                    AssistantTurn(
+                        presented, catalog, onFlushEphemeral, onOpenDocument,
+                        citations = state.chat.citations,
+                        isStreaming = state.chat.isTurnStreaming(turn),
+                    )
+                }
             }
         }
     }

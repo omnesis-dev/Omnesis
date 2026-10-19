@@ -193,6 +193,7 @@ data class AgentToolCall(
     val durationMs: Double? = null,
     val pendingTail: List<AgentEvent> = emptyList(),
     val tailDismissed: Boolean = false,
+    val interrupted: Boolean = false,
     /**
      * Per-child progress for a batch retrieval call (`search_many` / `fetch_many`), attached LIVE
      * from `agent.tool.child.*` events and kept sorted by [AgentToolChild.index]. The renderer
@@ -236,6 +237,9 @@ data class AgentCitationEntry(
 /** The full immutable agent-chat state the reducer threads through. */
 data class AgentChatState(
     val turns: List<AgentTurn> = emptyList(),
+    /** Interrupted tool progress must not reappear when delayed SSE events arrive. */
+    val dismissedToolMessageIds: Set<String> = emptySet(),
+    val dismissToolsUntilUserMessage: Boolean = false,
     val citations: List<AgentCitation> = emptyList(),
     val citationsByDocId: Map<String, Int> = emptyMap(),
     val planItems: List<AgentPlanItem> = emptyList(),

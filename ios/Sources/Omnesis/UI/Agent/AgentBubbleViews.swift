@@ -33,6 +33,7 @@ func userMessageWithLinks(_ text: String) -> AttributedString {
 @available(iOS 17.0, *)
 struct AgentTurnBubble: View {
     let turn: AgentTurn
+    @Environment(\.conversationPresentation) private var presentation
 
     var body: some View {
         switch turn {
@@ -54,9 +55,15 @@ struct AgentTurnBubble: View {
             }
         case .assistant(let assistant):
             VStack(alignment: .leading, spacing: 10) {
-                let pillRuns = computeCitationPillRuns(parts: assistant.parts)
-                let lastAnswerTextIndex = agentLastAnswerTextIndex(in: assistant.parts)
-                ForEach(Array(assistant.parts.enumerated()), id: \.offset) { idx, part in
+                let parts = conversationPresentedParts(
+                    assistant.parts,
+                    controls: presentation.controls,
+                    activityDismissed: presentation.dismissedMessageIds.contains(assistant.id),
+                    dismissedToolCallIds: presentation.dismissedToolCallIds
+                )
+                let pillRuns = computeCitationPillRuns(parts: parts)
+                let lastAnswerTextIndex = agentLastAnswerTextIndex(in: parts)
+                ForEach(Array(parts.enumerated()), id: \.offset) { idx, part in
                     // A thinking part is "live" only while it is the trailing
                     // part of an in-flight turn (no stopReason yet). The moment
                     // anything follows it — or the turn ends — it stops being
@@ -64,7 +71,7 @@ struct AgentTurnBubble: View {
                     AgentPartView(
                         part: part,
                         pillRun: pillRuns[idx],
-                        thinkingActive: !assistant.isComplete && idx == assistant.parts.count - 1,
+                        thinkingActive: !assistant.isComplete && idx == parts.count - 1,
                         turnDone: assistant.isComplete
                     )
                     .environment(\.agentAnswerTextFollows, idx < (lastAnswerTextIndex ?? -1))

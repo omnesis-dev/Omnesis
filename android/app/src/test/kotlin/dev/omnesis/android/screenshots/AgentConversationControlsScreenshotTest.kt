@@ -94,7 +94,11 @@ class AgentConversationControlsScreenshotTest {
 
     private fun base() = AgentCoordinator.UiState(hasClient = true, sessionId = "conversation-example", title = "Compare project estimates", controlsAvailable = true,
         chat = AgentChatState(turns = listOf(AgentTurn.User("user-example", "Compare the project estimates"))))
-    private fun choices() = base().copy(controls = ConversationControls(pendingClarification = ConversationClarification("question-example", "Which period should I compare?", listOf(
+    private fun choices() = base().copy(chat = base().chat.copy(turns = base().chat.turns + AgentTurn.Assistant("question-turn", listOf(
+        AgentPart.Tool(AgentToolCall("question-tool", "ask_clarification", result = dev.omnesis.android.transport.dto.AgentToolResult.Structured("conversation.clarification",
+            kotlinx.serialization.json.Json.parseToJsonElement("""{"id":"question-example","question":"Which period should I compare?","choices":[{"label":"This quarter"},{"label":"This year"}]}""")))),
+        AgentPart.Text("Which period should I compare? Choose this quarter or this year."),
+    ))), controls = ConversationControls(pendingClarification = ConversationClarification("question-example", "Which period should I compare?", listOf(
         ConversationChoice("This quarter", "Compare the latest quarterly estimates"), ConversationChoice("This year", "Compare annual totals across projects")))))
     private fun queued() = base().copy(chat = base().chat.copy(busy = true), composer = ComposerRecord("Use the approved budget instead"), controls = ConversationControls(busy = true,
         queuedMessages = listOf(ConversationSubmission("queued-example", "Include a comparison table", "queued"), ConversationSubmission("queued-second", "Keep the summary concise", "queued")),

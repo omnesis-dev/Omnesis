@@ -3400,6 +3400,52 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testConversationClarificationTranscript() {
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: PreviewMocks.conversationClarificationTurn)
+                    .environment(\.conversationPresentation, ConversationTranscriptPresentation(
+                        controls: PreviewMocks.conversationControls
+                    ))
+                ConversationQueuedBubble(controls: PreviewMocks.conversationControls, disabled: false, onSendNow: {})
+                ConversationControlsPanel(controls: PreviewMocks.conversationControls, error: nil, disabled: false, onChoice: { _ in })
+                AgentComposer(
+                    text: .constant("My answer"),
+                    busy: false,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(16),
+            name: "72f-conversation-clarification-transcript",
+            size: CGSize(width: 393, height: 650)
+        )
+    }
+
+    func testConversationInterruptedActivity() {
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: .assistant(AgentAssistantTurn(
+                    id: "prior-turn", parts: [
+                        .text("The earlier answer remains available."),
+                        .thinking("Checking more documents"),
+                        .tool(PreviewMocks.agentToolCallSearchManyRunning),
+                    ]
+                )))
+                .environment(\.conversationPresentation, ConversationTranscriptPresentation(dismissedMessageIds: ["prior-turn"]))
+                AgentTurnBubble(turn: .user(id: "followup", text: "Include a short summary."))
+                ConversationControlsPanel(
+                    controls: nil, error: "Couldn’t send yet. Your queued message is saved.", disabled: false, onChoice: { _ in }
+                )
+            }.padding(16),
+            name: "72g-conversation-interrupted-activity",
+            size: CGSize(width: 393, height: 400)
+        )
+    }
+
     func testConversationChoicesAndQueue() {
         snapshot(
             VStack(spacing: 24) {

@@ -5,6 +5,23 @@ import SwiftUI
 
 #if canImport(UIKit)
 
+private struct ConversationPresentationKey: EnvironmentKey {
+    static let defaultValue = ConversationTranscriptPresentation()
+}
+
+struct ConversationTranscriptPresentation {
+    var controls: ConversationControls?
+    var dismissedMessageIds: Set<String> = []
+    var dismissedToolCallIds: Set<String> = []
+}
+
+extension EnvironmentValues {
+    var conversationPresentation: ConversationTranscriptPresentation {
+        get { self[ConversationPresentationKey.self] }
+        set { self[ConversationPresentationKey.self] = newValue }
+    }
+}
+
 @available(iOS 17.0, *)
 struct ConversationControlsPanel: View {
     let controls: ConversationControls?
@@ -85,7 +102,18 @@ struct ConversationQueuedBubble: View {
             ForEach(Array(controls.queuedBubbleTexts.enumerated()), id: \.offset) { _, text in
                 VStack(alignment: .trailing, spacing: 4) {
                     AgentTurnBubble(turn: .user(id: "queued", text: text))
-                    Text("Queued").font(.caption).foregroundStyle(Theme.textSecondary)
+                    HStack(spacing: 4) {
+                        Text(controls.capabilities?.queueSendNow == true ? "Queued -" : "Queued")
+                            .foregroundStyle(Theme.textSecondary)
+                        if controls.capabilities?.queueSendNow == true {
+                            Button("send now", action: onSendNow)
+                                .foregroundStyle(Theme.accent)
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                                .disabled(disabled)
+                        }
+                    }
+                    .font(.caption)
                 }
                 .contextMenu {
                     Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }

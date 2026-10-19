@@ -838,6 +838,12 @@ public struct AgentView: View {
                         }
                     )
 
+                    .environment(\.conversationPresentation, ConversationTranscriptPresentation(
+                        controls: store.agent.conversationControls,
+                        dismissedMessageIds: store.agent.dismissedConversationActivity.messageIds,
+                        dismissedToolCallIds: store.agent.dismissedConversationActivity.toolCallIds
+                    ))
+
                     if let controls = store.agent.conversationControls, !controls.queued.isEmpty {
                         ConversationQueuedBubble(
                             controls: controls,
