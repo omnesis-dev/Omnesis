@@ -116,7 +116,10 @@ import { loadCompletionFromResolved } from "./inference/completion-loader.js";
 import { TranscribeService } from "./transcribe/index.js";
 import { TranscriptionVocabularyService } from "./transcribe/vocabulary/service.js";
 import { resolveVocabularySettings } from "./transcribe/vocabulary/config.js";
-import { createTranscriptionVocabularyTask } from "./scheduler/tasks/transcription-vocabulary.js";
+import {
+  createTranscriptionVocabularyTask,
+  scheduleTranscriptionVocabulary,
+} from "./scheduler/tasks/transcription-vocabulary.js";
 import { OcrService } from "./ocr/index.js";
 import { ConfigBootError, ConfigStore, defaultConfigPath } from "./config-store.js";
 import { OperatorInstructionsStore } from "./instructions/store.js";
@@ -2353,7 +2356,6 @@ const app = createServer(db, DB_PATH, {
     wsServer.broadcast(makeEvent("documents.upserted", { sourceId, count }));
     // Nudge the date-enrichment pass to pick up freshly ingested docs promptly.
     dateEnrichment.kick();
-    scheduler.kickPeriodic("transcription.vocabularyBackfill");
   },
   onVoiceNoteService: (service) => {
     voiceNoteService = service;
@@ -2967,7 +2969,12 @@ const transcriptionVocabularyTask = createTranscriptionVocabularyTask({
   getSettings: () => resolveVocabularySettings(configStore.get()),
   log: log.child("transcription-vocabulary"),
 });
-scheduler.schedule(transcriptionVocabularyTask);
+scheduleTranscriptionVocabulary({
+  scheduler,
+  eventBus,
+  task: transcriptionVocabularyTask,
+  enabled: () => transcriptionVocabularyService.enabled(),
+});
 const transcriptionVocabularyJob = periodicJob(transcriptionVocabularyTask, {
   scheduler,
   displayName: "Transcription vocabulary",
