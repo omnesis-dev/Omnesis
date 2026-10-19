@@ -1,4 +1,5 @@
 {
+  "speed": 3,
   "triggers": [
     "drive.google.com",
     "https://drive.google.com",

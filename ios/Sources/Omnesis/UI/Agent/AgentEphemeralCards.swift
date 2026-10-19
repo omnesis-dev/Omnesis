@@ -12,10 +12,44 @@ struct AgentEphemeralSqlLifecycleKey: Hashable {
     let argsKnown: Bool
     let hasResult: Bool
     let expedited: Bool
+    var postText: Bool = false
 }
+
+/// Following answer text should clear completed tool activity promptly.
+func agentEphemeralHasPendingAnswerText(_ events: [AgentEvent]) -> Bool {
+    events.contains { event in
+        guard case .textDelta(_, _, let delta) = event else { return false }
+        return !delta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+/// Batch tools stream following prose directly, rather than parking it on a
+/// singular tool's causality gate. The view supplies the same dismissal hint.
+@available(iOS 17.0, *)
+func agentLastAnswerTextIndex(in parts: [AgentPart]) -> Int? {
+    parts.lastIndex { part in
+        guard case .text(let text) = part else { return false }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private let postTextMinSeconds = 0.167 // PARITY:ephemeral-post-text-min-visible-ms
+let agentEphemeralPostTextMinVisibleSeconds = postTextMinSeconds * AppBuild.ephemeralRecordingPacingMultiplier
+let agentEphemeralPostTextFadeSeconds: Double = 0.1 // PARITY:ephemeral-post-text-fade-ms
 
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
+
+private struct AgentAnswerTextFollowsKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var agentAnswerTextFollows: Bool {
+        get { self[AgentAnswerTextFollowsKey.self] }
+        set { self[AgentAnswerTextFollowsKey.self] = newValue }
+    }
+}
 
 // Ephemeral tool-call cards. Search / Open Document / Run SQL each
 // render as a small fixed-height card with one rotating slot — the
@@ -52,7 +86,6 @@ private let agentEphemeralScrollAnimation: Animation = .linear(duration: agentEp
 /// the portal (`EPHEMERAL_MIN_VISIBLE_MS`).
 let agentEphemeralMinVisibleSeconds: Double = 0.5 * AppBuild.ephemeralRecordingPacingMultiplier // PARITY:ephemeral-min-visible-ms
 private let agentEphemeralFadeSeconds: Double = 0.3 // PARITY:ephemeral-fade-ms
-private let agentEphemeralFadeNs = UInt64(agentEphemeralFadeSeconds * 1_000_000_000)
 
 /// Composite re-run key for an ephemeral card's lifecycle task.
 /// `task(id:)` cancels the prior run when this changes, so the new
@@ -61,6 +94,7 @@ private let agentEphemeralFadeNs = UInt64(agentEphemeralFadeSeconds * 1_000_000_
 struct AgentEphemeralLifecycleKey: Hashable {
     let ready: Bool
     let expedited: Bool
+    var postText: Bool = false
 }
 
 // MARK: - Rolling slot primitive
@@ -182,6 +216,7 @@ private struct AgentInlineHeader<Trailing: View>: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralSearchCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     /// Slot index visible on first render. `nil` keeps the slot empty
     /// (used for pending / freeze previews). Snapshot tests pass a
@@ -240,7 +275,11 @@ struct AgentEphemeralSearchCard: View {
     /// cancels the prior task instance when the key flips, so the new
     /// run sees up-to-date state.
     private var lifecycleKey: AgentEphemeralLifecycleKey {
-        .init(ready: hasResult, expedited: !call.pendingTail.isEmpty)
+        .init(
+            ready: hasResult,
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
+        )
     }
 
     var body: some View {
@@ -256,7 +295,7 @@ struct AgentEphemeralSearchCard: View {
     private func runRotation() async {
         guard hasResult, !freeze, !dismissed else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -279,24 +318,27 @@ struct AgentEphemeralSearchCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 
@@ -344,6 +386,7 @@ struct AgentEphemeralSearchCard: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralTrailCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     var initialIndex: Int?
     var freeze: Bool = false
@@ -398,7 +441,11 @@ struct AgentEphemeralTrailCard: View {
     }
 
     private var lifecycleKey: AgentEphemeralLifecycleKey {
-        .init(ready: hasResult, expedited: !call.pendingTail.isEmpty)
+        .init(
+            ready: hasResult,
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
+        )
     }
 
     var body: some View {
@@ -414,7 +461,7 @@ struct AgentEphemeralTrailCard: View {
     private func runRotation() async {
         guard hasResult, !freeze, !dismissed else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -434,24 +481,27 @@ struct AgentEphemeralTrailCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 
@@ -495,6 +545,7 @@ struct AgentEphemeralTrailCard: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralDocumentCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     var initialIndex: Int?
     var freeze: Bool = false
@@ -551,7 +602,11 @@ struct AgentEphemeralDocumentCard: View {
     }
 
     private var lifecycleKey: AgentEphemeralLifecycleKey {
-        .init(ready: hasResult, expedited: !call.pendingTail.isEmpty)
+        .init(
+            ready: hasResult,
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
+        )
     }
 
     var body: some View {
@@ -567,7 +622,7 @@ struct AgentEphemeralDocumentCard: View {
     private func runRotation() async {
         guard hasResult, !freeze, !dismissed else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -587,24 +642,27 @@ struct AgentEphemeralDocumentCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 
@@ -665,6 +723,7 @@ struct AgentEphemeralDocumentCard: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralSqlCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     var initialSqlIndex: Int?
     var initialRowIndex: Int?
@@ -702,7 +761,8 @@ struct AgentEphemeralSqlCard: View {
         .init(
             argsKnown: call.argsKnown,
             hasResult: hasResult,
-            expedited: !call.pendingTail.isEmpty
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
         )
     }
 
@@ -769,7 +829,7 @@ struct AgentEphemeralSqlCard: View {
         guard !freeze, !dismissed else { return }
         guard call.argsKnown || hasResult else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -811,24 +871,27 @@ struct AgentEphemeralSqlCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 
@@ -995,6 +1058,7 @@ struct AgentEphemeralSqlCard: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralPeopleCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     var initialIndex: Int?
     var freeze: Bool = false
@@ -1035,7 +1099,11 @@ struct AgentEphemeralPeopleCard: View {
     }
 
     private var lifecycleKey: AgentEphemeralLifecycleKey {
-        .init(ready: hasResult, expedited: !call.pendingTail.isEmpty)
+        .init(
+            ready: hasResult,
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
+        )
     }
 
     var body: some View {
@@ -1051,7 +1119,7 @@ struct AgentEphemeralPeopleCard: View {
     private func runRotation() async {
         guard hasResult, !freeze, !dismissed else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -1071,24 +1139,27 @@ struct AgentEphemeralPeopleCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 
@@ -1150,6 +1221,7 @@ struct AgentEphemeralPeopleCard: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralUrlLookupCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     var initialIndex: Int?
     var freeze: Bool = false
@@ -1196,7 +1268,11 @@ struct AgentEphemeralUrlLookupCard: View {
     }
 
     private var lifecycleKey: AgentEphemeralLifecycleKey {
-        .init(ready: hasResult, expedited: !call.pendingTail.isEmpty)
+        .init(
+            ready: hasResult,
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
+        )
     }
 
     var body: some View {
@@ -1212,7 +1288,7 @@ struct AgentEphemeralUrlLookupCard: View {
     private func runRotation() async {
         guard hasResult, !freeze, !dismissed else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -1232,24 +1308,27 @@ struct AgentEphemeralUrlLookupCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 
@@ -1399,6 +1478,7 @@ private struct AgentLoopImportanceMeter: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralLoopSearchCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     var initialIndex: Int?
     var freeze: Bool = false
@@ -1438,7 +1518,11 @@ struct AgentEphemeralLoopSearchCard: View {
     }
 
     private var lifecycleKey: AgentEphemeralLifecycleKey {
-        .init(ready: hasResult, expedited: !call.pendingTail.isEmpty)
+        .init(
+            ready: hasResult,
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
+        )
     }
 
     var body: some View {
@@ -1454,7 +1538,7 @@ struct AgentEphemeralLoopSearchCard: View {
     private func runRotation() async {
         guard hasResult, !freeze, !dismissed else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -1474,24 +1558,27 @@ struct AgentEphemeralLoopSearchCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 
@@ -1538,6 +1625,7 @@ struct AgentEphemeralLoopSearchCard: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralLoopFetchCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     var initialIndex: Int?
     var freeze: Bool = false
@@ -1591,7 +1679,11 @@ struct AgentEphemeralLoopFetchCard: View {
     }
 
     private var lifecycleKey: AgentEphemeralLifecycleKey {
-        .init(ready: hasResult, expedited: !call.pendingTail.isEmpty)
+        .init(
+            ready: hasResult,
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
+        )
     }
 
     var body: some View {
@@ -1607,7 +1699,7 @@ struct AgentEphemeralLoopFetchCard: View {
     private func runRotation() async {
         guard hasResult, !freeze, !dismissed else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -1627,24 +1719,27 @@ struct AgentEphemeralLoopFetchCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 
@@ -1757,6 +1852,7 @@ struct AgentEphemeralLoopFetchCard: View {
 @available(iOS 17.0, *)
 struct AgentEphemeralActionCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.agentAnswerTextFollows) private var answerTextFollows
     let call: AgentToolCall
     var initialIndex: Int?
     var freeze: Bool = false
@@ -1797,7 +1893,11 @@ struct AgentEphemeralActionCard: View {
     }
 
     private var lifecycleKey: AgentEphemeralLifecycleKey {
-        .init(ready: hasResult, expedited: !call.pendingTail.isEmpty)
+        .init(
+            ready: hasResult,
+            expedited: answerTextFollows || !call.pendingTail.isEmpty,
+            postText: answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail)
+        )
     }
 
     var body: some View {
@@ -1813,7 +1913,7 @@ struct AgentEphemeralActionCard: View {
     private func runRotation() async {
         guard hasResult, !freeze, !dismissed else { return }
         if startedAt == nil { startedAt = Date() }
-        if !call.pendingTail.isEmpty {
+        if answerTextFollows || !call.pendingTail.isEmpty {
             await expediteDismiss()
             return
         }
@@ -1833,24 +1933,27 @@ struct AgentEphemeralActionCard: View {
     }
 
     private func expediteDismiss() async {
+        let postText = (answerTextFollows || agentEphemeralHasPendingAnswerText(call.pendingTail))
+        let minimum = postText ? agentEphemeralPostTextMinVisibleSeconds : agentEphemeralMinVisibleSeconds
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let remaining = max(0, agentEphemeralMinVisibleSeconds - elapsed)
+        let remaining = max(0, minimum - elapsed)
         if remaining > 0 {
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
         }
-        await dismissAndFlush()
+        await dismissAndFlush(postText: postText)
     }
 
-    private func dismissAndFlush() async {
+    private func dismissAndFlush(postText: Bool = false) async {
         if dismissed { return }
-        withAnimation(.easeOut(duration: agentEphemeralFadeSeconds)) { dismissed = true }
+        let fadeSeconds = postText ? agentEphemeralPostTextFadeSeconds : agentEphemeralFadeSeconds
+        withAnimation(.easeOut(duration: fadeSeconds)) { dismissed = true }
         guard !flushed else { return }
         flushed = true
         // try? — if SwiftUI cancels our task mid-fade (lifecycleKey
         // changed because pendingTail grew), we must still open the
         // causality gate. Without this, queued text tokens stay parked
         // on pendingTail forever and the conversation appears to stop.
-        try? await Task.sleep(nanoseconds: agentEphemeralFadeNs)
+        try? await Task.sleep(nanoseconds: UInt64(fadeSeconds * 1_000_000_000))
         await store.agent.flushEphemeralTail(toolCallId: call.toolCallId)
     }
 

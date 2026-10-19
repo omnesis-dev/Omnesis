@@ -56,6 +56,7 @@ struct AgentTurnBubble: View {
         case .assistant(let assistant):
             VStack(alignment: .leading, spacing: 10) {
                 let pillRuns = computeCitationPillRuns(parts: assistant.parts)
+                let lastAnswerTextIndex = agentLastAnswerTextIndex(in: assistant.parts)
                 ForEach(Array(assistant.parts.enumerated()), id: \.offset) { idx, part in
                     // A thinking part is "live" only while it is the trailing
                     // part of an in-flight turn (no stopReason yet). The moment
@@ -67,6 +68,7 @@ struct AgentTurnBubble: View {
                         thinkingActive: !assistant.isComplete && idx == assistant.parts.count - 1,
                         turnDone: assistant.isComplete
                     )
+                    .environment(\.agentAnswerTextFollows, idx < (lastAnswerTextIndex ?? -1))
                 }
                 if let failure = assistant.failure {
                     // Two registers, deliberately: the sentence says what went

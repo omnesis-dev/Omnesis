@@ -67,8 +67,7 @@ set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
 # Shared encode knobs.
 FPS=30             # Down from the ~36fps native capture; invisible here.
 CRF_H264=18        # Lower = sharper; extra bitrate for streaming text.
-SPLASH_TRIM=2.5    # Seconds of app-launch splash to skip.
-HOLD_LAST=4        # Seconds to hold on the last frame before looping.
+HOLD_LAST=1.333333 # One third of the four-second final-frame hold.
 
 # Per-variant profile. WIDTH is ~2x the carousel's CSS display width for
 # that variant: browsers downscale <video> with cheap GPU bilinear
@@ -182,17 +181,15 @@ for scenario in "${SCENARIOS[@]}"; do
     src="$INPUT_DIR/${scenario}.mp4"
 
     if [ ! -f "$src" ]; then
-        echo "  skip $scenario (no $src)"
-        continue
+        echo "error: missing master $src" >&2
+        exit 1
     fi
 
-    duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$src" | cut -d. -f1)
-
-    duration_flag=""
-    # Per-scenario overrides for outliers with heavy animation.
-    case "$scenario" in
-        swim_progress) duration_flag="-t 15" ;;
-    esac
+    duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$src")
+    if ! awk -v duration="$duration" 'BEGIN { exit !(duration ~ /^[0-9]+([.][0-9]+)?$/ && duration > 0) }'; then
+        echo "error: invalid master duration for $src: $duration" >&2
+        exit 1
+    fi
 
     mp4="$OUTPUT_DIR/${scenario}.mp4"
     poster="$OUTPUT_DIR/${scenario}.png"
@@ -204,18 +201,26 @@ for scenario in "${SCENARIOS[@]}"; do
     # stall a second or two in), and at these settings H.264 is no larger
     # than VP9 anyway — so a single, universally-supported MP4 is both
     # simpler and more robust than offering a WebM alternative.
-    # shellcheck disable=SC2086
-    ffmpeg -y -ss "$SPLASH_TRIM" $duration_flag -i "$src" \
+    ffmpeg -y -i "$src" \
         -vf "$FILT" \
         -c:v libx264 -crf "$CRF_H264" -preset slow -pix_fmt yuv420p \
         -an -movflags +faststart "$mp4" 2>/dev/null
 
-    # Poster frame from the middle of the (post-splash) video. We write both a
-    # PNG and a WebP: the page serves the WebP by default (it's ~half the size
-    # for these screenshot frames) and falls back to the PNG where WebP isn't
-    # supported (see the <picture> elements in website/index.html).
-    mid=$(echo "($duration / 2) + $SPLASH_TRIM" | bc)
-    ffmpeg -y -ss "$mid" -i "$src" -frames:v 1 -vf "$POSTER_FILT" "$poster" 2>/dev/null
+    # Select the final decoded frame, which is settled after completion.
+    # Native MP4 duration can extend beyond its last frame: seeking near that
+    # duration can emit no image while ffmpeg still exits successfully.
+    frame_count=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 "$src")
+    if ! [[ "$frame_count" =~ ^[1-9][0-9]*$ ]]; then
+        echo "error: invalid master frame count for $src: $frame_count" >&2
+        exit 1
+    fi
+    last_frame=$((frame_count - 1))
+    rm -f "$poster" "$poster_webp"
+    ffmpeg -y -i "$src" -map 0:v:0 -frames:v 1 -vf "select=eq(n\,${last_frame}),${POSTER_FILT}" "$poster" 2>/dev/null
+    if [ ! -s "$poster" ]; then
+        echo "error: no poster frame produced for $src" >&2
+        exit 1
+    fi
     cwebp -quiet -q 80 "$poster" -o "$poster_webp"
 
     mp4_size=$(du -h "$mp4" | cut -f1)

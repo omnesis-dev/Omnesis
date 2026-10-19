@@ -86,6 +86,15 @@ export function MessageBubble({ turn, citations, dispatch, header = null, footer
   // alternative (one pill per part) reads as a stack of identical
   // animations when the agent fires off five annotates in a row.
   const pillRuns = computeCitationPillRuns(turn.parts ?? []);
+  // Batch tools do not gate the reducer. Their cards still yield promptly
+  // once later assistant prose is already present in the transcript.
+  const followedByText = new Set();
+  let textFollows = false;
+  for (let i = turn.parts.length - 1; i >= 0; i--) {
+    if (textFollows) followedByText.add(i);
+    const part = turn.parts[i];
+    if (part.kind === "text" && typeof part.text === "string" && part.text.trim()) textFollows = true;
+  }
   return html`
     <div class=${`agent-msg agent-msg-${turn.role}`}>
       ${header}
@@ -107,6 +116,7 @@ export function MessageBubble({ turn, citations, dispatch, header = null, footer
             true,
             turn.role === "assistant" && turn.done === true,
             turn.role === "assistant",
+            turn.role === "assistant" && followedByText.has(i),
           ))}
       </div>
       ${turn.error
@@ -189,7 +199,7 @@ function computeCitationPillRuns(parts) {
 // tool parts on resume, so only sub-agent `childTurns` (which retain them) need
 // the static path; without it the rolling cards animate-then-vanish, leaving
 // bare text blobs.
-export function renderPart(part, key, citations, dispatch, pillRuns, thinkingActive, live = true, turnDone = false, plainValueFences = true) {
+export function renderPart(part, key, citations, dispatch, pillRuns, thinkingActive, live = true, turnDone = false, plainValueFences = true, followingText = false) {
   switch (part.kind) {
     case "text":
       // Assistant text is markdown — tables, bold, lists, code fences.
@@ -297,7 +307,7 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
         return html`<${StaticToolCard} key=${key} call=${part} />`;
       }
       if (live && (EPHEMERAL_TOOLS.has(part.tool) || EPHEMERAL_CARD_TOOLS.has(part.tool))) {
-        return sharedTools.renderToolPart(part, key, dispatch);
+        return sharedTools.renderToolPart(part, key, dispatch, followingText);
       }
       return html`<${ToolCallChip} key=${key} call=${part} citations=${citations} />`;
     default:

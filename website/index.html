@@ -1331,8 +1331,65 @@
         transition: opacity 0.4s ease;
       }
 
-      .demo-card.active .demo-phone-frame video {
+      .demo-card.active .demo-phone-frame.is-video-playing video {
         opacity: 1;
+      }
+
+      /* Keep the in-flow image for device sizing, but remove its painted
+         layer once playback starts. Transparent or rounded video edges must
+         reveal the screen background rather than a different poster frame. */
+      .demo-card.active .is-video-playing .demo-poster {
+        visibility: hidden;
+      }
+
+      .demo-video-loading {
+        display: none;
+        position: absolute;
+        inset: 50% auto auto 50%;
+        transform: translate(-50%, -50%);
+        z-index: 1;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--bg-secondary);
+        pointer-events: none;
+      }
+      .demo-video-loading::before {
+        content: "";
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: demo-video-loading-spin 0.8s linear infinite;
+      }
+      .demo-video-loading-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+      .demo-card.active
+        .demo-phone-frame:not(.is-video-playing):not(.is-video-error)
+        .demo-video-loading,
+      .demo-card.active
+        .demo-ipad-frame:not(.is-video-playing):not(.is-video-error)
+        .demo-video-loading {
+        display: grid;
+        place-items: center;
+      }
+      @keyframes demo-video-loading-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .demo-video-loading::before {
+          animation: none;
+        }
       }
 
       /* ── iPad (landscape) variant ──
@@ -1390,7 +1447,7 @@
         transition: opacity 0.4s ease;
       }
 
-      .demo-card.active .demo-ipad-frame video {
+      .demo-card.active .demo-ipad-frame.is-video-playing video {
         opacity: 1;
       }
 
@@ -6116,6 +6173,30 @@
             // set them as properties.
             video.muted = true;
             video.playsInline = true;
+            const frame = video.parentElement;
+            const loading = document.createElement("span");
+            loading.className = "demo-video-loading";
+            loading.setAttribute("role", "status");
+            const label = document.createElement("span");
+            label.className = "demo-video-loading-label";
+            label.textContent = "Loading video";
+            loading.appendChild(label);
+            frame.appendChild(loading);
+            video.addEventListener("playing", () => {
+              frame.classList.add("is-video-playing");
+              frame.classList.remove("is-video-error");
+            });
+            video.addEventListener("error", () => {
+              frame.classList.remove("is-video-playing");
+              frame.classList.add("is-video-error");
+            });
+            for (const event of ["loadstart", "emptied", "waiting", "stalled"]) {
+              video.addEventListener(event, () => {
+                frame.classList.remove("is-video-playing");
+                if (event === "loadstart" || event === "emptied")
+                  frame.classList.remove("is-video-error");
+              });
+            }
             return video;
           });
           const n = cards.length;

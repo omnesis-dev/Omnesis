@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { expect, it, vi } from "vitest";
-import { FrontierEditingReceipts } from "./frontier-editing-receipts.js";
+import { FrontierEditingReceipts, FrontierReceiptMissing } from "./frontier-editing-receipts.js";
 import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeEditingSnapshot, KnowledgeReceiptProposal } from "./dependency-receipts.js";
 
@@ -44,7 +44,7 @@ it("requires a returned offer followed by a complete editing read; equivalent of
   const receipts = new FrontierEditingReceipts(() => 0);
   receipts.editing(snapshot, () => {});
   receipts.offered([offer]);
-  expect(() => receipts.resolve(proposal, undefined)).toThrow("complete matching editing read");
+  expect(() => receipts.resolve(proposal, undefined)).toThrow(FrontierReceiptMissing);
   const check = vi.fn();
   receipts.editing(snapshot, check);
   expect(check).toHaveBeenCalledExactlyOnceWith("exact-offer");

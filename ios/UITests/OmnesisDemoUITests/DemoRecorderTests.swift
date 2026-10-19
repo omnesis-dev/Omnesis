@@ -9,10 +9,10 @@ import XCTest
 /// Each test method launches the app with a prompt and waits for the in-app
 /// auto-pilot (driven by `DEMO_AUTO_SEND`) to complete the full sequence:
 /// send prompt, wait for response, open citations drawer, write a marker
-/// file. XCUITest never queries the UI — it's a thin launcher + timer.
+/// file. XCUITest checks the opening state, then waits for completion.
 ///
 /// Orchestrated by `scripts/record-demos.sh` which wraps each test
-/// invocation with `xcrun simctl io booted recordVideo`.
+/// invocation with `simctl recordVideo` on the selected simulator.
 final class DemoRecorderTests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -56,7 +56,7 @@ final class DemoRecorderTests: XCTestCase {
         // its only supported orientation). Rotate AFTER launch (a
         // pre-launch orientation set doesn't stick) and settle briefly so
         // the app finishes rotating before the auto-pilot — which is
-        // still waiting on the gateway session — produces any visible
+        // still waiting on recording readiness — produces any visible
         // content. Driving off the device idiom means `record-demos.sh`
         // just picks the simulator and the orientation follows.
         if UIDevice.current.userInterfaceIdiom == .pad {
@@ -70,14 +70,15 @@ final class DemoRecorderTests: XCTestCase {
         // the push prompt under automation; this is the belt-and-braces
         // guard that doesn't depend on the build picking that up.
         dismissSystemAlerts()
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "Demo must not summon the keyboard")
+        XCTAssertTrue(app.buttons["agentSendButton"].waitForExistence(timeout: 10), "Demo prompt must be ready to send")
 
         // Signal the recorder that the app is up and (on iPad) finished
         // rotating, so it can start screen capture now. The capture must
         // begin AFTER any rotation — simctl's recordVideo can't survive a
         // mid-stream framebuffer resolution change and would produce a
-        // corrupt file. The auto-pilot still has the gateway-session wait
-        // ahead of it, so there's ample time before the first visible
-        // content.
+        // corrupt file. The auto-pilot waits for the recorder-ready marker
+        // before sending, so no scripted response can precede capture.
         FileManager.default.createFile(atPath: Self.orientedMarkerPath, contents: nil)
 
         // Poll for the done marker written by the in-app auto-pilot.

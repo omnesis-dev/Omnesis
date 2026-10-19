@@ -143,6 +143,7 @@ fun AssistantTurn(
     isStreaming: Boolean = false,
 ) {
     val pillRuns = remember(turn.parts) { computeCitationPillRuns(turn.parts) }
+    val lastAnswerIndex = remember(turn.parts) { lastAnswerTextIndex(turn.parts) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         turn.parts.forEachIndexed { index, part ->
             when (part) {
@@ -166,7 +167,10 @@ fun AssistantTurn(
 
                 is AgentPart.Tool ->
                     if (turn.stopReason == null || part.call.tool !in AgentReducer.EPHEMERAL_TOOLS) {
-                        ToolCard(part.call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument)
+                        ToolCard(
+                            part.call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument,
+                            followingAnswerText = lastAnswerIndex > index,
+                        )
                     }
 
                 // A sub-agent the parent spawned via `spawn_subagent` — a
@@ -508,6 +512,7 @@ internal fun ToolCard(
     // no roll-in animation, no self-dismiss — instead of replaying every
     // animation at once on expand.
     freeze: Boolean = false,
+    followingAnswerText: Boolean = false,
 ) {
     when {
         // A pending `annotate` at the lead slot of a contiguous run surfaces the inline
@@ -559,7 +564,7 @@ internal fun ToolCard(
                 AgentEphemeralTemporalCard(call, onFlushEphemeral, freeze = freeze)
             // Batch retrieval: N live per-child cards, each reusing the singular card and animating
             // on its own lifecycle. A batch parent doesn't gate, so it takes no flush handler.
-            "search_many", "fetch_many" -> AgentBatchEphemeralCards(call, catalog, freeze = freeze)
+            "search_many", "fetch_many" -> AgentBatchEphemeralCards(call, catalog, freeze = freeze, followingAnswerText = followingAnswerText)
             else -> AgentEphemeralActionCard(
                 call = call,
                 label = prettyToolName(call.tool),

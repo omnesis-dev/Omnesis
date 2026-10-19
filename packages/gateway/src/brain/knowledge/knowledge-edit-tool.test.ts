@@ -256,7 +256,11 @@ describe("knowledge_edit", () => {
         'omits existing claims without explicit removal intent: ["costs"]',
       ),
     });
-    expect(edit).toEqual(save);
+    // The same refusal, plus the note that the run's read still stands.
+    expect(edit).toEqual({
+      ...save,
+      message: `${(save as { message: string }).message} Nothing was saved, and this run's editing read of revision 1 is still the current page: any retry edits it at the same expectedRevision without fetching the page again.`,
+    });
     expect(getKnowledgeNode(db, "garden")!.revision).toBe(1);
     expect(lines).toContain("Wiki edit refused on garden (claim_invalid): delete_section");
 
@@ -305,10 +309,13 @@ describe("knowledge_edit", () => {
     };
     // The edited claim re-cites its existing evidence, which needs a read too.
     await readEvidence(entries, "source:doc-b");
+    // The refusal says the run's read still stands, so a retry needs no refetch.
     expect(await call(entries, "knowledge_edit", args)).toMatchObject({
       kind: "error",
       code: "revision_conflict",
-      message: expect.stringContaining('Missing dependency version for "source:doc-d"'),
+      message: expect.stringMatching(
+        /Missing dependency version for "source:doc-d".*editing read of revision 1 is still the current page/s,
+      ),
     });
     expect(getKnowledgeNode(db, "garden")!.revision).toBe(1);
     expect(
@@ -338,11 +345,13 @@ describe("knowledge_edit", () => {
         edits: [{ op: "replace_text", old: "25 credits", new: "26 credits" }],
       },
     };
-    expect(await call(entries, "knowledge_edit", edit)).toMatchObject({
+    const unread = await call(entries, "knowledge_edit", edit);
+    expect(unread).toMatchObject({
       kind: "error",
       code: "revision_conflict",
       message: expect.stringContaining("knowledge_fetch({id, editing:true})"),
     });
+    expect(JSON.stringify(unread)).not.toContain("still the current page");
     // A reading fetch strips claim tags; it is not an editing read.
     await call(entries, "knowledge_fetch", { id: "garden" });
     expect(await call(entries, "knowledge_edit", edit)).toMatchObject({
@@ -364,10 +373,10 @@ describe("knowledge_edit", () => {
         },
       }),
     ).toMatchObject({ kind: "structured", data: { node: { revision: 2 } } });
-    expect(await call(entries, "knowledge_edit", edit)).toMatchObject({
-      kind: "error",
-      code: "revision_conflict",
-    });
+    // The page moved on, so the refusal must not vouch for the stale read.
+    const stale = await call(entries, "knowledge_edit", edit);
+    expect(stale).toMatchObject({ kind: "error", code: "revision_conflict" });
+    expect(JSON.stringify(stale)).not.toContain("still the current page");
     expect(
       await call(entries, "knowledge_edit", { node: { ...edit.node, expectedRevision: 2 } }),
     ).toMatchObject({

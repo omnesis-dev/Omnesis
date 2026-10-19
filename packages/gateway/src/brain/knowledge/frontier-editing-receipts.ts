@@ -5,6 +5,16 @@ import { KnowledgeStorageError } from "./types.js";
 import type { KnowledgeFrontierView } from "./engine.js";
 import type { KnowledgeEditingSnapshot, KnowledgeReceiptProposal } from "./dependency-receipts.js";
 
+/** No offered fingerprint and no frontier-then-editing read to supply one. */
+export class FrontierReceiptMissing extends KnowledgeStorageError {
+  constructor() {
+    super(
+      "claim_invalid",
+      "Supply inputFingerprint at the top level beside node, or first read this node's current knowledge_next_frontier offer and then knowledge_fetch({id, editing:true}) in this run. Only a complete matching editing read supplies an omitted fingerprint; explicit blank or wrong fingerprints are never repaired.",
+    );
+  }
+}
+
 /** Run-local observations, never reconstructed from the database's current frontier. */
 export class FrontierEditingReceipts {
   private readonly offers = new Map<string, string>();
@@ -81,9 +91,6 @@ export class FrontierEditingReceipts {
       )
         return read.fingerprint;
     }
-    throw new KnowledgeStorageError(
-      "claim_invalid",
-      "Supply inputFingerprint at the top level beside node, or first read this node's current knowledge_next_frontier offer and then knowledge_fetch({id, editing:true}) in this run. Only a complete matching editing read supplies an omitted fingerprint; explicit blank or wrong fingerprints are never repaired.",
-    );
+    throw new FrontierReceiptMissing();
   }
 }

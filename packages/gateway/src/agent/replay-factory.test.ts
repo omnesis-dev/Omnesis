@@ -239,6 +239,47 @@ describe("makeReplayBackendFactory — replay pacing", () => {
     },
   );
 
+  it("scales scenario entry floors, long waits and typing together without changing events", async () => {
+    const normal: AgentEvent[] = [];
+    const normalStart = Date.now();
+    const normalRun = collect(backend("directory"), normal);
+    await vi.runAllTimersAsync();
+    await normalRun;
+    const normalMs = Date.now() - normalStart;
+
+    writeFileSync(
+      join(h.dir, "alpha.meta.json"),
+      JSON.stringify({ triggers: ["alpha"], speed: 3 }),
+    );
+    const fast: AgentEvent[] = [];
+    const fastStart = Date.now();
+    const fastRun = collect(backend("directory"), fast);
+    await vi.advanceTimersByTimeAsync(19);
+    expect(fast).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fast.map((event) => event.type)).toEqual(["agent.message.start"]);
+    await vi.runAllTimersAsync();
+    await fastRun;
+    const fastMs = Date.now() - fastStart;
+    expect(fast).toEqual(normal);
+    // Node timers truncate fractional milliseconds: allow less than 1 ms per
+    // replay wait while proving both fixture and text-chunk delays scale.
+    expect(Math.abs(fastMs - normalMs / 3)).toBeLessThan(fast.length);
+
+    const immediate: AgentEvent[] = [];
+    const immediateStart = Date.now();
+    const immediateRun = collect(backend("directory", "immediate"), immediate);
+    await vi.runAllTimersAsync();
+    await immediateRun;
+    expect(immediate).toEqual(normal);
+    expect(Date.now() - immediateStart).toBeLessThan(10);
+  });
+
+  it.each([0, -1, "3", null])("rejects invalid scenario speed %s at load", (speed) => {
+    writeFileSync(join(h.dir, "alpha.meta.json"), JSON.stringify({ triggers: ["alpha"], speed }));
+    expect(() => backend("directory")).toThrow("invalid shape");
+  });
+
   it.each(["file", "directory"] as const)(
     "%s mode lets event-loop cancellation stop an immediate stream between text chunks",
     async (mode) => {

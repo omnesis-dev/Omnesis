@@ -64,6 +64,7 @@ const scenarioMetaSchema = z
   .object({
     triggers: z.array(z.string().min(1)).min(1),
     role: z.string().min(1).optional(),
+    speed: z.number().finite().positive().optional(),
     placeholders: placeholdersFileSchema.optional(),
   })
   .strict();
@@ -185,6 +186,7 @@ type LoadedScenario = {
   name: string;
   triggers: ReadonlyArray<string>;
   fixture: ReplayFixture;
+  speed?: number;
   docExternalIds: ReadonlyArray<string>;
   personNames: ReadonlyArray<string>;
 };
@@ -233,6 +235,7 @@ function makeDirectoryFactory(
       name: s.name,
       triggers: s.triggers,
       fixture: s.fixture,
+      speed: s.speed,
       substitutions: resolveSubstitutions(s.docExternalIds, s.personNames),
     }));
     return new RoutingReplayBackend({
@@ -268,6 +271,7 @@ function loadScenariosFromDirectory(dirPath: string, role: string): LoadedScenar
       name,
       triggers: meta.data.triggers,
       fixture,
+      speed: meta.data.speed,
       docExternalIds: meta.data.placeholders?.docExternalIds ?? [],
       personNames: meta.data.placeholders?.personNames ?? [],
     });

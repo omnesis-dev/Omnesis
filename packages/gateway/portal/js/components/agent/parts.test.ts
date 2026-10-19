@@ -8,6 +8,10 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { ephemeralResultArrived, MessageBubble, prettyToolName, renderPart } from "./parts.js";
+import { initialState, reducer } from "../../views/agent-reducer.js";
+
+// Card lifecycle tests use LinkeDOM; DOMPurify requires a browser window at import time.
+vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
 
 describe("ephemeralResultArrived", () => {
   it("is false until a result lands (spinner stays, rotation parked)", () => {
@@ -76,6 +80,90 @@ describe("ephemeral card layout lifecycle", () => {
     expect(host!.querySelector(".agent-ephemeral.is-dismissed")).not.toBeNull();
     await act(async () => { vi.advanceTimersByTime(300); });
   }
+
+  it.each([0, 100, 600])(
+    "flushes following prose after the shorter visibility floor and fade (arrives at %sms)",
+    async (arrivalMs) => {
+      const call = {
+        kind: "tool", toolCallId: "search-text", tool: "search_documents", args: {},
+        result: { kind: "search.results", results: Array.from({ length: 12 }, (_, i) => ({ title: `Result ${i}` })) },
+        pendingTail: [],
+      };
+      await renderTurn([call]);
+      await act(async () => { vi.advanceTimersByTime(arrivalMs); });
+      await act(async () => {
+        render(h(MessageBubble, {
+          turn: { role: "assistant", parts: [{ ...call, pendingTail: [
+            { kind: "agent.text.delta", payload: { delta: "Here is the answer." } },
+          ] }], done: false, citationCount: 0 },
+          citations: [], dispatch,
+        }), host!);
+      });
+      const remaining = Math.max(0, 167 - arrivalMs);
+      if (remaining > 0) {
+        await act(async () => { vi.advanceTimersByTime(remaining - 1); });
+        expect(host!.querySelector(".is-dismissed")).toBeNull();
+        await act(async () => { vi.advanceTimersByTime(1); });
+      }
+      expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("100ms");
+      expect(dispatch).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(99); });
+      expect(dispatch).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(1); });
+      expect(host!.querySelector(".agent-ephemeral")).toBeNull();
+      expect(dispatch).toHaveBeenCalledExactlyOnceWith({ kind: "ephemeral-tail-flush", toolCallId: "search-text" });
+    },
+  );
+
+  it("shortens an already expedited non-text tail when prose arrives, cancelling its old timer", async () => {
+    const thinking = { kind: "agent.thinking.delta", payload: { delta: "Reviewing results" } };
+    const call = {
+      kind: "tool", toolCallId: "search-tail-update", tool: "search_documents", args: {},
+      result: { kind: "search.results", results: [] }, pendingTail: [thinking],
+    };
+    await renderTurn([call]);
+    await act(async () => { vi.advanceTimersByTime(100); });
+    await act(async () => {
+      render(h(MessageBubble, {
+        turn: { role: "assistant", parts: [{ ...call, pendingTail: [
+          thinking, { kind: "agent.text.delta", payload: { delta: "Here is the answer." } },
+        ] }], done: false, citationCount: 0 },
+        citations: [], dispatch,
+      }), host!);
+    });
+    await act(async () => { vi.advanceTimersByTime(66); });
+    expect(host!.querySelector(".is-dismissed")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("100ms");
+    await act(async () => { vi.advanceTimersByTime(99); });
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".agent-ephemeral")).toBeNull();
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({
+      kind: "ephemeral-tail-flush", toolCallId: "search-tail-update",
+    });
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { kind: "agent.thinking.delta", payload: { delta: "Reviewing results" } },
+    { kind: "agent.tool.start", payload: { tool: "search_documents" } },
+    { kind: "agent.text.delta", payload: { delta: " \n " } },
+  ])("keeps non-prose queued events at the existing dismissal pace: $kind", async (action) => {
+    await renderTurn([{
+      kind: "tool", toolCallId: "search-non-text", tool: "search_documents", args: {},
+      result: { kind: "search.results", results: [] }, pendingTail: [action],
+    }]);
+    await act(async () => { vi.advanceTimersByTime(499); });
+    expect(host!.querySelector(".is-dismissed")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("300ms");
+    await act(async () => { vi.advanceTimersByTime(299); });
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
 
   it("removes a dismissed card's DOM node so prose keeps only its normal flex gap", async () => {
     await renderTurn([
@@ -166,6 +254,50 @@ describe("ephemeral card layout lifecycle", () => {
     expect(host!.querySelector(".agent-ephemeral")).toBeNull();
     expect(dispatch).toHaveBeenCalledWith({ kind: "ephemeral-tail-flush", toolCallId: "wiki-1" });
   });
+
+  it.each(["search_many", "fetch_many"])(
+    "dismisses %s children promptly when later prose appears without adding a reducer gate",
+    async (tool) => {
+      const sessionId = "batch-session";
+      let state = { ...initialState(), sessionId };
+      state = reducer(state, { kind: "agent.message.start", payload: { sessionId, messageId: "batch-message" } });
+      state = reducer(state, { kind: "agent.tool.start", payload: {
+        sessionId, toolCallId: "batch-followed", tool,
+        args: tool === "search_many" ? { queries: [{ query: "first" }, { query: "second" }] }
+          : { documents: [{ documentId: "doc-first" }, { documentId: "doc-second" }] },
+      } });
+      const items = ["first", "second"].map((name) => tool === "search_many"
+        ? { kind: "search.results", results: Array.from({ length: 12 }, (_, i) => ({ title: `${name} result ${i}` })) }
+        : { kind: "document", ref: { documentId: `doc-${name}`, title: name },
+          document: { title: name, content: Array.from({ length: 10 }, (_, i) => `Document line ${i}`).join("\n") } });
+      state = reducer(state, { kind: "agent.tool.result", payload: {
+        sessionId, toolCallId: "batch-followed", result: {
+          kind: tool === "search_many" ? "search.batch" : "document.batch", items,
+        },
+      } });
+      await renderTurn(state.turns.at(-1).parts);
+      const initialCards = [...host!.querySelectorAll(".agent-ephemeral")];
+      expect(initialCards).toHaveLength(2);
+      await act(async () => { vi.advanceTimersByTime(100); });
+      state = reducer(state, { kind: "agent.text.delta", payload: { sessionId, delta: "The answer is ready." } });
+      const turn = state.turns.at(-1);
+      expect(turn.parts.find((part) => part.tool === tool).pendingTail ?? []).toEqual([]);
+      expect(turn.parts.at(-1)).toMatchObject({ kind: "text", text: "The answer is ready." });
+      await act(async () => { render(h(MessageBubble, { turn, citations: [], dispatch }), host!); });
+      expect([...host!.querySelectorAll(".agent-ephemeral")]).toEqual(initialCards);
+      expect(host!.textContent).toContain("The answer is ready.");
+      await act(async () => { vi.advanceTimersByTime(67); });
+      expect(host!.querySelectorAll(".is-dismissed")).toHaveLength(2);
+      await act(async () => { vi.advanceTimersByTime(99); });
+      expect(dispatch).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(1); });
+      expect(host!.querySelectorAll(".agent-ephemeral")).toHaveLength(0);
+      expect(dispatch).toHaveBeenCalledTimes(2);
+      for (const index of [0, 1]) expect(dispatch).toHaveBeenCalledWith({
+        kind: "ephemeral-tail-flush", toolCallId: `batch-followed#${index}`,
+      });
+    },
+  );
 
   it("removes every projected child DOM node of a dismissed batch card", async () => {
     await renderTurn([
