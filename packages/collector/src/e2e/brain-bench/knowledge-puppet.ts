@@ -220,7 +220,7 @@ export function knowledgePuppet(
           typeof expectedRevision === "number" &&
           saved.data.node.revision === expectedRevision + 1;
         return (
-          step.name === "knowledge_save" &&
+          (step.name === "knowledge_save" || step.name === "knowledge_edit") &&
           node !== null &&
           typeof node === "object" &&
           (node as { id?: unknown }).id === item.id &&
@@ -238,7 +238,8 @@ export function knowledgePuppet(
                 step.name === "knowledge_discovery_complete" &&
                 isSourceReadRefusal(step)
               ) &&
-              ((step.name === "knowledge_save" && !item.source) ||
+              (((step.name === "knowledge_save" || step.name === "knowledge_edit") &&
+                !item.source) ||
                 step.name === "knowledge_discovery_complete" ||
                 !policy
                   .expectedRefusals?.(item)
@@ -369,7 +370,7 @@ export function knowledgePuppet(
       const next = emitNextPlanned(plan, planSteps, false);
       if (next.kind === "tool") {
         if (
-          next.name === "knowledge_save" &&
+          (next.name === "knowledge_save" || next.name === "knowledge_edit") &&
           item.node &&
           next.args.reviewedClaimIds === undefined &&
           typeof next.args.node === "object" &&

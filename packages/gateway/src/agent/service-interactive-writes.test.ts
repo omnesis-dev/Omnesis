@@ -25,7 +25,13 @@ import {
   type ToolHandle,
   type TurnInput,
 } from "@omnesis/agent";
-import { type AgentEvent, type CapabilityRole, type WsEvent } from "@omnesis/core";
+import Database from "better-sqlite3";
+import { createLogger, type AgentEvent, type CapabilityRole, type WsEvent } from "@omnesis/core";
+import { resolveBrainSettings } from "../brain/config.js";
+import { KnowledgeService } from "../brain/knowledge/service.js";
+import { createKnowledgeTables } from "../brain/knowledge/storage.js";
+import { buildKnowledgeTools } from "../brain/knowledge/tools.js";
+import { directKnowledgeGate } from "../brain/knowledge/writer.js";
 import { AgentService, type InteractiveWriteProfile } from "./service.js";
 
 const stubSearch: SearchPort = {
@@ -133,6 +139,32 @@ describe("interactive-agent substrate write access", () => {
     expect(backend.sawTools).toContain("knowledge_list");
     expect(backend.sawTools).not.toContain("knowledge_save");
     expect(backend.sawTools).not.toContain("knowledge_link");
+  });
+
+  it("never offers the Brain's real wiki write tools, knowledge_edit included", async () => {
+    const db = new Database(":memory:");
+    try {
+      createKnowledgeTables(db);
+      const knowledge = new KnowledgeService({
+        db,
+        writeGate: directKnowledgeGate(db),
+        getSettings: () => resolveBrainSettings(),
+        clock: () => 1,
+        log: createLogger("interactive-writes-test"),
+      });
+      const brainTools = buildKnowledgeTools(knowledge, { runId: "interactive" });
+      expect(brainTools.map((tool) => tool.name)).toContain("knowledge_edit");
+      const { service, backend } = makeService();
+      service.setInteractiveWriteProfile({ buildOwnTools: () => brainTools });
+      const { sessionId } = await service.createSession("device:A");
+      service.sendMessage("device:A", sessionId, "fix the fee on the garden page");
+      await settle();
+      expect(backend.sawTools).toContain("knowledge_fetch");
+      for (const tool of brainTools.filter((entry) => entry.mutates))
+        expect(backend.sawTools).not.toContain(tool.name);
+    } finally {
+      db.close();
+    }
   });
 
   it("stays read-only when no profile is installed", async () => {

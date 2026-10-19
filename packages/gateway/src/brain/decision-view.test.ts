@@ -50,6 +50,16 @@ describe("summarizeCognitionTranscript", () => {
           toolStart("c", "knowledge_save", {
             node: { kind: "wiki", id: "project", title: "Workshop" },
           }),
+          toolStart("d", "knowledge_edit", {
+            node: {
+              id: "project",
+              edits: [
+                { op: "replace_text", old: "a", new: "b" },
+                { op: "replace_section", heading: "Costs", markdown: "x" },
+                { op: "replace_text", old: "c", new: "d" },
+              ],
+            },
+          }),
         ],
       }),
     );
@@ -57,6 +67,11 @@ describe("summarizeCognitionTranscript", () => {
     expect(decision.docId).toBeNull();
     expect(decision.actions).toEqual([
       { tool: "knowledge_save", detail: "save wiki Workshop", ok: true },
+      {
+        tool: "knowledge_edit",
+        detail: "edit project (replace_text, replace_section)",
+        ok: true,
+      },
     ]);
   });
 
