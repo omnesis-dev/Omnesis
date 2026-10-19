@@ -173,6 +173,20 @@ describe("/tasks", () => {
     );
   });
 
+  test("completing a task that is already done is refused with its own code", async () => {
+    const { task } = await addTask("Return the library books", { scheduledFor: TODAY });
+    expect((await action(task.id, { action: "complete" })).status).toBe(200);
+    const again = await action(task.id, { action: "complete" });
+    expect(again.status).toBe(400);
+    expect(again.json).toMatchObject({
+      code: "TASK_ALREADY_DONE",
+      error: "the task is already done",
+    });
+    // Other refusals keep the generic code.
+    const moved = await action(task.id, { action: "migrate", to: "2026-03-11" });
+    expect(moved.json).toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   test("a task's history lists every change with its surface", async () => {
     const { task } = await addTask("Fix the gate latch");
     await action(task.id, { action: "edit", title: "Fix the garden gate latch" });

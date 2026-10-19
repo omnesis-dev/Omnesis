@@ -159,6 +159,27 @@ export function taskBullet(task) {
 }
 
 /**
+ * The bullet a row shows while an action on it is in flight: a completion
+ * shows the check and a reopen the open ring at once, so the click answers
+ * before the gateway does; any other action keeps the row's own bullet.
+ */
+export function pendingBullet(bullet, action) {
+  if (action === "complete") return "done";
+  if (action === "reopen") return "open";
+  return bullet;
+}
+
+/**
+ * Whether a refused action already holds: completing a task the gateway
+ * reports as done (a repeated click, or another device's completion) leaves
+ * the task where the user wanted it, so the view reloads instead of showing
+ * an error.
+ */
+export function actionAlreadyApplied(body, err) {
+  return body?.action === "complete" && err?.code === "TASK_ALREADY_DONE";
+}
+
+/**
  * The context line under a task's title, as the mobile apps show it: each
  * item an icon, its text and a tone. Where it is planned (a calendar), or the
  * day it was carried from; its deadline (a flag) while it is open; the other

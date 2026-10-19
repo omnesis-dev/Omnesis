@@ -85,6 +85,13 @@ async function mount(props: Record<string, unknown> = {}) {
   });
 }
 
+/** Let a clicked action finish: its request, the reload and the re-render. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 function click(el: Element | null) {
   if (!el) throw new Error("element not found");
   el.dispatchEvent(new (win as unknown as { Event: typeof Event }).Event("click", { bubbles: true, cancelable: true }));
@@ -176,8 +183,10 @@ describe("a suggestion", () => {
     expect(labels).toEqual(["Accept", "Accept with note", "Mark as done", "Ignore"]);
     await act(async () => click(button("Ignore")));
     expect(api.taskAction).toHaveBeenLastCalledWith("loop_s", { action: "ignore" });
+    await settle();
     await act(async () => click(button("Mark as done")));
     expect(api.taskAction).toHaveBeenLastCalledWith("loop_s", { action: "complete" });
+    await settle();
     await act(async () => click(button("Accept")));
     expect(api.taskAction).toHaveBeenLastCalledWith("loop_s", { action: "accept" });
   });
@@ -200,5 +209,101 @@ describe("a suggestion", () => {
       note: "the old one runs out on the 20th",
       noteId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
+  });
+});
+
+describe("an action in flight", () => {
+  function deferred() {
+    let resolve!: (value: unknown) => void;
+    let reject!: (err: unknown) => void;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+  const venue = () => row("Book the venue walkthrough");
+  const bullet = () => venue().querySelector("button.tasks-bullet") as Element;
+  const alert = () => host.querySelector(".tasks-error");
+
+  it("shows the completion at once and sends no second request", async () => {
+    const reply = deferred();
+    api.taskAction.mockReturnValue(reply.promise);
+    await mount();
+    await act(async () => click(bullet()));
+    expect(venue().classList.contains("pending")).toBe(true);
+    expect(venue().getAttribute("aria-busy")).toBe("true");
+    expect(bullet().classList.contains("tasks-bullet-done")).toBe(true);
+    expect(bullet().hasAttribute("disabled")).toBe(true);
+    await act(async () => click(bullet()));
+    await act(async () => click(bullet()));
+    expect(api.taskAction).toHaveBeenCalledTimes(1);
+
+    const reads = api.listTasks.mock.calls.length;
+    await act(async () => reply.resolve({ task: {}, receipt: { text: "Done: Book the venue walkthrough", undoSeq: 3 } }));
+    await settle();
+    expect(api.listTasks.mock.calls.length).toBe(reads + 1);
+    expect(venue().classList.contains("pending")).toBe(false);
+    expect(bullet().hasAttribute("disabled")).toBe(false);
+  });
+
+  it("restores the row and shows the error when the action fails", async () => {
+    const reply = deferred();
+    api.taskAction.mockReturnValue(reply.promise);
+    await mount();
+    await act(async () => click(bullet()));
+    await act(async () => reply.reject(Object.assign(new Error("HTTP 409"), { serverMessage: "the task changed meanwhile" })));
+    await settle();
+    expect(venue().classList.contains("pending")).toBe(false);
+    expect(bullet().classList.contains("tasks-bullet-open")).toBe(true);
+    expect(alert()?.textContent).toContain("the task changed meanwhile");
+  });
+
+  it("treats a completion the gateway finds already done as applied", async () => {
+    api.taskAction.mockRejectedValue(
+      Object.assign(new Error("HTTP 400"), { code: "TASK_ALREADY_DONE", serverMessage: "the task is already done" }),
+    );
+    await mount();
+    const reads = api.listTasks.mock.calls.length;
+    await act(async () => click(bullet()));
+    await settle();
+    expect(alert()).toBeNull();
+    expect(api.listTasks.mock.calls.length).toBe(reads + 1);
+  });
+
+  it("still reports that refusal for an action that is not a completion", async () => {
+    api.taskAction.mockRejectedValue(
+      Object.assign(new Error("HTTP 400"), { code: "TASK_ALREADY_DONE", serverMessage: "the task is already done" }),
+    );
+    await mount();
+    await act(async () => click(venue().querySelector(".tasks-row-title")));
+    const strike = [...venue().querySelectorAll(".tasks-actions button")].find((b) => b.textContent?.trim() === "Strike");
+    await act(async () => click(strike ?? null));
+    await settle();
+    expect(alert()?.textContent).toContain("the task is already done");
+  });
+
+  it("disables every action in the open row, the Done button and the moves included", async () => {
+    const reply = deferred();
+    api.taskAction.mockReturnValue(reply.promise);
+    await mount();
+    await act(async () => click(venue().querySelector(".tasks-row-title")));
+    const actions = () => [...venue().querySelectorAll(".tasks-done-btn, .tasks-actions button")];
+    const labelled = (label: string) => actions().find((b) => b.textContent?.trim() === label) ?? null;
+    await act(async () => click(labelled("Strike")));
+    expect(api.taskAction).toHaveBeenCalledWith("loop_a", { action: "strike" });
+    const disabled = actions()
+      .filter((b) => b.hasAttribute("disabled"))
+      .map((b) => b.textContent?.trim());
+    expect(disabled).toEqual(expect.arrayContaining(["Done", "Tomorrow", "Strike"]));
+    // Reading the task's history or opening the editor changes nothing, so they stay available.
+    expect(labelled("History")?.hasAttribute("disabled")).toBe(false);
+    // The bullet keeps the task's own ring for an action that is not a completion.
+    expect(bullet().classList.contains("tasks-bullet-open")).toBe(true);
+    await act(async () => click(labelled("Done")));
+    expect(api.taskAction).toHaveBeenCalledTimes(1);
+    await act(async () => reply.resolve({ task: {}, receipt: { text: "Struck", undoSeq: 4 } }));
+    await settle();
+    expect(labelled("Done")?.hasAttribute("disabled")).toBe(false);
   });
 });

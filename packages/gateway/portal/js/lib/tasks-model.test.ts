@@ -3,6 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  actionAlreadyApplied,
+  pendingBullet,
   TASK_VIEW_KEYS,
   addDays,
   autoAppliedUndoSeq,
@@ -446,5 +448,24 @@ describe("taskDocumentsShown", () => {
   it("holds back the rest of a long list until asked", () => {
     expect(taskDocumentsShown(docs(6), false)).toEqual({ shown: docs(3), hidden: 3 });
     expect(taskDocumentsShown(docs(6), true)).toEqual({ shown: docs(6), hidden: 0 });
+  });
+});
+
+describe("an action in flight", () => {
+  it("shows a completion's check and a reopen's ring, and keeps the bullet otherwise", () => {
+    expect(pendingBullet("open", "complete")).toBe("done");
+    expect(pendingBullet("carried", "complete")).toBe("done");
+    expect(pendingBullet("done", "reopen")).toBe("open");
+    expect(pendingBullet("carried", "migrate")).toBe("carried");
+    expect(pendingBullet("open", null)).toBe("open");
+  });
+
+  it("counts only a completion refused as already done as applied", () => {
+    const alreadyDone = { code: "TASK_ALREADY_DONE" };
+    expect(actionAlreadyApplied({ action: "complete" }, alreadyDone)).toBe(true);
+    expect(actionAlreadyApplied({ action: "complete", note: "sent" }, alreadyDone)).toBe(true);
+    expect(actionAlreadyApplied({ action: "strike" }, alreadyDone)).toBe(false);
+    expect(actionAlreadyApplied({ action: "complete" }, { code: "BAD_REQUEST" })).toBe(false);
+    expect(actionAlreadyApplied({ action: "complete" }, new Error("network down"))).toBe(false);
   });
 });

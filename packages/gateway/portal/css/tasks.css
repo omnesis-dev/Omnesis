@@ -217,16 +217,16 @@
   transform: translate(-50%, -50%) rotate(45deg);
 }
 
-button.tasks-bullet-open:hover,
-button.tasks-bullet-carried:hover,
-button.tasks-bullet-suggested:hover {
+button.tasks-bullet-open:not(:disabled):hover,
+button.tasks-bullet-carried:not(:disabled):hover,
+button.tasks-bullet-suggested:not(:disabled):hover {
   border-color: var(--success);
   background: color-mix(in srgb, var(--success) 14%, transparent);
 }
 
-button.tasks-bullet-open:hover::after,
-button.tasks-bullet-carried:hover::after,
-button.tasks-bullet-suggested:hover::after {
+button.tasks-bullet-open:not(:disabled):hover::after,
+button.tasks-bullet-carried:not(:disabled):hover::after,
+button.tasks-bullet-suggested:not(:disabled):hover::after {
   border-color: var(--success);
 }
 
@@ -249,6 +249,34 @@ button.tasks-bullet-suggested:hover::after {
 
 button.tasks-bullet-done:hover {
   opacity: 0.8;
+}
+
+/* An action in flight: the row already shows its outcome, pulses its bullet
+   and takes no second click until the gateway answers. */
+.tasks-row.pending .tasks-row-body {
+  opacity: 0.6;
+}
+
+.tasks-row.pending .tasks-bullet {
+  cursor: progress;
+  animation: tasks-bullet-pending 0.9s ease-in-out infinite alternate;
+}
+
+.tasks-row .btn-tiny:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+@keyframes tasks-bullet-pending {
+  to {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tasks-row.pending .tasks-bullet {
+    animation: none;
+  }
 }
 
 /* Struck: a dash across the ring. */

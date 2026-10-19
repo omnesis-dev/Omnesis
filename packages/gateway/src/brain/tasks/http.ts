@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { assertNever } from "@omnesis/core";
 import { scope } from "../../http/scope.js";
-import { BadRequestError, ConflictError, NotFoundError } from "../../http/errors.js";
+import { BadRequestError, ConflictError, HttpError, NotFoundError } from "../../http/errors.js";
 import { validateJson } from "../../http/validate.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { isTaskSchedule, type TaskCommand, type TaskCommandResult } from "../storage/tasks.js";
@@ -201,6 +201,10 @@ export function mountTaskRoutes(app: RouteApp, opts: MountTaskRoutesOpts): void 
     if (!result.ok) {
       if (result.reason === "not_found") throw new NotFoundError(result.message);
       if (result.reason === "invalid") throw new BadRequestError(result.message);
+      // Still a 400 for clients that read only the status; the code lets a
+      // client that retried a completion treat it as applied.
+      if (result.reason === "already_done")
+        throw new HttpError(400, "TASK_ALREADY_DONE", result.message);
       throw new ConflictError(result.message);
     }
     const item = result.loop ? tasks.get(result.loop.id) : null;

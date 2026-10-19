@@ -95,7 +95,17 @@ export type TaskCommandResult =
     }
   | {
       ok: false;
-      reason: "not_found" | "not_owned" | "invalid" | "nothing_to_undo" | "not_latest";
+      /**
+       * `already_done`: a complete on a task that is done — the outcome the
+       * caller asked for already holds, so a client may treat it as applied.
+       */
+      reason:
+        | "not_found"
+        | "not_owned"
+        | "invalid"
+        | "already_done"
+        | "nothing_to_undo"
+        | "not_latest";
       message: string;
     };
 
@@ -205,7 +215,7 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
 
   switch (command.kind) {
     case "complete": {
-      if (loop.state === "done") return fail("invalid", "the task is already done");
+      if (loop.state === "done") return fail("already_done", "the task is already done");
       updateOpenLoop(
         db,
         loop.id,

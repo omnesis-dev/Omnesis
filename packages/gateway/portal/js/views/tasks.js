@@ -8,7 +8,10 @@
  * resolved one); a click anywhere else on the row's line expands it in place
  * to show its actions —
  * Done with an optional note, the quick moves, Strike, Edit and History.
- * Every change answers with a receipt that the toast shows with Undo.
+ * Every change answers with a receipt that the toast shows with Undo. While
+ * a change is in flight its row shows the outcome (a completion's check) and
+ * takes no further action, and a completion the gateway finds already done
+ * reloads the view instead of reporting an error.
  * In experimental mode the Brain's suggestions live under Suggested: the
  * bullet marks one already done, and its line offers Accept (for a chosen
  * time), Accept with a note the note agent applies to it, and Ignore, which
@@ -29,6 +32,7 @@ import { navigate } from "../lib/router.js";
 import { docHref, sourceIcon, sourceLabel } from "../lib/format.js";
 import {
   TASK_VIEWS,
+  actionAlreadyApplied,
   countLabel,
   editBody,
   emptyViewMessage,
@@ -38,6 +42,7 @@ import {
   historyNote,
   isResolved,
   localDay,
+  pendingBullet,
   proposalText,
   quickMoves,
   resolveTaskView,
@@ -74,6 +79,10 @@ export function TasksView({ taskView = "today", focusTaskId = null, experimental
   const [focusTask, setFocusTask] = useState(null);
   const [toast, setToast] = useState(null);
   const [actionError, setActionError] = useState(null);
+  // The action in flight per task id. The state draws the row; the ref
+  // refuses a second request before the first re-render lands.
+  const [pending, setPending] = useState({});
+  const inFlight = useRef(new Set());
   const loadSeq = useRef(0);
   const toastTimer = useRef(null);
 
@@ -130,8 +139,9 @@ export function TasksView({ taskView = "today", focusTaskId = null, experimental
   }
 
   // Run one mutation: show its receipt, then re-read the view so the row
-  // lands where the gateway now places it.
-  async function mutate(request) {
+  // lands where the gateway now places it. A refusal saying the outcome
+  // already holds reloads the view like a success.
+  async function mutate(request, alreadyApplied = () => false) {
     setActionError(null);
     try {
       const result = await request();
@@ -139,12 +149,31 @@ export function TasksView({ taskView = "today", focusTaskId = null, experimental
       await load();
       return true;
     } catch (err) {
+      if (alreadyApplied(err)) {
+        await load();
+        return true;
+      }
       setActionError(errorText(err));
       return false;
     }
   }
 
-  const act = (task, body) => mutate(() => taskAction(task.id, body));
+  // One action per task at a time: the row shows it as pending until the
+  // view has reloaded, and a click meanwhile sends nothing.
+  async function act(task, body) {
+    if (inFlight.current.has(task.id)) return false;
+    inFlight.current.add(task.id);
+    setPending((current) => ({ ...current, [task.id]: body.action }));
+    try {
+      return await mutate(
+        () => taskAction(task.id, body),
+        (err) => actionAlreadyApplied(body, err),
+      );
+    } finally {
+      inFlight.current.delete(task.id);
+      setPending(({ [task.id]: _done, ...rest }) => rest);
+    }
+  }
 
   async function undo(seq) {
     clearTimeout(toastTimer.current);
@@ -163,6 +192,7 @@ export function TasksView({ taskView = "today", focusTaskId = null, experimental
     experimental=${experimental}
     expanded=${expandedId === task.id}
     focused=${focusTaskId === task.id}
+    pending=${pending[task.id] ?? null}
     onToggle=${() => setExpandedId(expandedId === task.id ? null : task.id)}
     act=${(body) => act(task, body)}
     onUndo=${undo}
@@ -283,15 +313,16 @@ export function isRowToggleClick(event) {
   return !String(window.getSelection?.() ?? "");
 }
 
-function TaskRow({ task, view, today, experimental, expanded, focused = false, onToggle, act, onUndo }) {
+function TaskRow({ task, view, today, experimental, expanded, focused = false, pending = null, onToggle, act, onUndo }) {
   const rowRef = useRef(null);
   // A task opened by a link is brought into view once it renders.
   useEffect(() => {
     if (focused) rowRef.current?.scrollIntoView?.({ block: "center" });
   }, [focused]);
-  const bullet = taskBullet(task);
+  const bullet = pendingBullet(taskBullet(task), pending);
   const resolved = isResolved(task);
   const suggested = view === "suggested";
+  const busy = pending !== null;
   const proposal = experimental ? proposalText(task.proposedChange) : null;
   const detailId = `task-detail-${task.id}`;
   const bulletLabel = suggested
@@ -299,13 +330,18 @@ function TaskRow({ task, view, today, experimental, expanded, focused = false, o
     : resolved
       ? `Reopen “${task.title}”`
       : `Complete “${task.title}”`;
-  return html`<li ref=${rowRef} class=${`tasks-row tasks-row-${bullet}${expanded ? " expanded" : ""}${focused ? " focused" : ""}`}>
+  return html`<li
+    ref=${rowRef}
+    class=${`tasks-row tasks-row-${bullet}${expanded ? " expanded" : ""}${focused ? " focused" : ""}${busy ? " pending" : ""}`}
+    aria-busy=${busy ? "true" : undefined}
+  >
     <div class="tasks-row-main" onClick=${(e) => { if (isRowToggleClick(e)) onToggle(); }}>
       <button
         type="button"
-        class=${`tasks-bullet tasks-bullet-${suggested ? "suggested" : bullet}`}
+        class=${`tasks-bullet tasks-bullet-${suggested && pending !== "complete" ? "suggested" : bullet}`}
         aria-label=${bulletLabel}
-        title=${suggested ? "Already done" : resolved ? "Reopen" : "Complete"}
+        title=${busy ? "Saving…" : suggested ? "Already done" : resolved ? "Reopen" : "Complete"}
+        disabled=${busy}
         onClick=${() => act(resolved ? { action: "reopen" } : { action: "complete" })}
       ></button>
       <div class="tasks-row-body">
@@ -323,15 +359,15 @@ function TaskRow({ task, view, today, experimental, expanded, focused = false, o
         ${proposal && !resolved && html`<div class="tasks-proposal">
           <span class="tasks-proposal-text">${proposal}</span>
           <span class="tasks-proposal-actions">
-            <button type="button" class="btn-tiny" onClick=${() => act({ action: "confirm" })}>Confirm</button>
-            <button type="button" class="btn-tiny" onClick=${() => act({ action: "keep" })}>Keep</button>
+            <button type="button" class="btn-tiny" disabled=${busy} onClick=${() => act({ action: "confirm" })}>Confirm</button>
+            <button type="button" class="btn-tiny" disabled=${busy} onClick=${() => act({ action: "keep" })}>Keep</button>
           </span>
         </div>`}
-        ${suggested && html`<${SuggestionActions} task=${task} today=${today} act=${act} />`}
+        ${suggested && html`<${SuggestionActions} task=${task} today=${today} busy=${busy} act=${act} />`}
       </div>
     </div>
     ${expanded && html`<div class="tasks-row-detail" id=${detailId}>
-      <${TaskDetail} task=${task} view=${view} today=${today} act=${act} onUndo=${onUndo} />
+      <${TaskDetail} task=${task} view=${view} today=${today} busy=${busy} act=${act} onUndo=${onUndo} />
     </div>`}
   </li>`;
 }
@@ -363,7 +399,7 @@ function TaskDocuments({ documents }) {
   </ul>`;
 }
 
-function SuggestionActions({ task, today, act }) {
+function SuggestionActions({ task, today, busy, act }) {
   const [when, setWhen] = useState("");
   const [note, setNote] = useState(null);
   const noteId = useRef(null);
@@ -386,10 +422,10 @@ function SuggestionActions({ task, today, act }) {
     </label>
     ${note === null
       ? html`
-        <button type="button" class="btn-tiny tasks-accept" onClick=${accept}>Accept</button>
-        <button type="button" class="btn-tiny tasks-accept-note" onClick=${() => setNote("")}>Accept with note</button>
-        <button type="button" class="btn-tiny tasks-mark-done" onClick=${() => act({ action: "complete" })}>Mark as done</button>
-        <button type="button" class="btn-tiny tasks-ignore" title="Hide it from Tasks; Omnesis keeps track of it" onClick=${() => act({ action: "ignore" })}>Ignore</button>`
+        <button type="button" class="btn-tiny tasks-accept" disabled=${busy} onClick=${accept}>Accept</button>
+        <button type="button" class="btn-tiny tasks-accept-note" disabled=${busy} onClick=${() => setNote("")}>Accept with note</button>
+        <button type="button" class="btn-tiny tasks-mark-done" disabled=${busy} onClick=${() => act({ action: "complete" })}>Mark as done</button>
+        <button type="button" class="btn-tiny tasks-ignore" disabled=${busy} title="Hide it from Tasks; Omnesis keeps track of it" onClick=${() => act({ action: "ignore" })}>Ignore</button>`
       : html`<form class="tasks-suggestion-note" onSubmit=${(e) => { e.preventDefault(); accept(); }}>
           <textarea
             class="tasks-note-input"
@@ -400,20 +436,20 @@ function SuggestionActions({ task, today, act }) {
             value=${note}
             onInput=${(e) => setNote(e.currentTarget.value)}
           ></textarea>
-          <button type="submit" class="btn-tiny tasks-accept" disabled=${!note.trim()}>Accept with note</button>
+          <button type="submit" class="btn-tiny tasks-accept" disabled=${busy || !note.trim()}>Accept with note</button>
           <button type="button" class="btn-tiny" onClick=${() => setNote(null)}>Cancel</button>
         </form>`}
   </div>`;
 }
 
-function TaskDetail({ task, view, today, act, onUndo }) {
+function TaskDetail({ task, view, today, busy, act, onUndo }) {
   const [note, setNote] = useState("");
   const [mode, setMode] = useState("actions");
   const resolved = isResolved(task);
   const suggested = view === "suggested";
   return html`<div class="tasks-detail">
     ${mode === "edit"
-      ? html`<${TaskEditor} task=${task} onCancel=${() => setMode("actions")} act=${async (body) => {
+      ? html`<${TaskEditor} task=${task} busy=${busy} onCancel=${() => setMode("actions")} act=${async (body) => {
           const ok = await act(body);
           if (ok) setMode("actions");
         }} />`
@@ -431,13 +467,13 @@ function TaskDetail({ task, view, today, act, onUndo }) {
             value=${note}
             onInput=${(e) => setNote(e.currentTarget.value)}
           />
-          <button type="submit" class="btn-tiny tasks-done-btn">Done</button>
+          <button type="submit" class="btn-tiny tasks-done-btn" disabled=${busy}>Done</button>
         </form>`}
         <div class="tasks-actions" role="group" aria-label="Task actions">
           ${!resolved && !suggested && quickMoves(today).map((move) => html`
-            <button key=${move.key} type="button" class="btn-tiny" title=${`Move to ${move.to}`} onClick=${() => act({ action: "migrate", to: move.to })}>${move.label}</button>`)}
-          ${!resolved && !suggested && html`<button type="button" class="btn-tiny" onClick=${() => act({ action: "strike" })}>Strike</button>`}
-          ${resolved && html`<button type="button" class="btn-tiny" onClick=${() => act({ action: "reopen" })}>Reopen</button>`}
+            <button key=${move.key} type="button" class="btn-tiny" disabled=${busy} title=${`Move to ${move.to}`} onClick=${() => act({ action: "migrate", to: move.to })}>${move.label}</button>`)}
+          ${!resolved && !suggested && html`<button type="button" class="btn-tiny" disabled=${busy} onClick=${() => act({ action: "strike" })}>Strike</button>`}
+          ${resolved && html`<button type="button" class="btn-tiny" disabled=${busy} onClick=${() => act({ action: "reopen" })}>Reopen</button>`}
           ${!suggested && html`<button type="button" class="btn-tiny" onClick=${() => setMode("edit")}>Edit</button>`}
           <button type="button" class="btn-tiny" aria-expanded=${mode === "history"} onClick=${() => setMode(mode === "history" ? "actions" : "history")}>History</button>
         </div>
@@ -446,7 +482,7 @@ function TaskDetail({ task, view, today, act, onUndo }) {
   </div>`;
 }
 
-function TaskEditor({ task, act, onCancel }) {
+function TaskEditor({ task, busy, act, onCancel }) {
   const initialSchedule = scheduleEditorState(task.scheduledFor);
   const [form, setForm] = useState({
     title: task.title,
@@ -502,7 +538,7 @@ function TaskEditor({ task, act, onCancel }) {
     ${error && html`<div class="tasks-editor-error" role="alert">${error}</div>`}
     <div class="tasks-editor-actions">
       <button type="button" class="btn-secondary" onClick=${onCancel}>Cancel</button>
-      <button type="submit" class="btn-primary">Save</button>
+      <button type="submit" class="btn-primary" disabled=${busy}>Save</button>
     </div>
   </form>`;
 }

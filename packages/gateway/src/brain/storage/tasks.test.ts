@@ -131,7 +131,10 @@ describe("task commands", () => {
       completionNote: "renewed online",
       resolvedAt: NOW + 1000,
     });
-    expect(apply({ kind: "complete", id: loopId })).toMatchObject({ ok: false, reason: "invalid" });
+    expect(apply({ kind: "complete", id: loopId })).toMatchObject({
+      ok: false,
+      reason: "already_done",
+    });
   });
 
   test("migrate moves an open task and records from and to", () => {
