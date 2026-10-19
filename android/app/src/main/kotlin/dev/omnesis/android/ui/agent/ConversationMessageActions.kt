@@ -65,7 +65,7 @@ internal fun queuedConversationText(messages: List<ConversationSubmission>): Str
 
 @Composable
 internal fun QueuedConversationBubble(state: AgentCoordinator.UiState, onSendNow: (List<String>) -> Unit) {
-    val queued = state.controls.queuedMessages.filter { it.status == "queued" }
+    val queued = state.visibleQueuedMessages.filter { it.status == "queued" }
     if (queued.isEmpty()) return
     val groups = if (state.controls.capabilities.coalescedQueue) listOf(queued) else queued.map { listOf(it) }
     Column(Modifier.fillMaxWidth()) {

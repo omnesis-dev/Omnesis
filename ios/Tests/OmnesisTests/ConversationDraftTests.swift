@@ -119,6 +119,7 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
     override func tearDown() {
         ConversationControlsStub.responses = [:]
         ConversationControlsStub.requests = []
+        ConversationControlsStub.beforeResponse = nil
         super.tearDown()
     }
 
@@ -198,6 +199,7 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
         XCTAssertNotNil(coordinator.submissionError)
         XCTAssertFalse(coordinator.submitting)
         XCTAssertEqual(coordinator.conversationControls?.queued.map(\.id), ["queued"])
+        XCTAssertEqual(coordinator.presentedConversationControls?.queued.map(\.id), ["queued"])
         XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "Unsent draft")
         guard case .assistant(let turn) = coordinator.turns.last else { return XCTFail("Missing answer") }
         XCTAssertTrue(turn.parts.contains(.text("Durable answer")))
@@ -278,6 +280,92 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
         coordinator.saveDraft("", for: coordinator.composerDraftKey)
     }
 
+    func testSendNowHandoffHandlesBothEventResponseOrdersAndStaleSnapshots() async throws {
+        for eventFirst in [true, false] {
+            let coordinator = coordinator()
+            let queued = #"""
+            {"busy":true,"capabilities":{"queueSendNow":true},"queuedMessages":[
+              {"id":"receipt","text":"Follow-up","status":"queued"}]}
+            """#
+            ConversationControlsStub.responses["controls"] = (200, queued)
+            ConversationControlsStub.responses["send-now"] = (202, queued)
+            await coordinator.refreshConversationControls()
+            coordinator.saveDraft("Another draft", for: coordinator.composerDraftKey)
+            ConversationControlsStub.beforeResponse = { request in
+                guard request.url?.lastPathComponent == "send-now" else { return }
+                XCTAssertTrue(coordinator.presentedConversationControls?.queued.isEmpty == true)
+                XCTAssertEqual(coordinator.conversationControls?.queued.map(\.id), ["receipt"])
+                if eventFirst {
+                    await coordinator.applyEventForTesting(.userMessage(
+                        sessionId: "conversation-example", userMessageId: "independent-wire-id", text: "Follow-up"
+                    ))
+                }
+            }
+            await coordinator.sendQueuedMessagesNow(submissionIds: ["receipt"])
+            if !eventFirst {
+                await coordinator.applyEventForTesting(.userMessage(
+                    sessionId: "conversation-example", userMessageId: "independent-wire-id", text: "Follow-up"
+                ))
+            }
+            await coordinator.refreshConversationControls()
+            XCTAssertTrue(coordinator.presentedConversationControls?.queued.isEmpty == true)
+            let users = coordinator.turns.filter { turn in
+                if case .user = turn { return true }
+                return false
+            }
+            XCTAssertEqual(users.count, 1)
+            XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "Another draft")
+            ConversationControlsStub.responses["controls"] = (
+                200,
+                #"""
+                {"busy":true,"queuedMessages":[
+                  {"id":"receipt","text":"Follow-up","status":"queued"},
+                  {"id":"new","text":"Follow-up","status":"queued"}]}
+                """#
+            )
+            await coordinator.refreshConversationControls()
+            XCTAssertEqual(coordinator.presentedConversationControls?.queued.map(\.id), ["new"])
+            ConversationControlsStub.responses["controls"] = (
+                200,
+                #"{"busy":false,"queuedMessages":[{"id":"receipt","text":"Follow-up","status":"failed","error":"Unavailable"}]}"#
+            )
+            await coordinator.refreshConversationControls()
+            XCTAssertEqual(coordinator.presentedConversationControls?.queuedMessages.first?.status, "failed")
+            ConversationControlsStub.beforeResponse = nil
+        }
+    }
+
+    func testSendNowFailureAfterLeavingAndReturningDoesNotChangeNewSessionState() async throws {
+        let coordinator = coordinator()
+        let json = #"""
+        {"busy":true,"capabilities":{"queueSendNow":true},"queuedMessages":[
+          {"id":"receipt","text":"Follow-up","status":"queued"}]}
+        """#
+        let controls = try JSONDecoder().decode(ConversationControls.self, from: Data(json.utf8))
+        coordinator.installPreviewConversationControls(controls)
+        ConversationControlsStub.responses["send-now"] = (503, "Unavailable")
+        ConversationControlsStub.beforeResponse = { request in
+            guard request.url?.lastPathComponent == "send-now" else { return }
+            coordinator.newConversation()
+            coordinator.installPreviewState(
+                sessionId: "conversation-example",
+                model: "m",
+                backend: "b",
+                title: "Example",
+                turns: [],
+                citations: [],
+                conversations: []
+            )
+            coordinator.installPreviewConversationControls(controls)
+            coordinator.saveDraft("New unsent draft", for: coordinator.composerDraftKey)
+        }
+        await coordinator.sendQueuedMessagesNow(submissionIds: ["receipt"])
+        XCTAssertEqual(coordinator.presentedConversationControls?.queued.map(\.id), ["receipt"])
+        XCTAssertNil(coordinator.submissionError)
+        XCTAssertFalse(coordinator.submitting)
+        XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "New unsent draft")
+    }
+
     func testSendNowDoesNotCallOlderGateway() async {
         let coordinator = coordinator()
         ConversationControlsStub.responses["controls"] = (
@@ -314,6 +402,7 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
 private final class ConversationControlsStub: URLProtocol {
     nonisolated(unsafe) static var responses: [String: (Int, String)] = [:]
     nonisolated(unsafe) static var requests: [URLRequest] = []
+    nonisolated(unsafe) static var beforeResponse: (@MainActor @Sendable (URLRequest) async -> Void)?
     // URLProtocol requires a class override.
     // swiftlint:disable:next static_over_final_class
     override class func canInit(with request: URLRequest) -> Bool {
@@ -342,6 +431,13 @@ private final class ConversationControlsStub: URLProtocol {
         }
         Self.requests.append(captured)
         let response = Self.responses[request.url!.lastPathComponent] ?? (200, "{}")
+        Task {
+            await Self.beforeResponse?(captured)
+            complete(response)
+        }
+    }
+
+    private func complete(_ response: (Int, String)) {
         client?.urlProtocol(
             self,
             didReceive: HTTPURLResponse(

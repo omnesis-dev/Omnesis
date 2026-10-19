@@ -843,7 +843,7 @@ public struct AgentView: View {
                         dismissedToolCallIds: store.agent.dismissedConversationActivity.toolCallIds
                     ))
 
-                    if let controls = store.agent.conversationControls, !controls.queued.isEmpty {
+                    if let controls = store.agent.presentedConversationControls, !controls.queued.isEmpty {
                         ConversationQueuedBubble(
                             controls: controls,
                             disabled: !store.agent.canComposeMessage || store.agent.submitting,

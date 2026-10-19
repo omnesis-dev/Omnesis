@@ -27,6 +27,7 @@ import { useEffect, useReducer, useRef, useState } from "preact/hooks";
 
 import { migrateClarificationDraft, submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
 import { ConversationControls } from "../components/agent/conversation-controls.js";
+import { handoffQueuedMessages, newQueueHandoffIds, visibleQueueControls } from "../lib/queue-handoff.js";
 import { createAgentClient } from "../lib/agent-client.js";
 import {
   Composer,
@@ -286,6 +287,9 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   const [historyError, setHistoryError] = useState(null);
   const [actionFailure, setActionFailure] = useState(null);
   const [controls, setControls] = useState(null);
+  const queueHandoffsRef = useRef(new Map());
+  const [queueHandoffs, setQueueHandoffs] = useState(queueHandoffsRef.current);
+  const visibleControls = visibleQueueControls(controls, queueHandoffs.get(state.sessionId));
   const [editPrompt, setEditPrompt] = useState(null);
   const [unconfirmed, setUnconfirmed] = useState(null);
   const composerDraftKey = convoId ?? (shouldReplaceLandingUrl(window.location.pathname) ? "new" : (state.sessionId ?? "new"));
@@ -1036,14 +1040,28 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
 
   async function sendQueuedNow(submissionIds) {
     const sessionId = state.sessionId;
-    if (!sessionId || !clientRef.current || state.terminalFailure) return;
+    const client = clientRef.current;
+    const generation = sendGenerationRef.current;
+    if (!sessionId || !client || state.terminalFailure) return;
+    const newlyHidden = newQueueHandoffIds(queueHandoffsRef.current.get(sessionId), submissionIds);
+    if (!newlyHidden.length) return;
     setActionFailure(null);
-    try {
-      await clientRef.current.sendQueuedNow(sessionId, submissionIds);
-      if (activeSessionIdRef.current === sessionId) await refreshControls(sessionId);
-    } catch (error) {
-      if (activeSessionIdRef.current === sessionId) setActionFailure({ sessionId, message: `Queued messages were not confirmed. Try Send now again. ${error.message ?? String(error)}` });
-    }
+    const updateMask = (hide) => {
+      const next = new Map(queueHandoffsRef.current);
+      const ids = new Set(next.get(sessionId));
+      for (const id of newlyHidden) hide ? ids.add(id) : ids.delete(id);
+      next.set(sessionId, ids);
+      queueHandoffsRef.current = next;
+      setQueueHandoffs(next);
+    };
+    await handoffQueuedMessages({
+      send: () => client.sendQueuedNow(sessionId, submissionIds),
+      hide: () => updateMask(true),
+      restore: () => updateMask(false),
+      isCurrent: () => agentRequestIsCurrent(generation, sendGenerationRef.current, sessionId, activeSessionIdRef.current) && clientRef.current === client,
+      refresh: () => refreshControls(sessionId),
+      onError: (error) => setActionFailure({ sessionId, message: `Queued messages were not confirmed. Try Send now again. ${error.message ?? String(error)}` }),
+    });
   }
 
   function cancel() {
@@ -1139,7 +1157,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                 <h1 class="agent-hero-headline">Ask Omnesis about your corpus</h1>
                 <div class="agent-hero-composer">
               <${ConversationControls}
-                controls=${controls?.sessionId === state.sessionId ? controls : null}
+                controls=${visibleControls?.sessionId === state.sessionId ? visibleControls : null}
                 unconfirmed=${unconfirmed?.sessionId === state.sessionId ? unconfirmed.submission : null}
                 onAnswer=${send}
                 onSendNow=${sendQueuedNow}
@@ -1195,7 +1213,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                   active=${workingIndicatorActive(state)}
                   rev=${workingIndicatorRev(state)} />
               <${ConversationControls}
-                controls=${controls?.sessionId === state.sessionId ? controls : null}
+                controls=${visibleControls?.sessionId === state.sessionId ? visibleControls : null}
                 unconfirmed=${unconfirmed?.sessionId === state.sessionId ? unconfirmed.submission : null}
                 onAnswer=${send}
                 onSendNow=${sendQueuedNow}

@@ -5,6 +5,8 @@ package dev.omnesis.android.ui.agent
 
 import dev.omnesis.android.transport.client.AgentClient
 import dev.omnesis.android.transport.client.AgentEventSource
+import dev.omnesis.android.transport.dto.AgentEvent
+import dev.omnesis.android.transport.client.ConversationSubmission
 import dev.omnesis.android.transport.client.ConversationControls
 import dev.omnesis.android.transport.http.GatewayHttp
 import kotlinx.coroutines.CoroutineScope
@@ -34,6 +36,7 @@ class ConversationSubmissionTest {
     private lateinit var server: MockWebServer
     private val coordinators = mutableListOf<AgentCoordinator>()
     private val submissions = CopyOnWriteArrayList<String>()
+    private var sendNowReply: (() -> MockResponse)? = null
     private var reject = true
     private var oldGateway = false
     private var controlsBody = """{"busy":true,"queuedMessages":[],"future":true}"""
@@ -43,6 +46,7 @@ class ConversationSubmissionTest {
         server = MockWebServer()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.path?.endsWith("/queue/send-now") == true -> sendNowReply?.invoke() ?: MockResponse().setResponseCode(503)
                 request.path?.endsWith("/controls") == true -> if (oldGateway) MockResponse().setResponseCode(404).setBody("""{"error":"NOT_FOUND","message":"Not found"}""")
                     else MockResponse().setBody(controlsBody)
                 request.path?.endsWith("/submissions") == true -> {
@@ -72,7 +76,7 @@ class ConversationSubmissionTest {
             coordinators += it
             it.attachForTesting(AgentClient(GatewayHttp(http, base, "example-token")), AgentEventSource(http, base, "example-token"),
                 AgentCoordinator.UiState(sessionId = "session-one", hasClient = true, controlsAvailable = supported,
-                    controls = ConversationControls(busy = busy, capabilities = dev.omnesis.android.transport.client.ConversationCapabilities(queueSendNow = sendNow)), chat = AgentChatState(busy = busy, turns = turns), composer = store.read("", "session-one")))
+                    controls = ConversationControls(busy = busy, queuedMessages = if (sendNow) listOf(ConversationSubmission("queued", "Follow up", "queued")) else emptyList(), capabilities = dev.omnesis.android.transport.client.ConversationCapabilities(queueSendNow = sendNow)), chat = AgentChatState(busy = busy, turns = turns), composer = store.read("", "session-one")))
         }
     }
 
@@ -93,6 +97,45 @@ class ConversationSubmissionTest {
         await { coord.state.value.chat.lastTurnError != null }
         assertFalse(coord.state.value.chat.dismissToolsUntilUserMessage)
         assertTrue(coord.state.value.chat.lastTurnError!!.startsWith("Could not send queued messages"))
+    }
+
+    @Test fun sendNowHandoffHidesOnlySelectedReceiptsInEitherEventResponseOrder() {
+        for (eventFirst in listOf(true, false)) {
+            val entered = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            sendNowReply = {
+                entered.countDown()
+                check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                MockResponse().setBody("""{"busy":true,"queuedMessages":[{"id":"queued","text":"Follow up","status":"queued"},{"id":"new-id","text":"Follow up","status":"queued"}]}""")
+            }
+            val coord = coordinator(sendNow = true)
+            coord.sendQueuedNow(listOf("queued"))
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(coord.state.value.visibleQueuedMessages.isEmpty())
+            assertEquals(1, coord.state.value.controls.queuedMessages.size)
+            if (eventFirst) coord.applyEventForTesting(AgentEvent.UserMessage("session-one", "random-message", "Follow up"))
+            release.countDown()
+            await { coord.state.value.controls.queuedMessages.size == 2 }
+            if (!eventFirst) coord.applyEventForTesting(AgentEvent.UserMessage("session-one", "random-message", "Follow up"))
+            assertEquals(listOf("new-id"), coord.state.value.visibleQueuedMessages.map { it.id })
+            assertEquals(1, coord.state.value.chat.turns.filterIsInstance<AgentTurn.User>().size)
+            // A failed receipt must remain actionable even if a prior queued snapshot was hidden.
+            val failed = coord.state.value.copy(controls = ConversationControls(queuedMessages = listOf(
+                ConversationSubmission("queued", "Follow up", "failed"),
+            )))
+            assertEquals("failed", failed.visibleQueuedMessages.single().status)
+            coord.teardown()
+        }
+    }
+
+    @Test fun failedSendNowRestoresQueueAndRefreshes() {
+        val coord = coordinator(sendNow = true)
+        controlsBody = """{"busy":true,"queuedMessages":[{"id":"queued","text":"Follow up","status":"queued"}]}"""
+        coord.sendQueuedNow(listOf("queued"))
+        await { coord.state.value.chat.lastTurnError != null }
+        assertTrue(coord.state.value.hiddenQueuedSubmissionIds.isEmpty())
+        await { coord.state.value.visibleQueuedMessages.size == 1 }
+        assertEquals("queued", coord.state.value.visibleQueuedMessages.single().id)
     }
 
     @Test fun uncertainDeliverySurvivesCoordinatorRecreationAndRetriesSameId() {

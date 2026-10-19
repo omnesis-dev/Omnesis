@@ -881,7 +881,7 @@ private fun Transcript(
     // a send or a streamed reply still follows.
     val lastAssistantParts = (turns.lastOrNull() as? AgentTurn.Assistant)?.parts?.size ?: 0
     var holdOpeningPosition by remember { mutableStateOf(briefRows != null) }
-    LaunchedEffect(turns.size, lastAssistantParts, queuedConversationText(state.controls.queuedMessages)) {
+    LaunchedEffect(turns.size, lastAssistantParts, queuedConversationText(state.visibleQueuedMessages)) {
         if (holdOpeningPosition) {
             holdOpeningPosition = false
             return@LaunchedEffect
@@ -1006,7 +1006,7 @@ private fun Transcript(
             } else {
                 items(turns, key = { it.id }) { turn -> Bubble(turn) }
             }
-            if (state.controls.queuedMessages.any { it.status == "queued" }) {
+            if (state.visibleQueuedMessages.any { it.status == "queued" }) {
                 item(key = "queued-messages") { QueuedConversationBubble(state, onSendQueuedNow) }
             }
             // The item is added only once the dots have actually revealed (a genuine quiet gap),

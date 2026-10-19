@@ -3343,6 +3343,33 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testConversationQueueHandoff() {
+        let controls = PreviewMocks.conversationControls
+        var handoff = ConversationQueueHandoff()
+        _ = handoff.begin(ids: controls.queued.map(\.id))
+        let presented = handoff.presenting(controls)
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: .user(id: "wire-message", text: controls.queuedText))
+                if !presented.queued.isEmpty {
+                    ConversationQueuedBubble(controls: presented, disabled: false, onSendNow: {})
+                }
+                AgentComposer(
+                    text: .constant(""),
+                    busy: true,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(16).background(Theme.bgPrimary),
+            name: "72h-conversation-queue-handoff",
+            size: CGSize(width: 393, height: 300)
+        )
+    }
+
     func testConversationBusyFollowupComposer() {
         snapshot(
             AgentComposer(

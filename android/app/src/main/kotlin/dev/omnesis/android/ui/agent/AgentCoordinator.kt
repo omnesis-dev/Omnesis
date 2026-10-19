@@ -140,24 +140,34 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
             ?.let { submitFollowUp(it.text, deepResearch = it.deepResearch == true, answerCurrentQuestion = false) }
     }
 
+    private var queueContextGeneration = 0L
+
     fun sendQueuedNow(submissionIds: List<String>) {
+        val generation = queueContextGeneration
         val st = _state.value
         val sid = st.sessionId ?: return
         val c = client ?: return
         if (!st.controlsAvailable || !st.controls.capabilities.queueSendNow || submissionIds.isEmpty()) return
+        val selected = st.visibleQueuedMessages.filter { it.status == "queued" && it.id in submissionIds }
+            .mapTo(hashSetOf()) { it.id }
+        if (selected.isEmpty()) return
         cancelEphemeralGateTimeout()
-        _state.update { it.copy(chat = AgentReducer.dismissInterruptedTools(it.chat)) }
+        _state.update { it.copy(
+            hiddenQueuedSubmissionIds = it.hiddenQueuedSubmissionIds + selected,
+            chat = AgentReducer.dismissInterruptedTools(it.chat),
+        ) }
         scope.launch {
             try {
-                val controls = c.sendQueuedNow(sid, submissionIds)
-                if (client === c && _state.value.sessionId == sid) {
+                val controls = c.sendQueuedNow(sid, selected.toList())
+                if (client === c && _state.value.sessionId == sid && queueContextGeneration == generation) {
                     _state.update { it.copy(controls = controls) }
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                if (client === c && _state.value.sessionId == sid) {
-                    _state.update { it.copy(chat = it.chat.copy(dismissToolsUntilUserMessage = false, lastTurnError = "Could not send queued messages: ${classifyGatewayError(error)}")) }
+                if (client === c && _state.value.sessionId == sid && queueContextGeneration == generation) {
+                    _state.update { it.copy(hiddenQueuedSubmissionIds = it.hiddenQueuedSubmissionIds - selected, chat = it.chat.copy(dismissToolsUntilUserMessage = false, lastTurnError = "Could not send queued messages: ${classifyGatewayError(error)}")) }
+                    refreshControls(sid)
                 }
             }
         }
@@ -227,6 +237,8 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         val composer: ComposerRecord = ComposerRecord(),
         val controls: dev.omnesis.android.transport.client.ConversationControls = dev.omnesis.android.transport.client.ConversationControls(),
         val controlsAvailable: Boolean = false,
+        /** Presentation-only handoff. Retained across stale snapshots until this session is left. */
+        val hiddenQueuedSubmissionIds: Set<String> = emptySet(),
         val submissionsSending: Set<String> = emptySet(),
         val sessionId: String? = null,
         val model: String? = null,
@@ -287,6 +299,10 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
          */
         val liveSessionMissingReason: String? = null,
     ) {
+        val visibleQueuedMessages get() = controls.queuedMessages.filterNot {
+            it.status == "queued" && it.id in hiddenQueuedSubmissionIds
+        }
+
         /**
          * Whether the composer should accept input. Enabled as soon as a client exists —
          * including the fresh/empty state where no session has been minted yet ([send] mints
@@ -655,6 +671,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
      * no session backs them yet. Sidebar state (`conversations`) is left untouched.
      */
     private fun resetToEmptySession() {
+        queueContextGeneration++
         cancelEphemeralGateTimeout()
         planClearJob?.cancel()
         planClearJob = null
@@ -671,6 +688,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 composer = composerStore.read(composerAccount, null),
                 controls = dev.omnesis.android.transport.client.ConversationControls(),
                 controlsAvailable = false,
+                hiddenQueuedSubmissionIds = emptySet(),
                 model = null,
                 backend = null,
                 title = "",
@@ -700,6 +718,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
      * are reduced so neither an in-flight delta nor a replayed delta is lost or duplicated.
      */
     private fun beginResume(id: String) {
+        queueContextGeneration++
         cancelEphemeralGateTimeout()
         planClearJob?.cancel()
         planClearJob = null
@@ -715,6 +734,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 composerGeneration = it.composerGeneration + 1,
                 controls = dev.omnesis.android.transport.client.ConversationControls(),
                 controlsAvailable = false,
+                hiddenQueuedSubmissionIds = emptySet(),
                 model = summary?.model,
                 backend = summary?.backend,
                 title = summary?.title ?: "",

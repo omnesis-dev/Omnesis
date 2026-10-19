@@ -209,15 +209,22 @@ public final class AgentCoordinator {
         draftStore.restoreBackup(key)
     }
 
+    private var queueHandoff = ConversationQueueHandoff()
+
+    var presentedConversationControls: ConversationControls? {
+        conversationControls.map(queueHandoff.presenting)
+    }
+
     func refreshConversationControls() async {
         guard let client, let id = sessionId else { return }
+        let choice = sessionChoiceCount
         do {
             let controls = try await client.conversationControls(sessionId: id)
-            guard sessionId == id, self.client === client else { return }
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
             conversationControls = controls
             conversationControlsSupported = true
         } catch {
-            if case GatewayClient.Error.notFound = error, sessionId == id, self.client === client {
+            if case GatewayClient.Error.notFound = error, sessionChoiceCount == choice, sessionId == id, self.client === client {
                 conversationControlsSupported = false
                 conversationControls = nil
             }
@@ -229,17 +236,22 @@ public final class AgentCoordinator {
         guard let client, let id = sessionId, canComposeMessage, !submitting,
               let controls = conversationControls, controls.capabilities?.queueSendNow == true,
               !submissionIds.isEmpty else { return }
+        let choice = sessionChoiceCount
         submitting = true
         submissionError = nil
-        defer { submitting = false }
+        defer {
+            if sessionChoiceCount == choice, sessionId == id, self.client === client { submitting = false }
+        }
+        let handoff = queueHandoff.begin(ids: submissionIds)
         await dismissPriorConversationActivity()
-        guard sessionId == id, self.client === client else { return }
+        guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
         do {
             let updated = try await client.sendQueuedMessagesNow(sessionId: id, submissionIds: submissionIds)
-            guard sessionId == id, self.client === client else { return }
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
             conversationControls = updated
         } catch {
-            guard sessionId == id, self.client === client else { return }
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+            queueHandoff.failed(handoff)
             dismissedConversationActivity.requestFailed()
             submissionError = error
             await refreshConversationControls()
@@ -499,6 +511,8 @@ public final class AgentCoordinator {
         client = nil
         pairing = nil
         sessionId = nil
+        queueHandoff = ConversationQueueHandoff()
+        submitting = false
         conversationControls = nil
         conversationControlsSupported = false
         submissionError = nil
@@ -795,6 +809,8 @@ public final class AgentCoordinator {
         clearTranscriptState()
         composerDraft = ""
         sessionId = nil
+        queueHandoff = ConversationQueueHandoff()
+        submitting = false
         conversationControls = nil
         conversationControlsSupported = false
         submissionError = nil
@@ -857,6 +873,8 @@ public final class AgentCoordinator {
 
     private func adoptConversationId(_ id: String) {
         if sessionId != id {
+            queueHandoff = ConversationQueueHandoff()
+            submitting = false
             conversationControls = nil
             conversationControlsSupported = false
         }
