@@ -12,7 +12,7 @@ typealias DailyBriefReactionHandler = (
     _ observationId: String,
     _ reaction: DailyBriefReaction.Kind?,
     _ note: String?
-)
+) async
     -> Bool
 
 /// The thumbs under a brief item. Up is one tap, and a second tap clears
@@ -21,6 +21,9 @@ typealias DailyBriefReactionHandler = (
 /// opens that screen for the correction and stands on Done or Cancel alike.
 /// A down reaction shows its kind, and the words, as a caption; a reaction
 /// the gateway refused is put back with a one-line reason.
+/// What the Tell Omnesis screen opened from a thumbs down is for.
+private enum CapturePurpose { case whyNot, correction }
+
 @available(iOS 17.0, *)
 struct DailyBriefReactionBar: View {
     let item: DailyBriefItem
@@ -35,10 +38,8 @@ struct DailyBriefReactionBar: View {
 
     /// The Tell Omnesis screen open for one reaction.
     private struct Capture: Identifiable {
-        enum Purpose { case whyNot, correction }
-
         let id = UUID()
-        let purpose: Purpose
+        let purpose: CapturePurpose
     }
 
     private var kind: DailyBriefReaction.Kind? {

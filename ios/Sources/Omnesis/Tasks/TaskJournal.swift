@@ -183,7 +183,8 @@ public enum TaskJournal {
 
     /// A history line's verb.
     public static func eventTitle(_ event: TaskEvent) -> String {
-        switch event.kind {
+        if let own = autonomousTitle(event) { return own }
+        return switch event.kind {
         case "created": "Added"
         case "accepted": "Accepted"
         case "ignored": "Ignored"
@@ -196,11 +197,18 @@ public enum TaskJournal {
         case "reopened": "Reopened"
         case "proposal_confirmed": "Change confirmed"
         case "proposal_kept": "Kept as it was"
+        case "undone": "Undone"
+        default: "Note"
+        }
+    }
+
+    /// The verb of a change Omnesis made on its own, naming it; nil otherwise.
+    private static func autonomousTitle(_ event: TaskEvent) -> String? {
+        switch event.kind {
         case "auto_applied": event.change == "complete" ? "Marked done by Omnesis" : "Updated by Omnesis"
         case "auto_accepted": "Added by Omnesis"
         case "withheld": "Withheld by Omnesis"
-        case "undone": "Undone"
-        default: "Note"
+        default: nil
         }
     }
 

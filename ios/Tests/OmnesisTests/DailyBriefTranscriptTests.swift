@@ -511,7 +511,7 @@ private actor SlowReactionGateway: DailyBriefItemsLoading {
     }
 
     func answer(_ index: Int) {
-        pending.removeValue(forKey: index)?.resume(returning: answers[index] ?? nil)
+        pending.removeValue(forKey: index)?.resume(returning: answers[index].flatMap { $0 })
     }
 }
 

@@ -657,10 +657,16 @@ describe("brain bench: the interest engine", () => {
     });
     // A changed mind on one item replaces its example rather than adding one.
     expect((await react(loyalty, { reaction: "up" })).status).toBe(200);
+    // The virtual clock is frozen inside a phase, so the two rows share a
+    // timestamp and their order is not meaningful; compare them as a set.
     const loyaltySignals = (await interest()).signals.filter((s) => s.observationId === loyalty);
-    expect(loyaltySignals.map((s) => [s.source, s.supersededAt === null])).toEqual([
-      ["brief_thumbs_up", true],
+    expect(
+      loyaltySignals
+        .map((s) => [s.source, s.supersededAt === null])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    ).toEqual([
       ["brief_not_interested", false],
+      ["brief_thumbs_up", true],
     ]);
     expect(
       (await react(loyalty, { reaction: "not_interested", note: "I never read these." })).status,
