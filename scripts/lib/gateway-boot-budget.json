@@ -13,6 +13,7 @@
     "scripts/generate-ios-app-store-screenshots.sh",
     "scripts/ios-push-spike.sh",
     "scripts/shot-portal.sh",
-    "scripts/synth-gateway.sh"
+    "scripts/synth-gateway.sh",
+    "scripts/record-demos.sh"
   ]
 }

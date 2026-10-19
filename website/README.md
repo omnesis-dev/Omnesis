@@ -86,7 +86,13 @@ it's HTML using the page's `.term` tokens.
 ## Demo carousel (top of the page)
 
 The hero carousel videos under `demos/` are produced by
-`scripts/record-demos.sh` + `scripts/demos-to-video.sh` (see those files).
+`scripts/record-demos.sh` + `scripts/demos-to-video.sh`. Record each combination
+of `--phone` / `--ipad` and `--dark` / `--light`; each produces MP4s plus PNG
+and WebP posters in the matching `demos/` subtree. The nine carousel scenarios
+set `speed: 3` in their replay metadata, scaling event and typing delays before
+capture. The demo auto-pilot uses matching shorter reading pauses. Encoding
+preserves the complete capture and adds a brief final-frame hold; it does not
+change playback speed or trim away the opening question.
 
 ## Apple Watch clips
 

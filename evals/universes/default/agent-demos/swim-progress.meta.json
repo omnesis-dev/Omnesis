@@ -1,3 +1,4 @@
 {
+  "speed": 3,
   "triggers": ["swim", "swims", "swimming"]
 }

@@ -321,6 +321,10 @@ public struct AgentView: View {
     }
 
     private func applyComposerFocusRequest() {
+        #if DEBUG
+        // Recording automation owns the pre-filled prompt and keyboard state.
+        guard ProcessInfo.processInfo.environment["DEMO_AUTO_SEND"] == nil else { return }
+        #endif
         let requestedFocus = composerFocusRequest
         guard AgentComposerForegroundFocusPolicy.shouldFocus(
             request: requestedFocus,

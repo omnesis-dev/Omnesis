@@ -27,6 +27,15 @@ function fixture(events: AgentEvent[], afterMs = 0): ReplayFixture {
 }
 
 describe("ReplayBackend", () => {
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects invalid pacing speed %s",
+    (speed) => {
+      expect(() => new ReplayBackend({ fixtures: [fixture([])], speed })).toThrow(
+        "speed must be a positive finite number",
+      );
+    },
+  );
+
   it("emits a fixture's events in order with placeholders substituted", async () => {
     const fx = fixture([
       {

@@ -75,6 +75,8 @@ export interface ReplayBackendOptions {
   clampMs?: number;
   /** Maximum sleep between events, in ms. Default Infinity. */
   capMs?: number;
+  /** Positive finite pacing multiplier, applied after delay clamping. Default 1. */
+  speed?: number;
   /** Model name to report. Default "replay". */
   model?: string;
   /**
@@ -130,6 +132,7 @@ export class ReplayBackend implements ChatBackend {
   // call to `runTurn` captures the value at entry into a local so concurrent
   // sessions sharing the instance don't interleave cursor advances.
   private turnsServed = 0;
+  private readonly speed: number;
   private readonly clampMs: number;
   private readonly capMs: number;
   private readonly substitutions: Readonly<Record<string, string>>;
@@ -139,6 +142,10 @@ export class ReplayBackend implements ChatBackend {
   constructor(opts: ReplayBackendOptions) {
     if (opts.fixtures.length === 0) {
       throw new Error("ReplayBackend requires at least one fixture");
+    }
+    this.speed = opts.speed ?? 1;
+    if (!Number.isFinite(this.speed) || this.speed <= 0) {
+      throw new Error("ReplayBackend speed must be a positive finite number");
     }
     this.fixtures = [...opts.fixtures];
     this.clampMs = opts.clampMs ?? 0;
@@ -188,7 +195,7 @@ export class ReplayBackend implements ChatBackend {
     const captured: Record<string, string> = {};
     for (const entry of fixture.entries) {
       if (signal?.aborted) return;
-      const wait = clamp(entry.afterMs, this.clampMs, this.capMs);
+      const wait = clamp(entry.afterMs, this.clampMs, this.capMs) / this.speed;
       if (wait > 0) {
         await sleep(wait, signal);
         if (signal?.aborted) return;
@@ -201,7 +208,7 @@ export class ReplayBackend implements ChatBackend {
         for await (const sub of streamTextDelta(
           substituted,
           this.textStreamChars,
-          this.textStreamMs,
+          this.textStreamMs / this.speed,
           signal,
         )) {
           if (signal?.aborted) return;
@@ -551,6 +558,8 @@ export interface ReplayScenario {
    */
   triggers: ReadonlyArray<string>;
   fixture: ReplayFixture;
+  /** Positive finite pacing multiplier for this scenario. Default 1. */
+  speed?: number;
   /** Per-scenario placeholder substitutions resolved at session-create. */
   substitutions?: Readonly<Record<string, string>>;
 }
@@ -623,6 +632,7 @@ export class RoutingReplayBackend implements ChatBackend {
 
     const inner = new ReplayBackend({
       fixtures: [picked.fixture],
+      speed: picked.speed,
       clampMs: this.clampMs,
       capMs: this.capMs,
       substitutions: picked.substitutions,
