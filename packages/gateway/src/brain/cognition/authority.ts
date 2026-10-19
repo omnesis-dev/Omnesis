@@ -50,6 +50,7 @@ const ARTIFACT_TOOLS: Readonly<Record<CognitiveArtifact, readonly string[]>> = {
     "knowledge_link",
     "knowledge_evidence",
     "knowledge_save",
+    "knowledge_edit",
     "knowledge_propose_page",
     "knowledge_candidate_decide",
     "knowledge_next_frontier",

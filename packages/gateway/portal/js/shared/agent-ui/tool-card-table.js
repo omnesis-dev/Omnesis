@@ -86,6 +86,7 @@ export const AGENT_TOOL_CARDS = Object.freeze({
   knowledge_candidate_decide: ephemeral("Decide on a page idea", "wiki"),
   knowledge_propose_page: ephemeral("Propose wiki page", "wiki"),
   knowledge_save: ephemeral("Save wiki page", "wiki"),
+  knowledge_edit: ephemeral("Edit wiki page", "wiki"),
 });
 
 /**

@@ -37,6 +37,8 @@ import { listKnowledgeLinks } from "./links.js";
 import { checkKnowledgeOutcome, KnowledgeOutcomeRejected } from "./outcome-check.js";
 import { LOOP_FIELD_REFERENCE_GUIDANCE } from "./references.js";
 import { assertKnowledgeSavePreflight } from "./save-preflight.js";
+import { applyWikiEdits, WikiEditError } from "./wiki-edit.js";
+import { getKnowledgeNode } from "./storage.js";
 import { ClaimMarkupError } from "./claims.js";
 import { knowledgePageRefForDocument } from "./document-context.js";
 import { RelatedKnowledgeCheck, type KnowledgeMirrorSearch } from "./related-knowledge.js";
@@ -135,6 +137,159 @@ const proposal = z.strictObject(
   { error: echoKeyError("node") },
 );
 
+const knowledgeSaveArgs = z
+  .object({
+    node: proposal.extend({
+      inputVersions: versions
+        .optional()
+        .describe(
+          "Optional explicit dependency-version overrides. After knowledge_fetch(editing:true), unchanged tagged claim trees and semantic state can retain that exact snapshot's stored versions. New or edited uses require a successful knowledge_reference read in this run or an explicit exact version. A ref reused by an edited/new claim cannot inherit merely because another claim was unchanged. Explicit stale overrides remain errors. Reading a page does not read its cited sources; no versions are invented or refreshed from current database state.",
+        ),
+    }),
+    candidateId: id
+      .optional()
+      .describe(
+        "Publication candidate ID returned by knowledge_propose_page, separate from node identity and revision. Proposing a candidate does not create a wiki: a new wiki still uses node.expectedRevision: 0.",
+      ),
+    creationAssessment: z
+      .object({
+        reason: z.string().trim().min(1).max(1000),
+        relatedPageIds: z.array(id).max(16),
+      })
+      .strict()
+      .optional()
+      .describe(
+        "Required for a NEW wiki only: explain its distinct reusable scope and why enriching considered existing pages is insufficient. Read wiki library and candidates first, and knowledge_fetch each relatedPageIds entry. An empty list is an explicit judgment after retrieval, not proof no related page exists. New wikis need actual claim supports from at least two distinct current source documents; context or declared evidence padding does not count. New and changed wiki prose also undergo the configured synthesis-value check; a source inventory or copied boilerplate is insufficient.",
+      ),
+    inputFingerprint: z
+      .string()
+      .optional()
+      .describe(
+        "Optional after this run actually receives the current frontier offer and then fully reads the same node with editing:true at node.expectedRevision. Otherwise copy the offered inputFingerprint verbatim here. Explicit wrong or blank values are never repaired. Source/privacy/owner changes require a fresh frontier and editing read; final atomic freshness checks always apply.",
+      ),
+    reviewedClaimIds: z
+      .array(id)
+      .max(1024)
+      .optional()
+      .describe(
+        "Existing pending claim IDs actually reviewed in this save. Untouched claims omitted here remain pending; changing or removing a claim is recorded automatically. Use the offered pendingClaimIds, or an explicit subset for partial review.",
+      ),
+    curationDeferral: z
+      .object({
+        reasonCode: z.literal("insufficient_useful_context"),
+        reason: z.string().trim().min(1).max(500),
+        factualRepair: z
+          .object({ claimIds: z.array(id).min(1).max(8) })
+          .strict()
+          .optional()
+          .describe(
+            "Explicit narrow factual correction/qualification of named existing claims only. Same title/headings/claim identities; no unrelated edits or deletion. Requires an enforced integrity pass and current positive proof; editorial work remains deferred.",
+          ),
+      })
+      .strict()
+      .optional()
+      .describe(
+        "Existing wiki review only: after reviewing every offered claim against current evidence, retain the unchanged title, visible markdown, claim structure and qualifications when no useful synthesis improvement is supported. Defers curation to a bounded routine review without certifying editorial completion. Mutually exclusive with placementAssessment; never permits new pages, changed prose, stale inputs or unreviewed claims. Supporting references may be replaced with a bounded set of current evidence references only with current positive proof for every retained claim; never weaken support relations or qualifiers. Explain the missing useful context in reason; do not retry cosmetic rewrites after a value refusal.",
+      ),
+    placementAssessment: z
+      .discriminatedUnion("status", [
+        z
+          .object({
+            status: z.literal("integrated"),
+            reason: z.string().trim().min(1).max(500),
+            links: z
+              .array(
+                z
+                  .object({
+                    fromId: id,
+                    toId: id,
+                    kind: z.enum(["part_of", "belongs_to_project", "related_to"]),
+                    otherRevision: z.number().int().nonnegative(),
+                  })
+                  .strict(),
+              )
+              .min(1)
+              .max(16),
+          })
+          .strict(),
+        z
+          .object({
+            status: z.literal("standalone"),
+            reason: z.string().trim().min(1).max(500),
+          })
+          .strict(),
+        z
+          .object({
+            status: z.literal("deferred"),
+            reason: z.string().trim().min(1).max(500),
+          })
+          .strict(),
+      ])
+      .optional()
+      .describe(
+        "Required for terminal review=true wiki saves only. Read the wiki library before integrated or standalone judgment; integrated requires persisted incident links and knowledge_fetch reads of their counterparts. Normal reading is sufficient for placement; editing:true is needed to edit tagged claims. Standalone is an explicit scope judgment, not proof no related page exists. Deferred preserves grounded prose and schedules bounded follow-up. Partial claim repair and other node kinds do not require this field.",
+      ),
+  })
+  .strict();
+type KnowledgeSaveArgs = z.output<typeof knowledgeSaveArgs>;
+
+const editHeading = z
+  .string()
+  .trim()
+  .min(1)
+  .max(1000)
+  .describe(
+    'Heading text exactly as it appears on the page, e.g. "Costs", at any level. Prefix its # marks ("## Costs") to choose a level when the same text appears at several levels.',
+  );
+const editMarkdown = z.string().min(1).max(262144);
+const wikiEditOp = z.discriminatedUnion("op", [
+  z.strictObject({
+    op: z.literal("replace_section"),
+    heading: editHeading,
+    markdown: editMarkdown.describe(
+      "Tagged Markdown replacing the whole section: its heading line, body and subsections, together with the claim tags that open just before the heading. Include the heading again (or a new one) inside its claim tag.",
+    ),
+  }),
+  z.strictObject({
+    op: z.literal("insert_section"),
+    markdown: editMarkdown.describe("Tagged Markdown for the new section, heading included."),
+    after: editHeading.optional().describe("Insert after this section and its subsections."),
+    before: editHeading.optional().describe("Insert before this section."),
+    at: z
+      .enum(["start", "end"])
+      .optional()
+      .describe("Insert at the very start of the page or at its end."),
+  }),
+  z.strictObject({ op: z.literal("delete_section"), heading: editHeading }),
+  z.strictObject({
+    op: z.literal("replace_text"),
+    old: z
+      .string()
+      .min(1)
+      .max(262144)
+      .describe(
+        "Exact text from the editing markdown, claim tags included; it must occur exactly once.",
+      ),
+    new: z.string().max(262144),
+  }),
+]);
+const knowledgeEditArgs = knowledgeSaveArgs
+  .omit({ candidateId: true, creationAssessment: true, node: true })
+  .extend({
+    node: proposal.omit({ kind: true, ownerId: true, title: true, markdown: true }).extend({
+      title: proposal.shape.title.optional().describe("Omit to keep the current title."),
+      inputVersions: knowledgeSaveArgs.shape.node.shape.inputVersions,
+      edits: z
+        .array(wikiEditOp)
+        .min(1)
+        .max(64)
+        .describe(
+          "Applied in order to the tagged markdown knowledge_fetch({id, editing:true}) returned at node.expectedRevision; each edit sees the result of the previous one.",
+        ),
+    }),
+  })
+  .strict();
+
 function tool<S extends z.ZodType>(
   name: string,
   description: string,
@@ -181,7 +336,11 @@ function tool<S extends z.ZodType>(
                     : "Not saved. Do not retry or reword this proposal. Existing canonical content and maintenance work remain unchanged. Complete unchanged proof maintenance only if current evidence supports it; otherwise leave the unsupported work pending.",
             },
           };
-        if (error instanceof KnowledgeStorageError || error instanceof ClaimMarkupError)
+        if (
+          error instanceof KnowledgeStorageError ||
+          error instanceof ClaimMarkupError ||
+          error instanceof WikiEditError
+        )
           return { kind: "error", code: error.code, message: error.message };
         throw error;
       }
@@ -195,6 +354,7 @@ export const KNOWLEDGE_MUTATING_TOOLS = new Set([
   "knowledge_link",
   "knowledge_evidence",
   "knowledge_save",
+  "knowledge_edit",
   "knowledge_propose_page",
   "knowledge_candidate_decide",
   "knowledge_next_frontier",
@@ -282,6 +442,232 @@ export function buildKnowledgeTools(
           .prepare<[string], { title: string }>("SELECT title FROM knowledge_nodes WHERE id = ?")
           .get(ref.slice(5))?.title ?? "")
       : "";
+  };
+  const saveNode = async (input: KnowledgeSaveArgs, signal?: AbortSignal) => {
+    if (
+      input.curationDeferral &&
+      (!context.batchId ||
+        !context.engine ||
+        input.node.expectedRevision === 0 ||
+        input.placementAssessment)
+    )
+      throw new KnowledgeStorageError(
+        "claim_invalid",
+        "Curation deferral requires an existing offered wiki review and no placementAssessment",
+      );
+    const node = dependencyReceipts.complete(input.node);
+    // Check the wiki read first: a candidate revision mistaken for a page
+    // revision needs the new-page guidance, not a fingerprint request.
+    let fence =
+      node.kind === "wiki" && reconciliation && node.expectedRevision > 0
+        ? reconciliation.nodeFence(node.id, node.expectedRevision)
+        : runFence;
+    const inputFingerprint =
+      context.batchId && context.engine && node.expectedRevision > 0
+        ? frontierEditing.resolve(node, input.inputFingerprint)
+        : input.inputFingerprint;
+
+    if (input.curationDeferral)
+      assertCurationDeferral(service.deps.db, {
+        ...node,
+        maintenance: {
+          batchId: context.batchId!,
+          runId: context.runId,
+          inputFingerprint: inputFingerprint ?? "",
+          curationDeferral: input.curationDeferral,
+        },
+      });
+    if (context.parallel && node.kind === "root")
+      throw new KnowledgeStorageError(
+        "revision_conflict",
+        "Root changes require an exclusive root maintenance run",
+      );
+    if (node.kind === "root" && context.batchId && context.engine && placementReads && fence)
+      fence = placementReads.orientationFence(fence);
+    if (
+      input.placementAssessment &&
+      input.placementAssessment.status !== "deferred" &&
+      placementReads &&
+      fence
+    )
+      fence = placementReads.placementFence(fence);
+    const candidate = input.candidateId
+      ? getKnowledgeCandidate(service.deps.db, input.candidateId)
+      : null;
+    if (
+      node.expectedRevision === 0 &&
+      node.kind === "wiki" &&
+      (!candidate || candidate.status !== "proposed")
+    )
+      throw new KnowledgeStorageError(
+        "claim_invalid",
+        "A new wiki needs a reconciled proposed candidate",
+      );
+    if (context.batchId && context.engine && node.expectedRevision > 0)
+      context.engine.preflightSaveNode(
+        context.batchId,
+        context.runId,
+        node.id,
+        inputFingerprint ?? "",
+      );
+    assertKnowledgeSavePreflight(service.deps.db, node, fence);
+    const creationReceipt = candidate
+      ? publicationReads.receipt(candidate.id, input.creationAssessment)
+      : undefined;
+    if (candidate) assertWikiPublicationReceipt(service.deps.db, candidate.id, creationReceipt);
+    if (candidate && creationReceipt && node.expectedRevision === 0 && node.kind === "wiki")
+      await assertNoOverlappingScope(
+        service.deps.db,
+        context.relatedKnowledge,
+        { id: node.id, title: node.title, markdown: node.markdown, scope: candidate.scope },
+        creationReceipt.assessment,
+        {
+          candidateId: candidate.id,
+          log: service.deps.log.child("wiki-publication"),
+          discoveryTargets: !!(context.batchId && context.engine),
+          ...(signal ? { signal } : {}),
+        },
+      );
+    await relatedKnowledge.assert(node, input.reviewedClaimIds, signal);
+    const wikiRepairAssessment = await wikiValue.assess(
+      input.curationDeferral?.factualRepair
+        ? {
+            ...node,
+            maintenance: {
+              batchId: context.batchId!,
+              runId: context.runId,
+              inputFingerprint: inputFingerprint!,
+              curationDeferral: input.curationDeferral,
+            },
+          }
+        : node,
+      signal,
+    );
+    const personReviewFence = await personReview.prepare(
+      node,
+      runFence,
+      inputFingerprint,
+      context.checkRecord,
+      signal,
+    );
+    const outcomeFence = await checkKnowledgeOutcome(
+      service,
+      context.checkRecord,
+      node,
+      signal,
+      runFence,
+    );
+    const result =
+      context.batchId && context.engine && node.expectedRevision > 0
+        ? await context.engine.saveNode(
+            context.batchId,
+            context.runId,
+            node.id,
+            inputFingerprint ?? "",
+            {
+              ...node,
+              personReviewFence,
+              ...(wikiRepairAssessment ? { wikiRepairAssessment } : {}),
+            },
+            input.reviewedClaimIds,
+            fence,
+            input.placementAssessment,
+            outcomeFence,
+            input.curationDeferral,
+          )
+        : await service.save(
+            node,
+            candidate
+              ? {
+                  candidateId: candidate.id,
+                  expectedCandidateRevision: candidate.revision,
+                  creationReceipt,
+                }
+              : undefined,
+            fence,
+            outcomeFence,
+          );
+    if (node.kind === "wiki") relatedKnowledge.noteSaved(result.node.id);
+    const accepted =
+      reconciliation && fence && node.kind === "wiki"
+        ? reconciliation.acceptNode(reconciliation.accept(result, fence))
+        : placementReads
+          ? placementReads.acceptNode(result)
+          : result;
+    return {
+      ...accepted,
+      verificationSummary: savedProofFeedback(service.deps.db, accepted.node),
+    };
+  };
+  // One content-free line per wiki/root write, so the share of targeted edits
+  // against full replacements can be measured from the logs.
+  const wikiWrites = service.deps.log.child("wiki-write");
+  const saveAndLog = async (input: KnowledgeSaveArgs, signal?: AbortSignal) => {
+    const page = input.node.kind === "wiki" || input.node.kind === "root";
+    const before = page
+      ? (getKnowledgeNode(service.deps.db, input.node.id)?.markdown.length ?? 0)
+      : 0;
+    const result = await saveNode(input, signal);
+    if (page)
+      wikiWrites.info(
+        `Wiki write via knowledge_save on ${result.node.id}: r${input.node.expectedRevision}→r${result.node.revision}, ${before}→${input.node.markdown.length} chars`,
+      );
+    return result;
+  };
+  /** Splice targeted edits into this run's editing read, then save it exactly as knowledge_save would. */
+  const editWiki = async (input: z.output<typeof knowledgeEditArgs>, signal?: AbortSignal) => {
+    const { edits, ...fields } = input.node;
+    const ops = edits.map((edit) => edit.op).join(",");
+    try {
+      const base = dependencyReceipts.editingRead(fields.id);
+      if (!base || base.revision !== fields.expectedRevision)
+        throw new KnowledgeStorageError(
+          "revision_conflict",
+          `Edits apply to the tagged markdown this run read with knowledge_fetch({id, editing:true}) at node.expectedRevision. ${base ? `This run's latest editing read is revision ${base.revision}; ` : ""}fetch the page with editing:true and edit that revision.`,
+        );
+      if (base.kind !== "wiki" && base.kind !== "root")
+        throw new KnowledgeStorageError(
+          "claim_invalid",
+          "knowledge_edit changes wiki and root pages; other synthesis keeps its own save tools",
+        );
+      const applied = applyWikiEdits(base.markdown, edits);
+      const saved = await saveNode(
+        {
+          ...input,
+          node: {
+            ...fields,
+            kind: base.kind,
+            title: fields.title ?? base.title,
+            markdown: applied.markdown,
+          },
+        },
+        signal,
+      );
+      const { markdown: _markdown, plainText: _plainText, ...node } = saved.node;
+      wikiWrites.info(
+        `Wiki write via knowledge_edit[${ops}] on ${node.id}: r${fields.expectedRevision}→r${node.revision}, ${base.markdown.length}→${applied.markdown.length} chars`,
+      );
+      return {
+        ...saved,
+        node,
+        edit: {
+          changedSections: applied.changedSections,
+          charsBefore: base.markdown.length,
+          charsAfter: applied.markdown.length,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof KnowledgeStorageError ||
+        error instanceof ClaimMarkupError ||
+        error instanceof WikiEditError ||
+        error instanceof KnowledgeOutcomeRejected
+      )
+        wikiWrites.info(
+          `Wiki edit refused on ${fields.id} (${error instanceof KnowledgeOutcomeRejected ? "not_saved" : error.code}): ${ops}`,
+        );
+      throw error;
+    }
   };
   const tools: ToolHandle[] = [
     tool(
@@ -578,259 +964,19 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_save",
-      `Replace the full synthesis page, preserving existing claim spans and stable IDs by default. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Inside those tags, use ordinary Markdown headings such as ## Heading, without an extra opening angle bracket. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. New wikis require a reconciled candidate, top-level creationAssessment after library/candidate and relevant page reads, and claim support from at least two distinct current documents. Prefer enriching existing reusable scopes; one-document material belongs in a useful annotation or an unpublished candidate. Root is the compact overview itself and must fit its hard budget. Preserve canonical node.ownerId when revising an owned node. If omitted, an actual knowledge_fetch(editing:true) in this run can supply it only for the exact same id, kind and expectedRevision; explicit null or another owner is never repaired. Never infer or fabricate it. node.inputVersions is optional here: an actual knowledge_fetch(editing:true) lets unchanged claim trees retain their stored dependency versions; new or edited uses need knowledge_reference reads in this run or explicit exact versions. This never marks untouched claims reviewed. In maintenance, existing pages must match an offered frontier. Before revising an existing wiki, read knowledge_fetch({id:targetId,editing:true}) at node.expectedRevision. Neither the embedded frontier node nor an explicit inputFingerprint replaces this target read. After knowledge_next_frontier and then a complete knowledge_fetch(editing:true) for that exact node/revision, omit inputFingerprint to use this run’s bound read receipt. Otherwise include its exact fingerprint at the top level beside node. Explicit wrong or blank fingerprints are never corrected; changed authority requires refreshing the frontier and editing read. An offered review=true person annotation requires annotation_search({personId}) through every nextCursor first. Retention is assessed against the current whole profile; a refused retention must be corrected, consolidated or retracted through canonical person tools before saving. Ordinary proof refresh does not perform this editorial assessment. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
-      z
-        .object({
-          node: proposal.extend({
-            inputVersions: versions
-              .optional()
-              .describe(
-                "Optional explicit dependency-version overrides. After knowledge_fetch(editing:true), unchanged tagged claim trees and semantic state can retain that exact snapshot's stored versions. New or edited uses require a successful knowledge_reference read in this run or an explicit exact version. A ref reused by an edited/new claim cannot inherit merely because another claim was unchanged. Explicit stale overrides remain errors. Reading a page does not read its cited sources; no versions are invented or refreshed from current database state.",
-              ),
-          }),
-          candidateId: id
-            .optional()
-            .describe(
-              "Publication candidate ID returned by knowledge_propose_page, separate from node identity and revision. Proposing a candidate does not create a wiki: a new wiki still uses node.expectedRevision: 0.",
-            ),
-          creationAssessment: z
-            .object({
-              reason: z.string().trim().min(1).max(1000),
-              relatedPageIds: z.array(id).max(16),
-            })
-            .strict()
-            .optional()
-            .describe(
-              "Required for a NEW wiki only: explain its distinct reusable scope and why enriching considered existing pages is insufficient. Read wiki library and candidates first, and knowledge_fetch each relatedPageIds entry. An empty list is an explicit judgment after retrieval, not proof no related page exists. New wikis need actual claim supports from at least two distinct current source documents; context or declared evidence padding does not count. New and changed wiki prose also undergo the configured synthesis-value check; a source inventory or copied boilerplate is insufficient.",
-            ),
-          inputFingerprint: z
-            .string()
-            .optional()
-            .describe(
-              "Optional after this run actually receives the current frontier offer and then fully reads the same node with editing:true at node.expectedRevision. Otherwise copy the offered inputFingerprint verbatim here. Explicit wrong or blank values are never repaired. Source/privacy/owner changes require a fresh frontier and editing read; final atomic freshness checks always apply.",
-            ),
-          reviewedClaimIds: z
-            .array(id)
-            .max(1024)
-            .optional()
-            .describe(
-              "Existing pending claim IDs actually reviewed in this save. Untouched claims omitted here remain pending; changing or removing a claim is recorded automatically. Use the offered pendingClaimIds, or an explicit subset for partial review.",
-            ),
-          curationDeferral: z
-            .object({
-              reasonCode: z.literal("insufficient_useful_context"),
-              reason: z.string().trim().min(1).max(500),
-              factualRepair: z
-                .object({ claimIds: z.array(id).min(1).max(8) })
-                .strict()
-                .optional()
-                .describe(
-                  "Explicit narrow factual correction/qualification of named existing claims only. Same title/headings/claim identities; no unrelated edits or deletion. Requires an enforced integrity pass and current positive proof; editorial work remains deferred.",
-                ),
-            })
-            .strict()
-            .optional()
-            .describe(
-              "Existing wiki review only: after reviewing every offered claim against current evidence, retain the unchanged title, visible markdown, claim structure and qualifications when no useful synthesis improvement is supported. Defers curation to a bounded routine review without certifying editorial completion. Mutually exclusive with placementAssessment; never permits new pages, changed prose, stale inputs or unreviewed claims. Supporting references may be replaced with a bounded set of current evidence references only with current positive proof for every retained claim; never weaken support relations or qualifiers. Explain the missing useful context in reason; do not retry cosmetic rewrites after a value refusal.",
-            ),
-          placementAssessment: z
-            .discriminatedUnion("status", [
-              z
-                .object({
-                  status: z.literal("integrated"),
-                  reason: z.string().trim().min(1).max(500),
-                  links: z
-                    .array(
-                      z
-                        .object({
-                          fromId: id,
-                          toId: id,
-                          kind: z.enum(["part_of", "belongs_to_project", "related_to"]),
-                          otherRevision: z.number().int().nonnegative(),
-                        })
-                        .strict(),
-                    )
-                    .min(1)
-                    .max(16),
-                })
-                .strict(),
-              z
-                .object({
-                  status: z.literal("standalone"),
-                  reason: z.string().trim().min(1).max(500),
-                })
-                .strict(),
-              z
-                .object({
-                  status: z.literal("deferred"),
-                  reason: z.string().trim().min(1).max(500),
-                })
-                .strict(),
-            ])
-            .optional()
-            .describe(
-              "Required for terminal review=true wiki saves only. Read the wiki library before integrated or standalone judgment; integrated requires persisted incident links and knowledge_fetch reads of their counterparts. Normal reading is sufficient for placement; editing:true is needed to edit tagged claims. Standalone is an explicit scope judgment, not proof no related page exists. Deferred preserves grounded prose and schedules bounded follow-up. Partial claim repair and other node kinds do not require this field.",
-            ),
-        })
-        .strict(),
+      `Create a synthesis page or replace a full one, preserving existing claim spans and stable IDs by default. To change part of an existing wiki or root page, use knowledge_edit instead of resending the whole page. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Inside those tags, use ordinary Markdown headings such as ## Heading, without an extra opening angle bracket. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. New wikis require a reconciled candidate, top-level creationAssessment after library/candidate and relevant page reads, and claim support from at least two distinct current documents. Prefer enriching existing reusable scopes; one-document material belongs in a useful annotation or an unpublished candidate. Root is the compact overview itself and must fit its hard budget. Preserve canonical node.ownerId when revising an owned node. If omitted, an actual knowledge_fetch(editing:true) in this run can supply it only for the exact same id, kind and expectedRevision; explicit null or another owner is never repaired. Never infer or fabricate it. node.inputVersions is optional here: an actual knowledge_fetch(editing:true) lets unchanged claim trees retain their stored dependency versions; new or edited uses need knowledge_reference reads in this run or explicit exact versions. This never marks untouched claims reviewed. In maintenance, existing pages must match an offered frontier. Before revising an existing wiki, read knowledge_fetch({id:targetId,editing:true}) at node.expectedRevision. Neither the embedded frontier node nor an explicit inputFingerprint replaces this target read. After knowledge_next_frontier and then a complete knowledge_fetch(editing:true) for that exact node/revision, omit inputFingerprint to use this run’s bound read receipt. Otherwise include its exact fingerprint at the top level beside node. Explicit wrong or blank fingerprints are never corrected; changed authority requires refreshing the frontier and editing read. An offered review=true person annotation requires annotation_search({personId}) through every nextCursor first. Retention is assessed against the current whole profile; a refused retention must be corrected, consolidated or retracted through canonical person tools before saving. Ordinary proof refresh does not perform this editorial assessment. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
+      knowledgeSaveArgs,
       true,
-      async (input, signal) => {
-        if (
-          input.curationDeferral &&
-          (!context.batchId ||
-            !context.engine ||
-            input.node.expectedRevision === 0 ||
-            input.placementAssessment)
-        )
-          throw new KnowledgeStorageError(
-            "claim_invalid",
-            "Curation deferral requires an existing offered wiki review and no placementAssessment",
-          );
-        const node = dependencyReceipts.complete(input.node);
-        // Check the wiki read first: a candidate revision mistaken for a page
-        // revision needs the new-page guidance, not a fingerprint request.
-        let fence =
-          node.kind === "wiki" && reconciliation && node.expectedRevision > 0
-            ? reconciliation.nodeFence(node.id, node.expectedRevision)
-            : runFence;
-        const inputFingerprint =
-          context.batchId && context.engine && node.expectedRevision > 0
-            ? frontierEditing.resolve(node, input.inputFingerprint)
-            : input.inputFingerprint;
-
-        if (input.curationDeferral)
-          assertCurationDeferral(service.deps.db, {
-            ...node,
-            maintenance: {
-              batchId: context.batchId!,
-              runId: context.runId,
-              inputFingerprint: inputFingerprint ?? "",
-              curationDeferral: input.curationDeferral,
-            },
-          });
-        if (context.parallel && node.kind === "root")
-          throw new KnowledgeStorageError(
-            "revision_conflict",
-            "Root changes require an exclusive root maintenance run",
-          );
-        if (node.kind === "root" && context.batchId && context.engine && placementReads && fence)
-          fence = placementReads.orientationFence(fence);
-        if (
-          input.placementAssessment &&
-          input.placementAssessment.status !== "deferred" &&
-          placementReads &&
-          fence
-        )
-          fence = placementReads.placementFence(fence);
-        const candidate = input.candidateId
-          ? getKnowledgeCandidate(service.deps.db, input.candidateId)
-          : null;
-        if (
-          node.expectedRevision === 0 &&
-          node.kind === "wiki" &&
-          (!candidate || candidate.status !== "proposed")
-        )
-          throw new KnowledgeStorageError(
-            "claim_invalid",
-            "A new wiki needs a reconciled proposed candidate",
-          );
-        if (context.batchId && context.engine && node.expectedRevision > 0)
-          context.engine.preflightSaveNode(
-            context.batchId,
-            context.runId,
-            node.id,
-            inputFingerprint ?? "",
-          );
-        assertKnowledgeSavePreflight(service.deps.db, node, fence);
-        const creationReceipt = candidate
-          ? publicationReads.receipt(candidate.id, input.creationAssessment)
-          : undefined;
-        if (candidate) assertWikiPublicationReceipt(service.deps.db, candidate.id, creationReceipt);
-        if (candidate && creationReceipt && node.expectedRevision === 0 && node.kind === "wiki")
-          await assertNoOverlappingScope(
-            service.deps.db,
-            context.relatedKnowledge,
-            { id: node.id, title: node.title, markdown: node.markdown, scope: candidate.scope },
-            creationReceipt.assessment,
-            {
-              candidateId: candidate.id,
-              log: service.deps.log.child("wiki-publication"),
-              discoveryTargets: !!(context.batchId && context.engine),
-              ...(signal ? { signal } : {}),
-            },
-          );
-        await relatedKnowledge.assert(node, input.reviewedClaimIds, signal);
-        const wikiRepairAssessment = await wikiValue.assess(
-          input.curationDeferral?.factualRepair
-            ? {
-                ...node,
-                maintenance: {
-                  batchId: context.batchId!,
-                  runId: context.runId,
-                  inputFingerprint: inputFingerprint!,
-                  curationDeferral: input.curationDeferral,
-                },
-              }
-            : node,
-          signal,
-        );
-        const personReviewFence = await personReview.prepare(
-          node,
-          runFence,
-          inputFingerprint,
-          context.checkRecord,
-          signal,
-        );
-        const outcomeFence = await checkKnowledgeOutcome(
-          service,
-          context.checkRecord,
-          node,
-          signal,
-          runFence,
-        );
-        const result =
-          context.batchId && context.engine && node.expectedRevision > 0
-            ? await context.engine.saveNode(
-                context.batchId,
-                context.runId,
-                node.id,
-                inputFingerprint ?? "",
-                {
-                  ...node,
-                  personReviewFence,
-                  ...(wikiRepairAssessment ? { wikiRepairAssessment } : {}),
-                },
-                input.reviewedClaimIds,
-                fence,
-                input.placementAssessment,
-                outcomeFence,
-                input.curationDeferral,
-              )
-            : await service.save(
-                node,
-                candidate
-                  ? {
-                      candidateId: candidate.id,
-                      expectedCandidateRevision: candidate.revision,
-                      creationReceipt,
-                    }
-                  : undefined,
-                fence,
-                outcomeFence,
-              );
-        if (node.kind === "wiki") relatedKnowledge.noteSaved(result.node.id);
-        const accepted =
-          reconciliation && fence && node.kind === "wiki"
-            ? reconciliation.acceptNode(reconciliation.accept(result, fence))
-            : placementReads
-              ? placementReads.acceptNode(result)
-              : result;
-        return {
-          ...accepted,
-          verificationSummary: savedProofFeedback(service.deps.db, accepted.node),
-        };
-      },
+      saveAndLog,
       (input) => input.node.title,
+    ),
+    tool(
+      "knowledge_edit",
+      "Change part of an existing wiki or root page without resending it: the preferred way to correct a figure, enrich a section or add one. Use knowledge_save only to create a page or to restructure most of it. First read knowledge_fetch({id, editing:true}); node.edits apply in order to exactly that tagged markdown at node.expectedRevision. replace_section replaces a section's heading line, body and subsections (up to the next heading of the same or a higher level), including the claim tags that open just before its heading; delete_section removes it; insert_section adds tagged Markdown after or before a section, or at the start or end of the page; replace_text swaps one exact passage, claim tags included, that must occur exactly once. The resulting page then goes through every knowledge_save check unchanged, and the other node fields mean what they mean there: claims removed by an edit need node.claimRemovals, new claim refs need knowledge_reference reads or node.inputVersions, a root's dropped links need node.navigationRemovals, and maintenance needs the same frontier, fingerprint and review fields. Untouched claims keep their stored versions. A missing or ambiguous target, or a section whose edge falls inside a claim, is refused without saving; the error names the available headings or the occurrence count. Returns the new revision and the sections changed, not the page; fetch again with editing:true before another edit.",
+      knowledgeEditArgs,
+      true,
+      editWiki,
+      (input) => nodeTitle(input.node.id),
     ),
   ];
   if (context.engine && context.batchId) {

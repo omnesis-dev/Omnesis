@@ -98,6 +98,15 @@ function describeAction(tool: string, args: unknown): string {
       const node = args && typeof args === "object" ? (args as Record<string, unknown>).node : null;
       return `save ${argString(node, "kind") ?? "synthesis"} ${argString(node, "title") ?? argString(node, "id") ?? ""}`.trim();
     }
+    case "knowledge_edit": {
+      const node = args && typeof args === "object" ? (args as Record<string, unknown>).node : null;
+      const edits =
+        node && typeof node === "object" ? (node as Record<string, unknown>).edits : null;
+      const ops = Array.isArray(edits)
+        ? [...new Set(edits.map((edit) => argString(edit, "op")).filter((op) => op !== null))]
+        : [];
+      return `edit ${argString(node, "title") ?? argString(node, "id") ?? "page"}${ops.length ? ` (${ops.join(", ")})` : ""}`;
+    }
     case "knowledge_propose_page":
       return `propose wiki ${label}`.trim();
     case "knowledge_candidate_decide":

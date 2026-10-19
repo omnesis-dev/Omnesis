@@ -48,6 +48,8 @@ export function listOrganizationAdmissions(
     ...included.params,
     ...(metadata ? [KNOWLEDGE_DOCUMENT_TYPE, OPEN_LOOP_DOCUMENT_TYPE] : []),
   ];
+  // A candidate whose evidence is still in a running batch is being decided by
+  // that batch: readmitting it would bump its revision under the run's decision.
   const rows = db
     .prepare<
       unknown[],
@@ -65,6 +67,8 @@ export function listOrganizationAdmissions(
       WHERE status IN ('proposed','deferred')
       AND NOT EXISTS(SELECT 1 FROM knowledge_candidate_decision_work cw JOIN knowledge_work w ON w.id=cw.work_id
         WHERE cw.candidate_id=knowledge_candidates.id AND cw.generation=knowledge_candidates.decision_generation AND w.status IN ('pending','batched'))
+      AND NOT EXISTS(SELECT 1 FROM json_each(evidence_ids_json) e JOIN knowledge_work w
+        ON w.subject_kind='source' AND w.subject_id=e.value AND w.status='batched')
       AND NOT EXISTS(SELECT 1 FROM json_each(evidence_ids_json) e WHERE NOT (${readable}))
     UNION ALL
     SELECT 'coverage',c.subject_id,0,c.input_revision,c.reviewed_at,

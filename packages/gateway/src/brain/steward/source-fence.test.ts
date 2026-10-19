@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createBrainSourceFence, type BrainSourceFence } from "../source-exclusion.js";
 import {
   EXCLUDED_SOURCE_ERROR_CODE,
+  existingPageCitations,
   fenceExcludedDocumentArguments,
   fenceReadPorts,
   fenceTemporalResult,
@@ -335,5 +336,63 @@ describe("fenceExcludedDocumentArguments", () => {
     excluded = [];
     await fenced!.invoke({ docId: "doc-session" }, {} as never);
     expect(calls).toHaveLength(2);
+  });
+});
+
+describe("existingPageCitations", () => {
+  it("names a page's cited sources for a full save and a targeted edit alike", () => {
+    db.exec(
+      "CREATE TABLE knowledge_dependencies(node_id TEXT, target_id TEXT, target_kind TEXT); INSERT INTO knowledge_dependencies VALUES('page','doc-session','source'),('page','other-page','node')",
+    );
+    const cited = existingPageCitations(db);
+    for (const tool of ["knowledge_save", "knowledge_edit"])
+      expect([...cited(tool, { node: { id: "page" } })], tool).toEqual(["doc-session"]);
+    expect(cited("annotate_durable", { node: { id: "page" } }).size).toBe(0);
+    expect(cited("knowledge_edit", { node: {} }).size).toBe(0);
+  });
+
+  it("lets an edit replace text holding an existing citation but refuses a new one", async () => {
+    db.exec(
+      "CREATE TABLE knowledge_dependencies(node_id TEXT, target_id TEXT, target_kind TEXT); INSERT INTO knowledge_dependencies VALUES('page','doc-session','source')",
+    );
+    insertNote();
+    const edits: unknown[] = [];
+    const edit: ToolHandle = {
+      name: "knowledge_edit",
+      description: "test",
+      schema: z.unknown(),
+      mutates: true,
+      async invoke(args) {
+        edits.push(args);
+        return { kind: "structured", resultType: "ok", data: {} } as never;
+      },
+    };
+    const [fenced] = fenceExcludedDocumentArguments([edit], fence, existingPageCitations(db));
+    const args = (refs: string) => ({
+      node: {
+        id: "page",
+        expectedRevision: 1,
+        edits: [
+          {
+            op: "replace_text",
+            old: '<claim id="a" refs="source:doc-session">',
+            new: `<claim id="a" refs="${refs}">`,
+          },
+        ],
+      },
+    });
+    expect(
+      await fenced!.invoke(args("source:doc-session source:doc-mail"), {} as never),
+    ).toMatchObject({
+      kind: "structured",
+    });
+    expect(
+      await fenced!.invoke(args("source:doc-session source:doc-other"), {} as never),
+    ).toMatchObject({
+      kind: "error",
+      code: EXCLUDED_SOURCE_ERROR_CODE,
+      message: expect.stringContaining("doc-other"),
+    });
+    expect(edits).toHaveLength(1);
   });
 });

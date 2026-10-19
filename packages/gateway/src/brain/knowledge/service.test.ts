@@ -601,11 +601,13 @@ it.each([
       message: expect.stringContaining(`${reason} dependency version for "${ref}"`),
     });
     await expect(saving).rejects.toMatchObject({
-      message: expect.stringContaining(`knowledge_reference with {"ref":"${ref}"}`),
+      message: expect.stringContaining(
+        `in one call: knowledge_reference ${JSON.stringify({ refs: [ref] })}.`,
+      ),
     });
     await expect(saving).rejects.toMatchObject({
       message: expect.stringContaining(
-        `omit node.inputVersions["${ref}"] (or the whole map) to use its read receipt`,
+        "omit their node.inputVersions entries (or the whole map) to use the read receipts",
       ),
     });
     await expect(saving).rejects.toMatchObject({

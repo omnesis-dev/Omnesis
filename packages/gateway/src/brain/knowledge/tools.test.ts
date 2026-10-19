@@ -128,7 +128,7 @@ it("describes canonical operations and fresh reads before a terminal maintenance
   expect(save.description).toContain("knowledge_next_frontier and knowledge_fetch(editing=true)");
   expect(save.description).toContain("required canonical action is refused or incomplete");
   expect(save.description).not.toContain(WIKI_AUTHORING_GUIDANCE);
-  expect(save.description).toContain("Replace the full synthesis page");
+  expect(save.description).toContain("Create a synthesis page or replace a full one");
   expect(save.description).toContain("node.claimRemovals");
   expect(save.description).toContain(
     "reviewedClaimIds reports review and does not authorize removal",

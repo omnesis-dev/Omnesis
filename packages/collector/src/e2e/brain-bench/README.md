@@ -97,11 +97,12 @@ reads further pages through `knowledge_temporal_context` before discovery can se
 Use `contentContains` to select distinct decisions for actual source revisions.
 Negative gate scenarios specify `expectedRefusals: [{ tool, code }]` on the exact
 source decision. The puppet continues only after those declared canonical-tool
-refusals; unexpected errors preserve unfinished work. Rejected `knowledge_save`
-or `knowledge_discovery_complete` calls always stop and never count as settlement.
+refusals; unexpected errors preserve unfinished work. Rejected `knowledge_save`,
+`knowledge_edit` or `knowledge_discovery_complete` calls always stop and never count as
+settlement; a successful `knowledge_edit` settles its node exactly as `knowledge_save` does.
 
 `maintainNode` is an explicit scripted repair policy for existing owners/pages. It
-must call `knowledge_save` with the offered fingerprint, current revision and
+must call `knowledge_save` (or `knowledge_edit`) with the offered fingerprint, current revision and
 input versions. `preserveCurrentOwner` preserves only current legacy context claims and an empty
 overview. It keeps context relations unverified and refuses stale or custom owner
 prose; those need a scenario-specific repair. Omitting node maintenance deliberately

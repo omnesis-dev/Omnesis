@@ -186,9 +186,17 @@ it("refuses a near-duplicate new page beyond the first library page and merges i
             (step.args?.node as { id?: unknown } | undefined)?.id === existingId &&
             (step.result as { kind?: unknown } | null)?.kind === "structured",
         );
-        if (enriched >= 0 && !steps.some((step) => step.name === "knowledge_candidate_decide")) {
+        const decided = steps.findLastIndex((step) => step.name === "knowledge_candidate_decide");
+        const lastDecision = steps[decided]?.result as { kind?: unknown; code?: unknown } | null;
+        // Another batch's write to the library refuses the decision as a revision
+        // conflict; the tool asks for fresh reads and a retry.
+        const retry =
+          decided < 0 ||
+          (lastDecision?.code === "revision_conflict" &&
+            steps.filter((step) => step.name === "knowledge_candidate_decide").length < 3);
+        if (enriched >= 0 && retry) {
           // The save changed the library, so the decision rereads it first.
-          const since = steps.slice(enriched + 1);
+          const since = steps.slice(Math.max(enriched, decided) + 1);
           if (!since.some((step) => step.name === "knowledge_list"))
             return { kind: "tool", name: "knowledge_list", args: { kind: "wiki" } };
           const listed = since.find((step) => step.name === "knowledge_candidates");

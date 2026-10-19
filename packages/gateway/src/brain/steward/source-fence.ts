@@ -375,14 +375,14 @@ export function fenceExcludedDocumentArguments(
 
 /**
  * The source documents a knowledge page already cites, for
- * {@link fenceExcludedDocumentArguments}: saving a page may keep its existing
+ * {@link fenceExcludedDocumentArguments}: saving or editing a page may keep its existing
  * claims on an excluded source, though it cannot add one.
  */
 export function existingPageCitations(
   db: Database.Database,
 ): (toolName: string, args: unknown) => ReadonlySet<string> {
   return (toolName, args) => {
-    if (toolName !== "knowledge_save") return new Set();
+    if (toolName !== "knowledge_save" && toolName !== "knowledge_edit") return new Set();
     const nodeId = (args as { node?: { id?: unknown } } | null)?.node?.id;
     if (typeof nodeId !== "string") return new Set();
     return new Set(
