@@ -9,6 +9,7 @@ import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.ConversationsResponse
 import dev.omnesis.android.transport.dto.CreateSessionResponse
 import dev.omnesis.android.transport.dto.DailyBriefItemsDto
+import dev.omnesis.android.transport.dto.DailyBriefReactionReceiptDto
 import dev.omnesis.android.transport.dto.ModelDisplay
 import dev.omnesis.android.transport.dto.SendMessageResponse
 import dev.omnesis.android.transport.http.GatewayHttp
@@ -16,8 +17,13 @@ import dev.omnesis.android.transport.http.getJson
 import dev.omnesis.android.transport.http.getPrivateJson
 import dev.omnesis.android.transport.http.patchJson
 import dev.omnesis.android.transport.http.postJson
+import dev.omnesis.android.transport.http.putJsonSegments
 import java.time.ZoneId
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /** Agent control HTTP (sessions, messages, conversations). The SSE stream lives in [AgentEventSource]. */
 class AgentClient(private val http: GatewayHttp) {
@@ -126,6 +132,32 @@ class AgentClient(private val http: GatewayHttp) {
      */
     suspend fun dailyBriefItems(conversationId: String, day: String): DailyBriefItemsDto =
         http.getPrivateJson(listOf("agent", "conversations", conversationId, "briefs", day))
+
+    /**
+     * `PUT /agent/conversations/:id/briefs/:day/items/:observationId/reaction` — what the reader
+     * thinks of one item the brief sent on [day]. A null [reaction] clears it, sent as JSON `null`
+     * rather than left out. [note] carries the reader's words; the gateway derives a correction
+     * note's id from the item and the words, so a retry with the same words saves one note.
+     *
+     * Gateway TS body (`packages/gateway/src/http/schemas/agent-briefs.ts`):
+     *
+     * ```ts
+     * { reaction: "up" | "not_interested" | "factual_error" | null; note?: string }
+     * ```
+     */
+    suspend fun reactToBriefItem(
+        conversationId: String,
+        day: String,
+        observationId: String,
+        reaction: String?,
+        note: String? = null,
+    ): DailyBriefReactionReceiptDto = http.putJsonSegments<JsonObject, DailyBriefReactionReceiptDto>(
+        listOf("agent", "conversations", conversationId, "briefs", day, "items", observationId, "reaction"),
+        buildJsonObject {
+            if (reaction == null) put("reaction", JsonNull) else put("reaction", reaction)
+            note?.trim()?.takeIf(String::isNotEmpty)?.let { put("note", it) }
+        },
+    )
 }
 
 /** Prompt/tool profile requested when a session is created or resumed. */

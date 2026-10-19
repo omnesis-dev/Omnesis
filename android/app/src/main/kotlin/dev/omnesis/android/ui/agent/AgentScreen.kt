@@ -153,7 +153,15 @@ fun AgentScreen(
         experimental = experimental,
         onLoadOlderMessages = vm::loadOlderMessages,
         onOpenTask = onOpenTask,
-        dailyBrief = remember(vm) { DailyBriefContext(loader = DailyBriefItemsLoader { id, day -> vm.dailyBriefItems(id, day) }) },
+        dailyBrief = remember(vm) {
+            DailyBriefContext(
+                loader = DailyBriefItemsLoader { id, day -> vm.dailyBriefItems(id, day) },
+                reactions = DailyBriefReactionSender { id, day, observationId, reaction, note ->
+                    vm.reactToBriefItem(id, day, observationId, reaction, note)
+                },
+                noteCapture = { capture, onClose -> DailyBriefNoteCapture(capture, onClose) },
+            )
+        },
     )
 }
 
@@ -741,6 +749,11 @@ private fun agentWorkingRevision(turns: List<AgentTurn>): Int {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Modifier.transcriptKeyboardDismissal(): Modifier {
+    // Previews, screenshots and the Robolectric interaction tests have no keyboard to drive, and
+    // the platform never hands them an insets-animation controller: `imeNestedScroll` would keep
+    // requesting one and swallow every backward scroll meanwhile, so a semantics "scroll
+    // backward" there never moves the list.
+    if (LocalInspectionMode.current) return this
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return imeNestedScroll()
 
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -779,7 +792,7 @@ private fun Transcript(
     val briefOrigin = state.conversationOrigin?.takeIf { it.isDailyBrief }
     val briefConversationId = state.sessionId.takeIf { briefOrigin != null }
     val brief = briefConversationId?.let { id ->
-        rememberDailyBriefHolder(id, dailyBrief.loader, dailyBrief.preloaded)
+        rememberDailyBriefHolder(id, dailyBrief.loader, dailyBrief.preloaded, dailyBrief.reactions)
             .also { holder -> if (holder.view.latestId == null) holder.observeLatest(briefOrigin?.latestDailyBrief) }
     }
     LaunchedEffect(brief, briefOrigin?.latestDailyBrief) { brief?.observeLatest(briefOrigin?.latestDailyBrief) }

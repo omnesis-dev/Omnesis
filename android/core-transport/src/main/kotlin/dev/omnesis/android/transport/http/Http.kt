@@ -247,6 +247,12 @@ suspend inline fun <reified B, reified T> GatewayHttp.putJson(path: String, body
     return decodeBody(execute(newRequest(urlFor(path)).put(payload).build()))
 }
 
+/** JSON PUT with dynamic raw path segments encoded exactly once. */
+suspend inline fun <reified B, reified T> GatewayHttp.putJsonSegments(segments: List<String>, body: B): T {
+    val payload = OmnesisJson.encodeToString(body).toRequestBody(JSON_MEDIA)
+    return decodeBody(execute(newRequest(urlForSegments(segments)).put(payload).build()))
+}
+
 /**
  * POST of a prebuilt body (a multipart upload, not JSON), decoding the 2xx reply into [T].
  * [timeout] replaces the engine's call, read and write timeouts for this one call, for an

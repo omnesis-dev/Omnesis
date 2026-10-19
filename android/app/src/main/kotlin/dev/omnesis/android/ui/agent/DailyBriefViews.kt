@@ -20,28 +20,40 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ThumbDown
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.WbSunny
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -61,14 +73,39 @@ import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.DailyBriefItemDto
 import dev.omnesis.android.transport.dto.DailyBriefItemsDto
 import dev.omnesis.android.transport.dto.DailyBriefMessageRef
+import dev.omnesis.android.transport.dto.DailyBriefReactionDto
+import dev.omnesis.android.transport.dto.DailyBriefReactionKind
+import dev.omnesis.android.transport.dto.DailyBriefReactionReceiptDto
 import dev.omnesis.android.transport.dto.DailyBriefSourceDto
 import dev.omnesis.android.transport.dto.DailyBriefTaskDto
+import dev.omnesis.android.ui.capture.TaskCompletionCapture
+import dev.omnesis.android.ui.capture.TaskNoteKind
+import dev.omnesis.android.ui.common.classifyGatewayError
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 /** Reads what one day's brief was based on. */
 fun interface DailyBriefItemsLoader {
     suspend fun items(conversationId: String, day: String): DailyBriefItemsDto
 }
+
+/** Tells the gateway what the reader thinks of one brief item; a null [reaction] clears it. */
+fun interface DailyBriefReactionSender {
+    suspend fun react(
+        conversationId: String,
+        day: String,
+        observationId: String,
+        reaction: DailyBriefReactionKind?,
+        note: String?,
+    ): DailyBriefReactionReceiptDto
+}
+
+/**
+ * Hosts the capture that takes the words behind a thumbs-down: [TaskCompletionCapture] says what
+ * they are about and where they go, and the close callback runs whether they were sent or not.
+ * The app supplies the Tell Omnesis screen; a test without one sends the reaction alone.
+ */
+typealias DailyBriefNoteCaptureHost = @Composable (capture: TaskCompletionCapture, onClose: () -> Unit) -> Unit
 
 /**
  * The Morning brief conversation's [DailyBriefViewState] as Compose state, with the fetches
@@ -79,6 +116,7 @@ class DailyBriefHolder(
     val conversationId: String,
     private val loader: DailyBriefItemsLoader?,
     preloaded: List<DailyBriefItemsDto> = emptyList(),
+    private val reactions: DailyBriefReactionSender? = null,
 ) {
     var view: DailyBriefViewState by mutableStateOf(
         DailyBriefViewState(items = preloaded.associate { it.day to DailyBriefItemsState.Loaded(it) }),
@@ -119,6 +157,43 @@ class DailyBriefHolder(
             DailyBriefItemsState.Failed
         }
         view = view.withItems(day, next)
+    }
+
+    /**
+     * Record the reader's [reaction] to one item on [day], or clear it with null. The item shows
+     * the reaction at once; the gateway's answer replaces it, and a refusal puts the previous
+     * reaction back and leaves its reason as the day's [DailyBriefViewState.reactionError].
+     * Returns null once the gateway took it, or the sentence that says why not.
+     */
+    suspend fun react(
+        day: String,
+        observationId: String,
+        reaction: DailyBriefReactionKind?,
+        note: String? = null,
+    ): String? {
+        val sender = reactions ?: return null
+        val before = view.reaction(day, observationId)
+        val optimistic = reaction?.let { DailyBriefReactionDto(kind = it.wire, note = note?.trim()?.takeIf(String::isNotEmpty)) }
+        view = view.withReaction(day, observationId, optimistic).copy(reactionError = null)
+        return try {
+            val receipt = sender.react(conversationId, day, observationId, reaction, note)
+            // A later reaction on the same item has already moved on; its own answer settles it.
+            if (view.reaction(day, observationId) == optimistic) view = view.withReaction(day, observationId, receipt.asReaction)
+            null
+        } catch (cancellation: CancellationException) {
+            if (view.reaction(day, observationId) == optimistic) view = view.withReaction(day, observationId, before)
+            throw cancellation
+        } catch (failure: Throwable) {
+            val message = "Couldn't save your reaction: ${classifyGatewayError(failure)}"
+            if (view.reaction(day, observationId) == optimistic) {
+                view = view.withReaction(day, observationId, before).copy(reactionError = DailyBriefReactionError(day, message))
+            }
+            message
+        }
+    }
+
+    fun ackReactionError() {
+        view = view.copy(reactionError = null)
     }
 }
 
@@ -252,6 +327,12 @@ fun DailyBriefFooter(
     onRetry: () -> Unit,
     onOpenDocument: (String) -> Unit,
     onOpenTask: (String) -> Unit,
+    /** Sends a reaction on one of the day's items; null once it is saved, else why not. */
+    onReact: suspend (observationId: String, DailyBriefReactionKind?, note: String?) -> String? = { _, _, _ -> null },
+    /** The last reaction the gateway refused on this day, until dismissed. */
+    reactionError: String? = null,
+    onDismissReactionError: () -> Unit = {},
+    noteCapture: DailyBriefNoteCaptureHost? = null,
 ) {
     val c = OmTheme.colors
     when (state) {
@@ -282,7 +363,19 @@ fun DailyBriefFooter(
         is DailyBriefItemsState.Loaded -> {
             val items = state.page.items.sortedBy { it.rank }
             if (items.isNotEmpty()) {
-                LoadedFooter(day, items, open, catalog, onToggle, onOpenDocument, onOpenTask)
+                LoadedFooter(
+                    day = day,
+                    items = items,
+                    open = open,
+                    catalog = catalog,
+                    onToggle = onToggle,
+                    onOpenDocument = onOpenDocument,
+                    onOpenTask = onOpenTask,
+                    onReact = onReact,
+                    reactionError = reactionError,
+                    onDismissReactionError = onDismissReactionError,
+                    noteCapture = noteCapture,
+                )
             }
         }
         null -> Unit
@@ -298,9 +391,48 @@ private fun LoadedFooter(
     onToggle: () -> Unit,
     onOpenDocument: (String) -> Unit,
     onOpenTask: (String) -> Unit,
+    onReact: suspend (String, DailyBriefReactionKind?, String?) -> String?,
+    reactionError: String?,
+    onDismissReactionError: () -> Unit,
+    noteCapture: DailyBriefNoteCaptureHost?,
 ) {
     val c = OmTheme.colors
     val shape = RoundedCornerShape(OmRadius.large)
+    val scope = rememberCoroutineScope()
+    // The item whose thumbs-down is being chosen, then the note capture that choice opened.
+    var choosing by remember { mutableStateOf<DailyBriefItemDto?>(null) }
+    var pendingNote by remember { mutableStateOf<PendingBriefNote?>(null) }
+
+    fun send(item: DailyBriefItemDto, reaction: DailyBriefReactionKind?) {
+        scope.launch { onReact(item.observationId, reaction, null) }
+    }
+
+    fun thumbsDown(item: DailyBriefItemDto, choice: DailyBriefReactionKind) {
+        when (choice) {
+            // The reaction stands on its own; the words, if any come, are added to it.
+            DailyBriefReactionKind.NOT_INTERESTED -> {
+                send(item, choice)
+                if (noteCapture != null) {
+                    pendingNote = PendingBriefNote(item, TaskNoteKind.NOT_INTERESTED, onCancel = {}) { words ->
+                        onReact(item.observationId, choice, words)
+                    }
+                }
+            }
+            // The reaction is sent once the words are; cancelling still disputes the item,
+            // without a correction.
+            DailyBriefReactionKind.FACTUAL_ERROR -> {
+                if (noteCapture == null) {
+                    send(item, choice)
+                } else {
+                    pendingNote = PendingBriefNote(item, TaskNoteKind.FACTUAL_ERROR, onCancel = { send(item, choice) }) { words ->
+                        onReact(item.observationId, choice, words)
+                    }
+                }
+            }
+            DailyBriefReactionKind.UP -> send(item, choice)
+        }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
         Row(
             Modifier
@@ -339,13 +471,153 @@ private fun LoadedFooter(
                     .testTag("dailyBrief.items.$day"),
                 verticalArrangement = Arrangement.spacedBy(OmSpacing.md),
             ) {
-                items.forEach { item -> ItemRow(item, catalog, onOpenDocument, onOpenTask) }
+                items.forEach { item ->
+                    ItemRow(
+                        item = item,
+                        catalog = catalog,
+                        onOpenDocument = onOpenDocument,
+                        onOpenTask = onOpenTask,
+                        onThumbsUp = { send(item, if (item.reaction?.kindOrNull == DailyBriefReactionKind.UP) null else DailyBriefReactionKind.UP) },
+                        onThumbsDown = { choosing = item },
+                    )
+                }
             }
+        }
+        if (reactionError != null) {
+            Row(
+                Modifier.fillMaxWidth().testTag("dailyBrief.reactionError.$day"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = c.warning, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    reactionError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textMuted,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Dismiss",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = c.accent,
+                    modifier = Modifier
+                        .heightIn(min = 32.dp)
+                        .clickable(role = Role.Button, onClick = onDismissReactionError)
+                        .padding(vertical = 8.dp)
+                        .testTag("dailyBrief.reactionError.dismiss.$day"),
+                )
+            }
+        }
+    }
+
+    choosing?.let { item ->
+        DailyBriefThumbsDownDialog(
+            initial = item.reaction?.kindOrNull?.takeIf { it != DailyBriefReactionKind.UP },
+            onCancel = { choosing = null },
+            onContinue = { choice ->
+                choosing = null
+                thumbsDown(item, choice)
+            },
+        )
+    }
+    pendingNote?.let { pending ->
+        noteCapture?.invoke(pending.capture) {
+            if (!pending.saved) pending.onCancel()
+            pendingNote = null
         }
     }
 }
 
-/** One ranked item: its sentence, then a chip for each document and task. */
+/**
+ * A note capture opened by a thumbs-down, with what to do when it closes unsaved. [save] sends
+ * the words and answers null once they are taken; [saved] remembers that, so the close that
+ * follows a successful save is not read as a cancel.
+ */
+private class PendingBriefNote(
+    item: DailyBriefItemDto,
+    kind: TaskNoteKind,
+    val onCancel: () -> Unit,
+    save: suspend (String) -> String?,
+) {
+    var saved = false
+        private set
+    val capture = TaskCompletionCapture(
+        subject = item.summary,
+        kind = kind,
+        save = { words -> save(words).also { refusal -> if (refusal == null) saved = true } },
+    )
+}
+
+/**
+ * The choice behind a thumbs-down: not worth the reader's time, or wrong. Continue hands the
+ * choice back; the caller sends it and asks for the words.
+ */
+@Composable
+fun DailyBriefThumbsDownDialog(
+    initial: DailyBriefReactionKind?,
+    onCancel: () -> Unit,
+    onContinue: (DailyBriefReactionKind) -> Unit,
+) {
+    val c = OmTheme.colors
+    var choice by remember { mutableStateOf(initial ?: DailyBriefReactionKind.NOT_INTERESTED) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = c.bgSecondary,
+        modifier = Modifier.testTag("dailyBrief.thumbsDownDialog"),
+        title = { Text(DailyBriefCopy.THUMBS_DOWN_TITLE, color = c.textPrimary) },
+        text = {
+            Column {
+                ThumbsDownChoice(
+                    kind = DailyBriefReactionKind.NOT_INTERESTED,
+                    title = DailyBriefCopy.NOT_INTERESTED_CHOICE,
+                    selected = choice == DailyBriefReactionKind.NOT_INTERESTED,
+                    onSelect = { choice = DailyBriefReactionKind.NOT_INTERESTED },
+                )
+                ThumbsDownChoice(
+                    kind = DailyBriefReactionKind.FACTUAL_ERROR,
+                    title = DailyBriefCopy.FACTUAL_ERROR_CHOICE,
+                    selected = choice == DailyBriefReactionKind.FACTUAL_ERROR,
+                    onSelect = { choice = DailyBriefReactionKind.FACTUAL_ERROR },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onContinue(choice) }, modifier = Modifier.testTag("dailyBrief.thumbsDownContinue")) {
+                Text("Continue", color = c.accent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel, modifier = Modifier.testTag("dailyBrief.thumbsDownCancel")) {
+                Text("Cancel", color = c.accent)
+            }
+        },
+    )
+}
+
+@Composable
+private fun ThumbsDownChoice(kind: DailyBriefReactionKind, title: String, selected: Boolean, onSelect: () -> Unit) {
+    val c = OmTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .selectable(selected, role = Role.RadioButton, onClick = onSelect)
+            .padding(vertical = OmSpacing.xs)
+            .testTag("dailyBrief.thumbsDownChoice.${kind.wire}"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected, onClick = null)
+        Spacer(Modifier.width(OmSpacing.sm))
+        Text(title, style = MaterialTheme.typography.bodyMedium, color = c.textPrimary)
+    }
+}
+
+/**
+ * One ranked item: its sentence, a chip for each document and task, then a thumbs up and down
+ * with the word for a thumbs-down beside them once one is given.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ItemRow(
@@ -353,8 +625,11 @@ private fun ItemRow(
     catalog: SourceCatalog,
     onOpenDocument: (String) -> Unit,
     onOpenTask: (String) -> Unit,
+    onThumbsUp: () -> Unit,
+    onThumbsDown: () -> Unit,
 ) {
     val c = OmTheme.colors
+    val kind = item.reaction?.kindOrNull
     Row(verticalAlignment = Alignment.Top) {
         Text(
             "${item.rank}",
@@ -380,7 +655,66 @@ private fun ItemRow(
                     item.tasks.forEach { task -> TaskChip(task, onOpenTask) }
                 }
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ReactionButton(
+                    selected = kind == DailyBriefReactionKind.UP,
+                    outlined = Icons.Outlined.ThumbUp,
+                    filled = Icons.Filled.ThumbUp,
+                    description = DailyBriefCopy.THUMBS_UP,
+                    tag = "dailyBrief.thumbsUp.${item.observationId}",
+                    onClick = onThumbsUp,
+                )
+                Spacer(Modifier.width(2.dp))
+                ReactionButton(
+                    selected = kind == DailyBriefReactionKind.NOT_INTERESTED || kind == DailyBriefReactionKind.FACTUAL_ERROR,
+                    outlined = Icons.Outlined.ThumbDown,
+                    filled = Icons.Filled.ThumbDown,
+                    description = DailyBriefCopy.THUMBS_DOWN,
+                    tag = "dailyBrief.thumbsDown.${item.observationId}",
+                    onClick = onThumbsDown,
+                )
+                DailyBriefCopy.reactionCaption(kind)?.let { caption ->
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        caption,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("dailyBrief.reactionCaption.${item.observationId}"),
+                    )
+                }
+            }
         }
+    }
+}
+
+/** A small thumb: outlined until chosen, filled in the accent once it is. */
+@Composable
+private fun ReactionButton(
+    selected: Boolean,
+    outlined: ImageVector,
+    filled: ImageVector,
+    description: String,
+    tag: String,
+    onClick: () -> Unit,
+) {
+    val c = OmTheme.colors
+    Box(
+        Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(50))
+            .selectable(selected, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description }
+            .testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (selected) filled else outlined,
+            contentDescription = null,
+            tint = if (selected) c.accent else c.textMuted,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -460,7 +794,10 @@ fun rememberDailyBriefHolder(
     conversationId: String,
     loader: DailyBriefItemsLoader?,
     preloaded: List<DailyBriefItemsDto> = emptyList(),
-): DailyBriefHolder = remember(conversationId, loader != null) { DailyBriefHolder(conversationId, loader, preloaded) }
+    reactions: DailyBriefReactionSender? = null,
+): DailyBriefHolder = remember(conversationId, loader != null, reactions != null) {
+    DailyBriefHolder(conversationId, loader, preloaded, reactions)
+}
 
 /** Spacing the brief's header keeps above its bubble. */
 internal val DAILY_BRIEF_HEADER_GAP = 8.dp
@@ -485,6 +822,10 @@ data class DailyBriefContext(
     val zone: () -> java.time.ZoneId = { java.time.ZoneId.systemDefault() },
     /** Items already in hand, so a screenshot renders without a fetch. */
     val preloaded: List<DailyBriefItemsDto> = emptyList(),
+    /** Where reactions go; null leaves the thumbs on screen but inert. */
+    val reactions: DailyBriefReactionSender? = null,
+    /** The capture that takes the words behind a thumbs-down; null sends the reaction alone. */
+    val noteCapture: DailyBriefNoteCaptureHost? = null,
 )
 
 /** One row of the Morning brief conversation. */
@@ -507,7 +848,7 @@ internal fun DailyBriefRowContent(
             val day = row.brief.day
             // Every day on screen reads what its brief was based on: an open day for its list,
             // a folded one for the count its line names.
-            androidx.compose.runtime.LaunchedEffect(holder, day) { holder.load(day) }
+            LaunchedEffect(holder, day) { holder.load(day) }
             val now = context.now()
             val zone = context.zone()
             DailyBriefDaySeparator(
@@ -518,11 +859,17 @@ internal fun DailyBriefRowContent(
                 onToggle = { onToggleDay(row.brief) },
             )
         }
-        is DailyBriefRow.Folded -> DailyBriefFoldedRow(
-            day = row.day.brief.day,
-            summary = DailyBriefCopy.foldedSummary(view.itemCount(row.day.brief.day), row.day.replyCount),
-            onOpen = { onToggleDay(row.day.brief) },
-        )
+        is DailyBriefRow.Folded -> {
+            val day = row.day.brief.day
+            // A folded line can scroll into view ahead of its separator; it reads the count it
+            // names itself rather than waiting for the separator to.
+            LaunchedEffect(holder, day) { holder.load(day) }
+            DailyBriefFoldedRow(
+                day = day,
+                summary = DailyBriefCopy.foldedSummary(view.itemCount(day), row.day.replyCount),
+                onOpen = { onToggleDay(row.day.brief) },
+            )
+        }
         is DailyBriefRow.Brief -> DailyBriefBriefRow(
             time = DailyBriefCopy.sentTime(row.brief.sentAt ?: view.sentAt(row.brief.day), context.zone()),
         ) { bubble(row.turn) }
@@ -535,6 +882,10 @@ internal fun DailyBriefRowContent(
             onRetry = { onRetry(row.brief.day) },
             onOpenDocument = onOpenDocument,
             onOpenTask = onOpenTask,
+            onReact = { observationId, reaction, note -> holder.react(row.brief.day, observationId, reaction, note) },
+            reactionError = view.reactionError?.takeIf { it.day == row.brief.day }?.message,
+            onDismissReactionError = holder::ackReactionError,
+            noteCapture = context.noteCapture,
         )
     }
 }

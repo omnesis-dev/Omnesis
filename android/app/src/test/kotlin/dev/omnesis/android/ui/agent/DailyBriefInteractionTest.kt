@@ -7,6 +7,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performScrollToNode
@@ -18,7 +20,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
+import dev.omnesis.android.transport.dto.DailyBriefReactionKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -41,10 +45,12 @@ class DailyBriefInteractionTest {
     private val opened = mutableListOf<String>()
     private val tasks = mutableListOf<String>()
     private lateinit var loader: DailyBriefFixtures.Loader
+    private lateinit var sender: DailyBriefFixtures.Sender
 
-    private fun start(days: Int = 3, failingOnce: Set<String> = emptySet()) {
+    private fun start(days: Int = 3, failingOnce: Set<String> = emptySet(), failingReactions: Set<String> = emptySet()) {
         val (origin, messages) = DailyBriefFixtures.conversation(days)
         loader = DailyBriefFixtures.Loader(DailyBriefFixtures.pages, failingOnce)
+        sender = DailyBriefFixtures.Sender(failing = failingReactions)
         val state = AgentCoordinator.UiState(
             hasClient = true,
             sessionId = DailyBriefFixtures.CONVERSATION_ID,
@@ -70,6 +76,7 @@ class DailyBriefInteractionTest {
                             loader = loader,
                             now = { DailyBriefFixtures.now },
                             zone = { DailyBriefFixtures.zone },
+                            reactions = sender,
                         ),
                     )
                 }
@@ -102,10 +109,20 @@ class DailyBriefInteractionTest {
         node("dailyBrief.separator.2026-10-01").assertDoesNotExist()
     }
 
+    /** A folded line reads its count itself, so it is right even before its separator scrolls in. */
+    @Test
+    fun a_folded_line_counts_its_things_before_its_separator_shows() {
+        start()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasTestTag("dailyBrief.folded.2026-10-12"))
+        compose.waitForIdle()
+        compose.onNodeWithText("Morning brief · 2 things · 1 reply").assertExists()
+    }
+
     @Test
     fun earlier_days_fold_to_one_line_that_opens_and_folds_again() {
         start()
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasTestTag("dailyBrief.folded.2026-10-12"))
+        // Up to the day's heading, which brings its folded line in under it.
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasTestTag("dailyBrief.separator.2026-10-12"))
         compose.waitForIdle()
         node("dailyBrief.folded.2026-10-12").assertExists()
         compose.onNodeWithText("Morning brief · 2 things · 1 reply").assertExists()
@@ -162,5 +179,96 @@ class DailyBriefInteractionTest {
         compose.onNodeWithText("Couldn't load —").assertDoesNotExist()
         compose.onNodeWithText("Based on 3 things").assertExists()
         assertEquals(2, loader.reads.count { it == "2026-10-14" })
+    }
+
+    // --- Reactions ------------------------------------------------------------------------
+
+    @Test
+    fun items_show_the_reactions_the_brief_came_with() {
+        start()
+        node("dailyBrief.thumbsUp.obs_deposit").assertIsNotSelected()
+        node("dailyBrief.thumbsDown.obs_deposit").assertIsNotSelected()
+        node("dailyBrief.thumbsUp.obs_tuner").assertIsSelected()
+        node("dailyBrief.thumbsDown.obs_review").assertIsSelected()
+        node("dailyBrief.reactionCaption.obs_review").assertExists()
+        compose.onNodeWithText("Not interested").assertExists()
+        node("dailyBrief.reactionCaption.obs_deposit").assertDoesNotExist()
+    }
+
+    @Test
+    fun thumbs_up_selects_and_a_second_tap_clears() {
+        start()
+        node("dailyBrief.thumbsUp.obs_deposit").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsUp.obs_deposit").assertIsSelected()
+
+        node("dailyBrief.thumbsUp.obs_deposit").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsUp.obs_deposit").assertIsNotSelected()
+        assertEquals(
+            listOf(
+                DailyBriefFixtures.Reaction("obs_deposit", DailyBriefReactionKind.UP, null),
+                DailyBriefFixtures.Reaction("obs_deposit", null, null),
+            ),
+            sender.sent,
+        )
+    }
+
+    @Test
+    fun thumbs_down_asks_which_and_not_interested_is_sent_at_once() {
+        start()
+        node("dailyBrief.thumbsDown.obs_deposit").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsDownDialog").assertIsDisplayed()
+        compose.onNodeWithText(DailyBriefCopy.NOT_INTERESTED_CHOICE).assertExists()
+        compose.onNodeWithText(DailyBriefCopy.FACTUAL_ERROR_CHOICE).assertExists()
+
+        node("dailyBrief.thumbsDownChoice.not_interested").performClick()
+        node("dailyBrief.thumbsDownContinue").performClick()
+        compose.waitForIdle()
+
+        node("dailyBrief.thumbsDownDialog").assertDoesNotExist()
+        node("dailyBrief.thumbsDown.obs_deposit").assertIsSelected()
+        node("dailyBrief.reactionCaption.obs_deposit").assertExists()
+        assertEquals(listOf(DailyBriefFixtures.Reaction("obs_deposit", DailyBriefReactionKind.NOT_INTERESTED, null)), sender.sent)
+    }
+
+    /** With no capture to take a correction, a factual error is still recorded, without words. */
+    @Test
+    fun a_factual_error_without_a_capture_is_sent_without_words() {
+        start()
+        node("dailyBrief.thumbsDown.obs_deposit").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsDownChoice.factual_error").performClick()
+        node("dailyBrief.thumbsDownContinue").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Factual error").assertExists()
+        assertEquals(listOf(DailyBriefFixtures.Reaction("obs_deposit", DailyBriefReactionKind.FACTUAL_ERROR, null)), sender.sent)
+    }
+
+    @Test
+    fun cancelling_the_thumbs_down_sends_nothing() {
+        start()
+        node("dailyBrief.thumbsDown.obs_deposit").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsDownCancel").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsDownDialog").assertDoesNotExist()
+        node("dailyBrief.thumbsDown.obs_deposit").assertIsNotSelected()
+        assertTrue(sender.sent.isEmpty())
+    }
+
+    @Test
+    fun a_refused_reaction_goes_back_and_its_reason_can_be_dismissed() {
+        start(failingReactions = setOf("obs_deposit"))
+        node("dailyBrief.thumbsUp.obs_deposit").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsUp.obs_deposit").assertIsNotSelected()
+        node("dailyBrief.reactionError.2026-10-14").assertExists()
+        compose.onNode(hasText("Couldn't save your reaction", substring = true)).assertExists()
+
+        node("dailyBrief.reactionError.dismiss.2026-10-14").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.reactionError.2026-10-14").assertDoesNotExist()
     }
 }

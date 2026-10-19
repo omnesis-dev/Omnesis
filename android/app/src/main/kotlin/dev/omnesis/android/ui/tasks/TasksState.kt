@@ -145,15 +145,20 @@ data class TaskHistoryState(
     val error: String? = null,
 ) {
     /**
-     * The change the history offers to undo in place: its newest entry, when Omnesis applied it on
-     * its own and it is still the change undo would revert. Null otherwise.
+     * The change the history offers to undo in place: its newest entry, when Omnesis made it on
+     * its own (applied, added or withheld) and it is still the change undo would revert. Null
+     * otherwise.
      */
     val autoAppliedUndoSeq: Long?
         get() {
             val detail = detail ?: return null
             val newest = detail.history.firstOrNull() ?: return null
-            return newest.seq.takeIf { newest.kind == "auto_applied" && it == detail.undoSeq }
+            return newest.seq.takeIf { newest.kind in OMNESIS_OWN_CHANGE_KINDS && it == detail.undoSeq }
         }
+
+    private companion object {
+        val OMNESIS_OWN_CHANGE_KINDS = setOf("auto_applied", "auto_accepted", "withheld")
+    }
 }
 
 data class TasksUiState(

@@ -438,17 +438,24 @@ private fun HistoryRow(event: TaskEventDto, zone: ZoneId, onUndo: (() -> Unit)?)
     }
 }
 
-/** How a change Omnesis applied on its own names itself. */
-internal fun autoAppliedLabel(event: TaskEventDto): String =
-    if (event.change == "complete") "Marked done by Omnesis" else "Updated by Omnesis"
+/**
+ * How a change Omnesis made on its own names itself: a change it applied to a task
+ * (`auto_applied`), a task it added without asking (`auto_accepted`), or one it kept back
+ * (`withheld`). Null for a change the reader made.
+ */
+internal fun omnesisOwnChangeLabel(event: TaskEventDto): String? = when (event.kind) {
+    "auto_applied" -> if (event.change == "complete") "Marked done by Omnesis" else "Updated by Omnesis"
+    "auto_accepted" -> "Added by Omnesis"
+    "withheld" -> "Withheld by Omnesis"
+    else -> null
+}
 
 /**
  * A history line's headline: the gateway's own note when it wrote one, else the kind. A change
- * Omnesis applied on its own leads with who made it, then its reason.
+ * Omnesis made on its own leads with who made it, then its reason.
  */
 internal fun taskEventTitle(event: TaskEventDto): String {
-    if (event.kind == "auto_applied") {
-        val label = autoAppliedLabel(event)
+    omnesisOwnChangeLabel(event)?.let { label ->
         return event.note?.takeIf(String::isNotBlank)?.let { "$label — $it" } ?: label
     }
     return event.note?.takeIf(String::isNotBlank) ?: when (event.kind) {
@@ -471,7 +478,7 @@ internal fun taskEventTitle(event: TaskEventDto): String {
 
 /** Where a history line's change came from; null when its headline already says so. */
 internal fun taskEventAttribution(event: TaskEventDto): String? =
-    if (event.kind == "auto_applied") null else taskEventSurface(event.surface)
+    if (omnesisOwnChangeLabel(event) != null) null else taskEventSurface(event.surface)
 
 /** Where a change was made, in the reader's terms; null for a surface this build does not know. */
 internal fun taskEventSurface(surface: String): String? = when (surface) {

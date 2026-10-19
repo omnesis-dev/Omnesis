@@ -10,11 +10,13 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.DailyBriefItemsDto
+import dev.omnesis.android.transport.dto.DailyBriefReactionKind
 import dev.omnesis.android.ui.agent.AgentContent
 import dev.omnesis.android.ui.agent.AgentCoordinator
 import dev.omnesis.android.ui.agent.AgentTurnBuilder
 import dev.omnesis.android.ui.agent.DailyBriefContext
 import dev.omnesis.android.ui.agent.DailyBriefFixtures
+import dev.omnesis.android.ui.agent.DailyBriefThumbsDownDialog
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -83,6 +85,30 @@ class DailyBriefScreenshotTest {
     @Test
     fun daily_brief_earlier_folded_light() = capture("daily_brief_earlier_folded_light", dark = false) {
         FoldedHistory()
+    }
+
+    /** Every reaction given: a correction on the first item, a thumbs-up, a "not interested". */
+    @Test
+    fun daily_brief_reactions_dark() = capture("daily_brief_reactions_dark", dark = true) { Reacted() }
+
+    @Test
+    fun daily_brief_reactions_light() = capture("daily_brief_reactions_light", dark = false) { Reacted() }
+
+    @Composable
+    private fun Reacted() = Conversation(
+        days = 2,
+        pages = DailyBriefFixtures.pages.map { if (it.day == "2026-10-14") DailyBriefFixtures.todayReacted else it },
+    )
+
+    /** The thumbs-down's question, with "Factual error" chosen. */
+    @Test
+    fun daily_brief_thumbs_down_dialog_dark() = capture("daily_brief_thumbs_down_dialog_dark", dark = true) {
+        DailyBriefThumbsDownDialog(initial = DailyBriefReactionKind.FACTUAL_ERROR, onCancel = {}, onContinue = {})
+    }
+
+    @Test
+    fun daily_brief_thumbs_down_dialog_light() = capture("daily_brief_thumbs_down_dialog_light", dark = false) {
+        DailyBriefThumbsDownDialog(initial = null, onCancel = {}, onContinue = {})
     }
 
     /**

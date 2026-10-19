@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.sources.SourceCatalog
+import dev.omnesis.android.transport.dto.DailyBriefReactionKind
 import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
 
@@ -65,4 +66,13 @@ class AgentViewModel @Inject constructor(
 
     /** What a morning brief was based on. */
     suspend fun dailyBriefItems(conversationId: String, day: String) = coordinator.dailyBriefItems(conversationId, day)
+
+    /** What the reader thinks of one of a morning brief's items. */
+    suspend fun reactToBriefItem(
+        conversationId: String,
+        day: String,
+        observationId: String,
+        reaction: DailyBriefReactionKind?,
+        note: String?,
+    ) = coordinator.reactToBriefItem(conversationId, day, observationId, reaction, note)
 }

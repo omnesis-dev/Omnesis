@@ -226,7 +226,7 @@ private fun TaskNoteCapture(task: TaskDto, onClose: () -> Unit, onSave: suspend 
                 vm = capture,
                 completion = remember(task.id) {
                     TaskCompletionCapture(
-                        taskTitle = task.title,
+                        subject = task.title,
                         kind = if (task.isSuggestion) TaskNoteKind.ACCEPT else TaskNoteKind.COMPLETE,
                         save = onSave,
                     )

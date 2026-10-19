@@ -25,7 +25,8 @@ import kotlinx.serialization.json.JsonObject
  *   items: { rank: number; observationId: string; summary: string;
  *            sources: { id: string; title: string | null; sourceType: string | null;
  *                       createdAt: string | null }[];
- *            tasks: { id: string; title: string; state: string }[] }[] }
+ *            tasks: { id: string; title: string; state: string }[];
+ *            reaction?: { kind: "up" | "not_interested" | "factual_error"; note?: string; at: string } }[] }
  * ```
  *
  * Decoded leniently: an item, source or task this build cannot read is dropped and the rest
@@ -52,7 +53,60 @@ data class DailyBriefItemDto(
     val sources: List<DailyBriefSourceDto> = emptyList(),
     @Serializable(with = LenientBriefTaskListSerializer::class)
     val tasks: List<DailyBriefTaskDto> = emptyList(),
+    /** What the reader said about the item, once they have. */
+    val reaction: DailyBriefReactionDto? = null,
 )
+
+/**
+ * A reader's reaction to one brief item. [kind] is kept as the gateway spelled it so a kind this
+ * build does not know still decodes; [kindOrNull] reads the ones it does.
+ */
+@Serializable
+data class DailyBriefReactionDto(
+    val kind: String,
+    /** The words that came with it, when any did. */
+    val note: String? = null,
+    /** When it was recorded (ISO 8601); absent on an optimistic update until the gateway answers. */
+    val at: String? = null,
+) {
+    val kindOrNull: DailyBriefReactionKind? get() = DailyBriefReactionKind.fromWire(kind)
+}
+
+/** The reactions a reader can give a brief item, as `PUT …/items/:observationId/reaction` names them. */
+enum class DailyBriefReactionKind(val wire: String) {
+    UP("up"),
+    NOT_INTERESTED("not_interested"),
+    FACTUAL_ERROR("factual_error"),
+    ;
+
+    companion object {
+        fun fromWire(value: String): DailyBriefReactionKind? = entries.firstOrNull { it.wire == value }
+    }
+}
+
+/**
+ * The gateway's answer to `PUT /agent/conversations/:id/briefs/:day/items/:observationId/reaction`.
+ *
+ * Gateway TS shape (`packages/gateway/src/http/routes/agent.ts`):
+ *
+ * ```ts
+ * { observationId: string; reaction: "up" | "not_interested" | "factual_error" | null;
+ *   note?: string; noteId?: string; at?: string }
+ * ```
+ */
+@Serializable
+data class DailyBriefReactionReceiptDto(
+    val observationId: String = "",
+    /** Null once the reaction was cleared. */
+    val reaction: String? = null,
+    val note: String? = null,
+    /** The id the correction was saved under as a note, when a factual error came with words. */
+    val noteId: String? = null,
+    val at: String? = null,
+) {
+    /** The reaction as the item now carries it, or null when it was cleared. */
+    val asReaction: DailyBriefReactionDto? get() = reaction?.let { DailyBriefReactionDto(kind = it, note = note, at = at) }
+}
 
 /** A document an item rests on. [sourceType] picks its icon through the source catalog. */
 @Serializable

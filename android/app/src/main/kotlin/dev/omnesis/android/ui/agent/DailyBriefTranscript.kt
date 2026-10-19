@@ -6,6 +6,8 @@ package dev.omnesis.android.ui.agent
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.DailyBriefItemsDto
 import dev.omnesis.android.transport.dto.DailyBriefMessageRef
+import dev.omnesis.android.transport.dto.DailyBriefReactionDto
+import dev.omnesis.android.transport.dto.DailyBriefReactionKind
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -61,6 +63,18 @@ object DailyBriefCopy {
     const val TITLE = "Morning brief"
     const val COMPOSER_PROMPT = "Reply about today's brief…"
     const val DEFAULT_COMPOSER_PROMPT = "Ask Omnesis"
+    const val THUMBS_UP = "Useful"
+    const val THUMBS_DOWN = "Not useful"
+    const val THUMBS_DOWN_TITLE = "What's off about this?"
+    const val NOT_INTERESTED_CHOICE = "Not interested in this kind of thing"
+    const val FACTUAL_ERROR_CHOICE = "Factual error — send a correction"
+
+    /** The word beside the thumbs once a thumbs-down is given; nothing for a thumbs-up or none. */
+    fun reactionCaption(kind: DailyBriefReactionKind?): String? = when (kind) {
+        DailyBriefReactionKind.NOT_INTERESTED -> "Not interested"
+        DailyBriefReactionKind.FACTUAL_ERROR -> "Factual error"
+        DailyBriefReactionKind.UP, null -> null
+    }
 
     /** What the composer says while idle in a conversation with this origin. */
     fun composerPrompt(origin: ConversationOrigin?): String =
@@ -140,6 +154,8 @@ data class DailyBriefViewState(
     val toggledFooters: Set<String> = emptySet(),
     /** The latest brief seen, by message id. */
     val latestId: String? = null,
+    /** A reaction the gateway refused, shown under its day until dismissed or the next reaction lands. */
+    val reactionError: DailyBriefReactionError? = null,
 ) {
     fun isOpen(brief: DailyBriefMessageRef): Boolean = brief.messageId == latestId || brief.messageId in openedDays
 
@@ -182,7 +198,24 @@ data class DailyBriefViewState(
     fun needsFetch(day: String): Boolean = items[day] == null
 
     fun withItems(day: String, state: DailyBriefItemsState): DailyBriefViewState = copy(items = items + (day to state))
+
+    /** The reaction a loaded item carries, or null when it has none or is not loaded. */
+    fun reaction(day: String, observationId: String): DailyBriefReactionDto? =
+        (items[day] as? DailyBriefItemsState.Loaded)?.page?.items?.firstOrNull { it.observationId == observationId }?.reaction
+
+    /** The same state with one loaded item's reaction replaced; unchanged when the day or item is not loaded. */
+    fun withReaction(day: String, observationId: String, reaction: DailyBriefReactionDto?): DailyBriefViewState {
+        val loaded = items[day] as? DailyBriefItemsState.Loaded ?: return this
+        if (loaded.page.items.none { it.observationId == observationId }) return this
+        val page = loaded.page.copy(
+            items = loaded.page.items.map { if (it.observationId == observationId) it.copy(reaction = reaction) else it },
+        )
+        return withItems(day, DailyBriefItemsState.Loaded(page))
+    }
 }
+
+/** Why a reaction on [day]'s brief did not save, in a sentence the footer shows. */
+data class DailyBriefReactionError(val day: String, val message: String)
 
 /** One line of the Morning brief conversation's list. Each has a [key] stable across recompositions. */
 sealed interface DailyBriefRow {

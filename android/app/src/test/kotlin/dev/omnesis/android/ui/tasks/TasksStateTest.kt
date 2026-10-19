@@ -440,6 +440,18 @@ class TasksStateTest {
     }
 
     @Test
+    fun a_task_omnesis_added_or_withheld_leads_with_who_did_it_and_names_no_surface() {
+        val added = TaskEventDto(seq = 30, kind = "auto_accepted", surface = "brain", note = "The lease says the deposit is due Friday.")
+        assertEquals("Added by Omnesis — The lease says the deposit is due Friday.", taskEventTitle(added))
+        assertEquals("Added by Omnesis", taskEventTitle(added.copy(note = null)))
+        assertNull(taskEventAttribution(added))
+        val withheld = TaskEventDto(seq = 31, kind = "withheld", surface = "brain", note = "Nothing to do yet.")
+        assertEquals("Withheld by Omnesis — Nothing to do yet.", taskEventTitle(withheld))
+        assertEquals("Withheld by Omnesis", taskEventTitle(withheld.copy(note = " ")))
+        assertNull(taskEventAttribution(withheld))
+    }
+
+    @Test
     fun only_the_newest_change_omnesis_applied_offers_undo_while_it_is_undoable() {
         val applied = TaskEventDto(seq = 20, kind = "auto_applied", surface = "brain", change = "complete")
         fun history(events: List<TaskEventDto>, undoSeq: Long?) =
@@ -449,5 +461,12 @@ class TasksStateTest {
         assertNull(history(listOf(TaskEventDto(seq = 21, kind = "undone"), applied), null).autoAppliedUndoSeq)
         assertNull(history(listOf(TaskEventDto(seq = 20, kind = "completed")), 20L).autoAppliedUndoSeq)
         assertNull(TaskHistoryState(task("t")).autoAppliedUndoSeq)
+        // A task Omnesis added or withheld on its own is offered the same way.
+        val added = TaskEventDto(seq = 30, kind = "auto_accepted", surface = "brain")
+        assertEquals(30L, history(listOf(added), 30L).autoAppliedUndoSeq)
+        assertNull(history(listOf(added), 29L).autoAppliedUndoSeq)
+        val withheld = TaskEventDto(seq = 31, kind = "withheld", surface = "brain")
+        assertEquals(31L, history(listOf(withheld, added), 31L).autoAppliedUndoSeq)
+        assertNull(history(listOf(TaskEventDto(seq = 32, kind = "undone"), withheld), null).autoAppliedUndoSeq)
     }
 }

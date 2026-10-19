@@ -17,6 +17,8 @@ import dev.omnesis.android.transport.dto.CreateSessionResponse
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.ChatMessage
 import dev.omnesis.android.transport.dto.DailyBriefItemsDto
+import dev.omnesis.android.transport.dto.DailyBriefReactionKind
+import dev.omnesis.android.transport.dto.DailyBriefReactionReceiptDto
 import dev.omnesis.android.transport.dto.DailyBriefMessageRef
 import dev.omnesis.android.transport.dto.formatLine
 import dev.omnesis.android.ui.common.classifyGatewayError
@@ -719,6 +721,22 @@ class AgentCoordinator @Inject constructor() {
     suspend fun dailyBriefItems(conversationId: String, day: String): DailyBriefItemsDto {
         val c = client ?: throw IllegalStateException("not paired")
         return c.dailyBriefItems(conversationId, day)
+    }
+
+    /**
+     * What the reader thinks of one item the Morning brief sent on [day]; a null [reaction] clears
+     * it. Throws when there is no paired client or the gateway refuses, which the brief's footer
+     * reports and undoes.
+     */
+    suspend fun reactToBriefItem(
+        conversationId: String,
+        day: String,
+        observationId: String,
+        reaction: DailyBriefReactionKind?,
+        note: String?,
+    ): DailyBriefReactionReceiptDto {
+        val c = client ?: throw IllegalStateException("not paired")
+        return c.reactToBriefItem(conversationId, day, observationId, reaction?.wire, note)
     }
 
     /** Load one complete page before the visible transcript, preserving live suffix turns. */

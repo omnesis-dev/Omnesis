@@ -9,10 +9,14 @@ import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.DailyBriefItemDto
 import dev.omnesis.android.transport.dto.DailyBriefItemsDto
 import dev.omnesis.android.transport.dto.DailyBriefMessageRef
+import dev.omnesis.android.transport.dto.DailyBriefReactionDto
+import dev.omnesis.android.transport.dto.DailyBriefReactionKind
+import dev.omnesis.android.transport.dto.DailyBriefReactionReceiptDto
 import dev.omnesis.android.transport.dto.DailyBriefSourceDto
 import dev.omnesis.android.transport.dto.DailyBriefTaskDto
 import dev.omnesis.android.transport.dto.UserPart
 import dev.omnesis.android.transport.GatewayException
+import kotlinx.coroutines.CompletableDeferred
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -81,14 +85,33 @@ object DailyBriefFixtures {
                 summary = "The tuner confirmed Thursday at ten.",
                 sources = listOf(DailyBriefSourceDto("doc_reply", "Re: tuning appointment", "mail")),
                 tasks = listOf(DailyBriefTaskDto("task_tuner", "Book the piano tuner", "done")),
+                reaction = DailyBriefReactionDto(kind = "up", at = "2026-10-14T07:10:00.000Z"),
             ),
             DailyBriefItemDto(
                 rank = 3,
                 observationId = "obs_review",
                 summary = "The quarterly budget review moved to next week.",
                 sources = listOf(DailyBriefSourceDto("doc_invite", null, "calendar")),
+                reaction = DailyBriefReactionDto(kind = "not_interested", note = "Finance handles this.", at = "2026-10-14T07:11:00.000Z"),
             ),
         ),
+    )
+
+    /** [today] with every reaction given: the first item disputed with a correction. */
+    val todayReacted = today.copy(
+        items = today.items.map { item ->
+            if (item.observationId == "obs_deposit") {
+                item.copy(
+                    reaction = DailyBriefReactionDto(
+                        kind = "factual_error",
+                        note = "The deposit was paid on Monday.",
+                        at = "2026-10-14T07:12:00.000Z",
+                    ),
+                )
+            } else {
+                item
+            }
+        },
     )
 
     fun earlier(day: String, count: Int) = DailyBriefItemsDto(
@@ -109,6 +132,41 @@ object DailyBriefFixtures {
             reads += day
             if (failing.remove(day)) throw GatewayException.ServerError(503, "Briefs are unavailable")
             return byDay[day] ?: throw GatewayException.NotFound("no brief on $day")
+        }
+    }
+
+    /** One reaction as the fake gateway received it. */
+    data class Reaction(val observationId: String, val reaction: DailyBriefReactionKind?, val note: String?)
+
+    /**
+     * Takes reactions, answering each with a receipt stamped at [at], and refuses every reaction
+     * on an item in [failing]. A reaction on a [held] item waits until [release] is called.
+     */
+    class Sender(private val failing: Set<String> = emptySet(), private val held: Set<String> = emptySet()) : DailyBriefReactionSender {
+        val sent = mutableListOf<Reaction>()
+        private val gates = mutableMapOf<String, CompletableDeferred<Unit>>()
+        var at: String = "2026-10-14T09:00:00.000Z"
+
+        fun release(observationId: String) {
+            gates.getOrPut(observationId) { CompletableDeferred() }.complete(Unit)
+        }
+
+        override suspend fun react(
+            conversationId: String,
+            day: String,
+            observationId: String,
+            reaction: DailyBriefReactionKind?,
+            note: String?,
+        ): DailyBriefReactionReceiptDto {
+            sent += Reaction(observationId, reaction, note)
+            if (observationId in held) gates.getOrPut(observationId) { CompletableDeferred() }.await()
+            if (observationId in failing) throw GatewayException.ServerError(503, "Reactions are unavailable")
+            return DailyBriefReactionReceiptDto(
+                observationId = observationId,
+                reaction = reaction?.wire,
+                note = note?.trim()?.takeIf(String::isNotEmpty),
+                at = at,
+            )
         }
     }
 }

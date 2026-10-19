@@ -73,6 +73,53 @@ class DailyBriefItemsDecodeTest {
         assertTrue(page.items[1].tasks.isEmpty())
     }
 
+    /** A reaction rides on its item; an item without one reads as unreacted. */
+    @Test
+    fun a_reaction_reads_with_its_kind_note_and_time() {
+        val page = OmnesisJson.decodeFromString<DailyBriefItemsDto>(
+            """{"day":"2026-10-14","messageId":"mb_today","items":[
+                 {"rank":1,"observationId":"obs_up","summary":"Liked.",
+                  "reaction":{"kind":"up","at":"2026-10-14T08:00:00.000Z"}},
+                 {"rank":2,"observationId":"obs_wrong","summary":"Disputed.",
+                  "reaction":{"kind":"factual_error","note":"The tuner comes Friday.","at":"2026-10-14T08:01:00.000Z"}},
+                 {"rank":3,"observationId":"obs_plain","summary":"Nothing said."}]}""",
+        )
+        val up = page.items[0].reaction!!
+        assertEquals(DailyBriefReactionKind.UP, up.kindOrNull)
+        assertNull(up.note)
+        assertEquals("2026-10-14T08:00:00.000Z", up.at)
+        val wrong = page.items[1].reaction!!
+        assertEquals(DailyBriefReactionKind.FACTUAL_ERROR, wrong.kindOrNull)
+        assertEquals("The tuner comes Friday.", wrong.note)
+        assertNull(page.items[2].reaction)
+    }
+
+    /** A kind this build does not know keeps the item and its reaction's words; only the kind reads as unknown. */
+    @Test
+    fun an_unknown_reaction_kind_keeps_the_item() {
+        val page = OmnesisJson.decodeFromString<DailyBriefItemsDto>(
+            """{"day":"2026-10-14","messageId":"mb_today","items":[
+                 {"rank":1,"observationId":"obs_new","summary":"Reacted in a way this build has not met.",
+                  "reaction":{"kind":"shrug","note":"Hm.","at":"2026-10-14T08:00:00.000Z","futureField":1}}]}""",
+        )
+        val reaction = page.items.single().reaction!!
+        assertEquals("shrug", reaction.kind)
+        assertNull(reaction.kindOrNull)
+        assertEquals("Hm.", reaction.note)
+    }
+
+    /** The receipt a reaction PUT answers with, with and without a reaction left standing. */
+    @Test
+    fun a_reaction_receipt_reads_as_the_item_reaction() {
+        val set = OmnesisJson.decodeFromString<DailyBriefReactionReceiptDto>(
+            """{"observationId":"obs_a","reaction":"not_interested","note":"Not my department.","at":"2026-10-14T08:00:00.000Z"}""",
+        )
+        assertEquals("obs_a", set.observationId)
+        assertEquals(DailyBriefReactionDto("not_interested", "Not my department.", "2026-10-14T08:00:00.000Z"), set.asReaction)
+        val cleared = OmnesisJson.decodeFromString<DailyBriefReactionReceiptDto>("""{"observationId":"obs_a","reaction":null}""")
+        assertNull(cleared.asReaction)
+    }
+
     @Test
     fun items_that_are_not_a_list_read_as_empty() {
         val page = OmnesisJson.decodeFromString<DailyBriefItemsDto>(

@@ -7,6 +7,7 @@ import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.http.GatewayHttp
 import java.time.ZoneId
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
@@ -235,5 +236,50 @@ class AgentClientTest {
         assertEquals("/agent/conversations/conv%20brief%2F1/briefs/2026-10-14", request.path)
         assertEquals("no-store", request.getHeader("Cache-Control"))
         assertEquals(1, page.items.size)
+    }
+
+    /** A reaction is a PUT on the item, its words riding along, the receipt (with the note's id) read back. */
+    @Test
+    fun react_to_brief_item_puts_the_reaction_with_its_note() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"observationId":"obs/1","reaction":"factual_error","note":"The tuner comes Friday.",
+                   "noteId":"0f6c0e2a-9b1e-4a53-8c3f-1a2b3c4d5e6f","at":"2026-10-14T08:00:00.000Z"}""",
+            ),
+        )
+
+        val receipt = client().reactToBriefItem(
+            "conv brief/1",
+            "2026-10-14",
+            "obs/1",
+            reaction = "factual_error",
+            note = "  The tuner comes Friday. ",
+        )
+
+        val request = server.takeRequest()
+        assertEquals("PUT", request.method)
+        assertEquals("/agent/conversations/conv%20brief%2F1/briefs/2026-10-14/items/obs%2F1/reaction", request.path)
+        val body = OmnesisJson.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("factual_error", body["reaction"]?.jsonPrimitive?.content)
+        assertEquals("The tuner comes Friday.", body["note"]?.jsonPrimitive?.content)
+        assertTrue("noteId" !in body)
+        assertEquals("0f6c0e2a-9b1e-4a53-8c3f-1a2b3c4d5e6f", receipt.noteId)
+        assertEquals("factual_error", receipt.asReaction?.kind)
+        assertEquals("The tuner comes Friday.", receipt.asReaction?.note)
+        assertEquals("2026-10-14T08:00:00.000Z", receipt.asReaction?.at)
+    }
+
+    /** Clearing sends an explicit JSON null, which the gateway's body schema requires, and no note. */
+    @Test
+    fun clearing_a_brief_reaction_sends_json_null() = runTest {
+        server.enqueue(MockResponse().setBody("""{"observationId":"obs_a","reaction":null}"""))
+
+        val receipt = client().reactToBriefItem("conv", "2026-10-14", "obs_a", reaction = null, note = "   ")
+
+        val body = OmnesisJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertTrue(body.containsKey("reaction"))
+        assertEquals(JsonNull, body["reaction"])
+        assertTrue("note" !in body)
+        assertEquals(null, receipt.asReaction)
     }
 }

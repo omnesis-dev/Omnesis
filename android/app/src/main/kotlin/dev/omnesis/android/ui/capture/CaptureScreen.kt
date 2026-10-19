@@ -152,7 +152,7 @@ fun CaptureScreen(
         onCancel = onClose,
         onDismissError = vm::dismissError,
         onDiscardVoiceNote = vm::discardVoiceNote,
-        completionTaskTitle = completion?.taskTitle,
+        completionSubject = completion?.subject,
         completionKind = completion?.kind ?: TaskNoteKind.COMPLETE,
     )
 }
@@ -167,9 +167,9 @@ fun CaptureContent(
     onCancel: () -> Unit,
     onDismissError: () -> Unit,
     onDiscardVoiceNote: () -> Unit = {},
-    /** The task the note belongs to, when it completes or accepts a task rather than standing alone. */
-    completionTaskTitle: String? = null,
-    /** What the note does to that task, which words the screen. */
+    /** What the note is about — a task's title or a brief item's sentence — when it does not stand alone. */
+    completionSubject: String? = null,
+    /** What the note does to that subject, which words the screen. */
     completionKind: TaskNoteKind = TaskNoteKind.COMPLETE,
 ) {
     val c = OmTheme.colors
@@ -190,13 +190,13 @@ fun CaptureContent(
                     }
                 },
                 title = {
-                    if (completionTaskTitle == null) {
+                    if (completionSubject == null) {
                         Text("Tell Omnesis")
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(completionKind.heading)
                             Text(
-                                completionTaskTitle,
+                                completionSubject,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = c.textSecondary,
                                 maxLines = 1,
@@ -217,7 +217,7 @@ fun CaptureContent(
                 is SaveState.Done -> SavedConfirmation(queued = save.queued)
                 else -> CaptureForm(
                     state = state,
-                    completing = completionKind.takeIf { completionTaskTitle != null },
+                    completing = completionKind.takeIf { completionSubject != null },
                     saving = save is SaveState.Saving,
                     onMicTap = onMicTap,
                     onTextChange = onTextChange,
@@ -235,7 +235,7 @@ fun CaptureContent(
 @Composable
 private fun CaptureForm(
     state: CaptureUiState,
-    /** What the note does to a task, when it belongs to one. */
+    /** What the note does to its subject, when it has one. */
     completing: TaskNoteKind?,
     saving: Boolean,
     onMicTap: () -> Unit,

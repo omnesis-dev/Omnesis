@@ -236,7 +236,7 @@ class CaptureScreenshotTest {
             onSave = {},
             onCancel = {},
             onDismissError = {},
-            completionTaskTitle = "Pay the venue deposit",
+            completionSubject = "Pay the venue deposit",
         )
     }
 
@@ -249,7 +249,7 @@ class CaptureScreenshotTest {
             onSave = {},
             onCancel = {},
             onDismissError = {},
-            completionTaskTitle = "Pay the venue deposit",
+            completionSubject = "Pay the venue deposit",
         )
     }
 
@@ -263,8 +263,54 @@ class CaptureScreenshotTest {
             onSave = {},
             onCancel = {},
             onDismissError = {},
-            completionTaskTitle = "Renew the residents' parking permit",
+            completionSubject = "Renew the residents' parking permit",
             completionKind = TaskNoteKind.ACCEPT,
+        )
+    }
+
+    // --- A Morning brief item's thumbs-down: the same capture, headed by what the reader is saying ---
+
+    /** "Factual error": the correction, under the item's own sentence. */
+    @Test
+    fun capture_brief_correction_light() = capture("capture_brief_correction_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(text = "The tuner comes Friday, not Thursday"),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "The tuner confirmed Thursday at ten.",
+            completionKind = TaskNoteKind.FACTUAL_ERROR,
+        )
+    }
+
+    @Test
+    fun capture_brief_correction_dark() = capture("capture_brief_correction_dark", dark = true) {
+        CaptureContent(
+            state = CaptureUiState(text = "The tuner comes Friday, not Thursday"),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "The tuner confirmed Thursday at ten.",
+            completionKind = TaskNoteKind.FACTUAL_ERROR,
+        )
+    }
+
+    /** "Not interested": the words are optional, so the capture opens listening with nothing said yet. */
+    @Test
+    fun capture_brief_not_interested_light() = capture("capture_brief_not_interested_light", dark = false) {
+        CaptureContent(
+            state = CaptureUiState(speech = SpeechState.LISTENING),
+            onMicTap = {},
+            onTextChange = {},
+            onSave = {},
+            onCancel = {},
+            onDismissError = {},
+            completionSubject = "The quarterly budget review moved to next week.",
+            completionKind = TaskNoteKind.NOT_INTERESTED,
         )
     }
 }

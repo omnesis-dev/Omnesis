@@ -1225,6 +1225,41 @@ class AgentCoordinatorNavTest {
         assertTrue(coord.state.value.chat.turns.isEmpty())
     }
 
+    /**
+     * A sent and answered message leaves nothing for the next conversation's composer: the
+     * composer keeps its draft under [AgentCoordinator.UiState.composerGeneration] and clears it
+     * on submit, so a new conversation must bump the generation and carry no rejected text.
+     */
+    @Test
+    fun a_new_conversation_after_an_answered_send_starts_with_an_empty_composer() {
+        val finished = CountDownLatch(1)
+        server.enqueue(MockResponse().setBody("""{"messageId":"a1","userMessageId":"u1"}"""))
+        val coord = coordinator()
+        coord.attachForTesting(
+            clientWithFinishedCalls(finished),
+            eventSource(),
+            AgentCoordinator.UiState(hasClient = true, sessionId = "s_live"),
+        )
+        val generationBefore = coord.state.value.composerGeneration
+
+        coord.send("Hi")
+        assertTrue(server.takeRequest(3, TimeUnit.SECONDS) != null)
+        assertTrue(finished.await(3, TimeUnit.SECONDS))
+        coord.applyEventForTesting(AgentEvent.UserMessage("s_live", "u1", "Hi"))
+        coord.applyEventForTesting(AgentEvent.TextDelta("s_live", "a1", "Hello."))
+        coord.applyEventForTesting(AgentEvent.MessageEnd("s_live", "a1", "end_turn"))
+        assertTrue(await { !coord.state.value.chat.busy })
+        assertNull(coord.state.value.sendRejectedText)
+
+        coord.newConversation()
+
+        val fresh = coord.state.value
+        assertNull(fresh.sessionId)
+        assertTrue(fresh.chat.turns.isEmpty())
+        assertNull("nothing is handed back to the composer", fresh.sendRejectedText)
+        assertEquals("the composer resets its draft", generationBefore + 1, fresh.composerGeneration)
+    }
+
     @Test
     fun success_after_terminal_still_dedupes_the_exact_optimistic_user() {
         val release = CountDownLatch(1)
