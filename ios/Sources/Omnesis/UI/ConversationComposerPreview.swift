@@ -13,7 +13,8 @@ enum ConversationComposerPreview {
         coordinator.installPreviewConversationControls(ConversationControls(
             busy: false,
             pendingClarification: ConversationClarification(
-                id: "preview-question", question: "Which period should I compare?",
+                id: "preview-question",
+                question: "Which period should I compare?",
                 choices: ["This month", "This year", "Last year"].map {
                     ConversationClarification.Choice(label: $0, description: nil)
                 }
