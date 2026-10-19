@@ -82,6 +82,119 @@ final class ConversationPresentationTests: XCTestCase {
         )
     }
 
+    func testDismissalHidesAbortedBatchCitationAndWorkerActivityButKeepsFailures() async {
+        let aborted = AgentToolResult.error(code: "turn_aborted", message: "Interrupted")
+        let failure = AgentToolResult.error(code: "FAILED", message: "Unavailable")
+        let worker = AgentSubagentCard(
+            subagentId: "worker",
+            specialist: "generic",
+            title: "Compare totals",
+            task: "Compare",
+            parentToolCallId: "spawn"
+        )
+        var canceledWorker = worker
+        canceledWorker.status = "failed"
+        canceledWorker.failureCode = "turn_aborted"
+        var failedWorker = worker
+        failedWorker.status = "failed"
+        guard case .tool(var batch) = tool("search_many", result: nil) else { return XCTFail("Missing batch") }
+        batch.children = [.init(index: 0, tool: "search_documents", argsSummary: "", result: aborted)]
+        let parts: [AgentPart] = [
+            .tool(batch),
+            tool("search_many", result: .error(code: "canceled", message: "Canceled")),
+            tool("search_many", result: aborted),
+            tool("fetch_many", result: .documentBatch(items: [aborted])),
+            tool("annotate", result: nil),
+            tool("annotate_many", result: nil),
+            .subagent(worker),
+            .subagent(canceledWorker),
+            .subagent(failedWorker),
+            tool("search_many", result: .searchBatch(items: [aborted, failure])),
+        ]
+        XCTAssertEqual(conversationPresentedParts(parts, controls: nil), parts)
+        XCTAssertEqual(
+            conversationPresentedParts(parts, controls: nil, activityDismissed: true),
+            [.subagent(failedWorker), projectedFailureBatch(failure, aborted: aborted)]
+        )
+        let coordinator = AgentCoordinator()
+        coordinator.installPreviewState(
+            sessionId: "session",
+            model: "m",
+            backend: "b",
+            title: "Example",
+            turns: [.assistant(AgentAssistantTurn(id: "old", parts: [.subagent(worker)]))],
+            citations: [],
+            conversations: []
+        )
+        XCTAssertFalse(coordinator.researchPanels.isEmpty)
+        await coordinator.dismissPriorConversationActivity()
+        XCTAssertTrue(coordinator.researchPanels.isEmpty)
+        await coordinator.applyEventForTesting(.subagentSpawned(
+            sessionId: "session",
+            subagentId: "late",
+            specialist: "generic",
+            task: "Compare",
+            title: "Compare totals",
+            parentToolCallId: nil
+        ))
+        guard case .assistant(let old) = coordinator.turns.last else { return XCTFail("Missing assistant") }
+        XCTAssertEqual(old.parts, [.subagent(worker)])
+    }
+
+    private func projectedFailureBatch(_ failure: AgentToolResult, aborted: AgentToolResult) -> AgentPart {
+        guard case .tool(var call) = tool("search_many", result: .searchBatch(items: [aborted, failure])) else {
+            fatalError("Expected batch")
+        }
+        call.children = [.init(index: 1, tool: "search_documents", argsSummary: "", result: failure)]
+        return .tool(call)
+    }
+
+    func testDismissedMixedBatchShowsOnlyGenuineFailureChildren() {
+        guard case .tool(var call) = tool("search_many", result: nil) else { return XCTFail("Missing batch") }
+        let failure = AgentToolResult.error(code: "FAILED", message: "Unavailable")
+        call.children = [
+            .init(index: 0, tool: "search_documents", argsSummary: "", result: nil),
+            .init(index: 1, tool: "search_documents", argsSummary: "", result: .searchResults(
+                query: "Example", durationMs: 1, candidates: 0, results: []
+            )),
+            .init(index: 2, tool: "search_documents", argsSummary: "", result: .error(code: "canceled", message: "Canceled")),
+            .init(index: 3, tool: "search_documents", argsSummary: "", result: failure),
+        ]
+        let parts = conversationPresentedParts([.tool(call)], controls: nil, activityDismissed: true)
+        guard case .tool(let retained) = parts.first else { return XCTFail("Missing failure") }
+        XCTAssertEqual(retained.children, [call.children[3]])
+        XCTAssertNil(retained.result)
+        XCTAssertEqual(call.children.count, 4, "Canonical children remain intact")
+    }
+
+    func testLateResumedToolFailureUsesOriginalToolIdentity() async {
+        let coordinator = AgentCoordinator()
+        coordinator.installPreviewState(
+            sessionId: "session",
+            model: "m",
+            backend: "b",
+            title: "Example",
+            turns: [.assistant(AgentAssistantTurn(id: "history-id", parts: [tool("search_many", result: nil)]))],
+            citations: [],
+            conversations: []
+        )
+        await coordinator.dismissPriorConversationActivity()
+        await coordinator.applyEventForTesting(.userMessage(sessionId: "session", userMessageId: "next", text: "Continue"))
+        await coordinator.applyEventForTesting(.messageStart(sessionId: "session", messageId: "new"))
+        await coordinator.applyEventForTesting(.toolResult(
+            sessionId: "session",
+            messageId: "wire-id",
+            toolCallId: "tool",
+            result: .error(code: "FAILED", message: "Unavailable"),
+            durationMs: 1
+        ))
+        guard case .assistant(let original) = coordinator.turns.first,
+              case .assistant(let next) = coordinator.turns.last else { return XCTFail("Missing turns") }
+        XCTAssertTrue(next.parts.isEmpty)
+        guard case .tool(let call) = original.parts.first else { return XCTFail("Missing original tool") }
+        XCTAssertEqual(call.result, .error(code: "FAILED", message: "Unavailable"))
+    }
+
     func testInterruptFlushesDurableTailAndPreventsLateActivityResurrection() async {
         let coordinator = AgentCoordinator()
         coordinator.installPreviewState(

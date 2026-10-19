@@ -44,6 +44,7 @@ sealed interface AgentTurn {
          * Mirrors the iOS `AgentTurn.reportArtifact`.
          */
         val reportArtifact: AgentReportArtifact? = null,
+        val interrupted: Boolean = false,
     ) : AgentTurn
 }
 
@@ -265,4 +266,4 @@ data class AgentChatState(
 
 /** Persisted turns need no stop reason; only the active conversation's trailing turn streams. */
 fun AgentChatState.isTurnStreaming(turn: AgentTurn.Assistant): Boolean =
-    busy && turn.stopReason == null && turns.lastOrNull()?.id == turn.id
+    busy && !turn.interrupted && turn.stopReason == null && turns.lastOrNull()?.id == turn.id

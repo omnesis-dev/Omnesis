@@ -249,10 +249,19 @@ public final class AgentCoordinator {
     /// Retire presentation, not transcript content or failure handling. Drain
     /// parked prose immediately because its old card will no longer mount.
     func dismissPriorConversationActivity() async {
-        dismissedConversationActivity.begin(messageIds: turns.compactMap {
-            if case .assistant(let turn) = $0 { return turn.id }
+        let assistants = turns.compactMap { turn -> AgentAssistantTurn? in
+            if case .assistant(let assistant) = turn { return assistant }
             return nil
-        })
+        }
+        dismissedConversationActivity.begin(
+            messageIds: assistants.map(\.id),
+            toolCallIds: assistants.flatMap { assistant in
+                assistant.parts.compactMap { part in
+                    if case .tool(let call) = part { return call.toolCallId }
+                    return nil
+                }
+            }
+        )
         cancelAllGateHolds()
         var pending: [AgentEvent] = []
         for index in turns.indices {
@@ -1942,7 +1951,7 @@ public final class AgentCoordinator {
             // seconds later (`toolStart`). Without this the card
             // pops in fully-formed and the user sees nothing for the
             // gap.
-            mutateAssistant(messageId: messageId) { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 turn.parts.append(.tool(.init(
                     toolCallId: toolCallId,
                     tool: tool,
@@ -1956,7 +1965,7 @@ public final class AgentCoordinator {
 
         case .toolStart(_, let messageId, let toolCallId, let tool, let args, let argsSummary):
             if agentHiddenTranscriptTools.contains(tool) { break }
-            mutateAssistant(messageId: messageId) { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 // If the stub from `toolInputStart` is already there,
                 // upgrade it in place; otherwise append a fresh part
                 // (replay backends + non-Anthropic backends may skip
@@ -1995,7 +2004,7 @@ public final class AgentCoordinator {
                 planItems = items
                 break
             }
-            mutateAssistant(messageId: messageId) { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 if let idx = turn.parts.lastIndex(where: {
                     if case .tool(let call) = $0 { return call.toolCallId == toolCallId }
                     return false
@@ -2031,7 +2040,7 @@ public final class AgentCoordinator {
                 // A directly-cited record is a citation too — bump the
                 // citing turn's chip count so the bubble footer matches
                 // the annotate path.
-                mutateAssistant(messageId: messageId) { $0.citationCount += 1 }
+                mutateAssistant(messageId: messageId, toolCallId: toolCallId) { $0.citationCount += 1 }
             default:
                 break
             }
@@ -2044,7 +2053,7 @@ public final class AgentCoordinator {
             // out-of-order completion still renders correctly. Bypasses the
             // causality gate (not in `eventAppendsToTurn`) — a live progress
             // signal, never a transcript-extending event.
-            mutateAssistant(messageId: messageId) { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 guard let idx = turn.parts.lastIndex(where: {
                     if case .tool(let c) = $0 { return c.toolCallId == toolCallId }
                     return false
@@ -2065,7 +2074,7 @@ public final class AgentCoordinator {
             }
 
         case .toolChildResult(_, let messageId, let toolCallId, let childIndex, let result):
-            mutateAssistant(messageId: messageId) { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 guard let idx = turn.parts.lastIndex(where: {
                     if case .tool(let c) = $0 { return c.toolCallId == toolCallId }
                     return false
@@ -2156,6 +2165,7 @@ public final class AgentCoordinator {
             }
 
         case .subagentSpawned(_, let subagentId, let specialist, let task, let title, let parentToolCallId):
+            guard !dismissedConversationActivity.dismissesSpawn(parentToolCallId: parentToolCallId) else { break }
             // The worker row supersedes the launch call's temporary tool card.
             // Bind by tool-call id so parallel launches remove only their own
             // orchestration chrome.
@@ -2357,13 +2367,23 @@ public final class AgentCoordinator {
         }
     }
 
-    private func mutateAssistant(messageId: String, _ mutation: (inout AgentAssistantTurn) -> Void) {
+    private func mutateAssistant(
+        messageId: String, toolCallId: String? = nil, _ mutation: (inout AgentAssistantTurn) -> Void
+    ) {
         guard dismissedConversationActivity.messageIds.contains(messageId) else {
             mutateLastAssistant(mutation)
             return
         }
-        guard let index = turns.firstIndex(where: { $0.id == messageId }),
-              case .assistant(var assistant) = turns[index] else { return }
+        let index = turns.firstIndex { turn in
+            guard case .assistant(let assistant) = turn else { return false }
+            if assistant.id == messageId { return true }
+            guard let toolCallId, dismissedConversationActivity.toolCallIds.contains(toolCallId) else { return false }
+            return assistant.parts.contains { part in
+                if case .tool(let call) = part { return call.toolCallId == toolCallId }
+                return false
+            }
+        }
+        guard let index, case .assistant(var assistant) = turns[index] else { return }
         mutation(&assistant)
         turns[index] = .assistant(assistant)
         transcriptVersion &+= 1
@@ -2657,6 +2677,7 @@ public final class AgentCoordinator {
     var researchPanels: [AgentResearchPanel] {
         for turn in turns.reversed() {
             guard case .assistant(let assistant) = turn else { continue }
+            if dismissedConversationActivity.messageIds.contains(assistant.id) { return [] }
             // The most-recent assistant turn is the run in flight: its
             // sub-agent cards are the researchers. (Matches the portal
             // selector, which stops at the latest assistant turn.)

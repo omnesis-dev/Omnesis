@@ -165,7 +165,6 @@ fun AgentScreen(
         onDraftChanged = vm::updateDraft,
         onDraftSubmitted = vm::finishDraftSubmission,
         onCancelPromptEdit = vm::cancelPromptEdit,
-        onInterruptAndSend = vm::interruptAndSend,
         onAnswerClarification = vm::answerClarification,
         onRetrySubmission = vm::retrySubmission,
         onEditPendingSubmission = vm::editPendingSubmission,
@@ -201,7 +200,6 @@ fun AgentContent(
     onDraftChanged: (String, String?) -> Unit = { _, _ -> },
     onDraftSubmitted: () -> Unit = {},
     onCancelPromptEdit: () -> Unit = {},
-    onInterruptAndSend: ((String, SlashCommand?) -> Unit)? = null,
     onAnswerClarification: (String) -> Unit = {},
     onRetrySubmission: (String) -> Unit = {},
     onEditPendingSubmission: (String) -> Unit = {},
@@ -311,7 +309,6 @@ fun AgentContent(
                             initialArmedCommand = SlashCommand.byId(state.composer.commandId),
                             onDraftChanged = onDraftChanged,
                             onDraftSubmitted = onDraftSubmitted,
-                            onInterruptAndSend = if (state.controlsAvailable) onInterruptAndSend else null,
                             allowFollowUps = state.controlsAvailable,
                         )
                     }

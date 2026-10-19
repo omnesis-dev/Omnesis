@@ -80,22 +80,20 @@ class ConversationComposerTest {
         compose.runOnIdle { assertEquals("deep-research", restoredCommand) }
     }
 
-    @Test fun interruptionRequiresItsExplicitActionAndPreservesCommand() {
+    @Test fun busySendQueuesAndPreservesCommandWithoutComposerInterruptAction() {
         val sent = mutableListOf<String>()
-        var correction = ""
         var research = false
         compose.setContent {
             OmnesisTheme {
                 AgentComposer(busy = true, enabled = true, initialText = "Use a shorter period",
                     initialArmedCommand = SlashCommand.byId("deep-research"),
-                    onSend = { text, _ -> sent += text }, onStop = {},
-                    onInterruptAndSend = { text, command -> correction = text; research = command?.deepResearch == true })
+                    onSend = { text, command -> sent += text; research = command?.deepResearch == true }, onStop = {})
             }
         }
-        compose.onNodeWithText("Interrupt & send").performClick()
+        compose.onNodeWithText("Interrupt & send").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Send").performClick()
         compose.runOnIdle {
-            assertEquals(emptyList<String>(), sent)
-            assertEquals("Use a shorter period", correction)
+            assertEquals(listOf("Use a shorter period"), sent)
             assertEquals(true, research)
         }
     }

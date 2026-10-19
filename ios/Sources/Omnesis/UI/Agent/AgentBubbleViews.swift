@@ -72,6 +72,7 @@ struct AgentTurnBubble: View {
                         part: part,
                         pillRun: pillRuns[idx],
                         thinkingActive: !assistant.isComplete && idx == parts.count - 1,
+                        freeze: presentation.dismissedMessageIds.contains(assistant.id),
                         turnDone: assistant.isComplete
                     )
                     .environment(\.agentAnswerTextFollows, idx < (lastAnswerTextIndex ?? -1))
@@ -598,6 +599,8 @@ struct AgentPartView: View {
                 // Automation writes surface a lightning card so the
                 // user immediately sees the change.
                 AgentWatchCard(call: call)
+            } else if freeze, case .error = call.result {
+                AgentToolCallView(call: call)
             } else if agentEphemeralCardHandles(call) {
                 // Search / Open Document / Run SQL / Find people render
                 // as ephemeral glance cards that stream their content in

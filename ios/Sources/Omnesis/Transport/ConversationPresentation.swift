@@ -20,7 +20,7 @@ extension AgentToolResult {
 
     var containsConversationFailure: Bool {
         switch self {
-        case .error: true
+        case .error(let code, _): !["turn_aborted", "canceled"].contains(code)
         case .searchBatch(let items), .documentBatch(let items), .annotateBatch(let items):
             items.contains(where: \.containsConversationFailure)
         default: false
@@ -36,19 +36,34 @@ func conversationPresentedParts(
 )
     -> [AgentPart] {
     var questionPresented = false
-    return parts.filter { part in
+    return parts.map { part in
+        guard case .tool(var call) = part,
+              activityDismissed || dismissedToolCallIds.contains(call.toolCallId),
+              agentBatchTools.contains(call.tool) else { return part }
+        call.children = agentBatchChildCalls(for: call).enumerated().compactMap { index, child in
+            guard child.result?.containsConversationFailure == true else { return nil }
+            let childIndex = call.children.isEmpty ? index : call.children[index].index
+            return AgentToolChild(index: childIndex, tool: child.tool, argsSummary: child.argsSummary, result: child.result)
+        }
+        return .tool(call)
+    }
+    .filter { part in
         switch part {
         case .tool(let call):
             if controls != nil, call.tool == "ask_clarification", let question = call.result?.conversationClarification {
                 if question.id == controls?.pendingClarification?.id { questionPresented = true }
                 return false
             }
-            if activityDismissed || dismissedToolCallIds.contains(call.toolCallId), agentEphemeralTools.contains(call.tool),
+            let transient = agentEphemeralTools.contains(call.tool) || ["annotate", "annotate_many"].contains(call.tool)
+            if activityDismissed || dismissedToolCallIds.contains(call.toolCallId), transient,
                call.result?.containsConversationFailure != true,
                !call.children.contains(where: { $0.result?.containsConversationFailure == true }) {
                 return false
             }
             return true
+        case .subagent(let card):
+            let failed = card.status == "failed" && !["turn_aborted", "canceled"].contains(card.failureCode ?? "")
+            return !activityDismissed || failed || card.status == "budget_exhausted"
         case .text: return !questionPresented
         case .thinking: return !activityDismissed
         default: return true
@@ -63,9 +78,14 @@ struct ConversationActivityDismissal {
     private(set) var toolCallIds: Set<String> = []
     private var awaitingUserMessage = false
 
-    mutating func begin(messageIds: [String]) {
+    mutating func begin(messageIds: [String], toolCallIds: [String] = []) {
+        self.toolCallIds.formUnion(toolCallIds)
         self.messageIds.formUnion(messageIds)
         awaitingUserMessage = true
+    }
+
+    func dismissesSpawn(parentToolCallId: String?) -> Bool {
+        awaitingUserMessage || parentToolCallId.map(toolCallIds.contains) == true
     }
 
     func contains(_ event: AgentEvent) -> Bool {
@@ -91,6 +111,7 @@ struct ConversationActivityDismissal {
              .toolResult(_, let messageId, let callId, _, _),
              .toolChildStart(_, let messageId, let callId, _, _, _),
              .toolChildResult(_, let messageId, let callId, _, _):
+            if toolCallIds.contains(callId) { messageIds.insert(messageId) }
             if messageIds.contains(messageId) { toolCallIds.insert(callId) }
         default: break
         }

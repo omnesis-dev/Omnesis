@@ -28,6 +28,14 @@ internal fun clarificationResult(call: AgentToolCall): ConversationClarification
 
 internal fun isClarificationResult(call: AgentToolCall): Boolean = clarificationResult(call) != null
 
-/** Keep failed tools actionable, including failures arriving after an interruption. */
+/** Expected cancellation is not an actionable failure of an interrupted operation. */
+internal fun genuineToolFailure(result: AgentToolResult?): Boolean = when (result) {
+    is AgentToolResult.ErrorResult -> result.code !in setOf("turn_aborted", "canceled")
+    is AgentToolResult.SearchBatch -> result.items.any(::genuineToolFailure)
+    is AgentToolResult.DocumentBatch -> result.items.any(::genuineToolFailure)
+    is AgentToolResult.AnnotateBatch -> result.items.any(::genuineToolFailure)
+    else -> false
+}
+
 internal fun interruptedToolVisible(call: AgentToolCall): Boolean =
-    !call.interrupted || call.result is AgentToolResult.ErrorResult || call.children.any { it.result is AgentToolResult.ErrorResult }
+    !call.interrupted || genuineToolFailure(call.result) || call.children.any { genuineToolFailure(it.result) }

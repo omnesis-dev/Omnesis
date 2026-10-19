@@ -3352,7 +3352,6 @@ final class PreviewSnapshotTests: XCTestCase {
                 disabled: false,
                 speech: SpeechRecognizer.preview(state: .idle),
                 onSend: { _, _ in },
-                onInterrupt: { _, _ in },
                 onCancel: {},
                 focused: FocusState<Bool>().projectedValue
             ).background(Theme.bgPrimary),
@@ -3426,13 +3425,22 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     func testConversationInterruptedActivity() {
+        var aborted = PreviewMocks.agentToolCallSearchManyRunning
+        aborted.result = .error(code: "turn_aborted", message: "Interrupted")
         snapshot(
             VStack(spacing: 20) {
                 AgentTurnBubble(turn: .assistant(AgentAssistantTurn(
                     id: "prior-turn", parts: [
                         .text("The earlier answer remains available."),
                         .thinking("Checking more documents"),
-                        .tool(PreviewMocks.agentToolCallSearchManyRunning),
+                        .tool(aborted),
+                        .subagent(AgentSubagentCard(
+                            subagentId: "worker",
+                            specialist: "generic",
+                            title: "Comparing totals",
+                            task: "Compare totals",
+                            parentToolCallId: "spawn"
+                        )),
                     ]
                 )))
                 .environment(\.conversationPresentation, ConversationTranscriptPresentation(dismissedMessageIds: ["prior-turn"]))

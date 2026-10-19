@@ -46,6 +46,8 @@ class AgentConversationControlsScreenshotTest {
     @get:Rule val compose = createComposeRule()
     @Test fun choicesLight() = capture("conversation_choices_light", false, choices())
     @Test fun choicesDark() = capture("conversation_choices_dark", true, choices())
+    @Test fun interruptedLight() = capture("conversation_interrupted_light", false, interrupted())
+    @Test fun interruptedDark() = capture("conversation_interrupted_dark", true, interrupted())
     @Test fun queueLight() = capture("conversation_queue_light", false, queued())
     @Test fun queueDark() = capture("conversation_queue_dark", true, queued())
     @Test fun restoredDraftLight() = capture("conversation_draft_light", false, base().copy(composer = ComposerRecord("Compare the annual totals instead")))
@@ -103,13 +105,23 @@ class AgentConversationControlsScreenshotTest {
     private fun queued() = base().copy(chat = base().chat.copy(busy = true), composer = ComposerRecord("Use the approved budget instead"), controls = ConversationControls(busy = true,
         queuedMessages = listOf(ConversationSubmission("queued-example", "Include a comparison table", "queued"), ConversationSubmission("queued-second", "Keep the summary concise", "queued")),
         capabilities = ConversationCapabilities(coalescedQueue = true, queueSendNow = true)))
+    private fun interrupted(): AgentCoordinator.UiState {
+        val chat = base().chat.copy(busy = true, deepResearch = true, turns = base().chat.turns + AgentTurn.Assistant("interrupted", listOf(
+            AgentPart.Text("The initial estimates are available."),
+            AgentPart.Thinking("Checking references"),
+            AgentPart.Tool(AgentToolCall("batch", "search_many", result = dev.omnesis.android.transport.dto.AgentToolResult.ErrorResult("turn_aborted", "Tool did not complete before turn ended"))),
+            AgentPart.Tool(AgentToolCall("citation", "annotate")),
+            AgentPart.Subagent(AgentSubagentCard("worker", "generic", "Find references")),
+        )))
+        return base().copy(chat = AgentReducer.dismissInterruptedTools(chat))
+    }
     private fun retry() = base().copy(composer = ComposerRecord(pending = listOf(ConversationSubmissionBody("pending-example", "Use the annual totals"))), controls = ConversationControls(
         queuedMessages = listOf(ConversationSubmission("failed-example", "Compare estimates", "failed", "Could not start this message"))))
     private fun capture(name: String, dark: Boolean, state: AgentCoordinator.UiState) {
         compose.setContent {
             CompositionLocalProvider(LocalInspectionMode provides true) {
                 OmnesisTheme(darkTheme = dark) {
-                    AgentContent(state = state, catalog = SourceCatalog(), onOpenMenu = {}, onSend = { _, _ -> }, onStop = {}, onRetry = {}, onNewConversation = {}, onFlushEphemeral = {}, onOpenDocument = {}, onInterruptAndSend = { _, _ -> })
+                    AgentContent(state = state, catalog = SourceCatalog(), onOpenMenu = {}, onSend = { _, _ -> }, onStop = {}, onRetry = {}, onNewConversation = {}, onFlushEphemeral = {}, onOpenDocument = {})
                 }
             }
         }

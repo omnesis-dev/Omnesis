@@ -568,11 +568,11 @@ public struct AgentView: View {
         composerText = text
     }
 
-    private func submitComposer(_ text: String, command: SlashCommand? = nil, interrupt: Bool = false) {
+    private func submitComposer(_ text: String, command: SlashCommand? = nil) {
         composerFocused = false
         Task {
             let sent = await store.agent.submitDraft(
-                text: text, interrupt: interrupt, deepResearch: command?.deepResearch ?? false
+                text: text, deepResearch: command?.deepResearch ?? false
             )
             if sent, composerText == text {
                 composerText = store.agent.draft(for: store.agent.composerDraftKey)
@@ -640,7 +640,6 @@ public struct AgentView: View {
                         idlePrompt: DailyBriefCopy.composerPrompt(for: store.agent.conversationOrigin),
                         speech: speechRecognizer,
                         onSend: { text, command in submitComposer(text, command: command) },
-                        onInterrupt: { text, command in submitComposer(text, command: command, interrupt: true) },
                         onCancel: {
                             Task {
                                 if let restored = await store.agent.cancelTurn(),
@@ -1611,7 +1610,6 @@ struct AgentComposer: View {
     /// the caller can fold its options (e.g. `deepResearch`) into the POST.
     let onSend: (String, SlashCommand?) -> Void
     let onCancel: () -> Void
-    let onInterrupt: ((String, SlashCommand?) -> Void)?
     let onCommandChange: (SlashCommand?) -> Void
     var focused: FocusState<Bool>.Binding
 
@@ -1629,7 +1627,6 @@ struct AgentComposer: View {
         idlePrompt: String = "Ask Omnesis",
         speech: SpeechRecognizer,
         onSend: @escaping (String, SlashCommand?) -> Void,
-        onInterrupt: ((String, SlashCommand?) -> Void)? = nil,
         onCancel: @escaping () -> Void,
         focused: FocusState<Bool>.Binding,
         previewArmedCommand: SlashCommand? = nil,
@@ -1645,7 +1642,6 @@ struct AgentComposer: View {
         self.speech = speech
         self.onSend = onSend
         self.onCancel = onCancel
-        self.onInterrupt = onInterrupt
         self.focused = focused
         self._armedCommand = State(initialValue: savedCommand ?? previewArmedCommand)
         self.onCommandChange = onCommandChange
@@ -1667,15 +1663,6 @@ struct AgentComposer: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             VStack(alignment: .leading, spacing: 0) {
-                if busy, canSend, let onInterrupt {
-                    Button("Interrupt and send correction") {
-                        onInterrupt(text.trimmingCharacters(in: .whitespacesAndNewlines), armedCommand)
-                        armedCommand = nil
-                    }
-                    .font(.footnote)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                }
                 if let armedCommand {
                     armedPill(armedCommand)
                         .padding(.leading, 16)
@@ -2029,7 +2016,7 @@ struct AgentComposer: View {
 }
 
 @available(iOS 17.0, *)
-#Preview("Composer — queued follow-up and interruption") {
+#Preview("Composer — queued follow-up") {
     @Previewable @State var text = PreviewMocks.conversationFollowupDraft
     @Previewable @FocusState var focused: Bool
     AgentComposer(
@@ -2039,7 +2026,6 @@ struct AgentComposer: View {
         disabled: false,
         speech: SpeechRecognizer.preview(state: .idle),
         onSend: { _, _ in },
-        onInterrupt: { _, _ in },
         onCancel: {},
         focused: $focused
     )

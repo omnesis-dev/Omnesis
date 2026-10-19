@@ -32,6 +32,8 @@ object AgentReducer {
         "spawn_subagent",
     )
 
+    val INTERRUPTIBLE_TOOLS = EPHEMERAL_TOOLS + setOf("annotate", "annotate_many")
+
     /**
      * The batch retrieval tools — a subset of [EPHEMERAL_TOOLS]. They are dropped from resumed
      * history like the singular ephemeral tools they wrap, but they render as N independent
@@ -60,7 +62,7 @@ object AgentReducer {
             is AgentEvent.ToolStart -> event.messageId to event.tool
             else -> null
         }
-        if (incomingTool != null && incomingTool.second in EPHEMERAL_TOOLS &&
+        if (incomingTool != null && incomingTool.second in INTERRUPTIBLE_TOOLS &&
             (state.dismissToolsUntilUserMessage || incomingTool.first in state.dismissedToolMessageIds)) {
             val id = when (event) {
                 is AgentEvent.ToolStart -> event.toolCallId
@@ -94,7 +96,7 @@ object AgentReducer {
 
             is AgentEvent.MessageStart ->
                 state.copy(
-                    turns = state.turns + AgentTurn.Assistant(id = event.messageId),
+                    turns = state.turns + AgentTurn.Assistant(id = event.messageId, interrupted = state.dismissToolsUntilUserMessage),
                     dismissedToolMessageIds = if (state.dismissToolsUntilUserMessage) state.dismissedToolMessageIds + event.messageId else state.dismissedToolMessageIds,
                     busy = true,
                     lastTurnError = null,
@@ -144,7 +146,7 @@ object AgentReducer {
                 if (result is AgentToolResult.PlanUpdated) {
                     state.copy(planItems = result.items)
                 } else {
-                    var next = state.updateAssistantById(event.messageId) { a ->
+                    var next = state.updateToolAssistant(event.messageId, event.toolCallId) { a ->
                         val idx = a.parts.indexOfLast { it is AgentPart.Tool && it.call.toolCallId == event.toolCallId }
                         if (idx < 0) {
                             a
@@ -195,11 +197,17 @@ object AgentReducer {
                         it is AgentPart.Subagent && it.card.subagentId == event.subagentId
                     }
                 }
+                val parentTurn = event.parentToolCallId?.let { parentId ->
+                    state.turns.filterIsInstance<AgentTurn.Assistant>().lastOrNull { turn ->
+                        turn.parts.any { it is AgentPart.Tool && it.call.toolCallId == parentId }
+                    }
+                }
                 val withoutLaunch = event.parentToolCallId?.let { removeToolPart(state, it) } ?: state
                 val withCard = if (alreadyHave) {
                     withoutLaunch
                 } else {
-                    withoutLaunch.updateLastAssistant { a ->
+                    val ownerId = parentTurn?.id ?: withoutLaunch.turns.filterIsInstance<AgentTurn.Assistant>().lastOrNull()?.id.orEmpty()
+                    withoutLaunch.updateAssistantById(ownerId) { a ->
                         a.copy(
                             parts = a.parts + AgentPart.Subagent(
                                 AgentSubagentCard(
@@ -343,8 +351,8 @@ object AgentReducer {
             dismissedToolMessageIds = drained.dismissedToolMessageIds + drained.turns.filterIsInstance<AgentTurn.Assistant>().map { it.id },
             dismissToolsUntilUserMessage = true,
             turns = drained.turns.map { turn ->
-                if (turn is AgentTurn.Assistant) turn.copy(parts = turn.parts.map { part ->
-                    if (part is AgentPart.Tool && part.call.tool in EPHEMERAL_TOOLS)
+                if (turn is AgentTurn.Assistant) turn.copy(interrupted = true, parts = turn.parts.map { part ->
+                    if (part is AgentPart.Tool && part.call.tool in INTERRUPTIBLE_TOOLS)
                         AgentPart.Tool(part.call.copy(interrupted = true, tailDismissed = true)) else part
                 }) else turn
             },
@@ -677,6 +685,7 @@ object AgentReducer {
     fun researchPanels(state: AgentChatState): List<AgentResearchPanel> {
         for (turn in state.turns.asReversed()) {
             val assistant = turn as? AgentTurn.Assistant ?: continue
+            if (assistant.interrupted) return emptyList()
             return assistant.parts.mapNotNull { part ->
                 (part as? AgentPart.Subagent)?.card?.let { card ->
                     AgentResearchPanel(
@@ -720,7 +729,7 @@ object AgentReducer {
         // so nothing else can be animating.
         if (last is AgentTurn.User) return true
         val assistant = last as? AgentTurn.Assistant ?: return false
-        if (assistant.stopReason != null) return false
+        if (assistant.stopReason != null || assistant.interrupted) return false
         // `message.start` landed but no delta yet — the assistant turn renders nothing.
         val tail = assistant.parts.lastOrNull() ?: return true
         return when (tail) {
@@ -815,9 +824,9 @@ object AgentReducer {
         toolCallId: String,
         childIndex: Int,
         upsert: (AgentToolChild?) -> AgentToolChild,
-    ): AgentChatState = state.updateAssistantById(messageId) { a ->
+    ): AgentChatState = state.updateToolAssistant(messageId, toolCallId) { a ->
         val idx = a.parts.indexOfLast { it is AgentPart.Tool && it.call.toolCallId == toolCallId }
-        if (idx < 0) return@updateAssistantById a
+        if (idx < 0) return@updateToolAssistant a
         val call = (a.parts[idx] as AgentPart.Tool).call
         val existing = call.children.firstOrNull { it.index == childIndex }
         val merged = upsert(existing)
@@ -922,6 +931,19 @@ private fun AgentChatState.updateLastAssistant(
     val idx = turns.indexOfLast { it is AgentTurn.Assistant }
     if (idx < 0) return this
     return copy(turns = turns.toMutableList().also { it[idx] = transform(turns[idx] as AgentTurn.Assistant) })
+}
+
+/** Snapshot turns have local ids; an existing call id safely identifies their replay owner. */
+private fun AgentChatState.updateToolAssistant(
+    messageId: String,
+    toolCallId: String,
+    transform: (AgentTurn.Assistant) -> AgentTurn.Assistant,
+): AgentChatState {
+    val owner = turns.filterIsInstance<AgentTurn.Assistant>().lastOrNull { it.id == messageId }
+        ?: turns.filterIsInstance<AgentTurn.Assistant>().lastOrNull { turn ->
+            turn.parts.any { it is AgentPart.Tool && it.call.toolCallId == toolCallId }
+        } ?: return this
+    return updateAssistantById(owner.id, transform)
 }
 
 private fun AgentChatState.updateAssistantById(

@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -103,7 +102,6 @@ fun AgentComposer(
     idlePlaceholder: String = DailyBriefCopy.DEFAULT_COMPOSER_PROMPT,
     onDraftChanged: (String, String?) -> Unit = { _, _ -> },
     onDraftSubmitted: () -> Unit = { onDraftChanged("", null) },
-    onInterruptAndSend: ((String, SlashCommand?) -> Unit)? = null,
     allowFollowUps: Boolean = true,
 ) {
     var text by rememberSaveable(composerGeneration) { mutableStateOf(initialText) }
@@ -136,14 +134,14 @@ fun AgentComposer(
         onDraftChanged(text, armedId)
     }
 
-    fun submit(interrupt: Boolean = false) {
+    fun submit() {
         if (!enabled || (busy && !allowFollowUps)) return
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val command = armedCommand
         // Per-message: the pill governs THIS send only, then clears.
         armedId = null
-        if (interrupt) onInterruptAndSend?.invoke(trimmed, command) else onSend(trimmed, command)
+        onSend(trimmed, command)
         text = ""
         onDraftSubmitted()
     }
@@ -177,13 +175,8 @@ fun AgentComposer(
         }
 
         if (busy && canSend) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Send queues after this answer", color = colors.textSecondary,
-                    style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f).padding(8.dp))
-                if (onInterruptAndSend != null) TextButton(onClick = { submit(interrupt = true) }) {
-                    Text("Interrupt & send")
-                }
-            }
+            Text("Send queues after this answer", color = colors.textSecondary,
+                style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(8.dp))
         }
 
         // The pill: a translucent navy fill rather than a light card, a fine blue-gray rim,

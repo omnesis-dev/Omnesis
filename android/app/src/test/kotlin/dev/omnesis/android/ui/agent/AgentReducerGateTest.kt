@@ -82,6 +82,57 @@ class AgentReducerGateTest {
     }
 
     @Test
+    fun snapshotReplayFindsExistingCallWithoutDecoratingNewestAssistant() {
+        val call = AgentToolCall("batch", "search_many", interrupted = true, tailDismissed = true)
+        var state = AgentChatState(turns = listOf(AgentTurn.Assistant("snapshot-local", listOf(AgentPart.Tool(call))), AgentTurn.Assistant("new")))
+        state = reduce(state, AgentEvent.ToolChildResult(S, "snapshot-wire", "batch", 0, AgentToolResult.ErrorResult("denied", "Access denied")),
+            AgentEvent.ToolResult(S, "snapshot-wire", "batch", AgentToolResult.ErrorResult("offline", "Try again"), 1.0))
+        assertTrue(state.parts().isEmpty())
+        val restored = (state.turns.filterIsInstance<AgentTurn.Assistant>().first().parts.single() as AgentPart.Tool).call
+        assertEquals(1, restored.children.size)
+        assertTrue(restored.result is AgentToolResult.ErrorResult)
+    }
+
+    @Test
+    fun interruptDismissesThinkingAndResearchProgressWithoutDroppingMetadata() {
+        val original = AgentTurn.Assistant(M, listOf(AgentPart.Thinking("Looking for sources"),
+            AgentPart.Subagent(AgentSubagentCard("worker", "reader", "Find references")), AgentPart.Text("Saved answer")))
+        val state = AgentReducer.dismissInterruptedTools(AgentChatState(turns = listOf(original), busy = true, deepResearch = true))
+        assertTrue(state.assistant().interrupted)
+        assertEquals(original.parts, state.parts())
+        assertFalse(AgentReducer.isResearchWorkspaceActive(state))
+        assertFalse(AgentReducer.workingIndicatorActive(state))
+        assertFalse(state.isTurnStreaming(state.assistant()))
+    }
+
+    @Test
+    fun expectedCancellationNeverResurrectsInterruptedDirectOrBatchProgress() {
+        for (code in listOf("turn_aborted", "canceled")) {
+            val cancellation = AgentToolResult.ErrorResult(code, "Tool did not complete before turn ended")
+            assertFalse(interruptedToolVisible(AgentToolCall("direct", "search_documents", interrupted = true, result = cancellation)))
+            assertFalse(interruptedToolVisible(AgentToolCall("batch", "search_many", interrupted = true,
+                result = AgentToolResult.SearchBatch(listOf(cancellation)))))
+            assertFalse(interruptedToolVisible(AgentToolCall("children", "search_many", interrupted = true,
+                children = listOf(AgentToolChild(0, result = cancellation)))))
+            assertTrue(interruptedToolVisible(AgentToolCall("mixed", "search_many", interrupted = true,
+                result = AgentToolResult.SearchBatch(listOf(cancellation, AgentToolResult.ErrorResult("denied", "Access denied"))))))
+        }
+    }
+
+    @Test
+    fun pendingCitationAndLateWorkerStayWithInterruptedParent() {
+        var state = reduce(AgentChatState(), start(), toolStart("cite", "annotate"), toolStart("spawn", "spawn_subagent"))
+        state = AgentReducer.dismissInterruptedTools(state)
+        assertFalse(interruptedToolVisible(state.tool("cite")))
+        state = reduce(state, AgentEvent.UserMessage(S, "new-user", "Follow up"), AgentEvent.MessageStart(S, "new-turn"),
+            AgentEvent.SubagentSpawned(S, "worker", "generic", "References", "Find references", "spawn"))
+        assertTrue(state.parts().isEmpty())
+        val previous = state.turns.filterIsInstance<AgentTurn.Assistant>().first()
+        assertTrue(previous.interrupted)
+        assertEquals(1, previous.parts.filterIsInstance<AgentPart.Subagent>().size)
+    }
+
+    @Test
     fun duplicateUserReceiptReleasesInterruptionBarrierButOldRequestStaysDismissed() {
         val user = AgentEvent.UserMessage(S, "user", "Follow up")
         var state = reduce(AgentChatState(), user, start())

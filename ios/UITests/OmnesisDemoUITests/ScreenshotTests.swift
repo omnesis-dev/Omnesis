@@ -153,6 +153,7 @@ final class ScreenshotTests: XCTestCase {
             let paste = app.descendants(matching: .any).matching(identifier: "Paste").firstMatch
             XCTAssertTrue(paste.waitForExistence(timeout: 5))
             paste.tap()
+            XCTAssertFalse(app.buttons["Interrupt and send correction"].exists)
             XCTAssertEqual(composer.value as? String, copiedText)
             composer.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: copiedText.count))
             app.terminate()
