@@ -5,19 +5,31 @@ import Foundation
 
 /// Reads what one morning brief was based on: the ranked observations the
 /// Brain wrote it from, each with the documents behind it and the tasks it
-/// touches.
+/// touches. Also records the owner's reaction to one of those items.
 public protocol DailyBriefItemsLoading: Sendable {
     func items(conversationId: String, day: String) async throws -> DailyBriefItems
+
+    /// Set, replace or clear (`reaction: nil`) the owner's reaction to one
+    /// item. Returns the reaction as the gateway now holds it, nil once
+    /// cleared.
+    func react(
+        conversationId: String,
+        day: String,
+        observationId: String,
+        reaction: DailyBriefReaction.Kind?,
+        note: String?
+    ) async throws -> DailyBriefReaction?
 }
 
-/// Client for `GET /agent/conversations/:id/briefs/:day`. Same auth as
-/// reading the conversation; the gateway answers 404 when no brief was sent
-/// that day.
+/// Client for `GET /agent/conversations/:id/briefs/:day` and the reaction
+/// `PUT` under it. Same auth as reading the conversation; the gateway
+/// answers 404 when no brief was sent that day.
 public final class DailyBriefClient: DailyBriefItemsLoading {
     public let baseURL: URL
     public let token: String
     private let session: URLSessionLike
     private let decoder = JSONDecoder()
+    private let encoder = JSONEncoder()
 
     public init(baseURL: URL, token: String, session: URLSessionLike = OmnesisURLSession.shared) {
         self.baseURL = baseURL
@@ -58,10 +70,93 @@ public final class DailyBriefClient: DailyBriefItemsLoading {
         }
     }
 
+    /// `PUT /agent/conversations/:id/briefs/:day/items/:observationId/reaction`.
+    /// A nil `reaction` is sent as JSON null and clears the item's reaction.
+    /// A correction's note is saved under an id the gateway derives from the
+    /// item and the words, so sending the same words again is one note.
+    public func react(
+        conversationId: String,
+        day: String,
+        observationId: String,
+        reaction: DailyBriefReaction.Kind?,
+        note: String? = nil
+    ) async throws -> DailyBriefReaction? {
+        let path = "/agent/conversations/\(percentEncode(conversationId))/briefs/\(percentEncode(day))"
+            + "/items/\(percentEncode(observationId))/reaction"
+        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
+            throw GatewayClient.Error.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(ReactionRequest(reaction: reaction, note: note))
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw GatewayClient.Error.invalidResponse
+        }
+        switch http.statusCode {
+        case 200 ... 299:
+            do {
+                return try decoder.decode(ReactionResponse.self, from: data).reaction
+            } catch {
+                throw GatewayClient.Error.decoding("\(error)")
+            }
+        case 401: throw GatewayClient.Error.unauthorized
+        case 403: throw GatewayClient.Error.forbidden
+        case 404: throw GatewayClient.Error.notFound
+        default:
+            throw GatewayClient.Error.serverError(
+                status: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? ""
+            )
+        }
+    }
+
     private func percentEncode(_ raw: String) -> String {
         var allowed = CharacterSet.urlPathAllowed
         allowed.remove("/")
         return raw.addingPercentEncoding(withAllowedCharacters: allowed) ?? raw
+    }
+}
+
+/// The reaction PUT's body. `reaction` is always sent — null clears.
+private struct ReactionRequest: Encodable {
+    let reaction: DailyBriefReaction.Kind?
+    let note: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case reaction, note
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(reaction, forKey: .reaction)
+        try values.encodeIfPresent(note, forKey: .note)
+    }
+}
+
+/// What the reaction PUT answers: the reaction as now held, flat. The id
+/// of a saved correction note comes with it and is not needed here.
+private struct ReactionResponse: Decodable {
+    let reaction: DailyBriefReaction?
+
+    private enum CodingKeys: String, CodingKey {
+        case reaction, note, at
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        guard let kind = try? values.decodeIfPresent(DailyBriefReaction.Kind.self, forKey: .reaction) else {
+            reaction = nil
+            return
+        }
+        reaction = DailyBriefReaction(
+            kind: kind,
+            note: try? values.decodeIfPresent(String.self, forKey: .note),
+            at: (try? values.decodeIfPresent(String.self, forKey: .at)).flatMap(DailyBriefReaction.instant)
+        )
     }
 }
 
@@ -73,7 +168,7 @@ public struct DailyBriefItems: Decodable, Sendable, Equatable {
     public let messageId: String
     /// When the brief was sent (ISO 8601, UTC).
     public let sentAt: String?
-    public let items: [DailyBriefItem]
+    public var items: [DailyBriefItem]
 
     public init(day: String, messageId: String, sentAt: String? = nil, items: [DailyBriefItem]) {
         self.day = day
@@ -109,23 +204,27 @@ public struct DailyBriefItem: Decodable, Sendable, Equatable, Identifiable {
     public let summary: String
     public let sources: [DailyBriefSource]
     public let tasks: [DailyBriefTask]
+    /// The owner's reaction to this item, if they gave one.
+    public var reaction: DailyBriefReaction?
 
     public init(
         rank: Int,
         observationId: String,
         summary: String,
         sources: [DailyBriefSource] = [],
-        tasks: [DailyBriefTask] = []
+        tasks: [DailyBriefTask] = [],
+        reaction: DailyBriefReaction? = nil
     ) {
         self.rank = rank
         self.observationId = observationId
         self.summary = summary
         self.sources = sources
         self.tasks = tasks
+        self.reaction = reaction
     }
 
     private enum CodingKeys: String, CodingKey {
-        case rank, observationId, summary, sources, tasks
+        case rank, observationId, summary, sources, tasks, reaction
     }
 
     public init(from decoder: Decoder) throws {
@@ -137,6 +236,61 @@ public struct DailyBriefItem: Decodable, Sendable, Equatable, Identifiable {
             .compactMap(\.value) ?? []
         tasks = (try? values.decodeIfPresent([Lossy<DailyBriefTask>].self, forKey: .tasks))?
             .compactMap(\.value) ?? []
+        // A reaction kind this build does not know reads as no reaction.
+        reaction = try? values.decodeIfPresent(DailyBriefReaction.self, forKey: .reaction)
+    }
+}
+
+/// The owner's reaction to one brief item: useful, not the kind of thing
+/// they want, or wrong — with the words they gave, if any.
+public struct DailyBriefReaction: Codable, Sendable, Equatable {
+    public enum Kind: String, Codable, Sendable {
+        case up
+        case notInterested = "not_interested"
+        case factualError = "factual_error"
+    }
+
+    public let kind: Kind
+    public let note: String?
+    /// When the gateway recorded it; nil while a reaction is on its way.
+    public let at: Date?
+
+    public init(kind: Kind, note: String? = nil, at: Date? = nil) {
+        self.kind = kind
+        self.note = note
+        self.at = at
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, note, at
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try values.decode(Kind.self, forKey: .kind)
+        note = try? values.decodeIfPresent(String.self, forKey: .note)
+        at = (try? values.decodeIfPresent(String.self, forKey: .at)).flatMap(Self.instant)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(kind, forKey: .kind)
+        try values.encodeIfPresent(note, forKey: .note)
+        try values.encodeIfPresent(at.map { Self.formatter().string(from: $0) }, forKey: .at)
+    }
+
+    private static func formatter() -> ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }
+
+    /// An ISO 8601 instant, with or without fractional seconds.
+    static func instant(_ iso: String) -> Date? {
+        let formatter = formatter()
+        if let date = formatter.date(from: iso) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: iso)
     }
 }
 

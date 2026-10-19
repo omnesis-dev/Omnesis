@@ -7896,6 +7896,43 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// The thumbs under an item, one PNG per state: untouched, useful, not
+    /// interested with the words given, a factual error with its correction,
+    /// and a reaction the gateway refused — put back, with the reason.
+    func testDailyBriefReactionStates() {
+        for state in PreviewMocks.dailyBriefReactionStates {
+            let view = VStack(alignment: .leading, spacing: 0) {
+                DailyBriefReactionBar(item: state.item, failure: state.failure) { _, _, _ in true }
+                Spacer()
+            }
+            .padding(Theme.Spacing.lg)
+            .background(Theme.bgSecondary)
+            snapshot(view, name: "333c-daily-brief-reaction-\(state.name)", size: CGSize(width: 393, height: 120))
+        }
+    }
+
+    /// "Why not?" after "Not interested": the item's sentence under the
+    /// heading, the words optional.
+    func testDailyBriefWhyNotCapture() {
+        let view = CaptureView(
+            completion: .explainingDisinterest(PreviewMocks.dailyBriefToday.items[2].summary) { _ in true },
+            speech: .preview(state: .idle)
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "333d-daily-brief-why-not-capture")
+    }
+
+    /// "What's wrong?" after "Factual error", with a correction typed.
+    func testDailyBriefCorrectionCapture() {
+        let view = CaptureView(
+            completion: .correcting(PreviewMocks.dailyBriefToday.items[0].summary) { _ in true },
+            speech: .preview(state: .idle),
+            previewText: "The reply is due next Wednesday, not Friday"
+        )
+        .environment(AppStore.preview())
+        snapshot(view, name: "333e-daily-brief-correction-capture")
+    }
+
     /// The largest accessibility text size: separators, header, list and
     /// chips wrap rather than clip.
     func testDailyBriefAccessibilityText() {

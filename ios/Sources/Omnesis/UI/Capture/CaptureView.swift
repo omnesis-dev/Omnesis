@@ -35,12 +35,13 @@ extension EnvironmentValues {
 /// the phone's transcript, and Done saves it at once for the gateway to
 /// transcribe. Discarding the recording turns it back into a typed note.
 ///
-/// The same screen writes a note about a task when given a
-/// `TaskNoteCapture` — completing a task with a note ("Done + note" on
-/// Tasks) or accepting a suggestion with one ("Accept with note"): it listens
-/// at once and can be typed into just the same, and Done hands the text to
-/// the task instead of saving a note here. That note is always text, so it
-/// is never a voice note.
+/// The same screen writes words about something else when given a
+/// `NoteCaptureCompletion` — completing a task with a note ("Done + note" on
+/// Tasks), accepting a suggestion with one ("Accept with note"), or
+/// explaining a reaction to a morning brief item: it listens at once and can
+/// be typed into just the same, and Done hands the text to the completion
+/// instead of saving a note here. That note is always text, so it is never
+/// a voice note.
 @available(iOS 17.0, *)
 struct CaptureView: View {
     @Environment(AppStore.self) private var store
@@ -57,8 +58,8 @@ struct CaptureView: View {
     /// snapshots, which really are presented, fall back to `dismiss`.
     var onClose: (() -> Void)?
 
-    /// Set when the note is about a task rather than a note on its own.
-    let completion: TaskNoteCapture?
+    /// Set when the words are about something rather than a note on their own.
+    let completion: NoteCaptureCompletion?
 
     @State private var speech: SpeechRecognizer
     @State private var text: String = ""
@@ -97,7 +98,7 @@ struct CaptureView: View {
     init(
         surface: NoteSurface = .app,
         onClose: (() -> Void)? = nil,
-        completion: TaskNoteCapture? = nil,
+        completion: NoteCaptureCompletion? = nil,
         speech: SpeechRecognizer = SpeechRecognizer(),
         previewText: String = "",
         previewPhase: Phase = .capturing,
@@ -125,7 +126,7 @@ struct CaptureView: View {
         VStack(spacing: 0) {
             header
             if let completion {
-                Text(completion.taskTitle)
+                Text(completion.subject)
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)

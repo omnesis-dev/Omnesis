@@ -217,7 +217,7 @@ struct TasksContent: View {
     /// The composer's wording and call for a note about `noting`'s task. The
     /// note's id is fixed while the composer is open, so saving again after
     /// a failure is a replay rather than a second note.
-    private func capture(for noting: TaskNoting) -> TaskNoteCapture {
+    private func capture(for noting: TaskNoting) -> NoteCaptureCompletion {
         let task = noting.task
         switch noting.purpose {
         case .complete:

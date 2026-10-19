@@ -192,6 +192,12 @@ final class DailyBriefModel {
     private(set) var toggledFooters: Set<String> = []
     /// The latest brief seen, by message id.
     private(set) var latestId: String?
+    /// Why the last reaction to an item was not saved, by observation id.
+    /// Cleared by the next reaction to that item.
+    private(set) var reactionFailures: [String: any Error] = [:]
+    /// Reactions sent per item, so a reply to an older one is ignored once
+    /// a newer one has been shown.
+    @ObservationIgnored private var reactionSerials: [String: Int] = [:]
 
     init(
         conversationId: String,
@@ -272,6 +278,64 @@ final class DailyBriefModel {
         } catch {
             items[day] = .failed
         }
+    }
+
+    // MARK: - Reactions
+
+    /// Why the last reaction to an item was not saved, if it was not.
+    func reactionFailure(observationId: String) -> (any Error)? {
+        reactionFailures[observationId]
+    }
+
+    /// Set, replace or clear (`reaction: nil`) the owner's reaction to one
+    /// of a day's items. The item shows the reaction at once; the gateway's
+    /// answer replaces it, and a failure puts the previous reaction back and
+    /// keeps the error for the row. Returns whether the gateway took it.
+    @discardableResult
+    func react(
+        day: String,
+        observationId: String,
+        reaction: DailyBriefReaction.Kind?,
+        note: String? = nil
+    ) async -> Bool {
+        guard let current = item(day: day, observationId: observationId) else { return false }
+        let previous = current.reaction
+        setReaction(reaction.map { DailyBriefReaction(kind: $0, note: note) }, day: day, observationId: observationId)
+        reactionFailures[observationId] = nil
+        let serial = (reactionSerials[observationId] ?? 0) + 1
+        reactionSerials[observationId] = serial
+        guard let loader else { return true }
+        do {
+            let settled = try await loader.react(
+                conversationId: conversationId,
+                day: day,
+                observationId: observationId,
+                reaction: reaction,
+                note: note
+            )
+            guard reactionSerials[observationId] == serial else { return true }
+            setReaction(settled, day: day, observationId: observationId)
+            return true
+        } catch {
+            guard reactionSerials[observationId] == serial else { return false }
+            setReaction(previous, day: day, observationId: observationId)
+            reactionFailures[observationId] = error
+            return false
+        }
+    }
+
+    /// One of a loaded day's items.
+    private func item(day: String, observationId: String) -> DailyBriefItem? {
+        guard case .loaded(let page) = items[day] else { return nil }
+        return page.items.first { $0.observationId == observationId }
+    }
+
+    private func setReaction(_ reaction: DailyBriefReaction?, day: String, observationId: String) {
+        guard case .loaded(var page) = items[day],
+              let index = page.items.firstIndex(where: { $0.observationId == observationId })
+        else { return }
+        page.items[index].reaction = reaction
+        items[day] = .loaded(page)
     }
 }
 

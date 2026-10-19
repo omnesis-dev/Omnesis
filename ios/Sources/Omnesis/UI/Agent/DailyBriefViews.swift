@@ -124,8 +124,9 @@ struct DailyBriefHeader: View {
 }
 
 /// Under a brief: "Based on N things", which opens to the ranked items it was
-/// written from, each with its documents and tasks. Quiet while loading, a
-/// Retry line when the read failed, and nothing at all with no items.
+/// written from, each with its documents, tasks and the owner's reaction.
+/// Quiet while loading, a Retry line when the read failed, and nothing at
+/// all with no items.
 @available(iOS 17.0, *)
 struct DailyBriefFooter: View {
     let day: String
@@ -133,6 +134,9 @@ struct DailyBriefFooter: View {
     let isOpen: Bool
     let onToggle: () -> Void
     let onRetry: () -> Void
+    var onReact: DailyBriefReactionHandler = { _, _, _ in true }
+    /// Why an item's last reaction was not saved, by observation id.
+    var reactionFailure: (String) -> (any Error)? = { _ in nil }
 
     @State private var pushedDocument: DailyBriefDocumentPush?
 
@@ -196,7 +200,12 @@ struct DailyBriefFooter: View {
             if isOpen {
                 VStack(alignment: .leading, spacing: Theme.Spacing.md) {
                     ForEach(items) { item in
-                        DailyBriefItemRow(item: item, onOpenDocument: { pushedDocument = $0 })
+                        DailyBriefItemRow(
+                            item: item,
+                            reactionFailure: reactionFailure(item.observationId),
+                            onOpenDocument: { pushedDocument = $0 },
+                            onReact: onReact
+                        )
                     }
                 }
                 .padding(Theme.Spacing.md)
@@ -215,11 +224,14 @@ struct DailyBriefDocumentPush: Hashable, Identifiable {
     let title: String
 }
 
-/// One ranked item: its sentence, then a chip for each document and task.
+/// One ranked item: its sentence, a chip for each document and task, then
+/// the thumbs for the owner's reaction.
 @available(iOS 17.0, *)
 private struct DailyBriefItemRow: View {
     let item: DailyBriefItem
+    let reactionFailure: (any Error)?
     let onOpenDocument: (DailyBriefDocumentPush) -> Void
+    let onReact: DailyBriefReactionHandler
     @Environment(NotificationRouter.self) private var router: NotificationRouter?
     @Environment(AppStore.self) private var store: AppStore?
 
@@ -245,6 +257,7 @@ private struct DailyBriefItemRow: View {
                         }
                     }
                 }
+                DailyBriefReactionBar(item: item, failure: reactionFailure, onReact: onReact)
             }
         }
     }

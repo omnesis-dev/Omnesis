@@ -55,17 +55,17 @@ public struct AgentView: View {
     /// the environment (previews, snapshot renders) keep working; the
     /// live app injects one at the root.
     @Environment(NotificationRouter.self) private var router: NotificationRouter?
-    @State private var composerText: String = {
-        #if DEBUG
-        // XCUITest demo automation: pre-fill the composer with a prompt
-        // passed via the DEMO_PROMPT environment variable so the test
-        // can skip slow keyboard interaction.
-        if let prompt = ProcessInfo.processInfo.environment["DEMO_PROMPT"] {
-            return prompt
-        }
-        #endif
-        return ""
-    }()
+    /// The composer's unsent words, held by the coordinator with the rest
+    /// of the conversation's state so a new conversation never inherits
+    /// them.
+    private var composerText: String {
+        get { store.agent.composerDraft }
+        nonmutating set { store.agent.composerDraft = newValue }
+    }
+
+    private var composerTextBinding: Binding<String> {
+        Binding(get: { store.agent.composerDraft }, set: { store.agent.composerDraft = $0 })
+    }
 
     @State private var scrollToBottomTrigger: Int = 0
     @State private var bottomAnchorMinY: CGFloat = 0
@@ -217,7 +217,7 @@ public struct AgentView: View {
         .background(sizeProbe)
         .omnesisColorScheme()
         #if DEBUG
-            .demoAutoPilot(composerText: $composerText, citationsOpen: $citationsOpen)
+            .demoAutoPilot(composerText: composerTextBinding, citationsOpen: $citationsOpen)
         #endif
             .onPreferenceChange(ComposerNeedsGutterKey.self) { value in
                 // Mirror the drawer's bottom-band signal into local state.
@@ -559,28 +559,22 @@ public struct AgentView: View {
                     }
                 } else {
                     AgentComposer(
-                        text: $composerText,
+                        text: composerTextBinding,
                         busy: store.agent.busy,
                         disabled: !store.agent.canComposeMessage,
                         experimentalEnabled: store.experimentalEnabled,
                         idlePrompt: DailyBriefCopy.composerPrompt(for: store.agent.conversationOrigin),
                         speech: speechRecognizer,
                         onSend: { text, command in
-                            composerText = ""
                             // Surrender keyboard focus the moment the user
                             // hits send so the transcript reclaims its full
                             // screen real estate.
                             composerFocused = false
                             let deep = command?.deepResearch ?? false
-                            Task {
-                                let sent = await store.agent.send(text: text, deepResearch: deep)
-                                // A rejected turn (a failed lazy mint or refused POST)
-                                // never reached the gateway — restore
-                                // the text so the user can retry instead of silently
-                                // losing what they typed. Skip if they've already
-                                // started a new message.
-                                if !sent, composerText.isEmpty { composerText = text }
-                            }
+                            // The coordinator empties the composer and, for a
+                            // turn that never reached the gateway, puts the
+                            // words back so they can be sent again.
+                            Task { await store.agent.sendComposerDraft(text, deepResearch: deep) }
                         },
                         onCancel: {
                             Task {

@@ -197,16 +197,22 @@ public enum TaskJournal {
         case "proposal_confirmed": "Change confirmed"
         case "proposal_kept": "Kept as it was"
         case "auto_applied": event.change == "complete" ? "Marked done by Omnesis" : "Updated by Omnesis"
+        case "auto_accepted": "Added by Omnesis"
+        case "withheld": "Withheld by Omnesis"
         case "undone": "Undone"
         default: "Note"
         }
     }
 
+    /// The kinds of change Omnesis makes on its own: applying a change,
+    /// adding a task, or withholding one. Their titles say so.
+    private static let autonomousKinds: Set<String> = ["auto_applied", "auto_accepted", "withheld"]
+
     /// Where a change came from, for the history line's caption. Nil for a
     /// change made on this screen, which needs no attribution, and for a
-    /// change Omnesis applied on its own, whose title already says so.
+    /// change Omnesis made on its own, whose title already says so.
     public static func eventSource(_ event: TaskEvent) -> String? {
-        guard event.kind != "auto_applied" else { return nil }
+        guard !autonomousKinds.contains(event.kind) else { return nil }
         return switch event.surface {
         case "conversation": "In a conversation"
         case "note": "From a note"
@@ -216,11 +222,11 @@ public enum TaskJournal {
     }
 
     /// The change a task's history offers to undo in place: the newest
-    /// entry, when Omnesis applied it on its own and it is still the change
+    /// entry, when Omnesis made it on its own and it is still the change
     /// undo would revert. Nil otherwise.
     public static func autoAppliedUndoSeq(_ detail: TaskDetail) -> Int? {
         guard let newest = detail.history.first,
-              newest.kind == "auto_applied",
+              autonomousKinds.contains(newest.kind),
               newest.seq == detail.undoSeq
         else { return nil }
         return newest.seq

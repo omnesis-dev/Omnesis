@@ -6,11 +6,13 @@ import XCTest
 /// The Morning brief conversation's interactions, driven on the simulator
 /// against `DailyBriefDemoGateway` (`DEMO_MENU_REVEAL=briefs`), each judged by
 /// what the screen shows afterwards: days folding and opening, the "Based on"
-/// list, the Retry line, a source chip opening its document and a task chip
-/// opening Tasks on that task.
+/// list, the Retry line, a source chip opening its document, a task chip
+/// opening Tasks on that task, and the thumbs under an item.
 ///
 /// The fixture holds three briefs — Monday 12, Tuesday 13 ("Yesterday") and
 /// Wednesday 14 October ("Today") — and Monday's items fail on the first read.
+/// Today's first item is already marked useful, its second not interested,
+/// and its third untouched.
 final class DailyBriefInteractionUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -44,6 +46,8 @@ final class DailyBriefInteractionUITests: XCTestCase {
         static let boilerTitle = "Book the boiler engineer"
         static let yesterdayReply = "Is there a cheaper option in the quote?"
         static let mondayReply = "What does the budget review need from me?"
+        static let untouchedItem = "obs_run"
+        static let usefulItem = "obs_loan"
     }
 
     // MARK: - 1. As it opens
@@ -153,7 +157,59 @@ final class DailyBriefInteractionUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Tasks"].exists || app.staticTexts["Tasks"].exists, "not in Tasks")
     }
 
-    // MARK: - 5. A failed read
+    // MARK: - 5. Reactions
+
+    // The untouched item is today's last, so its thumbs are on screen above the
+    // composer as the conversation opens: no scrolling is needed to reach them.
+    func testThumbsUpMarksAnItemUsefulAndAgainClearsIt() {
+        XCTAssertTrue(wait { self.thumbsUp(Fixture.untouchedItem).isHittable }, "the thumbs are not on screen")
+        XCTAssertFalse(thumbsUp(Fixture.untouchedItem).isSelected)
+        thumbsUp(Fixture.untouchedItem).tap()
+        XCTAssertTrue(wait { self.thumbsUp(Fixture.untouchedItem).isSelected }, "the thumb did not fill")
+        XCTAssertFalse(reactionCaption(Fixture.untouchedItem).exists, "useful shows no caption")
+        thumbsUp(Fixture.untouchedItem).tap()
+        XCTAssertTrue(wait { !self.thumbsUp(Fixture.untouchedItem).isSelected }, "a second tap did not clear it")
+        // The item marked useful before the conversation opened reads so.
+        XCTAssertTrue(thumbsUp(Fixture.usefulItem).waitForExistence(timeout: 5))
+        XCTAssertTrue(thumbsUp(Fixture.usefulItem).isSelected)
+    }
+
+    func testThumbsDownNotInterestedStandsBeforeAnyWords() {
+        XCTAssertTrue(wait { self.thumbsDown(Fixture.untouchedItem).isHittable }, "the thumbs are not on screen")
+        thumbsDown(Fixture.untouchedItem).tap()
+        let choice = app.buttons["Not interested in this kind of thing"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5), "no choice of what is wrong")
+        XCTAssertTrue(app.buttons["Factual error — send a correction"].exists)
+        choice.tap()
+        // The reaction stands at once, and the words are offered on Tell Omnesis.
+        XCTAssertTrue(app.staticTexts["Why not?"].waitForExistence(timeout: 5), "the words were not offered")
+        app.buttons["Cancel capture"].tap()
+        XCTAssertTrue(wait { !self.app.staticTexts["Why not?"].exists })
+        XCTAssertTrue(wait { self.reactionCaption(Fixture.untouchedItem).exists }, "no caption after Not interested")
+        XCTAssertEqual(reactionCaption(Fixture.untouchedItem).label, "Not interested")
+        XCTAssertTrue(thumbsDown(Fixture.untouchedItem).isSelected)
+        XCTAssertFalse(thumbsUp(Fixture.untouchedItem).isSelected)
+    }
+
+    func testThumbsDownFactualErrorSendsTheCorrection() {
+        XCTAssertTrue(wait { self.thumbsDown(Fixture.untouchedItem).isHittable }, "the thumbs are not on screen")
+        thumbsDown(Fixture.untouchedItem).tap()
+        let choice = app.buttons["Factual error — send a correction"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        choice.tap()
+        XCTAssertTrue(app.staticTexts["What's wrong?"].waitForExistence(timeout: 5), "the correction was not asked for")
+        let field = app.textFields["captureTranscript"].exists ? app.textFields["captureTranscript"] : app.textViews["captureTranscript"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.tap()
+        field.typeText("It moved to 09:00")
+        app.buttons["captureDoneButton"].tap()
+        XCTAssertTrue(wait { !self.app.staticTexts["What's wrong?"].exists }, "the screen stayed open")
+        XCTAssertTrue(wait { self.reactionCaption(Fixture.untouchedItem).exists })
+        XCTAssertEqual(reactionCaption(Fixture.untouchedItem).label, "Factual error — It moved to 09:00")
+        XCTAssertTrue(thumbsDown(Fixture.untouchedItem).isSelected)
+    }
+
+    // MARK: - 6. A failed read
 
     func testFailedItemsOfferRetryAndRetryRecovers() {
         XCTAssertTrue(bringIntoView(folded(Fixture.monday)))
@@ -168,7 +224,7 @@ final class DailyBriefInteractionUITests: XCTestCase {
         XCTAssertFalse(retry.exists)
     }
 
-    // MARK: - 6. Scrolling
+    // MARK: - 7. Scrolling
 
     /// After a day opens and folds, the transcript still scrolls both ways.
     func testScrollingAfterOpeningAndFolding() {
@@ -209,6 +265,18 @@ final class DailyBriefInteractionUITests: XCTestCase {
 
     private func task(_ id: String) -> XCUIElement {
         app.buttons["dailyBrief.task.\(id)"]
+    }
+
+    private func thumbsUp(_ observationId: String) -> XCUIElement {
+        app.buttons["dailyBrief.thumbsUp.\(observationId)"]
+    }
+
+    private func thumbsDown(_ observationId: String) -> XCUIElement {
+        app.buttons["dailyBrief.thumbsDown.\(observationId)"]
+    }
+
+    private func reactionCaption(_ observationId: String) -> XCUIElement {
+        app.staticTexts["dailyBrief.reaction.\(observationId)"]
     }
 
     /// Scrolls until `element` sits in the open middle of the screen — clear

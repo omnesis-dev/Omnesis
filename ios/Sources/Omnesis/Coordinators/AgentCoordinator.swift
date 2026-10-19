@@ -369,6 +369,21 @@ public final class AgentCoordinator {
     @ObservationIgnored
     private var sessionChoiceCount = 0
 
+    /// What the composer holds, unsent. Conversation state like the
+    /// transcript, so a new conversation starts with an empty composer
+    /// whatever the field held before.
+    var composerDraft = ""
+
+    /// Send the composer's words. The composer empties at once; a send the
+    /// gateway never accepted puts them back, unless newer words are there.
+    @discardableResult
+    func sendComposerDraft(_ text: String, deepResearch: Bool = false) async -> Bool {
+        composerDraft = ""
+        let sent = await send(text: text, deepResearch: deepResearch)
+        if !sent, composerDraft.isEmpty { composerDraft = text }
+        return sent
+    }
+
     /// Start a fresh conversation. This is a purely local, instantaneous
     /// operation: it clears the surface synchronously and mints no session
     /// over the network. The session id is created lazily by the first
@@ -598,6 +613,7 @@ public final class AgentCoordinator {
         overflowSnapshotTask = nil
         snapshotHandoff = nil
         clearTranscriptState()
+        composerDraft = ""
         sessionId = nil
         model = nil
         backend = nil

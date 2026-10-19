@@ -170,7 +170,11 @@ struct DailyBriefTranscriptView: View {
             // Not animated: the transcript follows its bottom by the content's size, and an
             // animated change in size is reported before the scroll view can reach the new end.
             onToggle: { model.toggleFooter(brief) },
-            onRetry: { Task { await model.retry(day: brief.day) } }
+            onRetry: { Task { await model.retry(day: brief.day) } },
+            onReact: { observationId, reaction, note in
+                await model.react(day: brief.day, observationId: observationId, reaction: reaction, note: note)
+            },
+            reactionFailure: { model.reactionFailure(observationId: $0) }
         )
         .task(id: brief.day) { await model.load(day: brief.day) }
         ForEach(day.turns.dropFirst()) { turn in

@@ -50,6 +50,99 @@ final class DailyBriefTranscriptTests: XCTestCase {
         XCTAssertTrue(page.items[1].tasks.isEmpty)
     }
 
+    func testItemReactionDecodesLeniently() throws {
+        let page = try JSONDecoder().decode(DailyBriefItems.self, from: Data("""
+        {"day":"2026-10-14","messageId":"mb_2","items":[
+           {"rank":1,"observationId":"obs_up","summary":"Useful.",
+            "reaction":{"kind":"up","at":"2026-10-14T07:10:03.000Z"}},
+           {"rank":2,"observationId":"obs_no","summary":"Not interested.",
+            "reaction":{"kind":"not_interested","note":"Never mind this","at":"2026-10-14T07:11:40Z"}},
+           {"rank":3,"observationId":"obs_wrong","summary":"Wrong.",
+            "reaction":{"kind":"factual_error","note":"Paid already","at":"not an instant"}},
+           {"rank":4,"observationId":"obs_none","summary":"Untouched."},
+           {"rank":5,"observationId":"obs_new","summary":"A kind this build does not know.",
+            "reaction":{"kind":"shrug","at":"2026-10-14T07:12:00.000Z"}}
+         ]}
+        """.utf8))
+        let reactions = page.items.map(\.reaction)
+        XCTAssertEqual(reactions[0]?.kind, .up)
+        XCTAssertNil(reactions[0]?.note)
+        XCTAssertEqual(reactions[0]?.at, ISO8601DateFormatter().date(from: "2026-10-14T07:10:03Z"))
+        XCTAssertEqual(reactions[1], DailyBriefReaction(
+            kind: .notInterested,
+            note: "Never mind this",
+            at: ISO8601DateFormatter().date(from: "2026-10-14T07:11:40Z")
+        ))
+        XCTAssertEqual(reactions[2]?.kind, .factualError)
+        XCTAssertEqual(reactions[2]?.note, "Paid already")
+        XCTAssertNil(reactions[2]?.at, "an unreadable instant is dropped, not the reaction")
+        XCTAssertNil(reactions[3])
+        XCTAssertNil(reactions[4], "an unknown kind reads as no reaction")
+        XCTAssertEqual(page.items.count, 5, "an unknown reaction kind never drops the item")
+    }
+
+    func testClientPutsTheReactionAndReadsItBack() async throws {
+        let session = StubSession()
+        session.body = #"{"observationId":"obs/1","reaction":"not_interested","note":"Never mind","at":"2026-10-14T07:11:40.000Z"}"#
+        let client = try DailyBriefClient(
+            baseURL: XCTUnwrap(URL(string: "https://gateway.example.com:7600")),
+            token: "omn_t",
+            session: session
+        )
+        let settled = try await client.react(
+            conversationId: "s/brief",
+            day: "2026-10-14",
+            observationId: "obs/1",
+            reaction: .notInterested,
+            note: "Never mind"
+        )
+        XCTAssertEqual(settled?.kind, .notInterested)
+        XCTAssertEqual(settled?.note, "Never mind")
+        XCTAssertEqual(settled?.at, ISO8601DateFormatter().date(from: "2026-10-14T07:11:40Z"))
+        let request = try XCTUnwrap(session.requests.first)
+        XCTAssertEqual(request.httpMethod, "PUT")
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://gateway.example.com:7600/agent/conversations/s%2Fbrief/briefs/2026-10-14/items/obs%2F1/reaction"
+        )
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        let body = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any]
+        XCTAssertEqual(body?["reaction"] as? String, "not_interested")
+        XCTAssertEqual(body?["note"] as? String, "Never mind")
+        XCTAssertEqual(body?.count, 2, "the body is the reaction and the words, nothing else")
+
+        // A correction sends only its words — the gateway names the note it saves —
+        // and the note's id in the answer is not needed; clearing sends JSON null
+        // and reads back nil.
+        session.body = #"{"observationId":"obs/1","reaction":"factual_error","note":"Paid","noteId":"3f1e","at":"2026-10-14T07:12:00Z"}"#
+        let correction = try await client.react(
+            conversationId: "s/brief",
+            day: "2026-10-14",
+            observationId: "obs/1",
+            reaction: .factualError,
+            note: "Paid"
+        )
+        XCTAssertEqual(correction?.kind, .factualError)
+        let correcting = try JSONSerialization.jsonObject(with: XCTUnwrap(session.requests[1].httpBody)) as? [String: Any]
+        XCTAssertEqual(correcting?["reaction"] as? String, "factual_error")
+        XCTAssertEqual(correcting?["note"] as? String, "Paid")
+        XCTAssertEqual(correcting?.count, 2)
+
+        session.body = #"{"observationId":"obs/1","reaction":null}"#
+        let cleared = try await client.react(conversationId: "s/brief", day: "2026-10-14", observationId: "obs/1", reaction: nil)
+        XCTAssertNil(cleared)
+        let clearing = try JSONSerialization.jsonObject(with: XCTUnwrap(session.requests[2].httpBody)) as? [String: Any]
+        XCTAssertTrue(clearing?["reaction"] is NSNull, "clearing sends an explicit null")
+        XCTAssertEqual(clearing?.count, 1)
+
+        session.status = 404
+        session.body = #"{"error":"not one of this brief's items"}"#
+        do {
+            _ = try await client.react(conversationId: "s/brief", day: "2026-10-14", observationId: "obs/9", reaction: .up)
+            XCTFail("expected notFound")
+        } catch GatewayClient.Error.notFound {}
+    }
+
     func testItemsResponseWithoutSentAtOrItems() throws {
         let page = try JSONDecoder().decode(DailyBriefItems.self, from: Data("""
         {"day":"2026-10-12","messageId":"mb_0"}
@@ -291,12 +384,133 @@ final class DailyBriefTranscriptTests: XCTestCase {
     }
 
     @MainActor
+    func testReactionShowsAtOnceAndSettlesFromTheGateway() async {
+        let gateway = DailyBriefDemoGateway(pages: [page("2026-10-14", count: 2)])
+        let model = DailyBriefModel(conversationId: "s1", loader: gateway)
+        await model.load(day: "2026-10-14")
+
+        let took = await model.react(day: "2026-10-14", observationId: "obs_0", reaction: .up)
+        XCTAssertTrue(took)
+        let settled = reaction(model, "obs_0")
+        XCTAssertEqual(settled?.kind, .up)
+        XCTAssertNotNil(settled?.at, "the gateway's answer replaces the optimistic reaction")
+        XCTAssertNil(reaction(model, "obs_1"), "only the item reacted to changes")
+        XCTAssertNil(model.reactionFailure(observationId: "obs_0"))
+
+        await model.react(day: "2026-10-14", observationId: "obs_0", reaction: .factualError, note: "Paid")
+        XCTAssertEqual(reaction(model, "obs_0")?.kind, .factualError)
+        XCTAssertEqual(reaction(model, "obs_0")?.note, "Paid")
+        await model.react(day: "2026-10-14", observationId: "obs_0", reaction: nil)
+        XCTAssertNil(reaction(model, "obs_0"))
+
+        let unknown = await model.react(day: "2026-10-14", observationId: "obs_9", reaction: .up)
+        XCTAssertFalse(unknown, "an item the day does not hold is not sent")
+        let unloaded = await model.react(day: "2026-10-13", observationId: "obs_0", reaction: .up)
+        XCTAssertFalse(unloaded)
+
+        let sent = await gateway.reactions
+        XCTAssertEqual(sent, [
+            .init(observationId: "obs_0", kind: .up, note: nil),
+            .init(observationId: "obs_0", kind: .factualError, note: "Paid"),
+            .init(observationId: "obs_0", kind: nil, note: nil),
+        ])
+    }
+
+    @MainActor
+    func testRefusedReactionIsPutBackWithItsReason() async {
+        let gateway = DailyBriefDemoGateway(pages: [page("2026-10-14", count: 1)], refusingReactions: ["obs_0"])
+        let model = DailyBriefModel(conversationId: "s1", loader: gateway)
+        await model.load(day: "2026-10-14")
+
+        let took = await model.react(day: "2026-10-14", observationId: "obs_0", reaction: .notInterested, note: "No")
+        XCTAssertFalse(took)
+        XCTAssertNil(reaction(model, "obs_0"), "the reaction it had before is back")
+        let failure = model.reactionFailure(observationId: "obs_0") as? GatewayClient.Error
+        XCTAssertEqual(failure, .serverError(status: 503, body: #"{"error":"Reactions are unavailable"}"#))
+        let sent = await gateway.reactions.count
+        XCTAssertEqual(sent, 1)
+    }
+
+    /// A reply to an older reaction never overwrites a newer one: the
+    /// gateway answers the first tap after the second was shown.
+    @MainActor
+    func testALateReplyNeverOverwritesANewerReaction() async {
+        let gateway = SlowReactionGateway(page: page("2026-10-14", count: 1))
+        let model = DailyBriefModel(conversationId: "s1", loader: gateway)
+        await model.load(day: "2026-10-14")
+
+        let first = Task { await model.react(day: "2026-10-14", observationId: "obs_0", reaction: .up) }
+        await gateway.started(1)
+        // The second tap clears it while the first is still on its way.
+        let second = Task { await model.react(day: "2026-10-14", observationId: "obs_0", reaction: nil) }
+        await gateway.started(2)
+        XCTAssertNil(reaction(model, "obs_0"))
+        await gateway.answer(0)
+        _ = await first.value
+        XCTAssertNil(reaction(model, "obs_0"), "the first tap's late answer is ignored")
+        await gateway.answer(1)
+        _ = await second.value
+        XCTAssertNil(reaction(model, "obs_0"))
+    }
+
+    @MainActor
+    private func reaction(_ model: DailyBriefModel, _ observationId: String) -> DailyBriefReaction? {
+        guard case .loaded(let page) = model.items["2026-10-14"] else { return nil }
+        return page.items.first { $0.observationId == observationId }?.reaction
+    }
+
+    @MainActor
     func testPreloadedItemsNeedNoFetch() async {
         let model = DailyBriefModel(conversationId: "s1", loader: nil, preloaded: [page("2026-10-14", count: 3)])
         await model.load(day: "2026-10-14")
         XCTAssertEqual(model.itemCount(day: "2026-10-14"), 3)
         await model.load(day: "2026-10-13")
         XCTAssertNil(model.items["2026-10-13"], "with no loader nothing is fetched")
+    }
+}
+
+/// Answers each reaction only when told to, in the order they were sent.
+private actor SlowReactionGateway: DailyBriefItemsLoading {
+    private let page: DailyBriefItems
+    private var pending: [Int: CheckedContinuation<DailyBriefReaction?, Never>] = [:]
+    private var answers: [Int: DailyBriefReaction?] = [:]
+    private var sent = 0
+    private var waitingForStart: [CheckedContinuation<Void, Never>] = []
+
+    init(page: DailyBriefItems) {
+        self.page = page
+    }
+
+    func items(conversationId _: String, day _: String) async throws -> DailyBriefItems {
+        page
+    }
+
+    func react(
+        conversationId _: String,
+        day _: String,
+        observationId _: String,
+        reaction: DailyBriefReaction.Kind?,
+        note _: String?
+    ) async throws -> DailyBriefReaction? {
+        let index = sent
+        sent += 1
+        answers[index] = reaction.map { DailyBriefReaction(kind: $0, at: Date()) }
+        waitingForStart.forEach { $0.resume() }
+        waitingForStart = []
+        return await withCheckedContinuation { continuation in
+            pending[index] = continuation
+        }
+    }
+
+    /// Waits until `count` reactions have reached the gateway.
+    func started(_ count: Int) async {
+        while sent < count {
+            await withCheckedContinuation { waitingForStart.append($0) }
+        }
+    }
+
+    func answer(_ index: Int) {
+        pending.removeValue(forKey: index)?.resume(returning: answers[index] ?? nil)
     }
 }
 
