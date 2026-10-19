@@ -13,7 +13,7 @@
  * thumbs changed) supersedes the signal it produced rather than deleting it,
  * so the ledger stays an honest history.
  *
- * `brief_item_reactions` is the current thumbs state per shipped brief item,
+ * `interest_brief_reactions` is the current thumbs state per shipped brief item,
  * which the clients render; the signals it produced live in `interest_signals`.
  */
 
@@ -127,7 +127,7 @@ export function createInterestTables(db: Db): void {
     "CREATE INDEX IF NOT EXISTS idx_interest_signals_ledger_seq ON interest_signals(ledger_seq) WHERE ledger_seq IS NOT NULL",
   );
   db.exec(`
-    CREATE TABLE IF NOT EXISTS brief_item_reactions (
+    CREATE TABLE IF NOT EXISTS interest_brief_reactions (
       observation_id TEXT PRIMARY KEY,
       day TEXT NOT NULL,
       message_id TEXT NOT NULL,
@@ -626,7 +626,7 @@ export function upsertBriefItemReaction(
   now: number,
 ): BriefItemReaction {
   db.prepare<unknown[]>(
-    `INSERT INTO brief_item_reactions (observation_id, day, message_id, reaction, note, note_id, created_at, updated_at)
+    `INSERT INTO interest_brief_reactions (observation_id, day, message_id, reaction, note, note_id, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(observation_id) DO UPDATE SET
        day = excluded.day, message_id = excluded.message_id, reaction = excluded.reaction,
@@ -719,14 +719,17 @@ function setUserAction(db: Db, observationId: string, action: string | null, now
 export function deleteBriefItemReaction(db: Db, observationId: string): boolean {
   return (
     db
-      .prepare<[string]>("DELETE FROM brief_item_reactions WHERE observation_id = ?")
+      .prepare<[string]>("DELETE FROM interest_brief_reactions WHERE observation_id = ?")
       .run(observationId).changes > 0
   );
 }
 
 export function getBriefItemReaction(db: Db, observationId: string): BriefItemReaction | null {
   const row = db
-    .prepare<[string], ReactionRow>("SELECT * FROM brief_item_reactions WHERE observation_id = ?")
+    .prepare<
+      [string],
+      ReactionRow
+    >("SELECT * FROM interest_brief_reactions WHERE observation_id = ?")
     .get(observationId);
   return row ? toReaction(row) : null;
 }
@@ -734,7 +737,7 @@ export function getBriefItemReaction(db: Db, observationId: string): BriefItemRe
 /** The reactions on one sent brief's items, keyed by observation id. */
 export function listBriefItemReactions(db: Db, messageId: string): Map<string, BriefItemReaction> {
   const rows = db
-    .prepare<[string], ReactionRow>("SELECT * FROM brief_item_reactions WHERE message_id = ?")
+    .prepare<[string], ReactionRow>("SELECT * FROM interest_brief_reactions WHERE message_id = ?")
     .all(messageId);
   return new Map(rows.map((row) => [row.observation_id, toReaction(row)]));
 }

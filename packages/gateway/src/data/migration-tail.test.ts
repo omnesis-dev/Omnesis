@@ -130,7 +130,7 @@ function undoVocabulary(db: Db): void {
 /** Undo migration 204: no interest ledger and no thumbs on brief items. */
 function undoInterest(db: Db): void {
   db.exec("DROP TABLE IF EXISTS interest_signals");
-  db.exec("DROP TABLE IF EXISTS brief_item_reactions");
+  db.exec("DROP TABLE IF EXISTS interest_brief_reactions");
 }
 
 /** Undo migration 201: every decision-ledger row names a run and a document. */
