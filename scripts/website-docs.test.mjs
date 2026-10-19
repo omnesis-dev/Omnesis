@@ -49,7 +49,6 @@ const contentPages = [...sharedChromePages, "../privacy.html"];
 const html = Object.fromEntries(contentPages.map((f) => [f, readFileSync(join(DOCS, f), "utf8")]));
 const landing = readFileSync(join(WEBSITE, "index.html"), "utf8");
 const brain = readFileSync(join(WEBSITE, "brain.html"), "utf8");
-const vision = readFileSync(join(WEBSITE, "vision.html"), "utf8");
 const sharedChromeScript = readFileSync(join(DOCS, "docs.js"), "utf8");
 const publicHtml = Object.fromEntries(
   readdirSync(WEBSITE)
@@ -60,7 +59,7 @@ const redirects = readFileSync(join(WEBSITE, "_redirects"), "utf8");
 const idsOf = (f) => new Set([...html[f].matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
 const slug = (f) => (f === "index.html" ? "/docs/" : "/docs/" + f.replace(".html", ""));
 const REPO_URL = "https://github.com/omnesis-dev/Omnesis";
-const NAV_LINKS = ["/", "/vision", "/docs/", "/blog/"];
+const NAV_LINKS = ["/", "/docs/", "/blog/"];
 
 // Resolves URLs the way the Cloudflare static-asset host does
 // (html_handling): /docs/install serves docs/install.html, a trailing
@@ -306,6 +305,7 @@ describe("website docs", () => {
       const pathname = file === "index.html" ? "/" : `/${file.replace(".html", "")}`;
       const renderedLinks = renderChromeLinks(pathname);
       expect(renderedLinks, file).not.toContain("/brain");
+      expect(renderedLinks, file).not.toContain("/vision");
       expect(renderedLinks, file).toEqual(
         expect.arrayContaining([
           ...NAV_LINKS,
@@ -465,7 +465,7 @@ describe("website docs", () => {
   });
 
   it("binds every authored mobile-menu button to its primary link list", () => {
-    for (const page of [landing, brain, vision]) {
+    for (const page of [landing, brain]) {
       expect(page).toContain('<ul class="nav-links" id="primary-navigation">');
       expect(page).toContain('aria-controls="primary-navigation"');
       expect(page).not.toContain('aria-controls="nav"');
@@ -529,6 +529,15 @@ describe("website docs", () => {
 });
 
 describe("website hosting", () => {
+  it("removes the Vision page and its discoverable URL", () => {
+    expect(resolve("/vision")).toBeNull();
+    expect(resolve("/vision.html")).toBeNull();
+    expect(readFileSync(join(WEBSITE, "sitemap.xml"), "utf8")).not.toContain(
+      "https://omnesis.dev/vision",
+    );
+    expect(redirects).not.toMatch(/\/vision(?:[.\s/]|$)/);
+  });
+
   it("keeps npm as the sole root package-manager lockfile", () => {
     expect(existsSync(join(REPO_ROOT, "package-lock.json"))).toBe(true);
     expect(existsSync(join(REPO_ROOT, "pnpm-lock.yaml"))).toBe(false);

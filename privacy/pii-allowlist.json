@@ -689,8 +689,7 @@
         "website/docs/updating.html",
         "website/index.html",
         "website/mobile-privacy-policy.html",
-        "website/privacy.html",
-        "website/vision.html"
+        "website/privacy.html"
       ],
       "reason": "public support address"
     },
