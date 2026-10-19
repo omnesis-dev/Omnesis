@@ -59,6 +59,62 @@ final class AgentCoordinatorGateTests: XCTestCase {
         XCTAssertNotEqual(nonText, answer)
     }
 
+    func testBatchCardsDetectOnlyNonblankAnswerTextAfterTheirPart() {
+        for tool in ["search_many", "fetch_many"] {
+            let call = AgentToolCall(
+                toolCallId: "batch",
+                tool: tool,
+                args: JSONAny(value: NSNull()),
+                argsSummary: "",
+                argsKnown: true,
+                result: nil,
+                durationMs: nil
+            )
+            let before: [AgentPart] = [.text("Earlier answer"), .tool(call), .thinking("Reasoning"), .text(" \n")]
+            XCTAssertEqual(agentLastAnswerTextIndex(in: before), 0)
+            XCTAssertFalse((agentLastAnswerTextIndex(in: before) ?? -1) > 1)
+            let after = before + [.text("Following answer")]
+            XCTAssertEqual(agentLastAnswerTextIndex(in: after), 4)
+            XCTAssertTrue((agentLastAnswerTextIndex(in: after) ?? -1) > 1)
+            XCTAssertTrue(call.pendingTail.isEmpty, "batch prose must not require a causality gate")
+        }
+        XCTAssertNil(agentLastAnswerTextIndex(in: [.thinking("Reasoning"), .text(" ")]))
+    }
+
+    func testLiveBatchProseSuppliesDismissalHintWithoutParkingText() async throws {
+        for tool in ["search_many", "fetch_many"] {
+            let coord = makeCoordinator()
+            await coord.applyEventForTesting(.messageStart(sessionId: "sess-1", messageId: "msg-1"))
+            await coord.applyEventForTesting(.toolStart(
+                sessionId: "sess-1",
+                messageId: "msg-1",
+                toolCallId: "batch",
+                tool: tool,
+                args: JSONAny(value: NSNull()),
+                argsSummary: nil
+            ))
+            let result: AgentToolResult = tool == "search_many"
+                ? .searchBatch(items: [searchResult([docRef("d1")])])
+                : .documentBatch(items: [documentResult("d1")])
+            await coord.applyEventForTesting(.toolResult(
+                sessionId: "sess-1",
+                messageId: "msg-1",
+                toolCallId: "batch",
+                result: result,
+                durationMs: 1
+            ))
+            let parentBefore = try XCTUnwrap(toolCall(coord, toolCallId: "batch"))
+            let childrenBefore = agentBatchChildCalls(for: parentBefore)
+            await coord.applyEventForTesting(.textDelta(sessionId: "sess-1", messageId: "msg-1", delta: "Following answer"))
+            guard case .assistant(let turn) = try XCTUnwrap(coord.turns.last) else { return XCTFail("expected assistant turn") }
+            XCTAssertEqual(partTags(coord), ["tool:batch", "text:Following answer"])
+            XCTAssertTrue((agentLastAnswerTextIndex(in: turn.parts) ?? -1) > 0)
+            let parentAfter = try XCTUnwrap(toolCall(coord, toolCallId: "batch"))
+            XCTAssertTrue(parentAfter.pendingTail.isEmpty, "batch text must remain nongating")
+            XCTAssertEqual(agentBatchChildCalls(for: parentAfter).map(\.id), childrenBefore.map(\.id))
+        }
+    }
+
     private func makeCoordinator() -> AgentCoordinator {
         let coord = AgentCoordinator()
         coord.installPreviewState(

@@ -463,6 +463,7 @@ fun AgentEphemeralSearchCard(
     onFlushEphemeral: (String) -> Unit,
     initialIndex: Int? = null,
     freeze: Boolean = false,
+    followingAnswerText: Boolean = false,
 ) {
     val result = call.result as? AgentToolResult.SearchResults
     val results = result?.results.orEmpty().take(MaxItemsToReveal)
@@ -472,6 +473,7 @@ fun AgentEphemeralSearchCard(
         onFlushEphemeral = onFlushEphemeral,
         initialIndex = initialIndex,
         freeze = freeze,
+        followingAnswerText = followingAnswerText,
     ) { currentIndex ->
         AgentInlineHeader(
             glyph = Icons.Outlined.Search,
@@ -566,6 +568,7 @@ fun AgentEphemeralDocumentCard(
     onFlushEphemeral: (String) -> Unit,
     initialIndex: Int? = null,
     freeze: Boolean = false,
+    followingAnswerText: Boolean = false,
 ) {
     val result = agentDocumentRead(call.result)
     val ref = result?.ref
@@ -583,6 +586,7 @@ fun AgentEphemeralDocumentCard(
         onFlushEphemeral = onFlushEphemeral,
         initialIndex = initialIndex,
         freeze = freeze,
+        followingAnswerText = followingAnswerText,
     ) { currentIndex ->
         AgentInlineHeader(
             glyph = AgentToolCards.icon(call.tool),
@@ -1202,7 +1206,9 @@ private fun formatSqlCell(cell: JsonElement): String = when (cell) {
  * OWN lifecycle. Unlike a singular ephemeral card, a batch parent does NOT act as a causality gate
  * (see [AgentReducer.BATCH_EPHEMERAL_TOOLS]): the answer text streams as soon as the durable batch
  * result lands, alongside the settling child cards. So there is no parent flush to wire — each
- * child's flush is a no-op ({@code {}}), its fade driven by its own local alpha. [freeze] passes
+ * child's flush is a no-op ({@code {}}), its fade driven by its own local alpha.
+ * [followingAnswerText] accelerates completed children after prose arrives without gating it.
+ * [freeze] passes
  * through to the children: an after-the-fact render (a finished sub-agent transcript) shows them
  * statically; a live render animates each concurrently.
  *
@@ -1215,6 +1221,7 @@ fun AgentBatchEphemeralCards(
     call: AgentToolCall,
     catalog: SourceCatalog,
     freeze: Boolean = false,
+    followingAnswerText: Boolean = false,
 ) {
     val fallbackTool = if (call.tool == "fetch_many") "fetch_document" else "search_documents"
     Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
@@ -1233,8 +1240,8 @@ fun AgentBatchEphemeralCards(
                     result = child.result,
                 )
                 when (child.tool ?: fallbackTool) {
-                    "fetch_document" -> AgentEphemeralDocumentCard(childCall, catalog, onFlushEphemeral = {}, freeze = freeze)
-                    else -> AgentEphemeralSearchCard(childCall, catalog, onFlushEphemeral = {}, freeze = freeze)
+                    "fetch_document" -> AgentEphemeralDocumentCard(childCall, catalog, onFlushEphemeral = {}, freeze = freeze, followingAnswerText = followingAnswerText)
+                    else -> AgentEphemeralSearchCard(childCall, catalog, onFlushEphemeral = {}, freeze = freeze, followingAnswerText = followingAnswerText)
                 }
             }
         }
@@ -1322,6 +1329,7 @@ private fun EphemeralCardFrame(
     onFlushEphemeral: (String) -> Unit,
     initialIndex: Int? = null,
     freeze: Boolean = false,
+    followingAnswerText: Boolean = false,
     content: @Composable ColumnScope.(currentIndex: Int?) -> Unit,
 ) {
     // Frozen (after-the-fact) cards start showing their first result immediately
@@ -1335,8 +1343,8 @@ private fun EphemeralCardFrame(
         EphemeralRotation(
             toolCallId = call.toolCallId,
             hasResult = call.result != null,
-            expedite = call.pendingTail.isNotEmpty(),
-            hasPendingAnswerText = hasPendingAnswerText(call.pendingTail),
+            expedite = followingAnswerText || call.pendingTail.isNotEmpty(),
+            hasPendingAnswerText = followingAnswerText || hasPendingAnswerText(call.pendingTail),
             count = itemCount,
             setIndex = { currentIndex = it },
             setAlpha = { alpha = it },
@@ -1345,7 +1353,7 @@ private fun EphemeralCardFrame(
     }
     EphemeralDismissContainer(
         visible = alpha > 0f,
-        fadeMs = if (hasPendingAnswerText(call.pendingTail)) PostTextFadeMs else FadeMs,
+        fadeMs = if (followingAnswerText || hasPendingAnswerText(call.pendingTail)) PostTextFadeMs else FadeMs,
     ) {
         AgentInlineActivity { content(currentIndex) }
     }

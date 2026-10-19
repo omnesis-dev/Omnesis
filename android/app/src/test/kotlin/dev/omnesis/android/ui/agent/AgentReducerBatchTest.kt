@@ -105,6 +105,9 @@ class AgentReducerBatchTest {
         // Text appended immediately; nothing parked on the parent.
         assertEquals("here is the answer", s.texts().first().text)
         assertTrue(s.tool("tc").pendingTail.isEmpty())
+        val parts = s.turns.filterIsInstance<AgentTurn.Assistant>().last().parts
+        val batchIndex = parts.indexOfFirst { it is AgentPart.Tool && it.call.toolCallId == "tc" }
+        assertTrue(lastAnswerTextIndex(parts) > batchIndex)
     }
 
     @Test
@@ -122,6 +125,9 @@ class AgentReducerBatchTest {
         // Text streamed straight onto the turn; nothing parked.
         assertEquals("here is the answer", s.texts().first().text)
         assertTrue(s.tool("tc").pendingTail.isEmpty())
+        val parts = s.turns.filterIsInstance<AgentTurn.Assistant>().last().parts
+        val batchIndex = parts.indexOfFirst { it is AgentPart.Tool && it.call.toolCallId == "tc" }
+        assertTrue(lastAnswerTextIndex(parts) > batchIndex)
         // The late child still upserts onto the batch part's children.
         assertEquals(1, s.tool("tc").children.size)
         assertEquals("d0", (s.tool("tc").children[0].result as AgentToolResult.SearchResults).results[0].documentId)

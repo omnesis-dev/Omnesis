@@ -77,9 +77,9 @@ export function ephemeralResultArrived(call) {
   return call?.result != null;
 }
 
-/** Whether a card is holding back nonblank assistant prose. */
-export function ephemeralHasPendingText(call) {
-  return (call?.pendingTail ?? []).some(
+/** Whether nonblank assistant prose is queued or already follows this card. */
+export function ephemeralHasFollowingText(call) {
+  return call?.followingText === true || (call?.pendingTail ?? []).some(
     (action) => action.kind === "agent.text.delta"
       && typeof action.payload?.delta === "string"
       && action.payload.delta.trim().length > 0,

@@ -30,4 +30,26 @@ class EphemeralDismissalTimingTest {
             AgentEvent.TextDelta(delta = "Answer"),
         )))
     }
+
+    @Test fun both_batch_tools_detect_prose_after_their_part_without_mutating_the_call() {
+        for (tool in listOf("search_many", "fetch_many")) {
+            val call = AgentToolCall(toolCallId = "batch", tool = tool)
+            val parts = listOf(AgentPart.Tool(call), AgentPart.Text("Answer"))
+            assertEquals(true, lastAnswerTextIndex(parts) > 0)
+            assertEquals(emptyList<AgentEvent>(), call.pendingTail)
+            assertEquals("batch", call.toolCallId)
+        }
+    }
+
+    @Test fun prose_before_a_batch_and_following_thinking_or_blank_text_do_not_expedite() {
+        val parts = listOf(
+            AgentPart.Text("Earlier answer"),
+            AgentPart.Tool(AgentToolCall(toolCallId = "batch", tool = "search_many")),
+            AgentPart.Thinking("Reasoning"),
+            AgentPart.Text(" \n"),
+        )
+        assertEquals(false, lastAnswerTextIndex(parts) > 1)
+        assertEquals(true, lastAnswerTextIndex(parts + AgentPart.Text("New answer")) > 1)
+    }
+
 }
