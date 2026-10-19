@@ -1150,6 +1150,11 @@ Registering an exact source quote also records that selected evidence reference'
 version for subsequent saves in the same maintenance run. Its version is captured
 inside the registration transaction. It grants no whole-source read receipt, and
 explicit dependency versions are never silently replaced.
+A save whose cited references lack a current version is refused once, at
+preflight, verification or commit, with one `revision_conflict` that separates
+missing reads from stale explicit overrides, names up to 32 of them with a count
+of the rest, and spells out the `knowledge_reference` batch calls that read them,
+so a large page is not resubmitted once per unread reference.
 
 New wiki publications and changed wiki prose also use the configured record check
 before factual verification. The decision assesses the actual draft's synthesis

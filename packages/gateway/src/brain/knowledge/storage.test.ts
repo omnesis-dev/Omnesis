@@ -23,6 +23,7 @@ import {
   knowledgeClaimFingerprint,
 } from "./storage.js";
 import { CONTEXTUAL_VERIFIER, knowledgeClaimContexts } from "./claim-context.js";
+import { MAX_LISTED_DEPENDENCY_CONFLICTS } from "./storage-validation.js";
 import type { SaveKnowledgeNodeInput } from "./types.js";
 
 let db: Database.Database;
@@ -77,7 +78,7 @@ describe("knowledge persistence", () => {
     expect(() =>
       saveKnowledgeNode(db, input("project", { expectedRevision: 1, title: "Changed" }), 11),
     ).toThrow(
-      'Stale dependency version for "source:schedule". Call knowledge_reference with {"ref":"source:schedule"}',
+      'Stale dependency version for "source:schedule" (the explicit inputVersions entry differs from the current revision). Read it and review the returned evidence in one call: knowledge_reference {"refs":["source:schedule"]}.',
     );
     expect(getKnowledgeNode(db, "project")?.title).toBe("Workshop");
     expect(getKnowledgeClaims(db, "project")[0]?.text).toBe("The workshop starts Friday.");
@@ -712,4 +713,123 @@ it("keeps unordered supporter references semantically stable but detects support
   );
   expect(changed.node.meaningRevision).toBeGreaterThan(first.node.meaningRevision);
   expect(getKnowledgeClaims(db, "project")[0]!.meaningRevision).toBe(3);
+});
+
+describe("dependency version refusals", () => {
+  const addSources = (ids: string[]) => {
+    const insert = db.prepare("INSERT INTO documents VALUES(?,?,?)");
+    for (const id of ids) insert.run(id, `Notes for ${id}.`, `hash-${id}`);
+  };
+  const refusal = (save: () => unknown) => {
+    try {
+      save();
+    } catch (error) {
+      return error as { code: string; message: string };
+    }
+    throw new Error("expected the save to be refused");
+  };
+  const claims = (refsByClaim: string[][]) =>
+    refsByClaim
+      .map(
+        (refs, i) =>
+          `<claim id="c${i}" refs="${refs.map((id) => `source:${id}`).join(" ")}">Fact ${i}.</claim>`,
+      )
+      .join("\n");
+
+  it("refuses once, naming every unread reference across claims in one read call", () => {
+    addSources(["agenda", "venue", "catering"]);
+    const error = refusal(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          markdown: claims([["schedule", "agenda"], ["venue"], ["agenda", "catering"]]),
+        }),
+        10,
+      ),
+    );
+    expect(error.code).toBe("revision_conflict");
+    expect(error.message).toContain(
+      'Dependency versions are missing or stale for 3 references; nothing was saved. Missing dependency version for "source:agenda", "source:venue", "source:catering" (not read in this run and no inputVersions entry).',
+    );
+    expect(error.message).toContain(
+      'in one call: knowledge_reference {"refs":["source:agenda","source:venue","source:catering"]}.',
+    );
+    expect(error.message).not.toContain("Stale dependency version");
+    // The guidance is given once, not once per reference.
+    expect(error.message.split("Explicit overrides are never refreshed silently")).toHaveLength(2);
+    expect(getKnowledgeNode(db, "project")).toBeNull();
+  });
+
+  it("distinguishes missing from stale explicit overrides", () => {
+    addSources(["agenda", "venue"]);
+    const error = refusal(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          markdown: claims([["schedule", "agenda"], ["venue"]]),
+          inputVersions: { "source:schedule": "hash-old", "source:venue": "hash-venue" },
+        }),
+        10,
+      ),
+    );
+    expect(error.message).toContain(
+      'Missing dependency version for "source:agenda" (not read in this run and no inputVersions entry).',
+    );
+    expect(error.message).toContain(
+      'Stale dependency version for "source:schedule" (the explicit inputVersions entry differs from the current revision).',
+    );
+    expect(error.message).toContain(
+      'knowledge_reference {"refs":["source:agenda","source:schedule"]}',
+    );
+    expect(error.message).not.toContain('"source:venue"');
+  });
+
+  it("bounds the listed references and splits the reads into valid batches", () => {
+    const ids = Array.from({ length: 40 }, (_, i) => `note${String(i).padStart(2, "0")}`);
+    addSources(ids);
+    const error = refusal(() =>
+      saveKnowledgeNode(db, input("project", { markdown: claims(ids.map((id) => [id])) }), 10),
+    );
+    expect(error.message).toContain("missing or stale for 40 references");
+    const listed = ids.slice(0, MAX_LISTED_DEPENDENCY_CONFLICTS).map((id) => `source:${id}`);
+    expect(error.message).toContain(
+      `in 2 calls: knowledge_reference ${JSON.stringify({ refs: listed.slice(0, 16) })} ; knowledge_reference ${JSON.stringify({ refs: listed.slice(16) })}.`,
+    );
+    expect(error.message).toContain(
+      "8 more conflicting references are not listed; a retry after these reads names them.",
+    );
+    expect(error.message).not.toContain(`"source:${ids[MAX_LISTED_DEPENDENCY_CONFLICTS]}"`);
+  });
+
+  it("keeps a version conflict ahead of later claim checks and earlier checks ahead of it", () => {
+    addSources(["agenda", "venue"]);
+    const later = refusal(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          markdown: claims([["agenda"], ["venue"], ["schedule"]]),
+          inputVersions: { "source:schedule": "hash-one" },
+          claims: [{ id: "c2", modality: "rumour" as never }],
+        }),
+        10,
+      ),
+    );
+    expect(later.code).toBe("revision_conflict");
+    expect(later.message).toContain('"source:agenda", "source:venue"');
+
+    const earlier = refusal(() =>
+      saveKnowledgeNode(
+        db,
+        input("project", {
+          markdown: claims([["agenda"], ["venue"]]),
+          claims: [{ id: "c0", relations: { "source:absent": "supports" } }],
+        }),
+        10,
+      ),
+    );
+    expect(earlier).toMatchObject({
+      code: "claim_invalid",
+      message: "Claim relation names a missing reference",
+    });
+  });
 });

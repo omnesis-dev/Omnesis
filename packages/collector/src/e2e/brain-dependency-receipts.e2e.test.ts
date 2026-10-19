@@ -25,12 +25,14 @@ afterAll(async () => {
   await bench?.destroy();
 }, 60_000);
 const pageId = "archive-cabinet-reference";
+const inventoryTitle = "Archive cabinet inventory";
 
 it("inherits unchanged dependency versions from a real editing read, reads new evidence, and refuses explicit stale overrides", async () => {
   let sourceId = "";
   let sourceContentHash = "";
   let supportRef = "";
   let fullSourceAttemptExercised = false;
+  let inventoryRef = "";
   let supportMarkup = "";
   let staleOverrideExercised = false;
   let fingerprintTypoExercised = false;
@@ -40,7 +42,11 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
   const maintain = knowledgePuppet({
     plan(item, ctx, steps) {
       if (item.source) {
-        if (item.source.title === "Archive cabinet storage rules") return { calls: [] };
+        if (
+          item.source.title === "Archive cabinet storage rules" ||
+          item.source.title === inventoryTitle
+        )
+          return { calls: [] };
         const support = complementaryEvidence("Archive cabinet storage rules", steps);
         if (!support.evidence) return { calls: support.calls };
         supportMarkup = `<claim id="storage" refs="${support.evidence.ref}">${support.evidence.text}</claim>`;
@@ -210,6 +216,12 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
             !fullSourceAttemptExercised
           ) {
             fullSourceAttemptExercised = true;
+            // Cite two sources this run has not read: the save is refused once, naming both.
+            inventoryRef = `source:${
+              bench!.sql
+                .prepare<[string], { id: string }>("SELECT id FROM documents WHERE title=?")
+                .get(inventoryTitle)!.id
+            }`;
             return {
               ...next,
               args: {
@@ -218,7 +230,7 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
                   ...args.node,
                   markdown:
                     original() +
-                    `<claim id="labels" refs="source:${sourceId}">Blue labels mark the upper shelf.</claim>`,
+                    `<claim id="labels" refs="source:${sourceId} ${inventoryRef}">Blue labels mark the upper shelf.</claim>`,
                 },
               },
             };
@@ -248,6 +260,11 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
       externalId: "archive-cabinet-storage",
       title: "Archive cabinet storage rules",
       content: "Store only dry folders in the cabinet; liquids belong in the utility cupboard.",
+    }),
+    email({
+      externalId: "archive-cabinet-inventory",
+      title: inventoryTitle,
+      content: "The cabinet holds twelve folders of project correspondence.",
     }),
   ]);
   await waitForComplementaryEvidence(bench, "Archive cabinet storage rules");
@@ -281,9 +298,18 @@ it("inherits unchanged dependency versions from a real editing read, reads new e
     code: "revision_conflict",
     message: "Frontier item is no longer current",
   });
+  // One refusal names every unread source and the single call that reads them.
+  const missing = [`source:${sourceId}`, inventoryRef];
   expect(stale[0]!.result).toMatchObject({
     code: "revision_conflict",
-    message: expect.stringContaining("Missing dependency version"),
+    message: expect.stringContaining(
+      `Missing dependency version for ${missing.map((r) => JSON.stringify(r)).join(", ")} (not read in this run and no inputVersions entry).`,
+    ),
+  });
+  expect(stale[0]!.result).toMatchObject({
+    message: expect.stringContaining(
+      `in one call: knowledge_reference ${JSON.stringify({ refs: missing })}.`,
+    ),
   });
   expect(stale[1]!.result).toMatchObject({
     code: "revision_conflict",

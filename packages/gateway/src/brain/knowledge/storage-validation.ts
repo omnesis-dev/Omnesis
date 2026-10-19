@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { sourceRequiresEvidenceProjection } from "../../sources/evidence-authority.js";
-import { readKnowledgeSourceEvidence } from "./source-evidence.js";
 import { createHash } from "node:crypto";
+import { sourceRequiresEvidenceProjection } from "../../sources/evidence-authority.js";
 import { ANNOTATION_CONTEXT_VERIFIER } from "../annotation-verification.js";
+import { readKnowledgeSourceEvidence } from "./source-evidence.js";
 import { readKnowledgeSourceRevision } from "./source-revision.js";
 import {
   CONTEXTUAL_VERIFIER,
@@ -12,6 +12,7 @@ import {
   knowledgeClaimContexts,
   type KnowledgeClaimContext,
 } from "./claim-context.js";
+import { ClaimMarkupError, type ParsedClaim } from "./claims.js";
 import {
   parseClaimReference,
   unavailableKnowledgeReference,
@@ -29,7 +30,6 @@ import { readKnowledgeNodeRow } from "./storage-read.js";
 import { isKnowledgeEvidenceReadable } from "./storage-source-fence.js";
 import { assertAcyclicKnowledgeClaims } from "./storage-cycles.js";
 import { knowledgeNodeFence } from "./storage-fence.js";
-import type { ParsedClaim } from "./claims.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -255,19 +255,105 @@ function referenceHasCurrentSupport(
   return valid.length > 0 && valid.every(Boolean);
 }
 
-/** Identical actionable repair guidance at preflight, verification and commit. */
-export function assertKnowledgeDependencyVersion(
-  inputVersions: Record<string, KnowledgeRevision>,
-  ref: string,
-  revision: KnowledgeRevision,
-): void {
-  if (inputVersions[ref] === revision) return;
-  const reason = Object.hasOwn(inputVersions, ref) ? "Stale" : "Missing";
-  const key = JSON.stringify(ref);
-  throw new KnowledgeStorageError(
-    "revision_conflict",
-    `${reason} dependency version for ${key}. Call knowledge_reference with {"ref":${key}} and review the returned evidence. For knowledge_save, that read records the exact version in this run: omit node.inputVersions[${key}] (or the whole map) to use its read receipt. Explicit overrides are never refreshed silently; remove a stale override or copy the exact returned revision. Scoped owner synthesis tools still require explicit inputVersions. Reconcile the affected claim if evidence changed; unchanged claims can retain their editing-read versions. Refreshing the frontier alone does not read this dependency.`,
-  );
+/** Conflicting refs named in one refusal; the rest are counted. */
+export const MAX_LISTED_DEPENDENCY_CONFLICTS = 32;
+/** knowledge_reference accepts at most 16 refs within a 16 KiB serialized budget per batch. */
+const REFERENCE_BATCH_REFS = 16;
+const REFERENCE_BATCH_BYTES = 16 * 1024;
+
+function referenceBatches(refs: readonly string[]): string[][] {
+  const batches: string[][] = [];
+  for (const ref of refs) {
+    const last = batches.at(-1);
+    if (
+      last &&
+      last.length < REFERENCE_BATCH_REFS &&
+      Buffer.byteLength(JSON.stringify([...last, ref])) <= REFERENCE_BATCH_BYTES
+    )
+      last.push(ref);
+    else batches.push([ref]);
+  }
+  return batches;
+}
+
+/**
+ * Collects every missing or stale dependency version of a proposal so it is
+ * refused once, naming all of them, instead of once per unread ref. The same
+ * guidance is given at preflight, verification and commit.
+ */
+export class KnowledgeDependencyVersions {
+  private readonly missing = new Set<string>();
+  private readonly stale = new Set<string>();
+
+  constructor(private readonly inputVersions: Record<string, KnowledgeRevision>) {}
+
+  check(ref: string, revision: KnowledgeRevision): void {
+    if (this.inputVersions[ref] === revision) return;
+    (Object.hasOwn(this.inputVersions, ref) ? this.stale : this.missing).add(ref);
+  }
+
+  /**
+   * Runs a validation pass that calls check() as it goes. A version conflict
+   * found before any other failure still takes precedence over it, as it did
+   * when the first conflicting ref was refused on its own; the refusal then
+   * also names every conflict among allRefs, whose revisions are read with
+   * revisionOf (unavailable refs are left to the next attempt's validation).
+   */
+  run<T>(
+    pass: () => T,
+    allRefs: () => Iterable<string>,
+    revisionOf: (ref: string) => KnowledgeRevision,
+  ): T {
+    let result: T | undefined;
+    try {
+      result = pass();
+    } catch (error) {
+      if (!this.missing.size && !this.stale.size) throw error;
+    }
+    if (this.missing.size || this.stale.size) {
+      for (const ref of allRefs()) {
+        try {
+          this.check(ref, revisionOf(ref));
+        } catch (error) {
+          if (!(error instanceof KnowledgeStorageError || error instanceof ClaimMarkupError))
+            throw error;
+        }
+      }
+      throw this.refusal();
+    }
+    return result as T;
+  }
+
+  private refusal(): KnowledgeStorageError {
+    const conflicts = [...this.missing, ...this.stale];
+    const listed = conflicts.slice(0, MAX_LISTED_DEPENDENCY_CONFLICTS);
+    const names = (refs: string[]) => refs.map((ref) => JSON.stringify(ref)).join(", ");
+    const listedMissing = listed.filter((ref) => this.missing.has(ref));
+    const listedStale = listed.filter((ref) => this.stale.has(ref));
+    const unlisted = conflicts.length - listed.length;
+    const calls = referenceBatches(listed).map(
+      (batch) => `knowledge_reference ${JSON.stringify({ refs: batch })}`,
+    );
+    return new KnowledgeStorageError(
+      "revision_conflict",
+      [
+        `Dependency versions are missing or stale for ${conflicts.length} reference${conflicts.length === 1 ? "" : "s"}; nothing was saved.`,
+        listedMissing.length
+          ? `Missing dependency version for ${names(listedMissing)} (not read in this run and no inputVersions entry).`
+          : "",
+        listedStale.length
+          ? `Stale dependency version for ${names(listedStale)} (the explicit inputVersions entry differs from the current revision).`
+          : "",
+        unlisted > 0
+          ? `${unlisted} more conflicting reference${unlisted === 1 ? " is" : "s are"} not listed; a retry after these reads names them.`
+          : "",
+        `Read ${listed.length === 1 ? "it" : "them"} and review the returned evidence in ${calls.length === 1 ? "one call" : `${calls.length} calls`}: ${calls.join(" ; ")}. Retry deferredRefs from a batch result in another call.`,
+        "For knowledge_save, those reads record the exact versions in this run: omit their node.inputVersions entries (or the whole map) to use the read receipts. Explicit overrides are never refreshed silently; remove a stale override or copy the exact returned revision. Scoped owner synthesis tools still require explicit inputVersions. Reconcile affected claims if evidence changed; unchanged claims can retain their editing-read versions. Refreshing the frontier alone does not read these dependencies.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
 }
 
 export function validateKnowledgeDependencies(
@@ -287,100 +373,112 @@ export function validateKnowledgeDependencies(
     );
   const dependencies: KnowledgeDependency[] = [];
   const verificationBudget = { left: 8192 };
-  for (const claim of claims) {
-    const state = states.get(claim.id);
-    if (Object.keys(state?.relations ?? {}).some((ref) => !claim.refs.some((r) => r.raw === ref)))
-      throw new KnowledgeStorageError("claim_invalid", "Claim relation names a missing reference");
-    for (const ref of claim.refs) {
-      const target = resolveKnowledgeReference(db, ref);
-      assertKnowledgeDependencyVersion(input.inputVersions, ref.raw, target.revision);
-      const relation = state?.relations?.[ref.raw] ?? "supports";
-      if (
-        state?.verification?.status === "verified" &&
-        state.supportLogic !== "any" &&
-        target.stale &&
-        relation === "supports"
-      )
-        throw new KnowledgeStorageError(
-          "reference_invalid",
-          "Stale synthesis cannot verify a new claim",
-        );
-      dependencies.push({
-        nodeId: input.id,
-        claimId: claim.id,
-        ref: ref.raw,
-        targetId: target.targetId,
-        targetKind: target.targetKind,
-        relation,
-        inputVersion: target.revision,
-      });
-    }
-    if (
-      state?.attribution != null &&
-      (typeof state.attribution !== "string" ||
-        !state.attribution.trim() ||
-        state.attribution.length > 1000)
-    )
-      throw new KnowledgeStorageError("claim_invalid", "Invalid claim attribution");
-    if (
-      state?.modality !== undefined &&
-      ![
-        "observation",
-        "reported",
-        "proposal",
-        "commitment",
-        "inference",
-        "recommendation",
-        "question",
-      ].includes(state.modality)
-    )
-      throw new KnowledgeStorageError("claim_invalid", "Invalid claim modality");
-    if (
-      state?.epistemicStatus !== undefined &&
-      !["asserted", "disputed", "unsupported"].includes(state.epistemicStatus)
-    )
-      throw new KnowledgeStorageError("claim_invalid", "Invalid claim epistemic status");
-    if (
-      state?.verification?.status === "verified" &&
-      (state.epistemicStatus ?? "asserted") !== "asserted"
-    )
-      throw new KnowledgeStorageError(
-        "claim_invalid",
-        "Disputed or unsupported claims cannot carry verified support",
-      );
-    if (state?.verification?.status === "verified") {
-      const supports = claim.refs.filter(
-        (ref) => (state.relations?.[ref.raw] ?? "supports") === "supports",
-      );
-      const witnesses = state.verification.witnessRefs ?? [];
-      const sufficient =
-        state.supportLogic === "any"
-          ? supports.filter((ref) => witnesses.includes(ref.raw))
-          : supports;
-      if (state.supportLogic === "any" && (witnesses.length !== 1 || sufficient.length !== 1))
-        throw new KnowledgeStorageError(
-          "claim_invalid",
-          "Any-support verification requires its exact accepted witness",
-        );
-      const valid = sufficient.map((ref) =>
-        referenceHasCurrentSupport(db, ref, new Set(), verificationBudget),
-      );
-      if (!valid.length || !valid.every(Boolean))
-        throw new KnowledgeStorageError(
-          "revision_conflict",
-          "Claim support changed during verification",
-        );
-    }
-    if (
-      state?.verification &&
-      state.verification.fingerprint !==
-        knowledgeClaimFingerprint(claim, input.inputVersions, state, contexts.get(claim.id))
-    )
-      throw new KnowledgeStorageError(
-        "revision_conflict",
-        "Verification does not match current claim and evidence",
-      );
-  }
+  const versions = new KnowledgeDependencyVersions(input.inputVersions);
+  versions.run(
+    () => validateClaims(),
+    () => claims.flatMap((claim) => claim.refs.map((ref) => ref.raw)),
+    (ref) => resolveKnowledgeReference(db, parseClaimReference(ref)).revision,
+  );
   assertAcyclicKnowledgeClaims(db, input.id, claims, dependencies);
   return dependencies;
+
+  function validateClaims(): void {
+    for (const claim of claims) {
+      const state = states.get(claim.id);
+      if (Object.keys(state?.relations ?? {}).some((ref) => !claim.refs.some((r) => r.raw === ref)))
+        throw new KnowledgeStorageError(
+          "claim_invalid",
+          "Claim relation names a missing reference",
+        );
+      for (const ref of claim.refs) {
+        const target = resolveKnowledgeReference(db, ref);
+        versions.check(ref.raw, target.revision);
+        const relation = state?.relations?.[ref.raw] ?? "supports";
+        if (
+          state?.verification?.status === "verified" &&
+          state.supportLogic !== "any" &&
+          target.stale &&
+          relation === "supports"
+        )
+          throw new KnowledgeStorageError(
+            "reference_invalid",
+            "Stale synthesis cannot verify a new claim",
+          );
+        dependencies.push({
+          nodeId: input.id,
+          claimId: claim.id,
+          ref: ref.raw,
+          targetId: target.targetId,
+          targetKind: target.targetKind,
+          relation,
+          inputVersion: target.revision,
+        });
+      }
+      if (
+        state?.attribution != null &&
+        (typeof state.attribution !== "string" ||
+          !state.attribution.trim() ||
+          state.attribution.length > 1000)
+      )
+        throw new KnowledgeStorageError("claim_invalid", "Invalid claim attribution");
+      if (
+        state?.modality !== undefined &&
+        ![
+          "observation",
+          "reported",
+          "proposal",
+          "commitment",
+          "inference",
+          "recommendation",
+          "question",
+        ].includes(state.modality)
+      )
+        throw new KnowledgeStorageError("claim_invalid", "Invalid claim modality");
+      if (
+        state?.epistemicStatus !== undefined &&
+        !["asserted", "disputed", "unsupported"].includes(state.epistemicStatus)
+      )
+        throw new KnowledgeStorageError("claim_invalid", "Invalid claim epistemic status");
+      if (
+        state?.verification?.status === "verified" &&
+        (state.epistemicStatus ?? "asserted") !== "asserted"
+      )
+        throw new KnowledgeStorageError(
+          "claim_invalid",
+          "Disputed or unsupported claims cannot carry verified support",
+        );
+      if (state?.verification?.status === "verified") {
+        const supports = claim.refs.filter(
+          (ref) => (state.relations?.[ref.raw] ?? "supports") === "supports",
+        );
+        const witnesses = state.verification.witnessRefs ?? [];
+        const sufficient =
+          state.supportLogic === "any"
+            ? supports.filter((ref) => witnesses.includes(ref.raw))
+            : supports;
+        if (state.supportLogic === "any" && (witnesses.length !== 1 || sufficient.length !== 1))
+          throw new KnowledgeStorageError(
+            "claim_invalid",
+            "Any-support verification requires its exact accepted witness",
+          );
+        const valid = sufficient.map((ref) =>
+          referenceHasCurrentSupport(db, ref, new Set(), verificationBudget),
+        );
+        if (!valid.length || !valid.every(Boolean))
+          throw new KnowledgeStorageError(
+            "revision_conflict",
+            "Claim support changed during verification",
+          );
+      }
+      if (
+        state?.verification &&
+        state.verification.fingerprint !==
+          knowledgeClaimFingerprint(claim, input.inputVersions, state, contexts.get(claim.id))
+      )
+        throw new KnowledgeStorageError(
+          "revision_conflict",
+          "Verification does not match current claim and evidence",
+        );
+    }
+  }
 }
