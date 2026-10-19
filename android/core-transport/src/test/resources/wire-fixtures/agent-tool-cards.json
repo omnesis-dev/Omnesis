@@ -318,5 +318,10 @@
     "presentation": "ephemeral",
     "label": "Save wiki page",
     "icon": "wiki"
+  },
+  "knowledge_edit": {
+    "presentation": "ephemeral",
+    "label": "Edit wiki page",
+    "icon": "wiki"
   }
 }

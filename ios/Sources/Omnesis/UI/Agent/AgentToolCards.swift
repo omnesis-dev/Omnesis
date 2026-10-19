@@ -99,6 +99,7 @@ enum AgentToolCards {
         "knowledge_candidate_decide": ephemeral("Decide on a page idea", "wiki"),
         "knowledge_propose_page": ephemeral("Propose wiki page", "wiki"),
         "knowledge_save": ephemeral("Save wiki page", "wiki"),
+        "knowledge_edit": ephemeral("Edit wiki page", "wiki"),
     ]
 
     /// Names older conversations still carry for a renamed tool; they read as

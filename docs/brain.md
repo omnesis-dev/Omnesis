@@ -321,6 +321,23 @@ relative window, or explicitly retain an unknown anchor. The date on a document
 does not establish the date of an event it discusses.
 Routine notifications remain available through the time index; a wiki selects
 durable context and material exceptions rather than copying an activity log.
+A change to part of an existing wiki or root page goes through `knowledge_edit`
+rather than a full `knowledge_save`: the model sends an ordered list of
+`replace_section`, `insert_section`, `delete_section` or `replace_text` edits,
+and the gateway splices them into the tagged Markdown of the run's own
+`knowledge_fetch({id, editing:true})` read at `node.expectedRevision`
+(`wiki-edit.ts`). A section runs from its heading to the next heading of the
+same or a higher level and carries the claim tags that open just before its
+heading; a section edge that falls inside any other claim, a missing or
+ambiguous heading, and replacement text that does not occur exactly once are
+refused as tool errors before anything is saved. The spliced page is then one
+full replacement, so every check below — claim preservation, dependency
+versions, navigation, value, outcome and frontier — applies unchanged, and the
+result names only the new revision and the sections changed. Each wiki or root
+write logs one content-free line, `Wiki write via knowledge_edit[<ops>] on <id>:
+rN→rM, <before>→<after> chars` or `Wiki write via knowledge_save on <id>: …`,
+and each edit refused by the edit or save checks logs `Wiki edit refused on <id> (<code>): <ops>`, so the
+share of targeted edits can be read from the gateway log.
 Model-authored wiki and root replacements preserve existing claim identities
 unless `node.claimRemovals` explicitly names each omitted claim and its reason.
 `reviewedClaimIds` records review, not deletion permission. The writer rechecks
@@ -1150,6 +1167,11 @@ Registering an exact source quote also records that selected evidence reference'
 version for subsequent saves in the same maintenance run. Its version is captured
 inside the registration transaction. It grants no whole-source read receipt, and
 explicit dependency versions are never silently replaced.
+A save whose cited references lack a current version is refused once, at
+preflight, verification or commit, with one `revision_conflict` that separates
+missing reads from stale explicit overrides, names up to 32 of them with a count
+of the rest, and spells out the `knowledge_reference` batch calls that read them,
+so a large page is not resubmitted once per unread reference.
 
 New wiki publications and changed wiki prose also use the configured record check
 before factual verification. The decision assesses the actual draft's synthesis

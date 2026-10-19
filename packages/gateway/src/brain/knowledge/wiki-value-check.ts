@@ -14,7 +14,7 @@ import { wikiFactualRepairSnapshot, type WikiRepairAssessment } from "./wiki-fac
 import { parseClaimMarkup } from "./claims.js";
 import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 import { getKnowledgeNode } from "./storage.js";
-import { assertKnowledgeDependencyVersion } from "./storage-validation.js";
+import { KnowledgeDependencyVersions } from "./storage-validation.js";
 import { KnowledgeStorageError, type SaveKnowledgeNodeInput } from "./types.js";
 import type { WikiRecordContext } from "../record-check/wiki-context.js";
 import type { CheckRecord } from "../record-check/check.js";
@@ -76,18 +76,26 @@ export class WikiValueCheck {
       );
       const references: WikiRecordContext["references"] = [];
       const versions: Record<string, string | number> = {};
-      if (refs.length <= MAX_REFERENCES)
-        for (const ref of refs) {
-          const view = this.service.reference(ref.raw);
-          assertKnowledgeDependencyVersion(node.inputVersions, ref.raw, view.revision);
-          versions[ref.raw] = view.revision;
-          if (references.length < 16)
-            references.push({
-              ref: ref.raw,
-              text: view.text.slice(0, 1000),
-              truncated: view.text.length > 1000,
-            });
-        }
+      if (refs.length <= MAX_REFERENCES) {
+        const dependencyVersions = new KnowledgeDependencyVersions(node.inputVersions);
+        dependencyVersions.run(
+          () => {
+            for (const ref of refs) {
+              const view = this.service.reference(ref.raw);
+              dependencyVersions.check(ref.raw, view.revision);
+              versions[ref.raw] = view.revision;
+              if (references.length < 16)
+                references.push({
+                  ref: ref.raw,
+                  text: view.text.slice(0, 1000),
+                  truncated: view.text.length > 1000,
+                });
+            }
+          },
+          () => refs.map((ref) => ref.raw),
+          (ref) => this.service.reference(ref).revision,
+        );
+      }
       const context: WikiRecordContext | undefined =
         capture &&
         parsed.text.length <= MAX_DRAFT &&

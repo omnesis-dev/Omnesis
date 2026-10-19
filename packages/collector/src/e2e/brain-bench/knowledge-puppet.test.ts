@@ -280,6 +280,66 @@ describe("knowledge puppet protocol", () => {
       });
     },
   );
+  it("settles, scopes and stops on a targeted knowledge_edit exactly like knowledge_save", () => {
+    const next = knowledgePuppet({
+      plan: (item) => ({
+        calls: [
+          call("knowledge_edit", {
+            inputFingerprint: item.inputFingerprint,
+            node: {
+              id: item.id,
+              expectedRevision: 1,
+              edits: [{ op: "replace_text", old: "Tagged", new: "Edited" }],
+            },
+          }),
+        ],
+      }),
+    });
+    const node = {
+      id: "page",
+      kind: "wiki",
+      title: "Workshop",
+      markdown: "Tagged page",
+      revision: 1,
+      ownerId: null,
+    };
+    const offered = frontier([
+      {
+        id: "page",
+        inputFingerprint: "fp",
+        inputVersions: {},
+        depth: 0,
+        pendingClaimIds: ["date"],
+        node,
+      },
+    ]);
+    const fetched: ToolStep = {
+      name: "knowledge_fetch",
+      args: { id: "page", editing: true },
+      result: { kind: "structured", data: node },
+    };
+    const edit = next(ctx, [offered, fetched]);
+    expect(edit).toMatchObject({
+      kind: "tool",
+      name: "knowledge_edit",
+      args: { reviewedClaimIds: ["date"] },
+    });
+    if (edit?.kind !== "tool") throw new Error("expected an edit call");
+    const saved: ToolStep = {
+      name: "knowledge_edit",
+      args: edit.args,
+      result: { kind: "structured", data: { node: { id: "page", revision: 2 } } },
+    };
+    expect(next(ctx, [offered, fetched, saved])).toMatchObject({
+      kind: "tool",
+      name: "knowledge_next_frontier",
+    });
+    const refused: ToolStep = {
+      ...saved,
+      result: { kind: "error", code: "claim_invalid", message: "Refused" },
+    };
+    expect(next(ctx, [offered, fetched, refused])).toMatchObject({ kind: "final" });
+  });
   it("only finishes when the real engine returns done", () => {
     const next = knowledgePuppet({ plan: () => ({ calls: [] }) });
     expect(next(ctx, [])).toMatchObject({ kind: "tool", name: "knowledge_next_frontier" });

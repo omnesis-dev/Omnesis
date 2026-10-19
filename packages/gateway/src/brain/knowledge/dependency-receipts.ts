@@ -77,6 +77,11 @@ export class KnowledgeDependencyReceipts {
       this.references.delete(this.references.keys().next().value!);
   }
 
+  /** The node exactly as this run's latest editing read returned it, if still retained. */
+  editingRead(id: string): KnowledgeEditingSnapshot["node"] | undefined {
+    return this.snapshots.get(id)?.snapshot.node;
+  }
+
   /** Whether this run has read the record at this exact reference. */
   hasRead(ref: string): boolean {
     return this.references.has(ref);

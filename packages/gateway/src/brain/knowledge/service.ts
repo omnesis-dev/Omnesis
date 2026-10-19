@@ -19,7 +19,7 @@ import { raceAbort } from "../decision-call.js";
 import { assertWikiRepairAssessment } from "./wiki-factual-repair.js";
 import { KnowledgeVerificationTimeoutError, verificationFailure } from "./verification-failure.js";
 import { CONTEXTUAL_VERIFIER, knowledgeClaimContexts } from "./claim-context.js";
-import { assertKnowledgeDependencyVersion, knowledgeHash } from "./storage-validation.js";
+import { KnowledgeDependencyVersions, knowledgeHash } from "./storage-validation.js";
 import { assertKnowledgeSavePreflight } from "./save-preflight.js";
 import { readKnowledgeOwner } from "./owner-adapters.js";
 import { parseClaimMarkup } from "./claims.js";
@@ -238,15 +238,24 @@ export class KnowledgeService {
     } catch {
       this.deps.log.warn("Knowledge verifier unavailable; retaining unverified claims");
     }
+    const allRefs = () => parsed.claims.flatMap((claim) => claim.refs.map((ref) => ref.raw));
+    const currentRevision = (ref: string) => this.verificationReference(ref).revision;
     for (const claim of parsed.claims) {
       const previous = previousClaims.get(claim.id);
       const state = effectiveStates.get(claim.id)!;
       const support: VerificationReferenceView[] = [];
-      for (const ref of claim.refs) {
-        const view = this.verificationReference(ref.raw);
-        assertKnowledgeDependencyVersion(input.inputVersions, ref.raw, view.revision);
-        if ((state.relations?.[ref.raw] ?? "supports") === "supports") support.push(view);
-      }
+      const versions = new KnowledgeDependencyVersions(input.inputVersions);
+      versions.run(
+        () => {
+          for (const ref of claim.refs) {
+            const view = this.verificationReference(ref.raw);
+            versions.check(ref.raw, view.revision);
+            if ((state.relations?.[ref.raw] ?? "supports") === "supports") support.push(view);
+          }
+        },
+        allRefs,
+        currentRevision,
+      );
       if ((state.epistemicStatus ?? "asserted") !== "asserted") {
         states.push(state);
         continue;
@@ -370,15 +379,22 @@ export class KnowledgeService {
             // A verdict may quote evidence removed or changed during its await.
             // Recheck every support before returning any derived diagnostic prose.
             this.deps.db.transaction(() => {
-              for (const view of support) {
-                const current = this.verificationReference(view.ref);
-                assertKnowledgeDependencyVersion(input.inputVersions, view.ref, current.revision);
-                if (current.stale || !current.verified)
-                  throw new KnowledgeStorageError(
-                    "revision_conflict",
-                    "Claim support changed during assessment; read current evidence before retrying",
-                  );
-              }
+              const versions = new KnowledgeDependencyVersions(input.inputVersions);
+              versions.run(
+                () => {
+                  for (const view of support) {
+                    const current = this.verificationReference(view.ref);
+                    versions.check(view.ref, current.revision);
+                    if (current.stale || !current.verified)
+                      throw new KnowledgeStorageError(
+                        "revision_conflict",
+                        "Claim support changed during assessment; read current evidence before retrying",
+                      );
+                  }
+                },
+                allRefs,
+                currentRevision,
+              );
             })();
           }
           throw new KnowledgeStorageError(

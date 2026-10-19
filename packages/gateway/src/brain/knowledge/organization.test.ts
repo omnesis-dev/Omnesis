@@ -189,6 +189,35 @@ describe("candidate decision debt", () => {
     expect(listOrganizationAdmissions(db, { ...options, now: 5011 })).toHaveLength(1);
   });
 
+  it("leaves a candidate to the running batch still working its evidence", () => {
+    const first = candidate();
+    const options = { now: 11, limit: 5, retryMs: 1000, initialDelayMs: 10 };
+    enqueueKnowledgeWork(
+      db,
+      {
+        id: "interpretation",
+        subjectId: "evidence",
+        subjectKind: "source",
+        reason: "change",
+        inputRevision: "v1",
+        tier: "immediate",
+        dueAt: 1,
+      },
+      1,
+    );
+    db.exec(
+      "INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at) VALUES('batch','run','test-fingerprint','immediate','running',1,1)",
+    );
+    db.exec(
+      "UPDATE knowledge_work SET batch_id='batch',status='batched' WHERE id='interpretation'",
+    );
+    expect(listOrganizationAdmissions(db, options)).toEqual([]);
+    db.exec("UPDATE knowledge_work SET status='completed' WHERE id='interpretation'");
+    expect(listOrganizationAdmissions(db, options)).toEqual([
+      { kind: "candidate", id: first.id, revision: 1 },
+    ]);
+  });
+
   it("binds only admitted work and carries that obligation through a retry", () => {
     const first = candidate();
     const admission = pending()[0]!;
