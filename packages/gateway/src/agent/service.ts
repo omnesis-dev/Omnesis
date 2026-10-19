@@ -1342,7 +1342,8 @@ export class AgentService {
     for (const [id, entry] of this.sessions) {
       if (entry.callerId !== callerId) continue;
       perCaller++;
-      if (entry.session.busy || this.deepResearchActive.has(id)) continue;
+      if (entry.session.busy || this.deepResearchActive.has(id) || this.controls.active(id))
+        continue;
       if (!oldestIdle || entry.lastActive < oldestIdle.lastActive) {
         oldestIdle = { id, lastActive: entry.lastActive };
       }
@@ -3273,19 +3274,17 @@ export class AgentService {
     // Read once: the parent could be evicted during the prompt await, and a
     // second lookup would then hand the finalizer a prompt and a tool set built
     // in different zones.
-    const parentZone = this.sessions.get(input.sessionId)?.session.timeZone;
-    const finalPrompt = await this.resolveChatPrompt("interactive", { timeZone: parentZone });
+    const parent = this.sessions.get(input.sessionId);
+    const parentZone = parent?.session.timeZone;
+    const parentProfile = parent?.promptProfile ?? "voice";
+    const finalPrompt = await this.resolveChatPrompt(parentProfile, { timeZone: parentZone });
     const finalizer = new AgentSession({
       // Keep the parent session id in tool context, so normal annotate_many
       // events and their durable Timeline records belong to the parent turn.
       sessionId: input.sessionId,
       backend,
       tools: [
-        ...this.buildInteractiveTools(
-          input.sessionId,
-          "interactive",
-          this.sessions.get(input.sessionId)?.meta.origin?.kind,
-        ),
+        ...this.buildInteractiveTools(input.sessionId, parentProfile, parent?.meta.origin?.kind),
       ],
       systemPrompt: finalPrompt,
       timeZone: parentZone,

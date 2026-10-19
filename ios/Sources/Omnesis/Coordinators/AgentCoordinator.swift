@@ -816,6 +816,17 @@ public final class AgentCoordinator {
         }
     }
 
+    private func adoptConversationId(_ id: String) {
+        if sessionId != id {
+            conversationControls = nil
+            conversationControlsSupported = false
+        }
+        let previousDraftKey = composerDraftKey
+        let wasNewConversation = sessionId == nil
+        sessionId = id
+        if wasNewConversation, submitting { draftStore.move(from: previousDraftKey, to: composerDraftKey) }
+    }
+
     private func applyCreatedSession(
         _ session: CreateSessionResponse,
         preserving optimisticSend: PendingSessionMint? = nil
@@ -824,14 +835,7 @@ public final class AgentCoordinator {
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
         cancelError = nil
-        if sessionId != session.sessionId {
-            conversationControls = nil
-            conversationControlsSupported = false
-        }
-        let previousDraftKey = composerDraftKey
-        let wasNewConversation = sessionId == nil
-        sessionId = session.sessionId
-        if wasNewConversation, submitting { draftStore.move(from: previousDraftKey, to: composerDraftKey) }
+        adoptConversationId(session.sessionId)
         activeConversationPinned = conversations
             .first(where: { $0.sessionId == session.sessionId })?.pinned ?? activeConversationPinned
         // The surface now shows this conversation — covers an explicit open,

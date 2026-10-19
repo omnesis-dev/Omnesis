@@ -23,7 +23,12 @@ final class StoreSubmissionConfigurationTests: XCTestCase {
             let plist = try dictionary(at: iosRoot.appendingPathComponent(name))
             XCTAssertNil(plist["NSAppTransportSecurity"], "\(name) must not weaken ATS")
             XCTAssertEqual(plist["CFBundleShortVersionString"] as? String, releaseVersion)
-            XCTAssertEqual(plist["CFBundleVersion"] as? String, buildVersion)
+            let shippingBuild = try XCTUnwrap(plist["CFBundleVersion"] as? String)
+            XCTAssertGreaterThan(try XCTUnwrap(Int(shippingBuild)), 0)
+            // Demo has its own App Store Connect build sequence.
+            if name == "Info.plist" {
+                XCTAssertEqual(shippingBuild, buildVersion)
+            }
 
             for key in [
                 "NSHealthShareUsageDescription",

@@ -18,7 +18,7 @@ function gate() {
   });
   return { promise, resolve };
 }
-async function setup() {
+async function setup(maxSessionsPerCaller?: number) {
   const dir = await mkdtemp(join(tmpdir(), "omnesis-controls-"));
   dirs.push(dir);
   const store = new FsConversationStore(dir);
@@ -73,6 +73,7 @@ async function setup() {
       store,
       sessionIdGen: () => "controls-session",
       idleTimeoutMs: 60_000,
+      maxSessionsPerCaller,
     });
     services.push(service);
     return service;
@@ -282,4 +283,29 @@ it("interrupts once to send accumulated followups together and keeps receipts ac
   expect(h.turns).toHaveLength(2);
   const record = await h.store.load(sessionId);
   expect(record?.messages.filter((m) => m.role === "user")).toHaveLength(2);
+});
+
+it("counts a session accepting durable work against the caller cap", async () => {
+  const h = await setup(1);
+  const { sessionId } = await h.service.createSession("device:A");
+  const entered = gate();
+  const release = gate();
+  const save = h.store.save.bind(h.store);
+  vi.spyOn(h.store, "save").mockImplementationOnce(async (record) => {
+    entered.resolve();
+    await release.promise;
+    await save(record);
+  });
+  const accepting = h.service.submitMessage("device:A", sessionId, request("first", "Reserved"));
+  await entered.promise;
+  try {
+    await expect(h.service.createSession("device:A")).rejects.toMatchObject({
+      code: "session_cap_exceeded",
+    });
+  } finally {
+    release.resolve();
+    await accepting;
+  }
+  await vi.waitFor(() => expect(h.turns.map((turn) => turn.text)).toEqual(["Reserved"]));
+  h.turns[0]!.finish();
 });

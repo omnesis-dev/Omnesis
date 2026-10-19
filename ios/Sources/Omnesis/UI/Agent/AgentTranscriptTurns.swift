@@ -63,6 +63,7 @@ struct AgentTranscriptTurns: View {
             }
         }
     }
+
     private func editableBubble(_ turn: AgentTurn) -> some View {
         ConversationEditableTurn(
             turn: turn,
