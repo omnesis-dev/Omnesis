@@ -449,8 +449,8 @@ function undo(
   const loop = getOpenLoop(db, entry.loop_id);
   if (!loop) return fail("not_found", "the task no longer exists");
   if (event.kind === "created") {
-    // The creation's signal goes with the task: the owner took it back.
-    supersedeInterestSignals(db, { loopId: loop.id }, now);
+    // The loop is removed outright, and `deleteOpenLoop` takes the
+    // creation's signal with it: the owner took the task back.
     deleteOpenLoop(db, loop.id, { retire: false, now });
     return {
       ok: true,
