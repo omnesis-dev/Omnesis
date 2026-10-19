@@ -366,6 +366,41 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
         XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "New unsent draft")
     }
 
+    func testFreeTextClarificationAcknowledgementPreservesRawDraftAndNewerEdits() async throws {
+        for status in [202, 503] {
+            for editWhilePending in [false, true] {
+                let coordinator = coordinator()
+                let original = "  Compare a custom period \n"
+                let newer = "A newer draft "
+                ConversationControlsStub.requests = []
+                ConversationControlsStub.responses["controls"] = (
+                    200,
+                    #"""
+                    {"busy":false,"pendingClarification":{"id":"question","question":"Which period?","choices":[
+                      {"label":"This month"},{"label":"This year"},{"label":"Last year"}]},"queuedMessages":[]}
+                    """#
+                )
+                ConversationControlsStub.responses["submissions"] = (status, "{}")
+                await coordinator.refreshConversationControls()
+                coordinator.saveDraft(original, for: coordinator.composerDraftKey)
+                ConversationControlsStub.beforeResponse = { request in
+                    if request.url?.lastPathComponent == "submissions", editWhilePending {
+                        coordinator.saveDraft(newer, for: coordinator.composerDraftKey)
+                    }
+                }
+                let sent = await coordinator.submitDraft(text: original)
+                XCTAssertEqual(sent, status == 202)
+                let expected = editWhilePending ? newer : (status == 202 ? "" : original)
+                XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), expected)
+                let request = try XCTUnwrap(ConversationControlsStub.requests.first { $0.url?.lastPathComponent == "submissions" })
+                let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])
+                XCTAssertEqual(body["text"] as? String, "Compare a custom period")
+                XCTAssertEqual(body["clarificationId"] as? String, "question")
+                ConversationControlsStub.beforeResponse = nil
+            }
+        }
+    }
+
     func testSendNowDoesNotCallOlderGateway() async {
         let coordinator = coordinator()
         ConversationControlsStub.responses["controls"] = (

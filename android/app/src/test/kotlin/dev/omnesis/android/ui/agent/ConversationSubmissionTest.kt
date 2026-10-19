@@ -36,6 +36,7 @@ class ConversationSubmissionTest {
     private lateinit var server: MockWebServer
     private val coordinators = mutableListOf<AgentCoordinator>()
     private val submissions = CopyOnWriteArrayList<String>()
+    private var submissionReply: (() -> MockResponse)? = null
     private var sendNowReply: (() -> MockResponse)? = null
     private var reject = true
     private var oldGateway = false
@@ -51,7 +52,7 @@ class ConversationSubmissionTest {
                     else MockResponse().setBody(controlsBody)
                 request.path?.endsWith("/submissions") == true -> {
                     submissions += request.body.readUtf8()
-                    if (reject) MockResponse().setResponseCode(503).setBody("""{"error":"UNAVAILABLE","message":"Unavailable"}""")
+                    submissionReply?.invoke() ?: if (reject) MockResponse().setResponseCode(503).setBody("""{"error":"UNAVAILABLE","message":"Unavailable"}""")
                     else MockResponse().setBody("""{"submission":{"id":"accepted","text":"Use annual totals","status":"queued"}}""")
                 }
                 request.path?.endsWith("/seen") == true -> MockResponse().setBody("""{"ok":true}""")
@@ -136,6 +137,39 @@ class ConversationSubmissionTest {
         assertTrue(coord.state.value.hiddenQueuedSubmissionIds.isEmpty())
         await { coord.state.value.visibleQueuedMessages.size == 1 }
         assertEquals("queued", coord.state.value.visibleQueuedMessages.single().id)
+    }
+
+    @Test fun typedClarificationClearsImmediatelyAndLateAcknowledgementPreservesNewDraft() {
+        for (success in listOf(true, false)) {
+            val entered = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            submissionReply = {
+                entered.countDown()
+                check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                if (success) MockResponse().setBody("""{"submission":{"id":"accepted","text":"Use the annual totals","status":"queued"}}""")
+                else MockResponse().setResponseCode(503).setBody("""{"error":"UNAVAILABLE","message":"Unavailable"}""")
+            }
+            val store = AgentComposerStore()
+            val coord = coordinator(store)
+            controlsBody = """{"busy":true,"pendingClarification":{"id":"period","question":"Which period?","choices":[{"label":"Quarter"},{"label":"Year"}]},"queuedMessages":[]}"""
+            coord.conversationSurfaceVisible("session-one", true)
+            await { coord.state.value.controls.pendingClarification != null }
+            coord.updateDraft("Use the annual totals", null)
+            coord.send("Use the annual totals")
+            coord.finishDraftSubmission()
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals("", coord.state.value.composer.text)
+            assertEquals("", store.read("", "session-one").text)
+            val pending = coord.state.value.composer.pending.single()
+            assertEquals("period", pending.clarificationId)
+            coord.updateDraft("Next question", "deep-research")
+            release.countDown()
+            await { coord.state.value.submissionsSending.isEmpty() }
+            assertEquals("Next question", coord.state.value.composer.text)
+            assertEquals("deep-research", coord.state.value.composer.commandId)
+            assertEquals(if (success) emptyList() else listOf(pending), coord.state.value.composer.pending)
+            coord.teardown()
+        }
     }
 
     @Test fun uncertainDeliverySurvivesCoordinatorRecreationAndRetriesSameId() {

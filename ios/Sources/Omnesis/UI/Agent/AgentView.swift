@@ -1886,7 +1886,9 @@ struct AgentComposer: View {
         let command = armedCommand
         // Per-message: the pill governs THIS send only, then clears.
         armedCommand = nil
-        onSend(trimmed, command)
+        // Keep the exact binding snapshot for acknowledgement reconciliation;
+        // the coordinator trims only the outbound message.
+        onSend(text, command)
     }
 }
 

@@ -8,6 +8,7 @@ import { parseHTML } from "linkedom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationControls } from "./conversation-controls.js";
 import { Composer, MessageBubble } from "./parts.js";
+import { writeConversationDraft } from "../../lib/conversation-draft.js";
 
 // Sanitization itself is covered in the portal browser suite.
 vi.mock("dompurify", () => ({ default: { sanitize: (html) => html } }));
@@ -249,4 +250,58 @@ describe("conversation controls", () => {
     );
     expect(host.querySelector("textarea").value).toBe("");
   });
+  it("clears an acknowledged free-text answer including surrounding whitespace", async () => {
+    setup();
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    await act(async () => render(h(Composer, { draftKey: "question-answer", onSubmit }), host));
+    await act(async () => {
+      const input = host.querySelector("textarea");
+      input.value = "  Focus on travel  ";
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await act(async () => host.querySelector("form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    expect(onSubmit).toHaveBeenCalledWith("Focus on travel", {});
+    expect(host.querySelector("textarea").value).toBe("");
+    await act(async () => render(null, host));
+    await act(async () => render(h(Composer, { draftKey: "question-answer", onSubmit }), host));
+    expect(host.querySelector("textarea").value).toBe("");
+  });
+
+  it("does not clear another conversation's identical draft after a delayed acknowledgement", async () => {
+    setup();
+    let acknowledge;
+    const onSubmit = vi.fn(() => new Promise((resolve) => { acknowledge = resolve; }));
+    await act(async () => render(h(Composer, { draftKey: "first", onSubmit }), host));
+    const enter = async () => act(async () => {
+      const input = host.querySelector("textarea");
+      input.value = "Same text";
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await enter();
+    await act(async () => host.querySelector("form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    writeConversationDraft("second", "Same text", null);
+    await act(async () => render(h(Composer, { draftKey: "second", onSubmit }), host));
+    await act(async () => acknowledge(true));
+    expect(host.querySelector("textarea").value).toBe("Same text");
+    await act(async () => render(h(Composer, { draftKey: "first", onSubmit }), host));
+    expect(host.querySelector("textarea").value).toBe("");
+  });
+
+  it("preserves a command change made while its earlier draft acknowledgement is pending", async () => {
+    setup();
+    writeConversationDraft("command", "Same text", "deep-research");
+    let acknowledge;
+    const onSubmit = vi.fn(() => new Promise((resolve) => { acknowledge = resolve; }));
+    await act(async () => render(h(Composer, { draftKey: "command", onSubmit }), host));
+    await act(async () => host.querySelector("form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    await act(async () => host.querySelector(".agent-composer-pill-dismiss").click());
+    await act(async () => acknowledge(true));
+    expect(host.querySelector("textarea").value).toBe("Same text");
+    expect(host.querySelector(".agent-composer-pill")).toBeNull();
+    await act(async () => render(null, host));
+    await act(async () => render(h(Composer, { draftKey: "command", onSubmit }), host));
+    expect(host.querySelector("textarea").value).toBe("Same text");
+    expect(host.querySelector(".agent-composer-pill")).toBeNull();
+  });
+
 });

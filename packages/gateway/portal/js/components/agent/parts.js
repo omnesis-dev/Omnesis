@@ -1631,16 +1631,21 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
   const [text, setText] = useState(() => readConversationDraft(draftKey).text);
   const textRef = useRef(text);
   textRef.current = text;
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
   // The armed per-message command (a SLASH_COMMANDS descriptor) or null.
   // Cleared after each send so the next message is an ordinary turn unless
   // re-armed.
   const [armed, setArmed] = useState(() => getSlashCommand(readConversationDraft(draftKey).command));
+  const armedRef = useRef(armed);
+  armedRef.current = armed;
   const [sending, setSending] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
   const taRef = useRef(null);
   const canSend = !disabled && !sending && (!busy || controlsSupported) && text.trim().length > 0;
   function updateDraft(value, command = armed) {
     textRef.current = value;
+    armedRef.current = command;
     setText(value);
     setStorageFailed(!writeConversationDraft(draftKey, value, command?.id ?? null));
   }
@@ -1650,7 +1655,8 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
       const draft = readConversationDraft(draftKey);
       textRef.current = draft.text;
       setText(draft.text);
-      setArmed(getSlashCommand(draft.command));
+      armedRef.current = getSlashCommand(draft.command);
+      setArmed(armedRef.current);
     }
     restore();
     window.addEventListener("omnesis:conversation-draft", restore);
@@ -1702,7 +1708,7 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
       const accepted = await onSubmit(text.trim(), options);
       if (accepted !== false) {
         clearConversationDraft(draftKey, text, armed?.id ?? null);
-        if (textRef.current === text) {
+        if (draftKeyRef.current === draftKey && textRef.current === text && armedRef.current?.id === armed?.id) {
           textRef.current = "";
           setText("");
           setArmed(null);

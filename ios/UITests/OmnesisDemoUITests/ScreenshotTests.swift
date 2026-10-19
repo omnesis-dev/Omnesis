@@ -119,6 +119,36 @@ final class ScreenshotTests: XCTestCase {
         try captureStoreScreenshot(named: "04-privacy-settings")
     }
 
+    func test_clarification_free_text_composer_acknowledgement() throws {
+        for mode in ["success", "failure"] {
+            app = XCUIApplication()
+            app.launchEnvironment["DEMO_AGENT_PREVIEW"] = "conversation-controls"
+            app.launchEnvironment["DEMO_COMPOSER_ACK"] = mode
+            app.launchEnvironment["DEMO_DISABLE_ANIMATIONS"] = "1"
+            app.launchEnvironment["DEMO_PROMPT"] = "Compare a custom period "
+            app.launch()
+            dismissSystemAlerts()
+            XCTAssertTrue(app.buttons["Last year"].waitForExistence(timeout: 15), app.debugDescription)
+            let composer = app.textFields["agentComposer"]
+            XCTAssertEqual(composer.value as? String, "Compare a custom period ")
+            app.buttons["agentSendButton"].tap()
+            if mode == "success" {
+                let cleared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Ask Omnesis"), object: composer)
+                XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 10), .completed)
+            } else {
+                let saved = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Your draft is saved.")).firstMatch
+                XCTAssertTrue(saved.waitForExistence(timeout: 10))
+                XCTAssertEqual(composer.value as? String, "Compare a custom period ")
+            }
+            let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try XCUIScreen.main.screenshot().pngRepresentation.write(
+                to: directory.appendingPathComponent("72i-clarification-composer-\(mode).png")
+            )
+            app.terminate()
+        }
+    }
+
     func test_conversation_message_menus() throws {
         app = XCUIApplication()
         app.launchEnvironment["DEMO_AGENT_PREVIEW"] = "conversation-controls"

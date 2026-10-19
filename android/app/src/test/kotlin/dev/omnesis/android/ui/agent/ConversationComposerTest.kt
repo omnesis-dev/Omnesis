@@ -4,6 +4,8 @@
 package dev.omnesis.android.ui.agent
 
 import android.content.Context
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -46,6 +48,7 @@ class ConversationComposerTest {
             }
         }
         compose.onNodeWithText("Use annual totals").performImeAction()
+        compose.onNode(hasSetTextAction()).assertTextEquals("")
         compose.runOnIdle {
             assertEquals(listOf("Use annual totals"), sent)
             assertEquals("", persisted)

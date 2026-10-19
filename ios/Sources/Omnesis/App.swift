@@ -215,6 +215,9 @@ public struct OmnesisApp: App {
         let store = AppStore.preview(agentPreview: seed)
         if ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "conversation-controls" {
             store.agent.installPreviewConversationControls(PreviewMocks.conversationControls)
+            if ProcessInfo.processInfo.environment["DEMO_COMPOSER_ACK"] != nil {
+                ConversationComposerPreview.install(on: store.agent)
+            }
         }
         return AgentView(menuOpen: .constant(false))
             .environment(store)
