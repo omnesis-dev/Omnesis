@@ -280,7 +280,7 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
         coordinator.saveDraft("", for: coordinator.composerDraftKey)
     }
 
-    func testSendNowHandoffHandlesBothEventResponseOrdersAndStaleSnapshots() async throws {
+    func testSendNowHandoffHandlesBothEventResponseOrdersAndStaleSnapshots() async {
         for eventFirst in [true, false] {
             let coordinator = coordinator()
             let queued = #"""

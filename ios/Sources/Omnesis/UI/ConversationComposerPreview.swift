@@ -37,7 +37,7 @@ enum ConversationComposerPreview {
 
 private final class ConversationComposerProtocol: URLProtocol {
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var answered = false
+    private nonisolated(unsafe) static var answered = false
 
     static func reset() {
         lock.lock()
@@ -47,9 +47,14 @@ private final class ConversationComposerProtocol: URLProtocol {
 
     // URLProtocol requires class overrides.
     // swiftlint:disable:next static_over_final_class
-    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
     // swiftlint:disable:next static_over_final_class
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
 
     override func startLoading() {
         Self.lock.lock()
