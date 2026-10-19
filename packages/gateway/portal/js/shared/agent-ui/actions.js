@@ -8,6 +8,7 @@ import {
   EphemeralHeader,
   useRollingRotation,
   ephemeralResultArrived,
+  ephemeralHasPendingText,
   EPHEMERAL_SLOT_HEIGHT,
 } from "./lifecycle.js";
 import { toolCardLabel } from "./tool-card-table.js";
@@ -41,6 +42,7 @@ export function EphemeralActionCard({ call, dispatch }) {
   const items = line == null ? [] : [{ kind: "outcome", line, isError }];
   const { currentIndex, phase } = useRollingRotation(resultArrived, items.length, {
     expedite: (call.pendingTail?.length ?? 0) > 0,
+    postText: ephemeralHasPendingText(call),
     onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
   });
   return html`

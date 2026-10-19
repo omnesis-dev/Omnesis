@@ -117,6 +117,10 @@ private const val FadeMs = 300L // PARITY:ephemeral-fade-ms
 /** Floor before the fade may start, so a card never flashes faster than this. */
 private const val MinVisibleMs = 500L // PARITY:ephemeral-min-visible-ms
 
+/** A waiting answer shortens only the dismissal path, preserving result rotation. */
+private const val PostTextMinVisibleMs = 167L // PARITY:ephemeral-post-text-min-visible-ms
+private const val PostTextFadeMs = 100L // PARITY:ephemeral-post-text-fade-ms
+
 // MARK: - Leading-rail container
 
 /**
@@ -249,6 +253,7 @@ private fun <T> AgentRollingSlot(
  * rotate one item per [RevealIntervalMs] through [count] slots, hold, fade, then
  * fire [onFlush] exactly once. An [expedite] path (the coordinator parked tail
  * content on us) skips the rotation and dismisses after the min-visible floor.
+ * Answer text waiting in that tail shortens the floor and fade threefold.
  *
  * `setIndex` advances the visible slot. `setAlpha` drives the fade-out. The
  * load-bearing [onFlush] opens the causality gate so parked turn-extending events
@@ -259,6 +264,7 @@ private fun EphemeralRotation(
     toolCallId: String,
     hasResult: Boolean,
     expedite: Boolean,
+    hasPendingAnswerText: Boolean,
     count: Int,
     setIndex: (Int) -> Unit,
     setAlpha: (Float) -> Unit,
@@ -268,18 +274,18 @@ private fun EphemeralRotation(
 
     suspend fun dismissAndFlush() {
         setAlpha(0f)
-        delay(FadeMs)
+        delay(if (hasPendingAnswerText) PostTextFadeMs else FadeMs)
         if (flushed.value) return
         flushed.value = true
         onFlush(toolCallId)
     }
 
-    LaunchedEffect(toolCallId, hasResult, expedite) {
+    LaunchedEffect(toolCallId, hasResult, expedite, hasPendingAnswerText) {
         if (!hasResult) return@LaunchedEffect
         if (expedite) {
             // The card may already have been visible a while; only wait out the
             // remaining min-visible floor before dismissing.
-            delay(MinVisibleMs)
+            delay(if (hasPendingAnswerText) PostTextMinVisibleMs else MinVisibleMs)
             dismissAndFlush()
             return@LaunchedEffect
         }
@@ -1002,12 +1008,14 @@ fun AgentEphemeralSqlCard(
 
     val hasResult = call.result != null
     val expedite = call.pendingTail.isNotEmpty()
+    val hasPendingAnswerText = hasPendingAnswerText(call.pendingTail)
 
     suspend fun dismissAndFlush() {
         alpha = 0f
         if (flushed.value) return
+        delay(if (hasPendingAnswerText) PostTextFadeMs else FadeMs)
+        if (flushed.value) return
         flushed.value = true
-        delay(FadeMs)
         onFlushEphemeral(call.toolCallId)
     }
 
@@ -1016,9 +1024,9 @@ fun AgentEphemeralSqlCard(
     // state has nothing suspended to wait on. When the result arrives the query
     // line rolls in (if it wasn't already shown), then the rows roll, then fade.
     if (!freeze && hasResult) {
-        LaunchedEffect(call.toolCallId, expedite) {
+        LaunchedEffect(call.toolCallId, expedite, hasPendingAnswerText) {
             if (expedite) {
-                delay(MinVisibleMs)
+                delay(if (hasPendingAnswerText) PostTextMinVisibleMs else MinVisibleMs)
                 dismissAndFlush()
                 return@LaunchedEffect
             }
@@ -1040,7 +1048,10 @@ fun AgentEphemeralSqlCard(
         }
     }
 
-    EphemeralDismissContainer(visible = alpha > 0f) {
+    EphemeralDismissContainer(
+        visible = alpha > 0f,
+        fadeMs = if (hasPendingAnswerText) PostTextFadeMs else FadeMs,
+    ) {
         AgentInlineActivity {
             AgentInlineHeader(
                 glyph = Icons.Outlined.TableChart,
@@ -1325,13 +1336,17 @@ private fun EphemeralCardFrame(
             toolCallId = call.toolCallId,
             hasResult = call.result != null,
             expedite = call.pendingTail.isNotEmpty(),
+            hasPendingAnswerText = hasPendingAnswerText(call.pendingTail),
             count = itemCount,
             setIndex = { currentIndex = it },
             setAlpha = { alpha = it },
             onFlush = onFlushEphemeral,
         )
     }
-    EphemeralDismissContainer(visible = alpha > 0f) {
+    EphemeralDismissContainer(
+        visible = alpha > 0f,
+        fadeMs = if (hasPendingAnswerText(call.pendingTail)) PostTextFadeMs else FadeMs,
+    ) {
         AgentInlineActivity { content(currentIndex) }
     }
 }
@@ -1340,16 +1355,20 @@ private fun EphemeralCardFrame(
  * Wraps an ephemeral card so its dismissal both fades AND collapses its height —
  * `graphicsLayer { alpha }` alone hides the card visually but keeps its measured
  * height, leaving a blank gap above the streamed answer. The exit fade + vertical
- * shrink run over [FadeMs] (the same window the rotation waits before flushing the
+ * shrink run over [fadeMs] (the same window the rotation waits before flushing the
  * causality gate), mirroring how iOS removes the card view on dismiss so the
  * conversation closes up behind it.
  */
 @Composable
-private fun EphemeralDismissContainer(visible: Boolean, content: @Composable () -> Unit) {
+private fun EphemeralDismissContainer(
+    visible: Boolean,
+    fadeMs: Long = FadeMs,
+    content: @Composable () -> Unit,
+) {
     AnimatedVisibility(
         visible = visible,
         enter = EnterTransition.None,
-        exit = fadeOut(tween(FadeMs.toInt())) + shrinkVertically(tween(FadeMs.toInt())),
+        exit = fadeOut(tween(fadeMs.toInt())) + shrinkVertically(tween(fadeMs.toInt())),
     ) {
         Box(Modifier.fillMaxWidth()) { content() }
     }

@@ -77,6 +77,90 @@ describe("ephemeral card layout lifecycle", () => {
     await act(async () => { vi.advanceTimersByTime(300); });
   }
 
+  it.each([0, 100, 600])(
+    "flushes following prose after the shorter visibility floor and fade (arrives at %sms)",
+    async (arrivalMs) => {
+      const call = {
+        kind: "tool", toolCallId: "search-text", tool: "search_documents", args: {},
+        result: { kind: "search.results", results: Array.from({ length: 12 }, (_, i) => ({ title: `Result ${i}` })) },
+        pendingTail: [],
+      };
+      await renderTurn([call]);
+      await act(async () => { vi.advanceTimersByTime(arrivalMs); });
+      await act(async () => {
+        render(h(MessageBubble, {
+          turn: { role: "assistant", parts: [{ ...call, pendingTail: [
+            { kind: "agent.text.delta", payload: { delta: "Here is the answer." } },
+          ] }], done: false, citationCount: 0 },
+          citations: [], dispatch,
+        }), host!);
+      });
+      const remaining = Math.max(0, 167 - arrivalMs);
+      if (remaining > 0) {
+        await act(async () => { vi.advanceTimersByTime(remaining - 1); });
+        expect(host!.querySelector(".is-dismissed")).toBeNull();
+        await act(async () => { vi.advanceTimersByTime(1); });
+      }
+      expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("100ms");
+      expect(dispatch).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(99); });
+      expect(dispatch).not.toHaveBeenCalled();
+      await act(async () => { vi.advanceTimersByTime(1); });
+      expect(host!.querySelector(".agent-ephemeral")).toBeNull();
+      expect(dispatch).toHaveBeenCalledExactlyOnceWith({ kind: "ephemeral-tail-flush", toolCallId: "search-text" });
+    },
+  );
+
+  it("shortens an already expedited non-text tail when prose arrives, cancelling its old timer", async () => {
+    const thinking = { kind: "agent.thinking.delta", payload: { delta: "Reviewing results" } };
+    const call = {
+      kind: "tool", toolCallId: "search-tail-update", tool: "search_documents", args: {},
+      result: { kind: "search.results", results: [] }, pendingTail: [thinking],
+    };
+    await renderTurn([call]);
+    await act(async () => { vi.advanceTimersByTime(100); });
+    await act(async () => {
+      render(h(MessageBubble, {
+        turn: { role: "assistant", parts: [{ ...call, pendingTail: [
+          thinking, { kind: "agent.text.delta", payload: { delta: "Here is the answer." } },
+        ] }], done: false, citationCount: 0 },
+        citations: [], dispatch,
+      }), host!);
+    });
+    await act(async () => { vi.advanceTimersByTime(66); });
+    expect(host!.querySelector(".is-dismissed")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("100ms");
+    await act(async () => { vi.advanceTimersByTime(99); });
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".agent-ephemeral")).toBeNull();
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({
+      kind: "ephemeral-tail-flush", toolCallId: "search-tail-update",
+    });
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { kind: "agent.thinking.delta", payload: { delta: "Reviewing results" } },
+    { kind: "agent.tool.start", payload: { tool: "search_documents" } },
+    { kind: "agent.text.delta", payload: { delta: " \n " } },
+  ])("keeps non-prose queued events at the existing dismissal pace: $kind", async (action) => {
+    await renderTurn([{
+      kind: "tool", toolCallId: "search-non-text", tool: "search_documents", args: {},
+      result: { kind: "search.results", results: [] }, pendingTail: [action],
+    }]);
+    await act(async () => { vi.advanceTimersByTime(499); });
+    expect(host!.querySelector(".is-dismissed")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(host!.querySelector(".is-dismissed")!.getAttribute("style")).toContain("300ms");
+    await act(async () => { vi.advanceTimersByTime(299); });
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("removes a dismissed card's DOM node so prose keeps only its normal flex gap", async () => {
     await renderTurn([
       { kind: "text", text: "" },

@@ -42,6 +42,23 @@ final class AgentCoordinatorGateTests: XCTestCase {
         )
     }
 
+    func testOnlyNonblankAnswerTextAcceleratesToolDismissal() {
+        let text = AgentEvent.textDelta(sessionId: "s", messageId: "m", delta: "Answer")
+        let blank = AgentEvent.textDelta(sessionId: "s", messageId: "m", delta: " \n\t")
+        let thinking = AgentEvent.thinkingDelta(sessionId: "s", messageId: "m", delta: "Reasoning")
+        XCTAssertFalse(agentEphemeralHasPendingAnswerText([]))
+        XCTAssertFalse(agentEphemeralHasPendingAnswerText([thinking, blank]))
+        XCTAssertTrue(agentEphemeralHasPendingAnswerText([thinking, text]))
+        XCTAssertEqual(agentEphemeralPostTextMinVisibleSeconds, 0.167 * AppBuild.ephemeralRecordingPacingMultiplier)
+        XCTAssertEqual(agentEphemeralPostTextFadeSeconds, 0.1)
+    }
+
+    func testSqlLifecycleRestartsWhenAnswerTextFollowsOtherTailEvents() {
+        let nonText = AgentEphemeralSqlLifecycleKey(argsKnown: true, hasResult: true, expedited: true)
+        let answer = AgentEphemeralSqlLifecycleKey(argsKnown: true, hasResult: true, expedited: true, postText: true)
+        XCTAssertNotEqual(nonText, answer)
+    }
+
     private func makeCoordinator() -> AgentCoordinator {
         let coord = AgentCoordinator()
         coord.installPreviewState(

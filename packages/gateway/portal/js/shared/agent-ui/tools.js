@@ -9,6 +9,7 @@ import {
   EphemeralHeader,
   useRollingRotation,
   ephemeralResultArrived,
+  ephemeralHasPendingText,
   EPHEMERAL_REVEAL_MS,
   EPHEMERAL_SLOT_HEIGHT,
   EPHEMERAL_SQL_SLOT_HEIGHT,
@@ -133,6 +134,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
       : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, results.length, {
       expedite: (call.pendingTail?.length ?? 0) > 0,
+      postText: ephemeralHasPendingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const query = call.args?.query || call.argsSummary || "";
@@ -181,6 +183,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     const docs = hasResult ? flattenTrailDocs(call.result.events ?? []) : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, docs.length, {
       expedite: (call.pendingTail?.length ?? 0) > 0,
+      postText: ephemeralHasPendingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     return html`
@@ -245,6 +248,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
       : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, lines.length, {
       expedite: (call.pendingTail?.length ?? 0) > 0,
+      postText: ephemeralHasPendingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const pendingTitle = call.tool === "knowledge_fetch" ? call.argsSummary || "" : "";
@@ -292,6 +296,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     const loops = hasResult ? (call.result.loops || []).slice(0, EPHEMERAL_SEARCH_RESULTS_MAX) : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, loops.length, {
       expedite: (call.pendingTail?.length ?? 0) > 0,
+      postText: ephemeralHasPendingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const query = call.args?.query || call.argsSummary || "";
@@ -329,6 +334,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     const lines = loop ? loopDetailLines(loop) : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, lines.length, {
       expedite: (call.pendingTail?.length ?? 0) > 0,
+      postText: ephemeralHasPendingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const titleNode = loop
@@ -432,6 +438,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     const rowsReady = resultArrived && sqlDone;
     const { currentIndex: rowIndex, phase } = useRollingRotation(rowsReady, allRows.length, {
       expedite: (call.pendingTail?.length ?? 0) > 0,
+      postText: ephemeralHasPendingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
 
@@ -504,6 +511,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
       : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, results.length, {
       expedite: (call.pendingTail?.length ?? 0) > 0,
+      postText: ephemeralHasPendingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const query = call.args?.query || call.argsSummary || "";
@@ -572,6 +580,7 @@ export function createAgentToolRenderer({ sourceIcon = () => "📄", renderLoopR
     const items = hasResult ? [ref ? { kind: "ref", ref } : { kind: "no-match" }] : [];
     const { currentIndex, phase } = useRollingRotation(resultArrived, items.length, {
       expedite: (call.pendingTail?.length ?? 0) > 0,
+      postText: ephemeralHasPendingText(call),
       onDone: () => dispatch?.({ kind: "ephemeral-tail-flush", toolCallId: call.toolCallId }),
     });
     const url = call.args?.url || call.argsSummary || "";

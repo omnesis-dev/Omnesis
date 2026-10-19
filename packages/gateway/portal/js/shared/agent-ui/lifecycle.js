@@ -7,6 +7,9 @@ import { useState, useRef, useEffect } from "preact/hooks";
 export const EPHEMERAL_REVEAL_MS = 350; // PARITY:ephemeral-reveal-ms
 export const EPHEMERAL_HOLD_MS = 450; // PARITY:ephemeral-hold-ms
 export const EPHEMERAL_FADE_MS = 300; // PARITY:ephemeral-fade-ms
+// A following answer shortens the visibility floor and collapse by three.
+export const EPHEMERAL_POST_TEXT_MIN_VISIBLE_MS = 167; // PARITY:ephemeral-post-text-min-visible-ms
+export const EPHEMERAL_POST_TEXT_FADE_MS = 100; // PARITY:ephemeral-post-text-fade-ms
 // Minimum time the card stays visible before it starts its fade-out,
 // even when the reducer has buffered tail content that wants it gone.
 // A card that pops in and out faster than this would read as a flash
@@ -74,6 +77,15 @@ export function ephemeralResultArrived(call) {
   return call?.result != null;
 }
 
+/** Whether a card is holding back nonblank assistant prose. */
+export function ephemeralHasPendingText(call) {
+  return (call?.pendingTail ?? []).some(
+    (action) => action.kind === "agent.text.delta"
+      && typeof action.payload?.delta === "string"
+      && action.payload.delta.trim().length > 0,
+  );
+}
+
 /**
  * Drives a rolling-slot rotation: holds the slot empty until `ready` is
  * true, then steps `currentIndex` from 0…N-1 at EPHEMERAL_REVEAL_MS each,
@@ -89,11 +101,13 @@ export function ephemeralResultArrived(call) {
  * at `max(0, EPHEMERAL_MIN_VISIBLE_MS − elapsed)` from now, so the
  * card is never seen for less than 500ms (avoid flashes) but never
  * holds longer than that once the agent is ready to keep talking.
- * The fade-out is unchanged (300ms via CSS); `onDone` fires AFTER
+ * Nonblank following prose uses a 167ms floor and 100ms fade instead.
+ * Other queued events keep the 500ms floor and 300ms fade. `onDone` fires AFTER
  * the fade completes so the caller can dispatch `ephemeral-tail-flush`.
  */
 export function useRollingRotation(ready, count, options) {
   const expedite = options?.expedite ?? false;
+  const postText = options?.postText ?? false;
   const onDone = options?.onDone;
   const [currentIndex, setCurrentIndex] = useState(null);
   const [phase, setPhase] = useState("live");
@@ -107,11 +121,11 @@ export function useRollingRotation(ready, count, options) {
   const fadeTimerRef = useRef(null);
 
   function fireDismiss() {
-    setPhase("dismissing");
+    setPhase(postText ? "dismissing-post-text" : "dismissing");
     fadeTimerRef.current = setTimeout(() => {
       setPhase("gone");
       onDone?.();
-    }, EPHEMERAL_FADE_MS);
+    }, postText ? EPHEMERAL_POST_TEXT_FADE_MS : EPHEMERAL_FADE_MS);
   }
 
   function scheduleDismiss(delayMs) {
@@ -146,13 +160,14 @@ export function useRollingRotation(ready, count, options) {
 
   // Expedite reaction. The reducer's gate set this true; collapse the
   // remaining display time to whatever brings total visible time to
-  // exactly EPHEMERAL_MIN_VISIBLE_MS (or 0 if we're already past).
+  // the applicable visibility floor (or 0 if we're already past).
   useEffect(() => {
     if (!expedite || !startedRef.current || phase !== "live") return;
     const elapsed = Date.now() - startedAtRef.current;
-    const remaining = EPHEMERAL_MIN_VISIBLE_MS - elapsed;
+    const minimum = postText ? EPHEMERAL_POST_TEXT_MIN_VISIBLE_MS : EPHEMERAL_MIN_VISIBLE_MS;
+    const remaining = minimum - elapsed;
     scheduleDismiss(remaining);
-  }, [expedite, phase]);
+  }, [expedite, postText, phase, ready]);
 
   // Unmount cleanup. Any in-flight timer must release before the
   // component leaves the tree so we never call `setState` on an
@@ -177,8 +192,11 @@ export function useRollingRotation(ready, count, options) {
  */
 export function EphemeralCard({ phase, children }) {
   if (phase === "gone") return null;
+  const dismissing = phase === "dismissing" || phase === "dismissing-post-text";
+  const fadeMs = phase === "dismissing-post-text" ? EPHEMERAL_POST_TEXT_FADE_MS : EPHEMERAL_FADE_MS;
   return html`
-    <div class=${`agent-ephemeral${phase === "dismissing" ? " is-dismissed" : ""}`}>
+    <div class=${`agent-ephemeral${dismissing ? " is-dismissed" : ""}`}
+      style=${`--agent-ephemeral-fade-ms:${fadeMs}ms`}>
       ${children}
     </div>
   `;
