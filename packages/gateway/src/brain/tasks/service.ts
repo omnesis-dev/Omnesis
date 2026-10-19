@@ -151,11 +151,9 @@ export class TaskService {
 
   async apply(command: TaskCommand): Promise<TaskCommandResult> {
     const now = this.clock();
-    const recordInterest = this.effects?.interestEnabled?.() ?? true;
-    const result = await this.writeGate.applyTaskCommand(
-      recordInterest ? command : { ...command, recordInterest: false },
-      now,
-    );
+    const result = await this.writeGate.applyTaskCommand(command, now, {
+      recordInterest: this.effects?.interestEnabled?.() ?? true,
+    });
     if (!result.ok || !this.effects) return result;
     const { mirror, writeGate } = this.effects;
     if (result.loop === null) {

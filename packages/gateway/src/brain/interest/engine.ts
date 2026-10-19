@@ -9,24 +9,28 @@
  * Writes go through the writer; the gates read through the main-thread
  * handle. A new signal lands without a vector, and the embedding backlog
  * fills it in afterwards, one `embedQuery` at a time, so a reaction is never
- * held on the embedder. The lookup fails open: any error, a missing embedder
- * or an empty ledger all answer null, and the gate asks its question as it
- * always has.
+ * held on the embedder. A lookup decodes the live ledger once and keeps it
+ * until a cheap fingerprint says it changed, so a planner tick asking about
+ * many documents in a row does not re-read the table for each. The lookup
+ * fails open: any error, a missing embedder or an empty ledger all answer
+ * null, and the gate asks its question as it always has.
  */
 
 import {
   countUnembeddedInterestSignals,
+  hasInterestEmbeddingsNotFrom,
+  interestLedgerFingerprint,
   listLiveInterestSignals,
   listUnembeddedInterestSignals,
   type InterestKind,
   type InterestPolarity,
   type InterestSignal,
   type InterestSource,
+  type InterestSupersedeScope,
   type NewInterestSignal,
 } from "../storage/interest.js";
 import {
   DEFAULT_LOOKUP_OPTIONS,
-  hasOwnerInterest,
   lookupOwnerInterest,
   type InterestLookupOptions,
   type OwnerInterest,
@@ -35,7 +39,12 @@ import type { Logger } from "@omnesis/core";
 import type { WriteGate } from "../../write-gate.js";
 import type Database from "better-sqlite3";
 
-/** The main-thread embedder, when one is assigned and loaded. */
+/**
+ * The main-thread embedder, when one is assigned and loaded. `modelId` names
+ * the model that answers `embedQuery` right now, which during a graceful
+ * model swap is still the outgoing one; vectors are labelled with it so two
+ * models' vectors are never compared.
+ */
 export interface InterestEmbedder {
   modelId: string;
   embedQuery(text: string): Promise<ArrayLike<number>>;
@@ -52,12 +61,13 @@ export interface InterestEngineDeps {
   >;
   /** Resolved per call; null while the indexer loads or when no embedder is assigned. */
   getEmbedder: () => InterestEmbedder | null;
-  /** `brain.interest.enabled`, read live. */
+  /** Whether the ledger records and is shown: experimental mode and `brain.interest.enabled`, read live. */
   enabled: () => boolean;
+  /** The lookup's floors and example count (`brain.interest.lookup`), read live. */
+  lookupOptions?: () => Partial<InterestLookupOptions>;
   clock: () => number;
   idGen: () => string;
   log: Logger;
-  lookupOptions?: Partial<InterestLookupOptions>;
 }
 
 export interface RecordInterestInput {
@@ -69,39 +79,53 @@ export interface RecordInterestInput {
   loopId?: string;
   observationId?: string;
   conversationId?: string;
-  /** Supersede the live signals about this loop or observation first. */
-  replaces?: { loopId?: string; observationId?: string; kind?: InterestKind };
-}
-
-/** What a gate asks about: the text of the thing it is judging. */
-export interface InterestLookupQuery {
-  text: string;
+  /**
+   * Supersede the live signals this one replaces first. Applied even while
+   * the ledger is off: a reaction the owner took back must not come back
+   * when the ledger is switched on again.
+   */
+  replaces?: InterestSupersedeScope;
 }
 
 /** Signals kept for lookup: newest first, bounded so a lookup stays a few milliseconds. */
 const LOOKUP_SIGNAL_LIMIT = 2_000;
-/** Signals embedded per backlog pass; a pass runs again while any remain. */
+/** Signals embedded per backlog page; a pass pages on while any remain. */
 const EMBED_BATCH = 16;
 const EMBED_TIMEOUT_MS = 30_000;
 
 export class InterestEngine {
-  private readonly options: InterestLookupOptions;
   private draining: Promise<void> | null = null;
   private pendingDrain = false;
   private readonly queryVectors = new Map<string, { values: Float32Array; model: string }>();
+  /** The decoded live ledger, valid while its fingerprint matches the table. */
+  private ledger: { fingerprint: string; signals: InterestSignal[] } | null = null;
 
-  constructor(private readonly deps: InterestEngineDeps) {
-    this.options = { ...DEFAULT_LOOKUP_OPTIONS, ...deps.lookupOptions };
-  }
+  constructor(private readonly deps: InterestEngineDeps) {}
 
   enabled(): boolean {
     return this.deps.enabled();
   }
 
-  /** Record one reaction. Nothing is written when the ledger is off. */
+  /** Record one reaction. Nothing new is written while the ledger is off. */
   async record(input: RecordInterestInput): Promise<InterestSignal | null> {
+    const signal = this.draft(input);
+    if (!signal) {
+      if (input.replaces)
+        await this.deps.writeGate.supersedeInterestSignals(input.replaces, this.deps.clock());
+      return null;
+    }
+    const stored = await this.deps.writeGate.recordInterestSignal(signal, input.replaces ?? null);
+    this.kick();
+    return stored;
+  }
+
+  /**
+   * A signal row without a vector, for a caller that lands it in a transaction
+   * of its own; null while the ledger is off.
+   */
+  draft(input: Omit<RecordInterestInput, "replaces">): NewInterestSignal | null {
     if (!this.enabled()) return null;
-    const signal: NewInterestSignal = {
+    return {
       id: `int_${this.deps.idGen()}`,
       polarity: input.polarity,
       kind: input.kind,
@@ -114,17 +138,10 @@ export class InterestEngine {
       ledgerSeq: null,
       createdAt: this.deps.clock(),
     };
-    const stored = await this.deps.writeGate.recordInterestSignal(signal, input.replaces ?? null);
-    this.kick();
-    return stored;
   }
 
-  /** Take back the live signals about a loop or observation. */
-  async supersede(by: {
-    loopId?: string;
-    observationId?: string;
-    kind?: InterestKind;
-  }): Promise<number> {
+  /** Take back the live signals a scope names. */
+  async supersede(by: InterestSupersedeScope): Promise<number> {
     return this.deps.writeGate.supersedeInterestSignals(by, this.deps.clock());
   }
 
@@ -132,16 +149,19 @@ export class InterestEngine {
    * The owner's past reactions that resemble `query.text`, or null when there
    * are none worth showing. Never throws.
    */
-  async lookup(query: InterestLookupQuery): Promise<OwnerInterest | null> {
+  async lookup(query: { text: string }): Promise<OwnerInterest | null> {
     if (!this.enabled()) return null;
     try {
-      const signals = listLiveInterestSignals(this.deps.db, { limit: LOOKUP_SIGNAL_LIMIT });
+      const signals = this.liveSignals();
       if (signals.length === 0) return null;
-      const vector = signals.some((s) => s.embedding) ? await this.queryVector(query.text) : null;
-      const block = lookupOwnerInterest(signals, { text: query.text, vector }, this.deps.clock(), {
-        ...this.options,
+      const embedder = this.deps.getEmbedder();
+      const comparable =
+        embedder !== null && signals.some((s) => s.embeddingModel === embedder.modelId);
+      const vector = comparable ? await this.queryVector(query.text) : null;
+      return lookupOwnerInterest(signals, { text: query.text, vector }, this.deps.clock(), {
+        ...DEFAULT_LOOKUP_OPTIONS,
+        ...this.deps.lookupOptions?.(),
       });
-      return hasOwnerInterest(block) ? block : null;
     } catch (error) {
       this.deps.log.warn(
         `Interest lookup failed; deciding without it: ${error instanceof Error ? error.message : String(error)}`,
@@ -150,16 +170,15 @@ export class InterestEngine {
     }
   }
 
-  /** Whether any live signal still waits for its vector. */
+  /** Whether any live signal is due a try at a vector. */
   hasBacklog(): boolean {
-    return this.enabled() && countUnembeddedInterestSignals(this.deps.db) > 0;
+    return this.enabled() && countUnembeddedInterestSignals(this.deps.db, this.deps.clock()) > 0;
   }
 
   /**
    * Embed the signals that have no vector yet. One pass at a time; a kick
    * during a pass runs another after it, and the returned promise covers both.
-   * Resolves when the backlog is empty, the embedder is absent, or every
-   * remaining row has used its attempts.
+   * Resolves when nothing is due, or the embedder is absent.
    */
   embedBacklog(): Promise<void> {
     if (this.draining) {
@@ -186,38 +205,48 @@ export class InterestEngine {
     });
   }
 
+  private liveSignals(): InterestSignal[] {
+    const fingerprint = interestLedgerFingerprint(this.deps.db);
+    if (this.ledger?.fingerprint !== fingerprint)
+      this.ledger = {
+        fingerprint,
+        signals: listLiveInterestSignals(this.deps.db, { limit: LOOKUP_SIGNAL_LIMIT }),
+      };
+    return this.ledger.signals;
+  }
+
   private async drain(): Promise<void> {
     if (!this.enabled()) return;
     const embedder = this.deps.getEmbedder();
     if (!embedder) return;
     // A vector from another embedder is not comparable with the live one.
-    const reset = await this.deps.writeGate.resetInterestEmbeddingsNotFrom(embedder.modelId);
-    if (reset > 0) {
+    if (hasInterestEmbeddingsNotFrom(this.deps.db, embedder.modelId)) {
+      const reset = await this.deps.writeGate.resetInterestEmbeddingsNotFrom(embedder.modelId);
       this.queryVectors.clear();
       this.deps.log.info(`Interest ledger: ${reset} vectors from another embedder dropped`);
     }
-    // A row gets one attempt per pass, so an embedder outage costs each row
-    // one of its attempts rather than all of them.
-    const attempted = new Set<string>();
+    // Pages through the rows due at the start of the pass; a row that fails
+    // is pushed out by its backoff and not seen again this pass.
+    const now = this.deps.clock();
+    let after: { createdAt: number; id: string } | undefined;
     for (;;) {
-      const batch = listUnembeddedInterestSignals(this.deps.db, EMBED_BATCH).filter(
-        (signal) => !attempted.has(signal.id),
-      );
+      const batch = listUnembeddedInterestSignals(this.deps.db, { limit: EMBED_BATCH, now, after });
       if (batch.length === 0) return;
       for (const signal of batch) {
-        attempted.add(signal.id);
+        after = { createdAt: signal.createdAt, id: signal.id };
         const text = signal.note ? `${signal.subjectText}\n${signal.note}` : signal.subjectText;
         try {
           const vector = await withTimeout(embedder.embedQuery(text), EMBED_TIMEOUT_MS);
-          await this.deps.writeGate.setInterestSignalEmbedding(signal.id, {
-            vector,
-            model: embedder.modelId,
-          });
+          await this.deps.writeGate.setInterestSignalEmbedding(
+            signal.id,
+            { vector, model: embedder.modelId },
+            this.deps.clock(),
+          );
         } catch (error) {
           this.deps.log.warn(
             `Interest signal ${signal.id} not embedded: ${error instanceof Error ? error.message : String(error)}`,
           );
-          await this.deps.writeGate.setInterestSignalEmbedding(signal.id, null);
+          await this.deps.writeGate.setInterestSignalEmbedding(signal.id, null, this.deps.clock());
         }
       }
     }

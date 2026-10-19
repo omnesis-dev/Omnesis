@@ -2327,14 +2327,6 @@ const httpShutdown = new GatewayHttpShutdown();
 // What follows a task change, wherever it is made: the searchable loop mirror
 // (only while the Brain runs, which seeds its source), retracting scheduled
 // checks and dropping observations about a resolved task.
-const taskEffects: TaskEffects = {
-  writeGate,
-  ...(experimentalEnabled()
-    ? { mirror: createOpenLoopMirror({ db, writeGate, log: log.child("task-mirror") }) }
-    : {}),
-  interestEnabled: () => resolveBrainSettings(configStore.get().brain).interest.enabled,
-};
-const taskService = new TaskService(db, writeGate, briefsVirtualClock ?? Date.now, taskEffects);
 // The interest engine: the owner's reactions (tasks accepted, created or
 // ignored; thumbs on brief items; what they say in the Morning brief
 // conversation) as examples the decision gates compare new items against.
@@ -2346,21 +2338,29 @@ const interestEngine = new InterestEngine({
   getEmbedder: () => {
     const embedder = getSemanticEmbedder();
     if (!embedder) return null;
-    const resolved = inferenceRegistry.resolve("embedder");
-    const modelId =
-      resolved.kind === "local"
-        ? resolved.catalogId
-        : resolved.kind === "http"
-          ? resolved.model
-          : null;
+    // The model the live index was built with is the one answering queries,
+    // also while a replacement is still being built.
+    const modelId = getIndexEmbedModel(indexDb)?.name;
     return modelId ? { modelId, embedQuery: embedder.embedQuery } : null;
   },
-  enabled: () => resolveBrainSettings(configStore.get().brain).interest.enabled,
+  // Only the Brain's gates read the ledger, and they exist in experimental
+  // mode; a stable gateway records nothing.
+  enabled: () =>
+    experimentalVisible() && resolveBrainSettings(configStore.get().brain).interest.enabled,
+  lookupOptions: () => resolveBrainSettings(configStore.get().brain).interest.lookup,
   clock: briefsVirtualClock ?? Date.now,
   idGen: () => globalThis.crypto.randomUUID(),
   log: log.child("interest"),
 });
 
+const taskEffects: TaskEffects = {
+  writeGate,
+  ...(experimentalEnabled()
+    ? { mirror: createOpenLoopMirror({ db, writeGate, log: log.child("task-mirror") }) }
+    : {}),
+  interestEnabled: () => interestEngine.enabled(),
+};
+const taskService = new TaskService(db, writeGate, briefsVirtualClock ?? Date.now, taskEffects);
 const app = createServer(db, DB_PATH, {
   interest: interestEngine,
   taskEffects,
@@ -2797,7 +2797,7 @@ const interestEmbedTask: PeriodicTask<undefined, undefined> = {
   isIdle: () => !interestEngine.hasBacklog(),
   async run() {
     // An embedding pass waits on the embedder: run it off the scheduler's runner.
-    interestEngine.kick();
+    if (interestEngine.hasBacklog()) interestEngine.kick();
     return { kind: "done", value: undefined };
   },
 };

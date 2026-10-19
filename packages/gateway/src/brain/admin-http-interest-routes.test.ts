@@ -13,8 +13,8 @@ import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
-import { SCOPE_ADMIN, SCOPE_READ, type Scope } from "@omnesis/types";
-import { createDatabase } from "../db.js";
+import { ProviderId, SCOPE_ADMIN, SCOPE_READ, SourceId, type Scope } from "@omnesis/types";
+import { createDatabase, upsertDocuments } from "../db.js";
 import { createServer } from "../server.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
@@ -26,6 +26,8 @@ import {
   supersedeInterestSignals,
   type NewInterestSignal,
 } from "./storage/interest.js";
+import { createOpenLoop } from "./storage/open-loops.js";
+import { applyTaskCommand } from "./storage/tasks.js";
 import type { BriefsFeatureStatus } from "./feature-gate.js";
 import type Database from "better-sqlite3";
 
@@ -139,8 +141,41 @@ describe("GET /admin/brain/interest", () => {
       backlog: 0,
       counts: { live: 0, superseded: 0, positive: 0, negative: 0, statements: 0 },
       signals: [],
+      withheld: [],
       decisions: [],
     });
+  });
+
+  test("lists the suggestions the gate withheld with the ledger entry undo takes", async () => {
+    createOpenLoop(
+      db,
+      {
+        id: "loop_held",
+        createdByRun: "run_gate",
+        title: "Chase the deposit refund",
+        confidence: 0.8,
+        importance: 0.6,
+        proposal: { tier: "withhold", note: "Like the invoices you ignore" },
+      },
+      NOW - DAY,
+    );
+    const { body } = await get("/admin/brain/interest");
+    expect(body.withheld).toEqual([
+      {
+        loopId: "loop_held",
+        title: "Chase the deposit refund",
+        seq: expect.any(Number),
+        at: new Date(NOW - DAY).toISOString(),
+        note: "Like the invoices you ignore",
+      },
+    ]);
+    const undone = applyTaskCommand(
+      db,
+      { surface: "tasks", runId: "user:tasks", kind: "undo", seq: body.withheld[0].seq },
+      NOW,
+    );
+    expect(undone.ok).toBe(true);
+    expect((await get("/admin/brain/interest")).body.withheld).toEqual([]);
   });
 
   test("lists every signal newest first with counts, backlog and vectors", async () => {
@@ -166,7 +201,7 @@ describe("GET /admin/brain/interest", () => {
       subjectText: "Renew the parking permit",
       loopId: "loop_permit",
     });
-    setInterestSignalEmbedding(db, "int_a", { vector: [0.1, 0.2], model: "embed-test" });
+    setInterestSignalEmbedding(db, "int_a", { vector: [0.1, 0.2], model: "embed-test" }, NOW);
     supersedeInterestSignals(db, { loopId: "loop_permit" }, NOW - DAY);
     enabled = false;
 
@@ -222,32 +257,40 @@ describe("GET /admin/brain/interest", () => {
     expect((await get("/admin/brain/interest?limit=abc")).status).toBe(400);
   });
 
+  /** One suggestion-gate verdict about `recordId`; `documentId` anchors it to a document. */
+  const decision = (
+    id: string,
+    recordId: string,
+    at: number,
+    score: number,
+    documentId: string | null = null,
+  ) =>
+    insertCognitionDecision(db, {
+      id,
+      runId: "run_propose",
+      documentId,
+      subjectDocumentId: documentId,
+      purpose: "task-propose",
+      lane: "tier",
+      rubricVersion: "task-propose-v1",
+      contentHash: null,
+      requestedModelId: "scripted",
+      modelId: "scripted",
+      requestJson: JSON.stringify({ state: { owner_interest: {} } }),
+      responseJson: JSON.stringify({ tier: score }),
+      score,
+      threshold: 1,
+      verdict: score === 0 ? "skip" : "pass",
+      error: null,
+      reusedFrom: null,
+      recordId,
+      enforced: false,
+      latencyMs: 1,
+      inputTokens: 10,
+      createdAt: at,
+    });
+
   test("lists the suggestion-gate verdicts newest first through the decision DTO", async () => {
-    const decision = (id: string, recordId: string, at: number, score: number) =>
-      insertCognitionDecision(db, {
-        id,
-        runId: "run_propose",
-        documentId: null,
-        subjectDocumentId: null,
-        purpose: "task-propose",
-        lane: "tier",
-        rubricVersion: "task-propose-v1",
-        contentHash: null,
-        requestedModelId: "scripted",
-        modelId: "scripted",
-        requestJson: JSON.stringify({ state: { owner_interest: {} } }),
-        responseJson: JSON.stringify({ tier: score }),
-        score,
-        threshold: 1,
-        verdict: score === 0 ? "skip" : "pass",
-        error: null,
-        reusedFrom: null,
-        recordId,
-        enforced: false,
-        latencyMs: 1,
-        inputTokens: 10,
-        createdAt: at,
-      });
     decision("dec_1", "loop_a", NOW - 2 * DAY, 1);
     decision("dec_2", "loop_b", NOW - DAY, 0);
     decision("dec_3", "loop_a", NOW, 2);
@@ -296,12 +339,71 @@ describe("GET /admin/brain/interest", () => {
     );
     expect(body.decisions[1]).toMatchObject({ verdict: "skip", score: 0, recordId: "loop_b" });
   });
+
+  test("keeps the verdicts of the 50 most recently judged records", async () => {
+    // 51 records, one verdict each, oldest first; the oldest record falls off.
+    for (let i = 0; i < 51; i += 1) decision(`dec_${i}`, `loop_${i}`, NOW - (51 - i) * 1000, 1);
+    // A second, older verdict about a recent record still rides in with it.
+    decision("dec_50_old", "loop_50", NOW - 60 * DAY, 0);
+    const { body } = await get("/admin/brain/interest");
+    const ids = body.decisions.map((d: { id: string }) => d.id);
+    expect(ids).toHaveLength(50);
+    expect(ids[0]).toBe("dec_50");
+    expect(ids).toContain("dec_1");
+    expect(ids).not.toContain("dec_0");
+    // Fifty records' newest verdicts fill the page before any record's older one.
+    expect(ids).not.toContain("dec_50_old");
+    // Newest first throughout.
+    const times = body.decisions.map((d: { createdAt: string }) => Date.parse(d.createdAt));
+    expect([...times].sort((a, b) => b - a)).toEqual(times);
+  });
+
+  test("a verdict anchored to a document that is no longer readable keeps its score but not its payload", async () => {
+    upsertDocuments(db, [
+      {
+        providerId: ProviderId("google"),
+        sourceId: SourceId("gmail-test"),
+        externalId: "e1",
+        title: "Boiler service quote",
+        content: "Quote body",
+        contentHash: "h-e1",
+        sourceCreatedAt: "2026-07-01T09:00:00.000Z",
+        sourceUpdatedAt: "2026-07-01T09:00:00.000Z",
+        metadata: { documentType: "email" },
+      },
+    ]);
+    const doc = db.prepare<[], { id: string }>("SELECT id FROM documents").get()!.id;
+    decision("dec_open", "loop_a", NOW - DAY, 1);
+    decision("dec_fenced", "loop_b", NOW, 2, doc);
+    // A purge of the document's source is pending: its audit content is fenced.
+    db.prepare(
+      "INSERT INTO knowledge_cascade_jobs (kind, target_kind, target_id, revision, created_at) VALUES ('purge', 'source', ?, 'r1', ?)",
+    ).run(doc, NOW);
+    const { body } = await get("/admin/brain/interest");
+    expect(body.decisions.map((d: { id: string }) => d.id)).toEqual(["dec_fenced", "dec_open"]);
+    expect(body.decisions[0]).toMatchObject({
+      id: "dec_fenced",
+      score: 2,
+      verdict: "pass",
+      documentId: doc,
+      request: null,
+      response: null,
+      error: null,
+    });
+    expect(body.decisions[1]).toMatchObject({
+      id: "dec_open",
+      request: { state: { owner_interest: {} } },
+      response: { tier: 1 },
+    });
+  });
 });
 
 describe("GET /admin/brain/interest/lookup", () => {
-  test("rejects a missing or blank text", async () => {
+  test("rejects a missing, blank or oversized text", async () => {
     expect((await get("/admin/brain/interest/lookup")).status).toBe(400);
     expect((await get("/admin/brain/interest/lookup?text=%20%20")).status).toBe(400);
+    expect((await get(`/admin/brain/interest/lookup?text=${"a".repeat(2001)}`)).status).toBe(400);
+    expect((await get(`/admin/brain/interest/lookup?text=${"a".repeat(2000)}`)).status).toBe(200);
   });
 
   test("an empty ledger answers a null result", async () => {
@@ -319,7 +421,7 @@ describe("GET /admin/brain/interest/lookup", () => {
       polarity: -1,
       kind: "observation",
       source: "brief_not_interested",
-      subjectText: "The boiler warranty newsletter",
+      subjectText: "The boiler engineer newsletter",
       note: "Marketing, not mine",
       observationId: "obs_news",
     });
@@ -341,19 +443,21 @@ describe("GET /admin/brain/interest/lookup", () => {
         text: "Book the boiler engineer",
         source: "task_accepted",
         ageDays: 3,
+        basis: "words",
       }),
     ]);
     expect(body.result.positive[0].similarity).toBeGreaterThan(0.2);
     expect(body.result.negative).toEqual([
       expect.objectContaining({
-        text: "The boiler warranty newsletter",
+        text: "The boiler engineer newsletter",
         note: "Marketing, not mine",
         source: "brief_not_interested",
         ageDays: 2,
+        basis: "words",
       }),
     ]);
     expect(body.result.statements).toEqual([
-      expect.objectContaining({ direction: "less", ageDays: 1 }),
+      expect.objectContaining({ direction: "less", ageDays: 1, basis: "words" }),
     ]);
     // Nothing about parking resembles the probe.
     expect(JSON.stringify(body.result)).not.toContain("parking");

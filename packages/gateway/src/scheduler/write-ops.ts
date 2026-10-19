@@ -563,11 +563,11 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // turn the user is waiting on, so user priority.
   { name: "cognition.observationUserAction", priority: "user" },
   { name: "cognition.taskCommand", priority: "user" },
-  // A reaction or statement rides a request the user is waiting on; vectors
-  // and supersessions are bookkeeping.
+  // A reaction, a statement or a supersession rides a request the user is
+  // waiting on; vectors are bookkeeping.
   { name: "interest.record", priority: "user" },
   { name: "interest.reaction", priority: "user" },
-  { name: "interest.supersede", priority: "background" },
+  { name: "interest.supersede", priority: "user" },
   { name: "interest.embedding", priority: "background" },
   { name: "interest.resetEmbeddings", priority: "background" },
   { name: "cognition.taskPropose", priority: "background" },

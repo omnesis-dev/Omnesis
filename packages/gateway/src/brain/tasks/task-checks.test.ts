@@ -130,13 +130,14 @@ describe("TaskChecks ledger", () => {
           source: "task_accepted",
           ageDays: 2,
           similarity: 0.7,
+          basis: "words",
         },
       ],
       negative: [],
       statements: [],
     };
     await rename(checks(true, true));
-    expect(lookups).toEqual(["Book the main hall\n"]);
+    expect(lookups).toEqual(["Book the main hall"]);
     const request = () =>
       JSON.parse(records.at(-1)!.payload!.requestJson) as { state: Record<string, unknown> };
     expect(request().state.owner_interest).toEqual(interest);

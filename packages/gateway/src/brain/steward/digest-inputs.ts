@@ -75,7 +75,7 @@ export function renderAutoAppliedTaskLines(db: Database.Database, now: number): 
     if (row.at <= since) continue;
     const event = JSON.parse(row.event_json) as TaskEvent;
     if (event.kind === "undone" && event.undoOf !== undefined) undone.add(event.undoOf);
-    else if (event.kind === "auto_applied")
+    else if (event.kind === "auto_applied" || event.kind === "auto_accepted")
       applied.push({ seq: row.seq, loopId: row.loop_id, event });
   }
   const title = db.prepare<[string], { title: string }>(
@@ -85,7 +85,12 @@ export function renderAutoAppliedTaskLines(db: Database.Database, now: number): 
     if (undone.has(seq)) return [];
     const task = title.get(loopId)?.title;
     if (task === undefined) return [];
-    const verb = event.change?.kind === "complete" ? "Marked done" : "Updated";
+    const verb =
+      event.kind === "auto_accepted"
+        ? "Added"
+        : event.change?.kind === "complete"
+          ? "Marked done"
+          : "Updated";
     return [`- ${verb}: ${task}${event.note ? ` — ${event.note}` : ""}`];
   });
   return lines.length > AUTO_APPLIED_LINES_MAX

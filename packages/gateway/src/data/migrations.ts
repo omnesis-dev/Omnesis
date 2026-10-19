@@ -4872,11 +4872,6 @@ export const MIGRATIONS: readonly Migration[] = [
     up: rescanIsoDateTimeMentions,
   },
   {
-    version: 204,
-    description: "interest ledger: the owner's reactions as examples, and thumbs on brief items",
-    up: createInterestTables,
-  },
-  {
     version: 203,
     description: "index derivation backlog age by document write time",
     up(db) {
@@ -4894,6 +4889,11 @@ export const MIGRATIONS: readonly Migration[] = [
         db.exec(`DROP INDEX IF EXISTS idx_documents_${stage}_pending_age`);
       }
     },
+  },
+  {
+    version: 204,
+    description: "interest ledger: the owner's reactions as examples, and thumbs on brief items",
+    up: createInterestTables,
   },
 ];
 

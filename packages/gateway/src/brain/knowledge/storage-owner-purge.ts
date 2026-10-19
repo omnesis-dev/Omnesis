@@ -3,6 +3,7 @@
 
 import { deleteOpenLoop } from "../storage/open-loops.js";
 import { deleteObservationsAttachedToLoops } from "../storage/observations.js";
+import { deleteInterestSignalsFor } from "../storage/interest.js";
 import { deleteDocAnnotation } from "../storage/annotations.js";
 import { deletePersonAnnotation } from "../storage/person-annotations.js";
 import type Database from "better-sqlite3";
@@ -25,6 +26,10 @@ export function purgeKnowledgeOwner(
     // Preserve corpus mirror IDs until mirror.remove can delete their index chunks.
     // Immediate owner read fences hide them while bounded cleanup is pending.
   } else if (kind === "observation") {
+    if (
+      db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='interest_signals'").get()
+    )
+      deleteInterestSignalsFor(db, { observationId: ownerId });
     db.prepare("DELETE FROM observations WHERE id=?").run(ownerId);
   } else if (kind === "doc_annotation") {
     deleteDocAnnotation(db, ownerId);

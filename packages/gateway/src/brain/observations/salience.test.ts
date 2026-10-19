@@ -97,7 +97,13 @@ describe("buildSalienceRequest", () => {
 
   const ownerInterest: OwnerInterest = {
     positive: [
-      { text: "Rent invoice due Friday", source: "task_accepted", ageDays: 12, similarity: 0.71 },
+      {
+        text: "Rent invoice due Friday",
+        source: "task_accepted",
+        ageDays: 12,
+        similarity: 0.71,
+        basis: "words",
+      },
     ],
     negative: [
       {
@@ -106,14 +112,17 @@ describe("buildSalienceRequest", () => {
         source: "brief_not_interested",
         ageDays: 3,
         similarity: 0.58,
+        basis: "words",
       },
     ],
-    statements: [{ text: "invoice reminders", direction: "less", ageDays: 1, similarity: 0.6 }],
+    statements: [
+      { text: "invoice reminders", direction: "less", ageDays: 1, similarity: 0.6, basis: "words" },
+    ],
   };
 
   test("the owner's past reactions ride along as owner_interest when there are any", () => {
     const request = buildSalienceRequest({ ...subject, ownerInterest }, NOW);
-    expect(request.state.owner_interest).toEqual(ownerInterest);
+    expect((request.state as { owner_interest?: unknown }).owner_interest).toEqual(ownerInterest);
   });
 
   test("without reactions the state has no owner_interest key and is unchanged", () => {

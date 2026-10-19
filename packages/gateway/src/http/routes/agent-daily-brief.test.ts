@@ -182,13 +182,16 @@ describe("PUT /agent/conversations/:id/briefs/:day/items/:observationId/reaction
     });
 
   test("hands the reaction to the reactor with the day's message and answers its view", async () => {
+    // The reactor names the note a correction is saved as; the client never does.
     const reactor = vi.fn<BriefItemReactor>(async (input) => ({
       ok: true,
       reaction: {
         observationId: input.observationId,
         reaction: input.reaction,
         ...(input.note ? { note: input.note } : {}),
-        ...(input.noteId ? { noteId: input.noteId } : {}),
+        ...(input.reaction === "factual_error" && input.note
+          ? { noteId: "11111111-1111-5111-8111-111111111111" }
+          : {}),
         at: "2026-10-14T08:00:00.000Z",
       },
     }));
@@ -196,14 +199,13 @@ describe("PUT /agent/conversations/:id/briefs/:day/items/:observationId/reaction
     const res = await put(app, {
       reaction: "factual_error",
       note: "  The offer expires Monday.  ",
-      noteId: "11111111-1111-4111-8111-111111111111",
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       observationId: "obs_offer",
       reaction: "factual_error",
       note: "The offer expires Monday.",
-      noteId: "11111111-1111-4111-8111-111111111111",
+      noteId: "11111111-1111-5111-8111-111111111111",
       at: "2026-10-14T08:00:00.000Z",
     });
     expect(reactor).toHaveBeenCalledWith({
@@ -212,7 +214,6 @@ describe("PUT /agent/conversations/:id/briefs/:day/items/:observationId/reaction
       observationId: "obs_offer",
       reaction: "factual_error",
       note: "The offer expires Monday.",
-      noteId: "11111111-1111-4111-8111-111111111111",
     });
 
     const cleared = await put(app, { reaction: null });
@@ -266,6 +267,12 @@ describe("PUT /agent/conversations/:id/briefs/:day/items/:observationId/reaction
       { reaction: "down" },
       { reaction: "up", note: "   " },
       { reaction: "up", note: "x".repeat(2001) },
+      // The note id is the gateway's to choose, so a client may not send one.
+      {
+        reaction: "factual_error",
+        note: "wrong day",
+        noteId: "11111111-1111-4111-8111-111111111111",
+      },
       { reaction: "up", noteId: "not-a-uuid" },
       { reaction: "up", extra: true },
     ]) {

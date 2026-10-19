@@ -139,7 +139,7 @@ function pruneCognitionDecisions(db: Db, cutoff: number, limit: number): number 
         `DELETE FROM cognition_decisions
           WHERE id IN (
             SELECT id FROM cognition_decisions
-             WHERE (verdict = 'unavailable' OR purpose IN ('record-check', 'task-check', 'mention-worth', 'find-route'))
+             WHERE (verdict = 'unavailable' OR purpose IN ('record-check', 'task-check', 'task-propose', 'mention-worth', 'find-route'))
                AND created_at < ?
              ORDER BY created_at, id
              LIMIT ?

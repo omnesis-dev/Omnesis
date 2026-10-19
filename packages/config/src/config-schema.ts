@@ -2487,6 +2487,36 @@ const brainTasks = z
   })
   .strict();
 
+const brainInterestLookup = z
+  .object({
+    perPolarity: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .describe(
+        "How many past reactions of each kind (wanted, not wanted, said) a gate is shown at most.",
+      )
+      .optional(),
+    cosineFloor: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe(
+        "Below this cosine similarity between the item's vector and a reaction's, the reaction is not shown. Depends on the embedder; raise it if unrelated reactions appear.",
+      )
+      .optional(),
+    overlapFloor: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe(
+        "Below this share of words in common (used while a reaction has no vector yet, or with no embedder), the reaction is not shown.",
+      )
+      .optional(),
+  })
+  .strict();
+
 const brainInterest = z
   .object({
     enabled: z
@@ -2494,6 +2524,9 @@ const brainInterest = z
       .describe(
         "Let the Brain learn what you care about from what you did on purpose — tasks you accepted, created or ignored, thumbs on morning-brief items, and what you say in the Morning brief conversation — and show the decision model similar past reactions when it ranks observations for the brief, judges a new suggestion, or schedules new evidence. False stops recording and showing them; nothing is inferred from silence either way.",
       )
+      .optional(),
+    lookup: brainInterestLookup
+      .describe("How similar a past reaction must be to be shown, and how many are.")
       .optional(),
   })
   .strict();

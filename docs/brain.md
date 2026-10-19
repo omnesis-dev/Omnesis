@@ -872,10 +872,27 @@ A model outage fails open to a suggestion. `brain.interest.enabled: false`
 stops recording and stops showing examples; the gates then decide as if the
 ledger were empty.
 
+A gate looks up the few examples most like the item (by vector when both have
+one from the live embedder, by shared content words otherwise, never on one
+word alone); `brain.interest.lookup` sets how many it is shown of each kind
+(`perPolarity`, 4) and the similarity floors (`cosineFloor` 0.55,
+`overlapFloor` 0.2). Each example says which measure found it. The owner's
+latest word on a thing is the one that counts: accepting a suggestion they had
+ignored supersedes the ignore, a changed thumbs supersedes the earlier one,
+and a statement about the same subject supersedes the previous statement. A
+purged observation or loop takes its examples with it; a deleted task's
+examples are kept as history but no longer count.
+
+The ledger exists only in experimental mode, where the gates that read it
+run; a stable gateway records nothing.
+
 Debug → Cognition → Interest shows the ledger: every example with its
 polarity, source, text and note, whether its vector is ready, and whether it
-was superseded; the thumbs on each brief; the `task-propose` verdicts; and a
-lookup box that shows what a gate would be shown for any text.
+was superseded; the suggestions the gate withheld, each with an **Offer
+again** that undoes the withholding; the `task-propose` verdicts; and a
+lookup box that shows what a gate would be shown for any text. A
+factual-error thumbs records no example and so appears there only as the
+observation's `disputed` action.
 
 ## Auditing the decision model
 

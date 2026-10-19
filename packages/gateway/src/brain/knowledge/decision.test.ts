@@ -214,7 +214,13 @@ describe("knowledgeUrgencyState", () => {
   };
   const ownerInterest: OwnerInterest = {
     positive: [
-      { text: "Workshop booking confirmed", source: "task_created", ageDays: 5, similarity: 0.7 },
+      {
+        text: "Workshop booking confirmed",
+        source: "task_created",
+        ageDays: 5,
+        similarity: 0.7,
+        basis: "words",
+      },
     ],
     negative: [],
     statements: [],

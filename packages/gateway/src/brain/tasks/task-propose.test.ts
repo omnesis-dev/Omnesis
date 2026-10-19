@@ -17,12 +17,13 @@ import type Database from "better-sqlite3";
 const log = createLogger("test").child("task-propose");
 const capture: DecisionPayloadCapture = {
   erasureGeneration: 0,
-  subjects: [{ kind: "document", id: "doc_fixture" }],
+  subjects: [{ kind: "source", id: "doc_fixture" }],
 };
 
 const example = (source: string, text: string): InterestExample => ({
   text,
   source,
+  basis: "words",
   ageDays: 3,
   similarity: 0.8,
 });
@@ -156,7 +157,7 @@ describe("TaskProposeGate", () => {
     expect(await judge()).toEqual({
       tier: "adopt",
       enforced: true,
-      reason: "Adopted: like 2 tasks you accepted",
+      reason: "Adopted: like 2 tasks you accepted or created",
     });
     interest = interestOf({
       positive: [accepted("Renew the gym membership")],
@@ -166,7 +167,9 @@ describe("TaskProposeGate", () => {
     interest = interestOf({ negative: [ignored("Renew the magazine subscription")] });
     expect((await judge()).tier).toBe("suggest");
     interest = interestOf({
-      statements: [{ text: "lease renewals", direction: "more", ageDays: 1, similarity: 0.7 }],
+      statements: [
+        { text: "lease renewals", direction: "more", ageDays: 1, similarity: 0.7, basis: "words" },
+      ],
     });
     expect(await judge()).toEqual({
       tier: "adopt",

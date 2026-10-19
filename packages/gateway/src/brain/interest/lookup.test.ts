@@ -5,7 +5,6 @@ import { describe, expect, test } from "vitest";
 import {
   DEFAULT_LOOKUP_OPTIONS,
   cosineSimilarity,
-  hasOwnerInterest,
   lookupOwnerInterest,
   wordOverlap,
   wordSet,
@@ -55,16 +54,26 @@ describe("similarity primitives", () => {
     expect(cosineSimilarity(a, Float32Array.from([0, 0, 0]))).toBe(0);
   });
 
-  test("word sets keep lowercased words of three letters or more; overlap is Jaccard", () => {
-    expect([...wordSet("Renew the Passport, by 3pm — ok?")].sort()).toEqual([
+  test("word sets keep lowercased content words of three letters or more, dropping stopwords", () => {
+    expect([...wordSet("Renew the Passport, by 3pm — for you and your trip?")].sort()).toEqual([
       "3pm",
       "passport",
       "renew",
-      "the",
+      "trip",
     ]);
-    expect(wordOverlap(wordSet("renew the passport"), wordSet("renew the visa"))).toBeCloseTo(
-      2 / 4,
-    );
+    expect(wordSet("the and for you with from this that will")).toEqual(new Set());
+  });
+
+  test("overlap is Jaccard over content words, and zero below two shared words", () => {
+    expect(
+      wordOverlap(wordSet("renew the passport photo"), wordSet("renew the passport")),
+    ).toBeCloseTo(2 / 3);
+    // One shared word is a coincidence.
+    expect(wordOverlap(wordSet("renew the passport"), wordSet("renew the visa"))).toBe(0);
+    // Stopwords in common count for nothing.
+    expect(
+      wordOverlap(wordSet("Pay the invoice for the venue"), wordSet("Book the hotel for the trip")),
+    ).toBe(0);
     expect(wordOverlap(new Set(), wordSet("anything"))).toBe(0);
   });
 });
@@ -78,7 +87,10 @@ describe("lookupOwnerInterest with vectors", () => {
       sig({ id: "int_orthogonal", vector: [0, 1, 0] }),
     ];
     const block = lookupOwnerInterest(signals, query("unrelated words", [1, 0, 0]), NOW)!;
-    expect(block.positive.map((e) => e.similarity)).toEqual([1, 0.71]);
+    expect(block.positive.map((e) => [e.similarity, e.basis])).toEqual([
+      [1, "vector"],
+      [0.71, "vector"],
+    ]);
     expect(block.negative).toEqual([]);
     expect(block.statements).toEqual([]);
   });
@@ -140,8 +152,15 @@ describe("lookupOwnerInterest with vectors", () => {
         direction: "more",
         ageDays: 1,
         similarity: 1,
+        basis: "vector",
       },
-      { text: "newsletter promotions", direction: "less", ageDays: 1, similarity: 0.99 },
+      {
+        text: "newsletter promotions",
+        direction: "less",
+        ageDays: 1,
+        similarity: 0.99,
+        basis: "vector",
+      },
     ]);
   });
 
@@ -180,10 +199,10 @@ describe("lookupOwnerInterest with vectors", () => {
       query("Renew the passport before the trip", [0, 0, 1]),
       NOW,
     )!;
-    // Both compared by words (3 shared of 5), neither by the orthogonal vector.
-    expect(block.positive.map((e) => [e.text, e.similarity])).toEqual([
-      ["Renew the passport", 0.6],
-      ["Renew the passport", 0.6],
+    // Both compared by words (2 shared of 4), neither by the orthogonal vector.
+    expect(block.positive.map((e) => [e.text, e.similarity, e.basis])).toEqual([
+      ["Renew the passport", 0.5, "words"],
+      ["Renew the passport", 0.5, "words"],
     ]);
   });
 });
@@ -200,10 +219,12 @@ describe("lookupOwnerInterest without a query vector", () => {
         note: "passport renewal before the trip",
       }),
       sig({ id: "int_none", subjectText: "Buy groceries", vector: [1, 0, 0] }),
+      // One shared content word is not a resemblance.
+      sig({ id: "int_one_word", subjectText: "Renew the gym membership" }),
     ];
     const block = lookupOwnerInterest(signals, query("Renew the passport before the trip"), NOW)!;
     expect(block.positive.map((e) => e.text)).toEqual(["Renew the passport"]);
-    expect(block.positive[0]!.similarity).toBe(0.6);
+    expect(block.positive[0]).toMatchObject({ similarity: 0.5, basis: "words" });
     // The note counts towards the match but the example shows the subject and the note apart.
     expect(block.negative).toEqual([
       {
@@ -211,7 +232,8 @@ describe("lookupOwnerInterest without a query vector", () => {
         note: "passport renewal before the trip",
         source: "brief_not_interested",
         ageDays: 1,
-        similarity: 0.5,
+        similarity: 0.43,
+        basis: "words",
       },
     ]);
   });
@@ -219,14 +241,14 @@ describe("lookupOwnerInterest without a query vector", () => {
   test("superseded rows are ignored even when they match", () => {
     const signals = [
       sig({ id: "int_gone", subjectText: "Renew the passport", supersededAt: NOW - 1 }),
-      sig({ id: "int_live", subjectText: "Renew the visa" }),
+      sig({ id: "int_live", subjectText: "Renew the passport photo" }),
     ];
     const block = lookupOwnerInterest(signals, query("Renew the passport"), NOW)!;
-    expect(block.positive.map((e) => e.text)).toEqual(["Renew the visa"]);
+    expect(block.positive.map((e) => e.text)).toEqual(["Renew the passport photo"]);
     expect(lookupOwnerInterest([signals[0]!], query("Renew the passport"), NOW)).toBeNull();
   });
 
-  test("empty input and nothing above the floor both answer null", () => {
+  test("empty input and nothing above the floor both answer null, never an empty block", () => {
     expect(lookupOwnerInterest([], query("anything"), NOW)).toBeNull();
     expect(
       lookupOwnerInterest(
@@ -238,22 +260,14 @@ describe("lookupOwnerInterest without a query vector", () => {
     expect(
       lookupOwnerInterest([sig({ vector: [0, 1] })], query("Buy groceries", [1, 0]), NOW),
     ).toBeNull();
-  });
-});
-
-describe("hasOwnerInterest", () => {
-  test("is false for null and for a block with nothing in it", () => {
-    expect(hasOwnerInterest(null)).toBe(false);
-    expect(hasOwnerInterest({ positive: [], negative: [], statements: [] })).toBe(false);
-    const example = { text: "x", source: "task_accepted", ageDays: 0, similarity: 1 };
-    expect(hasOwnerInterest({ positive: [example], negative: [], statements: [] })).toBe(true);
-    expect(hasOwnerInterest({ positive: [], negative: [example], statements: [] })).toBe(true);
+    // Below the floor on words even though the vector route was unavailable.
     expect(
-      hasOwnerInterest({
-        positive: [],
-        negative: [],
-        statements: [{ text: "x", direction: "more", ageDays: 0, similarity: 1 }],
-      }),
-    ).toBe(true);
+      lookupOwnerInterest(
+        [sig({ subjectText: "Renew the passport before the Lisbon trip" })],
+        query("Renew the passport"),
+        NOW,
+        { ...DEFAULT_LOOKUP_OPTIONS, overlapFloor: 0.5 },
+      ),
+    ).toBeNull();
   });
 });

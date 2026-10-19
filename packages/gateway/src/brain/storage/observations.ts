@@ -23,6 +23,7 @@ import {
   type ObservationScores,
   type ObservationState,
 } from "./types.js";
+import { deleteInterestSignalsFor } from "./interest.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -419,7 +420,10 @@ export function deleteObservationsAttachedToLoops(
     .all(...loopIds)
     .map((r) => r.id);
   const del = db.prepare<[string]>("DELETE FROM observations WHERE id = ?");
-  for (const id of ids) del.run(id);
+  for (const id of ids) {
+    deleteInterestSignalsFor(db, { observationId: id });
+    del.run(id);
+  }
   return ids;
 }
 
@@ -434,7 +438,10 @@ export function deleteObservationsCitingDocs(db: Db, docIds: readonly string[]):
     .all(...docIds)
     .map((r) => r.observation_id);
   const del = db.prepare<[string]>("DELETE FROM observations WHERE id = ?");
-  for (const id of ids) del.run(id);
+  for (const id of ids) {
+    deleteInterestSignalsFor(db, { observationId: id });
+    del.run(id);
+  }
   return ids;
 }
 

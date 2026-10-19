@@ -18,7 +18,7 @@
  */
 
 import { html } from "htm/preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { getConversationBrief, setBriefItemReaction } from "../../api.js";
 import { Modal } from "../modal.js";
 import {
@@ -307,11 +307,16 @@ function NotUsefulDialog({ reaction, onClose, onSend }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
+  // One send at a time. The ref, not the state, is the guard: a second
+  // submit in the same tick would still see `busy` false.
+  const sending = useRef(false);
   const submit = (body) => {
-    if (busy) return;
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setError(null);
     onSend(body).catch((err) => {
+      sending.current = false;
       setError(errorText(err));
       setBusy(false);
     });

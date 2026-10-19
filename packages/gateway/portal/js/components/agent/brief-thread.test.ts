@@ -197,16 +197,49 @@ describe("brief item thumbs", () => {
     expect([pressed(thumbs(2).up), pressed(thumbs(2).down)]).toEqual(["false", "false"]);
   });
 
-  test("thumbs up sends the reaction and shows it at once; a second press clears it", async () => {
+  test("thumbs up shows pressed before the gateway answers, keeps it after; a second press clears it", async () => {
+    let answer;
+    mocks.setReaction.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
     await mount();
     await click(thumbs(0).up);
     expect(mocks.setReaction).toHaveBeenCalledWith("conv_brief", TODAY, "obs_offer", { reaction: "up" });
+    // Optimistic: the PUT is still pending and the thumb is already pressed.
     expect(pressed(thumbs(0).up)).toBe("true");
-    // The other item is untouched.
     expect(pressed(thumbs(1).up)).toBe("false");
+    await act(async () => {
+      answer({ observationId: "obs_offer", reaction: "up", at: "2026-10-14T09:00:00.000Z" });
+    });
+    await act(async () => {});
+    expect(pressed(thumbs(0).up)).toBe("true");
     await click(thumbs(0).up);
     expect(mocks.setReaction).toHaveBeenLastCalledWith("conv_brief", TODAY, "obs_offer", { reaction: null });
     expect(pressed(thumbs(0).up)).toBe("false");
+  });
+
+  test("the dialog sends once while a send is pending", async () => {
+    let answer;
+    mocks.setReaction.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    await mount();
+    await click(thumbs(0).down);
+    const form = host.querySelector(".modal-panel form");
+    const submit = () => form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    await act(async () => {
+      submit();
+      submit();
+    });
+    await act(async () => {});
+    expect(mocks.setReaction).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(".modal-panel button[type=submit]").textContent).toBe("Sending…");
+    expect(host.querySelector(".modal-panel button[type=submit]").hasAttribute("disabled")).toBe(true);
+    // A third press after the re-render is refused too.
+    await act(async () => { submit(); });
+    expect(mocks.setReaction).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      answer({ observationId: "obs_offer", reaction: "not_interested" });
+    });
+    await act(async () => {});
+    expect(host.querySelector(".modal-panel")).toBeNull();
+    expect(thumbs(0).label.textContent).toBe("not interested");
   });
 
   test("a refused thumbs up goes back to unpressed with the error beside it", async () => {

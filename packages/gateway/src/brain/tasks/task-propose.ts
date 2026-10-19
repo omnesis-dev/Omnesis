@@ -15,7 +15,7 @@
  * The model's answer is bounded by what the examples can support: adopt needs
  * a positive example and no negative one, withhold needs a negative example.
  * A suggestion nothing in the ledger resembles is never asked about and leaves
- * no ledger row, so an owner without reactions sees today's behaviour.
+ * no ledger row, so an owner without reactions is offered every suggestion.
  *
  * Three modes, read live: `off` asks nothing; `shadow` records the verdict
  * without acting on it; `enforce` acts on adopt and withhold. Fails open: an
@@ -23,6 +23,7 @@
  */
 
 import { askScore } from "../decision-call.js";
+import { taskSubjectText } from "../storage/interest.js";
 import type { DecisionPayloadCapture } from "../decision-payload.js";
 import type { DecisionCapability, DecisionQuestion, Logger } from "@omnesis/core";
 import type { TaskProposeGateMode } from "../config.js";
@@ -36,7 +37,11 @@ export const TASK_PROPOSE_RUBRIC_VERSION = "task-propose-v1";
 const TIER_QUESTION_ID = "tier";
 /** The ledger threshold: a score at or above it is offered or adopted, below it withheld. */
 const TIER_THRESHOLD = 1;
-/** Scores (0..2) the model's tier is read from; the midpoints leave `suggest` in between. */
+/**
+ * Scores (0..2) the model's tier is read from; the midpoints leave `suggest`
+ * in between. The portal's decision card reads an adoption from the ledger
+ * row's score with the same boundary (`decision-card.js`).
+ */
 const ADOPT_SCORE = 1.5;
 const WITHHOLD_SCORE = 0.5;
 
@@ -190,7 +195,7 @@ export class TaskProposeGate {
 
   private async lookup(input: TaskProposeInput): Promise<OwnerInterest | null> {
     try {
-      return await this.deps.interest.lookup({ text: `${input.title}\n${input.description}` });
+      return await this.deps.interest.lookup({ text: taskSubjectText(input) });
     } catch (error) {
       this.deps.log.warn(
         `Interest lookup for ${input.loopId} failed; suggesting: ${error instanceof Error ? error.message : String(error)}`,
@@ -234,7 +239,7 @@ function describeTier(tier: ProposalTier, interest: OwnerInterest): string {
   if (tier === "adopt") {
     const tasks = interest.positive.filter((e) => e.source.startsWith("task_")).length;
     return tasks > 0
-      ? `Adopted: like ${count(tasks, "task")} you accepted`
+      ? `Adopted: like ${count(tasks, "task")} you accepted or created`
       : interest.positive.length > 0
         ? `Adopted: like ${count(interest.positive.length, "item")} you wanted`
         : "Adopted: like what you asked for more of";

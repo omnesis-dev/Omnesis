@@ -23,6 +23,7 @@ import {
   createOpenLoop,
   deleteOpenLoop,
   getOpenLoop,
+  taskSnapshot,
   updateOpenLoop,
 } from "./open-loops.js";
 import {
@@ -44,10 +45,13 @@ export interface TaskCommandOrigin {
   /** Ledger run id: `user:tasks`, `user:conversation:<id>`, `note:<entryId>`. */
   runId: string;
   conversationId?: string;
+}
+
+export interface ApplyTaskCommandOptions {
   /**
    * Whether the change records the interest signal it implies (an accept,
-   * create or ignore). False while `brain.interest.enabled` is off; an undo
-   * still takes back what was recorded before.
+   * create or ignore). False while the interest ledger is off; an undo still
+   * takes back what was recorded before. Defaults to true.
    */
   recordInterest?: boolean;
 }
@@ -124,20 +128,6 @@ export function isTaskSchedule(value: string): boolean {
   return SCHEDULE_RE.test(value);
 }
 
-function snapshot(loop: OpenLoopRow): TaskSnapshot {
-  return {
-    state: loop.state,
-    title: loop.title,
-    description: loop.description,
-    deadline: loop.deadline,
-    scheduledFor: loop.scheduledFor,
-    accepted: loop.accepted,
-    ignored: loop.ignored,
-    completionNote: loop.completionNote,
-    proposedChange: loop.proposedChange,
-  };
-}
-
 function fail(
   reason: Extract<TaskCommandResult, { ok: false }>["reason"],
   message: string,
@@ -167,11 +157,21 @@ export function describeSchedule(schedule: TaskSchedule | null, now: number): st
 }
 
 /** Apply one task command atomically. */
-export function applyTaskCommand(db: Db, command: TaskCommand, now: number): TaskCommandResult {
-  return db.transaction(() => applyUnlocked(db, command, now))();
+export function applyTaskCommand(
+  db: Db,
+  command: TaskCommand,
+  now: number,
+  opts: ApplyTaskCommandOptions = {},
+): TaskCommandResult {
+  return db.transaction(() => applyUnlocked(db, command, now, opts))();
 }
 
-function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandResult {
+function applyUnlocked(
+  db: Db,
+  command: TaskCommand,
+  now: number,
+  opts: ApplyTaskCommandOptions,
+): TaskCommandResult {
   const origin: Pick<TaskEvent, "surface" | "conversationId"> = {
     surface: command.surface,
     ...(command.conversationId ? { conversationId: command.conversationId } : {}),
@@ -195,7 +195,7 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
           event: full,
           seq,
           undone: undone ?? null,
-          record: command.recordInterest !== false,
+          record: opts.recordInterest !== false,
           idGen: randomUUID,
         },
         now,
@@ -237,7 +237,7 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
 
   const loop = getOpenLoop(db, command.id);
   if (!loop) return fail("not_found", `task ${command.id} does not exist`);
-  const before = snapshot(loop);
+  const before = taskSnapshot(loop);
   const owned = isOwnedTask(loop);
 
   switch (command.kind) {
@@ -375,6 +375,9 @@ function applyUnlocked(db: Db, command: TaskCommand, now: number): TaskCommandRe
       return done(db, loop.id, seq, false, true, `Reopened: ${loop.title}`);
     }
     case "delete": {
+      // The task is history; so is what the owner said by creating or
+      // accepting it, which must not keep pointing at a loop that is gone.
+      supersedeInterestSignals(db, { loopId: loop.id, kind: "task" }, now);
       deleteOpenLoop(db, loop.id, { retire: true, now });
       return {
         ok: true,
@@ -636,7 +639,7 @@ export function autoApplyTaskChange(
     if (!isOwnedTask(loop)) return { applied: false, reason: "not_owned" };
     if (readTaskAuthorship(db, loopId).latestEventSeq !== change.basedOnSeq)
       return { applied: false, reason: "stale" };
-    const before = snapshot(loop);
+    const before = taskSnapshot(loop);
     const fields = change.fields ?? {};
     const changed: TaskAuthoredField[] = [];
     if (change.kind === "complete") {

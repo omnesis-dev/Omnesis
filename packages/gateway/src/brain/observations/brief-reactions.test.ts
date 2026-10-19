@@ -23,6 +23,7 @@ import {
 import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { createObservation, getObservation } from "../storage/observations.js";
 import {
+  correctionNoteId,
   correctionNoteText,
   createBriefItemReactor,
   type BriefNoteCapture,
@@ -38,6 +39,7 @@ describe("brief item reactions", () => {
   let path: string;
   let db: Database.Database;
   let now: number;
+  let enabled: boolean;
   let capture: ReturnType<typeof vi.fn<BriefNoteCapture["capture"]>>;
   let notes: BriefNoteCapture | null;
   let react: ReturnType<typeof createBriefItemReactor>;
@@ -46,13 +48,14 @@ describe("brief item reactions", () => {
     path = `/tmp/omnesis-test-${randomUUID()}.db`;
     db = createDatabase(path);
     now = NOW;
+    enabled = true;
     let n = 0;
     const writeGate = directWriteGate(db);
     const interest = new InterestEngine({
       db,
       writeGate,
       getEmbedder: () => null,
-      enabled: () => true,
+      enabled: () => enabled,
       clock: () => now,
       idGen: () => `sig${++n}`,
       log,
@@ -193,15 +196,16 @@ describe("brief item reactions", () => {
     expect(userAction("obs_rent")).toBe("not_interested");
   });
 
-  test("a factual error with a correction saves a note and leaves no signal", async () => {
+  test("a factual error with a correction saves a note under a derived id and leaves no signal", async () => {
     await react({ day: DAY, messageId: MESSAGE, observationId: "obs_rent", reaction: "up" });
+    const noteId = correctionNoteId("obs_rent", "The rent is due Monday, not Friday.");
+    expect(noteId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     const result = await react({
       day: DAY,
       messageId: MESSAGE,
       observationId: "obs_rent",
       reaction: "factual_error",
-      note: "The rent is due Monday, not Friday.",
-      noteId: "11111111-1111-4111-8111-111111111111",
+      note: "  The rent is due Monday, not Friday.  ",
     });
     expect(result).toEqual({
       ok: true,
@@ -209,14 +213,14 @@ describe("brief item reactions", () => {
         observationId: "obs_rent",
         reaction: "factual_error",
         note: "The rent is due Monday, not Friday.",
-        noteId: "11111111-1111-4111-8111-111111111111",
+        noteId,
         at: new Date(NOW).toISOString(),
       },
     });
     expect(live()).toEqual([]);
     expect(capture).toHaveBeenCalledTimes(1);
     expect(capture).toHaveBeenCalledWith({
-      id: "11111111-1111-4111-8111-111111111111",
+      id: noteId,
       text: correctionNoteText(
         "The studio rent invoice is due Friday.",
         "The rent is due Monday, not Friday.",
@@ -227,33 +231,93 @@ describe("brief item reactions", () => {
     });
     expect(getBriefItemReaction(db, "obs_rent")).toMatchObject({
       reaction: "factual_error",
-      noteId: "11111111-1111-4111-8111-111111111111",
+      noteId,
     });
     expect(userAction("obs_rent")).toBe("disputed");
 
-    // The same correction sent again is not captured twice.
+    // The same correction sent again, however padded, is not captured twice.
     const retry = await react({
       day: DAY,
       messageId: MESSAGE,
       observationId: "obs_rent",
       reaction: "factual_error",
-      note: "The rent is due Monday, not Friday.",
-      noteId: "11111111-1111-4111-8111-111111111111",
+      note: "The rent is due Monday, not Friday.   ",
     });
     expect(retry).toEqual(result);
     expect(capture).toHaveBeenCalledTimes(1);
 
-    // A different correction is a new note.
+    // Different words, even only in their case, are a new note.
     await react({
       day: DAY,
       messageId: MESSAGE,
       observationId: "obs_rent",
       reaction: "factual_error",
-      note: "It was paid last week.",
+      note: "The rent is due monday, not friday.",
     });
+    const recased = correctionNoteId("obs_rent", "The rent is due monday, not friday.");
+    expect(recased).not.toBe(noteId);
     expect(capture).toHaveBeenCalledTimes(2);
-    expect(capture.mock.calls[1]![0].id).not.toBe("11111111-1111-4111-8111-111111111111");
-    expect(getBriefItemReaction(db, "obs_rent")?.noteId).toBe(capture.mock.calls[1]![0].id);
+    expect(capture.mock.calls[1]![0].id).toBe(recased);
+    expect(getBriefItemReaction(db, "obs_rent")?.noteId).toBe(recased);
+    // The same correction on another item is another note.
+    expect(correctionNoteId("obs_venue", "The rent is due Monday, not Friday.")).not.toBe(noteId);
+  });
+
+  test("a correction the notes runtime rejects is refused and nothing changes", async () => {
+    await react({ day: DAY, messageId: MESSAGE, observationId: "obs_rent", reaction: "up" });
+    capture.mockRejectedValueOnce(new Error("the notes ledger is closed"));
+    const result = await react({
+      day: DAY,
+      messageId: MESSAGE,
+      observationId: "obs_rent",
+      reaction: "factual_error",
+      note: "The rent is due Monday.",
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "notes_unavailable",
+      message: "the correction could not be saved: notes are unavailable",
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(live()).toEqual([expect.objectContaining({ source: "brief_thumbs_up" })]);
+    expect(getBriefItemReaction(db, "obs_rent")).toMatchObject({ reaction: "up", noteId: null });
+    expect(userAction("obs_rent")).toBe("thumbs_up");
+    expect(
+      db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM interest_signals").get()!.n,
+    ).toBe(1);
+  });
+
+  test("while the ledger is off a thumbs still lands its row and user action, writes no signal, and takes the previous one back", async () => {
+    await react({ day: DAY, messageId: MESSAGE, observationId: "obs_rent", reaction: "up" });
+    expect(live()).toHaveLength(1);
+    enabled = false;
+    now = NOW + 2_000;
+    const result = await react({
+      day: DAY,
+      messageId: MESSAGE,
+      observationId: "obs_rent",
+      reaction: "not_interested",
+      note: "Not this month.",
+    });
+    expect(result).toEqual({
+      ok: true,
+      reaction: {
+        observationId: "obs_rent",
+        reaction: "not_interested",
+        note: "Not this month.",
+        at: new Date(now).toISOString(),
+      },
+    });
+    expect(live()).toEqual([]);
+    expect(listInterestSignals(db, { limit: 10 })).toEqual([
+      expect.objectContaining({ source: "brief_thumbs_up", supersededAt: now }),
+    ]);
+    expect(getBriefItemReaction(db, "obs_rent")).toMatchObject({
+      reaction: "not_interested",
+      note: "Not this month.",
+      updatedAt: now,
+    });
+    expect(userAction("obs_rent")).toBe("not_interested");
   });
 
   test("a factual error without a correction captures nothing", async () => {

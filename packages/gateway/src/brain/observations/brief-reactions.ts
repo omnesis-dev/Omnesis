@@ -8,12 +8,14 @@
  * interested" says they did not. Both become one interest signal with the
  * item's text, replacing whatever the owner said about the item before. A
  * factual error is not about interest at all: it marks the observation
- * disputed and, when the owner wrote a correction, saves it as a Tell Omnesis
+ * disputed and, when the owner wrote a correction, saves it as a quick-capture
  * note so the note agent acts on it. Clearing a reaction takes the signal
- * back.
+ * back. The signal, the reaction row and the observation's user action land
+ * in one writer transaction; only the correction note is saved first, on its
+ * own, so a note that could not be saved leaves the item untouched.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { getObservation } from "../storage/observations.js";
 import { listMorningBriefItemsForMessage } from "../storage/morning-brief-items.js";
 import { getBriefItemReaction, type BriefItemReactionKind } from "../storage/interest.js";
@@ -30,14 +32,13 @@ export interface BriefItemReactionInput {
   reaction: BriefItemReactionKind | null;
   /** The owner's words: why they are not interested, or the correction. */
   note?: string;
-  /** The Tell Omnesis note id a factual correction is saved under; retries reuse it. */
-  noteId?: string;
 }
 
 export interface BriefItemReactionView {
   observationId: string;
   reaction: BriefItemReactionKind | null;
   note?: string;
+  /** The quick-capture note a factual correction was saved as. */
   noteId?: string;
   /** ISO 8601 UTC. */
   at?: string;
@@ -63,27 +64,34 @@ export interface BriefNoteCapture {
 
 export interface BriefItemReactorDeps {
   db: Database.Database;
-  writeGate: Pick<WriteGate, "setBriefItemReaction" | "setObservationUserAction">;
-  interest: Pick<InterestEngine, "record" | "supersede">;
+  writeGate: Pick<WriteGate, "setBriefItemReaction">;
+  interest: Pick<InterestEngine, "draft">;
   /** Resolved per call; null until the notes source is up. */
   notes: () => BriefNoteCapture | null | undefined;
   clock: () => number;
   log: Logger;
 }
 
-/** How a reaction reads on the observation row, where other tools look for what the owner did. */
-export const REACTION_USER_ACTIONS: Record<BriefItemReactionKind, string> = {
-  up: "thumbs_up",
-  not_interested: "not_interested",
-  factual_error: "disputed",
-};
-
 /** The text a correction is saved as, so the note agent knows what it corrects. */
 export function correctionNoteText(summary: string, correction: string): string {
   return `Correction to a morning brief item. The brief said: "${summary}". The user says: ${correction}`;
 }
 
-export function reactionView(
+/**
+ * The note id a correction is saved under: a name-based UUID of the item and
+ * the correction's words, so the same correction sent twice is one note and
+ * a client cannot point the reaction at a note it did not write.
+ */
+export function correctionNoteId(observationId: string, correction: string): string {
+  const hex = createHash("sha256")
+    .update(`brief-correction\u0000${observationId}\u0000${correction}`)
+    .digest("hex");
+  // RFC 4122 layout with the name-based version nibble and the variant bits.
+  const variant = ((parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function reactionView(
   reaction: Awaited<ReturnType<WriteGate["setBriefItemReaction"]>>,
   observationId: string,
 ): BriefItemReactionView {
@@ -115,26 +123,14 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
       };
     const now = deps.clock();
     const note = input.note?.trim() || undefined;
-    const subjectText = observation.why
-      ? `${observation.summary}\n${observation.why}`
-      : observation.summary;
-
-    if (input.reaction === null) {
-      await deps.interest.supersede({ observationId: observation.id, kind: "observation" });
-      const cleared = await deps.writeGate.setBriefItemReaction(
-        { observationId: observation.id, clear: true },
-        now,
-      );
-      await deps.writeGate.setObservationUserAction(observation.id, null, now);
-      return { ok: true, reaction: reactionView(cleared, observation.id) };
-    }
 
     let noteId: string | undefined;
-    if (input.reaction === "factual_error") {
-      // Not a word about interest: a previous thumbs up no longer stands,
-      // and nothing replaces it. The correction is saved first, so that when
-      // it cannot be, nothing has changed.
-      if (note) {
+    if (input.reaction === "factual_error" && note) {
+      // Not a word about interest. The correction is saved before anything
+      // else changes, so a note that cannot be saved leaves the item as it was.
+      noteId = correctionNoteId(observation.id, note);
+      const previous = getBriefItemReaction(deps.db, observation.id);
+      if (previous?.noteId !== noteId) {
         const notes = deps.notes();
         if (!notes)
           return {
@@ -142,12 +138,7 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
             reason: "notes_unavailable",
             message: "the correction could not be saved: notes are unavailable",
           };
-        const previous = getBriefItemReaction(deps.db, observation.id);
-        // The same correction again is the note already saved, whether the
-        // client repeats its id or omits it; new words are a new note.
-        const repeated = previous?.noteId !== null && previous?.note === note;
-        noteId = input.noteId ?? (repeated ? previous.noteId! : randomUUID());
-        if (!(repeated && previous.noteId === noteId)) {
+        try {
           await notes.capture({
             id: noteId,
             text: correctionNoteText(observation.summary, note),
@@ -155,20 +146,32 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
             surface: "brief",
             fromOwner: true,
           });
+        } catch (error) {
+          deps.log.warn(
+            `Correction on brief item ${observation.id} not saved: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return {
+            ok: false,
+            reason: "notes_unavailable",
+            message: "the correction could not be saved: notes are unavailable",
+          };
         }
       }
-      await deps.interest.supersede({ observationId: observation.id, kind: "observation" });
-    } else {
-      await deps.interest.record({
-        polarity: input.reaction === "up" ? 1 : -1,
-        kind: "observation",
-        source: input.reaction === "up" ? "brief_thumbs_up" : "brief_not_interested",
-        subjectText,
-        note: note ?? null,
-        observationId: observation.id,
-        replaces: { observationId: observation.id, kind: "observation" },
-      });
     }
+
+    const signal =
+      input.reaction === "up" || input.reaction === "not_interested"
+        ? deps.interest.draft({
+            polarity: input.reaction === "up" ? 1 : -1,
+            kind: "observation",
+            source: input.reaction === "up" ? "brief_thumbs_up" : "brief_not_interested",
+            subjectText: observation.why
+              ? `${observation.summary}\n${observation.why}`
+              : observation.summary,
+            note: note ?? null,
+            observationId: observation.id,
+          })
+        : null;
     const stored = await deps.writeGate.setBriefItemReaction(
       {
         observationId: observation.id,
@@ -177,15 +180,13 @@ export function createBriefItemReactor(deps: BriefItemReactorDeps): BriefItemRea
         reaction: input.reaction,
         note: note ?? null,
         noteId: noteId ?? null,
+        signal,
       },
       now,
     );
-    await deps.writeGate.setObservationUserAction(
-      observation.id,
-      REACTION_USER_ACTIONS[input.reaction],
-      now,
+    deps.log.info(
+      `Brief item ${observation.id}: ${input.reaction ?? "cleared"}${note ? " with a note" : ""}`,
     );
-    deps.log.info(`Brief item ${observation.id}: ${input.reaction}${note ? " with a note" : ""}`);
     return { ok: true, reaction: reactionView(stored, observation.id) };
   };
 }

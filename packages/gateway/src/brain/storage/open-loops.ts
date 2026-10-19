@@ -37,9 +37,11 @@ import {
   findOpenObservationsForLoops,
 } from "./observations.js";
 import { bumpCognitionDecayDirty } from "./engine-state.js";
+import { deleteInterestSignalsFor } from "./interest.js";
 import { retireLoop } from "./retired-loops.js";
 import type Database from "better-sqlite3";
 import type {
+  TaskSnapshot,
   OpenLoopLedgerEntry,
   OpenLoopRow,
   OpenLoopState,
@@ -228,7 +230,7 @@ export function createOpenLoop(db: Db, input: CreateOpenLoopInput, now: number):
     updateOpenLoop(
       db,
       input.id,
-      proposal.tier === "adopt" ? { accepted: true } : { ignored: true },
+      proposal.tier === "adopt" ? { accepted: true, ignored: false } : { ignored: true },
       now,
     );
     appendOpenLoopLedger(
@@ -240,17 +242,7 @@ export function createOpenLoop(db: Db, input: CreateOpenLoopInput, now: number):
         event: {
           kind: proposal.tier === "adopt" ? "auto_accepted" : "withheld",
           surface: "brain",
-          before: {
-            state: suggestion.state,
-            title: suggestion.title,
-            description: suggestion.description,
-            deadline: suggestion.deadline,
-            scheduledFor: suggestion.scheduledFor,
-            accepted: false,
-            ignored: false,
-            completionNote: suggestion.completionNote,
-            proposedChange: suggestion.proposedChange,
-          },
+          before: taskSnapshot(suggestion),
         },
       },
       now,
@@ -259,6 +251,21 @@ export function createOpenLoop(db: Db, input: CreateOpenLoopInput, now: number):
   const created = getOpenLoop(db, input.id);
   if (!created) throw new Error(`open loop ${input.id} vanished mid-create`);
   return created;
+}
+
+/** The task fields a change can touch, as a ledger event records them before the change. */
+export function taskSnapshot(loop: OpenLoopRow): TaskSnapshot {
+  return {
+    state: loop.state,
+    title: loop.title,
+    description: loop.description,
+    deadline: loop.deadline,
+    scheduledFor: loop.scheduledFor,
+    accepted: loop.accepted,
+    ignored: loop.ignored,
+    completionNote: loop.completionNote,
+    proposedChange: loop.proposedChange,
+  };
 }
 
 export function getOpenLoop(db: Db, id: string): OpenLoopRow | null {
@@ -787,6 +794,8 @@ export function deleteOpenLoop(
       includeClosed: false,
     });
     db.prepare<[string]>("DELETE FROM observation_related_loops WHERE loop_id = ?").run(id);
+    // A retired loop's reactions stay as history; a purged one takes them along.
+    if (!opts.retire) deleteInterestSignalsFor(db, { loopId: id });
     db.prepare<[string]>("DELETE FROM open_loops WHERE id = ?").run(id);
     if (knowledgeRetirement)
       db.prepare("DELETE FROM knowledge_owner_retire_guard WHERE owner_id=?").run(id);

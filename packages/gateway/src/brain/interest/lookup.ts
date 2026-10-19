@@ -27,6 +27,8 @@ export interface InterestExample {
   ageDays: number;
   /** 0..1, two decimals; cosine or word overlap, whichever was available. */
   similarity: number;
+  /** How `similarity` was measured: by vector, or by shared words while no vector exists. */
+  basis: "vector" | "words";
 }
 
 export interface InterestStatementExample extends Omit<InterestExample, "source"> {
@@ -36,6 +38,7 @@ export interface InterestStatementExample extends Omit<InterestExample, "source"
 /**
  * The block a gate puts in its state. Absent (null) when nothing in the
  * ledger resembles the item, so an empty ledger changes no request at all.
+ * Never non-null and empty: every scored signal lands in one of its lists.
  */
 export interface OwnerInterest {
   /** Things like this one the owner wanted: accepted, created, thumbs up. */
@@ -79,16 +82,109 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 
 const WORD_RE = /[\p{L}\p{N}]{3,}/gu;
 
-/** The distinct words of three letters or more, lowercased. */
+/**
+ * Words that say nothing about a subject and would otherwise make any two
+ * sentences look alike. English only: the fallback is a stopgap until the
+ * embedder has seen the signal, not a text model.
+ */
+const STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "you",
+  "your",
+  "not",
+  "with",
+  "from",
+  "this",
+  "that",
+  "will",
+  "are",
+  "was",
+  "were",
+  "has",
+  "have",
+  "had",
+  "but",
+  "all",
+  "any",
+  "can",
+  "our",
+  "out",
+  "about",
+  "into",
+  "its",
+  "they",
+  "them",
+  "their",
+  "there",
+  "then",
+  "than",
+  "when",
+  "what",
+  "who",
+  "how",
+  "one",
+  "get",
+  "got",
+  "let",
+  "per",
+  "via",
+  "new",
+  "now",
+  "yet",
+  "also",
+  "just",
+  "some",
+  "more",
+  "most",
+  "such",
+  "only",
+  "over",
+  "under",
+  "been",
+  "being",
+  "does",
+  "did",
+  "done",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "must",
+  "here",
+  "very",
+  "much",
+  "many",
+  "each",
+  "every",
+  "both",
+  "these",
+  "those",
+  "which",
+  "while",
+  "where",
+  "whether",
+]);
+
+/** The distinct content words of three letters or more, lowercased. */
 export function wordSet(text: string): Set<string> {
-  return new Set(text.toLowerCase().match(WORD_RE) ?? []);
+  const words = new Set<string>();
+  for (const word of text.toLowerCase().match(WORD_RE) ?? [])
+    if (!STOPWORDS.has(word)) words.add(word);
+  return words;
 }
 
-/** Jaccard overlap of two word sets. */
+/**
+ * Jaccard overlap of two word sets. One shared word is a coincidence, so
+ * anything below two shared words scores zero.
+ */
 export function wordOverlap(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let shared = 0;
   for (const word of a) if (b.has(word)) shared += 1;
+  if (shared < 2) return 0;
   return shared / (a.size + b.size - shared);
 }
 
@@ -101,6 +197,7 @@ export interface InterestQuery {
 interface Scored {
   signal: InterestSignal;
   similarity: number;
+  basis: InterestExample["basis"];
 }
 
 function matchText(signal: InterestSignal): string {
@@ -124,6 +221,7 @@ export function lookupOwnerInterest(
     if (signal.supersededAt !== null) continue;
     const vector = query.vector;
     let similarity: number;
+    let basis: InterestExample["basis"];
     if (
       vector &&
       signal.embedding &&
@@ -131,12 +229,14 @@ export function lookupOwnerInterest(
       signal.embedding.length === vector.values.length
     ) {
       similarity = cosineSimilarity(vector.values, signal.embedding);
+      basis = "vector";
       if (similarity < options.cosineFloor) continue;
     } else {
       similarity = wordOverlap(words, wordSet(matchText(signal)));
+      basis = "words";
       if (similarity < options.overlapFloor) continue;
     }
-    scored.push({ signal, similarity });
+    scored.push({ signal, similarity, basis });
   }
   if (scored.length === 0) return null;
   // Most similar first; newest first on a tie, so the block is stable.
@@ -146,12 +246,13 @@ export function lookupOwnerInterest(
       b.signal.createdAt - a.signal.createdAt ||
       a.signal.id.localeCompare(b.signal.id),
   );
-  const example = ({ signal, similarity }: Scored): InterestExample => ({
+  const example = ({ signal, similarity, basis }: Scored): InterestExample => ({
     text: signal.subjectText,
     ...(signal.note ? { note: signal.note } : {}),
     source: signal.source,
     ageDays: Math.max(0, Math.floor((now - signal.createdAt) / DAY_MS)),
     similarity: Math.round(similarity * 100) / 100,
+    basis,
   });
   const statements = scored.filter((s) => s.signal.kind === "statement");
   const reactions = scored.filter((s) => s.signal.kind !== "statement");
@@ -169,12 +270,4 @@ export function lookupOwnerInterest(
       return { ...rest, direction: s.signal.polarity === 1 ? "more" : "less" };
     }),
   };
-}
-
-/** Whether a block carries anything a gate would act on. */
-export function hasOwnerInterest(block: OwnerInterest | null): block is OwnerInterest {
-  return (
-    block !== null &&
-    (block.positive.length > 0 || block.negative.length > 0 || block.statements.length > 0)
-  );
 }

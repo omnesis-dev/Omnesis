@@ -140,15 +140,14 @@ export const BRAIN_DEFAULTS = {
   // it triggers, which are what stop a loop resting on a prior that has since
   // died. An observation resting on a dead prior is dropped without a run.
   provenanceRecheck: { enabled: true },
-  // The interest gate on new suggestions observes first (`shadow`): its
-  // verdicts land in the decision ledger while every suggestion is still
-  // offered, so the operator can see what it would have withheld or adopted
-  // before letting it.
+  // The interest gate on new suggestions records its verdicts (`shadow`)
+  // while every suggestion is still offered; `enforce` is the operator's
+  // call once the ledger shows the verdicts are right.
   tasks: { autoApply: true, proposeGate: "shadow" },
   // The interest ledger: what the owner did on purpose, shown to the decision
   // gates as examples. On by default because it only ever records explicit
   // reactions; nothing is inferred from silence.
-  interest: { enabled: true },
+  interest: { enabled: true, lookup: { perPolarity: 4, cosineFloor: 0.55, overlapFloor: 0.2 } },
   // Merge adjudication — the background agent's verdict pass over pending
   // person-merge candidates. Bounded by construction: one run per candidate,
   // re-run only if the candidate is re-detected, so it cannot accumulate the
@@ -391,6 +390,8 @@ export interface ResolvedBrainSettings {
   interest: {
     /** Record reactions and show similar past ones to the decision gates (read per call). */
     enabled: boolean;
+    /** How alike a past reaction must be to be shown, and how many are. */
+    lookup: { perPolarity: number; cosineFloor: number; overlapFloor: number };
   };
   /** The retrospective bootstrap lane (historical temporal-annotation / loop seeding). */
   bootstrap: {
@@ -636,6 +637,14 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
     },
     interest: {
       enabled: settings?.interest?.enabled ?? BRAIN_DEFAULTS.interest.enabled,
+      lookup: {
+        perPolarity:
+          settings?.interest?.lookup?.perPolarity ?? BRAIN_DEFAULTS.interest.lookup.perPolarity,
+        cosineFloor:
+          settings?.interest?.lookup?.cosineFloor ?? BRAIN_DEFAULTS.interest.lookup.cosineFloor,
+        overlapFloor:
+          settings?.interest?.lookup?.overlapFloor ?? BRAIN_DEFAULTS.interest.lookup.overlapFloor,
+      },
     },
     bootstrap: {
       enabled: settings?.bootstrap?.enabled ?? BRAIN_DEFAULTS.bootstrap.enabled,

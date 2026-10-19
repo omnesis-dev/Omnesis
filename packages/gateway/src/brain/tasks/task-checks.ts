@@ -21,6 +21,7 @@
 
 import { askScore } from "../decision-call.js";
 import { captureOwnerDecisionPayload, type DecisionPayloadCapture } from "../decision-payload.js";
+import { taskSubjectText } from "../storage/interest.js";
 import type { DecisionCapability, DecisionQuestion, Logger } from "@omnesis/core";
 import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
 import type { InterestLookup } from "../interest/engine.js";
@@ -139,7 +140,7 @@ export class TaskChecks {
       {
         before: bounded(input.before),
         after: bounded(input.after),
-        ...(await this.ownerInterest(input, `${input.after.title}\n${input.after.description}`)),
+        ...(await this.ownerInterest(input, taskSubjectText(input.after))),
       },
       SAME_TASK_QUESTIONS,
       SAME_TASK_QUESTION_ID,

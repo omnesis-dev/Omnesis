@@ -323,6 +323,7 @@ describe("recheckObservations", () => {
             source: "brief_not_interested",
             ageDays: 7,
             similarity: 0.63,
+            basis: "words",
           },
         ],
         statements: [],

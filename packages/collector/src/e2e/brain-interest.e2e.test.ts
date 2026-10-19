@@ -168,6 +168,13 @@ const METER: Noted = {
   title: "Water meter reading",
   quote: "Please submit your water meter reading within ten days.",
 };
+/** Noted after the thumbs, with nothing like it in the ledger. */
+const PIANO: Noted = {
+  marker: "piano tuner",
+  externalId: "interest-piano-tuner",
+  title: "Piano tuner visit",
+  quote: "A piano tuner visits on Friday afternoon.",
+};
 /** Noted after the thumbs: like the one the owner liked. */
 const BINS_AGAIN: Noted = {
   marker: "council bins collection",
@@ -180,14 +187,14 @@ function observationDoc(n: Noted, at: number) {
   return email({ externalId: n.externalId, title: n.title, content: n.quote, at });
 }
 
-function noteOne(n: Noted) {
+function noteOne(n: Noted, summary = `The ${n.marker} schedule changed.`) {
   return {
     docTitle: n.title,
     plan: (ctx: { subject: string | null }) => ({
       calls: [
         call("observation_list", {}),
         call("observation_note", {
-          summary: `The ${n.marker} schedule changed.`,
+          summary,
           citations: [ctx.subject],
           claims: [{ docId: ctx.subject, quote: n.quote }],
         }),
@@ -381,6 +388,7 @@ describe("brain bench: the interest engine", () => {
             noteOne(LOYALTY),
             noteOne(METER),
             noteOne(BINS_AGAIN),
+            noteOne(PIANO, "A piano tuner visits on Friday."),
           ],
         }),
         behaviors: [
@@ -647,6 +655,16 @@ describe("brain bench: the interest engine", () => {
       source: "brief_not_interested",
       note: "I never read these.",
     });
+    // A changed mind on one item replaces its example rather than adding one.
+    expect((await react(loyalty, { reaction: "up" })).status).toBe(200);
+    const loyaltySignals = (await interest()).signals.filter((s) => s.observationId === loyalty);
+    expect(loyaltySignals.map((s) => [s.source, s.supersededAt === null])).toEqual([
+      ["brief_thumbs_up", true],
+      ["brief_not_interested", false],
+    ]);
+    expect(
+      (await react(loyalty, { reaction: "not_interested", note: "I never read these." })).status,
+    ).toBe(200);
 
     // Thumbs down, factual error, with a correction: no example, a quick-capture note.
     const notesBefore = (await bench.obs.tellNotes(DAYS.first)).length;
@@ -663,14 +681,26 @@ describe("brain bench: the interest engine", () => {
     expect(notes).toHaveLength(notesBefore + 1);
     expect(notes.map((n) => n.text).join("\n")).toContain("The reading was submitted last week.");
     expect(notes.map((n) => n.text).join("\n")).toContain(METER.marker);
-    // A retry with the same note id saves nothing twice.
+    // The same correction again saves nothing twice, and the note is a brief note.
     const again = await react(meter, {
       reaction: "factual_error",
       note: "The reading was submitted last week.",
-      noteId: wrongBody.noteId,
     });
     expect(again.status).toBe(200);
+    expect(((await again.json()) as { noteId?: string }).noteId).toBe(wrongBody.noteId);
     expect(await bench.obs.tellNotes(DAYS.first)).toHaveLength(notesBefore + 1);
+    const surface = bench.sql
+      .prepare<
+        [string],
+        { surface: string | null }
+      >("SELECT surface FROM note_entries WHERE id = ?")
+      .get(wrongBody.noteId!);
+    expect(surface?.surface).toBe("brief");
+    // A client cannot name the note: the body takes no note id.
+    expect(
+      (await react(meter, { reaction: "factual_error", note: "x", noteId: wrongBody.noteId }))
+        .status,
+    ).toBe(400);
 
     // The brief detail carries every reaction for the clients.
     const after = await bench.obs.briefDetail(briefConversationId, DAYS.first);
@@ -724,7 +754,11 @@ describe("brain bench: the interest engine", () => {
 
   test("the next morning's salience and the urgency of new evidence see the owner's reactions", async () => {
     await bench.clock.set(noon(1));
-    const [docId] = await bench.pushAndSettle([observationDoc(BINS_AGAIN, noon(1))]);
+    const callsBefore = bench.decision.calls.length;
+    const [docId] = await bench.pushAndSettle([
+      observationDoc(BINS_AGAIN, noon(1)),
+      observationDoc(PIANO, noon(1)),
+    ]);
 
     // Intake: the urgency question about the document carried the liked observation.
     const urgency = bench.decision.calls.filter(
@@ -778,12 +812,16 @@ describe("brain bench: the interest engine", () => {
     expect(salienceRows.length).toBeGreaterThan(0);
     expect(salienceRows.every((d) => d.rubricVersion === "observation-salience-v2")).toBe(true);
     // An observation with nothing like it in the ledger is asked about without the block.
-    const unlike = bench.decision.calls.find(
-      (c) =>
-        isSalienceRequest(c.request) && (salienceSubject(c.request) ?? "").includes(METER.marker),
-    );
-    expect(unlike).toBeDefined();
-    expect((unlike!.request.state as { owner_interest?: unknown }).owner_interest).toBeUndefined();
+    const unlike = bench.decision.calls
+      .slice(callsBefore)
+      .filter(
+        (c) =>
+          isSalienceRequest(c.request) && (salienceSubject(c.request) ?? "").includes(PIANO.marker),
+      );
+    // Noting time and the recheck alike: nothing in the ledger resembles it.
+    expect(unlike.length).toBeGreaterThanOrEqual(2);
+    for (const c of unlike)
+      expect((c.request.state as { owner_interest?: unknown }).owner_interest).toBeUndefined();
 
     // Everything the gates were shown is on the admin surface, newest first.
     const state = await interest();

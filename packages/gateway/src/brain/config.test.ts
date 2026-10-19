@@ -79,7 +79,7 @@ describe("resolveBrainSettings", () => {
       provenanceRecheck: { enabled: true },
       mergeAdjudication: { enabled: true },
       tasks: { autoApply: true, proposeGate: "shadow" },
-      interest: { enabled: true },
+      interest: { enabled: true, lookup: { perPolarity: 4, cosineFloor: 0.55, overlapFloor: 0.2 } },
       observations: {
         minConsequence: 2,
         timelyLevel: 2,
@@ -467,6 +467,10 @@ describe("interest knobs", () => {
     expect(resolveBrainSettings(undefined).interest.enabled).toBe(true);
     expect(resolveBrainSettings({ interest: { enabled: false } }).interest.enabled).toBe(false);
     expect(validateConfig({ brain: { interest: { nonsense: 1 } as never } }).ok).toBe(false);
+    expect(
+      resolveBrainSettings({ interest: { lookup: { cosineFloor: 0.7 } } }).interest.lookup,
+    ).toEqual({ perPolarity: 4, cosineFloor: 0.7, overlapFloor: 0.2 });
+    expect(validateConfig({ brain: { interest: { lookup: { perPolarity: 0 } } } }).ok).toBe(false);
   });
 });
 

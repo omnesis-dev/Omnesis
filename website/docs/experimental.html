@@ -524,8 +524,9 @@
           <strong>Not interested</strong> teaches Brain that items like this one are not worth your
           morning and that suggestions like it are not worth making, with whatever you type or
           dictate as your reason; <strong>Factual error</strong> says nothing about your interests,
-          marks the item disputed, and sends your correction to Omnesis as a note. Tapping a thumbs
-          again clears it. Nothing is inferred from an item you left alone.
+          marks the item disputed, and sends your correction to Omnesis as a note. Tapping thumbs up
+          again clears it; a thumbs down is removed from its dialog. Nothing is inferred from an
+          item you left alone.
         </p>
         <p>
           Reply in that conversation to act on the brief. The agent sees that morning's brief and
@@ -543,9 +544,9 @@
           new evidence, the decision model is shown the few past reactions most like the item in
           front of it, with your words where you gave any.
           <strong>Debug → Cognition → Interest</strong> lists every reaction it has recorded, lets
-          you try a lookup, and shows each suggestion verdict. Set
-          <code>brain.interest.enabled</code> to <code>false</code> to stop recording and showing
-          them.
+          you try a lookup, shows each suggestion verdict, and offers any withheld suggestion again.
+          Set <code>brain.interest.enabled</code> to <code>false</code> to stop recording and
+          showing them.
         </p>
         <p>
           In experimental mode, <a href="/docs/apps#tasks">Tasks</a> gains a
@@ -580,10 +581,10 @@
           proposed changes appear.
         </p>
         <p>
-          With a decision model assigned, every new suggestion is judged against what you did with
-          suggestions like it before: clearly like ones you ignored, it is withheld; clearly like
-          tasks you accepted or created, it is adopted as your task at once; otherwise it is
-          suggested as usual. <code>brain.tasks.proposeGate</code> sets what the verdict does.
+          With a decision model assigned, a new suggestion that resembles something you reacted to
+          is judged against what you did then: clearly like suggestions you ignored, it is withheld;
+          clearly like tasks you accepted or created, it is adopted as your task at once; otherwise
+          it is suggested as usual. <code>brain.tasks.proposeGate</code> sets what the verdict does.
           <code>shadow</code>, the default, only records it, so
           <strong>Debug → Cognition → Interest</strong> shows what would have happened.
           <code>enforce</code> acts on it: a withheld suggestion stays tracked and comes back when
@@ -1730,6 +1731,17 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
                 <td>
                   Record what you accept, ignore, thumb and say, and show the decision model similar
                   past reactions.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>interest.lookup.perPolarity</code> / <code>cosineFloor</code> /
+                  <code>overlapFloor</code>
+                </td>
+                <td>4 / 0.55 / 0.2</td>
+                <td>
+                  How many past reactions of each kind the decision model is shown, and how similar
+                  one must be to count, by vector or by shared words.
                 </td>
               </tr>
               <tr>

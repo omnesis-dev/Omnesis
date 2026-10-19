@@ -3,9 +3,10 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
+import { listLiveInterestSignals } from "../storage/interest.js";
 import { createOpenLoop, getOpenLoop } from "../storage/open-loops.js";
 import { getNoteEntry, insertNoteEntry } from "../../sources/omnesis-notes/storage.js";
 import { TaskService } from "./service.js";
@@ -75,7 +76,7 @@ function suggestion(id = "loop_s") {
   );
 }
 
-function service(notes?: ReturnType<typeof notesStub>) {
+function service(notes?: ReturnType<typeof notesStub>, interestEnabled?: () => boolean) {
   const calls: string[] = [];
   const gate = directWriteGate(db);
   const tasks = new TaskService(
@@ -83,6 +84,7 @@ function service(notes?: ReturnType<typeof notesStub>) {
     gate,
     () => NOW,
     {
+      ...(interestEnabled ? { interestEnabled } : {}),
       writeGate: {
         cancelScheduledRunsForLoop: async (id) => {
           calls.push(`cancel ${id}`);
@@ -104,7 +106,7 @@ function service(notes?: ReturnType<typeof notesStub>) {
     },
     notes?.runtime,
   );
-  return { tasks, calls };
+  return { tasks, calls, gate };
 }
 
 const origin = { surface: "tasks", runId: "user:tasks" } as const;
@@ -156,6 +158,34 @@ describe("TaskService effects", () => {
     const result = await tasks.apply({ ...origin, kind: "complete", id: "loop_missing" });
     expect(result.ok).toBe(false);
     expect(calls).toEqual([]);
+  });
+
+  test("a switched-off interest ledger is forwarded as recordInterest false; on or absent, true", async () => {
+    const off = service(undefined, () => false);
+    const offSpy = vi.spyOn(off.gate, "applyTaskCommand");
+    const create = {
+      ...origin,
+      kind: "create",
+      id: "loop_a",
+      origin: "user",
+      title: "Buy stamps",
+    } as const;
+    await off.tasks.apply(create);
+    expect(offSpy).toHaveBeenCalledWith(create, NOW, { recordInterest: false });
+    expect(listLiveInterestSignals(db)).toEqual([]);
+
+    const on = service(undefined, () => true);
+    const onSpy = vi.spyOn(on.gate, "applyTaskCommand");
+    await on.tasks.apply({ ...create, id: "loop_b" });
+    expect(onSpy).toHaveBeenCalledWith({ ...create, id: "loop_b" }, NOW, { recordInterest: true });
+    expect(listLiveInterestSignals(db).map((s) => s.loopId)).toEqual(["loop_b"]);
+
+    const unset = service();
+    const unsetSpy = vi.spyOn(unset.gate, "applyTaskCommand");
+    await unset.tasks.apply({ ...create, id: "loop_c" });
+    expect(unsetSpy).toHaveBeenCalledWith({ ...create, id: "loop_c" }, NOW, {
+      recordInterest: true,
+    });
   });
 });
 

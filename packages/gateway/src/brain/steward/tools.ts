@@ -127,6 +127,7 @@ import {
   type TaskEvidenceVerdict,
 } from "../tasks/auto-apply.js";
 import { TASK_NOTE_HISTORY, type TaskChecks } from "../tasks/task-checks.js";
+import { isWithheldSuggestion } from "../storage/interest.js";
 import { jointContextualEvidence } from "./annotation-gate-evidence.js";
 import { assessPersonWithdrawal } from "./person-withdrawal.js";
 import { PersonProfileReads } from "./person-profile-reads.js";
@@ -320,7 +321,7 @@ export interface CognitionToolDeps {
   /**
    * The gate on new suggestions (`open_loop_create`): from the owner's past
    * reactions, whether a suggestion is adopted as their task at once, offered,
-   * or withheld. Absent, every suggestion is offered as before.
+   * or withheld. Absent, every suggestion is offered.
    */
   taskPropose?: TaskProposeGate;
   /**
@@ -1062,10 +1063,15 @@ function loopToModelJson(
     // The user's own task: its state, title, description and deadline change
     // only by proposal (open_loop_update records one for the user to confirm).
     userTask: isOwnedTask(loop),
-    // The user chose not to see this suggestion among their tasks; the loop
-    // is still the Brain's to maintain, and must not be re-created to put it
-    // back in front of them.
-    ...(loop.ignored ? { ignoredByUser: true } : {}),
+    // Out of the user's Tasks views, either because they chose not to keep
+    // the suggestion or because the suggestion gate withheld it before they
+    // saw it. Either way the loop is still the Brain's to maintain, and must
+    // not be re-created to put it back in front of them.
+    ...(loop.ignored
+      ? isWithheldSuggestion(db, loop.id)
+        ? { withheldByGate: true }
+        : { ignoredByUser: true }
+      : {}),
     ...(loop.scheduledFor ? { scheduledFor: loop.scheduledFor } : {}),
     ...(loop.proposedChange
       ? { pendingProposal: { kind: loop.proposedChange.kind, reason: loop.proposedChange.reason } }
@@ -1567,8 +1573,9 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       log.info(`Cognition Steward run ${runId} created open loop ${id}: ${a.title}`);
       return ok("open_loop.created", {
         loop: loopToModelJson(db, loop, { ledger: false }),
-        proposal: proposal.tier,
-        enforced: proposal.enforced,
+        // Only an enforced verdict is the model's business: it says whether
+        // the owner will see the loop. A recorded-only verdict is audit data.
+        ...(proposal.enforced && proposal.tier !== "suggest" ? { gate: proposal.tier } : {}),
         ...(docs.dropped.length > 0 ? { droppedDocIds: docs.dropped } : {}),
         ...(blockedBy.dropped.length > 0 ? { droppedBlockedByIds: blockedBy.dropped } : {}),
         ...(actors.dropped.length > 0 ? { droppedActors: actors.dropped } : {}),

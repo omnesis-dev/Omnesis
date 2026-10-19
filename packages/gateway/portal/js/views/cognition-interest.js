@@ -15,7 +15,7 @@
 
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
-import { getBrainInterest, probeBrainInterest } from "../api.js";
+import { getBrainInterest, probeBrainInterest, undoTask } from "../api.js";
 import { DecisionList } from "../components/decision-card.js";
 import { internalKnowledgeHref } from "./knowledge-claim-markdown.js";
 import { BrainInactiveBanner, LoadState, Pill, cognitionPath, fmtRel, fmtTs, useLoader } from "./cognition.js";
@@ -82,6 +82,12 @@ export function similarityLabel(similarity) {
   return typeof similarity === "number" && Number.isFinite(similarity) ? similarity.toFixed(2) : "—";
 }
 
+/** "similarity 0.71 by vector" — how the example was matched, when the gateway says. */
+export function similarityText(example) {
+  const basis = example?.basis === "vector" || example?.basis === "words" ? ` by ${example.basis}` : "";
+  return `similarity ${similarityLabel(example?.similarity)}${basis}`;
+}
+
 /**
  * The probe's answer as the three lists the gate state carries. Every list
  * is present, empty when nothing of that kind resembled the text, so a null
@@ -143,7 +149,7 @@ function LookupProbe() {
                   ${section.items.map((example, index) => html`<li key=${index}>
                     <span class="cognition-interest-example-text">${example.text}</span>
                     ${example.note && html`<span class="cognition-dim"> — “${example.note}”</span>`}
-                    <span class="cognition-dim"> · ${example.direction ?? sourceLabel(example.source)} · ${ageDaysLabel(example.ageDays)} · similarity ${similarityLabel(example.similarity)}</span>
+                    <span class="cognition-dim"> · ${example.direction ?? sourceLabel(example.source)} · ${ageDaysLabel(example.ageDays)} · ${similarityText(example)}</span>
                   </li>`)}
                 </ul>`}
           </div>`)}
@@ -171,6 +177,54 @@ function SignalRow({ signal, nowMs }) {
   </tr>`;
 }
 
+/**
+ * Brain suggestions the gate kept out of Tasks. "Offer again" undoes the
+ * withholding through the task ledger, so the suggestion appears in Tasks as
+ * if the gate had let it through; the list is read again once it lands.
+ */
+function WithheldSection({ withheld, nowMs, onChanged }) {
+  const [busySeq, setBusySeq] = useState(null);
+  const [error, setError] = useState(null);
+  const offer = (entry) => {
+    setBusySeq(entry.seq);
+    setError(null);
+    undoTask(entry.seq).then(
+      () => {
+        setBusySeq(null);
+        onChanged();
+      },
+      (err) => {
+        setBusySeq(null);
+        setError(err?.message ?? String(err));
+      },
+    );
+  };
+  return html`<section class="cognition-interest-withheld">
+    <h3 class="cognition-section">Withheld suggestions (${withheld.length})</h3>
+    <p class="debug-sub" style="margin:0 0 8px;">
+      Suggestions the gate kept out of Tasks because they resembled things the owner did not want. Offer again puts one in Tasks as a suggestion.
+    </p>
+    ${error && html`<div class="debug-error">⚠️ ${error}</div>`}
+    ${withheld.length === 0
+      ? html`<p class="cognition-dim cognition-interest-withheld-empty">Nothing withheld.</p>`
+      : html`<ul class="cognition-interest-withheld-list">
+          ${withheld.map((entry) => html`<li key=${entry.seq} class="cognition-interest-withheld-row">
+            <div class="cognition-interest-withheld-body">
+              <a href=${internalKnowledgeHref(`loop:${entry.loopId}`)} class="cognition-interest-withheld-title">${entry.title}</a>
+              ${entry.note && html`<div class="cognition-dim">${entry.note}</div>`}
+              <div class="cognition-dim" title=${fmtTs(entry.at)}>${fmtRel(entry.at, nowMs)}</div>
+            </div>
+            <button
+              type="button"
+              class="btn-secondary cognition-interest-offer"
+              disabled=${busySeq !== null}
+              onClick=${() => offer(entry)}
+            >${busySeq === entry.seq ? "Offering…" : "Offer again"}</button>
+          </li>`)}
+        </ul>`}
+  </section>`;
+}
+
 export function InterestTab() {
   const { data, error, loading, reload } = useLoader(() => getBrainInterest({ limit: 200 }), []);
   const nowMs = Date.now();
@@ -188,6 +242,7 @@ export function InterestTab() {
         ${backlog && html`<span class="cognition-interest-backlog"> · ${backlog}</span>`}
         <button type="button" class="btn-tiny" style="margin-left:8px;" onClick=${reload}>Refresh</button>
       </p>
+      <${WithheldSection} withheld=${data.withheld ?? []} nowMs=${nowMs} onChanged=${reload} />
       <${LookupProbe} />
       <h3 class="cognition-section">Signals (${signals.length}${data.counts && signals.length < data.counts.live + data.counts.superseded ? " newest" : ""})</h3>
       ${signals.length === 0

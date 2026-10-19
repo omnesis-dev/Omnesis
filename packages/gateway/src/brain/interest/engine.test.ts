@@ -8,19 +8,21 @@ import { createLogger } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import {
+  getInterestSignal,
   insertInterestSignal,
   listInterestSignals,
   listLiveInterestSignals,
 } from "../storage/interest.js";
-import { wordSet } from "./lookup.js";
+import { wordSet, type InterestLookupOptions } from "./lookup.js";
 import { InterestEngine, type InterestEmbedder } from "./engine.js";
 import type Database from "better-sqlite3";
 
 const NOW = Date.parse("2026-03-10T09:00:00Z");
+const MINUTE = 60_000;
 const log = createLogger("test").child("interest");
 
 /**
- * A deterministic bag-of-words embedder: every distinct word owns one
+ * A deterministic bag-of-words embedder: every distinct content word owns one
  * dimension, so texts sharing words are close and disjoint texts orthogonal.
  */
 class FakeEmbedder implements InterestEmbedder {
@@ -52,6 +54,7 @@ let db: Database.Database;
 let embedder: FakeEmbedder;
 let enabled = true;
 let clock = NOW;
+let lookupOptions: Partial<InterestLookupOptions> = {};
 
 function makeEngine(getEmbedder: () => InterestEmbedder | null = () => embedder): InterestEngine {
   return new InterestEngine({
@@ -59,19 +62,21 @@ function makeEngine(getEmbedder: () => InterestEmbedder | null = () => embedder)
     writeGate: directWriteGate(db),
     getEmbedder,
     enabled: () => enabled,
+    lookupOptions: () => lookupOptions,
     clock: () => (clock += 1),
     idGen: () => randomUUID(),
     log,
   });
 }
 
-function attempts(id: string): number {
-  return db
+function embedState(id: string): { attempts: number; after: number } {
+  const row = db
     .prepare<
       [string],
-      { n: number }
-    >("SELECT embed_attempts AS n FROM interest_signals WHERE id = ?")
-    .get(id)!.n;
+      { embed_attempts: number; embed_after: number }
+    >("SELECT embed_attempts, embed_after FROM interest_signals WHERE id = ?")
+    .get(id)!;
+  return { attempts: row.embed_attempts, after: row.embed_after };
 }
 
 beforeEach(() => {
@@ -80,6 +85,7 @@ beforeEach(() => {
   embedder = new FakeEmbedder();
   enabled = true;
   clock = NOW;
+  lookupOptions = {};
 });
 afterEach(() => {
   db.close();
@@ -165,6 +171,55 @@ describe("InterestEngine.record", () => {
     enabled = false;
     expect(await engine.lookup({ text: "Renew the passport" })).toBeNull();
   });
+
+  test("while the ledger is off, record still supersedes what the reaction replaces", async () => {
+    const engine = makeEngine();
+    const earlier = await engine.record({
+      polarity: 1,
+      kind: "observation",
+      source: "brief_thumbs_up",
+      subjectText: "The gym renewal is due",
+      observationId: "obs_1",
+    });
+    enabled = false;
+    expect(
+      await engine.record({
+        polarity: -1,
+        kind: "observation",
+        source: "brief_not_interested",
+        subjectText: "The gym renewal is due",
+        observationId: "obs_1",
+        replaces: { observationId: "obs_1" },
+      }),
+    ).toBeNull();
+    expect(listInterestSignals(db, { limit: 10 }).map((s) => s.id)).toEqual([earlier!.id]);
+    expect(getInterestSignal(db, earlier!.id)?.supersededAt).not.toBeNull();
+  });
+
+  test("draft is the row a caller lands itself, and null while the ledger is off", () => {
+    const engine = makeEngine();
+    const draft = engine.draft({
+      ...accepted("Renew the passport"),
+      note: "Soon",
+      loopId: "loop_1",
+    });
+    expect(draft).toEqual({
+      id: expect.stringMatching(/^int_/),
+      polarity: 1,
+      kind: "task",
+      source: "task_accepted",
+      subjectText: "Renew the passport",
+      note: "Soon",
+      loopId: "loop_1",
+      observationId: null,
+      conversationId: null,
+      ledgerSeq: null,
+      createdAt: NOW + 1,
+    });
+    expect(listInterestSignals(db, { limit: 10 })).toEqual([]);
+    enabled = false;
+    expect(engine.draft(accepted("Renew the passport"))).toBeNull();
+  });
 });
 
 describe("InterestEngine.lookup", () => {
@@ -186,6 +241,7 @@ describe("InterestEngine.lookup", () => {
     expect(block!.positive.map((e) => e.text)).toEqual([
       "Renew the passport before the Lisbon trip",
     ]);
+    expect(block!.positive[0]).toMatchObject({ basis: "vector" });
     expect(block!.positive[0]!.similarity).toBeGreaterThanOrEqual(0.55);
     expect(block!.negative).toEqual([]);
     const renewals = await engine.lookup({ text: "Renew the gym membership card" });
@@ -205,18 +261,19 @@ describe("InterestEngine.lookup", () => {
     await engine.embedBacklog();
     expect(engine.hasBacklog()).toBe(true);
     expect(listLiveInterestSignals(db, { limit: 10 })[0]!.embedding).toBeNull();
-    expect(attempts(stored!.id)).toBe(0);
+    expect(embedState(stored!.id)).toEqual({ attempts: 0, after: 0 });
     const block = await engine.lookup({ text: "Renew the passport before the trip" });
     expect(block!.positive).toEqual([
       expect.objectContaining({
         text: "Renew the passport before the Lisbon trip",
-        similarity: 0.83,
+        similarity: 0.8,
+        basis: "words",
       }),
     ]);
     expect(await engine.lookup({ text: "Buy groceries" })).toBeNull();
   });
 
-  test("an embedder that throws counts an attempt per pass, leaves no vector and leaves lookup intact", async () => {
+  test("an embedder outage pushes the row out by its backoff; a pass before then skips it", async () => {
     const engine = makeEngine();
     embedder.failWith = new Error("embedder down");
     // Inserted without `record`, whose own kick would be a pass of its own.
@@ -226,28 +283,42 @@ describe("InterestEngine.lookup", () => {
       createdAt: NOW,
     });
     await engine.embedBacklog();
-    expect(attempts(stored.id)).toBe(1);
-    expect(listLiveInterestSignals(db, { limit: 10 })[0]!.embedding).toBeNull();
-    expect(engine.hasBacklog()).toBe(true);
-    const block = await engine.lookup({ text: "Renew the passport before the trip" });
-    expect(block!.positive.map((e) => e.text)).toEqual([
-      "Renew the passport before the Lisbon trip",
-    ]);
-    // Two more failed passes exhaust the row's attempts and the backlog gives it up.
-    await engine.embedBacklog();
-    await engine.embedBacklog();
-    expect(attempts(stored.id)).toBe(3);
+    const first = embedState(stored.id);
+    expect(first.attempts).toBe(1);
+    expect(first.after).toBeGreaterThanOrEqual(clock + 15 * MINUTE - 10);
+    expect(getInterestSignal(db, stored.id)!.embedding).toBeNull();
+    expect(embedder.calls).toHaveLength(1);
+    // Not due: the next pass leaves it alone and the backlog reads as empty.
     expect(engine.hasBacklog()).toBe(false);
-    // The embedder recovering embeds a new signal but not the exhausted one.
+    await engine.embedBacklog();
+    expect(embedState(stored.id).attempts).toBe(1);
+    expect(embedder.calls).toHaveLength(1);
+    // The lookup still finds it by words meanwhile.
+    const block = await engine.lookup({ text: "Renew the passport before the trip" });
+    expect(block!.positive.map((e) => [e.text, e.basis])).toEqual([
+      ["Renew the passport before the Lisbon trip", "words"],
+    ]);
+
+    // Once the wait is over the row is due again, and the wait doubles.
+    clock = first.after;
+    expect(engine.hasBacklog()).toBe(true);
+    await engine.embedBacklog();
+    const second = embedState(stored.id);
+    expect(second.attempts).toBe(2);
+    expect(second.after).toBeGreaterThanOrEqual(first.after + 30 * MINUTE - 10);
+    expect(embedder.calls).toHaveLength(2);
+
+    // The embedder recovering embeds it at its next due time, and a fresh row at once.
     embedder.failWith = null;
     const fresh = await engine.record(accepted("Pay the water bill"));
     await engine.embedBacklog();
-    expect(listLiveInterestSignals(db, { limit: 10 }).map((s) => [s.id, s.embeddingModel])).toEqual(
-      [
-        [fresh!.id, "fake"],
-        [stored.id, null],
-      ],
-    );
+    expect(getInterestSignal(db, fresh!.id)!.embeddingModel).toBe("fake");
+    expect(getInterestSignal(db, stored.id)!.embedding).toBeNull();
+    clock = second.after;
+    await engine.embedBacklog();
+    expect(getInterestSignal(db, stored.id)!.embeddingModel).toBe("fake");
+    expect(embedState(stored.id)).toEqual({ attempts: 3, after: 0 });
+    expect(engine.hasBacklog()).toBe(false);
   });
 
   test("a new embedder model drops the old vectors and the next pass re-embeds them", async () => {
@@ -255,7 +326,7 @@ describe("InterestEngine.lookup", () => {
     const stored = await engine.record(accepted("Renew the passport before the Lisbon trip"));
     await engine.embedBacklog();
     expect(listLiveInterestSignals(db, { limit: 10 })[0]!.embeddingModel).toBe("fake");
-    expect(attempts(stored!.id)).toBe(1);
+    expect(embedState(stored!.id).attempts).toBe(1);
 
     embedder.modelId = "fake-v2";
     await engine.embedBacklog();
@@ -263,24 +334,77 @@ describe("InterestEngine.lookup", () => {
     expect(row!.embeddingModel).toBe("fake-v2");
     expect(row!.embedding).toBeInstanceOf(Float32Array);
     // The attempts counter started over with the new model.
-    expect(attempts(stored!.id)).toBe(1);
+    expect(embedState(stored!.id).attempts).toBe(1);
     expect(embedder.calls).toHaveLength(2);
     // A pass with the same model touches nothing.
     await engine.embedBacklog();
     expect(embedder.calls).toHaveLength(2);
     // Lookup uses the new model's vectors.
     const block = await engine.lookup({ text: "Renew the passport for the trip" });
-    expect(block!.positive).toHaveLength(1);
+    expect(block!.positive.map((e) => e.basis)).toEqual(["vector"]);
   });
 
-  test("lookup resolves when the embedder throws mid-query", async () => {
+  test("the query is only embedded when a live signal has a vector from the current model", async () => {
+    const engine = makeEngine();
+    await engine.record(accepted("Renew the passport before the Lisbon trip"));
+    await engine.embedBacklog();
+    const embeds = embedder.calls.length;
+    // The vectors were made by another model: words, no query embedding.
+    embedder.modelId = "fake-v2";
+    const block = await engine.lookup({ text: "Renew the passport before the trip" });
+    expect(block!.positive.map((e) => e.basis)).toEqual(["words"]);
+    expect(embedder.calls).toHaveLength(embeds);
+  });
+
+  test("lookup fails open to null when the embedder throws mid-query, and recovers with it", async () => {
     const engine = makeEngine();
     await engine.record(accepted("Renew the passport before the Lisbon trip"));
     await engine.embedBacklog();
     embedder.failWith = new Error("embedder down");
-    await expect(engine.lookup({ text: "Renew the passport for the trip" })).resolves.toSatisfy(
-      (block) => block === null || typeof block === "object",
+    await expect(engine.lookup({ text: "Renew the passport for the trip" })).resolves.toBeNull();
+    embedder.failWith = null;
+    const block = await engine.lookup({ text: "Renew the passport for the trip" });
+    expect(block!.positive).toHaveLength(1);
+  });
+
+  test("the decoded ledger is kept until the table's fingerprint moves, even for writes made behind the engine", async () => {
+    const engine = makeEngine(() => null);
+    const stored = await engine.record(accepted("Renew the passport before the Lisbon trip"));
+    const first = await engine.lookup({ text: "Renew the passport before the trip" });
+    expect(first!.positive.map((e) => e.text)).toEqual([
+      "Renew the passport before the Lisbon trip",
+    ]);
+    // A change the fingerprint cannot see is served from the cache.
+    db.prepare("UPDATE interest_signals SET subject_text = 'Pay the water bill' WHERE id = ?").run(
+      stored!.id,
     );
+    const cached = await engine.lookup({ text: "Renew the passport before the trip" });
+    expect(cached).toEqual(first);
+    // A write that moves the fingerprint, made with no engine involved, is seen next time.
+    insertInterestSignal(db, {
+      id: "int_external",
+      ...accepted("Renew the passport photo before the trip"),
+      createdAt: clock + 1,
+    });
+    const refreshed = await engine.lookup({ text: "Renew the passport before the trip" });
+    expect(refreshed!.positive.map((e) => e.text)).toEqual([
+      "Renew the passport photo before the trip",
+    ]);
+  });
+
+  test("the lookup options are read live", async () => {
+    const engine = makeEngine();
+    await engine.record(accepted("Renew the passport"));
+    await engine.record(accepted("Renew the passport before the Lisbon trip"));
+    await engine.embedBacklog();
+    const both = await engine.lookup({ text: "Renew the passport" });
+    expect(both!.positive.map((e) => e.similarity)).toEqual([1, 0.63]);
+    lookupOptions = { cosineFloor: 0.9 };
+    const strict = await engine.lookup({ text: "Renew the passport" });
+    expect(strict!.positive.map((e) => e.similarity)).toEqual([1]);
+    lookupOptions = { perPolarity: 1 };
+    const one = await engine.lookup({ text: "Renew the passport" });
+    expect(one!.positive).toHaveLength(1);
   });
 
   test("embedBacklog called during a pass covers the signals recorded meanwhile", async () => {

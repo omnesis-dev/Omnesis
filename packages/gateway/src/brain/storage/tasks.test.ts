@@ -671,14 +671,21 @@ describe("interest signals from task events", () => {
       { id: "loop_sugg", createdByRun: "run", title: "A suggestion", confidence: 1, importance: 1 },
       NOW,
     );
-    const ignored = apply({ kind: "ignore", id: ignoredBrain.id, recordInterest: false });
+    const quiet = { recordInterest: false };
+    const ignored = applyTaskCommand(
+      db,
+      { ...ORIGIN, kind: "ignore", id: ignoredBrain.id },
+      NOW,
+      quiet,
+    );
     expect(ignored.ok).toBe(true);
     expect(listLiveInterestSignals(db)).toHaveLength(1);
-    const undone = apply({
-      kind: "undo",
-      seq: (created as { eventSeq: number }).eventSeq,
-      recordInterest: false,
-    });
+    const undone = applyTaskCommand(
+      db,
+      { ...ORIGIN, kind: "undo", seq: (created as { eventSeq: number }).eventSeq },
+      NOW,
+      quiet,
+    );
     expect(undone.ok).toBe(true);
     expect(listLiveInterestSignals(db)).toHaveLength(0);
   });
@@ -790,12 +797,17 @@ describe("interest signals from task events", () => {
     expect(all().map((s) => s.source)).toEqual(["task_ignored"]);
   });
 
-  test("undoing a creation supersedes the creation's signal", () => {
+  test("undoing a creation removes the creation's signal with the loop; deleting a task supersedes its signals", () => {
     const { eventSeq } = create("Renew the passport");
     expect(live()).toHaveLength(1);
     ok(apply({ kind: "undo", seq: eventSeq! }));
     expect(live()).toEqual([]);
-    expect(all().map((s) => s.source)).toEqual(["task_created"]);
+    // The loop never existed as far as the owner is concerned: no history either.
+    expect(all()).toEqual([]);
+    const { loop } = create("Book the dentist");
+    ok(apply({ kind: "delete", id: loop!.id }));
+    expect(live()).toEqual([]);
+    expect(all().map((s) => [s.source, s.supersededAt !== null])).toEqual([["task_created", true]]);
   });
 
   test("undoing an adoption records −1 task_adopt_undone and returns the loop to the suggestions", () => {
@@ -846,5 +858,19 @@ describe("interest signals from task events", () => {
     const suggestion = brainLoop();
     ok(apply({ kind: "strike", id: suggestion.id }));
     expect(all()).toHaveLength(1);
+  });
+
+  test("accepting an ignored suggestion supersedes the ignore and leaves one live accept", () => {
+    const loop = brainLoop();
+    ok(apply({ kind: "ignore", id: loop.id, reason: "not now" }));
+    ok(apply({ kind: "accept", id: loop.id }, NOW + 10));
+    expect(live().map((s) => s.source)).toEqual(["task_accepted"]);
+    expect(all().map((s) => [s.source, s.supersededAt])).toEqual([
+      ["task_accepted", null],
+      ["task_ignored", NOW + 10],
+    ]);
+    // Once accepted it is the user's task, which cannot be ignored, only struck.
+    expect(apply({ kind: "ignore", id: loop.id }, NOW + 20)).toMatchObject({ ok: false });
+    expect(live().map((s) => s.source)).toEqual(["task_accepted"]);
   });
 });

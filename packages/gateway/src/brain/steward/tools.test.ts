@@ -19,6 +19,7 @@ import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
+import { applyTaskCommand } from "../storage/tasks.js";
 import {
   createObservation,
   getObservation,
@@ -360,7 +361,8 @@ describe("Cognition Steward tools", () => {
     };
 
     const withheld = await create(gated("withhold", true));
-    expect(withheld.data).toMatchObject({ proposal: "withhold", enforced: true });
+    expect(withheld.data).toMatchObject({ gate: "withhold", loop: { withheldByGate: true } });
+    expect(withheld.data.loop).not.toHaveProperty("ignoredByUser");
     expect(withheld.loop).toMatchObject({ ignored: true, accepted: false, state: "open" });
     expect(listOpenLoopLedger(db, withheld.loop.id).map((e) => [e.event?.kind, e.note])).toEqual([
       ["withheld", "withhold because of the ledger"],
@@ -368,25 +370,79 @@ describe("Cognition Steward tools", () => {
     expect(judged).toEqual([withheld.loop.id]);
 
     const adopted = await create(gated("adopt", true));
-    expect(adopted.data).toMatchObject({ proposal: "adopt", enforced: true });
+    expect(adopted.data).toMatchObject({ gate: "adopt", loop: { userTask: true } });
+    expect(adopted.data.loop).not.toHaveProperty("withheldByGate");
     expect(adopted.loop).toMatchObject({ accepted: true, ignored: false });
     const adoption = listOpenLoopLedger(db, adopted.loop.id);
     expect(adoption.map((e) => e.event?.kind)).toEqual(["auto_accepted"]);
     expect(adoption[0]!.event?.before).toMatchObject({ accepted: false, ignored: false });
 
-    // Shadow: the tier is reported but the suggestion is offered as before.
+    // Shadow: the verdict is audit data, not the model's business; the
+    // suggestion is offered as before and the result says nothing about a gate.
     const shadowed = await create(gated("withhold", false));
-    expect(shadowed.data).toMatchObject({ proposal: "withhold", enforced: false });
+    expect(shadowed.data).not.toHaveProperty("gate");
+    expect(shadowed.data).not.toHaveProperty("proposal");
+    expect(shadowed.data.loop).not.toHaveProperty("withheldByGate");
+    expect(shadowed.data.loop).not.toHaveProperty("ignoredByUser");
     expect(shadowed.loop).toMatchObject({ ignored: false, accepted: false });
     expect(listOpenLoopLedger(db, shadowed.loop.id)).toEqual([]);
 
+    // An enforced "suggest" changes nothing either, so it is not reported.
     const suggested = await create(gated("suggest", true));
-    expect(suggested.data).toMatchObject({ proposal: "suggest", enforced: true });
+    expect(suggested.data).not.toHaveProperty("gate");
     expect(suggested.loop).toMatchObject({ ignored: false, accepted: false });
 
-    // No gate: offered, and the transcript says so.
+    // No gate: offered, with nothing to say about it.
     const ungated = await create(buildTools());
-    expect(ungated.data).toMatchObject({ proposal: "suggest", enforced: false });
+    expect(ungated.data).not.toHaveProperty("gate");
+  });
+
+  test("open_loop_search and open_loop_fetch say whether the gate withheld a suggestion or the user ignored it", async () => {
+    const gatedTools = buildTools({
+      taskPropose: {
+        judge: () =>
+          Promise.resolve({ tier: "withhold", enforced: true, reason: "like what you ignore" }),
+      } as unknown as CognitionToolDeps["taskPropose"],
+    });
+    const held = structured(
+      await findTool(gatedTools, "open_loop_create").invoke(
+        { title: "Reply to the venue quote", confidence: 0.9, importance: 0.7 },
+        CTX,
+      ),
+    );
+    const heldId = (held.data.loop as { id: string }).id;
+    const ignoredId = await createLoop();
+    expect(
+      applyTaskCommand(
+        db,
+        { surface: "tasks", runId: "user:tasks", kind: "ignore", id: ignoredId },
+        Date.now(),
+      ).ok,
+    ).toBe(true);
+    const offeredId = await createLoop();
+
+    const flags = (loop: Record<string, unknown>) => ({
+      withheldByGate: loop.withheldByGate,
+      ignoredByUser: loop.ignoredByUser,
+    });
+    const fetched = async (id: string) =>
+      flags(structured(await findTool(tools, "open_loop_fetch").invoke({ id }, CTX)).data);
+    expect(await fetched(heldId)).toEqual({ withheldByGate: true, ignoredByUser: undefined });
+    expect(await fetched(ignoredId)).toEqual({ withheldByGate: undefined, ignoredByUser: true });
+    expect(await fetched(offeredId)).toEqual({
+      withheldByGate: undefined,
+      ignoredByUser: undefined,
+    });
+
+    const search = structured(
+      await findTool(tools, "open_loop_search").invoke({ query: "venue quote" }, CTX),
+    );
+    const byId = new Map(
+      (search.data.loops as Array<Record<string, unknown>>).map((loop) => [loop.id, flags(loop)]),
+    );
+    expect(byId.get(heldId)).toEqual({ withheldByGate: true, ignoredByUser: undefined });
+    expect(byId.get(ignoredId)).toEqual({ withheldByGate: undefined, ignoredByUser: true });
+    expect(byId.get(offeredId)).toEqual({ withheldByGate: undefined, ignoredByUser: undefined });
   });
 
   test("open_loop_create never loses a suggestion to a failing gate", async () => {
@@ -400,7 +456,8 @@ describe("Cognition Steward tools", () => {
       CTX,
     );
     const { data } = structured(result);
-    expect(data).toMatchObject({ proposal: "suggest", enforced: false });
+    expect(data).not.toHaveProperty("gate");
+    expect(data).not.toHaveProperty("proposal");
     expect(getOpenLoop(db, (data.loop as { id: string }).id)).toMatchObject({ ignored: false });
   });
 

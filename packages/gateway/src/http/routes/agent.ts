@@ -707,7 +707,6 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
         observationId,
         reaction: body.reaction,
         ...(body.note !== undefined ? { note: body.note } : {}),
-        ...(body.noteId !== undefined ? { noteId: body.noteId } : {}),
       });
       if (!result.ok) {
         if (result.reason === "not_an_item") throw new NotFoundError(result.message);

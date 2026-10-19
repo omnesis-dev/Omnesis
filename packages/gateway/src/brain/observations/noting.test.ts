@@ -197,7 +197,13 @@ describe("createObservationScorer", () => {
   test("asks the interest ledger about the observation and shows the model what it finds", async () => {
     const ownerInterest: OwnerInterest = {
       positive: [
-        { text: "Parking permit renewal", source: "task_accepted", ageDays: 30, similarity: 0.66 },
+        {
+          text: "Parking permit renewal",
+          source: "task_accepted",
+          ageDays: 30,
+          similarity: 0.66,
+          basis: "words",
+        },
       ],
       negative: [],
       statements: [],
@@ -209,7 +215,9 @@ describe("createObservationScorer", () => {
     expect(lookup).toHaveBeenCalledExactlyOnceWith({
       text: "The parking permit expires tonight.\nA fine applies tomorrow.",
     });
-    expect(requests[0]!.state.owner_interest).toEqual(ownerInterest);
+    expect((requests[0]!.state as { owner_interest?: unknown }).owner_interest).toEqual(
+      ownerInterest,
+    );
   });
 
   test("a ledger with nothing similar leaves the request without owner_interest", async () => {

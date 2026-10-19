@@ -181,7 +181,11 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
   mountCognitionTranscriptAdminRoutes(context);
   mountCognitionObservationAdminRoutes(context);
   if (opts.interest)
-    mountCognitionInterestAdminRoutes(context, { db: opts.db, interest: opts.interest });
+    mountCognitionInterestAdminRoutes(context, {
+      db: opts.db,
+      interest: opts.interest,
+      clock: now,
+    });
   if (opts.sweeps) {
     mountCognitionSweepAdminRoutes(context, {
       db: opts.db,

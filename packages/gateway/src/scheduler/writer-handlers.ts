@@ -62,17 +62,16 @@ const NEAR_DUP_DF_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
 import {
-  deleteBriefItemReaction,
-  insertInterestSignal,
+  applyBriefReaction,
+  recordInterestSignal,
   resetInterestEmbeddingsNotFrom,
   setInterestSignalEmbedding,
   supersedeInterestSignals,
-  upsertBriefItemReaction,
+  type ApplyBriefReactionInput,
   type BriefItemReaction,
-  type InterestKind,
   type InterestSignal,
+  type InterestSupersedeScope,
   type NewInterestSignal,
-  type UpsertBriefItemReactionInput,
 } from "../brain/storage/interest.js";
 import { claimDueNote, enqueueNewNotes, finishNoteRun } from "../brain/note-agent/storage.js";
 import { advanceOccWatermark } from "../data/occ-materialized.js";
@@ -95,6 +94,7 @@ import {
   autoApplyTaskChange,
   withdrawTaskProposal,
   proposeTaskChange,
+  type ApplyTaskCommandOptions,
   type AutoAppliedTaskChange,
   type TaskCommand,
 } from "../brain/storage/tasks.js";
@@ -1828,39 +1828,33 @@ export const writerHandlers = {
     outcome: Parameters<typeof finishNoteRun>[3],
     now: number,
   ) => finishNoteRun(db, entryId, attempt, outcome, now),
-  "cognition.taskCommand": (db: Db, command: TaskCommand, now: number) =>
-    applyTaskCommand(db, command, now),
-  // The interest ledger: a signal lands with the supersession of what it
-  // replaces in one transaction, so a reader never sees both.
+  "cognition.taskCommand": (
+    db: Db,
+    command: TaskCommand,
+    now: number,
+    opts?: ApplyTaskCommandOptions,
+  ) => applyTaskCommand(db, command, now, opts),
+  // The interest ledger.
   "interest.record": (
     db: Db,
     signal: NewInterestSignal,
-    supersede: { loopId?: string; observationId?: string; kind?: InterestKind } | null,
-  ): InterestSignal =>
-    db.transaction(() => {
-      if (supersede) supersedeInterestSignals(db, supersede, signal.createdAt);
-      return insertInterestSignal(db, signal);
-    })(),
-  "interest.supersede": (
-    db: Db,
-    by: { loopId?: string; observationId?: string; ledgerSeq?: number; kind?: InterestKind },
-    now: number,
-  ): number => supersedeInterestSignals(db, by, now),
+    supersede: InterestSupersedeScope | null,
+  ): InterestSignal => recordInterestSignal(db, signal, supersede),
+  "interest.supersede": (db: Db, by: InterestSupersedeScope, now: number): number =>
+    supersedeInterestSignals(db, by, now),
   "interest.embedding": (
     db: Db,
     id: string,
     embedding: { vector: ArrayLike<number>; model: string } | null,
-  ): boolean => setInterestSignalEmbedding(db, id, embedding),
+    now: number,
+  ): boolean => setInterestSignalEmbedding(db, id, embedding, now),
   "interest.resetEmbeddings": (db: Db, model: string): number =>
     resetInterestEmbeddingsNotFrom(db, model),
   "interest.reaction": (
     db: Db,
-    input: UpsertBriefItemReactionInput | { observationId: string; clear: true },
+    input: ApplyBriefReactionInput,
     now: number,
-  ): BriefItemReaction | null =>
-    "clear" in input
-      ? (deleteBriefItemReaction(db, input.observationId), null)
-      : upsertBriefItemReaction(db, input, now),
+  ): BriefItemReaction | null => applyBriefReaction(db, input, now),
   "cognition.taskPropose": (db: Db, loopId: string, proposal: ProposedTaskChange, now: number) =>
     proposeTaskChange(db, loopId, proposal, now),
   "cognition.taskAutoApply": (db: Db, loopId: string, change: AutoAppliedTaskChange, now: number) =>
