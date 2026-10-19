@@ -5,7 +5,7 @@
  * Targeted wiki edits end to end: a maintenance run enriches an existing page
  * with `knowledge_edit` (one section replaced, one sentence changed) instead of
  * resending it, and every refusal arm — no editing read, a missing heading, a
- * removed claim without removal intent, a new reference without a read — is a
+ * removed claim without removal intent, a new reference at a stale version — is a
  * tool error that leaves the page untouched.
  *
  * Fixture data is invented — no corpus content.
@@ -224,13 +224,16 @@ function refusalArm(item: PuppetKnowledgeItem, steps: readonly ToolStep[]) {
     return edit([{ op: "replace_section", heading: "Paint", markdown: "## Paint\n\nx" }]);
   if (refused.length === 2) return edit([{ op: "delete_section", heading: "Tools" }]);
   if (refused.length === 3)
-    return edit([
-      {
-        op: "replace_text",
-        old: `<claim id="labels" refs="source:${sourceId}">`,
-        new: `<claim id="labels" refs="source:${sourceId} source:${supportId}">`,
-      },
-    ]);
+    return edit(
+      [
+        {
+          op: "replace_text",
+          old: `<claim id="labels" refs="source:${sourceId}">`,
+          new: `<claim id="labels" refs="source:${sourceId} source:${supportId}">`,
+        },
+      ],
+      { inputVersions: { [`source:${supportId}`]: "not-the-read-version" } },
+    );
   return null;
 }
 
@@ -376,7 +379,12 @@ it("enriches an existing page with targeted edits and refuses each unsafe edit",
     ),
   });
   expect(edits[3]!.result).toMatchObject({
-    message: expect.stringContaining(`Missing dependency version for "source:${supportId}"`),
+    code: "revision_conflict",
+    // Whichever reference of the edited claim has no version read in this run
+    // is named; the stale override never stands in for a read.
+    message: expect.stringMatching(
+      new RegExp(`dependency version for "source:(${sourceId}|${supportId})"`),
+    ),
   });
   expect(edits[4]!.result).toMatchObject({
     kind: "structured",
