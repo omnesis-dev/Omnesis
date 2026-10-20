@@ -349,6 +349,12 @@ An omitted version retains the legacy media format, while the negotiated SSE
 version omits the legacy tool-event mirror. Missing capabilities or incompatible
 ranges disable the unsupported voice surface without affecting text chat.
 
+Ending a negotiated voice call acknowledges release of its session lease before
+the client returns to the text composer. Release follows the canonical terminal
+event, without waiting for persistence, so an immediate text send cannot race
+the closing audio socket. A transport-owned model context failure is a turn
+failure; it must not make the default model's conversation permanently read-only.
+
 - Shared lifecycle: `packages/agent/src/session.ts`, `packages/gateway/src/agent/service.ts`
 - Realtime backend: `packages/gateway/src/realtime/backend.ts`
 - Media boundary: `packages/gateway/src/realtime/service.ts`, `packages/gateway/src/realtime/route.ts`
