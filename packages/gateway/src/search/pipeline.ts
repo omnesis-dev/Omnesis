@@ -274,6 +274,16 @@ export class SearchPipeline {
   }
 
   /**
+   * The embedder answering search queries right now, or undefined while none
+   * is attached. With an HTTP model it is a main-thread client, independent of
+   * the indexer worker's queue, so other latency-sensitive query embedding
+   * shares it rather than waiting behind indexing.
+   */
+  queryEmbedder(): Embedder | undefined {
+    return this.embedder;
+  }
+
+  /**
    * Attach (or clear) the dedicated search-worker pool. Wired at boot when
    * `gateway.searchWorker.concurrency > 0`. Clearing (`undefined`) reverts to
    * pure main-thread candidate generation.
