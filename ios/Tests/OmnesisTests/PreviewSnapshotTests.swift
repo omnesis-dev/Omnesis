@@ -7484,9 +7484,9 @@ final class PreviewSnapshotTests: XCTestCase {
 
     /// Today's page: chips carrying each view's open count, the date
     /// heading, a carried task first, today's tasks, and what was done or
-    /// struck today, struck through, then the "Use Tell Omnesis to add
-    /// tasks." line. A stable gateway has no Suggested segment, shows no
-    /// proposal and no review banner.
+    /// struck today, struck through, and the bar's Tell Omnesis button (a
+    /// microphone with a plus badge) at the top right. A stable gateway has
+    /// no Suggested segment, shows no proposal and no review banner.
     func testTasksToday() {
         let view = NavigationStack {
             TasksContent(model: .fixture(
@@ -7497,6 +7497,7 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         snapshot(view, name: "310-tasks-today", size: CGSize(width: 393, height: 1500))
@@ -7518,6 +7519,7 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         snapshot(view, name: "310a-tasks-today-experimental", size: CGSize(width: 393, height: 1500))
@@ -7540,6 +7542,7 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         snapshot(view, name: "311-tasks-today-undo-toast", size: CGSize(width: 393, height: 1100))
@@ -7560,6 +7563,7 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         snapshot(view, name: "310b-tasks-today-one-suggestion", size: CGSize(width: 393, height: 1500))
@@ -7587,6 +7591,7 @@ final class PreviewSnapshotTests: XCTestCase {
             )
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
         }
         .environment(AppStore.preview())
@@ -7659,6 +7664,7 @@ final class PreviewSnapshotTests: XCTestCase {
             )
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
         }
         .environment(AppStore.preview())
@@ -7695,6 +7701,7 @@ final class PreviewSnapshotTests: XCTestCase {
             TasksContent(model: .fixture(tasks: [], now: PreviewMocks.tasksNow))
                 .navigationTitle("Tasks")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar { TasksToolbar(menuOpen: .constant(false)) }
                 .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
         }
         .environment(AppStore.preview())
@@ -7712,6 +7719,7 @@ final class PreviewSnapshotTests: XCTestCase {
             ))
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         .environment(\.dynamicTypeSize, .accessibility3)

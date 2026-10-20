@@ -27,11 +27,7 @@ final class TasksInteractionUITests: XCTestCase {
     override func tearDownWithError() throws {
         // What the screen showed when a check failed, for review.
         if let run = testRun, run.failureCount > 0 {
-            let name = "326-" + name.replacingOccurrences(of: "[^A-Za-z]", with: "", options: .regularExpression)
-            let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try? XCUIScreen.main.screenshot().pngRepresentation
-                .write(to: directory.appendingPathComponent("\(name).png"))
+            keepScreenshot("326-" + name.replacingOccurrences(of: "[^A-Za-z]", with: "", options: .regularExpression))
         }
         app = nil
     }
@@ -397,7 +393,42 @@ final class TasksInteractionUITests: XCTestCase {
         XCTAssertTrue(circle(complete: Fixture.marathon).waitForExistence(timeout: 5), "cancelling the details changed the task")
     }
 
+    // MARK: - 9. Tell Omnesis
+
+    /// The bar's microphone-and-plus button, top right, opens the Tell
+    /// Omnesis capture; Cancel brings Tasks back unchanged. Leaves the screen
+    /// before and after the tap in `/tmp/omnesis-snapshots` for review.
+    func testTheBarsTellOmnesisButtonOpensCapture() {
+        let button = app.buttons["tasks.tellOmnesis"]
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "no Tell Omnesis button in the bar")
+        XCTAssertEqual(button.label, "Tell Omnesis")
+        let bar = app.navigationBars["Tasks"]
+        XCTAssertTrue(bar.exists, "no Tasks bar")
+        XCTAssertGreaterThan(button.frame.midX, bar.frame.midX, "the button is not on the bar's trailing side")
+        keepScreenshot("326-tell-omnesis-button")
+
+        button.tap()
+        let cancel = app.buttons["Cancel capture"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "Tell Omnesis did not open")
+        XCTAssertTrue(app.staticTexts["Tell Omnesis"].exists, "the capture is not headed Tell Omnesis")
+        XCTAssertTrue(app.buttons["captureDoneButton"].exists, "the capture has no Done button")
+        keepScreenshot("326-tell-omnesis-capture")
+
+        cancel.tap()
+        XCTAssertTrue(wait { !self.app.buttons["Cancel capture"].exists }, "the capture stayed open")
+        XCTAssertTrue(circle(complete: Fixture.marathon).waitForExistence(timeout: 5), "Tasks did not come back")
+        XCTAssertTrue(chipLabel("Today").hasPrefix("Today (5)"), chipLabel("Today"))
+    }
+
     // MARK: - Helpers
+
+    /// The screen as it is now, in `/tmp/omnesis-snapshots`, for review.
+    private func keepScreenshot(_ name: String) {
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? XCUIScreen.main.screenshot().pngRepresentation
+            .write(to: directory.appendingPathComponent("\(name).png"))
+    }
 
     /// Opens Suggested and lets its first layout settle: a press synthesized
     /// in the same instant the rows appear lands before the list has

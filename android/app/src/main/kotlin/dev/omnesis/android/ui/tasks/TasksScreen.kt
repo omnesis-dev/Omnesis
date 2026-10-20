@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,6 +28,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.Check
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.AlertDialog
@@ -72,16 +75,11 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.LinkAnnotation
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLinkStyles
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -140,7 +138,7 @@ fun TasksScreen(
     LaunchedEffect(experimental, state.segment) {
         if (state.segment !in TaskSegment.visible(experimental)) vm.select(TaskSegment.TODAY)
     }
-    TasksFrame(onOpenMenu = onOpenMenu) {
+    TasksFrame(onOpenMenu = onOpenMenu, onTellOmnesis = onTellOmnesis) {
         TasksContent(
             state = state,
             experimental = experimental,
@@ -151,7 +149,6 @@ fun TasksScreen(
             onRefresh = { vm.load(quietly = true) },
             onRetry = { vm.load() },
             onOpenSettings = onOpenSettings,
-            onTellOmnesis = onTellOmnesis,
             onUndo = vm::undo,
             onReceiptExpired = vm::dismissReceipt,
         )
@@ -239,10 +236,15 @@ private fun TaskNoteCapture(task: TaskDto, onClose: () -> Unit, onSave: suspend 
 /** One capture view model serves every task note; each opening starts it afresh. */
 private const val TASK_NOTE_CAPTURE_KEY = "tasks.done-with-note"
 
-/** The screen's chrome: the title bar with the menu button, over the journal. */
+/**
+ * The screen's chrome: the title bar over the journal, with the menu button on the left and,
+ * on the right, the way to dictate a change such as a new task. Tasks are added by telling
+ * Omnesis, so that button ([onTellOmnesis]) opens the same Tell Omnesis capture as the menu's
+ * entry.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TasksFrame(onOpenMenu: () -> Unit, content: @Composable () -> Unit) {
+fun TasksFrame(onOpenMenu: () -> Unit, onTellOmnesis: () -> Unit, content: @Composable () -> Unit) {
     Scaffold(
         containerColor = OmTheme.colors.bgPrimary,
         topBar = {
@@ -253,10 +255,37 @@ fun TasksFrame(onOpenMenu: () -> Unit, content: @Composable () -> Unit) {
                         Icon(Icons.Outlined.Menu, contentDescription = "Menu", tint = OmTheme.colors.accent)
                     }
                 },
+                actions = { TellOmnesisAction(onTellOmnesis) },
             )
         },
     ) { padding ->
         Box(Modifier.padding(padding)) { content() }
+    }
+}
+
+/**
+ * A microphone with a plus badge: dictate something for Omnesis to add or change. The badge sits
+ * on a disc of the bar's colour (the theme's surface, which the bar keeps since it has no scroll
+ * behaviour), cut out of the microphone's corner, so the two read as one glyph.
+ */
+@Composable
+private fun TellOmnesisAction(onTellOmnesis: () -> Unit) {
+    val c = OmTheme.colors
+    IconButton(onClick = onTellOmnesis, modifier = Modifier.testTag("tasks.tellOmnesis")) {
+        Box(Modifier.size(24.dp)) {
+            Icon(Icons.Outlined.Mic, contentDescription = "Tell Omnesis", tint = c.accent)
+            Icon(
+                Icons.Filled.AddCircle,
+                contentDescription = null,
+                tint = c.accent,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 4.dp, y = 3.dp)
+                    .size(14.dp)
+                    .background(MaterialTheme.colorScheme.surface, CircleShape)
+                    .padding(1.dp),
+            )
+        }
     }
 }
 
@@ -294,9 +323,7 @@ data class TaskFanPreview(
 /**
  * Renders the journal without fetching anything, so screenshots and interaction tests drive
  * every state directly. [experimental] reveals the Brain's surfaces: the Suggested segment,
- * Today's banner pointing to it, and the Confirm / Keep line of a proposed change. Tasks are
- * added by telling Omnesis, so the views a person fills end with the way there
- * ([onTellOmnesis]) rather than a field of their own.
+ * Today's banner pointing to it, and the Confirm / Keep line of a proposed change.
  */
 @Composable
 fun TasksContent(
@@ -309,7 +336,6 @@ fun TasksContent(
     onRefresh: () -> Unit = {},
     onRetry: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onTellOmnesis: () -> Unit = {},
     onUndo: (TaskReceipt) -> Unit = {},
     onReceiptExpired: (TaskReceipt) -> Unit = {},
     initialFan: TaskFanPreview? = null,
@@ -344,7 +370,6 @@ fun TasksContent(
                             actions = actions,
                             fan = fan,
                             iconFor = iconFor,
-                            onTellOmnesis = onTellOmnesis,
                             onOpenSuggested = { onSelect(TaskSegment.SUGGESTED) },
                         )
                     }
@@ -413,7 +438,6 @@ private fun TaskList(
     actions: TaskRowActions,
     fan: TaskFanController,
     iconFor: (String) -> SourceIconModel,
-    onTellOmnesis: () -> Unit,
     onOpenSuggested: () -> Unit,
 ) {
     val listState = rememberLazyListState()
@@ -462,9 +486,6 @@ private fun TaskList(
                     )
                 }
             }
-        }
-        if (showsCaptureHint(state.segment)) {
-            item(key = "tell-omnesis") { TellOmnesisFooter(onTellOmnesis) }
         }
     }
 }
@@ -598,34 +619,6 @@ private fun SuggestionsBanner(text: String, onOpen: () -> Unit) {
             Text("Review", fontWeight = FontWeight.SemiBold, color = c.accent)
         }
     }
-}
-
-/** How tasks get here: "Use Tell Omnesis to add tasks.", with Tell Omnesis opening capture. */
-@Composable
-private fun TellOmnesisFooter(onTellOmnesis: () -> Unit) {
-    val c = OmTheme.colors
-    val text = remember(c.accent, onTellOmnesis) {
-        buildAnnotatedString {
-            append("Use ")
-            withLink(
-                LinkAnnotation.Clickable(
-                    tag = "tell-omnesis",
-                    styles = TextLinkStyles(SpanStyle(color = c.accent, fontWeight = FontWeight.SemiBold)),
-                ) { onTellOmnesis() },
-            ) { append("Tell Omnesis") }
-            append(" to add tasks.")
-        }
-    }
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = c.textSecondary,
-        textAlign = TextAlign.Center,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = OmSpacing.lg, vertical = OmSpacing.lg)
-            .testTag("tasks.captureHint"),
-    )
 }
 
 @Composable

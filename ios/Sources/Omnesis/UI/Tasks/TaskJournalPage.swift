@@ -4,9 +4,8 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// One journal view as a page of the Tasks pager: its heading, its rows and
-/// how tasks get there, scrolling on its own, with the action fan its rows
-/// open on a long press.
+/// One journal view as a page of the Tasks pager: its heading and its rows,
+/// scrolling on its own, with the action fan its rows open on a long press.
 ///
 /// Each page keeps its own scroll position, fan and press recognizer, so a
 /// swipe to the next view and back finds the page where it was left. The
@@ -43,7 +42,7 @@ struct TaskJournalPage: View {
 
     /// Whether there is a settled page to show: read, and either read
     /// cleanly or holding rows from an earlier read. A re-read in flight
-    /// leaves it settled, so the banner and footer stay put.
+    /// leaves it settled, so the banner stays put.
     private var settled: Bool {
         page.loaded && (page.loadError == nil || !page.tasks.isEmpty)
     }
@@ -73,7 +72,6 @@ struct TaskJournalPage: View {
                     VStack(alignment: .leading, spacing: 0) {
                         TaskPageHeading(view: view, today: model.today, tasks: page.tasks)
                         rows
-                        footer
                     }
                     .padding(.bottom, Theme.Spacing.xl)
                     .background(TaskRowPressScrollProbe(bridge: press))
@@ -161,16 +159,6 @@ struct TaskJournalPage: View {
             }
             .padding(.horizontal, Theme.Spacing.lg)
             .padding(.vertical, Theme.Spacing.sm)
-        }
-    }
-
-    /// What closes the list on the views a person fills: how tasks get there.
-    @ViewBuilder
-    private var footer: some View {
-        if settled, TaskJournal.showsCaptureHint(for: view) {
-            TaskCaptureHint()
-                .padding(.horizontal, Theme.Spacing.lg)
-                .padding(.top, Theme.Spacing.lg)
         }
     }
 

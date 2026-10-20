@@ -83,11 +83,7 @@ struct TasksScreen: View {
             )
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    MenuToolbarButton(isOpen: $menuOpen)
-                }
-            }
+            .toolbar { TasksToolbar(menuOpen: $menuOpen) }
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
             .background(Theme.bgPrimary.ignoresSafeArea())
             .navigationDestination(for: TasksRoute.self) { route in
@@ -110,6 +106,43 @@ struct TasksScreen: View {
                 .omnesisColorScheme()
             }
         }
+    }
+}
+
+/// The Tasks bar's buttons: the menu on the leading side, and on the
+/// trailing side the way to dictate a change to the journal, such as a new
+/// task. Tasks are added by telling Omnesis, so that button opens the same
+/// Tell Omnesis capture as the menu's entry.
+@available(iOS 17.0, *)
+struct TasksToolbar: ToolbarContent {
+    @Binding var menuOpen: Bool
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            MenuToolbarButton(isOpen: $menuOpen)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            TellOmnesisToolbarButton()
+        }
+    }
+}
+
+/// A microphone with a plus badge: dictate something for Omnesis to add or
+/// change. It opens the app's Tell Omnesis capture through `openCapture`.
+@available(iOS 17.0, *)
+struct TellOmnesisToolbarButton: View {
+    @Environment(\.openCapture) private var openCapture
+
+    var body: some View {
+        Button {
+            openCapture?()
+        } label: {
+            Image(systemName: "mic.badge.plus")
+                .foregroundStyle(Theme.accent)
+        }
+        .accessibilityLabel("Tell Omnesis")
+        .accessibilityHint("Dictate a change, such as a new task")
+        .accessibilityIdentifier("tasks.tellOmnesis")
     }
 }
 
@@ -352,6 +385,7 @@ struct TaskFanPreview {
         ))
         .navigationTitle("Tasks")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { TasksToolbar(menuOpen: .constant(false)) }
     }
     .environment(AppStore.preview())
 }
@@ -408,6 +442,7 @@ struct TaskFanPreview {
         )
         .navigationTitle("Tasks")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { TasksToolbar(menuOpen: .constant(false)) }
     }
     .environment(AppStore.preview())
 }
@@ -430,6 +465,7 @@ struct TaskFanPreview {
         )
         .navigationTitle("Tasks")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { TasksToolbar(menuOpen: .constant(false)) }
     }
     .environment(AppStore.preview())
 }
@@ -443,6 +479,7 @@ struct TaskFanPreview {
         )
         .navigationTitle("Tasks")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { TasksToolbar(menuOpen: .constant(false)) }
     }
     .environment(AppStore.preview())
     .environment(\.dynamicTypeSize, .xxxLarge)
@@ -479,6 +516,7 @@ struct TaskFanPreview {
         )
         .navigationTitle("Tasks")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { TasksToolbar(menuOpen: .constant(false)) }
     }
     .environment(AppStore.preview())
 }
@@ -498,6 +536,7 @@ struct TaskFanPreview {
         )
         .navigationTitle("Tasks")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { TasksToolbar(menuOpen: .constant(false)) }
     }
     .environment(AppStore.preview())
 }
