@@ -3330,6 +3330,7 @@ describe("ios/Package.swift sim-less logic target (C11)", () => {
     "GatewayErrorViewTests.swift",
     "AdminCoordinatorReconnectTests.swift",
     "GatewayLiveE2ETests.swift",
+    "RealtimeAudioCaptureDeviceTests.swift",
   ];
 
   it("excludes the UIKit/live tests from the SwiftPM OmnesisTests target", () => {
