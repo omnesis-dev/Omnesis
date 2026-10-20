@@ -125,6 +125,7 @@ struct RealtimeCallView: View {
     }
 }
 
+#if DEBUG
 #Preview("Voice · Listening") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
 }
@@ -142,4 +143,5 @@ struct RealtimeCallView: View {
 #Preview("Voice · Error") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure)
 }
+#endif
 #endif
