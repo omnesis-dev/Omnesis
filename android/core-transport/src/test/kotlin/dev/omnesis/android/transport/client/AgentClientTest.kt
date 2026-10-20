@@ -39,6 +39,23 @@ class AgentClientTest {
     }
 
     @Test
+    fun defaultQueueModeIsRequiredOnWireIncludingPreviouslyPersistedRequests() = runTest {
+        // Older app versions omitted the default mode from persisted requests as well as HTTP.
+        val saved = OmnesisJson.decodeFromString<ConversationSubmissionBody>(
+            """{"clientMessageId":"saved-request","text":"Travel","clarificationId":"question-one"}""",
+        )
+        for (body in listOf(ConversationSubmissionBody("new-request", "Annual totals"), saved)) {
+            server.enqueue(MockResponse().setBody("""{"submission":{"id":"accepted","text":"Accepted","status":"queued"}}"""))
+            client().submit("s_one", body)
+            val payload = OmnesisJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+            assertEquals("queue", payload["mode"]?.jsonPrimitive?.content)
+            assertEquals(body.clientMessageId, payload["clientMessageId"]?.jsonPrimitive?.content)
+            assertEquals(body.clarificationId, payload["clarificationId"]?.jsonPrimitive?.content)
+            assertTrue("Optional absent flags stay omitted", "deepResearch" !in payload)
+        }
+    }
+
+    @Test
     fun retry_reuses_submission_id_and_preserves_interrupt_and_clarification() = runTest {
         repeat(2) { server.enqueue(MockResponse().setBody("""{"submission":{"id":"request-one","text":"Annual totals","status":"queued"},"future":true}""")) }
         val body = ConversationSubmissionBody("request-one", "Annual totals", "interrupt", true, "question-one")

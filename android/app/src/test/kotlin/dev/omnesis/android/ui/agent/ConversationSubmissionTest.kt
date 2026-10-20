@@ -9,6 +9,9 @@ import dev.omnesis.android.transport.dto.AgentEvent
 import dev.omnesis.android.transport.client.ConversationSubmission
 import dev.omnesis.android.transport.client.ConversationControls
 import dev.omnesis.android.transport.http.GatewayHttp
+import dev.omnesis.android.transport.dto.OmnesisJson
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -38,6 +41,7 @@ class ConversationSubmissionTest {
     private val submissions = CopyOnWriteArrayList<String>()
     private var submissionReply: (() -> MockResponse)? = null
     private var sendNowReply: (() -> MockResponse)? = null
+    private var requireQueueMode = false
     private var reject = true
     private var oldGateway = false
     private var controlsBody = """{"busy":true,"queuedMessages":[],"future":true}"""
@@ -51,8 +55,11 @@ class ConversationSubmissionTest {
                 request.path?.endsWith("/controls") == true -> if (oldGateway) MockResponse().setResponseCode(404).setBody("""{"error":"NOT_FOUND","message":"Not found"}""")
                     else MockResponse().setBody(controlsBody)
                 request.path?.endsWith("/submissions") == true -> {
-                    submissions += request.body.readUtf8()
-                    submissionReply?.invoke() ?: if (reject) MockResponse().setResponseCode(503).setBody("""{"error":"UNAVAILABLE","message":"Unavailable"}""")
+                    val payload = request.body.readUtf8()
+                    submissions += payload
+                    if (requireQueueMode && OmnesisJson.parseToJsonElement(payload).jsonObject["mode"]?.jsonPrimitive?.content != "queue") {
+                        MockResponse().setResponseCode(400).setBody("""{"error":"INVALID_BODY","message":"mode must be queue or interrupt"}""")
+                    } else submissionReply?.invoke() ?: if (reject) MockResponse().setResponseCode(503).setBody("""{"error":"UNAVAILABLE","message":"Unavailable"}""")
                     else MockResponse().setBody("""{"submission":{"id":"accepted","text":"Use annual totals","status":"queued"}}""")
                 }
                 request.path?.endsWith("/seen") == true -> MockResponse().setBody("""{"ok":true}""")
@@ -170,6 +177,74 @@ class ConversationSubmissionTest {
             assertEquals(if (success) emptyList() else listOf(pending), coord.state.value.composer.pending)
             coord.teardown()
         }
+    }
+
+    @Test fun clarificationChoiceIncludesRequiredQueueModeAndAcknowledgesDelivery() {
+        requireQueueMode = true
+        reject = false
+        controlsBody = """{"busy":false,"pendingClarification":{"id":"question-one","question":"Which category?","choices":[{"label":"Travel"},{"label":"Supplies"}]},"queuedMessages":[]}"""
+        val coord = coordinator(busy = false)
+        coord.conversationSurfaceVisible("session-one", true)
+        await { coord.state.value.controls.pendingClarification != null }
+        // Same coordinator entry point as tapping a native clarification choice.
+        coord.submitFollowUp("Travel")
+        await { submissions.size == 1 && coord.state.value.submissionsSending.isEmpty() }
+        assertTrue(coord.state.value.composer.pending.isEmpty())
+        assertNull(coord.state.value.chat.lastTurnError)
+        val payload = OmnesisJson.parseToJsonElement(submissions.single()).jsonObject
+        assertEquals("Travel", payload["text"]?.jsonPrimitive?.content)
+        assertEquals("queue", payload["mode"]?.jsonPrimitive?.content)
+        assertEquals("question-one", payload["clarificationId"]?.jsonPrimitive?.content)
+    }
+
+    @Test fun retryOfOlderSavedChoiceSendsSameIdWithQueueModeAndClearsReceipt() {
+        requireQueueMode = true
+        reject = false
+        val saved = OmnesisJson.decodeFromString<dev.omnesis.android.transport.client.ConversationSubmissionBody>(
+            """{"clientMessageId":"older-choice","text":"Travel","clarificationId":"question-one"}""",
+        )
+        val store = AgentComposerStore()
+        store.write("", "session-one", ComposerRecord(text = "Another unsent question", pending = listOf(saved)))
+        val coord = coordinator(store)
+        coord.retrySubmission(saved.clientMessageId)
+        await { submissions.size == 1 && coord.state.value.submissionsSending.isEmpty() }
+        assertTrue(coord.state.value.composer.pending.isEmpty())
+        assertEquals("Another unsent question", coord.state.value.composer.text)
+        assertNull(coord.state.value.chat.lastTurnError)
+        val payload = OmnesisJson.parseToJsonElement(submissions.single()).jsonObject
+        assertEquals("older-choice", payload["clientMessageId"]?.jsonPrimitive?.content)
+        assertEquals("queue", payload["mode"]?.jsonPrimitive?.content)
+        assertEquals("question-one", payload["clarificationId"]?.jsonPrimitive?.content)
+    }
+
+    @Test fun retryClearsOnlyItsOwnConfirmedDeliveryWarning() {
+        requireQueueMode = true
+        val coord = coordinator()
+        coord.submitFollowUp("Travel")
+        await { submissions.size == 1 && coord.state.value.submissionsSending.isEmpty() }
+        assertTrue(coord.state.value.chat.lastTurnError!!.startsWith("Message saved on this device"))
+        val id = coord.state.value.composer.pending.single().clientMessageId
+        reject = false
+        coord.retrySubmission(id)
+        await { submissions.size == 2 && coord.state.value.submissionsSending.isEmpty() }
+        assertTrue(coord.state.value.composer.pending.isEmpty())
+        assertNull(coord.state.value.chat.lastTurnError)
+        assertEquals(submissions[0], submissions[1])
+    }
+
+    @Test fun confirmingOlderReceiptDoesNotClearNewerDeliveryFailure() {
+        val coord = coordinator()
+        coord.submitFollowUp("First choice")
+        await { submissions.size == 1 && coord.state.value.submissionsSending.isEmpty() }
+        val first = coord.state.value.composer.pending.single().clientMessageId
+        coord.submitFollowUp("Second choice")
+        await { submissions.size == 2 && coord.state.value.submissionsSending.isEmpty() }
+        val newerWarning = coord.state.value.chat.lastTurnError
+        reject = false
+        coord.retrySubmission(first)
+        await { submissions.size == 3 && coord.state.value.submissionsSending.isEmpty() }
+        assertEquals(newerWarning, coord.state.value.chat.lastTurnError)
+        assertEquals("Second choice", coord.state.value.composer.pending.single().text)
     }
 
     @Test fun uncertainDeliverySurvivesCoordinatorRecreationAndRetriesSameId() {

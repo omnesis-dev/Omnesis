@@ -64,6 +64,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
     private var composerAccount = ""
     private var controlsJob: Job? = null
     private val submissionsInFlight = mutableSetOf<String>()
+    private var submissionDeliveryError: Pair<String, String>? = null
 
     fun updateDraft(text: String, commandId: String?) {
         val st = _state.value
@@ -177,21 +178,30 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         val c = client ?: return
         if (!submissionsInFlight.add(body.clientMessageId)) return
         val account = composerAccount
+        val generation = queueContextGeneration
         _state.update { it.copy(submissionsSending = submissionsInFlight.toSet()) }
         scope.launch {
             try {
                 c.submit(sid, body)
                 val record = composerStore.read(account, sid)
                 composerStore.write(account, sid, record.copy(pending = record.pending.filterNot { it.clientMessageId == body.clientMessageId }))
-                if (client === c && _state.value.sessionId == sid) {
-                    _state.update { it.copy(composer = composerStore.read(account, sid)) }
+                if (client === c && _state.value.sessionId == sid && queueContextGeneration == generation) {
+                    val ownedError = submissionDeliveryError?.takeIf { it.first == body.clientMessageId }
+                    _state.update { it.copy(
+                        composer = composerStore.read(account, sid),
+                        chat = if (ownedError != null && it.chat.lastTurnError == ownedError.second)
+                            it.chat.copy(lastTurnError = null) else it.chat,
+                    ) }
+                    if (ownedError != null) submissionDeliveryError = null
                     refreshControls(sid)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (client === c && _state.value.sessionId == sid) {
-                    _state.update { it.copy(chat = it.chat.copy(lastTurnError = "Message saved on this device. Retry to confirm delivery: ${classifyGatewayError(e)}")) }
+                if (client === c && _state.value.sessionId == sid && queueContextGeneration == generation) {
+                    val message = "Message saved on this device. Retry to confirm delivery: ${classifyGatewayError(e)}"
+                    submissionDeliveryError = body.clientMessageId to message
+                    _state.update { it.copy(chat = it.chat.copy(lastTurnError = message)) }
                 }
             } finally {
                 submissionsInFlight.remove(body.clientMessageId)

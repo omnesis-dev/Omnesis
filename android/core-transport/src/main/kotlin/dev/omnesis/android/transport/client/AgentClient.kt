@@ -19,6 +19,8 @@ import dev.omnesis.android.transport.http.patchJson
 import dev.omnesis.android.transport.http.postJson
 import dev.omnesis.android.transport.http.putJsonSegments
 import java.time.ZoneId
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -265,10 +267,12 @@ data class ConversationControls(
     val capabilities: ConversationCapabilities = ConversationCapabilities(),
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ConversationSubmissionBody(
     val clientMessageId: String,
     val text: String,
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val mode: String = "queue",
     val deepResearch: Boolean? = null,
     val clarificationId: String? = null,
