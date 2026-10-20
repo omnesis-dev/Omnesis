@@ -655,6 +655,13 @@ test("answers first, in the assistant's own voice, with no talk of its machinery
   expect(prompt).not.toContain("I'm built for your personal corpus");
 });
 
+test("counts a ranking question across every source, not the first one searched", () => {
+  const prompt = buildSystemPrompt({});
+  expect(prompt).toContain("**Rank across every source.**");
+  expect(prompt).toContain("Don't filter it to one source unless they named it");
+  expect(prompt).toContain("say which sources the answer covers");
+});
+
 test("binds interactive citations to the exact supporting source version", () => {
   const prompt = buildSystemPrompt({});
   expect(prompt).toContain("exact supporting source version you inspected");
