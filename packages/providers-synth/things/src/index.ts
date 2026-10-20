@@ -16,6 +16,14 @@ const { type: _type, ...rest } = realThings;
 
 export default defineSource<SynthCursor>({
   ...rest,
+  // Synthetic syncs must not depend on a hosted application icon being reachable.
+  icon: {
+    ...rest.icon,
+    url: undefined,
+    imageDataUri: `data:image/svg+xml;base64,${Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#4A90D9"/><path d="m7 12 3 3 7-7" fill="none" stroke="white" stroke-width="2"/></svg>',
+    ).toString("base64")}`,
+  },
   // A double reads fixtures, not a real vault or database, so it declares no
   // configuration at all. Inheriting the real schema would inherit its path
   // check too, and that check answers a question about this machine's
