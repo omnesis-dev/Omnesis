@@ -281,10 +281,9 @@ const knowledgeEditArgs = knowledgeSaveArgs
       inputVersions: knowledgeSaveArgs.shape.node.shape.inputVersions,
       edits: z
         .array(wikiEditOp)
-        .min(1)
         .max(64)
         .describe(
-          "Applied in order to the tagged markdown knowledge_fetch({id, editing:true}) returned at node.expectedRevision; each edit sees the result of the previous one.",
+          "Applied in order to the tagged markdown knowledge_fetch({id, editing:true}) returned at node.expectedRevision; each edit sees the result of the previous one. An empty list saves the page unchanged, to record review (reviewedClaimIds, curationDeferral) without resending it.",
         ),
     }),
   })
@@ -617,7 +616,7 @@ export function buildKnowledgeTools(
   /** Splice targeted edits into this run's editing read, then save it exactly as knowledge_save would. */
   const editWiki = async (input: z.output<typeof knowledgeEditArgs>, signal?: AbortSignal) => {
     const { edits, ...fields } = input.node;
-    const ops = edits.map((edit) => edit.op).join(",");
+    const ops = edits.map((edit) => edit.op).join(",") || "unchanged";
     const base = dependencyReceipts.editingRead(fields.id);
     try {
       if (!base || base.revision !== fields.expectedRevision)
@@ -983,7 +982,7 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_edit",
-      "Change part of an existing wiki or root page without resending it: the preferred way to correct a figure, enrich a section or add one. Use knowledge_save only to create a page or to restructure most of it. First read knowledge_fetch({id, editing:true}); node.edits apply in order to exactly that tagged markdown at node.expectedRevision. replace_section replaces a section's heading line, body and subsections (up to the next heading of the same or a higher level), including the claim tags that open just before its heading; delete_section removes it; insert_section adds tagged Markdown after or before a section, or at the start or end of the page; replace_text swaps one exact passage, claim tags included, that must occur exactly once. The resulting page then goes through every knowledge_save check unchanged, and the other node fields mean what they mean there: claims removed by an edit need node.claimRemovals, new claim refs need knowledge_reference reads or node.inputVersions, a root's dropped links need node.navigationRemovals, and maintenance needs the same frontier, fingerprint and review fields. Untouched claims keep their stored versions. A missing or ambiguous target, or a section whose edge falls inside a claim, is refused without saving; the error names the available headings or the occurrence count. Returns the new revision and the sections changed, not the page; fetch again with editing:true before another edit. A refused edit saves nothing; when its error says this run's editing read is still the current page, a retry needs no new fetch.",
+      "Change part of an existing wiki or root page without resending it: the preferred way to correct a figure, enrich a section or add one. Use knowledge_save only to create a page or to restructure most of it. First read knowledge_fetch({id, editing:true}); node.edits apply in order to exactly that tagged markdown at node.expectedRevision. replace_section replaces a section's heading line, body and subsections (up to the next heading of the same or a higher level), including the claim tags that open just before its heading; delete_section removes it; insert_section adds tagged Markdown after or before a section, or at the start or end of the page; replace_text swaps one exact passage, claim tags included, that must occur exactly once. The resulting page then goes through every knowledge_save check unchanged, and the other node fields mean what they mean there: claims removed by an edit need node.claimRemovals, new claim refs need knowledge_reference reads or node.inputVersions, a root's dropped links need node.navigationRemovals, and maintenance needs the same frontier, fingerprint and review fields. Untouched claims keep their stored versions. A missing or ambiguous target, or a section whose edge falls inside a claim, is refused without saving; the error names the available headings or the occurrence count. With no edits it saves the page unchanged: the way to record reviewedClaimIds or a curationDeferral on a page you are not changing, instead of resending it through knowledge_save. Returns the new revision and the sections changed, not the page; fetch again with editing:true before another edit. A refused edit saves nothing; when its error says this run's editing read is still the current page, a retry needs no new fetch.",
       knowledgeEditArgs,
       true,
       editWiki,

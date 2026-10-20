@@ -230,6 +230,48 @@ describe("knowledge_edit", () => {
     );
   });
 
+  it("records review of an unchanged page with no edits, as an unchanged knowledge_save would", async () => {
+    seed("garden-copy");
+    const edited = tools("edit-run");
+    await editingRead(edited);
+    expect(
+      await call(edited, "knowledge_edit", {
+        node: { id: "garden", expectedRevision: 1, edits: [] },
+        reviewedClaimIds: ["costs"],
+      }),
+    ).toMatchObject({
+      kind: "structured",
+      data: { node: { revision: 2 }, edit: { changedSections: [], charsBefore: PAGE.length } },
+    });
+    const saved = tools("save-run");
+    await editingRead(saved, "garden-copy");
+    expect(
+      await call(saved, "knowledge_save", {
+        node: {
+          id: "garden-copy",
+          kind: "wiki",
+          title: "Community garden",
+          expectedRevision: 1,
+          markdown: PAGE,
+        },
+        reviewedClaimIds: ["costs"],
+      }),
+    ).toMatchObject({ kind: "structured" });
+    const strip = (id: string) => {
+      const { id: _id, createdAt: _c, updatedAt: _u, ...node } = getKnowledgeNode(db, id)!;
+      return {
+        node,
+        claims: getKnowledgeClaims(db, id).map(({ nodeId: _n, ...claim }) => claim),
+        dependencies: getKnowledgeDependencies(db, id).map(({ nodeId: _n, ...dep }) => dep),
+      };
+    };
+    expect(getKnowledgeNode(db, "garden")!.markdown).toBe(PAGE);
+    expect(strip("garden")).toEqual(strip("garden-copy"));
+    expect(lines).toContain(
+      `Wiki write via knowledge_edit[unchanged] on garden: r1→r2, ${PAGE.length}→${PAGE.length} chars`,
+    );
+  });
+
   it("refuses a removed claim without claimRemovals exactly as knowledge_save does", async () => {
     const entries = tools();
     await editingRead(entries);
