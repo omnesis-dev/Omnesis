@@ -114,10 +114,10 @@ final class RealtimeCallSession {
         try input.setVoiceProcessingEnabled(true)
         input.isVoiceProcessingInputMuted = false
         let inputFormat = input.outputFormat(forBus: 0)
-        log
-            .info(
-                "Input rate=\(inputFormat.sampleRate, privacy: .public) channels=\(inputFormat.channelCount, privacy: .public) voiceProcessing=\(input.isVoiceProcessingEnabled, privacy: .public)"
-            )
+        let rate = inputFormat.sampleRate
+        let channels = inputFormat.channelCount
+        log.info("Input rate=\(rate, privacy: .public) channels=\(channels, privacy: .public)")
+        log.info("Voice processing enabled=\(input.isVoiceProcessingEnabled, privacy: .public)")
         let encoder = try RealtimePCMEncoder(inputFormat: inputFormat)
         captureMixer = RealtimeAudioGraph.connectCapture(input, format: inputFormat, engine: engine)
         let player = AVAudioPlayerNode()

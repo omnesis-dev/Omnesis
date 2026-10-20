@@ -13,6 +13,7 @@ import {
   acquireGatewayLock,
   applyPrivateUmask,
   GATEWAY_SHUTDOWN_BUDGET_MS,
+  SCOPE_ADMIN,
   assertNever,
   makeEvent,
   createLogger,
@@ -2944,7 +2945,7 @@ const realtimeService = new RealtimeService({
   getAgent: () => agentLifecycle.routeDeps.agentService,
   isAuthorized: (token, callerId) => {
     const auth = lookupToken(db, token);
-    return !!auth && auth.scopes.includes("admin") && callerId === `token:${auth.id}`;
+    return !!auth && auth.scopes.includes(SCOPE_ADMIN) && callerId === `token:${auth.id}`;
   },
   recordUsage: (usage, model) => {
     void writeGate
