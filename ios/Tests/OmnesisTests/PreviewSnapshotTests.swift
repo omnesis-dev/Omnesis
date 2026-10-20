@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import Observation
 @testable import Omnesis
 import SwiftUI
 import UIKit
@@ -24,6 +25,49 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testPeopleReadClientReadiness() throws {
+        let coordinator = AdminCoordinator()
+        let arrived = expectation(description: "The read client becoming available invalidates the view")
+        let initialIdentity = withObservationTracking {
+            coordinator.search.map { ObjectIdentifier($0) }
+        } onChange: {
+            arrived.fulfill()
+        }
+        XCTAssertNil(initialIdentity)
+        let client = try SearchClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test-token")
+        coordinator.injectSearchClientForTesting(client)
+        wait(for: [arrived], timeout: 1)
+        let readyIdentity = coordinator.search.map { ObjectIdentifier($0) }
+        XCTAssertEqual(readyIdentity, ObjectIdentifier(client))
+        coordinator.injectSearchClientForTesting(client)
+        XCTAssertEqual(coordinator.search.map { ObjectIdentifier($0) }, readyIdentity)
+
+        let rotated = expectation(description: "A replacement read client invalidates the view")
+        withObservationTracking {
+            _ = coordinator.search
+        } onChange: {
+            rotated.fulfill()
+        }
+        let replacement = SearchClient(baseURL: client.baseURL, token: "replacement-token")
+        coordinator.injectSearchClientForTesting(replacement)
+        wait(for: [rotated], timeout: 1)
+        XCTAssertNotEqual(coordinator.search.map { ObjectIdentifier($0) }, readyIdentity)
+
+        let removed = expectation(description: "Pairing loss invalidates the read client")
+        withObservationTracking {
+            _ = coordinator.search
+        } onChange: {
+            removed.fulfill()
+        }
+        coordinator.stopAdmin()
+        wait(for: [removed], timeout: 1)
+        XCTAssertNil(coordinator.search)
+        snapshot(
+            PeopleView(menuOpen: .constant(false)).environment(AppStore.preview()),
+            name: "people-awaiting-read-client"
+        )
+    }
+
     func testRealtimeComposer() {
         snapshot(RealtimeComposerSnapshot(), name: "realtime-composer", size: CGSize(width: 393, height: 130))
     }
