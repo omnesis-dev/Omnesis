@@ -96,6 +96,9 @@ import { createTlsLifecycleTask } from "./tls-lifecycle/task.js";
 import { DEFAULT_MDNS_ENABLED, DEFAULT_MDNS_HOSTNAME, MdnsAdvertiser } from "./mdns-advertiser.js";
 import { DeviceWsServer } from "./ws.js";
 import { mountDeviceWsRoute } from "./device-ws-route.js";
+import { RealtimeService } from "./realtime/service.js";
+import { mountRealtimeRoutes } from "./realtime/route.js";
+import { lookupToken } from "./data/repositories/TokenRepository.js";
 import { WsEventHandler } from "./http/services/WsEventHandler.js";
 import { FleetUpdateService } from "./http/services/FleetUpdateService.js";
 import { HostFleetUpdateService } from "./http/services/HostFleetUpdateService.js";
@@ -2935,6 +2938,23 @@ if (bootReport.sourcesUpdated > 0) {
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
 mountDeviceWsRoute(app, wsServer, upgradeWebSocket);
+const realtimeService = new RealtimeService({
+  getConfig: () => configStore.get(),
+  getApiKey: (backend) => inferenceRegistry.getBackendApiKey(backend),
+  getAgent: () => agentLifecycle.routeDeps.agentService,
+  isAuthorized: (token, callerId) => {
+    const auth = lookupToken(db, token);
+    return !!auth && auth.scopes.includes("admin") && callerId === `token:${auth.id}`;
+  },
+  recordUsage: (usage, model) => {
+    void writeGate
+      .recordCognitionSpend(cognitionSpendDay(Date.now()), "realtime-voice", model, usage)
+      .catch(() => {
+        log.warn("Could not record realtime voice usage");
+      });
+  },
+});
+mountRealtimeRoutes(app, realtimeService, upgradeWebSocket);
 
 function startServer() {
   // OMNESIS_BIND lets operators run the gateway behind a reverse proxy
@@ -3491,6 +3511,7 @@ const doShutdown = async (): Promise<void> => {
   // still exist. This drain is bounded so a streaming client cannot consume
   // the entire shutdown budget before the indexer has persisted its graph.
   wsServer.stop();
+  realtimeService.dispose();
   const httpDrained = await httpShutdown.close(server, 5_000);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
   // A warm still scanning competes with the sidecar persist below for I/O and

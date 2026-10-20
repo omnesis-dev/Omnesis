@@ -104,6 +104,8 @@ public struct AgentView: View {
     /// composer's height — most short citation lists.
     @State private var composerNeedsGutter: Bool = false
     @State private var speechRecognizer = SpeechRecognizer()
+    @State private var realtimeAvailable = false
+    @State private var realtimePresented = false
     /// Owns the exact conversation selected for destructive confirmation and
     /// preserves it across SwiftUI's dialog-dismissal callback ordering.
     @State private var conversationDeletion = ConversationDeletionConfirmation()
@@ -215,6 +217,18 @@ public struct AgentView: View {
         // risk of perturbing it — and the side-panel branch only engages
         // once the probe reports an iPad-landscape size.
         .background(sizeProbe)
+        .task(id: "\(store.pairing?.url.absoluteString ?? "")-\(store.pairing?.pairingGeneration ?? "")-\(store.experimentalEnabled)") {
+            realtimeAvailable = false
+            guard store.experimentalEnabled, let pairing = store.pairing else { return }
+            let available = await (try? RealtimeCapability.available(pairing: pairing)) ?? false
+            guard !Task.isCancelled else { return }
+            realtimeAvailable = available
+        }
+        .fullScreenCover(isPresented: $realtimePresented) {
+            RealtimeCallView(pairing: store.pairing, conversationID: store.agent.sessionId, onEnd: { id in
+                if let id { Task { await store.agent.resumeConversation(id: id, forceRefresh: true) } }
+            })
+        }
         .omnesisColorScheme()
         #if DEBUG
             .demoAutoPilot(composerText: composerTextBinding, citationsOpen: $citationsOpen)
@@ -569,6 +583,11 @@ public struct AgentView: View {
                         experimentalEnabled: store.experimentalEnabled,
                         idlePrompt: DailyBriefCopy.composerPrompt(for: store.agent.conversationOrigin),
                         speech: speechRecognizer,
+                        onRealtime: realtimeAvailable && store.experimentalEnabled ? {
+                            speechRecognizer.stopListening()
+                            composerFocused = false
+                            realtimePresented = true
+                        } : nil,
                         onSend: { text, command in
                             // Surrender keyboard focus the moment the user
                             // hits send so the transcript reclaims its full
@@ -1521,6 +1540,7 @@ struct AgentComposer: View {
     /// What the empty field says while nothing else is going on.
     let idlePrompt: String
     var speech: SpeechRecognizer
+    let onRealtime: (() -> Void)?
     /// The send carries the armed slash command (or `nil` for an ordinary turn) so
     /// the caller can fold its options (e.g. `deepResearch`) into the POST.
     let onSend: (String, SlashCommand?) -> Void
@@ -1539,6 +1559,7 @@ struct AgentComposer: View {
         experimentalEnabled: Bool = false,
         idlePrompt: String = "Ask Omnesis",
         speech: SpeechRecognizer,
+        onRealtime: (() -> Void)? = nil,
         onSend: @escaping (String, SlashCommand?) -> Void,
         onCancel: @escaping () -> Void,
         focused: FocusState<Bool>.Binding,
@@ -1550,6 +1571,7 @@ struct AgentComposer: View {
         self.experimentalEnabled = experimentalEnabled
         self.idlePrompt = idlePrompt
         self.speech = speech
+        self.onRealtime = onRealtime
         self.onSend = onSend
         self.onCancel = onCancel
         self.focused = focused
@@ -1596,9 +1618,22 @@ struct AgentComposer: View {
                     .onSubmit { submit() }
                     .accessibilityIdentifier("agentComposer")
 
-                    trailingButton
-                        .padding(.trailing, 10)
-                        .padding(.bottom, 14)
+                    HStack(spacing: 6) {
+                        trailingButton
+                        if let onRealtime {
+                            Button(action: onRealtime) {
+                                Image(systemName: "waveform")
+                                    .font(.system(size: 19, weight: .semibold))
+                                    .foregroundStyle(Theme.accent)
+                                    .frame(width: 34, height: 34)
+                            }
+                            .disabled(disabled || busy || speech.isListening)
+                            .accessibilityLabel("Start voice conversation")
+                            .accessibilityIdentifier("agentRealtimeButton")
+                        }
+                    }
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 14)
                 }
             }
             // Liquid Glass pill: on iOS 26 it's real glass — the
@@ -1917,7 +1952,7 @@ struct AgentComposer: View {
 }
 
 @available(iOS 17.0, *)
-#Preview("Composer — idle (mic visible)") {
+#Preview("Composer — idle (mic and voice visible)") {
     @Previewable @State var text = ""
     @Previewable @FocusState var focused: Bool
     let speech = SpeechRecognizer.preview(state: .idle)
@@ -1926,6 +1961,7 @@ struct AgentComposer: View {
         busy: false,
         disabled: false,
         speech: speech,
+        onRealtime: {},
         onSend: { _, _ in },
         onCancel: {},
         focused: $focused

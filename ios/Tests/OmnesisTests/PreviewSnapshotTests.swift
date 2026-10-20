@@ -24,6 +24,37 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testRealtimeComposer() {
+        snapshot(RealtimeComposerSnapshot(), name: "realtime-composer", size: CGSize(width: 393, height: 130))
+    }
+
+    func testRealtimeCallListening() {
+        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening), name: "realtime-listening")
+    }
+
+    func testRealtimeCallTools() {
+        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools).preferredColorScheme(.dark), name: "realtime-tools")
+    }
+
+    func testRealtimeCallSmallPhone() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools),
+            name: "realtime-small-phone",
+            size: CGSize(width: 375, height: 667)
+        )
+    }
+
+    func testRealtimeCallAccessible() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools).dynamicTypeSize(.accessibility3),
+            name: "realtime-accessible"
+        )
+    }
+
+    func testRealtimeCallFailure() {
+        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure), name: "realtime-failure")
+    }
+
     private static let outputDir = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
     private static let canvasSize = CGSize(width: 393, height: 852)
 
@@ -8054,5 +8085,22 @@ private struct PhoneSetupInPlaceOutcomeProbe: View {
                 try? await Task.sleep(for: .milliseconds(300))
                 coordinator.installPreview(flow: changed)
             }
+    }
+}
+
+private struct RealtimeComposerSnapshot: View {
+    @State private var text = ""
+    @FocusState private var focused: Bool
+    var body: some View {
+        AgentComposer(
+            text: $text,
+            busy: false,
+            disabled: false,
+            speech: SpeechRecognizer.preview(state: .idle),
+            onRealtime: {},
+            onSend: { _, _ in },
+            onCancel: {},
+            focused: $focused
+        )
     }
 }

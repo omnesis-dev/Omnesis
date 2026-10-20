@@ -3237,6 +3237,41 @@ export class AgentService {
     }
   }
 
+  /** Run a supervised voice turn through the ordinary tools and durable conversation. */
+  async realtimeTurn(
+    callerId: CallerId,
+    sessionId: string,
+    text: string,
+    signal: AbortSignal,
+    onEvent: (event: AgentEvent) => void,
+  ): Promise<string> {
+    if (signal.aborted) throw new Error("Voice call ended");
+    if (this.disposing) throw new AgentError("session_busy", "agent service is shutting down");
+    const entry = this.requireSession(sessionId);
+    if (entry.meta.terminalFailure) {
+      throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+    }
+    if (entry.pendingProfileSwap && !entry.session.busy) {
+      const swap = entry.pendingProfileSwap;
+      this.applyProfileSwap(sessionId, entry, swap.profile, swap.systemPrompt);
+    }
+    let answer = "";
+    let stopReason: string | undefined;
+    const unsubscribe = entry.session.subscribe((event) => {
+      onEvent(event);
+      if (event.type === "agent.text.delta") answer += event.payload.delta;
+      if (event.type === "agent.tool.start") answer = "";
+      if (event.type === "agent.message.end") stopReason = event.payload.stopReason;
+    });
+    try {
+      await this.startMessage(callerId, sessionId, text, { signal }).completion;
+      if (stopReason !== "end_turn") throw new Error("The agent could not complete this request");
+      return answer.trim();
+    } finally {
+      unsubscribe();
+    }
+  }
+
   cancelSession(callerId: CallerId, sessionId: string): { ok: true } {
     const entry = this.requireSession(sessionId);
     entry.callerId = callerId;

@@ -7208,5 +7208,30 @@ extension PreviewMocks {
         now: { tasksNow },
         preloaded: dailyBriefPages
     )
+
+    @MainActor static var realtimeListening: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Listening"
+        session.connected = true
+        return session
+    }
+
+    @MainActor static var realtimeTools: RealtimeCallSession {
+        let session = realtimeListening
+        session.status = "Thinking…"
+        session.transcript = "What meetings do I have tomorrow?"
+        session.tools = [
+            .init(id: "preview-search", name: "Searching your calendar"),
+            .init(id: "preview-read", name: "Reading matching documents", finished: true),
+        ]
+        return session
+    }
+
+    @MainActor static var realtimeFailure: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Call ended"
+        session.error = URLError(.notConnectedToInternet)
+        return session
+    }
 }
 #endif
