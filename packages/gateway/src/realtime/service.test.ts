@@ -3,10 +3,11 @@
 
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ReplayBackend } from "@omnesis/agent";
+import { AgentError, AgentService } from "../agent/service.js";
 import { RealtimeService, realtimeBackend } from "./service.js";
 import type WebSocket from "ws";
 import type { OmnesisConfig } from "@omnesis/config";
-import type { AgentService } from "../agent/service.js";
 
 class Socket extends EventEmitter {
   readyState = 1;
@@ -34,14 +35,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function fixture(turn?: AgentService["realtimeTurn"]) {
+function fixture(turn?: AgentService["realtimeTurn"], actualAgent?: AgentService) {
   const socket = new Socket();
   const events: Array<Record<string, unknown>> = [];
   const peer = { send: (data: string) => events.push(JSON.parse(data)), close: vi.fn() };
-  const agent = {
-    createSession: vi.fn().mockResolvedValue({ sessionId: "voice-thread" }),
-    realtimeTurn: turn ?? vi.fn().mockResolvedValue("The ferns need water."),
-  } as unknown as AgentService;
+  const agent =
+    actualAgent ??
+    ({
+      createSession: vi.fn().mockResolvedValue({ sessionId: "voice-thread" }),
+      realtimeTurn: turn ?? vi.fn().mockResolvedValue("The ferns need water."),
+    } as unknown as AgentService);
   const usage = vi.fn();
   const authorized = vi.fn(() => true);
   const logger = { info: vi.fn(), warn: vi.fn() };
@@ -75,6 +78,94 @@ const call = (id = "call-1") => ({
 });
 
 describe("realtime voice", () => {
+  it("recovers a vanished empty conversation after gateway restart and runs a replayed turn", async () => {
+    const makeAgent = (id: string) =>
+      new AgentService({
+        backendFactory: () =>
+          new ReplayBackend({
+            fixtures: [
+              {
+                entries: [
+                  {
+                    afterMs: 0,
+                    event: {
+                      type: "agent.text.delta",
+                      payload: {
+                        sessionId: "$SESSION",
+                        messageId: "$MSG",
+                        delta: "Water the ferns.",
+                      },
+                    },
+                  },
+                  {
+                    afterMs: 0,
+                    event: {
+                      type: "agent.message.end",
+                      payload: { sessionId: "$SESSION", messageId: "$MSG", stopReason: "end_turn" },
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+        ports: {
+          search: { search: async (input) => ({ query: input.query, durationMs: 1, results: [] }) },
+          document: { fetch: async () => null },
+        },
+        systemPrompt: "You are a fictional test assistant.",
+        sessionIdGen: () => id,
+      });
+    const beforeRestart = makeAgent("existing-thread");
+    await beforeRestart.createSession("token:fictional");
+    await beforeRestart.dispose();
+    const afterRestart = makeAgent("replacement-thread");
+    const create = vi.spyOn(afterRestart, "createSession");
+    const f = fixture(undefined, afterRestart);
+    try {
+      f.socket.emit("open");
+      await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+      expect(create.mock.calls[0]?.[1]?.resumeFromId).toBe("existing-thread");
+      expect(create.mock.calls[1]?.[1]?.resumeFromId).toBeUndefined();
+      f.socket.event({ type: "session.updated" });
+      expect(f.events).toContainEqual({
+        type: "session.ready",
+        conversationId: "replacement-thread",
+        model: "gpt-realtime",
+      });
+      f.socket.event(call());
+      await vi.waitFor(() =>
+        expect(f.socket.sent).toContainEqual(
+          expect.objectContaining({
+            type: "conversation.item.create",
+            item: expect.objectContaining({
+              type: "function_call_output",
+              output: "Water the ferns.",
+            }),
+          }),
+        ),
+      );
+      expect(f.peer.close).not.toHaveBeenCalled();
+    } finally {
+      f.connection.close();
+      await afterRestart.dispose();
+    }
+  });
+  it.each([
+    new AgentError("forbidden", "not allowed"),
+    new AgentError("anchored_thread_unavailable", "unsupported origin"),
+    new Error("session_not_found"),
+  ])(
+    "does not replace conversations after an unrelated or untyped startup error: %s",
+    async (error) => {
+      const f = fixture();
+      vi.mocked(f.agent.createSession).mockRejectedValueOnce(error);
+      f.socket.emit("open");
+      await vi.waitFor(() => expect(f.peer.close).toHaveBeenCalled());
+      expect(f.agent.createSession).toHaveBeenCalledTimes(1);
+      expect(f.peer.close).toHaveBeenCalled();
+      expect(f.events.some((event) => event.type === "session.ready")).toBe(false);
+    },
+  );
   it("warns once when a ready call never sends microphone audio", async () => {
     vi.useFakeTimers();
     const f = fixture();

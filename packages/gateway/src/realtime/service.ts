@@ -5,9 +5,9 @@ import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { z } from "zod";
 import { createLogger, experimentalEnabled, normalizeTimeZone } from "@omnesis/core";
+import { AgentError, type AgentService, type CreateSessionOptions } from "../agent/service.js";
 import type { AgentEvent } from "@omnesis/core";
 import type { OmnesisConfig } from "@omnesis/config";
-import type { AgentService } from "../agent/service.js";
 
 const MODEL = "gpt-realtime";
 const MAX_FRAME_BYTES = 128 * 1024;
@@ -286,14 +286,30 @@ export class RealtimeService {
     upstream.on("open", () => {
       this.log.info(`Call ${diagnosticId} upstream connected`);
       void (async () => {
-        const created = await agent.createSession(callerId, {
+        const sessionOptions = {
           profile: "voice",
           caller: { kind: "operator" },
-          ...(options.conversationId ? { resumeFromId: options.conversationId } : {}),
           ...(options.timeZone
             ? { timeZone: normalizeTimeZone(options.timeZone) ?? undefined }
             : {}),
-        });
+        } satisfies CreateSessionOptions;
+        let created: Awaited<ReturnType<AgentService["createSession"]>>;
+        try {
+          created = await agent.createSession(callerId, {
+            ...sessionOptions,
+            ...(options.conversationId ? { resumeFromId: options.conversationId } : {}),
+          });
+        } catch (error) {
+          if (
+            !options.conversationId ||
+            !(error instanceof AgentError) ||
+            error.code !== "session_not_found"
+          )
+            throw error;
+          if (closed) return;
+          this.log.info(`Call ${diagnosticId} starting fresh after missing conversation`);
+          created = await agent.createSession(callerId, sessionOptions);
+        }
         if (closed) return;
         sessionId = created.sessionId;
         sendUpstream({
