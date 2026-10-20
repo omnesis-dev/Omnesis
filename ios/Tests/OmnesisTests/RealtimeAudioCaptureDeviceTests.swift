@@ -13,10 +13,23 @@ import XCTest
 @MainActor
 final class RealtimeAudioCaptureDeviceTests: XCTestCase {
     func testLiveMicrophoneReachesSerializedGatewayAudioFrames() async throws {
+        try await assertLiveCapture(voiceProcessing: true, name: "realtime-live-microphone")
+    }
+
+    func testPlainRemoteIOControlReachesSerializedGatewayAudioFrames() async throws {
+        try await assertLiveCapture(voiceProcessing: false, name: "realtime-live-remote-io")
+    }
+
+    private func assertLiveCapture(voiceProcessing: Bool, name: String) async throws {
+        try requireHardwareProbeOptIn()
         let session = RealtimeCallSession()
+        session.setupStageForTesting = { stage in
+            FileHandle.standardError.write(Data("Realtime capture setup: \(stage)\n".utf8))
+        }
         session.configurationRecoveryEnabledForTesting = false
+        session.voiceProcessingEnabledForTesting = voiceProcessing
         defer { session.stop() }
-        defer { try? renderProof(session, name: "realtime-live-microphone") }
+        defer { try? renderProof(session, name: name) }
         let granted = await AVAudioApplication.requestRecordPermission()
         XCTAssertTrue(granted, "Grant microphone access to the owned test simulator before running this test")
         guard granted else { return }
@@ -41,7 +54,11 @@ final class RealtimeAudioCaptureDeviceTests: XCTestCase {
     }
 
     func testEngineConfigurationChangeRecoversActualMicrophoneFrames() async throws {
+        try requireHardwareProbeOptIn()
         let session = RealtimeCallSession()
+        session.setupStageForTesting = { stage in
+            FileHandle.standardError.write(Data("Realtime capture setup: \(stage)\n".utf8))
+        }
         defer { session.stop() }
         defer { try? renderProof(session, name: "realtime-live-microphone-recovery") }
         let granted = await AVAudioApplication.requestRecordPermission()
@@ -60,6 +77,7 @@ final class RealtimeAudioCaptureDeviceTests: XCTestCase {
         guard packets > 0 else { XCTFail(session.microphoneStartupDiagnostic)
             return
         }
+        let initialRestarts = session.captureCountersForTesting.restarts
         session.configurationRecoveryEnabledForTesting = false
         session.stopEngineForConfigurationTest()
         try await Task.sleep(for: .milliseconds(200))
@@ -74,7 +92,16 @@ final class RealtimeAudioCaptureDeviceTests: XCTestCase {
         session.stopEngineForConfigurationTest()
         await fulfillment(of: [resumed], timeout: 10)
         XCTAssertNil(session.error, session.microphoneStartupDiagnostic)
-        XCTAssertTrue(session.microphoneStartupDiagnostic.contains("restarts=1"), session.microphoneStartupDiagnostic)
+        XCTAssertEqual(session.captureCountersForTesting.restarts, initialRestarts + 1, session.microphoneStartupDiagnostic)
+    }
+
+    private func requireHardwareProbeOptIn() throws {
+        struct Configuration: Decodable { let enabled: Bool }
+        let file = URL(fileURLWithPath: "/tmp/omnesis-ios-audio-capture-test.json")
+        guard let data = try? Data(contentsOf: file),
+              let configuration = try? JSONDecoder().decode(Configuration.self, from: data), configuration.enabled else {
+            throw XCTSkip("Live microphone tests require the explicit local audio-capture test fixture")
+        }
     }
 
     private func renderProof(_ session: RealtimeCallSession, name: String) throws {

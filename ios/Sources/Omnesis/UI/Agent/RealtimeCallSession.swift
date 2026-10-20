@@ -262,6 +262,8 @@ final class RealtimeCallSession {
     #if DEBUG
     @ObservationIgnored var outgoingMessageForTesting: ((String) -> Void)?
     @ObservationIgnored var configurationRecoveryEnabledForTesting = true
+    @ObservationIgnored var voiceProcessingEnabledForTesting = true
+    @ObservationIgnored var setupStageForTesting: ((String) -> Void)?
 
     func receiveForTesting(_ event: [String: Any]) throws {
         try receive(event)
@@ -269,6 +271,10 @@ final class RealtimeCallSession {
 
     var engineRunningForTesting: Bool {
         engine?.isRunning ?? false
+    }
+
+    var captureCountersForTesting: RealtimeCaptureDiagnostics.Snapshot {
+        captureDiagnostics.snapshot
     }
 
     func stopEngineForConfigurationTest() {
@@ -307,15 +313,33 @@ final class RealtimeCallSession {
 }
 
 extension RealtimeCallSession {
+    private func logSetupStage(_ stage: String) {
+        log.info("Realtime audio setup: \(stage, privacy: .public)")
+        #if DEBUG
+        setupStageForTesting?(stage)
+        #endif
+    }
+
     private func beginAudio() throws {
         let session = AVAudioSession.sharedInstance()
+        logSetupStage("configuring audio session")
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        logSetupStage("activating audio session")
         try session.setActive(true)
+        logSetupStage("creating audio engine")
         let engine = AVAudioEngine()
         self.engine = engine
+        logSetupStage("acquiring input node")
         let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-        input.isVoiceProcessingInputMuted = false
+        #if DEBUG
+        let voiceProcessing = voiceProcessingEnabledForTesting
+        #else
+        let voiceProcessing = true
+        #endif
+        logSetupStage("configuring voice processing")
+        try input.setVoiceProcessingEnabled(voiceProcessing)
+        if voiceProcessing { input.isVoiceProcessingInputMuted = false }
+        logSetupStage("voice processing configured")
         let inputFormat = input.outputFormat(forBus: 0)
         captureInputFormat = inputFormat
         let rate = inputFormat.sampleRate
@@ -323,12 +347,13 @@ extension RealtimeCallSession {
         log.info("Input rate=\(rate, privacy: .public) channels=\(channels, privacy: .public)")
         log.info("Voice processing enabled=\(input.isVoiceProcessingEnabled, privacy: .public)")
         let encoder = try RealtimePCMEncoder(inputFormat: inputFormat)
-        captureMixer = RealtimeAudioGraph.connectCapture(input, format: inputFormat, engine: engine)
         let player = AVAudioPlayerNode()
         self.player = player
         engine.attach(player)
         let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1)!
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        captureMixer = RealtimeAudioGraph.connect(
+            input: input, inputFormat: inputFormat, playback: player, playbackFormat: playbackFormat, engine: engine
+        )
         let captureGeneration = generation
         audioObservers.append(NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
@@ -340,11 +365,25 @@ extension RealtimeCallSession {
         })
         installCaptureTap(input, format: inputFormat, encoder: encoder, generation: captureGeneration)
 
+        logSetupStage("checking IO graph formats")
+        let outputFormat = engine.outputNode.inputFormat(forBus: 0)
+        let outputRate = outputFormat.sampleRate
+        let outputChannels = outputFormat.channelCount
+        let matchingFormats = input.outputFormat(forBus: 0).isEqual(outputFormat)
+        log.info("Output rate=\(outputRate, privacy: .public) channels=\(outputChannels, privacy: .public)")
+        log.info("Input and output IO formats match=\(matchingFormats, privacy: .public)")
+        logSetupStage("preparing engine")
         engine.prepare()
+        logSetupStage("starting engine")
         try engine.start()
         player.play()
         log.info("Realtime audio engine started; waiting for microphone frames")
         sendCaptureDiagnostic(stage: "starting")
+        armCaptureStartupWatchdog(generation: captureGeneration)
+    }
+
+    private func armCaptureStartupWatchdog(generation captureGeneration: UUID) {
+        timeout?.cancel()
         timeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled, let self, generation == captureGeneration, !captureReadiness.isReady else { return }
@@ -367,8 +406,8 @@ extension RealtimeCallSession {
     ) {
         let diagnostics = captureDiagnostics
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
-            let firstInput = diagnostics.input(frames: Int(buffer.frameLength))
-            if firstInput {
+            let inputStamp = diagnostics.input(frames: Int(buffer.frameLength))
+            if inputStamp.isFirst {
                 Task { @MainActor [weak self] in
                     self?.log.info("Realtime hardware tap delivered its first buffer")
                 }
@@ -378,7 +417,8 @@ extension RealtimeCallSession {
                 diagnostics.converted(hasData: encoded != nil, status: encoder.lastStatus)
                 guard let data = encoded else { return }
                 Task { @MainActor [weak self] in
-                    guard let self, generation == captureGeneration, connected else { diagnostics.discarded()
+                    guard let self, generation == captureGeneration, connected, diagnostics.isCurrent(inputStamp) else {
+                        diagnostics.discarded()
                         return
                     }
                     configurationRestartAttempts = 0
@@ -427,10 +467,16 @@ extension RealtimeCallSession {
             return
         }
         configurationRestartAttempts += 1
+        captureDiagnostics.advanceEpoch()
         do {
+            RealtimeAudioGraph.connectOutput(format: current, engine: engine)
+            captureMixer?.outputVolume = 0
             try engine.start()
             player?.play()
             captureDiagnostics.restarted()
+            captureReadiness = RealtimeCaptureReadiness()
+            status = "Starting microphone…"
+            armCaptureStartupWatchdog(generation: generation)
             sendCaptureDiagnostic(stage: "configuration_changed")
             log.info("Realtime audio restarted after an engine configuration change")
         } catch { fail(error) }

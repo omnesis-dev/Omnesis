@@ -24,19 +24,33 @@ final class RealtimeCaptureDiagnostics: @unchecked Sendable {
         }
     }
 
+    struct InputStamp {
+        let isFirst: Bool
+        fileprivate let epoch: UUID
+    }
+
     private let lock = NSLock()
+    private var epoch = UUID()
     private var counters = Snapshot()
 
     var snapshot: Snapshot {
         lock.withLock { counters }
     }
 
-    func input(frames: Int) -> Bool {
+    func input(frames: Int) -> InputStamp {
         lock.withLock {
             counters.inputBuffers += 1
             counters.inputFrames += frames
-            return counters.inputBuffers == 1
+            return InputStamp(isFirst: counters.inputBuffers == 1, epoch: epoch)
         }
+    }
+
+    func advanceEpoch() {
+        lock.withLock { epoch = UUID() }
+    }
+
+    func isCurrent(_ stamp: InputStamp) -> Bool {
+        lock.withLock { stamp.epoch == epoch }
     }
 
     func converted(hasData: Bool, status: String) {

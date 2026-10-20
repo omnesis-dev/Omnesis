@@ -6,13 +6,24 @@ import AVFoundation
 
 /// Keep microphone input in the rendered graph without playing it through the speaker.
 enum RealtimeAudioGraph {
-    static func connectCapture(_ input: AVAudioNode, format: AVAudioFormat, engine: AVAudioEngine) -> AVAudioMixerNode {
+    static func connect(
+        input: AVAudioNode, inputFormat: AVAudioFormat,
+        playback: AVAudioNode, playbackFormat: AVAudioFormat, engine: AVAudioEngine
+    )
+        -> AVAudioMixerNode {
         let capture = AVAudioMixerNode()
         engine.attach(capture)
-        engine.connect(input, to: capture, format: format)
-        engine.connect(capture, to: engine.mainMixerNode, format: format)
+        engine.connect(input, to: capture, format: inputFormat)
+        engine.connect(capture, to: engine.mainMixerNode, format: inputFormat)
+        engine.connect(playback, to: engine.mainMixerNode, format: playbackFormat)
+        connectOutput(format: inputFormat, engine: engine)
         capture.outputVolume = 0
         return capture
+    }
+
+    /// Voice Processing I/O requires identical input-node output and output-node input formats.
+    static func connectOutput(format: AVAudioFormat, engine: AVAudioEngine) {
+        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: format)
     }
 }
 
