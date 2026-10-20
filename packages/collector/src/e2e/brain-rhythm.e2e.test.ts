@@ -1020,7 +1020,12 @@ describe("rhythm: scheduled sweeps", () => {
   let bench: BrainBench;
   const SWEEP_ID = "bench-rhythm-audit";
   const ANCHOR = "10:00";
-  const ANCHOR_MS = 10 * HOUR;
+  /** The sweep's 10:00 boundary on the local day of `ms`, in wall-clock time across a DST shift. */
+  const anchorOn = (ms: number) => {
+    const d = new Date(ms);
+    d.setHours(10, 0, 0, 0);
+    return d.getTime();
+  };
   const STEERING_ONE =
     "Review the rehearsal bookings the user is carrying and surface only the ones whose date is still unsettled.";
   const STEERING_TWO =
@@ -1157,11 +1162,11 @@ describe("rhythm: scheduled sweeps", () => {
     // serialized batch; the first occurrence lands on the next anchor.
     expect(runRows(bench, "sweep")).toHaveLength(0);
     const seeded = Number(bench.markers.get(`sweep_last_boundary_at:${SWEEP_ID}`));
-    expect(seeded).toBe(bench.clock.localMidnight(D0_NOON) + ANCHOR_MS);
+    expect(seeded).toBe(anchorOn(D0_NOON));
   }, 120_000);
 
   test("crossing the anchor fires the sweep once for the day, prompt-steered", async () => {
-    const boundary = localMidnight(D0_NOON + DAY) + ANCHOR_MS;
+    const boundary = anchorOn(D0_NOON + DAY);
     const day = bench.clock.localDay(boundary);
     await bench.clock.set(boundary + 30 * 60_000);
     await waitFor(
@@ -1264,7 +1269,7 @@ describe("rhythm: scheduled sweeps", () => {
 
     // The edit lands on the NEXT occurrence, which is the whole point of
     // snapshotting rather than freezing.
-    const boundary = localMidnight(D0_NOON + 2 * DAY) + ANCHOR_MS;
+    const boundary = anchorOn(D0_NOON + 2 * DAY);
     const day = bench.clock.localDay(boundary);
     await bench.clock.set(boundary + 30 * 60_000);
     await waitFor(
@@ -1285,7 +1290,7 @@ describe("rhythm: scheduled sweeps", () => {
     // Three anchors go by unobserved. The marker holds the BOUNDARY the sweep
     // last fired for, and only one boundary sits at or before now, so the
     // catch-up is a single occurrence — not a serialized burst of three.
-    const boundary = localMidnight(D0_NOON + 5 * DAY) + ANCHOR_MS;
+    const boundary = anchorOn(D0_NOON + 5 * DAY);
     await bench.clock.set(boundary + 30 * 60_000);
     await waitFor(
       "the catch-up occurrence to be enqueued",
@@ -1300,7 +1305,7 @@ describe("rhythm: scheduled sweeps", () => {
       `sweep:${SWEEP_ID}:${bench.clock.localDay(boundary)}`,
     ]);
     for (const offset of [3, 4]) {
-      const missed = bench.clock.localDay(localMidnight(D0_NOON + offset * DAY) + ANCHOR_MS);
+      const missed = bench.clock.localDay(anchorOn(D0_NOON + offset * DAY));
       expect(runRows(bench, "sweep").filter((r) => r.dedupe_key?.endsWith(`:${missed}`))).toEqual(
         [],
       );
