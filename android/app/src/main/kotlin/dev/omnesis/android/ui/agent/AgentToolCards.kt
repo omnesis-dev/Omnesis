@@ -124,6 +124,7 @@ object AgentToolCards {
         "knowledge_propose_page" to ephemeral("Propose wiki page", "wiki"),
         "knowledge_save" to ephemeral("Save wiki page", "wiki"),
         "knowledge_edit" to ephemeral("Edit wiki page", "wiki"),
+        "knowledge_retire" to ephemeral("Retire wiki page", "wiki"),
     )
 
     /** Names older conversations still carry for a renamed tool; they read as the tool they became. */

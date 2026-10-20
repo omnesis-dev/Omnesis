@@ -38,6 +38,7 @@ import { checkKnowledgeOutcome, KnowledgeOutcomeRejected } from "./outcome-check
 import { LOOP_FIELD_REFERENCE_GUIDANCE } from "./references.js";
 import { assertKnowledgeSavePreflight } from "./save-preflight.js";
 import { applyWikiEdits, WikiEditError } from "./wiki-edit.js";
+import { WIKI_RETIREMENT_REASON_MAX } from "./wiki-retirement.js";
 import { getKnowledgeNode } from "./storage.js";
 import { ClaimMarkupError } from "./claims.js";
 import { knowledgePageRefForDocument } from "./document-context.js";
@@ -354,6 +355,7 @@ export const KNOWLEDGE_MUTATING_TOOLS = new Set([
   "knowledge_evidence",
   "knowledge_save",
   "knowledge_edit",
+  "knowledge_retire",
   "knowledge_propose_page",
   "knowledge_candidate_decide",
   "knowledge_next_frontier",
@@ -679,6 +681,30 @@ export function buildKnowledgeTools(
       throw error;
     }
   };
+  /** Retire a wiki page this run has read for editing at the exact revision it names. */
+  const retireWiki = async (input: { id: string; expectedRevision: number; reason: string }) => {
+    const read = dependencyReceipts.editingRead(input.id);
+    try {
+      if (!read || read.revision !== input.expectedRevision)
+        throw new KnowledgeStorageError(
+          "revision_conflict",
+          `Retire only a page this run read with knowledge_fetch({id, editing:true}) at expectedRevision. ${read ? `This run's latest editing read is revision ${read.revision}; ` : ""}fetch the page with editing:true, review it, and retire that revision.`,
+        );
+      const retired = await service.deps.writeGate["knowledge.retire"](
+        input,
+        runFence,
+        service.deps.clock(),
+      );
+      wikiWrites.info(
+        `Wiki retired via knowledge_retire on ${retired.id}: r${input.expectedRevision}→r${retired.revision}`,
+      );
+      return { ...retired, retired: true };
+    } catch (error) {
+      if (error instanceof KnowledgeStorageError)
+        wikiWrites.info(`Wiki retirement refused on ${input.id} (${error.code})`);
+      throw error;
+    }
+  };
   const tools: ToolHandle[] = [
     tool(
       "knowledge_candidates",
@@ -987,6 +1013,20 @@ export function buildKnowledgeTools(
       true,
       editWiki,
       (input) => nodeTitle(input.node.id),
+    ),
+    tool(
+      "knowledge_retire",
+      "Retire an existing wiki page as a deliberate, reviewed decision, when its subject no longer warrants a page: for example most of its claims lost their only support because their sources were deleted, or another page now covers it. Prefer repair when the page is still useful: rewrite claims against current evidence, or drop individual unsupported claims with node.claimRemovals through knowledge_edit. First read knowledge_fetch({id, editing:true}); pass that expectedRevision and a specific reason, which is kept on the retired revision. The page stays on record as withdrawn with its history, but leaves search, the page directory and maintenance and can no longer be cited or edited; pages that read it are marked for review. The root page is never retired.",
+      z
+        .object({
+          id,
+          expectedRevision: z.number().int().positive(),
+          reason: z.string().trim().min(1).max(WIKI_RETIREMENT_REASON_MAX),
+        })
+        .strict(),
+      true,
+      retireWiki,
+      (input) => nodeTitle(input.id),
     ),
   ];
   if (context.engine && context.batchId) {

@@ -186,7 +186,10 @@ it.each(["source", "proof", "association", "owner", "privacy"] as const)(
       db.exec("UPDATE knowledge_claims SET modality='intention' WHERE node_id='a'");
     if (change === "association") updateOpenLoop(db, "a", { docs: [] }, now + 2);
     if (change === "owner") db.exec("UPDATE open_loops SET created_at=created_at+1 WHERE id='a'");
-    if (change === "privacy") db.exec("DELETE FROM documents WHERE id='source'");
+    if (change === "privacy")
+      db.exec(
+        "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','a','deleted',1)",
+      );
     const refused = vi.fn();
     expect(await port.validateList!(result, identity, undefined, refused)).toBe(false);
     expect(refused).toHaveBeenCalledWith(

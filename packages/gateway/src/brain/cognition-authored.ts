@@ -24,9 +24,9 @@
  *  - **The reactive plane** ({@link isCognitionAuthoredDocument}) drops EVERY
  *    entry, unconditionally, with no bypass. This is the whole point of the
  *    registry.
- *    Explicit evidence lifecycle is separate: changing a cited transcript
- *    repairs its existing dependents without opening source discovery, and
- *    deleting it purges derived content and historical provenance.
+ *    Explicit evidence lifecycle is separate: changing or deleting a cited
+ *    transcript invalidates its existing dependents for repair without
+ *    opening source discovery.
  *  - **Retrieval** (`search/hidden-sources.ts`) hides only entries that opt in
  *    via {@link CognitionAuthoredSource.hiddenFromSearch} — and even then lets
  *    a caller that explicitly names the source or one of its document types

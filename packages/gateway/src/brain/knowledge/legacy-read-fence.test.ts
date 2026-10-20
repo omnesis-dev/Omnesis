@@ -326,22 +326,42 @@ function assertHidden(mirror: string): void {
   }
 }
 
-it("hides legacy owner prose on a new source tombstone before bounded physical deletion", () => {
+it("hides owner prose while the owners' own erasure is pending, before physical deletion", () => {
   const mirror = seedOwners();
-  db.prepare(
-    `INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES(?,'',1,?)
-    ON CONFLICT(document_id) DO UPDATE SET deleted=1`,
-  ).run(newer, NOW + 1);
+  for (const id of ["hidden-loop", "hidden-observation", "hidden-doc", "hidden-person"])
+    db.prepare(
+      "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node',?,'deleted',?)",
+    ).run(id, NOW + 1);
   assertHidden(mirror);
 });
 
-it("hides legacy owner prose while an ancestor source purge is queued", () => {
-  const mirror = seedOwners();
-  db.prepare(
-    "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','source',?,'deleted',?)",
-  ).run(newer, NOW + 1);
-  assertHidden(mirror);
-});
+it.each(["tombstone", "queued deletion", "source removal"] as const)(
+  "keeps owner prose readable for review after a cited source's %s",
+  (mode) => {
+    seedOwners();
+    if (mode === "tombstone")
+      db.prepare(
+        `INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES(?,'',1,?)
+        ON CONFLICT(document_id) DO UPDATE SET deleted=1`,
+      ).run(newer, NOW + 1);
+    else if (mode === "queued deletion")
+      db.prepare(
+        "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','source',?,'deleted',?)",
+      ).run(newer, NOW + 1);
+    else
+      db.prepare("INSERT INTO removed_sources(id,removed_at,cleanup_done_at) VALUES(?,?,NULL)").run(
+        "fixture-private-notes",
+        NOW + 1,
+      );
+    expect(getOpenLoop(db, "hidden-loop")).not.toBeNull();
+    expect(getObservation(db, "hidden-observation")).not.toBeNull();
+    expect(getDocAnnotation(db, "hidden-doc")).not.toBeNull();
+    expect(getPersonAnnotation(db, "hidden-person")).not.toBeNull();
+    expect(listObservationsForLoop(db, "visible-loop").map((row) => row.id)).toEqual([
+      "hidden-observation",
+    ]);
+  },
+);
 
 it("denies tombstoned owners after their knowledge row is removed, without hiding unrelated legacy rows", () => {
   createOpenLoop(
@@ -404,7 +424,7 @@ it("projects stale ancestors through support but preserves context navigation an
   expect(knowledgeNodeFence(db, "supported").stale).toBe(false);
 });
 
-it("fences attached observations and their knowledge nodes while a loop privacy purge is pending", () => {
+it("fences attached observations and their knowledge nodes while a loop erasure is pending", () => {
   seedOwners();
   for (const id of ["attached-owned", "attached-legacy"]) {
     createObservation(
@@ -436,23 +456,14 @@ it("fences attached observations and their knowledge nodes while a loop privacy 
   );
   expect(getKnowledgeNode(db, "attached-owned")).not.toBeNull();
   db.prepare(
-    `INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES(?,'',1,?)
-    ON CONFLICT(document_id) DO UPDATE SET deleted=1`,
-  ).run(newer, NOW + 1);
+    "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','hidden-loop','deleted',?)",
+  ).run(NOW + 1);
   expect(getObservation(db, "attached-owned")).toBeNull();
   expect(getObservation(db, "attached-legacy")).toBeNull();
-  expect(listObservationsForLoop(db, "visible-loop")).toEqual([]);
-  expect(findOpenObservationsForLoops(db, ["visible-loop"])).toEqual([]);
-  expect(listOpenObservations(db).map((row) => row.id)).toEqual(["visible-observation"]);
+  const attached = (rows: Array<{ id: string }>) =>
+    rows.map((row) => row.id).filter((id) => id.startsWith("attached-"));
+  expect(attached(listObservationsForLoop(db, "visible-loop"))).toEqual([]);
+  expect(attached(findOpenObservationsForLoops(db, ["visible-loop"]))).toEqual([]);
+  expect(attached(listOpenObservations(db))).toEqual([]);
   expect(getKnowledgeNode(db, "attached-owned")).toBeNull();
-});
-
-it("honors a source-wide removal tombstone before document deletion starts", () => {
-  const mirror = seedOwners();
-  db.prepare("INSERT INTO removed_sources(id,removed_at,cleanup_done_at) VALUES(?,?,NULL)").run(
-    "fixture-private-notes",
-    NOW + 1,
-  );
-  expect(db.prepare("SELECT 1 FROM documents WHERE id=?").get(newer)).toBeDefined();
-  assertHidden(mirror);
 });

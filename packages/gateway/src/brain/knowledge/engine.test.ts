@@ -984,6 +984,33 @@ describe("knowledge coordinator", () => {
     ).toBeUndefined();
   });
 
+  it("queues the direct dependents of a deleted source for review and deletes nothing", async () => {
+    source();
+    await wiki("project");
+    await wiki("digest", "wiki:project#claim:fact");
+    db.prepare("DELETE FROM knowledge_changes").run();
+    db.prepare("DELETE FROM documents WHERE id='input'").run();
+    expect(
+      recordKnowledgeSourceChange(db, { documentId: "input", contentHash: "", deleted: true }, now),
+    ).toEqual({ changed: true, affectedNodeIds: ["project"] });
+    for (let tick = 0; tick < 4; tick++) {
+      await engine.tick();
+      if (db.prepare("SELECT 1 FROM knowledge_work WHERE subject_id='project'").get()) break;
+    }
+    expect(
+      db
+        .prepare(
+          "SELECT subject_kind,reason,input_revision FROM knowledge_work WHERE subject_id='project'",
+        )
+        .all(),
+    ).toEqual([{ subject_kind: "node", reason: "change", input_revision: "2" }]);
+    expect(db.prepare("SELECT 1 FROM knowledge_changes WHERE kind='source_deleted'").get()).toBe(
+      undefined,
+    );
+    expect(getKnowledgeNode(db, "project")?.validity).toBe("stale");
+    expect(getKnowledgeNode(db, "digest")?.validity).toBe("stale");
+  });
+
   it("presents bounded source chunks without losing shared batch work", async () => {
     const ids = Array.from({ length: 10 }, (_, i) => `chunk-${i}`);
     for (const id of ids) source(id);

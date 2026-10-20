@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { computeContentHash, type SearchProvenance } from "@omnesis/core";
 import { createDatabase } from "../db.js";
-import { saveKnowledgeNode, purgeKnowledgeBySource } from "../brain/knowledge/storage.js";
+import { saveKnowledgeNode, recordKnowledgeSourceDeletion } from "../brain/knowledge/storage.js";
 import { buildKnowledgeDocumentInput } from "../brain/knowledge/mirror.js";
 import { createGatewaySearchPort } from "../agent/ports.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
@@ -215,7 +215,7 @@ describe("agent search v2 enrollment and compatibility", () => {
       let crossed = false;
       const purge = () => {
         crossed = true;
-        purgeKnowledgeBySource(gateway, "a", 2);
+        recordKnowledgeSourceDeletion(gateway, "a", 2);
       };
       if (boundary === "ref-count")
         p.setLinkRefSource({

@@ -23,8 +23,9 @@ import {
   getKnowledgeNode,
   getKnowledgeClaims,
   getKnowledgeDependencies,
-  purgeKnowledgeBySource,
+  recordKnowledgeSourceDeletion,
   advanceKnowledgeCascade,
+  purgeKnowledgeNode,
   saveKnowledgeNode,
 } from "./storage.js";
 import {
@@ -242,7 +243,7 @@ it("accepts proof maintenance on an observation but refuses rewriting what was o
     state: "live",
   });
 });
-it("marks a closed observation historical and still privacy-purges it", () => {
+it("marks a closed observation historical and keeps it after its evidence is deleted", () => {
   createObservation(
     db,
     {
@@ -262,12 +263,12 @@ it("marks a closed observation historical and still privacy-purges it", () => {
   );
   advanceKnowledgeOwnerSync(db, 10, 4);
   expect(getKnowledgeNode(db, "snapshot")?.metadata.activity).toBe("historical");
-  purgeKnowledgeBySource(db, "evidence", 10);
+  recordKnowledgeSourceDeletion(db, "evidence", 10);
   while (advanceKnowledgeCascade(db, 100, 10).pending) {
     /* bounded batches */
   }
-  expect(getKnowledgeNode(db, "snapshot")).toBeNull();
-  expect(getObservation(db, "snapshot")).toBeNull();
+  expect(getKnowledgeNode(db, "snapshot")?.metadata.activity).toBe("historical");
+  expect(getObservation(db, "snapshot")).not.toBeNull();
 });
 it("reconciles canonical state changes, preserves tags, and prevents adapter self-triggering", () => {
   loop();
@@ -315,12 +316,18 @@ it("canonical deletion immediately fences knowledge and eventually purges histor
     db.prepare("SELECT COUNT(*) AS count FROM knowledge_revisions WHERE node_id='task'").get(),
   ).toEqual({ count: 0 });
 });
-it("privacy deletion also removes canonical plaintext that gained support beyond legacy attachments", () => {
+it("source deletion leaves a converted loop in place, as an edit would", () => {
   loop();
   convertKnowledgeOwner(db, "loop", "task", 2);
-  purgeKnowledgeBySource(db, "evidence", 3);
-  expect(getOpenLoop(db, "task")).toBeNull();
-  expect(getKnowledgeNode(db, "task")).toBeNull();
+  const before = getKnowledgeNode(db, "task")!;
+  // Converted legacy attachments are context, which a source change never invalidates.
+  expect(getKnowledgeDependencies(db, "task").map((d) => d.relation)).toEqual(["context"]);
+  recordKnowledgeSourceDeletion(db, "evidence", 3);
+  expect(getOpenLoop(db, "task")).not.toBeNull();
+  expect(getKnowledgeNode(db, "task")).toMatchObject({
+    revision: before.revision,
+    markdown: before.markdown,
+  });
 });
 
 it.each(["doc_annotation", "person_annotation"] as const)(
@@ -376,7 +383,7 @@ it.each(["doc_annotation", "person_annotation"] as const)(
   },
 );
 it.each([false, true])(
-  "preserves intentional retirement, then purges its source-derived trace (converted=%s)",
+  "preserves intentional retirement, also after its source is deleted (converted=%s)",
   (converted) => {
     loop();
     if (converted) convertKnowledgeOwner(db, "loop", "task", 2);
@@ -390,22 +397,17 @@ it.each([false, true])(
       expect(advanceKnowledgeOwnerSync(db, 10, 4).updatedNodeIds).toContain("task");
       expect(getKnowledgeNode(db, "task")?.canonicalFields.state).toBe("retired");
     }
-    // Privacy is immediate even before the cascade gets a turn.
-    db.prepare(
-      "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('evidence','',1,5)",
-    ).run();
-    expect(listRetiredLoops(db)).toHaveLength(0);
-    purgeKnowledgeBySource(db, "evidence", 6);
+    recordKnowledgeSourceDeletion(db, "evidence", 6);
     while (advanceKnowledgeCascade(db, 10, 7).pending) {
       /* bounded fixture drain */
     }
-    expect(db.prepare("SELECT 1 FROM retired_loops WHERE id='task'").get()).toBeUndefined();
+    expect(listRetiredLoops(db)).toHaveLength(1);
     expect(
       db.prepare("SELECT 1 FROM knowledge_retired_loop_sources WHERE loop_id='task'").get(),
-    ).toBeUndefined();
+    ).toBeDefined();
   },
 );
-it("yields during attached-observation privacy cleanup instead of deleting arbitrary fanout in one step", () => {
+it("yields during attached-observation cleanup of a deleted loop instead of deleting arbitrary fanout in one step", () => {
   loop();
   convertKnowledgeOwner(db, "loop", "task", 2);
   for (let i = 0; i < 120; i++)
@@ -422,7 +424,7 @@ it("yields during attached-observation privacy cleanup instead of deleting arbit
       3,
     );
   installKnowledgeOwnerTriggers(db);
-  purgeKnowledgeBySource(db, "evidence", 4);
+  purgeKnowledgeNode(db, "task", 4);
   const remaining = db
     .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM observations")
     .get()!.count;
@@ -476,11 +478,11 @@ it.each(["doc_annotation", "person_annotation"])(
     expect(
       db.prepare("SELECT 1 FROM knowledge_cascade_jobs WHERE kind='purge'").get(),
     ).toBeUndefined();
-    purgeKnowledgeBySource(db, "evidence", 5);
+    recordKnowledgeSourceDeletion(db, "evidence", 5);
     while (advanceKnowledgeCascade(db, 10, 6).pending) {
       /* bounded fixture drain */
     }
-    expect(getObservation(db, "notice")).toBeNull();
+    expect(getObservation(db, "notice")).not.toBeNull();
   },
 );
 it("rejects canonical owner identity collisions without overwriting another synthesis kind", () => {

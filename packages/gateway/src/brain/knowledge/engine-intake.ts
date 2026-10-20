@@ -148,9 +148,13 @@ export class KnowledgeIntake {
       } else if (
         change.kind === "node_changed" ||
         change.kind === "node_deleted" ||
-        change.kind === "source_evidence_changed"
+        change.kind === "source_evidence_changed" ||
+        change.kind === "source_deleted"
       ) {
-        const sourceEvidence = change.kind === "source_evidence_changed";
+        // A deleted source has no interpretation left to run; like changed
+        // explicit evidence, its direct dependents are queued for review.
+        const sourceEvidence =
+          change.kind === "source_evidence_changed" || change.kind === "source_deleted";
         // The change ledger retains the committed creation revision even if
         // the page has already been edited again before intake catches up.
         const newWiki =

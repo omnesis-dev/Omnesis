@@ -358,7 +358,7 @@ it("preserves bounded joint provenance through loop tool protocol and model seri
   );
 });
 
-it("omits loop provenance when its projection is missing or obsolete and refuses privacy-hidden owners", async () => {
+it("omits loop provenance when its projection is missing or obsolete and refuses erased owners", async () => {
   projectedLoop("visit");
   const port = createGatewayLoopReadPort(db);
   expect((await port.fetch("visit"))?.knowledgeContext).toBeDefined();
@@ -368,7 +368,12 @@ it("omits loop provenance when its projection is missing or obsolete and refuses
   expect((await port.fetch("visit"))?.knowledgeContext).toBeUndefined();
   db.prepare("DELETE FROM documents WHERE id='projection-visit'").run();
   expect((await port.fetch("visit"))?.knowledgeContext).toBeUndefined();
+  // A deleted source leaves the loop readable for review; erasing the owner hides it.
   db.prepare("UPDATE knowledge_source_revisions SET deleted=1 WHERE document_id='evidence'").run();
+  expect(await port.fetch("visit")).not.toBeNull();
+  db.prepare(
+    "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','visit','deleted',20)",
+  ).run();
   expect(await port.fetch("visit")).toBeNull();
 });
 
@@ -394,14 +399,14 @@ it("retains current and observed source versions in a readable stale loop projec
 });
 
 it.each(["done", "dismissed"] as const)(
-  "keeps terminal %s owners behind the same privacy fence",
+  "keeps terminal %s owners behind the same erasure fence",
   async (state) => {
     projectedLoop("visit");
     updateOpenLoop(db, "visit", { state }, 12);
     const port = createGatewayLoopReadPort(db);
     expect(await port.fetch("visit")).toMatchObject({ state });
     db.prepare(
-      "UPDATE knowledge_source_revisions SET deleted=1 WHERE document_id='evidence'",
+      "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','visit','deleted',20)",
     ).run();
     expect(await port.fetch("visit")).toBeNull();
   },
@@ -730,10 +735,13 @@ it("retains only independent current claims in a readable stale page and root", 
   const captured = captureKnowledgeRootContext(db);
   expect(captured.support).toHaveLength(1);
   expect(captured.support[0]!.text).toContain("observatory");
-  // Privacy is still whole-page, even when only the other sibling used the source.
+  // Deleting the sibling's source is a change like an edit: the page stays
+  // readable and the independent claim keeps its support.
   db.prepare("DELETE FROM documents WHERE id='changing'").run();
-  expect(await port.fetch("wiki:partial-root")).toBeNull();
-  expect(captureKnowledgeRootContext(db).support).toEqual([]);
+  expect(await port.fetch("wiki:partial-root")).not.toBeNull();
+  expect(captureKnowledgeRootContext(db).support.map((item) => item.text)).toEqual([
+    expect.stringContaining("observatory"),
+  ]);
 });
 
 it("bounds partial qualified support and never upgrades an obsolete contextual policy", async () => {

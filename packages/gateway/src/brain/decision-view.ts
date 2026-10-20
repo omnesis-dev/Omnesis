@@ -107,6 +107,8 @@ function describeAction(tool: string, args: unknown): string {
         : [];
       return `edit ${argString(node, "title") ?? argString(node, "id") ?? "page"}${ops.length ? ` (${ops.join(", ")})` : ""}`;
     }
+    case "knowledge_retire":
+      return `retire wiki ${argString(args, "id") ?? "page"}`;
     case "knowledge_propose_page":
       return `propose wiki ${label}`.trim();
     case "knowledge_candidate_decide":

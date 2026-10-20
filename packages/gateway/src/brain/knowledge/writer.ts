@@ -26,6 +26,7 @@ import {
 import { recordKnowledgeDecision } from "./decision-storage.js";
 import { advanceKnowledgeOwnerSync } from "./owner-sync.js";
 import { setKnowledgeLink } from "./links.js";
+import { retireKnowledgeWikiPage } from "./wiki-retirement.js";
 import { saveOwnedKnowledgeNode } from "./owner-adapters.js";
 import { attemptLegacyOwnerConversion } from "./owner-conversion.js";
 import {
@@ -34,7 +35,6 @@ import {
   recordKnowledgeSourceChange,
   advanceKnowledgeCascade,
   invalidateKnowledgeDependents,
-  purgeKnowledgeBySource,
   ackKnowledgeChanges,
 } from "./storage.js";
 import {
@@ -111,6 +111,7 @@ export const knowledgeWriterHandlers = {
   "knowledge.publishCandidate": publishKnowledgeCandidate,
   "knowledge.decision": recordKnowledgeDecision,
   "knowledge.link": setKnowledgeLink,
+  "knowledge.retire": retireKnowledgeWikiPage,
   "knowledge.syncOwners": advanceKnowledgeOwnerSync,
   "knowledge.adoptWork": appendKnowledgeBatchWork,
   "knowledge.promoteBlockingBatches": promoteBlockingKnowledgeBatches,
@@ -124,7 +125,6 @@ export const knowledgeWriterHandlers = {
   "knowledge.sourceChanged": recordKnowledgeSourceChange,
   "knowledge.advanceCascade": advanceKnowledgeCascade,
   "knowledge.invalidate": invalidateKnowledgeDependents,
-  "knowledge.purge": purgeKnowledgeBySource,
   "knowledge.ackChanges": ackKnowledgeChanges,
   "knowledge.enqueue": enqueueKnowledgeWork,
   "knowledge.retireBeyondHorizon": retireHistoricalKnowledgeWorkBeyond,
@@ -165,6 +165,7 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
     "knowledge.publishCandidate": (...args) => call("knowledge.publishCandidate", args),
     "knowledge.decision": (...args) => call("knowledge.decision", args),
     "knowledge.link": (...args) => call("knowledge.link", args),
+    "knowledge.retire": (...args) => call("knowledge.retire", args),
     "knowledge.syncOwners": (...args) => call("knowledge.syncOwners", args),
     "knowledge.adoptWork": (...args) => call("knowledge.adoptWork", args),
     "knowledge.promoteBlockingBatches": (...args) => call("knowledge.promoteBlockingBatches", args),
@@ -178,7 +179,6 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
     "knowledge.sourceChanged": (...args) => call("knowledge.sourceChanged", args),
     "knowledge.advanceCascade": (...args) => call("knowledge.advanceCascade", args),
     "knowledge.invalidate": (...args) => call("knowledge.invalidate", args),
-    "knowledge.purge": (...args) => call("knowledge.purge", args),
     "knowledge.ackChanges": (...args) => call("knowledge.ackChanges", args),
     "knowledge.enqueue": (...args) => call("knowledge.enqueue", args),
     "knowledge.retireBeyondHorizon": (...args) => call("knowledge.retireBeyondHorizon", args),
@@ -214,6 +214,7 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.publishCandidate": async (...args) => publishKnowledgeCandidate(db, ...args),
     "knowledge.decision": async (...args) => recordKnowledgeDecision(db, ...args),
     "knowledge.link": async (...args) => setKnowledgeLink(db, ...args),
+    "knowledge.retire": async (...args) => retireKnowledgeWikiPage(db, ...args),
     "knowledge.syncOwners": async (...args) => advanceKnowledgeOwnerSync(db, ...args),
     "knowledge.adoptWork": async (...args) => appendKnowledgeBatchWork(db, ...args),
     "knowledge.promoteBlockingBatches": async (...args) =>
@@ -228,7 +229,6 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.sourceChanged": async (...args) => recordKnowledgeSourceChange(db, ...args),
     "knowledge.advanceCascade": async (...args) => advanceKnowledgeCascade(db, ...args),
     "knowledge.invalidate": async (...args) => invalidateKnowledgeDependents(db, ...args),
-    "knowledge.purge": async (...args) => purgeKnowledgeBySource(db, ...args),
     "knowledge.ackChanges": async (...args) => ackKnowledgeChanges(db, ...args),
     "knowledge.enqueue": async (...args) => enqueueKnowledgeWork(db, ...args),
     "knowledge.retireBeyondHorizon": async (...args) =>

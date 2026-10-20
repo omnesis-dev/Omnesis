@@ -51,9 +51,37 @@ and privacy cleanup continue when autonomous synthesis is stopped.
 ## Changes and maintenance
 
 Source writes record a durable change and invalidate affected evidence without
-calling a model. Invalidated claims remain visibly stale until maintenance;
-privacy-deleted evidence is denied immediately while bounded cleanup removes
-derived content and index projections.
+calling a model. Invalidated claims remain visibly stale until maintenance.
+
+A source deletion is a change like an edit, whatever caused it: a sync
+tombstone, a snapshot-absence sweep, a source removal or an explicit delete.
+In the same transaction the document is tombstoned
+(`knowledge_source_revisions.deleted=1`), so it can never be read or newly
+cited again, and its own evidence passages, outcome assessments, unpublished
+candidates and organization cohorts are removed. Knowledge derived from it is
+never deleted or scrubbed: the bounded cascade walks only the direct,
+non-navigational dependents of the source, as for an edit, marks the claims that
+relied on it stale and the pages stale, and queues them for maintenance. Pages
+that read a stale claim are stale in turn; pages that only link to it for
+navigation are untouched, and retained history keeps its text. Maintenance then
+reconciles each stale page with the model: it rewrites a claim against current
+evidence, marks it unsupported, removes it with `node.claimRemovals`, or retires
+the whole page with `knowledge_retire`.
+
+`knowledge_retire` is the Brain's only way to take a wiki page out of service,
+and it is a deliberate, reviewed act: it requires this run's
+`knowledge_fetch({id, editing:true})` read at `expectedRevision` and a specific
+reason, and is granted exactly where `knowledge_save` is. The page is withdrawn,
+not deleted: the reason is stored on the retired revision, the whole history is
+kept, the page leaves search, the page directory and maintenance, it can no
+longer be cited or edited, and every page that read it is invalidated for
+review. The root is never retired. Each retirement logs one content-free line,
+`Wiki retired via knowledge_retire on <id>: rN→rM`.
+
+Only the deletion of a canonical owner record (a loop, observation or
+annotation) erases a knowledge node: that owner's own node, its history and
+the owner records attached to it, such as the observations of a deleted loop.
+Its dependents, including wiki pages, are invalidated, never deleted.
 
 Maintenance assignments distinguish affected-claim repair from whole-page
 curation (`review=true`), root orientation and evidence organization. Wiki curation carries an explicit
@@ -143,8 +171,8 @@ New evidence needs discovery even when no dependency points to it yet. The
 agent searches established context, adds evidence to existing synthesis, or
 proposes a scoped page candidate. A source does not require its own page.
 Agent transcripts are excluded from automatic source discovery. When explicitly
-cited as evidence, their edits repair existing dependents and their deletion
-purges derived content, including historical provenance.
+cited as evidence, their edits and deletion invalidate existing dependents for
+repair, like any other source.
 Newly arriving historical evidence is considered without treating its events
 as new commitments or allowing an old proposal to overwrite an accepted plan.
 
@@ -188,7 +216,7 @@ any source of it is installed. Every consumer reads the list live
 The interactive agent and its own memory tools are unaffected. Existing
 knowledge derived from an excluded source is kept and stays visible to Brain
 runs as knowledge (annotation evidence quotes, loop document ids, page claims);
-its doc and person annotations are skipped by the re-verification sweep. Source edits and deletions still invalidate and purge
+its doc and person annotations are skipped by the re-verification sweep. Source edits and deletions still invalidate
 dependent knowledge as usual. Journal entries acknowledged while a source was
 excluded are not replayed; historical review within `brain.bootstrap.horizon`
 admits those documents once the exclusion is removed. Bootstrap status reports
@@ -233,7 +261,7 @@ group follow its all/any support logic; they do not assign individual phrases to
 individual sources. This context helps select evidence without reconstructing an
 entire page, and does not independently verify its claims. Exact-ID loop reads
 retain done/dismissed status and history while list/search return active loops;
-privacy-hidden or physically deleted owners remain unavailable. The mutation boundary parses markup,
+erased or physically deleted owners remain unavailable. The mutation boundary parses markup,
 checks references and versions, and invokes the entailment verifier on changed
 claims. For wiki and root claims, verification also checks attribution implied by
 page title, section headings and enclosing claims. Moving unchanged words to a
@@ -292,7 +320,7 @@ A wiki supplies context; a loop tracks an outcome. Organizational links can
 express project membership, page hierarchy and separately trackable subloops.
 They do not imply evidential support. Operational blocking and completion stay
 in the loop's canonical fields. Closing or retiring a loop preserves its useful
-history; deleting private evidence has separate removal semantics.
+history; deleting its evidence invalidates it for review like any other change.
 
 A loop keeps the same completion criterion as its evidence develops. Titles and
 descriptions may clarify that outcome; a shared person, topic or project does
@@ -628,8 +656,8 @@ because their outcome is old.
 
 Archived loops and retired or superseded annotations preserve their historical prose rather
 than undergoing routine rewriting. Evidence changes still invalidate their
-support and propagate support loss to dependent durable synthesis; privacy
-deletion still removes affected material. Canonical historical owner work settles
+support and propagate support loss to dependent durable synthesis, deletion
+included. Canonical historical owner work settles
 before a model turn, with lifecycle and revision checked again in the writer transaction;
 dependent synthesis still receives support-loss maintenance. A loop is historical only after
 its active record has been removed and an archived record exists; a retained active
@@ -1484,8 +1512,8 @@ same bounded reference checks. The page remains labelled stale; omitted prose
 and navigation are not evidence. Support coverage reports budget truncation,
 and never promises an exhaustive inventory. Main-agent use still requires the
 actual full page read and an unchanged authorized snapshot; root injection uses
-the same qualified support checks within its character budget. Whole-page
-privacy erasure remains whole-page. Direct reads can materialize a freshness-only
+the same qualified support checks within its character budget. An erased or
+retired page is unavailable as a whole. Direct reads can materialize a freshness-only
 mirror lag without writing: the stored body, title, hash, metadata and creation
 time must exactly match the canonical builder at its recorded validity and the
 same physical revision. The emitted effective projection supplies the exact bytes
@@ -1535,6 +1563,6 @@ These states are diagnostic, not fresh support receipts: accepted storage and co
 review work can still leave claims unverified. No automatic retry or stricter completion
 gate is implied; reuse exact qualified claim references or original evidence.
 
-Root prompt support is checked against the exact qualified assertions originally exposed, including their selected proof and source identities. Navigation, unrelated sibling prose, physical revision banners and later context-budget fitting do not themselves invalidate those assertions. Changed selected context, proof, source authority or whole-root privacy still withholds the captured support; re-verifying unchanged words against changed evidence does not substitute a new proof into an existing answer. These private checks add no evidence to the prompt.
+Root prompt support is checked against the exact qualified assertions originally exposed, including their selected proof and source identities. Navigation, unrelated sibling prose, physical revision banners and later context-budget fitting do not themselves invalidate those assertions. Changed selected context, proof or source authority, including deletion of a selected claim's source, still withholds the captured support; re-verifying unchanged words against changed evidence does not substitute a new proof into an existing answer. These private checks add no evidence to the prompt.
 
 The verifier service admits at most two independent remote checks (Codex, HTTP or Anthropic), while native model contexts remain serial. This internal safety ceiling does not enlarge a backend's shared inference pool. Configuration swaps and disposal wait for every admitted operation's underlying cleanup, including canceled calls; caller deadlines and unavailable-write behavior remain unchanged.

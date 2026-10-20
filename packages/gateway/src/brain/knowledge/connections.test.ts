@@ -99,16 +99,16 @@ it("paginates every direction without duplicate edges and binds cursors to their
     "Invalid connections cursor",
   );
 });
-it("does not reveal a private neighbor and preserves continuation through filtered rows", () => {
+it("does not reveal an erased neighbor and preserves continuation through filtered rows", () => {
   page("project");
   page("hidden", "source:schedule");
   page("visible");
   related("project", "hidden");
   related("project", "visible");
-  // The deletion fence lands before the bounded cascade removes stored links.
+  // The erasure fence lands before the bounded cascade removes the node.
   db.prepare(
-    "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES(?,?,1,?)",
-  ).run("schedule", "hash", 2);
+    "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','hidden','deleted',2)",
+  ).run();
   const first = readKnowledgeConnections(db, "project", { limit: 1 });
   expect(first.items).toEqual([]);
   expect(first.nextCursor).not.toBeNull();

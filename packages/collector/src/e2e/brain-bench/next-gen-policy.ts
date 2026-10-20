@@ -293,8 +293,20 @@ function nodePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Puppet
     if (ref.startsWith("source:")) sourceIds.add(ref.slice(7).split("#")[0]!);
   const views: z.infer<typeof referenceSchema>[] = [];
   const evidence: z.infer<typeof evidenceSchema>[] = [];
+  let deleted = false;
   for (const id of [...sourceIds].sort()) {
     calls.push(call("knowledge_reference", { ref: `source:${id}` }));
+    if (
+      local.some(
+        (step) =>
+          step.name === "knowledge_reference" &&
+          step.args?.ref === `source:${id}` &&
+          (step.result as { kind?: unknown } | null)?.kind === "error",
+      )
+    ) {
+      deleted = true;
+      continue;
+    }
     const view = referenceSchema.safeParse(
       result(local, "knowledge_reference", (step) => step.args?.ref === `source:${id}`),
     );
@@ -312,6 +324,18 @@ function nodePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Puppet
     );
     if (passage.success) evidence.push(passage.data);
   }
+  // A scripted page loses its reason to exist with a deleted source it cites.
+  if (deleted)
+    return {
+      calls: [
+        ...calls,
+        call("knowledge_retire", {
+          id: node.id,
+          expectedRevision: node.revision,
+          reason: "A source this page depends on was deleted and nothing current replaces it.",
+        }),
+      ],
+    };
   if (views.length === sourceIds.size && evidence.length === sourceIds.size)
     calls.push(
       call("knowledge_list", { kind: "wiki" }),
@@ -340,6 +364,9 @@ function nodePlan(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): Puppet
 
 export const nextGenPolicy: KnowledgePuppetPolicy = {
   maxRevisionConflictRetries: 12,
+  // Reviewing a page names each cited source; a deleted one is refused as unavailable.
+  expectedRefusals: (item) =>
+    item.node?.kind === "wiki" ? [{ tool: "knowledge_reference", code: "reference_invalid" }] : [],
   plan: (item, _ctx, steps) =>
     item.source ? sourcePlan(item, localSteps(steps, item)) : nodePlan(item, steps),
   targets: (item) => (item.source ? topics(item.source.title).map(pageId) : []),

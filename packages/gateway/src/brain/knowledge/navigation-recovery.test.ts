@@ -79,7 +79,7 @@ it("avoids history scanning for roots already linking a wiki and for non-root no
   expect(recoverRootNavigation(db, "wiki_catalogue", 8)).toBeUndefined();
 });
 
-it.each(["deleted", "withdrawn", "private-target", "private-history"] as const)(
+it.each(["deleted", "withdrawn", "erasing"] as const)(
   "withholds %s navigation without disclosing old identities",
   (mode) => {
     seed();
@@ -89,18 +89,9 @@ it.each(["deleted", "withdrawn", "private-target", "private-history"] as const)(
       db.prepare("UPDATE knowledge_nodes SET fields_json=? WHERE id='wiki_catalogue'").run(
         JSON.stringify({ withdrawn: true }),
       );
-    if (mode === "private-target") {
-      db.exec("INSERT INTO documents VALUES('private-evidence','Private catalogue.','v2')");
+    if (mode === "erasing")
       db.prepare(
-        "UPDATE knowledge_dependencies SET target_id='private-evidence',ref='source:private-evidence' WHERE node_id='wiki_catalogue'",
-      ).run();
-      db.prepare(
-        "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('private-evidence','v2',1,20)",
-      ).run();
-    }
-    if (mode === "private-history")
-      db.prepare(
-        "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('evidence','v1',1,20)",
+        "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','wiki_catalogue','deleted',20)",
       ).run();
     expect(recoverRootNavigation(db, "overview", 8)).toBeUndefined();
   },
@@ -139,16 +130,24 @@ it("does not let a wrong typed alias suppress a later valid wiki link", () => {
   ).toEqual(["wiki_catalogue"]);
 });
 
-it("retains navigation after readable source changes without supplying stale proof", () => {
-  seed();
-  db.prepare("UPDATE documents SET content_hash='new-version' WHERE id='evidence'").run();
-  expect(recoverRootNavigation(db, "overview", 8)).toEqual({
-    candidates: [{ id: "wiki_catalogue", title: "Current catalogue", revision: 1 }],
-    incomplete: false,
-  });
-});
+it.each(["changed", "deleted"] as const)(
+  "retains navigation after a source is %s without supplying stale proof",
+  (change) => {
+    seed();
+    if (change === "changed")
+      db.prepare("UPDATE documents SET content_hash='new-version' WHERE id='evidence'").run();
+    else
+      db.prepare(
+        "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('evidence','v1',1,20)",
+      ).run();
+    expect(recoverRootNavigation(db, "overview", 8)).toEqual({
+      candidates: [{ id: "wiki_catalogue", title: "Current catalogue", revision: 1 }],
+      incomplete: false,
+    });
+  },
+);
 
-it("applies the history privacy fence even after current root dependencies change", () => {
+it("recovers navigation from history after the current root stops citing a deleted source", () => {
   seed();
   db.exec("INSERT INTO documents VALUES('current-evidence','Current orientation.','current-v1')");
   saveKnowledgeNode(
@@ -171,8 +170,8 @@ it("applies the history privacy fence even after current root dependencies chang
   db.prepare(
     "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('evidence','v1',1,20)",
   ).run();
-  expect(() => readKnowledgeHistory(db, { id: "overview" })).toThrow("unavailable");
-  expect(recoverRootNavigation(db, "overview", 8)).toBeUndefined();
+  expect(readKnowledgeHistory(db, { id: "overview" })).toBeDefined();
+  expect(recoverRootNavigation(db, "overview", 8)?.candidates).toHaveLength(1);
 });
 
 it("bounds current navigation lookup work before scanning history", () => {

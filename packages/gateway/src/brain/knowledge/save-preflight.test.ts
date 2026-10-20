@@ -25,13 +25,13 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-it.each(["missing", "hidden", "tombstoned", "withdrawn"])(
+it.each(["missing", "erasing", "tombstoned", "withdrawn"])(
   "does not distinguish %s targets through identity admission",
   (state) => {
     if (state === "missing") db.prepare("DELETE FROM knowledge_nodes WHERE id='guide'").run();
-    else if (state === "hidden")
+    else if (state === "erasing")
       db.prepare(
-        "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('manual','v1',1,2)",
+        "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','guide','deleted',2)",
       ).run();
     else if (state === "tombstoned")
       db.prepare("INSERT INTO knowledge_node_tombstones(id,deleted_at) VALUES('guide',2)").run();
@@ -49,6 +49,12 @@ it.each(["missing", "hidden", "tombstoned", "withdrawn"])(
     }
   },
 );
+it("keeps a page whose cited source was deleted open for repair", () => {
+  db.prepare(
+    "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('manual','v1',1,2)",
+  ).run();
+  expect(() => assertKnowledgeSaveIdentity(db, { ...input, expectedRevision: 1 })).not.toThrow();
+});
 it("preserves the revision fence for visible nodes and permits a new identity", () => {
   expect(() => assertKnowledgeSaveIdentity(db, { ...input, expectedRevision: 99 })).toThrowError(
     expect.objectContaining({ code: "revision_conflict" }),

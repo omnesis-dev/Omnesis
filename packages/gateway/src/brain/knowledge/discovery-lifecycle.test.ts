@@ -176,7 +176,7 @@ it("resumes publication after closing and reopening the candidate database witho
   expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_nodes").get()).toEqual({ count: 1 });
 });
 
-it("refuses a previously proposed candidate after evidence deletion and purges retained derivatives", () => {
+it("refuses a previously proposed candidate after evidence deletion and keeps the published page for review", () => {
   const pending = proposeKnowledgeCandidate(db, proposal("pending"), 1);
   const prior = proposeKnowledgeCandidate(db, proposal("prior", "project:prior"), 1);
   publishKnowledgeCandidate(
@@ -191,7 +191,7 @@ it("refuses a previously proposed candidate after evidence deletion and purges r
   );
   db.prepare("DELETE FROM documents WHERE id='evidence'").run();
   expect(getKnowledgeCandidate(db, pending.id)).toBeNull();
-  expect(getKnowledgeNode(db, "retained-page")).toBeNull();
+  expect(getKnowledgeNode(db, "retained-page")?.validity).toBe("stale");
   expect(() =>
     publishKnowledgeCandidate(
       db,
@@ -211,8 +211,8 @@ it("refuses a previously proposed candidate after evidence deletion and purges r
   expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_candidates").get()).toEqual({
     count: 0,
   });
-  expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_nodes").get()).toEqual({ count: 0 });
-  expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_revisions").get()).toEqual({
+  expect(db.prepare("SELECT id FROM knowledge_nodes").all()).toEqual([{ id: "retained-page" }]);
+  expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_revisions").get()).not.toEqual({
     count: 0,
   });
   expect(db.pragma("foreign_key_check")).toEqual([]);

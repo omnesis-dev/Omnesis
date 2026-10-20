@@ -5,31 +5,21 @@ import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { CONTEXTUAL_VERIFIER } from "./claim-context.js";
 import type Database from "better-sqlite3";
 
-const HIDDEN_ANCESTOR_CONDITION = `
-  (a.kind='source' AND s.deleted=1)
-  OR (a.kind='node' AND (n.id IS NULL OR t.id IS NOT NULL))
+/**
+ * A record is hidden only when it is itself gone or being erased. Losing an
+ * ancestor, a deleted source or a deleted owner it cited, makes a record stale
+ * for review, never hidden.
+ */
+const HIDDEN_RECORD_CONDITION = `
+  n.id IS NULL OR t.id IS NOT NULL
   OR EXISTS (SELECT 1 FROM knowledge_cascade_jobs j
-             WHERE j.kind='purge' AND j.target_kind=a.kind AND j.target_id=a.id)`;
+             WHERE j.kind='purge' AND j.target_kind='node' AND j.target_id=a.id)`;
 
-/** A source-wide removal tombstone precedes the bounded document deletion sweep. */
-function hiddenAncestorCondition(db: Database.Database): string {
-  if (
-    !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='removed_sources'").get()
-  )
-    return HIDDEN_ANCESTOR_CONDITION;
-  return `${HIDDEN_ANCESTOR_CONDITION}
-    OR (a.kind='source' AND EXISTS (
-      SELECT 1 FROM documents source_document
-      JOIN removed_sources removed ON removed.id=source_document.source_id
-      WHERE source_document.id=a.id))`;
-}
-
-/** Canonical loop-to-observation privacy edges also apply before their physical cascade. */
-function relatedLoopPrivacyEdges(
-  db: Database.Database,
-  ownerColumn: string,
-  recursive = false,
-): string {
+/**
+ * An observation attached to a deleted loop is erased with it, so it is hidden
+ * from the moment the loop is, before its own physical cascade.
+ */
+function relatedLoopPrivacyEdges(db: Database.Database, ownerColumn: string): string {
   if (
     !db
       .prepare(
@@ -38,30 +28,10 @@ function relatedLoopPrivacyEdges(
       .get()
   )
     return "";
-  return `UNION SELECT 'node', brl.loop_id FROM observation_related_loops brl
-    ${recursive ? "JOIN ancestors a ON a.kind='node'" : ""}
+  return `UNION SELECT brl.loop_id FROM observation_related_loops brl
     WHERE brl.observation_id=${ownerColumn}
       AND (EXISTS (SELECT 1 FROM knowledge_nodes known_loop WHERE known_loop.id=brl.loop_id)
         OR EXISTS (SELECT 1 FROM knowledge_node_tombstones tomb_loop WHERE tomb_loop.id=brl.loop_id))`;
-}
-
-/** Intentional retirement retains its source ancestry without requiring a live owner mirror. */
-function retiredLoopPrivacyEdges(
-  db: Database.Database,
-  ownerColumn: string,
-  recursive = false,
-): string {
-  if (
-    !db
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_retired_loop_sources'",
-      )
-      .get()
-  )
-    return "";
-  return `UNION SELECT 'source', retired.document_id FROM knowledge_retired_loop_sources retired
-    ${recursive ? "JOIN ancestors a ON a.kind='node'" : ""}
-    WHERE retired.loop_id=${ownerColumn}`;
 }
 
 /**
@@ -75,24 +45,16 @@ export function knowledgeOwnerReadPredicate(db: Database.Database, idColumn: str
   )
     return "1";
   return `NOT EXISTS (
-    WITH RECURSIVE ancestors(kind,id) AS (
-      SELECT 'node', ${idColumn}
+    WITH records(id) AS (
+      SELECT ${idColumn}
         WHERE EXISTS (SELECT 1 FROM knowledge_nodes known WHERE known.id=${idColumn})
            OR EXISTS (SELECT 1 FROM knowledge_node_tombstones tomb WHERE tomb.id=${idColumn})
       ${relatedLoopPrivacyEdges(db, idColumn)}
-      ${retiredLoopPrivacyEdges(db, idColumn)}
-      UNION
-      SELECT d.target_kind,d.target_id FROM knowledge_dependencies d JOIN ancestors a ON a.kind='node' AND d.node_id=a.id
-      UNION
-      SELECT d.target_kind,d.target_id FROM knowledge_revision_dependencies d JOIN ancestors a ON a.kind='node' AND d.node_id=a.id
-      ${relatedLoopPrivacyEdges(db, "a.id", true)}
-      ${retiredLoopPrivacyEdges(db, "a.id", true)}
     )
-    SELECT 1 FROM ancestors a
-      LEFT JOIN knowledge_nodes n ON a.kind='node' AND n.id=a.id
-      LEFT JOIN knowledge_source_revisions s ON a.kind='source' AND s.document_id=a.id
-      LEFT JOIN knowledge_node_tombstones t ON a.kind='node' AND t.id=a.id
-      WHERE ${hiddenAncestorCondition(db)}
+    SELECT 1 FROM records a
+      LEFT JOIN knowledge_nodes n ON n.id=a.id
+      LEFT JOIN knowledge_node_tombstones t ON t.id=a.id
+      WHERE ${HIDDEN_RECORD_CONDITION}
   )`;
 }
 
@@ -130,6 +92,7 @@ const CURRENT_ANCESTORS_CTE = `current_ancestors(kind,id,selector_kind,selector_
 /** Joins that let {@link STALE_ANCESTOR_CONDITION} read a current ancestor `a`. */
 const STALE_ANCESTOR_JOINS = `
         LEFT JOIN documents doc ON a.kind='source' AND doc.id=a.id
+        LEFT JOIN knowledge_source_revisions tombstone ON a.kind='source' AND tombstone.document_id=a.id AND tombstone.deleted=1
         LEFT JOIN knowledge_nodes n ON a.kind='node' AND n.id=a.id
         LEFT JOIN knowledge_claims c ON a.kind='node' AND a.selector_kind='claim' AND c.node_id=a.id AND c.id=a.selector_id`;
 
@@ -137,19 +100,20 @@ const OWNER_UPDATE_PENDING = `EXISTS(SELECT 1 FROM knowledge_owner_changes o WHE
 
 /**
  * A current ancestor that changed since the node observed it: a source document
- * whose revision moved or which is gone, a claim or node that changed meaning or
- * is itself stale, or an owner with an update not yet mirrored. Binds: the
+ * whose revision moved or which is gone, a claim or node that changed meaning, is
+ * itself stale or was deleted, or an owner with an update not yet mirrored. Binds: the
  * candidate node's id, which is never stale on account of its own validity.
  */
-const STALE_ANCESTOR_CONDITION = `(a.kind='source' AND (doc.id IS NULL OR ${knowledgeSourceRevisionSql("doc")} IS NOT json_extract(a.observed_version,'$')))
+const STALE_ANCESTOR_CONDITION = `(a.kind='source' AND (doc.id IS NULL OR tombstone.document_id IS NOT NULL OR ${knowledgeSourceRevisionSql("doc")} IS NOT json_extract(a.observed_version,'$')))
           OR (a.kind='node' AND a.selector_kind='claim' AND (c.id IS NULL OR c.verification='stale' OR (a.context_parent=1 AND (c.verification!='verified' OR c.epistemic_status!='asserted' OR c.verifier IS NOT '${CONTEXTUAL_VERIFIER}')) OR (a.observed_version IS NOT NULL AND c.meaning_revision IS NOT json_extract(a.observed_version,'$'))))
           OR (a.kind='node' AND a.selector_kind IS NOT 'claim' AND ((a.observed_version IS NOT NULL AND n.meaning_revision IS NOT json_extract(a.observed_version,'$')) OR (a.selector_kind IS NULL AND n.validity='stale' AND n.id!=?)))
+          OR (a.kind='node' AND n.id IS NULL)
           OR (a.kind='node' AND ${OWNER_UPDATE_PENDING})`;
 
 /**
- * Indexed ancestor traversal, scoped to one candidate node. Source tombstones are
- * authoritative before physical cleanup finishes. Missing intermediate nodes also
- * fence descendants while a privacy cascade progressively removes their parents.
+ * Whether one node is hidden (itself deleted or being erased) and whether it is
+ * stale: a current ancestor, scoped to the selected claim or field, changed or
+ * was deleted since the node observed it.
  */
 export function knowledgeNodeFence(
   db: Database.Database,
@@ -163,18 +127,15 @@ export function knowledgeNodeFence(
     >(
       `
     WITH RECURSIVE
-    ancestors(kind,id) AS (
-      SELECT 'node', ? UNION
-      SELECT d.target_kind,d.target_id FROM knowledge_dependencies d JOIN ancestors a ON a.kind='node' AND d.node_id=a.id
-      UNION SELECT d.target_kind,d.target_id FROM knowledge_revision_dependencies d JOIN ancestors a ON a.kind='node' AND d.node_id=a.id
-      ${relatedLoopPrivacyEdges(db, "a.id", true)}
-      ${retiredLoopPrivacyEdges(db, "a.id", true)}
+    seed(id) AS (SELECT ?),
+    records(id) AS (
+      SELECT id FROM seed
+      ${relatedLoopPrivacyEdges(db, "(SELECT id FROM seed)")}
     ),
     ${CURRENT_ANCESTORS_CTE} SELECT
-      EXISTS(SELECT 1 FROM ancestors a LEFT JOIN knowledge_nodes n ON a.kind='node' AND n.id=a.id
-        LEFT JOIN knowledge_source_revisions s ON a.kind='source' AND s.document_id=a.id
-        LEFT JOIN knowledge_node_tombstones t ON a.kind='node' AND t.id=a.id
-        WHERE ${hiddenAncestorCondition(db)}) AS hidden,
+      EXISTS(SELECT 1 FROM records a LEFT JOIN knowledge_nodes n ON n.id=a.id
+        LEFT JOIN knowledge_node_tombstones t ON t.id=a.id
+        WHERE ${HIDDEN_RECORD_CONDITION}) AS hidden,
       EXISTS(SELECT 1 FROM current_ancestors a ${STALE_ANCESTOR_JOINS}
         WHERE ${STALE_ANCESTOR_CONDITION})
  AS stale
@@ -213,7 +174,7 @@ export function knowledgeNodeStaleAncestors(
     stale(kind,id,cause) AS (
       SELECT a.kind,a.id,
         CASE
-          WHEN a.kind='source' AND doc.id IS NULL THEN 'source_deleted'
+          WHEN a.kind='source' AND (doc.id IS NULL OR tombstone.document_id IS NOT NULL) THEN 'source_deleted'
           WHEN a.kind='source' THEN 'source_changed'
           WHEN ${OWNER_UPDATE_PENDING} THEN 'owner_changed'
           ELSE 'node_changed'

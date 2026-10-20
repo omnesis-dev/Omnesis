@@ -116,7 +116,7 @@ it("filters observation states before paging and rejects cross-filter or stale c
     }),
   ).toThrow("list changed");
 });
-it("filters privacy-hidden owners and retirement ancestry before page limit and detail", () => {
+it("filters erased owners before page limit and detail, but keeps retirements whose source was deleted", () => {
   loop("hidden");
   loop("visible");
   retired("gone");
@@ -127,10 +127,16 @@ it("filters privacy-hidden owners and retirement ancestry before page limit and 
   db.prepare(
     "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('secret','v1',1,1)",
   ).run();
-  expect(readKnowledgeLibrary(db, { kind: "loop", limit: 1 }).items.map((x) => x.id)).toEqual([
-    "visible",
-  ]);
-  expect(() => readKnowledgeLibraryRetirement(db, "retired-loop:gone")).toThrow("not found");
+  expect(
+    readKnowledgeLibrary(db, { kind: "loop", status: "active", limit: 1 }).items.map((x) => x.id),
+  ).toEqual(["visible"]);
+  expect(
+    readKnowledgeLibrary(db, { kind: "loop", status: "retired" }).items.map((x) => x.id),
+  ).toEqual(["retired-loop:gone"]);
+  expect(readKnowledgeLibraryRetirement(db, "retired-loop:gone").canonicalFields).toMatchObject({
+    retired: true,
+    originalLoopId: "gone",
+  });
 });
 
 it("invalidates paging on wiki edits, retirement-only changes and journaled annotation mirror movement", () => {
@@ -318,7 +324,7 @@ it.each(["missing", "purging", "source-removed"])(
   },
 );
 
-it("preserves document identity after canonical withdrawal physically removes the owner, with current privacy fencing", () => {
+it("preserves document identity after canonical withdrawal physically removes the owner, until the document is deleted", () => {
   documentNote();
   db.prepare("DELETE FROM knowledge_nodes WHERE id='doc-note'").run();
   convertKnowledgeOwner(db, "doc_annotation", "doc-owner", 20);
@@ -350,12 +356,13 @@ it("preserves document identity after canonical withdrawal physically removes th
   db.exec(
     "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','source','note-source','v1',40)",
   );
+  // The deleted subject document is unreadable; the withdrawn owner stays listed.
   expect(readKnowledgeSubjectRef(db, "doc-owner", "doc_annotation")).toBeNull();
   expect(
     readKnowledgeLibrary(db, { kind: "doc_annotation" }).items.find(
       (node) => node.id === "doc-owner",
-    ),
-  ).toBeUndefined();
+    )?.subjectRef,
+  ).toBeNull();
 });
 
 it("resolves an intentionally withdrawn person's authoritative subject through current merges and hides unavailable people", () => {

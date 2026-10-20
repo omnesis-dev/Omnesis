@@ -9,7 +9,12 @@ import { proposeKnowledgeCandidate, getKnowledgeCandidate } from "./discovery.js
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { createKnowledgeSourceTriggers } from "./source-triggers.js";
-import { advanceKnowledgeCascade, getKnowledgeNode, saveKnowledgeNode } from "./storage.js";
+import {
+  advanceKnowledgeCascade,
+  getKnowledgeClaims,
+  getKnowledgeNode,
+  saveKnowledgeNode,
+} from "./storage.js";
 import { KNOWLEDGE_SOURCE_ID, KNOWLEDGE_DOCUMENT_TYPE } from "./source-meta.js";
 
 const databases: Database.Database[] = [];
@@ -74,7 +79,7 @@ describe("durable source intake", () => {
     });
     expect(advanceKnowledgeCascade(db, 100, 1).pending).toBe(false);
   });
-  it("fences derived content in the delete transaction before the maintenance worker runs", () => {
+  it("tombstones a deleted source in its delete transaction and only invalidates what cited it", () => {
     const db = setup();
     db.prepare(
       "INSERT INTO documents(id,source_id,provider_id,content_hash,content) VALUES('evidence','inbox','fictional','v1','A plan')",
@@ -94,10 +99,20 @@ describe("durable source intake", () => {
     );
     expect(getKnowledgeNode(db, "project")).not.toBeNull();
     db.prepare("DELETE FROM documents WHERE id='evidence'").run();
-    expect(getKnowledgeNode(db, "project")).toBeNull();
-    expect(db.prepare("SELECT 1 FROM knowledge_nodes WHERE id='project'").get()).toBeDefined();
-    advanceKnowledgeCascade(db, 100, 3);
-    expect(db.prepare("SELECT 1 FROM knowledge_nodes WHERE id='project'").get()).toBeUndefined();
+    expect(
+      db
+        .prepare("SELECT deleted FROM knowledge_source_revisions WHERE document_id='evidence'")
+        .get(),
+    ).toEqual({ deleted: 1 });
+    // Stale at once through the read fence, before the cascade marks it.
+    expect(getKnowledgeNode(db, "project")).toMatchObject({ revision: 1, validity: "stale" });
+    expect(advanceKnowledgeCascade(db, 100, 3)).toMatchObject({
+      pending: false,
+      deletedNodeIds: [],
+      invalidatedNodeIds: ["project"],
+    });
+    expect(getKnowledgeNode(db, "project")).toMatchObject({ revision: 2, validity: "stale" });
+    expect(getKnowledgeClaims(db, "project")[0]?.verification).toBe("stale");
   });
   it("excludes every registered authored source and exclusive type from intake", () => {
     const db = setup();
@@ -147,26 +162,25 @@ describe("durable source intake", () => {
     ).toEqual([{ entity_id: "cited-chat", revision: "v2:knowledge:1" }]);
     expect(getKnowledgeNode(db, "chat-project")?.validity).toBe("stale");
     advanceKnowledgeCascade(db, 100, 4);
-    // Re-ground the current page elsewhere: deletion must also follow old revisions.
+    // Re-ground the current page elsewhere: deleting a source only old revisions cite changes nothing.
     put.run("replacement", "inbox");
     advanceKnowledgeCascade(db, 100, 5);
     save(getKnowledgeNode(db, "chat-project")!.revision, "source:replacement", {
       "source:replacement": "v1",
     });
+    const revision = getKnowledgeNode(db, "chat-project")!.revision;
     db.prepare("DELETE FROM documents WHERE id IN ('cited-chat','unused-chat')").run();
-    expect(getKnowledgeNode(db, "chat-project")).toBeNull();
     expect(
       db.prepare("SELECT entity_id FROM knowledge_changes WHERE kind='source_deleted'").all(),
     ).toEqual([{ entity_id: "cited-chat" }, { entity_id: "unused-chat" }]);
     advanceKnowledgeCascade(db, 100, 6);
-    expect(
-      db.prepare("SELECT 1 FROM knowledge_nodes WHERE id='chat-project'").get(),
-    ).toBeUndefined();
+    expect(getKnowledgeNode(db, "chat-project")).toMatchObject({ revision });
+    expect(getKnowledgeNode(db, "chat-project")?.validity).not.toBe("stale");
     expect(
       db.prepare("SELECT 1 FROM knowledge_revisions WHERE node_id='chat-project'").get(),
-    ).toBeUndefined();
+    ).toBeDefined();
   });
-  it("purges prior source provenance even if the document is relabeled as a generated mirror", () => {
+  it("tracks the deletion of cited evidence even if the document is relabeled as a generated mirror", () => {
     const db = setup();
     db.prepare(
       "INSERT INTO documents(id,source_id,provider_id,content_hash,content) VALUES('relabeled','inbox','fictional','v1','Fictional evidence')",
@@ -189,14 +203,14 @@ describe("durable source intake", () => {
       JSON.stringify({ documentType: KNOWLEDGE_DOCUMENT_TYPE }),
     );
     db.prepare("DELETE FROM documents WHERE id='relabeled'").run();
-    expect(getKnowledgeNode(db, "retained-page")).toBeNull();
+    expect(
+      db
+        .prepare("SELECT deleted FROM knowledge_source_revisions WHERE document_id='relabeled'")
+        .get(),
+    ).toEqual({ deleted: 1 });
     advanceKnowledgeCascade(db, 100, 3);
-    expect(
-      db.prepare("SELECT 1 FROM knowledge_revisions WHERE node_id='retained-page'").get(),
-    ).toBeUndefined();
-    expect(
-      db.prepare("SELECT 1 FROM knowledge_nodes WHERE id='retained-page'").get(),
-    ).toBeUndefined();
+    expect(getKnowledgeNode(db, "retained-page")).toMatchObject({ validity: "stale" });
+    expect(getKnowledgeClaims(db, "retained-page")[0]?.verification).toBe("stale");
   });
   it("purges candidate-only transcript provenance one matched candidate per bounded step", () => {
     const db = setup();
