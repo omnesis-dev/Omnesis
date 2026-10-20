@@ -3,7 +3,7 @@
 
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { DeviceId, TokenId } from "@omnesis/types";
+import { DeviceId, Scope, TokenId } from "@omnesis/types";
 import { HttpError, errorResponse } from "../http/errors.js";
 import { mountRealtimeRoutes } from "./route.js";
 import type { Context } from "hono";
@@ -35,12 +35,12 @@ const owner: AuthContext = {
   authMethod: "bearer",
   deviceId: DeviceId("00000000-0000-4000-8000-000000000001"),
   tokenId: TokenId("00000000-0000-4000-8000-000000000002"),
-  scopes: ["admin"],
+  scopes: [Scope("admin")],
 };
 
 describe("realtime route authority", () => {
   it("requires admin scope for discovery and upgrade", async () => {
-    for (const auth of [undefined, { ...owner, scopes: ["read"] } as AuthContext]) {
+    for (const auth of [undefined, { ...owner, scopes: [Scope("read")] }]) {
       const app = fixture(auth);
       expect((await app.request("/agent/realtime")).status).toBe(auth ? 403 : 401);
       expect((await app.request("/agent/realtime/ws")).status).toBe(auth ? 403 : 401);

@@ -34,10 +34,13 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
-const config = (url = "https://api.openai.com") =>
-  ({
-    inference: { allowRemoteInference: true, backends: { cloud: { type: "http", url } } },
-  }) as OmnesisConfig;
+const config = (url = "https://api.openai.com"): OmnesisConfig => ({
+  inference: {
+    allowRemoteInference: true,
+    entailment: { promptStyle: "judge" },
+    backends: { cloud: { type: "http", url } },
+  },
+});
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "omnesis-realtime-test-"));
   const store = new FsConversationStore(directory);
