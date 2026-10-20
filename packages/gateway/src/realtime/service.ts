@@ -13,7 +13,19 @@ const MODEL = "gpt-realtime";
 const MAX_FRAME_BYTES = 128 * 1024;
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 const MAX_CALL_MS = 30 * 60 * 1000;
+const MAX_CLIENT_DIAGNOSTICS = 12;
+const diagnosticCounter = z.number().int().min(0).max(10_000_000);
 const clientEvent = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("client.audio_diagnostics"),
+      stage: z.enum(["starting", "ready", "configuration_changed", "timeout"]),
+      rawBuffers: diagnosticCounter,
+      pcmBuffers: diagnosticCounter,
+      sentFrames: diagnosticCounter,
+      engineRunning: z.boolean(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("input_audio_buffer.append"),
@@ -146,6 +158,7 @@ export class RealtimeService {
     let outputBytes = 0;
     let speechStarts = 0;
     let speechStops = 0;
+    let clientDiagnostics = 0;
     let closeReason = "client_closed";
     let inputWatchdog: ReturnType<typeof setTimeout> | undefined;
     this.log.info(`Call ${diagnosticId} opening`);
@@ -426,7 +439,12 @@ export class RealtimeService {
             }, 10_000);
             inputWatchdog.unref();
           }
-          send({ type: "session.ready", conversationId: sessionId, model: MODEL });
+          send({
+            type: "session.ready",
+            conversationId: sessionId,
+            model: MODEL,
+            clientAudioDiagnostics: true,
+          });
         } else if (event.type === "response.function_call_arguments.done")
           void delegate(event).catch(fail);
         else if (event.type === "error") {
@@ -490,6 +508,15 @@ export class RealtimeService {
         try {
           if (Buffer.byteLength(raw) > MAX_FRAME_BYTES) throw new Error("Voice frame too large");
           const event = clientEvent.parse(JSON.parse(raw));
+          if (event.type === "client.audio_diagnostics") {
+            if (clientDiagnostics < MAX_CLIENT_DIAGNOSTICS) {
+              clientDiagnostics += 1;
+              this.log.info(
+                `Call ${diagnosticId} client audio stage=${event.stage} rawBuffers=${event.rawBuffers} pcmBuffers=${event.pcmBuffers} sentFrames=${event.sentFrames} engineRunning=${event.engineRunning}`,
+              );
+            }
+            return;
+          }
           if (event.type === "input_audio_buffer.append") {
             audioFrames += 1;
             audioBytes += Buffer.byteLength(event.audio, "base64");

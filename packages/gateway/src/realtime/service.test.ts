@@ -78,6 +78,102 @@ const call = (id = "call-1") => ({
 });
 
 describe("realtime voice", () => {
+  it("keeps content-free client capture diagnostics on the gateway", async () => {
+    const f = fixture();
+    await ready(f);
+    const sent = f.socket.sent.length;
+    f.connection.receive(
+      JSON.stringify({
+        type: "client.audio_diagnostics",
+        stage: "ready",
+        rawBuffers: 3,
+        pcmBuffers: 2,
+        sentFrames: 1,
+        engineRunning: true,
+      }),
+    );
+    expect(f.socket.sent).toHaveLength(sent);
+    expect(f.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "client audio stage=ready rawBuffers=3 pcmBuffers=2 sentFrames=1 engineRunning=true",
+      ),
+    );
+    expect(f.peer.close).not.toHaveBeenCalled();
+  });
+  it.each([
+    { stage: "private-route-name" },
+    { rawBuffers: -1 },
+    { pcmBuffers: 10_000_001 },
+    { sentFrames: 1.5 },
+    { engineRunning: "true" },
+    { transcript: "Private diagnostic contents" },
+  ])(
+    "rejects malformed client capture diagnostics without logging their contents: %j",
+    async (invalid) => {
+      const f = fixture();
+      await ready(f);
+      const sent = f.socket.sent.length;
+      f.connection.receive(
+        JSON.stringify({
+          type: "client.audio_diagnostics",
+          stage: "ready",
+          rawBuffers: 0,
+          pcmBuffers: 0,
+          sentFrames: 0,
+          engineRunning: true,
+          ...invalid,
+        }),
+      );
+      expect(f.peer.close).toHaveBeenCalled();
+      expect(f.socket.sent).toHaveLength(sent);
+      expect(
+        f.logger.info.mock.calls.some(([message]) => message.includes("client audio stage=")),
+      ).toBe(false);
+    },
+  );
+  it("caps client diagnostic logs without interrupting audio or forwarding diagnostics", async () => {
+    const f = fixture();
+    await ready(f);
+    const sent = f.socket.sent.length;
+    for (let rawBuffers = 0; rawBuffers < 20; rawBuffers++) {
+      f.connection.receive(
+        JSON.stringify({
+          type: "client.audio_diagnostics",
+          stage: "configuration_changed",
+          rawBuffers,
+          pcmBuffers: 0,
+          sentFrames: 0,
+          engineRunning: true,
+        }),
+      );
+    }
+    expect(
+      f.logger.info.mock.calls.filter(([message]) => message.includes("client audio stage=")),
+    ).toHaveLength(12);
+    expect(f.socket.sent).toHaveLength(sent);
+    expect(f.peer.close).not.toHaveBeenCalled();
+    f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio: "AAAA" }));
+    expect(f.socket.sent.at(-1)?.type).toBe("input_audio_buffer.append");
+  });
+  it("requires current authority before accepting client diagnostics", async () => {
+    const f = fixture();
+    await ready(f);
+    f.authorized.mockReturnValue(false);
+    f.connection.receive(
+      JSON.stringify({
+        type: "client.audio_diagnostics",
+        stage: "timeout",
+        rawBuffers: 0,
+        pcmBuffers: 0,
+        sentFrames: 0,
+        engineRunning: false,
+      }),
+    );
+    expect(f.peer.close).toHaveBeenCalled();
+    expect(
+      f.logger.info.mock.calls.some(([message]) => message.includes("client audio stage=")),
+    ).toBe(false);
+  });
   it("recovers a vanished empty conversation after gateway restart and runs a replayed turn", async () => {
     const makeAgent = (id: string) =>
       new AgentService({
@@ -131,6 +227,7 @@ describe("realtime voice", () => {
         type: "session.ready",
         conversationId: "replacement-thread",
         model: "gpt-realtime",
+        clientAudioDiagnostics: true,
       });
       f.socket.event(call());
       await vi.waitFor(() =>
@@ -258,6 +355,7 @@ describe("realtime voice", () => {
       type: "session.ready",
       conversationId: "voice-thread",
       model: "gpt-realtime",
+      clientAudioDiagnostics: true,
     });
     expect(JSON.stringify(f.socket.sent)).not.toContain("test-key");
     f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio: "AAAA" }));

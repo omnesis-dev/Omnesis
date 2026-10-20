@@ -16,7 +16,8 @@ final class RealtimeAudioGraphTests: XCTestCase {
         engine.attach(microphone)
         engine.attach(assistant)
         let capture = RealtimeAudioGraph.connectCapture(microphone, format: format, engine: engine)
-        engine.connect(assistant, to: engine.mainMixerNode, format: format)
+        let playbackFormat = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1))
+        engine.connect(assistant, to: engine.mainMixerNode, format: playbackFormat)
         let captured = expectation(description: "Microphone branch delivers samples while output renders")
         captured.assertForOverFulfill = false
         microphone.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in

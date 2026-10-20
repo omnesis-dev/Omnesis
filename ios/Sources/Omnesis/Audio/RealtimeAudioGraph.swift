@@ -21,6 +21,7 @@ final class RealtimePCMEncoder {
     private let converter: AVAudioConverter
     private let wireFormat: AVAudioFormat
     private let inputRate: Double
+    private(set) var lastStatus = "not-run"
 
     init(inputFormat: AVAudioFormat) throws {
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
@@ -34,14 +35,16 @@ final class RealtimePCMEncoder {
     }
 
     func encode(_ buffer: AVAudioPCMBuffer) throws -> Data? {
-        guard buffer.frameLength > 0 else { return nil }
+        guard buffer.frameLength > 0 else { lastStatus = "empty-input"
+            return nil
+        }
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 24000 / inputRate) + 1
         guard let converted = AVAudioPCMBuffer(pcmFormat: wireFormat, frameCapacity: capacity) else {
             throw URLError(.cannotDecodeContentData)
         }
         var provided = false
         var conversionError: NSError?
-        converter.convert(to: converted, error: &conversionError) { _, state in
+        let status = converter.convert(to: converted, error: &conversionError) { _, state in
             if provided { state.pointee = .noDataNow
                 return nil
             }
@@ -49,8 +52,19 @@ final class RealtimePCMEncoder {
             state.pointee = .haveData
             return buffer
         }
+        switch status {
+        case .haveData: lastStatus = "have-data"
+        case .inputRanDry: lastStatus = "input-ran-dry"
+        case .endOfStream: lastStatus = "end-of-stream"
+        case .error: lastStatus = "error"
+        @unknown default: lastStatus = "unknown"
+        }
         if let conversionError { throw conversionError }
-        guard converted.frameLength > 0, let samples = converted.int16ChannelData else { return nil }
+        guard converted.frameLength > 0 else { return nil }
+        guard let samples = converted.int16ChannelData else {
+            lastStatus = "missing-pcm16-storage"
+            throw URLError(.cannotDecodeContentData)
+        }
         return Data(bytes: samples[0], count: Int(converted.frameLength) * 2)
     }
 }

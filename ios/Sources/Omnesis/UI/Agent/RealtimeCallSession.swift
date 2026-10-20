@@ -37,12 +37,17 @@ final class RealtimeCallSession {
     @ObservationIgnored private var playbackGeneration = UUID()
     @ObservationIgnored private var pendingSends = 0
     @ObservationIgnored private var pendingFrames: Int64 = 0
+    @ObservationIgnored private var clientAudioDiagnostics = false
+    @ObservationIgnored private var configurationRestartAttempts = 0
+    @ObservationIgnored private var captureInputFormat: AVAudioFormat?
+    @ObservationIgnored private var captureDiagnostics = RealtimeCaptureDiagnostics()
     @ObservationIgnored private var audioObservers: [NSObjectProtocol] = []
 
     func start(pairing: Pairing, conversationID: String? = nil) async {
         guard receiver == nil else { return }
         generation = UUID()
         let callGeneration = generation
+        captureDiagnostics = RealtimeCaptureDiagnostics()
         transcript = ""
         tools = []
         assistantTranscriptStarted = false
@@ -104,71 +109,12 @@ final class RealtimeCallSession {
         } catch { fail(error) }
     }
 
-    private func beginAudio() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
-        try session.setActive(true)
-        let engine = AVAudioEngine()
-        self.engine = engine
-        let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-        input.isVoiceProcessingInputMuted = false
-        let inputFormat = input.outputFormat(forBus: 0)
-        let rate = inputFormat.sampleRate
-        let channels = inputFormat.channelCount
-        log.info("Input rate=\(rate, privacy: .public) channels=\(channels, privacy: .public)")
-        log.info("Voice processing enabled=\(input.isVoiceProcessingEnabled, privacy: .public)")
-        let encoder = try RealtimePCMEncoder(inputFormat: inputFormat)
-        captureMixer = RealtimeAudioGraph.connectCapture(input, format: inputFormat, engine: engine)
-        let player = AVAudioPlayerNode()
-        self.player = player
-        engine.attach(player)
-        let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1)!
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
-        let captureGeneration = generation
-        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
-            do {
-                guard let data = try encoder.encode(buffer) else { return }
-                Task { @MainActor [weak self] in
-                    guard let self, generation == captureGeneration, connected else { return }
-                    if captureReadiness.receivePCMFrame(byteCount: data.count) {
-                        timeout?.cancel()
-                        status = "Listening"
-                        log.info("Realtime microphone is delivering PCM frames")
-                    }
-                    guard !muted else { return }
-                    send(RealtimeProtocol.audioAppend(data))
-                }
-            } catch {
-                Task { @MainActor [weak self] in
-                    guard let self, generation == captureGeneration else { return }
-                    log.error("Realtime microphone conversion failed")
-                    fail(error)
-                }
-            }
-        }
-
-        engine.prepare()
-        try engine.start()
-        player.play()
-        log.info("Realtime audio engine started; waiting for microphone frames")
-        timeout = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(8))
-            guard !Task.isCancelled, let self, generation == captureGeneration, !captureReadiness.isReady else { return }
-            log.error("Realtime microphone produced no frames before startup timeout")
-            fail(NSError(
-                domain: "RealtimeCall",
-                code: 4,
-                userInfo: [NSLocalizedDescriptionKey: "The microphone did not start. End the call and try again."]
-            ))
-        }
-    }
-
     private func receive(_ event: [String: Any]) throws {
         switch event["type"] as? String {
         case "session.ready":
             guard !connected else { return }
             self.conversationID = event["conversationId"] as? String ?? conversationID
+            clientAudioDiagnostics = event["clientAudioDiagnostics"] as? Bool == true
             timeout?.cancel()
             try beginAudio()
             connected = true
@@ -281,13 +227,22 @@ final class RealtimeCallSession {
     }
 
     private func send(_ event: [String: Any]) {
-        guard let socket, let data = try? JSONSerialization.data(withJSONObject: event),
+        guard let data = try? JSONSerialization.data(withJSONObject: event),
               let text = String(data: data, encoding: .utf8) else { return }
+        #if DEBUG
+        if let outgoingMessageForTesting {
+            if event["type"] as? String == "input_audio_buffer.append" { captureDiagnostics.sent() }
+            outgoingMessageForTesting(text)
+            return
+        }
+        #endif
+        guard let socket else { return }
         guard pendingSends < 8 else {
             fail(URLError(.networkConnectionLost))
             return
         }
         pendingSends += 1
+        if event["type"] as? String == "input_audio_buffer.append" { captureDiagnostics.sent() }
         let sendGeneration = generation
         socket.send(.string(text)) { [weak self] error in
             Task { @MainActor in
@@ -303,6 +258,25 @@ final class RealtimeCallSession {
         self.error = error
         status = "Call ended"
     }
+
+    #if DEBUG
+    @ObservationIgnored var outgoingMessageForTesting: ((String) -> Void)?
+    @ObservationIgnored var configurationRecoveryEnabledForTesting = true
+
+    func receiveForTesting(_ event: [String: Any]) throws {
+        try receive(event)
+    }
+
+    var engineRunningForTesting: Bool {
+        engine?.isRunning ?? false
+    }
+
+    func stopEngineForConfigurationTest() {
+        guard let engine else { return }
+        engine.stop()
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: engine)
+    }
+    #endif
 
     func stop() {
         generation = UUID()
@@ -325,7 +299,155 @@ final class RealtimeCallSession {
         engine = nil
         player = nil
         captureMixer = nil
+        captureInputFormat = nil
+        clientAudioDiagnostics = false
+        configurationRestartAttempts = 0
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
+
+extension RealtimeCallSession {
+    private func beginAudio() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setActive(true)
+        let engine = AVAudioEngine()
+        self.engine = engine
+        let input = engine.inputNode
+        try input.setVoiceProcessingEnabled(true)
+        input.isVoiceProcessingInputMuted = false
+        let inputFormat = input.outputFormat(forBus: 0)
+        captureInputFormat = inputFormat
+        let rate = inputFormat.sampleRate
+        let channels = inputFormat.channelCount
+        log.info("Input rate=\(rate, privacy: .public) channels=\(channels, privacy: .public)")
+        log.info("Voice processing enabled=\(input.isVoiceProcessingEnabled, privacy: .public)")
+        let encoder = try RealtimePCMEncoder(inputFormat: inputFormat)
+        captureMixer = RealtimeAudioGraph.connectCapture(input, format: inputFormat, engine: engine)
+        let player = AVAudioPlayerNode()
+        self.player = player
+        engine.attach(player)
+        let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1)!
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        let captureGeneration = generation
+        audioObservers.append(NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self, weak engine] _ in
+            Task { @MainActor [weak self, weak engine] in
+                guard let self, let engine, generation == captureGeneration, self.engine === engine else { return }
+                recoverAudioConfiguration(engine)
+            }
+        })
+        installCaptureTap(input, format: inputFormat, encoder: encoder, generation: captureGeneration)
+
+        engine.prepare()
+        try engine.start()
+        player.play()
+        log.info("Realtime audio engine started; waiting for microphone frames")
+        sendCaptureDiagnostic(stage: "starting")
+        timeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, let self, generation == captureGeneration, !captureReadiness.isReady else { return }
+            sendCaptureDiagnostic(stage: "starting")
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, generation == captureGeneration, !captureReadiness.isReady else { return }
+            let detail = microphoneStartupDiagnostic
+            log.error("Realtime microphone startup failed: \(detail, privacy: .public)")
+            sendCaptureDiagnostic(stage: "timeout")
+            fail(NSError(
+                domain: "RealtimeCall",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "The microphone did not start. End the call and try again."]
+            ))
+        }
+    }
+
+    private func installCaptureTap(
+        _ input: AVAudioInputNode, format: AVAudioFormat, encoder: RealtimePCMEncoder, generation captureGeneration: UUID
+    ) {
+        let diagnostics = captureDiagnostics
+        input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
+            let firstInput = diagnostics.input(frames: Int(buffer.frameLength))
+            if firstInput {
+                Task { @MainActor [weak self] in
+                    self?.log.info("Realtime hardware tap delivered its first buffer")
+                }
+            }
+            do {
+                let encoded = try encoder.encode(buffer)
+                diagnostics.converted(hasData: encoded != nil, status: encoder.lastStatus)
+                guard let data = encoded else { return }
+                Task { @MainActor [weak self] in
+                    guard let self, generation == captureGeneration, connected else { diagnostics.discarded()
+                        return
+                    }
+                    configurationRestartAttempts = 0
+                    let becameReady = captureReadiness.receivePCMFrame(byteCount: data.count)
+                    if becameReady {
+                        timeout?.cancel()
+                        status = "Listening"
+                        log.info("Realtime microphone is delivering PCM frames")
+                    }
+                    if !muted { send(RealtimeProtocol.audioAppend(data)) }
+                    if becameReady { sendCaptureDiagnostic(stage: "ready") }
+                }
+            } catch {
+                diagnostics.failedConversion()
+                Task { @MainActor [weak self] in
+                    guard let self, generation == captureGeneration else { return }
+                    log.error("Realtime microphone conversion failed")
+                    fail(error)
+                }
+            }
+        }
+    }
+
+    var microphoneStartupDiagnostic: String {
+        "engineRunning=\(engine?.isRunning ?? false) " + captureDiagnostics.snapshot.summary
+    }
+
+    private func recoverAudioConfiguration(_ engine: AVAudioEngine) {
+        captureDiagnostics.configurationChanged()
+        sendCaptureDiagnostic(stage: "configuration_changed")
+        #if DEBUG
+        guard configurationRecoveryEnabledForTesting else { return }
+        #endif
+        guard connected, !engine.isRunning else { return }
+        let current = engine.inputNode.outputFormat(forBus: 0)
+        let inputRate = current.sampleRate
+        let outputRate = engine.outputNode.inputFormat(forBus: 0).sampleRate
+        log.info("Audio configuration inputRate=\(inputRate, privacy: .public) outputRate=\(outputRate, privacy: .public)")
+        guard current.sampleRate == captureInputFormat?.sampleRate,
+              current.channelCount == captureInputFormat?.channelCount else {
+            fail(URLError(.cannotDecodeContentData))
+            return
+        }
+        guard configurationRestartAttempts < 3 else {
+            fail(URLError(.cannotConnectToHost))
+            return
+        }
+        configurationRestartAttempts += 1
+        do {
+            try engine.start()
+            player?.play()
+            captureDiagnostics.restarted()
+            sendCaptureDiagnostic(stage: "configuration_changed")
+            log.info("Realtime audio restarted after an engine configuration change")
+        } catch { fail(error) }
+    }
+
+    private func sendCaptureDiagnostic(stage: String) {
+        guard clientAudioDiagnostics else { return }
+        let capture = captureDiagnostics.snapshot
+        send([
+            "type": "client.audio_diagnostics",
+            "stage": stage,
+            "rawBuffers": capture.inputBuffers,
+            "pcmBuffers": capture.convertedPackets,
+            "sentFrames": capture.sentPackets,
+            "engineRunning": engine?.isRunning ?? false,
+        ])
+    }
+}
+
 #endif

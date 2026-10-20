@@ -29,7 +29,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID)
     MARKETING_VERSION: "0.6.0"
-    CURRENT_PROJECT_VERSION: "320"
+    CURRENT_PROJECT_VERSION: "321"
     TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad
     SWIFT_STRICT_CONCURRENCY: targeted
     # Point at our custom Info.plist + entitlements (instead of letting
