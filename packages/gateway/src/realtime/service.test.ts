@@ -153,8 +153,12 @@ async function fixture() {
     },
   };
 }
-async function ready(f: Awaited<ReturnType<typeof fixture>>, conversationId?: string) {
-  const connection = f.open(conversationId);
+async function ready(
+  f: Awaited<ReturnType<typeof fixture>>,
+  conversationId?: string,
+  version?: 1 | 2,
+) {
+  const connection = f.open(conversationId, version);
   f.socket.emit("open");
   await vi.waitFor(() =>
     expect(f.socket.sent.some((event) => event.type === "session.update")).toBe(true),
@@ -279,6 +283,68 @@ describe("direct realtime Omnesis runtime", () => {
       }
     },
   );
+  it.each([false, true])(
+    "acknowledges graceful end only after text can resume, without waiting for persistence (active tool: %s)",
+    async (activeTool) => {
+      const f = await fixture();
+      const connection = await ready(f, undefined, 2);
+      const conversationId = f.events.find((event) => event.type === "session.ready")!
+        .conversationId as string;
+      let finishPersistence!: () => void;
+      const pendingPersistence = new Promise<void>((resolve) => {
+        finishPersistence = resolve;
+      });
+      const persistence = vi
+        .spyOn(
+          f.agent as unknown as {
+            persistAndNotify: (sessionId: string, messageId?: string) => Promise<void>;
+          },
+          "persistAndNotify",
+        )
+        .mockReturnValue(pendingPersistence);
+      let toolSignal: AbortSignal | undefined;
+      if (activeTool) {
+        vi.spyOn(f.customTool, "invoke").mockImplementation((_args, context) => {
+          toolSignal = context.abortSignal;
+          return new Promise((resolve) =>
+            context.abortSignal?.addEventListener(
+              "abort",
+              () => resolve({ kind: "error", code: "turn_aborted", message: "Canceled" }),
+              { once: true },
+            ),
+          );
+        });
+        await speech(f);
+        call(f, "fixture_write", { value: "Fictional value" }, "pending-tool");
+        await vi.waitFor(() => expect(toolSignal).toBeDefined());
+      }
+      connection.receive(JSON.stringify({ type: "session.end" }));
+      connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio: "AAAA" }));
+      await vi.waitFor(() =>
+        expect(f.events).toContainEqual({ type: "session.ended", conversationId }),
+      );
+      if (activeTool) expect(toolSignal?.aborted).toBe(true);
+      expect(f.peer.close).toHaveBeenCalled();
+      expect(f.socket.sent.some((event) => event.type === "session.end")).toBe(false);
+      expect(() =>
+        f.agent.sendMessage(
+          "token:fixture",
+          conversationId,
+          "Immediate text after end acknowledgement",
+        ),
+      ).not.toThrow();
+      finishPersistence();
+      await vi.waitFor(() => expect(f.ordinary.runTurn).toHaveBeenCalledTimes(1));
+      persistence.mockRestore();
+    },
+  );
+  it("rejects graceful session end on legacy media transport", async () => {
+    const f = await fixture();
+    const connection = await ready(f);
+    connection.receive(JSON.stringify({ type: "session.end" }));
+    expect(f.peer.close).toHaveBeenCalled();
+    expect(f.events.some((event) => event.type === "session.ended")).toBe(false);
+  });
   it("advertises additive direct-runtime capabilities while preserving the old available/model/audio contract", async () => {
     const f = await fixture();
     const capability = f.service.capability();

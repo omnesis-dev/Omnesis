@@ -364,7 +364,7 @@ export interface RealtimeAgentSession {
   run(text: string, backend: ChatBackend, signal: AbortSignal): Promise<void>;
   subscribe(listener: (event: AgentEvent) => void): () => void;
   cancel(): void;
-  close(): void;
+  close(): Promise<void>;
 }
 
 export interface CreateSessionResult {
@@ -3339,8 +3339,13 @@ export class AgentService {
       )
         voiceContextFailure = event.payload.failure.message;
     });
+    let resolveReleased!: () => void;
+    const released = new Promise<void>((resolve) => {
+      resolveReleased = resolve;
+    });
     const release = () => {
       unsubscribeFailure();
+      resolveReleased();
       if (this.realtimeOwners.get(sessionId) === owner) this.realtimeOwners.delete(sessionId);
     };
     return {
@@ -3370,11 +3375,11 @@ export class AgentService {
         if (!closed) entry.session.cancel("user");
       },
       close: () => {
-        if (closed) return;
+        if (closed) return released;
         closed = true;
         if (!entry.session.busy) {
           release();
-          return;
+          return released;
         }
         const unsubscribe = entry.session.subscribe((event) => {
           if (event.type !== "agent.message.end") return;
@@ -3389,6 +3394,7 @@ export class AgentService {
               release();
             })
             .catch(() => {});
+        return released;
       },
     };
   }

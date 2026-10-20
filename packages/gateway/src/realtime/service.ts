@@ -19,6 +19,7 @@ const MAX_CALL_MS = 30 * 60 * 1000;
 const MAX_CLIENT_DIAGNOSTICS = 12;
 const diagnosticCounter = z.number().int().min(0).max(10_000_000);
 const clientEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("session.end") }).strict(),
   z
     .object({
       type: z.literal("client.audio_diagnostics"),
@@ -151,6 +152,7 @@ export class RealtimeService {
     this.log.info(`Call ${diagnosticId} opening`);
     const abort = new AbortController();
     let closed = false;
+    let ending = false;
     let sessionId: string | undefined;
     let agentSession: RealtimeAgentSession | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -204,7 +206,7 @@ export class RealtimeService {
       );
       abort.abort();
       unsubscribe?.();
-      agentSession?.close();
+      void agentSession?.close();
       void backendAdapter.dispose();
       inputSequencer.dispose();
       upstream.close();
@@ -239,7 +241,7 @@ export class RealtimeService {
       fail,
     );
     const drainTranscripts = () => {
-      if (closed || running || !agentSession || pendingTranscripts.length === 0) return;
+      if (closed || ending || running || !agentSession || pendingTranscripts.length === 0) return;
       if (!authorized()) {
         close();
         return;
@@ -252,6 +254,7 @@ export class RealtimeService {
         .catch(fail)
         .finally(() => {
           running = false;
+          if (ending) return;
           if (closeAfterTurn) fail();
           else drainTranscripts();
         });
@@ -273,7 +276,7 @@ export class RealtimeService {
           timeZone: normalizeTimeZone(options.timeZone) ?? undefined,
         });
         if (closed) {
-          opened.close();
+          void opened.close();
           return;
         }
         agentSession = opened;
@@ -329,7 +332,7 @@ export class RealtimeService {
       })().catch(fail);
     });
     upstream.on("message", (raw) => {
-      if (closed) return;
+      if (closed || ending) return;
       try {
         if (!authorized()) {
           close();
@@ -502,7 +505,7 @@ export class RealtimeService {
     return {
       close,
       receive: (raw) => {
-        if (closed) return;
+        if (closed || ending) return;
         if (!authorized()) {
           close();
           return;
@@ -510,6 +513,20 @@ export class RealtimeService {
         try {
           if (Buffer.byteLength(raw) > MAX_FRAME_BYTES) throw new Error("Voice frame too large");
           const event = clientEvent.parse(JSON.parse(raw));
+          if (event.type === "session.end") {
+            if (options.version !== 2 || !ready || !agentSession)
+              throw new Error("Graceful voice end requires a ready version 2 session");
+            ending = true;
+            pendingTranscripts.length = 0;
+            inputSequencer.dispose();
+            abort.abort();
+            void agentSession.close().then(() => {
+              if (closed) return;
+              send({ type: "session.ended", conversationId: sessionId });
+              close();
+            }, fail);
+            return;
+          }
           if (event.type === "client.audio_diagnostics") {
             if (clientDiagnostics < MAX_CLIENT_DIAGNOSTICS) {
               clientDiagnostics += 1;

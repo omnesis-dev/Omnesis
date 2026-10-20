@@ -96,7 +96,7 @@ describe("shared realtime session facade", () => {
     expect(() =>
       service.sendMessage("token:fixture", created.sessionId, "Blocked while in voice"),
     ).toThrow("voice call");
-    realtime.close();
+    await realtime.close();
     await vi.waitFor(() =>
       expect(() =>
         service.sendMessage("token:fixture", created.sessionId, "Back to text"),
@@ -143,7 +143,7 @@ describe("shared realtime session facade", () => {
     await expect(
       realtime.run("Retry voice", exhausted, new AbortController().signal),
     ).rejects.toThrow("context");
-    realtime.close();
+    await realtime.close();
     expect(() =>
       service.sendMessage(
         "token:fixture",
@@ -213,7 +213,7 @@ describe("shared realtime session facade", () => {
         terminal = resolve;
       });
       const unsubscribe = realtime.subscribe((event) => {
-        if (closeDuringTurn && event.type === "agent.text.delta") realtime.close();
+        if (closeDuringTurn && event.type === "agent.text.delta") void realtime.close();
         if (event.type === "agent.message.end") terminal();
       });
       const turn = realtime.run(
@@ -222,7 +222,7 @@ describe("shared realtime session facade", () => {
         new AbortController().signal,
       );
       await terminalSeen;
-      if (!closeDuringTurn) realtime.close();
+      await realtime.close();
       expect(() =>
         service.sendMessage("token:fixture", realtime.sessionId, "Immediate text question"),
       ).not.toThrow();
@@ -255,7 +255,7 @@ describe("shared realtime session facade", () => {
         profile: "voice",
       }),
     ).rejects.toThrow("voice call");
-    realtime.close();
+    await realtime.close();
   });
   it("cancels a transport turn through the canonical session and releases its lease after settlement", async () => {
     const { service, ordinary } = fixture();
@@ -279,7 +279,7 @@ describe("shared realtime session facade", () => {
     await vi.waitFor(() => expect(signal).toBeDefined());
     realtime.cancel();
     await active;
-    realtime.close();
+    await realtime.close();
     await vi.waitFor(async () =>
       expect(
         (await service.createSession("token:fixture", { resumeFromId: realtime.sessionId })).busy,
