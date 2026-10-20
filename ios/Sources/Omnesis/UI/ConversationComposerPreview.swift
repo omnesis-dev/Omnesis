@@ -68,6 +68,9 @@ enum ConversationComposerPreview {
         if ProcessInfo.processInfo.environment["DEMO_COMPOSER_ACK"] == "first-send" {
             coordinator.newConversation()
         }
+        if let prompt = ProcessInfo.processInfo.environment["DEMO_PROMPT"] {
+            coordinator.updateComposerDraft(prompt, for: coordinator.composerDraftKey)
+        }
     }
 }
 
