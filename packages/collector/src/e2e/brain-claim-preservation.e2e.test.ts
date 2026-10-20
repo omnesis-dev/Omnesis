@@ -176,10 +176,9 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",
-      // The scripted saves below reuse the frontier's wiki collection receipt.
-      // A parallel maintenance run that writes any wiki node or candidate in
-      // between would turn the expected claim refusal into revision_conflict,
-      // so runs are serialized: no other run can move the collection.
+      // Keep the rejected edits and the later deliberate removal serialized.
+      // A competing page edit would correctly invalidate the editing receipt
+      // and test revision conflicts instead of these semantic refusals.
       workerConcurrency: 1,
       knowledge: { soonDelay: "1s", routineDelay: "6h" },
     },
@@ -206,12 +205,26 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
             step.result.kind === "error",
         );
         if (item && destructiveCheckRun === undefined) destructiveCheckRun = ctx.runId;
-        if (item && ctx.runId === destructiveCheckRun && refused.length < 3)
+        if (item && ctx.runId === destructiveCheckRun && refused.length < 3) {
+          // This branch bypasses knowledgePuppet's normal editing read. Acquire
+          // the same trusted node receipt before testing semantic refusals.
+          const frontierAt = steps.findLastIndex((step) => step.name === "knowledge_next_frontier");
+          const editingRead = steps
+            .slice(frontierAt + 1)
+            .findLast(
+              (step) =>
+                step.name === "knowledge_fetch" &&
+                step.args?.id === pageId &&
+                step.args?.editing === true,
+            );
+          if (!editingRead)
+            return { kind: "tool", name: "knowledge_fetch", args: { id: pageId, editing: true } };
+          const node = z.object({ revision: z.number() }).parse(structuredData(editingRead.result));
           return {
             kind: "tool",
             name: "knowledge_save",
             args: edit(
-              item,
+              { ...item, node: { ...item.node!, revision: node.revision } },
               refused.length === 0
                 ? ""
                 : refused.length === 1
@@ -222,6 +235,7 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
                     ),
             ),
           };
+        }
         return maintain(
           ctx,
           steps.filter((step) => !refused.includes(step)),
