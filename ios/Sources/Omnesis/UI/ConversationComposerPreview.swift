@@ -32,6 +32,9 @@ enum ConversationComposerPreview {
             sessionId: coordinator.sessionId ?? "composer-preview"
         )
         coordinator.stopForTesting()
+        if ProcessInfo.processInfo.environment["DEMO_COMPOSER_ACK"] == "first-send" {
+            coordinator.newConversation()
+        }
     }
 }
 
@@ -74,7 +77,14 @@ private final class ConversationComposerProtocol: URLProtocol {
             return
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        let responseBody = status == 503 ? "Temporarily unavailable." : body
+        let responseBody: String = switch request.url?.lastPathComponent {
+        case "sessions":
+            #"{"sessionId":"minted-preview","model":"fixture","backend":"fixture"}"#
+        case "messages":
+            #"{"messageId":"assistant-preview","userMessageId":"user-preview"}"#
+        default:
+            status == 503 ? "Temporarily unavailable." : body
+        }
         client?.urlProtocol(self, didLoad: Data(responseBody.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }

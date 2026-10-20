@@ -32,7 +32,7 @@ import { TimelineColumn } from "../timeline.js";
 import { buildUnifiedTimeline } from "../../views/agent-reducer.js";
 import { getSlashCommand, matchSlashCommands, sendOptionsForArmed } from "../../lib/slash-commands.js";
 
-import { clearConversationDraft, readConversationDraft, writeConversationDraft } from "../../lib/conversation-draft.js";
+import { conversationDraftRevision, clearConversationDraft, readConversationDraft, writeConversationDraft } from "../../lib/conversation-draft.js";
 
 // Agent components sit inline with body text, so icons should match the
 // surrounding font size rather than the portal default (16px). 12px reads
@@ -1703,12 +1703,14 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
     if (!canSend) return;
     const options = sendOptionsForArmed(armed?.id ?? null);
     if (mode) options.mode = mode;
+    const submittedRevision = conversationDraftRevision(draftKey);
     setSending(true);
     try {
       const accepted = await onSubmit(text.trim(), options);
       if (accepted !== false) {
-        clearConversationDraft(draftKey, text, armed?.id ?? null);
-        if (draftKeyRef.current === draftKey && textRef.current === text && armedRef.current?.id === armed?.id) {
+        const draftUnchanged = conversationDraftRevision(draftKey) === submittedRevision;
+        clearConversationDraft(draftKey, text, armed?.id ?? null, submittedRevision);
+        if (draftUnchanged && draftKeyRef.current === draftKey && textRef.current === text && armedRef.current?.id === armed?.id) {
           textRef.current = "";
           setText("");
           setArmed(null);

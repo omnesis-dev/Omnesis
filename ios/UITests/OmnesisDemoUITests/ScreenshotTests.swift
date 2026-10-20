@@ -119,6 +119,39 @@ final class ScreenshotTests: XCTestCase {
         try captureStoreScreenshot(named: "04-privacy-settings")
     }
 
+    func test_first_prompt_then_choice_does_not_reappear_in_new_chat() throws {
+        app = XCUIApplication()
+        app.launchEnvironment["DEMO_AGENT_PREVIEW"] = "conversation-controls"
+        app.launchEnvironment["DEMO_COMPOSER_ACK"] = "first-send"
+        app.launchEnvironment["DEMO_DISABLE_ANIMATIONS"] = "1"
+        app.launchEnvironment["DEMO_PROMPT"] = "Compare an activity period "
+        app.launch()
+        dismissSystemAlerts()
+        let composer = app.textFields["agentComposer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 15))
+        XCTAssertEqual(composer.value as? String, "Compare an activity period ")
+        app.buttons["agentSendButton"].tap()
+        let choice = app.buttons["Last year"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 15), app.debugDescription)
+        let initialCleared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == placeholderValue"), object: composer
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [initialCleared], timeout: 10), .completed)
+        choice.tap()
+        let answerCleared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == placeholderValue"), object: composer
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [answerCleared], timeout: 10), .completed)
+        app.buttons["New conversation"].tap()
+        let newChat = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Ask Omnesis"), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [newChat], timeout: 10), .completed)
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try XCUIScreen.main.screenshot().pngRepresentation.write(
+            to: directory.appendingPathComponent("72j-new-chat-after-sent-clarification.png")
+        )
+    }
+
     func test_clarification_free_text_composer_acknowledgement() throws {
         for mode in ["success", "failure"] {
             app = XCUIApplication()

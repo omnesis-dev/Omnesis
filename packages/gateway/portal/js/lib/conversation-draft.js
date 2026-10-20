@@ -3,6 +3,12 @@
 
 const prefix = "omnesis:conversation-draft:";
 const pendingSubmissions = new Map();
+const draftRevisions = new Map();
+
+/** Revisions distinguish a new edit with identical text from an in-flight send. */
+export function conversationDraftRevision(key) {
+  return draftRevisions.get(key) ?? 0;
+}
 
 export function readConversationDraft(key) {
   try {
@@ -15,6 +21,7 @@ export function readConversationDraft(key) {
 
 /** Persist on input, before navigation or an asynchronous send can detach the composer. */
 export function writeConversationDraft(key, text, command = null) {
+  draftRevisions.set(key, conversationDraftRevision(key) + 1);
   try {
     if (!text && !command) localStorage.removeItem(prefix + key);
     else localStorage.setItem(prefix + key, JSON.stringify({ text, command }));
@@ -30,10 +37,21 @@ export function writeConversationDraft(key, text, command = null) {
 }
 
 /** An acknowledgment must not erase a newer draft typed after navigation. */
-export function clearConversationDraft(key, expectedText, expectedCommand = null) {
+export function clearConversationDraft(key, expectedText, expectedCommand = null, expectedRevision) {
+  if (expectedRevision !== undefined && conversationDraftRevision(key) !== expectedRevision) return false;
   const current = readConversationDraft(key);
   if (current.text !== expectedText || (current.command ?? null) !== expectedCommand) return false;
   return writeConversationDraft(key, "");
+}
+
+/** A first-send draft belongs to its session, including when that send needs retrying. */
+export function migrateLandingDraft(sessionId) {
+  const draft = readConversationDraft("new");
+  const revision = conversationDraftRevision("new");
+  if ((draft.text || draft.command) && writeConversationDraft(sessionId, draft.text, draft.command)) {
+    clearConversationDraft("new", draft.text, draft.command, revision);
+  }
+  return draft;
 }
 
 export function readPendingSubmission(sessionId) {

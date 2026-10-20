@@ -171,6 +171,7 @@ public final class AgentCoordinator {
     private(set) var conversationControls: ConversationControls?
     private(set) var conversationControlsSupported = false
     private(set) var submitting = false
+    private var draftSubmissionID: UUID?
     private(set) var submissionError: Error?
     private let draftStore = ConversationDraftStore()
     private(set) var dismissedConversationActivity = ConversationActivityDismissal()
@@ -292,14 +293,22 @@ public final class AgentCoordinator {
         }
     }
 
+    private func finishDraftSubmission(_ operation: UUID) {
+        guard draftSubmissionID == operation else { return }
+        draftSubmissionID = nil
+        submitting = false
+    }
+
     /// Keep the unsent draft until the gateway acknowledges its durable submission.
     func submitDraft(text: String, interrupt: Bool = false, deepResearch: Bool = false) async -> Bool {
         guard let client, canComposeMessage, !submitting else { return false }
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return false }
+        let operation = UUID()
+        draftSubmissionID = operation
         submitting = true
         submissionError = nil
-        defer { submitting = false }
+        defer { finishDraftSubmission(operation) }
         let originalKey = composerDraftKey
         draftStore.write(text, key: originalKey)
         guard let draft = draftStore.prepare(
@@ -313,12 +322,16 @@ public final class AgentCoordinator {
         ), let request = draft.submission else { return false }
         if !conversationControlsSupported {
             guard !interrupt, !busy else { return false }
-            let sent = await send(text: text, deepResearch: request.deepResearch)
-            let key = composerDraftKey
-            guard sent, self.client === client, draftStore.read(key) == draft else { return false }
-            draftStore.write("", key: key)
-            draftStore.restoreBackup(key)
-            return true
+            var acceptedKey: String?
+            _ = await send(text: text, deepResearch: request.deepResearch) { id in
+                let key = ConversationDraftStore.scope(url: client.baseURL, token: client.token) + ":" + id
+                acceptedKey = key
+                if self.draftStore.read(key) == draft {
+                    self.draftStore.write("", key: key)
+                    self.draftStore.restoreBackup(key)
+                }
+            }
+            return acceptedKey == composerDraftKey && self.client === client && draftSubmissionID == operation
         }
         switch await mintSessionIfNeeded(client: client) {
         case .ready: break
@@ -342,16 +355,16 @@ public final class AgentCoordinator {
                 draftStore.write("", key: acceptedDraftKey)
                 draftStore.restoreBackup(acceptedDraftKey)
             }
-            guard sessionId == id, self.client === client else { return false }
+            guard sessionId == id, self.client === client, draftSubmissionID == operation else { return false }
             await refreshConversationControls()
-            return sessionId == id && self.client === client
+            return sessionId == id && self.client === client && draftSubmissionID == operation
         } catch {
             if case GatewayClient.Error.serverError(let status, _) = error, status == 409,
                draftStore.read(acceptedDraftKey) == draft {
                 draftStore.renewRequest(acceptedDraftKey)
                 await refreshConversationControls()
             }
-            if sessionId == id, self.client === client { submissionError = error }
+            if sessionId == id, self.client === client, draftSubmissionID == operation { submissionError = error }
             return false
         }
     }
@@ -513,6 +526,7 @@ public final class AgentCoordinator {
         sessionId = nil
         queueHandoff = ConversationQueueHandoff()
         submitting = false
+        draftSubmissionID = nil
         conversationControls = nil
         conversationControlsSupported = false
         submissionError = nil
@@ -811,6 +825,7 @@ public final class AgentCoordinator {
         sessionId = nil
         queueHandoff = ConversationQueueHandoff()
         submitting = false
+        draftSubmissionID = nil
         conversationControls = nil
         conversationControlsSupported = false
         submissionError = nil
@@ -874,7 +889,6 @@ public final class AgentCoordinator {
     private func adoptConversationId(_ id: String) {
         if sessionId != id {
             queueHandoff = ConversationQueueHandoff()
-            submitting = false
             conversationControls = nil
             conversationControlsSupported = false
         }
@@ -1228,7 +1242,7 @@ public final class AgentCoordinator {
     /// newer turn returns `true`: restoring its stale text would overwrite the
     /// newer composer even when that older HTTP request failed.
     @discardableResult
-    func send(text: String, deepResearch: Bool = false) async -> Bool {
+    func send(text: String, deepResearch: Bool = false, onAccepted: ((String) -> Void)? = nil) async -> Bool {
         guard let client else { return false }
         guard terminalFailure == nil else { return false }
         // The gateway accepts one active turn per session. In particular,
@@ -1316,6 +1330,7 @@ public final class AgentCoordinator {
                 text: cleaned,
                 deepResearch: deepResearch
             )
+            onAccepted?(sessionId)
             // The request was accepted, but its UI completion may have been
             // superseded by navigation or a newer turn in this conversation.
             // In that case the newer surface already owns all presentation.

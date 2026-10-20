@@ -25,7 +25,7 @@
 import { html } from "htm/preact";
 import { useEffect, useReducer, useRef, useState } from "preact/hooks";
 
-import { migrateClarificationDraft, submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
+import { conversationDraftRevision, migrateLandingDraft, migrateClarificationDraft, submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
 import { ConversationControls } from "../components/agent/conversation-controls.js";
 import { handoffQueuedMessages, newQueueHandoffIds, visibleQueueControls } from "../lib/queue-handoff.js";
 import { createAgentClient } from "../lib/agent-client.js";
@@ -995,8 +995,8 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     // Read the browser location rather than the route prop here. `replaceUrl`
     // intentionally does not dispatch a route-change, so a stale prop must
     // never prevent the first durable conversation URL from being written.
-    const landingDraft = shouldReplaceLandingUrl(window.location.pathname) ? readConversationDraft("new") : null;
-    if (landingDraft?.text) writeConversationDraft(sessionId, landingDraft.text, landingDraft.command);
+    const landingDraft = shouldReplaceLandingUrl(window.location.pathname) ? migrateLandingDraft(sessionId) : null;
+    const landingDraftRevision = conversationDraftRevision(sessionId);
     if (shouldReplaceLandingUrl(window.location.pathname)) {
       replaceUrl(`/portal/agent/${encodeURIComponent(sessionId)}`);
       lastLoadedConvoIdRef.current = sessionId;
@@ -1018,7 +1018,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         throw new Error(result.submission.error || "The message failed. Send again to retry.");
       }
       clearPendingSubmission(sessionId, submission.clientMessageId);
-      if (landingDraft) clearConversationDraft(sessionId, landingDraft.text, landingDraft.command);
+      if (landingDraft) clearConversationDraft(sessionId, landingDraft.text, landingDraft.command, landingDraftRevision);
       if (activeSessionIdRef.current === sessionId) {
         await refreshControls(sessionId);
         refreshConversations();

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearConversationDraft,
   migrateClarificationDraft,
+  migrateLandingDraft,
   clearPendingSubmission,
   readConversationDraft,
   readPendingSubmission,
@@ -131,4 +132,56 @@ it("retains the legacy answer when migration cannot persist the composer", () =>
   });
   expect(migrateClarificationDraft("first", "q")).toBe(false);
   expect(readConversationDraft("clarification:q").text).toBe("Use this month");
+});
+
+
+describe("first-message draft ownership", () => {
+  it("keeps a failed first send in its session without resurfacing it in a new chat after retry", () => {
+    storage();
+    writeConversationDraft("new", "  Ask which activity to summarize  ", "deep-research");
+    const sent = migrateLandingDraft("first");
+    // A failed send retains the session draft across reload and navigation.
+    expect(readConversationDraft("first")).toEqual(sent);
+    expect(readConversationDraft("new")).toEqual({ text: "", command: null });
+    // Retrying from the session acknowledges only that session's draft.
+    expect(clearConversationDraft("first", sent.text, sent.command)).toBe(true);
+    expect(readConversationDraft("first").text).toBe("");
+    expect(readConversationDraft("new").text).toBe("");
+  });
+
+  it("preserves a same-text edit made by a listener while the draft is transferred", () => {
+    storage();
+    writeConversationDraft("new", "Choose a topic");
+    vi.stubGlobal("window", {
+      CustomEvent: class {
+        detail: { key: string };
+        constructor(_type: string, init: { detail: { key: string } }) { this.detail = init.detail; }
+      },
+      dispatchEvent(event: { detail: { key: string } }) {
+        if (event.detail.key === "first") writeConversationDraft("new", "Choose a topic");
+      },
+    });
+    migrateLandingDraft("first");
+    expect(readConversationDraft("first").text).toBe("Choose a topic");
+    expect(readConversationDraft("new").text).toBe("Choose a topic");
+  });
+
+  it("retains the landing draft when the session draft cannot be persisted", () => {
+    storage();
+    writeConversationDraft("new", "Choose a topic");
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("quota"); });
+    migrateLandingDraft("first");
+    expect(readConversationDraft("new").text).toBe("Choose a topic");
+    expect(readConversationDraft("first").text).toBe("");
+  });
+
+  it("leaves a later new-chat draft intact when the first session acknowledges", () => {
+    storage();
+    writeConversationDraft("new", "Choose a topic");
+    const sent = migrateLandingDraft("first");
+    writeConversationDraft("new", "Another question");
+    clearConversationDraft("first", sent.text, sent.command);
+    clearConversationDraft("new", sent.text, sent.command);
+    expect(readConversationDraft("new").text).toBe("Another question");
+  });
 });

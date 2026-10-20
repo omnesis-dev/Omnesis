@@ -8,7 +8,7 @@ import { parseHTML } from "linkedom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationControls } from "./conversation-controls.js";
 import { Composer, MessageBubble } from "./parts.js";
-import { writeConversationDraft } from "../../lib/conversation-draft.js";
+import { clearConversationDraft, conversationDraftRevision, migrateLandingDraft, writeConversationDraft } from "../../lib/conversation-draft.js";
 
 // Sanitization itself is covered in the portal browser suite.
 vi.mock("dompurify", () => ({ default: { sanitize: (html) => html } }));
@@ -250,6 +250,65 @@ describe("conversation controls", () => {
     );
     expect(host.querySelector("textarea").value).toBe("");
   });
+  it("clears the migrated first-send composer after acknowledgement and opens a blank new chat", async () => {
+    setup();
+    writeConversationDraft("new", "Choose a topic ");
+    let acknowledge;
+    const onSubmit = vi.fn(async () => {
+      const draft = migrateLandingDraft("minted");
+      const revision = conversationDraftRevision("minted");
+      await new Promise((resolve) => { acknowledge = resolve; });
+      clearConversationDraft("minted", draft.text, draft.command, revision);
+      return true;
+    });
+    await act(async () => render(h(Composer, { draftKey: "new", onSubmit }), host));
+    await act(async () => host.querySelector("form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    await act(async () => render(h(Composer, { draftKey: "minted", onSubmit }), host));
+    expect(host.querySelector("textarea").value).toBe("Choose a topic ");
+    await act(async () => acknowledge());
+    expect(host.querySelector("textarea").value).toBe("");
+    await act(async () => render(h(Composer, { draftKey: "new", onSubmit }), host));
+    expect(host.querySelector("textarea").value).toBe("");
+  });
+
+  it("preserves an identical new-chat draft while the migrated first send is acknowledged", async () => {
+    setup();
+    writeConversationDraft("new", "Same prompt");
+    let acknowledge;
+    const onSubmit = vi.fn(() => {
+      migrateLandingDraft("minted");
+      return new Promise((resolve) => { acknowledge = resolve; });
+    });
+    await act(async () => render(h(Composer, { draftKey: "new", onSubmit }), host));
+    await act(async () => host.querySelector("form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    await act(async () => render(h(Composer, { draftKey: "minted", onSubmit }), host));
+    writeConversationDraft("new", "Same prompt");
+    await act(async () => render(h(Composer, { draftKey: "new", onSubmit }), host));
+    await act(async () => acknowledge(true));
+    expect(host.querySelector("textarea").value).toBe("Same prompt");
+    await act(async () => render(null, host));
+    await act(async () => render(h(Composer, { draftKey: "new", onSubmit }), host));
+    expect(host.querySelector("textarea").value).toBe("Same prompt");
+  });
+
+  it("does not restore a sent landing prompt after retrying it in the minted conversation", async () => {
+    setup();
+    writeConversationDraft("new", "Choose a topic ");
+    const firstSend = vi.fn(async () => {
+      migrateLandingDraft("minted");
+      return false;
+    });
+    await act(async () => render(h(Composer, { draftKey: "new", onSubmit: firstSend }), host));
+    await act(async () => host.querySelector("form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    const retry = vi.fn().mockResolvedValue(true);
+    await act(async () => render(h(Composer, { draftKey: "minted", onSubmit: retry }), host));
+    expect(host.querySelector("textarea").value).toBe("Choose a topic ");
+    await act(async () => host.querySelector("form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })));
+    expect(retry).toHaveBeenCalledWith("Choose a topic", {});
+    await act(async () => render(h(Composer, { draftKey: "new", onSubmit: retry }), host));
+    expect(host.querySelector("textarea").value).toBe("");
+  });
+
   it("clears an acknowledged free-text answer including surrounding whitespace", async () => {
     setup();
     const onSubmit = vi.fn().mockResolvedValue(true);

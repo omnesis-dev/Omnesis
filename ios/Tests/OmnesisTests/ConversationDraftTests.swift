@@ -434,6 +434,113 @@ final class ConversationControlsCompatibilityTests: XCTestCase {
     }
 }
 
+@available(iOS 17.0, *)
+@MainActor
+extension ConversationControlsCompatibilityTests {
+    func testFirstSendMovesDraftToMintedSessionAndLeavesNextChatEmpty() async {
+        let coordinator = coordinator()
+        coordinator.newConversation()
+        let landingKey = coordinator.composerDraftKey
+        ConversationControlsStub.responses["sessions"] = (
+            200, #"{"sessionId":"minted-example","model":"fixture","backend":"fixture"}"#
+        )
+        ConversationControlsStub.responses["messages"] = (202, #"{"messageId":"assistant-example"}"#)
+        ConversationControlsStub.responses["controls"] = (404, "{}")
+        var remainedSubmitting = false
+        ConversationControlsStub.beforeResponse = { request in
+            if request.url?.lastPathComponent == "messages" {
+                remainedSubmitting = coordinator.submitting
+                XCTAssertEqual(coordinator.draft(for: landingKey), "")
+                XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "Choose a period ")
+            }
+        }
+        let sent = await coordinator.submitDraft(text: "Choose a period ")
+        XCTAssertTrue(sent)
+        XCTAssertTrue(remainedSubmitting)
+        XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "")
+        coordinator.newConversation()
+        XCTAssertEqual(coordinator.composerDraftKey, landingKey)
+        XCTAssertEqual(coordinator.draft(for: landingKey), "")
+        coordinator.saveDraft("", for: landingKey)
+    }
+
+    func testFirstSendKeepsFailedAndNewerDraftsInMintedConversation() async {
+        for status in [202, 503] {
+            for edited in [false, true] {
+                let coordinator = coordinator()
+                coordinator.newConversation()
+                let landingKey = coordinator.composerDraftKey
+                ConversationControlsStub.responses["sessions"] = (
+                    200, #"{"sessionId":"minted-example","model":"fixture","backend":"fixture"}"#
+                )
+                ConversationControlsStub.responses["messages"] = (status, #"{"messageId":"assistant-example"}"#)
+                ConversationControlsStub.beforeResponse = { request in
+                    if request.url?.lastPathComponent == "messages", edited {
+                        coordinator.saveDraft("An unsent follow-up", for: coordinator.composerDraftKey)
+                    }
+                }
+                let sent = await coordinator.submitDraft(text: "First prompt ")
+                XCTAssertEqual(sent, status == 202)
+                let key = coordinator.composerDraftKey
+                let expected = edited ? "An unsent follow-up" : (status == 202 ? "" : "First prompt ")
+                XCTAssertEqual(coordinator.draft(for: key), expected)
+                coordinator.newConversation()
+                XCTAssertEqual(coordinator.draft(for: landingKey), "")
+                XCTAssertEqual(coordinator.draft(for: key), expected)
+                coordinator.saveDraft("A genuine landing draft", for: landingKey)
+                coordinator.newConversation()
+                XCTAssertEqual(coordinator.draft(for: landingKey), "A genuine landing draft")
+                coordinator.saveDraft("", for: landingKey)
+                coordinator.saveDraft("", for: key)
+                ConversationControlsStub.beforeResponse = nil
+            }
+        }
+    }
+
+    func testOldFirstSendCompletionCannotClearNewSubmissionOrItsDraft() async {
+        for firstStatus in [202, 503] {
+            let coordinator = coordinator()
+            coordinator.newConversation()
+            ConversationControlsStub.responses["sessions"] = (
+                200, #"{"sessionId":"first-example","model":"fixture","backend":"fixture"}"#
+            )
+            ConversationControlsStub.responses["messages"] = (firstStatus, #"{"messageId":"first-answer"}"#)
+            var originalKey = ""
+            var firstGate: CheckedContinuation<Void, Never>?
+            var secondGate: CheckedContinuation<Void, Never>?
+            var second: Task<Bool, Never>?
+            ConversationControlsStub.beforeResponse = { request in
+                guard request.url?.lastPathComponent == "messages" else { return }
+                if request.url?.path.contains("first-example") == true {
+                    originalKey = coordinator.composerDraftKey
+                    coordinator.newConversation()
+                    ConversationControlsStub.responses["sessions"] = (
+                        200, #"{"sessionId":"second-example","model":"fixture","backend":"fixture"}"#
+                    )
+                    ConversationControlsStub.responses["messages"] = (202, #"{"messageId":"second-answer"}"#)
+                    second = Task { await coordinator.submitDraft(text: "New conversation prompt") }
+                    await withCheckedContinuation { firstGate = $0 }
+                } else {
+                    firstGate?.resume()
+                    await withCheckedContinuation { secondGate = $0 }
+                }
+            }
+            let first = await coordinator.submitDraft(text: "Original prompt")
+            XCTAssertFalse(first)
+            XCTAssertTrue(coordinator.submitting, "The second HTTP request still owns the submit gate")
+            XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "New conversation prompt")
+            XCTAssertEqual(coordinator.draft(for: originalKey), firstStatus == 202 ? "" : "Original prompt")
+            secondGate?.resume()
+            let sent = await second?.value
+            XCTAssertEqual(sent, true)
+            XCTAssertFalse(coordinator.submitting)
+            XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "")
+            coordinator.saveDraft("", for: originalKey)
+            ConversationControlsStub.beforeResponse = nil
+        }
+    }
+}
+
 private final class ConversationControlsStub: URLProtocol {
     nonisolated(unsafe) static var responses: [String: (Int, String)] = [:]
     nonisolated(unsafe) static var requests: [URLRequest] = []
