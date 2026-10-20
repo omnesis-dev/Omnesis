@@ -174,23 +174,25 @@ final class RealtimeCallSession {
         case "response.done":
             // Playback can outlast the server response; its completion updates the label.
             if playbackStarted == nil { status = "Listening" }
-        case "tool.start":
-            if let id = event["id"] as? String, let name = event["name"] as? String {
-                tools.append(Tool(id: id, name: name))
-                if tools.count > 5 { tools.removeFirst() }
-            }
-        case "tool.end":
-            if let id = event["id"] as? String, let index = tools.firstIndex(where: { $0.id == id }) {
-                tools[index].finished = true
-                Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(5))
-                    self?.tools.removeAll { $0.id == id }
-                }
-            }
+        case "tool.start", "tool.end": receiveTool(event)
         case "error":
             let message = (event["error"] as? [String: Any])?["message"] as? String ?? "The voice conversation could not continue."
             throw NSError(domain: "RealtimeCall", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
         default: break
+        }
+    }
+
+    private func receiveTool(_ event: [String: Any]) {
+        guard let id = event["id"] as? String else { return }
+        if event["type"] as? String == "tool.start", let name = event["name"] as? String {
+            tools.append(Tool(id: id, name: name))
+            if tools.count > 5 { tools.removeFirst() }
+        } else if let index = tools.firstIndex(where: { $0.id == id }) {
+            tools[index].finished = true
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                self?.tools.removeAll { $0.id == id }
+            }
         }
     }
 

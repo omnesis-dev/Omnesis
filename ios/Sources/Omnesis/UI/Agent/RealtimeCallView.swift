@@ -48,10 +48,7 @@ struct RealtimeCallView: View {
                     if let error = session.error {
                         GatewayErrorView(context: "start the voice conversation", error: error, onRetry: {
                             session.error = nil
-                            if let pairing { Task { await session.start(
-                                pairing: pairing,
-                                conversationID: session.conversationID ?? conversationID
-                            ) } }
+                            Task { await startCall() }
                         })
                         .frame(minHeight: GatewayErrorView.minScrollHeight)
                     } else {
@@ -104,13 +101,14 @@ struct RealtimeCallView: View {
                 .accessibilityLabel("End voice conversation")
             }
             Text("Audio is sent through your gateway to OpenAI.")
-                .font(.caption).foregroundStyle(Theme.textSecondary)
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(24)
         .background(Theme.bgPrimary)
         .foregroundStyle(Theme.textPrimary)
-        .task { if let pairing { await session.start(pairing: pairing, conversationID: session.conversationID ?? conversationID) } }
+        .task { await startCall() }
         .onDisappear { session.stop()
             onEnd?(session.conversationID)
         }
@@ -119,6 +117,11 @@ struct RealtimeCallView: View {
                 dismiss()
             }
         }
+    }
+
+    private func startCall() async {
+        guard let pairing else { return }
+        await session.start(pairing: pairing, conversationID: session.conversationID ?? conversationID)
     }
 }
 
