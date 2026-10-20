@@ -49,7 +49,7 @@ struct RealtimeCallView: View {
                             .foregroundStyle(.white)
                     }
                     .accessibilityHidden(true)
-                    Text(session.muted ? "Microphone muted" : session.status)
+                    Text(session.muted && !session.ending ? "Microphone muted" : session.status)
                         .font(.title3.weight(.medium))
                         .accessibilityAddTraits(.updatesFrequently)
                     if let error = session.error {
@@ -59,7 +59,7 @@ struct RealtimeCallView: View {
                         })
                         .frame(minHeight: GatewayErrorView.minScrollHeight)
                     } else {
-                        Text(session.transcript.isEmpty ? "Speak naturally. You can interrupt Omnesis at any time." : session.transcript)
+                        Text(conversationCaption)
                             .font(.body)
                             .foregroundStyle(session.transcript.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                             .multilineTextAlignment(.center)
@@ -134,6 +134,11 @@ struct RealtimeCallView: View {
                 dismiss()
             }
         }
+    }
+
+    private var conversationCaption: String {
+        if session.ending { return "Returning to your conversation…" }
+        return session.transcript.isEmpty ? "Speak naturally. You can interrupt Omnesis at any time." : session.transcript
     }
 
     private func startCall() async {
