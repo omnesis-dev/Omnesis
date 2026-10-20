@@ -8,9 +8,11 @@ import SwiftUI
 @available(iOS 17.0, *)
 struct RealtimeCallView: View {
     let pairing: Pairing?
+    var freezeToolActivity = false
     var conversationID: String?
-    var onEnd: ((String?) -> Void)?
     @State var session = RealtimeCallSession()
+    @State var citationsOpen = false
+    @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
@@ -23,7 +25,12 @@ struct RealtimeCallView: View {
                         .font(.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
-                Image(systemName: "waveform").foregroundStyle(Theme.accent)
+                Button {
+                    withAnimation(CitationsDrawer.openCloseAnimation) { citationsOpen.toggle() }
+                } label: {
+                    Image(systemName: "quote.bubble").foregroundStyle(Theme.accent)
+                }
+                .accessibilityLabel("Open citations")
             }
             ScrollView {
                 VStack(spacing: 24) {
@@ -58,21 +65,23 @@ struct RealtimeCallView: View {
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: .infinity)
                     }
-                    VStack(spacing: 8) {
-                        ForEach(session.tools) { tool in
-                            HStack(spacing: 12) {
-                                if tool.finished {
-                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
-                                } else { ProgressView() }
-                                Text(tool.name.replacingOccurrences(of: "_", with: " "))
-                                    .font(.subheadline.weight(.medium)).lineLimit(2)
-                                Spacer()
-                                Text(tool.finished ? "Done" : "Working")
-                                    .font(.caption).foregroundStyle(Theme.textSecondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let assistant = activityTurn {
+                            let pillRuns = computeCitationPillRuns(parts: assistant.parts)
+                            let lastText = agentLastAnswerTextIndex(in: assistant.parts)
+                            ForEach(Array(assistant.parts.enumerated()), id: \.offset) { index, part in
+                                switch part {
+                                case .tool, .subagent:
+                                    AgentPartView(
+                                        part: part,
+                                        pillRun: pillRuns[index],
+                                        freeze: freezeToolActivity,
+                                        turnDone: assistant.isComplete
+                                    )
+                                    .environment(\.agentAnswerTextFollows, index < (lastText ?? -1))
+                                default: EmptyView()
+                                }
                             }
-                            .padding(12)
-                            .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 14))
-                            .accessibilityElement(children: .combine)
                         }
                     }
                 }
@@ -108,10 +117,15 @@ struct RealtimeCallView: View {
         .padding(24)
         .background(Theme.bgPrimary)
         .foregroundStyle(Theme.textPrimary)
-        .task { await startCall() }
-        .onDisappear { session.stop()
-            onEnd?(session.conversationID)
+        .overlay {
+            CitationsDrawer(
+                trailAnnotations: store.agent.trailAnnotations,
+                recordCitations: store.agent.recordCitations,
+                isOpen: $citationsOpen
+            )
         }
+        .task { await startCall() }
+        .onDisappear { session.stop() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { session.stop()
                 dismiss()
@@ -121,31 +135,60 @@ struct RealtimeCallView: View {
 
     private func startCall() async {
         guard let pairing else { return }
-        await session.start(pairing: pairing, conversationID: session.conversationID ?? conversationID)
+        await session.start(pairing: pairing, conversationID: session.conversationID ?? conversationID) { id in
+            try await RealtimeConversationHandoff.attach(id: id, to: store.agent)
+        }
+    }
+
+    private var activityTurn: AgentAssistantTurn? {
+        for turn in store.agent.turns.reversed() {
+            if case .assistant(let assistant) = turn { return assistant }
+        }
+        return nil
     }
 }
 
 #if DEBUG
 #Preview("Voice · Starting microphone") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeMicrophoneStarting)
+        .environment(AppStore.preview())
 }
 
 #Preview("Voice · Listening") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
+        .environment(AppStore.preview())
 }
 
 #Preview("Voice · Tool activity") {
-    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools)
+    RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+        .environment(PreviewMocks.realtimeToolsStore)
         .preferredColorScheme(.dark)
 }
 
 #Preview("Voice · Accessible tool activity") {
-    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools)
+    RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+        .environment(PreviewMocks.realtimeToolsStore)
         .dynamicTypeSize(.accessibility3)
+}
+
+#Preview("Voice · SQL results") {
+    RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+        .environment(PreviewMocks.realtimeSQLStore)
+}
+
+#Preview("Voice · Batch tool activity") {
+    RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+        .environment(PreviewMocks.realtimeBatchStore)
+}
+
+#Preview("Voice · Citations") {
+    RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+        .environment(PreviewMocks.realtimeCitationsStore)
 }
 
 #Preview("Voice · Error") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure)
+        .environment(AppStore.preview())
 }
 #endif
 #endif

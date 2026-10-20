@@ -8,15 +8,8 @@ import SwiftUI
 @MainActor
 @Observable
 final class RealtimeCallSession {
-    struct Tool: Identifiable {
-        let id: String
-        let name: String
-        var finished = false
-    }
-
     var status = "Connecting…"
     var transcript = ""
-    var tools: [Tool] = []
     var muted = false
     var error: Error?
     var connected = false
@@ -43,30 +36,24 @@ final class RealtimeCallSession {
     @ObservationIgnored private var captureDiagnostics = RealtimeCaptureDiagnostics()
     @ObservationIgnored private var audioObservers: [NSObjectProtocol] = []
 
-    func start(pairing: Pairing, conversationID: String? = nil) async {
+    func start(
+        pairing: Pairing,
+        conversationID: String? = nil,
+        onReady: (@MainActor (String) async throws -> Void)? = nil
+    ) async {
         guard receiver == nil else { return }
         generation = UUID()
         let callGeneration = generation
         captureDiagnostics = RealtimeCaptureDiagnostics()
         transcript = ""
-        tools = []
         assistantTranscriptStarted = false
         status = "Connecting…"
         let granted = await AVAudioApplication.requestRecordPermission()
-        guard !Task.isCancelled, generation == callGeneration else { return }
-        guard granted else {
-            error = NSError(
-                domain: "RealtimeCall",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Allow microphone access in Settings to talk to Omnesis."]
-            )
-            status = "Microphone access needed"
-            return
-        }
+        guard acceptMicrophonePermission(granted, callGeneration: callGeneration) else { return }
         do {
-            guard let url = RealtimeProtocol.socketURL(pairing.url, conversationID: conversationID) else { throw URLError(.badURL) }
-            var request = URLRequest(url: url)
-            request.setValue("Bearer \(pairing.token)", forHTTPHeaderField: "Authorization")
+            guard let request = RealtimeProtocol.socketRequest(pairing: pairing, conversationID: conversationID) else {
+                throw URLError(.badURL)
+            }
             let socket = OmnesisURLSession.shared.webSocketTask(with: request)
             self.socket = socket
             socket.resume()
@@ -98,20 +85,53 @@ final class RealtimeCallSession {
                         @unknown default: continue
                         }
                         guard let event = RealtimeProtocol.event(data) else { continue }
-                        guard self?.generation == callGeneration else { return }
+                        guard self?.isCurrentCall(callGeneration) == true else { return }
+                        try await self?.prepareConversation(event, onReady: onReady)
+                        guard self?.isCurrentCall(callGeneration) == true else { return }
                         try self?.receive(event)
                     }
                 } catch {
-                    guard !Task.isCancelled, self?.generation == callGeneration else { return }
+                    guard self?.isCurrentCall(callGeneration) == true else { return }
                     self?.fail(error)
                 }
             }
         } catch { fail(error) }
     }
 
+    private func isCurrentCall(_ id: UUID) -> Bool {
+        !Task.isCancelled && generation == id
+    }
+
+    private func acceptMicrophonePermission(_ granted: Bool, callGeneration: UUID) -> Bool {
+        guard isCurrentCall(callGeneration) else { return false }
+        guard granted else {
+            error = NSError(
+                domain: "RealtimeCall",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Allow microphone access in Settings to talk to Omnesis."]
+            )
+            status = "Microphone access needed"
+            return false
+        }
+        return true
+    }
+
+    private func prepareConversation(
+        _ event: [String: Any],
+        onReady: (@MainActor (String) async throws -> Void)?
+    ) async throws {
+        guard event["type"] as? String == "session.ready" else { return }
+        try RealtimeProtocol.validateReady(event)
+        guard !connected, let onReady else { return }
+        guard let id = event["conversationId"] as? String else { throw URLError(.badServerResponse) }
+        conversationID = id
+        try await onReady(id)
+    }
+
     private func receive(_ event: [String: Any]) throws {
         switch event["type"] as? String {
         case "session.ready":
+            try RealtimeProtocol.validateReady(event)
             guard !connected else { return }
             self.conversationID = event["conversationId"] as? String ?? conversationID
             clientAudioDiagnostics = event["clientAudioDiagnostics"] as? Bool == true
@@ -141,25 +161,10 @@ final class RealtimeCallSession {
         case "response.done":
             // Playback can outlast the server response; its completion updates the label.
             if playbackStarted == nil { status = "Listening" }
-        case "tool.start", "tool.end": receiveTool(event)
         case "error":
             let message = (event["error"] as? [String: Any])?["message"] as? String ?? "The voice conversation could not continue."
             throw NSError(domain: "RealtimeCall", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
         default: break
-        }
-    }
-
-    private func receiveTool(_ event: [String: Any]) {
-        guard let id = event["id"] as? String else { return }
-        if event["type"] as? String == "tool.start", let name = event["name"] as? String {
-            tools.append(Tool(id: id, name: name))
-            if tools.count > 5 { tools.removeFirst() }
-        } else if let index = tools.firstIndex(where: { $0.id == id }) {
-            tools[index].finished = true
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(5))
-                self?.tools.removeAll { $0.id == id }
-            }
         }
     }
 

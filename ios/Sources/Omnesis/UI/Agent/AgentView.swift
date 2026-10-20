@@ -225,9 +225,7 @@ public struct AgentView: View {
             realtimeAvailable = available
         }
         .fullScreenCover(isPresented: $realtimePresented) {
-            RealtimeCallView(pairing: store.pairing, conversationID: store.agent.sessionId, onEnd: { id in
-                if let id { Task { await store.agent.resumeConversation(id: id, forceRefresh: true) } }
-            })
+            RealtimeCallView(pairing: store.pairing, conversationID: store.agent.sessionId)
         }
         .omnesisColorScheme()
         #if DEBUG

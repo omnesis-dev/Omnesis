@@ -37,6 +37,14 @@ final class RealtimeProtocolTests: XCTestCase {
         XCTAssertNil(RealtimeProtocol.event(Data("not JSON".utf8)))
         XCTAssertNil(RealtimeProtocol.event(Data("[]".utf8)))
     }
+
+    func testReadyMustConfirmNegotiatedVersionBeforeConversationOrCaptureStarts() throws {
+        XCTAssertNoThrow(try RealtimeProtocol.validateReady(["protocolVersion": 2, "futureField": true]))
+        let invalid: [[String: Any]] = [[:], ["protocolVersion": 1], ["protocolVersion": 3], ["protocolVersion": "2"]]
+        for event in invalid {
+            XCTAssertThrowsError(try RealtimeProtocol.validateReady(event))
+        }
+    }
 }
 
 final class RealtimeCapabilityTests: XCTestCase {
@@ -65,8 +73,20 @@ final class RealtimeCapabilityTests: XCTestCase {
         )
     }
 
+    func testAudioSocketRequestsCanonicalSSEWithoutLegacyToolMirroring() throws {
+        let request = try XCTUnwrap(RealtimeProtocol.socketRequest(pairing: pairing, conversationID: "same-thread"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Omnesis-Realtime-Version"), "2")
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Omnesis-Realtime-Events"))
+        let url = try XCTUnwrap(request.url)
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "conversationId" })?.value, "same-thread")
+    }
+
     func testCapabilityUsesAuthenticatedGatewayRequest() async throws {
-        let session = Session(body: "{\"available\":true}")
+        let session = Session(body: """
+        {"available":true,"directAgentTools":true,"canonicalAgentEvents":true,"protocol":{"min":1,"max":2},"futureField":42}
+        """)
         let available = try await RealtimeCapability.available(pairing: pairing, session: session)
         XCTAssertTrue(available)
         XCTAssertEqual(session.request?.url?.path, "/agent/realtime")
@@ -79,15 +99,51 @@ final class RealtimeCapabilityTests: XCTestCase {
         XCTAssertFalse(available)
     }
 
+    func testLegacyAudioCapabilityCannotEnableCanonicalVoice() async throws {
+        for body in [
+            "{\"available\":true}",
+            "{\"available\":true,\"directAgentTools\":true}",
+            "{\"available\":true,\"canonicalAgentEvents\":true}",
+            "{\"available\":true,\"directAgentTools\":false,\"canonicalAgentEvents\":true}",
+        ] {
+            let withProtocol = String(body.dropLast()) + ",\"protocol\":{\"min\":1,\"max\":2}}"
+            let available = try await RealtimeCapability.available(pairing: pairing, session: Session(body: withProtocol))
+            XCTAssertFalse(available)
+        }
+    }
+
     func testDisabledCapabilityHidesVoice() async throws {
-        let available = try await RealtimeCapability.available(pairing: pairing, session: Session(body: "{\"available\":false}"))
+        let body = "{\"available\":false,\"directAgentTools\":true,\"canonicalAgentEvents\":true,\"protocol\":{\"min\":1,\"max\":2}}"
+        let available = try await RealtimeCapability.available(pairing: pairing, session: Session(body: body))
         XCTAssertFalse(available)
     }
 
     func testMalformedCapabilityCannotEnableVoice() async throws {
-        do {
-            _ = try await RealtimeCapability.available(pairing: pairing, session: Session(body: "{}"))
-            XCTFail("Missing availability must not enable voice")
-        } catch is DecodingError {}
+        let available = try await RealtimeCapability.available(pairing: pairing, session: Session(body: "{}"))
+        XCTAssertFalse(available)
+    }
+
+    func testGatewayWithoutMediaProtocolRangeKeepsVoiceHidden() async throws {
+        let body = "{\"available\":true,\"directAgentTools\":true,\"canonicalAgentEvents\":true}"
+        let available = try await RealtimeCapability.available(pairing: pairing, session: Session(body: body))
+        XCTAssertFalse(available)
+    }
+
+    func testOnlyOverlappingMediaProtocolRangesEnableVoice() async throws {
+        for (range, expected) in [
+            ("{\"min\":1,\"max\":2}", true),
+            ("{\"min\":2,\"max\":3}", true),
+            ("{\"min\":1,\"max\":1}", false),
+            ("{\"min\":3,\"max\":4}", false),
+            ("{\"min\":3,\"max\":2}", false),
+            ("{\"min\":0,\"max\":2}", false),
+            ("{\"min\":2}", false),
+            ("{\"min\":\"2\",\"max\":3}", false),
+            ("null", false),
+        ] {
+            let body = "{\"available\":true,\"directAgentTools\":true,\"canonicalAgentEvents\":true,\"protocol\":\(range)}"
+            let available = try await RealtimeCapability.available(pairing: pairing, session: Session(body: body))
+            XCTAssertEqual(available, expected, range)
+        }
     }
 }

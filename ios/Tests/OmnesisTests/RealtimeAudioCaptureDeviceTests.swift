@@ -45,7 +45,7 @@ final class RealtimeAudioCaptureDeviceTests: XCTestCase {
             packets += 1
             sent.fulfill()
         }
-        try session.receiveForTesting(["type": "session.ready", "conversationId": "capture-test"])
+        try session.receiveForTesting(["type": "session.ready", "conversationId": "capture-test", "protocolVersion": 2])
         await fulfillment(of: [sent], timeout: 10)
         XCTAssertGreaterThan(packets, 0, session.microphoneStartupDiagnostic)
         XCTAssertEqual(session.status, "Listening", session.microphoneStartupDiagnostic)
@@ -72,7 +72,9 @@ final class RealtimeAudioCaptureDeviceTests: XCTestCase {
             packets += 1
             initial.fulfill()
         }
-        try session.receiveForTesting(["type": "session.ready", "conversationId": "capture-restart-test", "clientAudioDiagnostics": true])
+        try session.receiveForTesting([
+            "type": "session.ready", "conversationId": "capture-restart-test", "clientAudioDiagnostics": true, "protocolVersion": 2,
+        ])
         await fulfillment(of: [initial], timeout: 10)
         guard packets > 0 else { XCTFail(session.microphoneStartupDiagnostic)
             return

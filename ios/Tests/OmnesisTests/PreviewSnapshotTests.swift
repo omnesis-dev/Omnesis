@@ -30,19 +30,25 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testRealtimeCallMicrophoneStarting() {
         snapshot(
-            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeMicrophoneStarting),
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeMicrophoneStarting).environment(AppStore.preview()),
             name: "realtime-microphone-starting",
             ignoresSafeArea: true
         )
     }
 
     func testRealtimeCallListening() {
-        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening), name: "realtime-listening", ignoresSafeArea: true)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening).environment(AppStore.preview()),
+            name: "realtime-listening",
+            ignoresSafeArea: true
+        )
     }
 
     func testRealtimeCallTools() {
         snapshot(
-            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools).preferredColorScheme(.dark),
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore)
+                .preferredColorScheme(.dark),
             name: "realtime-tools",
             ignoresSafeArea: true
         )
@@ -50,7 +56,8 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testRealtimeCallSmallPhone() {
         snapshot(
-            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools),
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore),
             name: "realtime-small-phone",
             size: CGSize(width: 375, height: 667),
             ignoresSafeArea: true
@@ -59,14 +66,60 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testRealtimeCallAccessible() {
         snapshot(
-            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools).dynamicTypeSize(.accessibility3),
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore)
+                .dynamicTypeSize(.accessibility3),
             name: "realtime-accessible",
             ignoresSafeArea: true
         )
     }
 
+    func testRealtimeCallSQL() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeSQLStore),
+            name: "realtime-sql",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallBatch() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeBatchStore),
+            name: "realtime-batch",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallCitations() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore),
+            name: "realtime-citations",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore),
+            name: "realtime-citations-small-phone",
+            size: CGSize(width: 375, height: 667),
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore).dynamicTypeSize(.accessibility3),
+            name: "realtime-citations-accessible",
+            ignoresSafeArea: true
+        )
+    }
+
     func testRealtimeCallFailure() {
-        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure), name: "realtime-failure", ignoresSafeArea: true)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure).environment(AppStore.preview()),
+            name: "realtime-failure",
+            ignoresSafeArea: true
+        )
     }
 
     private static let outputDir = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
