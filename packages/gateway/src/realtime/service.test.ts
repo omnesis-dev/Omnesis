@@ -441,7 +441,17 @@ describe("direct realtime Omnesis runtime", () => {
       ?.session as {
       tools: Array<{ name: string; parameters: unknown }>;
       instructions: string;
-      audio: { input: { turn_detection: { create_response: boolean } } };
+      audio: {
+        input: {
+          noise_reduction: { type: string };
+          turn_detection: {
+            type: string;
+            create_response: boolean;
+            interrupt_response: boolean;
+            threshold: number;
+          };
+        };
+      };
     };
     expect(configuration.tools.some((tool) => tool.name === "annotate_many")).toBe(true);
     expect(configuration.tools.some((tool) => tool.name === "run_sql")).toBe(true);
@@ -456,7 +466,13 @@ describe("direct realtime Omnesis runtime", () => {
     ).toBe(true);
     expect(configuration.instructions).toContain("last clearly established language");
     expect(configuration.instructions).toContain("only on an explicit request");
-    expect(configuration.audio.input.turn_detection.create_response).toBe(false);
+    expect(configuration.audio.input.noise_reduction).toEqual({ type: "near_field" });
+    expect(configuration.audio.input.turn_detection).toEqual({
+      type: "server_vad",
+      create_response: false,
+      interrupt_response: false,
+      threshold: 0.65,
+    });
     expect(f.ordinary.runTurn).not.toHaveBeenCalled();
     expect(f.events.some((event) => event.type === "agent.event")).toBe(false);
   });
@@ -612,6 +628,40 @@ describe("direct realtime Omnesis runtime", () => {
     await settle(f);
     expect(f.peer.close).not.toHaveBeenCalled();
     expect(f.usage).toHaveBeenCalledTimes(1);
+  });
+  it("cancels an owned response once across repeated VAD and client cancellation, then continues the call", async () => {
+    const f = await fixture();
+    const connection = await ready(f);
+    await speech(f);
+    f.socket.event({ type: "input_audio_buffer.speech_started" });
+    f.socket.event({ type: "input_audio_buffer.speech_started" });
+    connection.receive(JSON.stringify({ type: "response.cancel" }));
+    expect(f.socket.sent.filter((event) => event.type === "response.cancel")).toEqual([
+      { type: "response.cancel", response_id: "r1" },
+    ]);
+    done(f, "r1", "cancelled");
+    await settle(f);
+    f.socket.event({ type: "error", error: { code: "response_cancel_not_active" } });
+    f.socket.event({ type: "response.output_audio.delta", response_id: "r1", delta: "AAAA" });
+    expect(f.peer.close).not.toHaveBeenCalled();
+    await speech(f, "r2", "replacement-speech");
+    done(f, "r1", "cancelled");
+    f.socket.event({ type: "response.output_audio.delta", response_id: "r2", delta: "BBBB" });
+    done(f, "r2");
+    await vi.waitFor(() =>
+      expect(f.canonical.filter((event) => event.type === "agent.message.end")).toHaveLength(2),
+    );
+    connection.receive(JSON.stringify({ type: "response.cancel" }));
+    expect(f.socket.sent.filter((event) => event.type === "response.cancel")).toHaveLength(1);
+    expect(f.events.filter((event) => event.type === "response.output_audio.delta")).toEqual([
+      { type: "response.output_audio.delta", response_id: "r2", delta: "BBBB" },
+    ]);
+    expect(f.peer.close).not.toHaveBeenCalled();
+    expect(
+      f.canonical
+        .filter((event) => event.type === "agent.message.end")
+        .map((event) => event.payload.stopReason),
+    ).toEqual(["canceled", "end_turn"]);
   });
   it("counts canceled response usage even after canonical turn cancellation and ignores stale response output", async () => {
     const f = await fixture();

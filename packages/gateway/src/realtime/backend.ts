@@ -197,7 +197,10 @@ export class RealtimeBackend implements ChatBackend {
     const abort = () => {
       toolsAbort.abort();
       if (this.responsePending && this.responseOwner === queue) {
-        this.send({ type: "response.cancel" });
+        this.send({
+          type: "response.cancel",
+          ...(this.responseId ? { response_id: this.responseId } : {}),
+        });
         this.cancelDeadline ??= setTimeout(() => {
           void this.dispose();
           this.onCancellationTimeout();

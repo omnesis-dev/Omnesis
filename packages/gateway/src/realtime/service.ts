@@ -240,6 +240,10 @@ export class RealtimeService {
       authorized,
       fail,
     );
+    const interruptTurn = () => {
+      backendAdapter.interrupt();
+      if (running) agentSession?.cancel();
+    };
     const drainTranscripts = () => {
       if (closed || ending || running || !agentSession || pendingTranscripts.length === 0) return;
       if (!authorized()) {
@@ -318,10 +322,13 @@ export class RealtimeService {
               input: {
                 format: { type: "audio/pcm", rate: 24000 },
                 transcription: { model: "gpt-4o-mini-transcribe" },
+                noise_reduction: { type: "near_field" },
                 turn_detection: {
                   type: "server_vad",
-                  interrupt_response: true,
+                  // AgentSession owns turn cancellation; VAD only reports speech boundaries.
+                  interrupt_response: false,
                   create_response: false,
+                  threshold: 0.65,
                 },
               },
               output: { format: { type: "audio/pcm", rate: 24000 }, voice: "marin" },
@@ -342,8 +349,7 @@ export class RealtimeService {
           throw new Error("Upstream voice event too large");
         const event = upstreamEvent.parse(JSON.parse(raw.toString()));
         if (event.type === "input_audio_buffer.speech_started") {
-          backendAdapter.interrupt();
-          if (running) agentSession?.cancel();
+          interruptTurn();
           speechStarts += 1;
           this.log.info(
             `Call ${diagnosticId} speech started count=${speechStarts} audioFrames=${audioFrames} audioBytes=${audioBytes}`,
@@ -525,6 +531,10 @@ export class RealtimeService {
               send({ type: "session.ended", conversationId: sessionId });
               close();
             }, fail);
+            return;
+          }
+          if (event.type === "response.cancel") {
+            interruptTurn();
             return;
           }
           if (event.type === "client.audio_diagnostics") {
