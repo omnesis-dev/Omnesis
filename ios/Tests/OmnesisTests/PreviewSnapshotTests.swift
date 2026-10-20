@@ -29,30 +29,36 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     func testRealtimeCallListening() {
-        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening), name: "realtime-listening")
+        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening), name: "realtime-listening", ignoresSafeArea: true)
     }
 
     func testRealtimeCallTools() {
-        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools).preferredColorScheme(.dark), name: "realtime-tools")
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools).preferredColorScheme(.dark),
+            name: "realtime-tools",
+            ignoresSafeArea: true
+        )
     }
 
     func testRealtimeCallSmallPhone() {
         snapshot(
             RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools),
             name: "realtime-small-phone",
-            size: CGSize(width: 375, height: 667)
+            size: CGSize(width: 375, height: 667),
+            ignoresSafeArea: true
         )
     }
 
     func testRealtimeCallAccessible() {
         snapshot(
             RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeTools).dynamicTypeSize(.accessibility3),
-            name: "realtime-accessible"
+            name: "realtime-accessible",
+            ignoresSafeArea: true
         )
     }
 
     func testRealtimeCallFailure() {
-        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure), name: "realtime-failure")
+        snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure), name: "realtime-failure", ignoresSafeArea: true)
     }
 
     private static let outputDir = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
