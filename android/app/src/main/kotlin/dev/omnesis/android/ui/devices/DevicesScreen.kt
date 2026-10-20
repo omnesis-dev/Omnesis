@@ -565,6 +565,8 @@ fun DeviceCard(
     onRepairDevice: () -> Unit = {},
     onRevokeToken: (String) -> Unit = {},
     startExpanded: Boolean = false,
+    /** The instant the card's relative times ("just now", "5m ago") are measured from. */
+    now: Long = System.currentTimeMillis(),
 ) {
     val c = OmTheme.colors
     var expanded by remember { mutableStateOf(startExpanded) }
@@ -604,7 +606,7 @@ fun DeviceCard(
                 Spacer(Modifier.height(OmSpacing.md))
                 androidx.compose.material3.HorizontalDivider(thickness = 1.dp, color = c.borderLight)
                 Spacer(Modifier.height(OmSpacing.md))
-                DeviceTimesRow(device, isThis = isThis)
+                DeviceTimesRow(device, isThis = isThis, now = now)
                 Spacer(Modifier.height(OmSpacing.sm))
                 Text(
                     device.id,
@@ -615,7 +617,7 @@ fun DeviceCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(OmSpacing.sm))
-                TokenSection(tokens, onRevokeToken = onRevokeToken)
+                TokenSection(tokens, now = now, onRevokeToken = onRevokeToken)
                 // The pointer sits under the loaded list, never beside the
                 // spinner or an error; a revoked device can take no new
                 // credential, so it gets no pointer at all.
@@ -799,12 +801,12 @@ private fun StatusLabel(device: DeviceRecord, isThis: Boolean) {
 }
 
 @Composable
-private fun DeviceTimesRow(device: DeviceRecord, isThis: Boolean) {
+private fun DeviceTimesRow(device: DeviceRecord, isThis: Boolean, now: Long) {
     Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
-        MetaPair("Paired", TimeFormat.relative(device.pairedAt))
+        MetaPair("Paired", TimeFormat.relative(device.pairedAt, now))
         MetaPair(
             "Last activity",
-            if (isThis) "now" else device.lastSeenAt?.let { TimeFormat.relative(it) } ?: "not recorded",
+            if (isThis) "now" else device.lastSeenAt?.let { TimeFormat.relative(it, now) } ?: "not recorded",
         )
     }
 }
@@ -821,7 +823,7 @@ private fun MetaPair(label: String, value: String) {
 // --- Token section ---------------------------------------------------------
 
 @Composable
-private fun TokenSection(tokens: Loadable<List<TokenRecord>>?, onRevokeToken: (String) -> Unit = {}) {
+private fun TokenSection(tokens: Loadable<List<TokenRecord>>?, now: Long, onRevokeToken: (String) -> Unit = {}) {
     val c = OmTheme.colors
     when (tokens) {
         null, Loadable.Loading -> Row(
@@ -848,7 +850,7 @@ private fun TokenSection(tokens: Loadable<List<TokenRecord>>?, onRevokeToken: (S
                         letterSpacing = 0.6.sp,
                         color = c.textMuted,
                     )
-                    tokens.value.forEach { TokenRow(it, onRevoke = { onRevokeToken(it.id) }) }
+                    tokens.value.forEach { TokenRow(it, now = now, onRevoke = { onRevokeToken(it.id) }) }
                 }
             }
         }
@@ -874,7 +876,7 @@ private fun CliCredentialsFootnote() {
 }
 
 @Composable
-private fun TokenRow(token: TokenRecord, onRevoke: () -> Unit = {}) {
+private fun TokenRow(token: TokenRecord, now: Long, onRevoke: () -> Unit = {}) {
     val c = OmTheme.colors
     Column(
         Modifier
@@ -908,8 +910,8 @@ private fun TokenRow(token: TokenRecord, onRevoke: () -> Unit = {}) {
             ScopeChipRow(token.scopes)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
-            Text("created ${TimeFormat.relative(token.createdAt)}", fontSize = 10.sp, color = c.textMuted)
-            Text("used ${TimeFormat.relative(token.lastUsedAt ?: 0L)}", fontSize = 10.sp, color = c.textMuted)
+            Text("created ${TimeFormat.relative(token.createdAt, now)}", fontSize = 10.sp, color = c.textMuted)
+            Text("used ${TimeFormat.relative(token.lastUsedAt ?: 0L, now)}", fontSize = 10.sp, color = c.textMuted)
         }
     }
 }
