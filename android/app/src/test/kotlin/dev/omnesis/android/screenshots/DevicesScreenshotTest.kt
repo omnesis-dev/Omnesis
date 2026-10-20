@@ -46,8 +46,9 @@ class DevicesScreenshotTest {
 
     private companion object {
         // Wall-clock "now" captured once per fixture build. Recent timestamps are
-        // small offsets from this, so TimeFormat.relative() buckets them stably
-        // ("just now", "Nm/Nh/Nd ago") regardless of when the suite runs.
+        // small offsets from this, and each DeviceCard is rendered at this same
+        // instant (`now = NOW`), so TimeFormat.relative() buckets them stably
+        // ("just now", "Nm/Nh/Nd ago") however long the suite takes to reach it.
         val NOW: Long = System.currentTimeMillis()
 
         // Fixed absolute epochs for the "older than 7 days" timestamps, which
@@ -224,6 +225,7 @@ class DevicesScreenshotTest {
                 device = devices()[0],
                 tokens = tokens()["dev-collector-1"],
                 startExpanded = true,
+                now = NOW,
             )
         }
     }
@@ -235,6 +237,7 @@ class DevicesScreenshotTest {
                 device = devices()[2],
                 tokens = Loadable.Content(emptyList()),
                 startExpanded = true,
+                now = NOW,
             )
         }
     }
@@ -249,6 +252,7 @@ class DevicesScreenshotTest {
                 device = devices()[1],
                 tokens = Loadable.Loading,
                 startExpanded = true,
+                now = NOW,
             )
         }
     }
@@ -256,14 +260,14 @@ class DevicesScreenshotTest {
     @Test
     fun device_card_revoked_dark() = capture("device_card_revoked_dark", dark = true) {
         ThemedCardSurface {
-            DeviceCard(device = revokedDevice(), tokens = Loadable.Content(emptyList()), startExpanded = true)
+            DeviceCard(device = revokedDevice(), tokens = Loadable.Content(emptyList()), startExpanded = true, now = NOW)
         }
     }
 
     @Test
     fun device_card_revoked_light() = capture("device_card_revoked_light", dark = false) {
         ThemedCardSurface {
-            DeviceCard(device = revokedDevice(), tokens = Loadable.Content(emptyList()), startExpanded = true)
+            DeviceCard(device = revokedDevice(), tokens = Loadable.Content(emptyList()), startExpanded = true, now = NOW)
         }
     }
 

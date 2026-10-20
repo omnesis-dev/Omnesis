@@ -24,12 +24,15 @@ import { useState, useRef, useEffect } from "preact/hooks";
 import { sourceIcon, sourceLabel } from "../../lib/format.js";
 import { KnowledgeIcon } from "../../lib/knowledge-link-icons.js";
 import { navigate } from "../../lib/router.js";
+import { MessageActions } from "./message-actions.js";
 import { AssistantMarkdown } from "./assistant-markdown.js";
 import { DocChip } from "../doc-chip.js";
 import { Modal } from "../modal.js";
 import { TimelineColumn } from "../timeline.js";
 import { buildUnifiedTimeline } from "../../views/agent-reducer.js";
-import { matchSlashCommands, sendOptionsForArmed } from "../../lib/slash-commands.js";
+import { getSlashCommand, matchSlashCommands, sendOptionsForArmed } from "../../lib/slash-commands.js";
+
+import { conversationDraftRevision, clearConversationDraft, readConversationDraft, writeConversationDraft } from "../../lib/conversation-draft.js";
 
 // Agent components sit inline with body text, so icons should match the
 // surrounding font size rather than the portal default (16px). 12px reads
@@ -77,7 +80,7 @@ function AgentFailureCodes({ failure, className = "agent-msg-error-codes" }) {
 
 // `header` and `footer` are optional slots around the message — the Morning
 // brief thread puts its brief header above a brief and its sources below it.
-export function MessageBubble({ turn, citations, dispatch, header = null, footer = null }) {
+export function MessageBubble({ turn, citations, dispatch, header = null, footer = null, onEdit, canEdit = true }) {
   const count = turn.role === "assistant" ? (turn.citationCount ?? 0) : 0;
   // Pre-compute citation-pill coalescing: every consecutive run of
   // pending annotate tool parts collapses into ONE pill rendered at the
@@ -96,6 +99,7 @@ export function MessageBubble({ turn, citations, dispatch, header = null, footer
     if (part.kind === "text" && typeof part.text === "string" && part.text.trim()) textFollows = true;
   }
   return html`
+    <${MessageActions} text=${turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")} action=${turn.role === "user" && onEdit && canEdit ? { label: "Edit and resend", onSelect: () => onEdit(turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")) } : null}>
     <div class=${`agent-msg agent-msg-${turn.role}`}>
       ${header}
       <div class="agent-msg-body">
@@ -133,6 +137,7 @@ export function MessageBubble({ turn, citations, dispatch, header = null, footer
         : null}
       ${footer}
     </div>
+    </${MessageActions}>
   `;
 }
 
@@ -269,6 +274,7 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       // transcript recorded before they were removed still reopens
       // without an empty card where a background fetch used to be.
       if (
+        part.tool === "ask_clarification" ||
         SILENT_CARD_TOOLS.has(part.tool) ||
         part.tool === "triggers_list" ||
         part.tool === "trigger_get" ||
@@ -1621,14 +1627,41 @@ const SLASH_ICONS = {
  * character so the empty state stays uncluttered. When the slash menu is
  * open, Enter selects the highlighted command instead of sending.
  */
-export function Composer({ disabled, onSubmit, onCancel, busy, variant = "default", autoFocus = false, experimental = false, placeholder = null }) {
-  const [text, setText] = useState("");
+export function Composer({ disabled, onSubmit, onCancel, busy, variant = "default", autoFocus = false, experimental = false, placeholder = null, draftKey = "new", controlsSupported = true }) {
+  const [text, setText] = useState(() => readConversationDraft(draftKey).text);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
   // The armed per-message command (a SLASH_COMMANDS descriptor) or null.
   // Cleared after each send so the next message is an ordinary turn unless
   // re-armed.
-  const [armed, setArmed] = useState(null);
+  const [armed, setArmed] = useState(() => getSlashCommand(readConversationDraft(draftKey).command));
+  const armedRef = useRef(armed);
+  armedRef.current = armed;
+  const [sending, setSending] = useState(false);
+  const [storageFailed, setStorageFailed] = useState(false);
   const taRef = useRef(null);
-  const canSend = !disabled && !busy && text.trim().length > 0;
+  const canSend = !disabled && !sending && (!busy || controlsSupported) && text.trim().length > 0;
+  function updateDraft(value, command = armed) {
+    textRef.current = value;
+    armedRef.current = command;
+    setText(value);
+    setStorageFailed(!writeConversationDraft(draftKey, value, command?.id ?? null));
+  }
+  useEffect(() => {
+    function restore(event) {
+      if (event?.detail?.key && event.detail.key !== draftKey) return;
+      const draft = readConversationDraft(draftKey);
+      textRef.current = draft.text;
+      setText(draft.text);
+      armedRef.current = getSlashCommand(draft.command);
+      setArmed(armedRef.current);
+    }
+    restore();
+    window.addEventListener("omnesis:conversation-draft", restore);
+    return () => window.removeEventListener("omnesis:conversation-draft", restore);
+  }, [draftKey]);
 
   // Slash-menu state derived purely from the current text. When `open`, the
   // textarea's Enter selects the first match rather than submitting.
@@ -1655,23 +1688,37 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
   function armCommand(cmd) {
     if (!cmd) return;
     setArmed(cmd);
-    setText("");
+    updateDraft("", cmd);
     taRef.current?.focus();
   }
 
   function disarm() {
     setArmed(null);
+    updateDraft(text, null);
     taRef.current?.focus();
   }
 
-  function submit(e) {
+  async function submit(e, mode) {
     e?.preventDefault?.();
     if (!canSend) return;
     const options = sendOptionsForArmed(armed?.id ?? null);
-    onSubmit(text.trim(), options);
-    setText("");
-    // Per-message: the pill governs this one send only.
-    setArmed(null);
+    if (mode) options.mode = mode;
+    const submittedRevision = conversationDraftRevision(draftKey);
+    setSending(true);
+    try {
+      const accepted = await onSubmit(text.trim(), options);
+      if (accepted !== false) {
+        const draftUnchanged = conversationDraftRevision(draftKey) === submittedRevision;
+        clearConversationDraft(draftKey, text, armed?.id ?? null, submittedRevision);
+        if (draftUnchanged && draftKeyRef.current === draftKey && textRef.current === text && armedRef.current?.id === armed?.id) {
+          textRef.current = "";
+          setText("");
+          setArmed(null);
+        }
+      }
+    } finally {
+      setSending(false);
+    }
   }
 
   return html`
@@ -1716,15 +1763,15 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
         ref=${taRef}
         name="text"
         class="agent-composer-input"
-        placeholder=${busy ? "Working…" : (placeholder ?? (variant === "hero" ? "Ask Omnesis" : "Ask Omnesis…"))}
-        disabled=${disabled}
+        placeholder=${busy ? "Add a follow-up…" : (placeholder ?? (variant === "hero" ? "Ask Omnesis" : "Ask Omnesis…"))}
+        disabled=${disabled || sending}
         value=${text}
-        onInput=${(e) => setText(e.target.value)}
+        onInput=${(e) => updateDraft(e.target.value)}
         onKeyDown=${(e) => {
           if (e.key === "Escape" && menu.open) {
             e.preventDefault();
             // Clear the `/query` token so the menu closes.
-            setText("");
+            updateDraft("");
             return;
           }
           if (e.key === "Enter" && !e.shiftKey) {
@@ -1740,16 +1787,12 @@ export function Composer({ disabled, onSubmit, onCancel, busy, variant = "defaul
         }}
         rows=${variant === "hero" ? 2 : 1}
       />
-      ${busy
-        ? html`<button type="button" class="agent-composer-cancel" onClick=${onCancel} aria-label="Cancel">Cancel</button>`
-        : canSend
-          ? html`<button type="submit" class="agent-composer-send" aria-label="Send">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M8 13V3" />
-                <path d="M3 8l5-5 5 5" />
-              </svg>
-            </button>`
-          : null}
+      ${storageFailed ? html`<p role="status">Draft could not be saved on this browser.</p>` : null}
+      <div class="agent-composer-actions">
+        ${busy ? html`<button type="button" onClick=${onCancel}>Stop</button>` : null}
+        ${busy && canSend ? html`<button type="button" onClick=${(e) => submit(e, "interrupt")}>Interrupt and send</button>` : null}
+        ${canSend ? html`<button type="submit" class="agent-composer-submit">${busy ? "Send follow-up" : "Send"}</button>` : null}
+      </div>
     </form>
   `;
 }

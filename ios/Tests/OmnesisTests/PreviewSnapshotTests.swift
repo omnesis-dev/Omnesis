@@ -3299,6 +3299,231 @@ final class PreviewSnapshotTests: XCTestCase {
         XCTAssertEqual(store.agent.turns.count, 1)
     }
 
+    func testConversationEmptyControls() {
+        snapshot(
+            VStack(spacing: 0) {
+                ConversationControlsPanel(controls: nil, error: nil, disabled: false, onChoice: { _ in })
+                AgentComposer(
+                    text: .constant(""),
+                    busy: false,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.background(Theme.bgPrimary),
+            name: "72f-conversation-empty-controls",
+            size: CGSize(
+                width: 393,
+                height: 140
+            )
+        )
+    }
+
+    func testConversationEditDraft() {
+        snapshot(
+            VStack(spacing: 0) {
+                ConversationDraftEditBanner(onCancel: {})
+                AgentComposer(
+                    text: .constant(PreviewMocks.conversationFollowupDraft),
+                    busy: false,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.background(Theme.bgPrimary),
+            name: "72e-conversation-edit-draft",
+            size: CGSize(
+                width: 393,
+                height: 220
+            )
+        )
+    }
+
+    func testConversationQueueHandoff() {
+        queueHandoffSnapshot(automatic: false)
+    }
+
+    func testConversationAutomaticQueueHandoff() {
+        queueHandoffSnapshot(automatic: true)
+    }
+
+    private func queueHandoffSnapshot(automatic: Bool) {
+        let controls = PreviewMocks.conversationControls
+        var handoff = ConversationQueueHandoff()
+        if automatic {
+            handoff.delivered(ids: controls.queued.map(\.id))
+        } else {
+            _ = handoff.begin(ids: controls.queued.map(\.id))
+        }
+        let presented = handoff.presenting(controls)
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: .user(id: "wire-message", text: controls.queuedText))
+                if !presented.queued.isEmpty {
+                    ConversationQueuedBubble(controls: presented, disabled: false, onSendNow: {})
+                }
+                AgentComposer(
+                    text: .constant(""),
+                    busy: true,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(16).background(Theme.bgPrimary),
+            name: automatic ? "72k-conversation-automatic-queue-handoff" : "72h-conversation-queue-handoff",
+            size: CGSize(width: 393, height: 300)
+        )
+    }
+
+    func testConversationBusyFollowupComposer() {
+        snapshot(
+            AgentComposer(
+                text: .constant(PreviewMocks.conversationFollowupDraft),
+                busy: true,
+                queueEnabled: true,
+                disabled: false,
+                speech: SpeechRecognizer.preview(state: .idle),
+                onSend: { _, _ in },
+                onCancel: {},
+                focused: FocusState<Bool>().projectedValue
+            ).background(Theme.bgPrimary),
+            name: "72b-conversation-busy-followup",
+            size: CGSize(
+                width: 393,
+                height: 220
+            )
+        )
+    }
+
+    func testConversationRestoredDraftComposer() {
+        snapshot(
+            AgentComposer(
+                text: .constant(PreviewMocks.conversationFollowupDraft),
+                busy: false,
+                queueEnabled: true,
+                disabled: false,
+                speech: SpeechRecognizer.preview(state: .idle),
+                onSend: { _, _ in },
+                onCancel: {},
+                focused: FocusState<Bool>().projectedValue
+            ).background(Theme.bgPrimary),
+            name: "72c-conversation-restored-draft",
+            size: CGSize(
+                width: 393,
+                height: 180
+            )
+        )
+    }
+
+    func testConversationSubmissionFailure() {
+        snapshot(
+            ConversationControlsPanel(
+                controls: nil,
+                error: "Message not confirmed. Retry to check delivery.",
+                disabled: false,
+                onChoice: { _ in }
+            ),
+            name: "72d-conversation-submission-failure",
+            size: CGSize(
+                width: 393,
+                height: 150
+            )
+        )
+    }
+
+    func testConversationClarificationTranscript() {
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: PreviewMocks.conversationClarificationTurn)
+                    .environment(\.conversationPresentation, ConversationTranscriptPresentation(
+                        controls: PreviewMocks.conversationControls
+                    ))
+                ConversationQueuedBubble(controls: PreviewMocks.conversationControls, disabled: false, onSendNow: {})
+                ConversationControlsPanel(controls: PreviewMocks.conversationControls, error: nil, disabled: false, onChoice: { _ in })
+                AgentComposer(
+                    text: .constant("My answer"),
+                    busy: false,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(16),
+            name: "72f-conversation-clarification-transcript",
+            size: CGSize(width: 393, height: 650)
+        )
+    }
+
+    func testConversationInterruptedActivity() {
+        var aborted = PreviewMocks.agentToolCallSearchManyRunning
+        aborted.result = .error(code: "turn_aborted", message: "Interrupted")
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: .assistant(AgentAssistantTurn(
+                    id: "prior-turn", parts: [
+                        .text("The earlier answer remains available."),
+                        .thinking("Checking more documents"),
+                        .tool(aborted),
+                        .subagent(AgentSubagentCard(
+                            subagentId: "worker",
+                            specialist: "generic",
+                            title: "Comparing totals",
+                            task: "Compare totals",
+                            parentToolCallId: "spawn"
+                        )),
+                    ]
+                )))
+                .environment(\.conversationPresentation, ConversationTranscriptPresentation(dismissedMessageIds: ["prior-turn"]))
+                AgentTurnBubble(turn: .user(id: "followup", text: "Include a short summary."))
+                ConversationControlsPanel(
+                    controls: nil, error: "Couldn’t send yet. Your queued message is saved.", disabled: false, onChoice: { _ in }
+                )
+            }.padding(16),
+            name: "72g-conversation-interrupted-activity",
+            size: CGSize(width: 393, height: 400)
+        )
+    }
+
+    func testConversationChoicesAndQueue() {
+        snapshot(
+            VStack(spacing: 24) {
+                AgentTurnBubble(turn: .user(id: "original", text: "Compare this month's activity."))
+                ConversationQueuedBubble(
+                    controls: PreviewMocks.conversationControls,
+                    disabled: false,
+                    onSendNow: {}
+                )
+                ConversationControlsPanel(
+                    controls: PreviewMocks.conversationControls,
+                    error: nil,
+                    disabled: false,
+                    onChoice: { _ in }
+                )
+                AgentComposer(
+                    text: .constant("My answer"),
+                    busy: false,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(.horizontal, 16),
+            name: "72a-conversation-choices-queue",
+            size: CGSize(width: 393, height: 650)
+        )
+    }
+
     func testAgentBusyStreaming() {
         let store = AppStore.preview(agentPreview: PreviewMocks.agentBusyStreaming)
         snapshot(AgentView(menuOpen: .constant(false)).environment(store), name: "72-agent-busy-streaming")

@@ -3,7 +3,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
@@ -29,12 +29,15 @@ class FakeEmbedder implements InterestEmbedder {
   modelId = "fake";
   calls: string[] = [];
   failWith: Error | null = null;
+  /** Never answers, like an embedder stuck behind a long queue. */
+  hang = false;
   private readonly vocabulary = new Map<string, number>();
   private static readonly DIM = 64;
 
   async embedQuery(text: string): Promise<number[]> {
     this.calls.push(text);
     if (this.failWith) throw this.failWith;
+    if (this.hang) return new Promise<number[]>(() => {});
     const vector = new Array<number>(FakeEmbedder.DIM).fill(0);
     for (const word of wordSet(text)) {
       let index = this.vocabulary.get(word);
@@ -356,15 +359,37 @@ describe("InterestEngine.lookup", () => {
     expect(embedder.calls).toHaveLength(embeds);
   });
 
-  test("lookup fails open to null when the embedder throws mid-query, and recovers with it", async () => {
+  test("a query the embedder cannot embed is matched by words, and by vector once it recovers", async () => {
     const engine = makeEngine();
     await engine.record(accepted("Renew the passport before the Lisbon trip"));
     await engine.embedBacklog();
     embedder.failWith = new Error("embedder down");
-    await expect(engine.lookup({ text: "Renew the passport for the trip" })).resolves.toBeNull();
+    const byWords = await engine.lookup({ text: "Renew the passport for the trip" });
+    expect(byWords!.positive.map((e) => [e.text, e.basis])).toEqual([
+      ["Renew the passport before the Lisbon trip", "words"],
+    ]);
+    // Nothing shares enough words: no block, rather than a guess.
+    expect(await engine.lookup({ text: "Book a dentist appointment" })).toBeNull();
     embedder.failWith = null;
-    const block = await engine.lookup({ text: "Renew the passport for the trip" });
-    expect(block!.positive).toHaveLength(1);
+    const byVector = await engine.lookup({ text: "Renew the passport for the trip" });
+    expect(byVector!.positive.map((e) => e.basis)).toEqual(["vector"]);
+  });
+
+  test("a query embedding that outlasts its wait gives way to words", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const engine = makeEngine();
+      await engine.record(accepted("Renew the passport before the Lisbon trip"));
+      await engine.embedBacklog();
+      embedder.hang = true;
+      const pending = engine.lookup({ text: "Renew the passport for the trip" });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const block = await pending;
+      expect(block!.positive.map((e) => e.basis)).toEqual(["words"]);
+    } finally {
+      embedder.hang = false;
+      vi.useRealTimers();
+    }
   });
 
   test("the decoded ledger is kept until the table's fingerprint moves, even for writes made behind the engine", async () => {

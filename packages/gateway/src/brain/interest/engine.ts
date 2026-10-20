@@ -92,6 +92,12 @@ const LOOKUP_SIGNAL_LIMIT = 2_000;
 /** Signals embedded per backlog page; a pass pages on while any remain. */
 const EMBED_BATCH = 16;
 const EMBED_TIMEOUT_MS = 30_000;
+/**
+ * How long a lookup waits for its query vector. A gate is waiting on the
+ * answer, and the shared query embedder can queue for tens of seconds behind
+ * indexing, so a slow embedding gives way to matching by shared words.
+ */
+const QUERY_EMBED_TIMEOUT_MS = 10_000;
 
 export class InterestEngine {
   private draining: Promise<void> | null = null;
@@ -157,7 +163,7 @@ export class InterestEngine {
       const embedder = this.deps.getEmbedder();
       const comparable =
         embedder !== null && signals.some((s) => s.embeddingModel === embedder.modelId);
-      const vector = comparable ? await this.queryVector(query.text) : null;
+      const vector = comparable ? await this.queryVectorOrWords(query.text) : null;
       return lookupOwnerInterest(signals, { text: query.text, vector }, this.deps.clock(), {
         ...DEFAULT_LOOKUP_OPTIONS,
         ...this.deps.lookupOptions?.(),
@@ -252,6 +258,20 @@ export class InterestEngine {
     }
   }
 
+  /** The query's vector, or null to match by words when it cannot be had in time. */
+  private async queryVectorOrWords(
+    text: string,
+  ): Promise<{ values: Float32Array; model: string } | null> {
+    try {
+      return await this.queryVector(text);
+    } catch (error) {
+      this.deps.log.warn(
+        `Interest query not embedded; matching by words: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
   private async queryVector(text: string): Promise<{ values: Float32Array; model: string } | null> {
     const embedder = this.deps.getEmbedder();
     if (!embedder) return null;
@@ -259,7 +279,7 @@ export class InterestEngine {
     const cached = this.queryVectors.get(key);
     if (cached) return cached;
     const values = Float32Array.from(
-      await withTimeout(embedder.embedQuery(text), EMBED_TIMEOUT_MS),
+      await withTimeout(embedder.embedQuery(text), QUERY_EMBED_TIMEOUT_MS),
     );
     const entry = { values, model: embedder.modelId };
     // Bounded: a gate asks about each item once, so the cache only has to

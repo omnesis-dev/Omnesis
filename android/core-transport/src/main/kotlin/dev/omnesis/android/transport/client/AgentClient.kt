@@ -19,6 +19,8 @@ import dev.omnesis.android.transport.http.patchJson
 import dev.omnesis.android.transport.http.postJson
 import dev.omnesis.android.transport.http.putJsonSegments
 import java.time.ZoneId
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -65,6 +67,15 @@ class AgentClient(private val http: GatewayHttp) {
             "agent/sessions/$sessionId/messages",
             SendMessageBody.of(text, deepResearch, notifyAfterMs, viewingForMs),
         )
+
+    suspend fun controls(sessionId: String): ConversationControls =
+        http.getJson("agent/sessions/$sessionId/controls")
+
+    suspend fun submit(sessionId: String, body: ConversationSubmissionBody): ConversationSubmissionResponse =
+        http.postJson("agent/sessions/$sessionId/submissions", body)
+
+    suspend fun sendQueuedNow(sessionId: String, submissionIds: List<String>): ConversationControls =
+        http.postJson("agent/sessions/$sessionId/queue/send-now", QueueSendNowBody(submissionIds))
 
     suspend fun cancel(sessionId: String): Boolean =
         http.postJson<Map<String, String>, OkResponse>("agent/sessions/$sessionId/cancel", emptyMap()).ok
@@ -222,3 +233,50 @@ data class OkResponse(val ok: Boolean = false)
 /** Body of `POST /agent/conversations/:id/seen`. */
 @Serializable
 data class ConversationSeenBody(val viewing: Boolean)
+
+@Serializable
+data class ConversationChoice(val label: String, val description: String? = null)
+
+@Serializable
+data class ConversationClarification(
+    val id: String,
+    val question: String,
+    val choices: List<ConversationChoice> = emptyList(),
+)
+
+@Serializable
+data class ConversationSubmission(
+    val id: String,
+    val text: String,
+    val status: String,
+    val error: String? = null,
+    val deepResearch: Boolean? = null,
+)
+
+@Serializable
+data class ConversationCapabilities(val coalescedQueue: Boolean = false, val queueSendNow: Boolean = false)
+
+@Serializable
+data class QueueSendNowBody(val submissionIds: List<String>)
+
+@Serializable
+data class ConversationControls(
+    val busy: Boolean = false,
+    val pendingClarification: ConversationClarification? = null,
+    val queuedMessages: List<ConversationSubmission> = emptyList(),
+    val capabilities: ConversationCapabilities = ConversationCapabilities(),
+)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class ConversationSubmissionBody(
+    val clientMessageId: String,
+    val text: String,
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val mode: String = "queue",
+    val deepResearch: Boolean? = null,
+    val clarificationId: String? = null,
+)
+
+@Serializable
+data class ConversationSubmissionResponse(val submission: ConversationSubmission)

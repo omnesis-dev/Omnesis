@@ -184,6 +184,49 @@ public final class AgentClient: Sendable {
         )
     }
 
+    public func conversationControls(sessionId: String) async throws -> ConversationControls {
+        let (data, _) = try await dispatch(
+            method: "GET", path: "/agent/sessions/\(percentEncode(sessionId))/controls", body: nil
+        )
+        return try decodeOrThrow(ConversationControls.self, from: data)
+    }
+
+    public func sendQueuedMessagesNow(sessionId: String, submissionIds: [String]) async throws -> ConversationControls {
+        struct Body: Encodable {
+            let submissionIds: [String]
+        }
+        let (data, _) = try await dispatch(
+            method: "POST",
+            path: "/agent/sessions/\(percentEncode(sessionId))/queue/send-now",
+            body: encoder.encode(Body(submissionIds: submissionIds))
+        )
+        return try decodeOrThrow(ConversationControls.self, from: data)
+    }
+
+    public func submitMessage(
+        sessionId: String, text: String, clientMessageId: String,
+        interrupt: Bool, deepResearch: Bool = false, clarificationId: String? = nil
+    ) async throws {
+        struct Body: Encodable {
+            let text: String
+            let clientMessageId: String
+            let mode: String
+            let deepResearch: Bool
+            let clarificationId: String?
+        }
+        _ = try await dispatch(
+            method: "POST",
+            path: "/agent/sessions/\(percentEncode(sessionId))/submissions",
+            body: encoder.encode(Body(
+                text: text,
+                clientMessageId: clientMessageId,
+                mode: interrupt ? "interrupt" : "queue",
+                deepResearch: deepResearch,
+                clarificationId: clarificationId
+            ))
+        )
+    }
+
     /// POST `/agent/sessions/:id/cancel` — abort the in-flight turn.
     public func cancel(sessionId: String) async throws {
         _ = try await dispatch(
@@ -2212,7 +2255,7 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
     /// begins. Fans out to every device on this session so non-originator
     /// devices can render the user bubble. Originator dedupes by the
     /// `userMessageId` it got back from `POST /agent/sessions/:id/messages`.
-    case userMessage(sessionId: String, userMessageId: String, text: String)
+    case userMessage(sessionId: String, userMessageId: String, text: String, submissionIds: [String] = [])
     case messageStart(sessionId: String, messageId: String)
     case textDelta(sessionId: String, messageId: String, delta: String)
     case thinkingDelta(sessionId: String, messageId: String, delta: String)
@@ -2369,7 +2412,7 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
 
     public var sessionId: String {
         switch self {
-        case .userMessage(let id, _, _),
+        case .userMessage(let id, _, _, _),
              .messageStart(let id, _),
              .textDelta(let id, _, _),
              .thinkingDelta(let id, _, _),
@@ -2406,7 +2449,8 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
             self = .userMessage(
                 sessionId: payload.sessionId,
                 userMessageId: payload.userMessageId,
-                text: payload.text
+                text: payload.text,
+                submissionIds: payload.submissionIds ?? []
             )
         case "agent.message.start":
             let payload = try container.decode(MessageStartPayload.self, forKey: .payload)
@@ -2589,10 +2633,21 @@ public enum AgentEvent: Decodable, Sendable, Equatable {
 
     // MARK: - Typed payload helpers
 
+    private enum UserMessageKey: String, CodingKey { case sessionId, userMessageId, text, submissionIds }
+
     private struct UserMessagePayload: Decodable {
         let sessionId: String
         let userMessageId: String
         let text: String
+        let submissionIds: [String]?
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: UserMessageKey.self)
+            sessionId = try values.decode(String.self, forKey: .sessionId)
+            userMessageId = try values.decode(String.self, forKey: .userMessageId)
+            text = try values.decode(String.self, forKey: .text)
+            submissionIds = try? values.decode([String].self, forKey: .submissionIds)
+        }
     }
 
     /// sessionId / messageId are OPTIONAL on these payloads because the same

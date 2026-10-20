@@ -160,17 +160,16 @@ fun AssistantTurn(
                 // an in-flight turn (no stopReason yet). The moment anything
                 // follows it — or the turn ends — it fades itself out.
                 is AgentPart.Thinking ->
-                    ThinkingBlock(
+                    if (!turn.interrupted) ThinkingBlock(
                         part.text,
                         active = turn.stopReason == null && index == turn.parts.lastIndex,
                     )
 
                 is AgentPart.Tool ->
-                    if (turn.stopReason == null || part.call.tool !in AgentReducer.EPHEMERAL_TOOLS) {
-                        ToolCard(
-                            part.call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument,
-                            followingAnswerText = lastAnswerIndex > index,
-                        )
+                    if ((turn.stopReason == null || part.call.tool !in AgentReducer.EPHEMERAL_TOOLS || part.call.interrupted) && !isClarificationResult(part.call) && interruptedToolVisible(part.call)) {
+                        val call = part.call
+                        ToolCard(call, pillRuns[index], catalog, onFlushEphemeral, onOpenDocument,
+                            freeze = call.interrupted, followingAnswerText = lastAnswerIndex > index)
                     }
 
                 // A sub-agent the parent spawned via `spawn_subagent` — a
@@ -185,7 +184,7 @@ fun AssistantTurn(
                 // tool_use, never subagent), so this only affects the live
                 // just-finished turn.
                 is AgentPart.Subagent ->
-                    if (turn.stopReason == null) AgentSubAgentCard(part.card, catalog)
+                    if ((turn.stopReason == null && !turn.interrupted) || (turn.interrupted && part.card.status == "failed" && part.card.failureCode !in setOf("turn_aborted", "canceled"))) AgentSubAgentCard(part.card, catalog)
 
                 // Forward-compat: a part kind the gateway introduced after this build
                 // shipped. Production hides it entirely so an older client never shows
@@ -547,6 +546,8 @@ internal fun ToolCard(
         // watches still render their cards on reopen.
         call.tool in AGENT_AUTOMATION_TOOLS ->
             AgentWatchCard(call)
+
+        call.interrupted && call.result is AgentToolResult.ErrorResult && genuineToolFailure(call.result) -> AgentToolCallView(call)
 
         call.tool in AgentReducer.EPHEMERAL_TOOLS -> when (call.tool) {
             "search_documents" -> AgentEphemeralSearchCard(call, catalog, onFlushEphemeral, freeze = freeze)
