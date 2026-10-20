@@ -44,6 +44,14 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testRealtimeCallEnding() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeEnding).environment(AppStore.preview()),
+            name: "realtime-ending",
+            ignoresSafeArea: true
+        )
+    }
+
     func testRealtimeCallTools() {
         snapshot(
             RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)

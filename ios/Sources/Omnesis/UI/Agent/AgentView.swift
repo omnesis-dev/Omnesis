@@ -265,7 +265,7 @@ public struct AgentView: View {
                 store.agent.agentSurfaceVisibilityChanged(true)
                 applyComposerFocusRequest()
             }
-            .onDisappear { store.agent.agentSurfaceVisibilityChanged(false) }
+            .onDisappear { if !realtimePresented { store.agent.agentSurfaceVisibilityChanged(false) } }
             .onChange(of: composerFocusRequest) { _, _ in
                 applyComposerFocusRequest()
             }

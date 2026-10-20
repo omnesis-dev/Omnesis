@@ -98,8 +98,10 @@ struct RealtimeCallView: View {
                 .disabled(!session.connected)
                 .accessibilityLabel(session.muted ? "Unmute microphone" : "Mute microphone")
                 Button {
-                    session.stop()
-                    dismiss()
+                    Task {
+                        await session.end()
+                        dismiss()
+                    }
                 } label: {
                     Image(systemName: "phone.down.fill")
                         .font(.title2)
@@ -107,6 +109,7 @@ struct RealtimeCallView: View {
                         .frame(width: 64, height: 64)
                         .background(Theme.danger, in: Circle())
                 }
+                .disabled(session.ending)
                 .accessibilityLabel("End voice conversation")
             }
             Text("Audio is sent through your gateway to OpenAI.")
@@ -156,6 +159,11 @@ struct RealtimeCallView: View {
 
 #Preview("Voice · Listening") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
+        .environment(AppStore.preview())
+}
+
+#Preview("Voice · Ending") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeEnding)
         .environment(AppStore.preview())
 }
 

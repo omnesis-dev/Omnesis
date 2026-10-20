@@ -7223,6 +7223,13 @@ extension PreviewMocks {
         return session
     }
 
+    @MainActor static var realtimeEnding: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Ending call…"
+        session.ending = true
+        return session
+    }
+
     @MainActor static var realtimeTools: RealtimeCallSession {
         let session = realtimeListening
         session.status = "Thinking…"

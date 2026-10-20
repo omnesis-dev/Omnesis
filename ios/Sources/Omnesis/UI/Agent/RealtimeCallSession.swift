@@ -13,6 +13,7 @@ final class RealtimeCallSession {
     var muted = false
     var error: Error?
     var connected = false
+    var ending = false
     var conversationID: String?
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var receiver: Task<Void, Never>?
@@ -35,13 +36,14 @@ final class RealtimeCallSession {
     @ObservationIgnored private var captureInputFormat: AVAudioFormat?
     @ObservationIgnored private var captureDiagnostics = RealtimeCaptureDiagnostics()
     @ObservationIgnored private var audioObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var endHandshake = RealtimeEndHandshake()
 
     func start(
         pairing: Pairing,
         conversationID: String? = nil,
         onReady: (@MainActor (String) async throws -> Void)? = nil
     ) async {
-        guard receiver == nil else { return }
+        guard receiver == nil, !ending else { return }
         generation = UUID()
         let callGeneration = generation
         captureDiagnostics = RealtimeCaptureDiagnostics()
@@ -120,6 +122,7 @@ final class RealtimeCallSession {
         _ event: [String: Any],
         onReady: (@MainActor (String) async throws -> Void)?
     ) async throws {
+        guard !ending else { return }
         guard event["type"] as? String == "session.ready" else { return }
         try RealtimeProtocol.validateReady(event)
         guard !connected, let onReady else { return }
@@ -129,6 +132,7 @@ final class RealtimeCallSession {
     }
 
     private func receive(_ event: [String: Any]) throws {
+        if receiveWhileEnding(event) { return }
         switch event["type"] as? String {
         case "session.ready":
             try RealtimeProtocol.validateReady(event)
@@ -166,6 +170,14 @@ final class RealtimeCallSession {
             throw NSError(domain: "RealtimeCall", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
         default: break
         }
+    }
+
+    private func receiveWhileEnding(_ event: [String: Any]) -> Bool {
+        guard ending else { return false }
+        if event["type"] as? String == "session.ended", event["conversationId"] as? String == conversationID {
+            endHandshake.acknowledge(generation: generation)
+        }
+        return true
     }
 
     private func play(_ data: Data) {
@@ -232,6 +244,7 @@ final class RealtimeCallSession {
     }
 
     private func send(_ event: [String: Any]) {
+        if ending, event["type"] as? String != "session.end" { return }
         guard let data = try? JSONSerialization.data(withJSONObject: event),
               let text = String(data: data, encoding: .utf8) else { return }
         #if DEBUG
@@ -259,6 +272,9 @@ final class RealtimeCallSession {
     }
 
     private func fail(_ error: Error) {
+        if ending { endHandshake.cancel(generation: generation)
+            return
+        }
         stop()
         self.error = error
         status = "Call ended"
@@ -289,21 +305,46 @@ final class RealtimeCallSession {
     }
     #endif
 
+    func end() async {
+        guard socket != nil else { stop()
+            return
+        }
+        let callGeneration = generation
+        if !ending {
+            ending = true
+            status = "Ending call…"
+            connected = false
+            playbackGeneration = UUID()
+            timeout?.cancel()
+            stopAudio()
+        }
+        let outcome = await endHandshake.wait(generation: callGeneration) { send(["type": "session.end"]) }
+        guard generation == callGeneration else { return }
+        if outcome == .timedOut { log.warning("Realtime graceful close timed out; forcing transport cleanup") }
+        stop()
+    }
+
     func stop() {
+        endHandshake.cancel(generation: generation)
         generation = UUID()
         playbackGeneration = UUID()
-        audioObservers.forEach { NotificationCenter.default.removeObserver($0) }
-        audioObservers = []
         pendingSends = 0
         pendingFrames = 0
         playbackStarted = nil
         connected = false
+        ending = false
         captureReadiness = RealtimeCaptureReadiness()
         timeout?.cancel()
         receiver?.cancel()
         receiver = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        stopAudio()
+    }
+
+    private func stopAudio() {
+        audioObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        audioObservers = []
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         player?.stop()

@@ -58,24 +58,26 @@ enum RealtimeCapability {
         request.setValue("Bearer \(pairing.token)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
-        struct ProtocolRange: Decodable {
-            let min: Int
-            let max: Int
-        }
-        struct Capability: Decodable {
-            let available: Bool
-            let directAgentTools: Bool?
-            let canonicalAgentEvents: Bool?
-            let protocolRange: ProtocolRange?
-
-            enum CodingKeys: String, CodingKey {
-                case available, directAgentTools, canonicalAgentEvents
-                case protocolRange = "protocol"
-            }
-        }
-        guard let capability = try? JSONDecoder().decode(Capability.self, from: data),
+        guard let capability = try? JSONDecoder().decode(RealtimeCapabilityPayload.self, from: data),
               let range = capability.protocolRange,
               RealtimeProtocol.negotiatedVersion(minimum: range.min, maximum: range.max) != nil else { return false }
         return capability.available && capability.directAgentTools == true && capability.canonicalAgentEvents == true
+    }
+}
+
+private struct RealtimeProtocolRange: Decodable {
+    let min: Int
+    let max: Int
+}
+
+private struct RealtimeCapabilityPayload: Decodable {
+    let available: Bool
+    let directAgentTools: Bool?
+    let canonicalAgentEvents: Bool?
+    let protocolRange: RealtimeProtocolRange?
+
+    enum CodingKeys: String, CodingKey {
+        case available, directAgentTools, canonicalAgentEvents
+        case protocolRange = "protocol"
     }
 }
