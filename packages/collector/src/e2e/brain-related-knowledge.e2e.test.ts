@@ -5,6 +5,7 @@ import "./synth-env.js";
 import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 import { scheduleKnowledgeReview } from "../../../gateway/src/brain/knowledge/work-lifecycle.js";
+import { enqueueKnowledgeWork } from "../../../gateway/src/brain/knowledge/work.js";
 import {
   BrainBench,
   call,
@@ -58,6 +59,13 @@ it("carries a correction recorded on another document into the page that cites t
       if (item.source?.title === BROCHURE) {
         ids.brochure = item.source.id;
         ids.brochureRevision = item.source.contentHash;
+        // A source can be offered again after its proposed page was adopted.
+        // Inspect this frontier's library rather than trying to create it again.
+        const frontier = steps.findLastIndex((step) => step.name === "knowledge_next_frontier");
+        const listed = steps.slice(frontier + 1).findLast((step) => step.name === "knowledge_list");
+        if (!listed) return { calls: [call("knowledge_list", { kind: "wiki" })] };
+        const pages = z.array(z.object({ id: z.string() })).parse(structuredData(listed.result));
+        if (pages.some((page) => page.id === pageId)) return { calls: [] };
         const support = complementaryEvidence(VIEWING, steps);
         if (!support.evidence) return { calls: support.calls };
         viewingMarkup = `<claim id="viewing" refs="${support.evidence.ref}">${support.evidence.text}</claim>`;
@@ -281,6 +289,43 @@ it("carries a correction recorded on another document into the page that cites t
     );
     await expect.poll(pageText, { timeout: 90_000 }).toContain("£3,200 per quarter");
     await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
+    // Reproduce a delayed review of the source after its candidate was adopted.
+    // It must settle discovery using the existing page, without recreating it.
+    bench.withWriteHandle((db) => {
+      const now = Date.now();
+      enqueueKnowledgeWork(
+        db,
+        {
+          id: "flat-two-brochure-review",
+          subjectId: ids.brochure,
+          subjectKind: "source",
+          reason: "review",
+          inputRevision: ids.brochureRevision,
+          tier: "immediate",
+          dueAt: now,
+        },
+        now,
+      );
+    });
+    await expect
+      .poll(
+        () =>
+          bench!.sql
+            .prepare("SELECT status FROM knowledge_work WHERE id='flat-two-brochure-review'")
+            .get(),
+        { timeout: 90_000 },
+      )
+      .toEqual({ status: "completed" });
+    await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
+    expect(
+      (await steps()).filter(
+        (step) =>
+          step.tool === "knowledge_save" &&
+          (step.args.node as { id?: string; expectedRevision?: number } | undefined)?.id ===
+            pageId &&
+          (step.args.node as { expectedRevision?: number }).expectedRevision === 0,
+      ),
+    ).toHaveLength(1);
     await searchable("Flat 2 service charge quarter", "Flat 2");
 
     // The agent's correction arrives on its own document.
