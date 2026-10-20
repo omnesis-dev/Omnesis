@@ -10,6 +10,7 @@ import Foundation
 enum RealtimeConversationHandoff {
     static func attach(id: String, to coordinator: AgentCoordinator) async throws {
         try Task.checkCancellation()
+        let previousDraftKey = coordinator.composerDraftKey
         // Closing voice must not cancel a shared read-only snapshot and leave text
         // showing a cancellation error. The normal HTTP timeout bounds this task;
         // the coordinator's selection generation still rejects a superseded thread.
@@ -17,6 +18,7 @@ enum RealtimeConversationHandoff {
             await coordinator.resumeConversation(id: id, forceRefresh: true)
             if let error = coordinator.fatalError { throw error }
             guard coordinator.sessionId == id, !coordinator.transcriptLoading else { throw URLError(.cancelled) }
+            coordinator.restoreDraftAfterVoiceHandoff(from: previousDraftKey)
         }
         try await handoff.value
         try Task.checkCancellation()

@@ -1225,7 +1225,7 @@ fun AgentBatchEphemeralCards(
 ) {
     val fallbackTool = if (call.tool == "fetch_many") "fetch_document" else "search_documents"
     Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
-        batchChildren(call, fallbackTool).forEach { child ->
+        batchChildren(call, fallbackTool).filter { !call.interrupted || genuineToolFailure(it.result) }.forEach { child ->
             // Key by the stable child index so an out-of-order arrival that re-sorts the list
             // doesn't shift a still-animating card's composition slot (matches the iOS
             // ForEach(id:) and the portal's keyed child render). The index is stable across the

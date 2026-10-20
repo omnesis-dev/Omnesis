@@ -138,14 +138,15 @@ class TasksScreenshotTest {
 
     @Composable
     private fun Screen(state: TasksUiState, experimental: Boolean = false) {
-        TasksFrame(onOpenMenu = {}) {
+        TasksFrame(onOpenMenu = {}, onTellOmnesis = {}) {
             TasksContent(state = state, today = today, experimental = experimental)
         }
     }
 
     /**
      * A stable gateway: tabs with their open counts, no Suggested segment, no suggestions
-     * banner, no proposal on a row, and Today ending with the way to add a task.
+     * banner, no proposal on a row, and the bar's Tell Omnesis button (a microphone with a
+     * plus badge) at the top right as the way to add a task.
      */
     @Test
     fun tasks_today_dark() = capture("tasks_today_dark", dark = true) { Screen(todayState) }
@@ -176,7 +177,7 @@ class TasksScreenshotTest {
 
     @Composable
     private fun FanScreen(state: TasksUiState, fan: TaskFanPreview, experimental: Boolean = false) {
-        TasksFrame(onOpenMenu = {}) {
+        TasksFrame(onOpenMenu = {}, onTellOmnesis = {}) {
             TasksContent(state = state, today = today, experimental = experimental, initialFan = fan)
         }
     }

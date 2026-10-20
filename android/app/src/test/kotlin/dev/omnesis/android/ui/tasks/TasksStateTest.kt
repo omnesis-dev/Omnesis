@@ -158,14 +158,6 @@ class TasksStateTest {
     }
 
     @Test
-    fun the_capture_hint_closes_only_the_views_a_person_fills() {
-        assertEquals(
-            listOf(true, true, true, true, true, false, false),
-            TaskSegment.entries.map { showsCaptureHint(it) },
-        )
-    }
-
-    @Test
     fun the_page_is_headed_by_its_day_or_month() {
         val today = TaskPageHeading.of(
             TaskSegment.TODAY,

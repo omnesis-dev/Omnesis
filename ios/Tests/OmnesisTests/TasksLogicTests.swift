@@ -213,13 +213,6 @@ final class TasksLogicTests: XCTestCase {
         XCTAssertEqual(TaskJournal.reviewBannerText(suggested: 5), "Omnesis has created 5 tasks for your review")
     }
 
-    func testCaptureHintOnTheViewsAPersonFills() {
-        XCTAssertEqual(
-            TaskViewKind.allCases.filter(TaskJournal.showsCaptureHint(for:)),
-            [.today, .month, .future, .anytime, .waiting]
-        )
-    }
-
     func testDocumentsShowAFewThenTheRestOnRequest() {
         let documents = (0 ..< 6).map {
             TaskDocument(id: "doc_\($0)", title: "Document \($0)", sourceId: "mail:inbox")

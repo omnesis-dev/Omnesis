@@ -867,7 +867,8 @@ of this" into a statement example; the tool exists in no other conversation.
 
 A gate does not score the ledger; it reads it. Before it asks its question, a
 gate looks up the few examples most like the item it judges (by vector when
-both have one from the live embedder, by word overlap otherwise) and puts them
+both have one from the live embedder and the item's own vector arrives within
+ten seconds, by word overlap otherwise) and puts them
 in its state as `owner_interest`: positive examples, negative examples and
 statements, each with its similarity and age. An empty ledger, or nothing
 above the similarity floor, leaves the request exactly as it was. Three gates
@@ -893,7 +894,11 @@ A gate looks up the few examples most like the item (by vector when both have
 one from the live embedder, by shared content words otherwise, never on one
 word alone); `brain.interest.lookup` sets how many it is shown of each kind
 (`perPolarity`, 4) and the similarity floors (`cosineFloor` 0.55,
-`overlapFloor` 0.2). Each example says which measure found it. The owner's
+`overlapFloor` 0.2). Each example says which measure found it. Cosine scores
+depend on the embedder: with Qwen3-Embedding-0.6B, related short texts score
+roughly 0.4 to 0.75 and unrelated ones mostly below 0.4, so a floor near 0.45
+finds more of what the owner meant at the cost of an occasional stray example,
+which the decision model sees with its similarity and can discount. The owner's
 latest word on a thing is the one that counts: accepting a suggestion they had
 ignored supersedes the ignore, a changed thumbs supersedes the earlier one,
 and a statement about the same subject supersedes the previous statement. A

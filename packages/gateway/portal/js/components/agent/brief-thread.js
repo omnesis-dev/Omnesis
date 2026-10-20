@@ -91,7 +91,7 @@ function errorText(err) {
   return err?.serverMessage ?? err?.message ?? String(err);
 }
 
-export function BriefThread({ conversationId, turns, citations, dispatch, today = localDay() }) {
+export function BriefThread({ conversationId, turns, citations, dispatch, onEdit, canEdit = true, today = localDay() }) {
   const { preamble, days } = groupBriefDays(turns);
   const latest = days.at(-1)?.day ?? null;
   // Earlier days the user opened, and the days whose footer is toggled away
@@ -147,6 +147,8 @@ export function BriefThread({ conversationId, turns, citations, dispatch, today 
     turn=${turn}
     citations=${citations}
     dispatch=${dispatch}
+    onEdit=${onEdit}
+    canEdit=${canEdit}
     ...${extra}
   />`;
 

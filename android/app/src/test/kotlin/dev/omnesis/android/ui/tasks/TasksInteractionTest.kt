@@ -9,6 +9,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -65,6 +66,9 @@ class TasksInteractionTest {
     private lateinit var gateway: StatefulTasksGateway
     private lateinit var vm: TasksViewModel
 
+    /** How many times the bar's Tell Omnesis button asked for the capture. */
+    private var tellOmnesisTaps = 0
+
     private fun start(tasks: List<TaskDto> = listOf(deposit, tuner, permit), experimental: Boolean = false) {
         gateway = StatefulTasksGateway(tasks, resolvedNow = "2026-10-14T09:30:00.000Z")
         vm = TasksViewModel(gateway) { today }
@@ -78,15 +82,17 @@ class TasksInteractionTest {
         // Inspection mode freezes the receipt's timer, so Undo stays on screen to be tapped.
         CompositionLocalProvider(LocalInspectionMode provides true) {
             OmnesisTheme(darkTheme = false) {
-                TasksContent(
-                    state = state,
-                    today = LocalDate.parse(state.day),
-                    experimental = experimental,
-                    actions = taskRowActions(vm) {},
-                    onSelect = vm::select,
-                    onUndo = vm::undo,
-                    onReceiptExpired = vm::dismissReceipt,
-                )
+                TasksFrame(onOpenMenu = {}, onTellOmnesis = { tellOmnesisTaps += 1 }) {
+                    TasksContent(
+                        state = state,
+                        today = LocalDate.parse(state.day),
+                        experimental = experimental,
+                        actions = taskRowActions(vm) {},
+                        onSelect = vm::select,
+                        onUndo = vm::undo,
+                        onReceiptExpired = vm::dismissReceipt,
+                    )
+                }
             }
         }
     }
@@ -172,6 +178,24 @@ class TasksInteractionTest {
         vm.select(TaskSegment.SUGGESTED)
         compose.waitForIdle()
         node("tasks.row.${permit.id}").assertExists()
+    }
+
+    // --- Tell Omnesis ---------------------------------------------------------------------------
+
+    /** The bar's microphone-and-plus button asks for Tell Omnesis once per tap and changes no task. */
+    @Test
+    fun the_bars_tell_omnesis_button_asks_for_capture() {
+        start()
+        assertOpen(deposit.id)
+
+        val button = compose.onNodeWithTag("tasks.tellOmnesis")
+        button.assertIsDisplayed()
+        button.assertContentDescriptionEquals("Tell Omnesis")
+
+        button.performClick()
+        compose.waitForIdle()
+        assertEquals(1, tellOmnesisTaps)
+        assertTrue(gateway.commands.isEmpty())
     }
 
     // --- The circle ----------------------------------------------------------------------------

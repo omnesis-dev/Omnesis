@@ -93,6 +93,12 @@ import {
 } from "./spend-recorder.js";
 import { slimPersistedHistory } from "./persist-slim.js";
 import {
+  ConversationControls,
+  restoreConversationControls,
+  type ConversationControlState,
+  type SubmissionInput,
+} from "./conversation-controls.js";
+import {
   deriveTitle,
   originAnchor,
   latestDailyBrief,
@@ -817,6 +823,8 @@ export const MORNING_BRIEF_CALLER_ID = "brain:morning-brief";
 
 /** Bookkeeping for one live in-memory session held by {@link AgentService}. */
 interface LiveSessionEntry {
+  /** Controls safe for unrelated transcript saves; tentative mutations never escape their transaction. */
+  committedControls?: ConversationControlState;
   session: AgentSession;
   callerId: CallerId;
   lastActive: number;
@@ -846,6 +854,7 @@ interface LiveSessionEntry {
     model: string;
     backend: string;
     pinned: boolean;
+    controls?: ConversationControlState;
     /** Permanent context-exhaustion state, persisted outside model-visible history. */
     terminalFailure?: AgentConversationTerminalFailure;
     /** Durable marker for a partial latest answer, outside model-visible history. */
@@ -866,6 +875,7 @@ interface LiveSessionEntry {
 }
 
 export class AgentService {
+  private readonly controls: ConversationControls;
   private readonly backendFactory: (role: CapabilityRole) => ChatBackend | null;
   private readonly tools: ReadonlyArray<ToolHandle>;
   private readonly citationReads = new CitationReads();
@@ -1012,6 +1022,54 @@ export class AgentService {
   }
 
   constructor(deps: AgentServiceDeps) {
+    this.controls = new ConversationControls({
+      state: (id) => {
+        const entry = this.requireSession(id);
+        const state = (entry.meta.controls ??= { submissions: [] });
+        entry.committedControls ??= structuredClone(state);
+        return state;
+      },
+      persist: async (id) => {
+        const entry = this.requireSession(id);
+        if (!this.store)
+          throw new AgentError("agent_unavailable", "Conversation storage is unavailable.");
+        await this.persistConversation(
+          id,
+          entry.callerId,
+          entry.meta,
+          undefined,
+          false,
+          structuredClone(entry.meta.controls),
+        );
+      },
+      busy: (id) => {
+        const entry = this.requireSession(id);
+        return (
+          entry.session.busy ||
+          this.deepResearchActive.has(id) ||
+          this.realtimeOwners.has(id) ||
+          this.activeTurnCompletions.has(id)
+        );
+      },
+      available: (id) =>
+        !this.disposing && this.sessions.has(id) && !this.answerDeleteLocks.has(id),
+      cancel: (id) => {
+        this.cancelSession(this.requireSession(id).callerId, id);
+      },
+      start: async (id, submission, submissionIds) => {
+        const entry = this.requireSession(id);
+        this.sendMessage(submission.callerId ?? entry.callerId, id, submission.text, {
+          deepResearch: submission.deepResearch,
+          acceptedSubmission: true,
+          submissionIds,
+        });
+        const completions = [...(this.activeTurnCompletions.get(id) ?? [])];
+        const research = this.deepResearchRuns.get(id);
+        if (research) completions.push(research.completion);
+        await Promise.all(completions);
+        if (entry.meta.lastTurnFailure) throw new Error("The submitted turn failed.");
+      },
+    });
     this.backendFactory = deps.backendFactory;
     this.planStore = new PlanStore();
     // Build the sub-agent orchestrator + port BEFORE the tools, so the
@@ -1279,7 +1337,12 @@ export class AgentService {
     for (const [id, entry] of this.sessions) {
       if (entry.callerId !== callerId) continue;
       perCaller++;
-      if (entry.session.busy || this.deepResearchActive.has(id) || this.realtimeOwners.has(id))
+      if (
+        entry.session.busy ||
+        this.deepResearchActive.has(id) ||
+        this.realtimeOwners.has(id) ||
+        this.controls.active(id)
+      )
         continue;
       if (!oldestIdle || entry.lastActive < oldestIdle.lastActive) {
         oldestIdle = { id, lastActive: entry.lastActive };
@@ -1311,6 +1374,7 @@ export class AgentService {
     let resumedOrigin: ConversationOrigin | undefined;
     let resumedTerminalFailure: AgentConversationTerminalFailure | undefined;
     let resumedLastTurnFailure: AgentTerminalFailure | undefined;
+    let resumedControls: ConversationControlState | undefined;
 
     if (opts.resumeFromId) {
       // Resume from disk — any admin caller can pick up any prior
@@ -1337,6 +1401,7 @@ export class AgentService {
       resumedOrigin = normalized.origin;
       resumedTerminalFailure = normalized.terminalFailure;
       resumedLastTurnFailure = normalized.lastTurnFailure;
+      resumedControls = restoreConversationControls(normalized.controls);
     } else {
       sessionId = this.sessionIdGen();
       createdAt = new Date().toISOString();
@@ -1399,6 +1464,7 @@ export class AgentService {
       pinned: resumedPinned,
       ...(resumedTerminalFailure ? { terminalFailure: resumedTerminalFailure } : {}),
       ...(resumedLastTurnFailure ? { lastTurnFailure: resumedLastTurnFailure } : {}),
+      ...(resumedControls ? { controls: resumedControls } : {}),
       ...(resumedOrigin ? { origin: resumedOrigin, fixedTitle: resumedTitle } : {}),
     };
     this.attachSessionEvents(sessionId, session);
@@ -1413,6 +1479,7 @@ export class AgentService {
     log.info(
       `session ${sessionId} ${opts.resumeFromId ? "resumed" : "created"} for caller ${callerId} (${backend.name}/${backend.model})`,
     );
+    this.controls.kick(sessionId);
     const messages = initialHistory ? [...initialHistory] : [];
     return {
       sessionId,
@@ -1538,6 +1605,7 @@ export class AgentService {
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
     const base = withTodaysTasks([
       ...this.tools,
+      ...(profile === "interactive" ? [this.controls.clarificationTool(sessionId)] : []),
       ...memory.filter((tool) => !experimentalNames.has(tool.name)),
       ...experimental,
       ...taskTools,
@@ -1556,6 +1624,15 @@ export class AgentService {
    */
   private attachSessionEvents(sessionId: string, session: AgentSession): void {
     session.subscribe((event) => {
+      // Replay fixtures emit tool results without invoking the live tool handle.
+      if (
+        session.backendName === "replay" &&
+        event.type === "agent.tool.result" &&
+        event.payload.result.kind === "structured" &&
+        event.payload.result.resultType === "conversation.clarification"
+      ) {
+        this.controls.observeClarification(sessionId, event.payload.result.data);
+      }
       if (event.type === "agent.message.end") {
         const live = this.sessions.get(sessionId);
         if (live) {
@@ -1770,7 +1847,8 @@ export class AgentService {
       this.activeTurnReplays.has(id) ||
       this.deepResearchActive.has(id) ||
       this.resumeCreationTails.has(id) ||
-      this.conversationPersistenceCounts.has(id)
+      this.conversationPersistenceCounts.has(id) ||
+      this.controls.active(id)
     ) {
       throw new AgentError(
         "session_busy",
@@ -2302,10 +2380,18 @@ export class AgentService {
     callerId: CallerId,
     sessionId: string,
     text: string,
-    opts: { deepResearch?: boolean; notifyAfterMs?: number } = {},
+    opts: {
+      deepResearch?: boolean;
+      notifyAfterMs?: number;
+      acceptedSubmission?: boolean;
+      submissionIds?: string[];
+    } = {},
   ): { messageId: string; userMessageId: string } {
     if (this.realtimeOwners.has(sessionId))
       throw new AgentError("session_busy", "conversation is in a voice call");
+    if (!opts.acceptedSubmission && this.controls.active(sessionId)) {
+      throw new AgentError("session_busy", "a queued message is being accepted or started");
+    }
     if (this.disposing) {
       throw new AgentError("session_busy", "agent service is shutting down");
     }
@@ -2324,6 +2410,10 @@ export class AgentService {
     if (this.deepResearchActive.has(sessionId)) {
       throw new AgentError("session_busy", "session is busy; cancel the in-flight turn first");
     }
+    if (entry.session.busy) {
+      throw new AgentError("session_busy", "session is busy; cancel the in-flight turn first");
+    }
+    const answeredClarificationId = entry.meta.controls?.pendingClarification?.id;
     // A profile switch requested while a turn was in flight applies now,
     // before this turn starts, so the reply speaks the surface the caller
     // resumed on. Still-busy sessions keep the swap pending (the send
@@ -2348,16 +2438,39 @@ export class AgentService {
       if (entry.session.busy) {
         throw new AgentError("session_busy", "session is busy; cancel the in-flight turn first");
       }
-      return this.runDeepResearch(sessionId, text);
+      const result = this.runDeepResearch(sessionId, text, opts.submissionIds);
+      this.clearAnsweredClarification(entry, answeredClarificationId);
+      return result;
     }
     if (opts.notifyAfterMs !== undefined && this.notifyAnswer) {
-      return this.startMessageWithSlowAnswerPush(callerId, sessionId, text, opts.notifyAfterMs);
+      const result = this.startMessageWithSlowAnswerPush(
+        callerId,
+        sessionId,
+        text,
+        opts.notifyAfterMs,
+        opts.submissionIds,
+      );
+      this.clearAnsweredClarification(entry, answeredClarificationId);
+      return result;
     }
-    const { messageId, userMessageId, completion } = this.startMessage(callerId, sessionId, text);
+    const { messageId, userMessageId, completion } = this.startMessage(callerId, sessionId, text, {
+      submissionIds: opts.submissionIds,
+    });
     // The streaming command returns immediately; event subscribers receive the
     // terminal error while this catch prevents an unhandled rejection.
     void completion.catch(() => {});
+    this.clearAnsweredClarification(entry, answeredClarificationId);
     return { messageId, userMessageId };
+  }
+
+  private clearAnsweredClarification(entry: LiveSessionEntry, id: string | undefined): void {
+    if (!id) return;
+    // A successfully started legacy message answers the question without a submission envelope.
+    // The ordinary turn's save must carry this accepted transition, never resurrect the question.
+    if (entry.meta.controls?.pendingClarification?.id === id)
+      delete entry.meta.controls.pendingClarification;
+    if (entry.committedControls?.pendingClarification?.id === id)
+      delete entry.committedControls.pendingClarification;
   }
 
   /**
@@ -2384,6 +2497,7 @@ export class AgentService {
     sessionId: string,
     text: string,
     notifyAfterMs: number,
+    submissionIds?: string[],
   ): { messageId: string; userMessageId: string } {
     const entry = this.requireSession(sessionId);
     const acceptedAt = Date.now();
@@ -2415,7 +2529,7 @@ export class AgentService {
     const entryForBudget = this.sessions.get(sessionId);
     if (entryForBudget) entryForBudget.meta.notificationSatisfied = true;
     try {
-      started = this.startMessage(callerId, sessionId, text);
+      started = this.startMessage(callerId, sessionId, text, { submissionIds });
     } catch (err) {
       unsubscribe();
       if (entryForBudget) delete entryForBudget.meta.notificationSatisfied;
@@ -2779,6 +2893,7 @@ export class AgentService {
       signal?: AbortSignal;
       /** Spend bucket for this turn; defaults to ordinary interactive chat. */
       spendMechanism?: string;
+      submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string; completion: Promise<void> } {
     return this.startSessionTurn(callerId, sessionId, text, opts);
@@ -2794,6 +2909,7 @@ export class AgentService {
       spendMechanism?: string;
       backend?: ChatBackend;
       owner?: symbol;
+      submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string; completion: Promise<void> } {
     const owner = this.realtimeOwners.get(sessionId);
@@ -2862,6 +2978,7 @@ export class AgentService {
       started = entry.session.send(text, {
         signal: opts.signal,
         ...(opts.backend ? { backend: opts.backend } : {}),
+        submissionIds: opts.submissionIds,
         ...(modelNote ? { modelNote } : {}),
       });
     } catch (err) {
@@ -2928,6 +3045,7 @@ export class AgentService {
       const current = this.activeTurnCompletions.get(sessionId);
       current?.delete(settled);
       if (current?.size === 0) this.activeTurnCompletions.delete(sessionId);
+      this.controls.kick(sessionId);
     };
     void settled.then(forgetCompletion, forgetCompletion);
     this.touch(sessionId);
@@ -3014,6 +3132,7 @@ export class AgentService {
   private runDeepResearch(
     sessionId: string,
     text: string,
+    submissionIds?: string[],
   ): { messageId: string; userMessageId: string } {
     const messageId = `dr_${crypto.randomUUID()}`;
     const userMessageId = `dr_${crypto.randomUUID()}`;
@@ -3119,7 +3238,14 @@ export class AgentService {
       rawEmit(makeEvent("agent.message.end", terminal));
     };
 
-    rawEmit(makeEvent("agent.user.message", { sessionId, userMessageId, text }));
+    rawEmit(
+      makeEvent("agent.user.message", {
+        sessionId,
+        userMessageId,
+        text,
+        ...(submissionIds?.length ? { submissionIds: [...submissionIds] } : {}),
+      }),
+    );
     rawEmit(makeEvent("agent.message.start", { sessionId, messageId, role: "assistant" }));
 
     const operation = (async () => {
@@ -3194,6 +3320,7 @@ export class AgentService {
       }
     })();
     operation.then(settleRun, settleRun);
+    void operation.finally(() => this.controls.kick(sessionId)).catch(() => {});
 
     this.touch(sessionId);
     return { messageId, userMessageId };
@@ -3219,19 +3346,17 @@ export class AgentService {
     // Read once: the parent could be evicted during the prompt await, and a
     // second lookup would then hand the finalizer a prompt and a tool set built
     // in different zones.
-    const parentZone = this.sessions.get(input.sessionId)?.session.timeZone;
-    const finalPrompt = await this.resolveChatPrompt("interactive", { timeZone: parentZone });
+    const parent = this.sessions.get(input.sessionId);
+    const parentZone = parent?.session.timeZone;
+    const parentProfile = parent?.promptProfile ?? "voice";
+    const finalPrompt = await this.resolveChatPrompt(parentProfile, { timeZone: parentZone });
     const finalizer = new AgentSession({
       // Keep the parent session id in tool context, so normal annotate_many
       // events and their durable Timeline records belong to the parent turn.
       sessionId: input.sessionId,
       backend,
       tools: [
-        ...this.buildInteractiveTools(
-          input.sessionId,
-          "interactive",
-          this.sessions.get(input.sessionId)?.meta.origin?.kind,
-        ),
+        ...this.buildInteractiveTools(input.sessionId, parentProfile, parent?.meta.origin?.kind),
       ],
       systemPrompt: finalPrompt,
       timeZone: parentZone,
@@ -3318,7 +3443,10 @@ export class AgentService {
         if (
           entry.session.busy ||
           this.deepResearchActive.has(sessionId) ||
-          this.realtimeOwners.has(sessionId)
+          this.realtimeOwners.has(sessionId) ||
+          this.controls.active(sessionId) ||
+          this.activeTurnCompletions.has(sessionId) ||
+          entry.meta.controls?.submissions.some((submission) => submission.status === "queued")
         )
           throw new AgentError("session_busy", "conversation is busy");
         if (entry.meta.terminalFailure)
@@ -3330,6 +3458,7 @@ export class AgentService {
     );
     let closed = false;
     let voiceContextFailure: string | undefined;
+    let cancellationGeneration = 0;
     let active: Promise<void> | undefined;
     const unsubscribeFailure = entry.session.subscribe((event) => {
       if (
@@ -3346,32 +3475,44 @@ export class AgentService {
     const release = () => {
       unsubscribeFailure();
       resolveReleased();
-      if (this.realtimeOwners.get(sessionId) === owner) this.realtimeOwners.delete(sessionId);
+      if (this.realtimeOwners.get(sessionId) === owner) {
+        this.realtimeOwners.delete(sessionId);
+        this.controls.kick(sessionId);
+      }
     };
     return {
       sessionId,
       context: entry.session.modelContextSnapshot(),
       subscribe: (listener) => entry.session.subscribe(listener),
-      run: (text, backend, signal) => {
+      run: async (text, backend, signal) => {
         if (closed || signal.aborted || this.disposing)
-          return Promise.reject(new AgentError("session_busy", "voice call ended"));
-        if (voiceContextFailure)
-          return Promise.reject(new AgentError("context_window_exceeded", voiceContextFailure));
-        if (entry.meta.terminalFailure)
-          return Promise.reject(
-            new AgentError("context_window_exceeded", entry.meta.terminalFailure.message),
-          );
-        this.touch(sessionId);
-        active = this.startSessionTurn(callerId, sessionId, text, {
-          backend,
-          signal,
-          owner,
-          spendMechanism: "realtime-voice",
-          recordSpend: false,
-        }).completion;
-        return active;
+          throw new AgentError("session_busy", "voice call ended");
+        const generation = cancellationGeneration;
+        let completion: Promise<void> | undefined;
+        await this.controls.startTurn(sessionId, () => {
+          // A barge-in or hangup while awaiting durable controls must not start late work.
+          if (closed || signal.aborted || this.disposing || generation !== cancellationGeneration)
+            return;
+          if (voiceContextFailure)
+            throw new AgentError("context_window_exceeded", voiceContextFailure);
+          if (entry.meta.terminalFailure)
+            throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+          this.touch(sessionId);
+          const answeredClarificationId = entry.meta.controls?.pendingClarification?.id;
+          active = this.startSessionTurn(callerId, sessionId, text, {
+            backend,
+            signal,
+            owner,
+            spendMechanism: "realtime-voice",
+            recordSpend: false,
+          }).completion;
+          completion = active;
+          this.clearAnsweredClarification(entry, answeredClarificationId);
+        });
+        return completion;
       },
       cancel: () => {
+        cancellationGeneration += 1;
         if (!closed) entry.session.cancel("user");
       },
       close: () => {
@@ -3397,6 +3538,40 @@ export class AgentService {
         return released;
       },
     };
+  }
+
+  conversationControls(sessionId: string) {
+    return this.controls.snapshot(sessionId);
+  }
+
+  async submitMessage(callerId: CallerId, sessionId: string, input: SubmissionInput) {
+    if (this.realtimeOwners.has(sessionId) && input.mode === "interrupt")
+      throw new AgentError("session_busy", "End the voice call before sending a message now.");
+    const entry = this.requireSession(sessionId);
+    if (this.disposing || this.answerDeleteLocks.has(sessionId)) {
+      throw new AgentError("session_busy", "The conversation is closing. Try again shortly.");
+    }
+    if (entry.meta.terminalFailure)
+      throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+    entry.callerId = callerId;
+    this.touch(sessionId);
+    return this.controls.submit(sessionId, input, callerId);
+  }
+
+  async sendQueuedNow(callerId: CallerId, sessionId: string, submissionIds: string[]) {
+    if (this.realtimeOwners.has(sessionId))
+      throw new AgentError(
+        "session_busy",
+        "End the voice call before sending queued messages now.",
+      );
+    const entry = this.requireSession(sessionId);
+    if (this.disposing || this.answerDeleteLocks.has(sessionId))
+      throw new AgentError("session_busy", "The conversation is closing. Try again shortly.");
+    if (entry.meta.terminalFailure)
+      throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+    entry.callerId = callerId;
+    this.touch(sessionId);
+    return this.controls.sendNow(sessionId, submissionIds);
   }
 
   cancelSession(callerId: CallerId, sessionId: string): { ok: true } {
@@ -3570,6 +3745,7 @@ export class AgentService {
       model: string;
       backend: string;
       pinned: boolean;
+      controls?: ConversationControlState;
       terminalFailure?: AgentConversationTerminalFailure;
       lastTurnFailure?: AgentTerminalFailure;
       origin?: ConversationOrigin;
@@ -3578,12 +3754,18 @@ export class AgentService {
     },
     arrivingMessageId?: string,
     notify = true,
+    controlsWrite?: ConversationControlState,
   ): Promise<void> {
     if (!this.store) return;
     const entry = this.sessions.get(sessionId);
     if (!entry) return; // evicted between event and persist — drop.
     const messages = slimPersistedHistory(entry.session.historySnapshot());
-    if (messages.length === 0) return; // nothing worth saving yet.
+    if (
+      messages.length === 0 &&
+      !meta.controls?.submissions.length &&
+      !meta.controls?.pendingClarification
+    )
+      return;
     const record: ConversationRecord = {
       id: sessionId,
       callerId,
@@ -3597,12 +3779,13 @@ export class AgentService {
       // Carry the live pin flag through so a turn-end save preserves a
       // pin that was toggled while the session was in memory.
       pinned: meta.pinned,
+      ...(meta.controls ? { controls: structuredClone(meta.controls) } : {}),
       ...(meta.terminalFailure ? { terminalFailure: meta.terminalFailure } : {}),
       ...(meta.lastTurnFailure ? { lastTurnFailure: meta.lastTurnFailure } : {}),
       ...(meta.origin ? { origin: meta.origin } : {}),
       messages,
     };
-    await this.saveConversationRecord(record);
+    await this.saveConversationRecord(record, controlsWrite);
     if (!notify) return;
     // Every turn that runs on a live session passes through here, whoever
     // started it, so this is the one place that has to ask whether the
@@ -3666,9 +3849,22 @@ export class AgentService {
     }
   }
 
-  private async saveConversationRecord(record: ConversationRecord): Promise<void> {
+  private async saveConversationRecord(
+    record: ConversationRecord,
+    controlsWrite?: ConversationControlState,
+  ): Promise<void> {
     if (!this.store) return;
-    await this.enqueueConversationMutation(record.id, () => this.store!.save(record));
+    await this.enqueueConversationMutation(record.id, async () => {
+      const entry = this.sessions.get(record.id);
+      // Resolve inside the persistence tail: a transcript captured before an acceptance
+      // must not overwrite it, and a failed control proposal must never leak through it.
+      const controls = controlsWrite ?? entry?.committedControls;
+      await this.store!.save({
+        ...record,
+        ...(controls ? { controls: structuredClone(controls) } : {}),
+      });
+      if (controlsWrite && entry) entry.committedControls = structuredClone(controlsWrite);
+    });
   }
 
   /** Serialize every durable mutation for one conversation in acceptance order. */
@@ -3734,7 +3930,8 @@ export class AgentService {
     if (
       entry.session.busy ||
       this.deepResearchActive.has(sessionId) ||
-      this.realtimeOwners.has(sessionId)
+      this.realtimeOwners.has(sessionId) ||
+      this.controls.active(sessionId)
     ) {
       // The caller may be the original idle-timer firing (in which case
       // `entry.timer` already cleared itself via setTimeout's natural
@@ -3820,6 +4017,7 @@ export class AgentService {
         ...turnSettlements.map((settlement) => settlement.catch(() => {})),
       ]);
     }
+    if (this.controls.hasWork) await this.controls.settle();
     this.sessions.clear();
     this.deepResearchRuns.clear();
     this.deepResearchAborts.clear();

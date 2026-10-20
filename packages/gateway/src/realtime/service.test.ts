@@ -345,6 +345,72 @@ describe("direct realtime Omnesis runtime", () => {
     expect(f.peer.close).toHaveBeenCalled();
     expect(f.events.some((event) => event.type === "session.ended")).toBe(false);
   });
+  it("keeps the call alive when barge-in cancels a voice start waiting on durable controls", async () => {
+    const f = await fixture();
+    const connection = await ready(f, undefined, 2);
+    const conversationId = f.events.find((event) => event.type === "session.ready")!
+      .conversationId as string;
+    let persistStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      persistStarted = resolve;
+    });
+    let finishPersist!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      finishPersist = resolve;
+    });
+    const originalSave = f.store.save.bind(f.store);
+    vi.spyOn(f.store, "save").mockImplementationOnce(async (record) => {
+      persistStarted();
+      await blocked;
+      await originalSave(record);
+    });
+    const acceptance = f.agent.submitMessage("token:fixture", conversationId, {
+      clientMessageId: "during-voice",
+      text: "Queued text",
+      mode: "queue",
+    });
+    await started;
+    f.socket.event({ type: "input_audio_buffer.committed", item_id: "interrupted-audio" });
+    f.socket.event({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "interrupted-audio",
+      transcript: "Interrupted before admission",
+    });
+    f.socket.event({ type: "input_audio_buffer.speech_started" });
+    f.socket.event({ type: "input_audio_buffer.committed", item_id: "replacement-audio" });
+    f.socket.event({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "replacement-audio",
+      transcript: "Replacement spoken question",
+    });
+    finishPersist();
+    await acceptance;
+    await vi.waitFor(() =>
+      expect(f.socket.sent.filter((event) => event.type === "response.create")).toHaveLength(1),
+    );
+    expect(f.peer.close).not.toHaveBeenCalled();
+    expect(
+      f.canonical.some(
+        (event) =>
+          event.type === "agent.user.message" &&
+          event.payload.text === "Interrupted before admission",
+      ),
+    ).toBe(false);
+    expect(f.canonical).toContainEqual(
+      expect.objectContaining({
+        type: "agent.user.message",
+        payload: expect.objectContaining({ text: "Replacement spoken question" }),
+      }),
+    );
+    expect(f.ordinary.runTurn).not.toHaveBeenCalled();
+    f.socket.event({ type: "response.created", response: { id: "replacement-response" } });
+    done(f, "replacement-response");
+    await settle(f);
+    connection.receive(JSON.stringify({ type: "session.end" }));
+    await vi.waitFor(() =>
+      expect(f.events).toContainEqual({ type: "session.ended", conversationId }),
+    );
+  });
   it("advertises additive direct-runtime capabilities while preserving the old available/model/audio contract", async () => {
     const f = await fixture();
     const capability = f.service.capability();

@@ -144,6 +144,9 @@ export interface SessionOptions {
 export interface SendOptions {
   /** A transport-owned backend for this turn; the canonical session still owns its lifecycle. */
   backend?: ChatBackend;
+
+  /** Queue receipt identities for presentation handoff, never model instructions. */
+  submissionIds?: string[];
   /** External abort signal. Cancelling causes `agent.message.end { stopReason: "canceled" }`. */
   signal?: AbortSignal;
   /**
@@ -496,7 +499,12 @@ export class AgentSession {
     // send can render it. Originator dedupes by `userMessageId`.
     this.broadcast({
       type: "agent.user.message",
-      payload: { sessionId: this.sessionId, userMessageId, text },
+      payload: {
+        sessionId: this.sessionId,
+        userMessageId,
+        text,
+        ...(opts.submissionIds?.length ? { submissionIds: [...opts.submissionIds] } : {}),
+      },
     });
 
     const completion = this.runTurnLoop(turn, userTurn, text, opts, onExternalAbort);

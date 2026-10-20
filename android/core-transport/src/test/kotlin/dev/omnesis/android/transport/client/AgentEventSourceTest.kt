@@ -5,6 +5,7 @@ package dev.omnesis.android.transport.client
 
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.AgentEvent
+import dev.omnesis.android.transport.dto.OmnesisJson
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
@@ -59,6 +60,18 @@ class AgentEventSourceTest {
         idleTimeoutMs = idleTimeoutMs,
         watchdogIntervalMs = watchdogIntervalMs,
     )
+
+    @Test fun queuedReceiptIdsAreOptionalAndForwardCompatible() {
+        val older = OmnesisJson.decodeFromString<AgentEvent>(
+            """{"type":"agent.user.message","payload":{"sessionId":"session","userMessageId":"random-message","text":"Same text"}}""",
+        ) as AgentEvent.UserMessage
+        assertTrue(older.submissionIds.isEmpty())
+        val correlated = OmnesisJson.decodeFromString<AgentEvent>(
+            """{"type":"agent.user.message","payload":{"sessionId":"session","userMessageId":"random-message","text":"Same text","submissionIds":["first","second"],"future":true}}""",
+        ) as AgentEvent.UserMessage
+        assertEquals(listOf("first", "second"), correlated.submissionIds)
+        assertEquals("random-message", correlated.userMessageId)
+    }
 
     /** `count` text deltas followed by the `message.end` that retires the turn, as SSE frames. */
     private fun burst(count: Int): String = buildString {

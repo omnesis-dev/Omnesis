@@ -168,6 +168,215 @@ public final class AgentCoordinator {
             && liveSessionMissingReason == nil
     }
 
+    private(set) var conversationControls: ConversationControls?
+    private(set) var conversationControlsSupported = false
+    private(set) var submitting = false
+    private var draftSubmissionID: UUID?
+    private(set) var submissionError: Error?
+    private let draftStore = ConversationDraftStore()
+    private(set) var dismissedConversationActivity = ConversationActivityDismissal()
+
+    var composerDraftKey: String {
+        guard let client else { return "unpaired" }
+        return ConversationDraftStore.scope(url: client.baseURL, token: client.token)
+            + ":" + (sessionId ?? "new")
+    }
+
+    func draft(for key: String) -> String {
+        draftStore.read(key)?.text ?? ""
+    }
+
+    func draftResearch(for key: String) -> Bool {
+        draftStore.research(key)
+    }
+
+    func saveDraftResearch(_ enabled: Bool, for key: String) {
+        draftStore.setResearch(enabled, key: key)
+    }
+
+    func saveDraft(_ text: String, for key: String) {
+        draftStore.write(text, key: key)
+    }
+
+    /// A voice snapshot refreshes the same conversation without consuming its unsent text.
+    func restoreDraftAfterVoiceHandoff(from previousKey: String) {
+        if previousKey.hasSuffix(":new"), previousKey != composerDraftKey {
+            draftStore.move(from: previousKey, to: composerDraftKey)
+        }
+        composerDraft = draft(for: composerDraftKey)
+    }
+
+    func draftHasBackup(for key: String) -> Bool {
+        draftStore.hasBackup(key)
+    }
+
+    func replaceDraft(_ text: String, for key: String, deepResearch: Bool = false, answerCurrentQuestion: Bool = true) {
+        draftStore.beginReplacement(text, key: key, deepResearch: deepResearch, answerCurrentQuestion: answerCurrentQuestion)
+    }
+
+    func cancelDraftReplacement(for key: String) {
+        draftStore.restoreBackup(key)
+    }
+
+    private var queueHandoff = ConversationQueueHandoff()
+
+    var presentedConversationControls: ConversationControls? {
+        conversationControls.map(queueHandoff.presenting)
+    }
+
+    func refreshConversationControls() async {
+        guard let client, let id = sessionId else { return }
+        let choice = sessionChoiceCount
+        do {
+            let controls = try await client.conversationControls(sessionId: id)
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+            conversationControls = controls
+            conversationControlsSupported = true
+        } catch {
+            if case GatewayClient.Error.notFound = error, sessionChoiceCount == choice, sessionId == id, self.client === client {
+                conversationControlsSupported = false
+                conversationControls = nil
+            }
+            // Keep the last confirmed state while the event stream reconnects.
+        }
+    }
+
+    func sendQueuedMessagesNow(submissionIds: [String]) async {
+        guard let client, let id = sessionId, canComposeMessage, !submitting,
+              let controls = conversationControls, controls.capabilities?.queueSendNow == true,
+              !submissionIds.isEmpty else { return }
+        let choice = sessionChoiceCount
+        submitting = true
+        submissionError = nil
+        defer {
+            if sessionChoiceCount == choice, sessionId == id, self.client === client { submitting = false }
+        }
+        let handoff = queueHandoff.begin(ids: submissionIds)
+        await dismissPriorConversationActivity()
+        guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+        do {
+            let updated = try await client.sendQueuedMessagesNow(sessionId: id, submissionIds: submissionIds)
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+            conversationControls = updated
+        } catch {
+            guard sessionChoiceCount == choice, sessionId == id, self.client === client else { return }
+            queueHandoff.failed(handoff)
+            dismissedConversationActivity.requestFailed()
+            submissionError = error
+            await refreshConversationControls()
+        }
+    }
+
+    /// Retire presentation, not transcript content or failure handling. Drain
+    /// parked prose immediately because its old card will no longer mount.
+    func dismissPriorConversationActivity() async {
+        let assistants = turns.compactMap { turn -> AgentAssistantTurn? in
+            if case .assistant(let assistant) = turn { return assistant }
+            return nil
+        }
+        dismissedConversationActivity.begin(
+            messageIds: assistants.map(\.id),
+            toolCallIds: assistants.flatMap { assistant in
+                assistant.parts.compactMap { part in
+                    if case .tool(let call) = part { return call.toolCallId }
+                    return nil
+                }
+            }
+        )
+        cancelAllGateHolds()
+        var pending: [AgentEvent] = []
+        for index in turns.indices {
+            guard case .assistant(var turn) = turns[index] else { continue }
+            for partIndex in turn.parts.indices {
+                guard case .tool(var call) = turn.parts[partIndex], agentEphemeralTools.contains(call.tool) else { continue }
+                pending.append(contentsOf: call.pendingTail)
+                call.pendingTail = []
+                call.tailDismissed = true
+                turn.parts[partIndex] = .tool(call)
+            }
+            turns[index] = .assistant(turn)
+        }
+        for event in pending {
+            await handle(event: event)
+        }
+    }
+
+    private func finishDraftSubmission(_ operation: UUID) {
+        guard draftSubmissionID == operation else { return }
+        draftSubmissionID = nil
+        submitting = false
+    }
+
+    /// Keep the unsent draft until the gateway acknowledges its durable submission.
+    func submitDraft(text: String, interrupt: Bool = false, deepResearch: Bool = false) async -> Bool {
+        guard let client, canComposeMessage, !submitting else { return false }
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return false }
+        let operation = UUID()
+        draftSubmissionID = operation
+        submitting = true
+        submissionError = nil
+        defer { finishDraftSubmission(operation) }
+        let originalKey = composerDraftKey
+        draftStore.write(text, key: originalKey)
+        guard let draft = draftStore.prepare(
+            key: originalKey,
+            submission: ConversationDraftSubmission(
+                interrupt: interrupt,
+                deepResearch: deepResearch,
+                clarificationId: draftStore.read(originalKey)?.answerCurrentQuestion == false ? nil : conversationControls?
+                    .pendingClarification?.id
+            )
+        ), let request = draft.submission else { return false }
+        if !conversationControlsSupported {
+            guard !interrupt, !busy else { return false }
+            var acceptedKey: String?
+            _ = await send(text: text, deepResearch: request.deepResearch) { id in
+                let key = ConversationDraftStore.scope(url: client.baseURL, token: client.token) + ":" + id
+                acceptedKey = key
+                if self.draftStore.read(key) == draft {
+                    self.draftStore.write("", key: key)
+                    self.draftStore.restoreBackup(key)
+                }
+            }
+            return acceptedKey == composerDraftKey && self.client === client && draftSubmissionID == operation
+        }
+        switch await mintSessionIfNeeded(client: client) {
+        case .ready: break
+        case .superseded: return false
+        case .failed(let error):
+            submissionError = error
+            return false
+        }
+        guard let id = sessionId else { return false }
+        let acceptedDraftKey = composerDraftKey
+        do {
+            try await client.submitMessage(
+                sessionId: id,
+                text: cleaned,
+                clientMessageId: draft.clientMessageId,
+                interrupt: request.interrupt,
+                deepResearch: request.deepResearch,
+                clarificationId: request.clarificationId
+            )
+            if draftStore.read(acceptedDraftKey) == draft {
+                draftStore.write("", key: acceptedDraftKey)
+                draftStore.restoreBackup(acceptedDraftKey)
+            }
+            guard sessionId == id, self.client === client, draftSubmissionID == operation else { return false }
+            await refreshConversationControls()
+            return sessionId == id && self.client === client && draftSubmissionID == operation
+        } catch {
+            if case GatewayClient.Error.serverError(let status, _) = error, status == 409,
+               draftStore.read(acceptedDraftKey) == draft {
+                draftStore.renewRequest(acceptedDraftKey)
+                await refreshConversationControls()
+            }
+            if sessionId == id, self.client === client, draftSubmissionID == operation { submissionError = error }
+            return false
+        }
+    }
+
     // MARK: - Private internals
 
     @ObservationIgnored
@@ -323,6 +532,12 @@ public final class AgentCoordinator {
         client = nil
         pairing = nil
         sessionId = nil
+        queueHandoff = ConversationQueueHandoff()
+        submitting = false
+        draftSubmissionID = nil
+        conversationControls = nil
+        conversationControlsSupported = false
+        submissionError = nil
         model = nil
         backend = nil
         title = ""
@@ -373,6 +588,12 @@ public final class AgentCoordinator {
     /// transcript, so a new conversation starts with an empty composer
     /// whatever the field held before.
     var composerDraft = ""
+
+    /// Persist explicit editor changes, never a coordinator-driven session reset.
+    func updateComposerDraft(_ text: String, for key: String?) {
+        composerDraft = text
+        if let key, key == composerDraftKey, !submitting { saveDraft(text, for: key) }
+    }
 
     /// Send the composer's words. The composer empties at once; a send the
     /// gateway never accepted puts them back, unless newer words are there.
@@ -576,6 +797,7 @@ public final class AgentCoordinator {
     /// left untouched. Kept in one place so the two callers — and the
     /// wholesale reset in `applyCreatedSession` — can't drift.
     private func clearTranscriptState() {
+        dismissedConversationActivity = ConversationActivityDismissal()
         sendOperationGeneration &+= 1
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
@@ -615,6 +837,12 @@ public final class AgentCoordinator {
         clearTranscriptState()
         composerDraft = ""
         sessionId = nil
+        queueHandoff = ConversationQueueHandoff()
+        submitting = false
+        draftSubmissionID = nil
+        conversationControls = nil
+        conversationControlsSupported = false
+        submissionError = nil
         model = nil
         backend = nil
         title = ""
@@ -672,6 +900,18 @@ public final class AgentCoordinator {
         }
     }
 
+    private func adoptConversationId(_ id: String) {
+        if sessionId != id {
+            queueHandoff = ConversationQueueHandoff()
+            conversationControls = nil
+            conversationControlsSupported = false
+        }
+        let previousDraftKey = composerDraftKey
+        let wasNewConversation = sessionId == nil
+        sessionId = id
+        if wasNewConversation, submitting { draftStore.move(from: previousDraftKey, to: composerDraftKey) }
+    }
+
     private func applyCreatedSession(
         _ session: CreateSessionResponse,
         preserving optimisticSend: PendingSessionMint? = nil
@@ -680,7 +920,7 @@ public final class AgentCoordinator {
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
         cancelError = nil
-        sessionId = session.sessionId
+        adoptConversationId(session.sessionId)
         activeConversationPinned = conversations
             .first(where: { $0.sessionId == session.sessionId })?.pinned ?? activeConversationPinned
         // The surface now shows this conversation — covers an explicit open,
@@ -1016,7 +1256,7 @@ public final class AgentCoordinator {
     /// newer turn returns `true`: restoring its stale text would overwrite the
     /// newer composer even when that older HTTP request failed.
     @discardableResult
-    func send(text: String, deepResearch: Bool = false) async -> Bool {
+    func send(text: String, deepResearch: Bool = false, onAccepted: ((String) -> Void)? = nil) async -> Bool {
         guard let client else { return false }
         guard terminalFailure == nil else { return false }
         // The gateway accepts one active turn per session. In particular,
@@ -1104,6 +1344,7 @@ public final class AgentCoordinator {
                 text: cleaned,
                 deepResearch: deepResearch
             )
+            onAccepted?(sessionId)
             // The request was accepted, but its UI completion may have been
             // superseded by navigation or a newer turn in this conversation.
             // In that case the newer surface already owns all presentation.
@@ -1679,6 +1920,9 @@ public final class AgentCoordinator {
         // this guard so the drawer updates live for conversations advanced on
         // another device.
         guard let live = sessionId, event.sessionId == live else { return }
+        dismissedConversationActivity.observe(event)
+        if case .thinkingDelta(_, let id, _) = event,
+           dismissedConversationActivity.messageIds.contains(id) { return }
         // Causality gate. While the latest ephemeral tool card is still
         // playing out its dismiss animation, every event that would
         // extend the assistant turn is parked on that card's tail queue.
@@ -1686,12 +1930,13 @@ public final class AgentCoordinator {
         // fade-out completes; that drains the queue back through this
         // same handler in order. Net effect: card → result → fade →
         // next text / next tool reads as one chronological narration.
-        if eventAppendsToTurn(event), let gateIdx = activeEphemeralGateIndex() {
+        if !dismissedConversationActivity.contains(event), eventAppendsToTurn(event), let gateIdx = activeEphemeralGateIndex() {
             parkOnEphemeralGate(at: gateIdx, event: event)
             return
         }
         switch event {
-        case .userMessage(_, let userMessageId, let text):
+        case .userMessage(_, let userMessageId, let text, let submissionIds):
+            queueHandoff.delivered(ids: submissionIds)
             // Cross-device user-message sync. The originator already has
             // an optimistic bubble; the HTTP send-response stamps it with
             // this `userMessageId`. If we find a turn that matches, skip
@@ -1719,8 +1964,8 @@ public final class AgentCoordinator {
             turns.append(.assistant(.init(id: messageId, parts: [], stopReason: nil, failure: nil)))
             transcriptVersion &+= 1
 
-        case .textDelta(_, _, let delta):
-            mutateLastAssistant { turn in
+        case .textDelta(_, let messageId, let delta):
+            mutateAssistant(messageId: messageId) { turn in
                 if case .text(var text) = turn.parts.last {
                     text += delta
                     turn.parts[turn.parts.count - 1] = .text(text)
@@ -1744,7 +1989,7 @@ public final class AgentCoordinator {
             // top-level turn has no separate token-progress surface.
             break
 
-        case .toolInputStart(_, _, let toolCallId, let tool):
+        case .toolInputStart(_, let messageId, let toolCallId, let tool):
             // `plan` is panel-only and `join_subagents` is orchestration-only;
             // neither belongs in the transcript. Plan results still route into
             // the pinned TODO panel below.
@@ -1754,7 +1999,7 @@ public final class AgentCoordinator {
             // seconds later (`toolStart`). Without this the card
             // pops in fully-formed and the user sees nothing for the
             // gap.
-            mutateLastAssistant { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 turn.parts.append(.tool(.init(
                     toolCallId: toolCallId,
                     tool: tool,
@@ -1766,9 +2011,9 @@ public final class AgentCoordinator {
                 )))
             }
 
-        case .toolStart(_, _, let toolCallId, let tool, let args, let argsSummary):
+        case .toolStart(_, let messageId, let toolCallId, let tool, let args, let argsSummary):
             if agentHiddenTranscriptTools.contains(tool) { break }
-            mutateLastAssistant { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 // If the stub from `toolInputStart` is already there,
                 // upgrade it in place; otherwise append a fresh part
                 // (replay backends + non-Anthropic backends may skip
@@ -1797,7 +2042,7 @@ public final class AgentCoordinator {
                 }
             }
 
-        case .toolResult(_, _, let toolCallId, let result, let durationMs):
+        case .toolResult(_, let messageId, let toolCallId, let result, let durationMs):
             // `plan` is panel-only: feed the snapshot directly into
             // `planItems` and skip the transcript-mutation path. No
             // matching tool part was ever appended (see toolInputStart /
@@ -1807,7 +2052,7 @@ public final class AgentCoordinator {
                 planItems = items
                 break
             }
-            mutateLastAssistant { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 if let idx = turn.parts.lastIndex(where: {
                     if case .tool(let call) = $0 { return call.toolCallId == toolCallId }
                     return false
@@ -1843,12 +2088,12 @@ public final class AgentCoordinator {
                 // A directly-cited record is a citation too — bump the
                 // citing turn's chip count so the bubble footer matches
                 // the annotate path.
-                mutateLastAssistant { $0.citationCount += 1 }
+                mutateAssistant(messageId: messageId, toolCallId: toolCallId) { $0.citationCount += 1 }
             default:
                 break
             }
 
-        case .toolChildStart(_, _, let toolCallId, let childIndex, let tool, let argsSummary):
+        case .toolChildStart(_, let messageId, let toolCallId, let childIndex, let tool, let argsSummary):
             // Live per-child progress for a batch tool (search_many /
             // fetch_many). Attach the child onto its parent tool part's
             // `children`, keyed by index; AgentPartView projects one live
@@ -1856,7 +2101,7 @@ public final class AgentCoordinator {
             // out-of-order completion still renders correctly. Bypasses the
             // causality gate (not in `eventAppendsToTurn`) — a live progress
             // signal, never a transcript-extending event.
-            mutateLastAssistant { turn in
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 guard let idx = turn.parts.lastIndex(where: {
                     if case .tool(let c) = $0 { return c.toolCallId == toolCallId }
                     return false
@@ -1876,8 +2121,8 @@ public final class AgentCoordinator {
                 turn.parts[idx] = .tool(call)
             }
 
-        case .toolChildResult(_, _, let toolCallId, let childIndex, let result):
-            mutateLastAssistant { turn in
+        case .toolChildResult(_, let messageId, let toolCallId, let childIndex, let result):
+            mutateAssistant(messageId: messageId, toolCallId: toolCallId) { turn in
                 guard let idx = turn.parts.lastIndex(where: {
                     if case .tool(let c) = $0 { return c.toolCallId == toolCallId }
                     return false
@@ -1968,6 +2213,7 @@ public final class AgentCoordinator {
             }
 
         case .subagentSpawned(_, let subagentId, let specialist, let task, let title, let parentToolCallId):
+            guard !dismissedConversationActivity.dismissesSpawn(parentToolCallId: parentToolCallId) else { break }
             // The worker row supersedes the launch call's temporary tool card.
             // Bind by tool-call id so parallel launches remove only their own
             // orchestration chrome.
@@ -2167,6 +2413,28 @@ public final class AgentCoordinator {
         } else {
             recordCitations.append(record)
         }
+    }
+
+    private func mutateAssistant(
+        messageId: String, toolCallId: String? = nil, _ mutation: (inout AgentAssistantTurn) -> Void
+    ) {
+        guard dismissedConversationActivity.messageIds.contains(messageId) else {
+            mutateLastAssistant(mutation)
+            return
+        }
+        let index = turns.firstIndex { turn in
+            guard case .assistant(let assistant) = turn else { return false }
+            if assistant.id == messageId { return true }
+            guard let toolCallId, dismissedConversationActivity.toolCallIds.contains(toolCallId) else { return false }
+            return assistant.parts.contains { part in
+                if case .tool(let call) = part { return call.toolCallId == toolCallId }
+                return false
+            }
+        }
+        guard let index, case .assistant(var assistant) = turns[index] else { return }
+        mutation(&assistant)
+        turns[index] = .assistant(assistant)
+        transcriptVersion &+= 1
     }
 
     private func mutateLastAssistant(_ mutation: (inout AgentAssistantTurn) -> Void) {
@@ -2457,6 +2725,7 @@ public final class AgentCoordinator {
     var researchPanels: [AgentResearchPanel] {
         for turn in turns.reversed() {
             guard case .assistant(let assistant) = turn else { continue }
+            if dismissedConversationActivity.messageIds.contains(assistant.id) { return [] }
             // The most-recent assistant turn is the run in flight: its
             // sub-agent cards are the researchers. (Matches the portal
             // selector, which stops at the latest assistant turn.)
@@ -2573,10 +2842,12 @@ public final class AgentCoordinator {
             if case .assistant = $0 { return true }
             return false
         }) else { return nil }
-        guard case .assistant(let assistant) = turns[turnIdx] else { return nil }
+        guard case .assistant(let assistant) = turns[turnIdx],
+              !dismissedConversationActivity.messageIds.contains(assistant.id) else { return nil }
         for i in (0 ..< assistant.parts.count).reversed() {
             guard case .tool(let call) = assistant.parts[i] else { continue }
             guard agentEphemeralTools.contains(call.tool) else { continue }
+            if dismissedConversationActivity.toolCallIds.contains(call.toolCallId) { continue }
             // A batch parent (search_many / fetch_many) renders as N
             // independent per-child cards, each with its own dismiss
             // lifecycle — there is no single card to drive a gate flush for
@@ -3755,6 +4026,11 @@ extension AgentCoordinator {
     /// broken gateway. Pass real `URLError` / `GatewayClient.Error`
     /// shapes so `GatewayErrorView`'s classifier sees the same
     /// inputs it would in production.
+    func installPreviewConversationControls(_ controls: ConversationControls) {
+        conversationControls = controls
+        conversationControlsSupported = true
+    }
+
     func installPreviewFatal(error: Error) {
         self.fatalError = error
     }

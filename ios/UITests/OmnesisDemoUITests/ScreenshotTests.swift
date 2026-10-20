@@ -119,6 +119,112 @@ final class ScreenshotTests: XCTestCase {
         try captureStoreScreenshot(named: "04-privacy-settings")
     }
 
+    func test_first_prompt_then_choice_does_not_reappear_in_new_chat() throws {
+        app = XCUIApplication()
+        app.launchEnvironment["DEMO_AGENT_PREVIEW"] = "conversation-controls"
+        app.launchEnvironment["DEMO_COMPOSER_ACK"] = "first-send"
+        app.launchEnvironment["DEMO_DISABLE_ANIMATIONS"] = "1"
+        app.launchEnvironment["DEMO_PROMPT"] = "Compare an activity period "
+        app.launch()
+        dismissSystemAlerts()
+        let composer = app.textFields["agentComposer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 15))
+        XCTAssertEqual(composer.value as? String, "Compare an activity period ")
+        app.buttons["agentSendButton"].tap()
+        let choice = app.buttons["Last year"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 15), app.debugDescription)
+        let initialCleared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == placeholderValue"), object: composer
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [initialCleared], timeout: 10), .completed)
+        choice.tap()
+        let answerCleared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == placeholderValue"), object: composer
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [answerCleared], timeout: 10), .completed)
+        app.buttons["New conversation"].tap()
+        let newChat = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Ask Omnesis"), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [newChat], timeout: 10), .completed)
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try XCUIScreen.main.screenshot().pngRepresentation.write(
+            to: directory.appendingPathComponent("72j-new-chat-after-sent-clarification.png")
+        )
+    }
+
+    func test_clarification_free_text_composer_acknowledgement() throws {
+        for mode in ["success", "failure"] {
+            app = XCUIApplication()
+            app.launchEnvironment["DEMO_AGENT_PREVIEW"] = "conversation-controls"
+            app.launchEnvironment["DEMO_COMPOSER_ACK"] = mode
+            app.launchEnvironment["DEMO_DISABLE_ANIMATIONS"] = "1"
+            app.launchEnvironment["DEMO_PROMPT"] = "Compare a custom period "
+            app.launch()
+            dismissSystemAlerts()
+            XCTAssertTrue(app.buttons["Last year"].waitForExistence(timeout: 15), app.debugDescription)
+            let composer = app.textFields["agentComposer"]
+            XCTAssertEqual(composer.value as? String, "Compare a custom period ")
+            app.buttons["agentSendButton"].tap()
+            if mode == "success" {
+                let cleared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Ask Omnesis"), object: composer)
+                XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 10), .completed)
+            } else {
+                let saved = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Your draft is saved.")).firstMatch
+                XCTAssertTrue(saved.waitForExistence(timeout: 10))
+                XCTAssertEqual(composer.value as? String, "Compare a custom period ")
+            }
+            let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try XCUIScreen.main.screenshot().pngRepresentation.write(
+                to: directory.appendingPathComponent("72i-clarification-composer-\(mode).png")
+            )
+            app.terminate()
+        }
+    }
+
+    func test_conversation_message_menus() throws {
+        app = XCUIApplication()
+        app.launchEnvironment["DEMO_AGENT_PREVIEW"] = "conversation-controls"
+        app.launchEnvironment["DEMO_DISABLE_ANIMATIONS"] = "1"
+        app.launchEnvironment["DEMO_APPEARANCE"] = "dark"
+        app.launch()
+        dismissSystemAlerts()
+        let prompt = app.staticTexts["Compare my activity."]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 30))
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let answer = "I can compare your activity.\n\n```swift\nlet total = 42\n```"
+        for (text, action, name, copiedText) in [
+            ("Compare my activity.", "Edit and resend", "73a-user-message-menu", "Compare my activity."),
+            (
+                "Include a short summary.\n\nCompare the totals too.",
+                "Send now",
+                "73b-queued-message-menu",
+                "Include a short summary.\n\nCompare the totals too."
+            ),
+            ("I can compare your activity.", "Copy", "73c-assistant-message-menu", answer),
+            ("let total = 42", "Copy", "73d-assistant-code-menu", answer),
+        ] {
+            app.staticTexts[text].firstMatch.press(forDuration: 1.2)
+            XCTAssertTrue(app.buttons["Copy"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons[action].exists)
+            try XCUIScreen.main.screenshot().pngRepresentation.write(to: directory.appendingPathComponent("\(name).png"))
+            app.buttons["Copy"].tap()
+            let composer = app.textFields["agentComposer"]
+            composer.tap()
+            composer.press(forDuration: 1.2)
+            let paste = app.descendants(matching: .any).matching(identifier: "Paste").firstMatch
+            XCTAssertTrue(paste.waitForExistence(timeout: 5))
+            paste.tap()
+            XCTAssertFalse(app.buttons["Interrupt and send correction"].exists)
+            XCTAssertEqual(composer.value as? String, copiedText)
+            composer.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: copiedText.count))
+            app.terminate()
+            app.launch()
+            XCTAssertTrue(prompt.waitForExistence(timeout: 30))
+        }
+    }
+
     private func launchPaired(tab: String, environment: [String: String] = [:]) {
         app = XCUIApplication()
         if let pairingJSON = ProcessInfo.processInfo.environment["DEMO_PAIRING_JSON"] {

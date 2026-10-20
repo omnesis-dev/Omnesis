@@ -41,39 +41,4 @@ struct TaskReviewBanner: View {
         .accessibilityAddTraits(.isButton)
     }
 }
-
-/// The reminder that tasks are added by telling Omnesis, with "Tell
-/// Omnesis" opening the same capture as the menu's Tell Omnesis entry.
-@available(iOS 17.0, *)
-struct TaskCaptureHint: View {
-    @Environment(\.openCapture) private var openCapture
-
-    private static let captureURL = URL(string: "omnesis-tasks://tell-omnesis")!
-
-    var body: some View {
-        Text(line)
-            .font(.footnote)
-            .foregroundStyle(Theme.textMuted)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .multilineTextAlignment(.center)
-            .environment(\.openURL, OpenURLAction { url in
-                guard url == Self.captureURL else { return .systemAction }
-                openCapture?()
-                return .handled
-            })
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Use Tell Omnesis to add tasks.")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityHint("Opens Tell Omnesis")
-            .accessibilityAction { openCapture?() }
-    }
-
-    private var line: AttributedString {
-        var link = AttributedString("Tell Omnesis")
-        link.link = Self.captureURL
-        link.foregroundColor = Theme.accent
-        link.font = .footnote.weight(.semibold)
-        return AttributedString("Use ") + link + AttributedString(" to add tasks.")
-    }
-}
 #endif

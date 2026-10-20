@@ -81,13 +81,6 @@ public enum TaskJournal {
             : "Omnesis has created \(suggested) tasks for your review"
     }
 
-    /// Whether a view ends with the reminder that tasks are added through
-    /// Tell Omnesis. Suggested and Done hold what Omnesis or the past put
-    /// there, so the reminder would not answer anything a reader there asks.
-    public static func showsCaptureHint(for view: TaskViewKind) -> Bool {
-        view != .suggested && view != .done
-    }
-
     /// Today reads like the day's page of a bullet journal: what was carried
     /// over from earlier days first, then what is planned or due today, then
     /// what got resolved today. Every other view is one run in the gateway's

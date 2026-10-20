@@ -3405,6 +3405,232 @@ final class PreviewSnapshotTests: XCTestCase {
         XCTAssertEqual(store.agent.turns.count, 1)
     }
 
+    func testConversationEmptyControls() {
+        snapshot(
+            VStack(spacing: 0) {
+                ConversationControlsPanel(controls: nil, error: nil, disabled: false, onChoice: { _ in })
+                AgentComposer(
+                    text: .constant(""),
+                    busy: false,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.background(Theme.bgPrimary),
+            name: "72f-conversation-empty-controls",
+            size: CGSize(
+                width: 393,
+                height: 140
+            )
+        )
+    }
+
+    func testConversationEditDraft() {
+        snapshot(
+            VStack(spacing: 0) {
+                ConversationDraftEditBanner(onCancel: {})
+                AgentComposer(
+                    text: .constant(PreviewMocks.conversationFollowupDraft),
+                    busy: false,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.background(Theme.bgPrimary),
+            name: "72e-conversation-edit-draft",
+            size: CGSize(
+                width: 393,
+                height: 220
+            )
+        )
+    }
+
+    func testConversationQueueHandoff() {
+        queueHandoffSnapshot(automatic: false)
+    }
+
+    func testConversationAutomaticQueueHandoff() {
+        queueHandoffSnapshot(automatic: true)
+    }
+
+    private func queueHandoffSnapshot(automatic: Bool) {
+        let controls = PreviewMocks.conversationControls
+        var handoff = ConversationQueueHandoff()
+        if automatic {
+            handoff.delivered(ids: controls.queued.map(\.id))
+        } else {
+            _ = handoff.begin(ids: controls.queued.map(\.id))
+        }
+        let presented = handoff.presenting(controls)
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: .user(id: "wire-message", text: controls.queuedText))
+                if !presented.queued.isEmpty {
+                    ConversationQueuedBubble(controls: presented, disabled: false, onSendNow: {})
+                }
+                AgentComposer(
+                    text: .constant(""),
+                    busy: true,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(16).background(Theme.bgPrimary),
+            name: automatic ? "72k-conversation-automatic-queue-handoff" : "72h-conversation-queue-handoff",
+            size: CGSize(width: 393, height: 300)
+        )
+    }
+
+    func testConversationBusyFollowupComposer() {
+        snapshot(
+            AgentComposer(
+                text: .constant(PreviewMocks.conversationFollowupDraft),
+                busy: true,
+                queueEnabled: true,
+                disabled: false,
+                speech: SpeechRecognizer.preview(state: .idle),
+                onRealtime: {},
+                onSend: { _, _ in },
+                onCancel: {},
+                focused: FocusState<Bool>().projectedValue
+            ).background(Theme.bgPrimary),
+            name: "72b-conversation-busy-followup",
+            size: CGSize(
+                width: 393,
+                height: 220
+            )
+        )
+    }
+
+    func testConversationRestoredDraftComposer() {
+        snapshot(
+            AgentComposer(
+                text: .constant(PreviewMocks.conversationFollowupDraft),
+                busy: false,
+                queueEnabled: true,
+                disabled: false,
+                speech: SpeechRecognizer.preview(state: .idle),
+                onSend: { _, _ in },
+                onCancel: {},
+                focused: FocusState<Bool>().projectedValue
+            ).background(Theme.bgPrimary),
+            name: "72c-conversation-restored-draft",
+            size: CGSize(
+                width: 393,
+                height: 180
+            )
+        )
+    }
+
+    func testConversationSubmissionFailure() {
+        snapshot(
+            ConversationControlsPanel(
+                controls: nil,
+                error: "Message not confirmed. Retry to check delivery.",
+                disabled: false,
+                onChoice: { _ in }
+            ),
+            name: "72d-conversation-submission-failure",
+            size: CGSize(
+                width: 393,
+                height: 150
+            )
+        )
+    }
+
+    func testConversationClarificationTranscript() {
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: PreviewMocks.conversationClarificationTurn)
+                    .environment(\.conversationPresentation, ConversationTranscriptPresentation(
+                        controls: PreviewMocks.conversationControls
+                    ))
+                ConversationQueuedBubble(controls: PreviewMocks.conversationControls, disabled: false, onSendNow: {})
+                ConversationControlsPanel(controls: PreviewMocks.conversationControls, error: nil, disabled: false, onChoice: { _ in })
+                AgentComposer(
+                    text: .constant("My answer"),
+                    busy: false,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(16),
+            name: "72f-conversation-clarification-transcript",
+            size: CGSize(width: 393, height: 650)
+        )
+    }
+
+    func testConversationInterruptedActivity() {
+        var aborted = PreviewMocks.agentToolCallSearchManyRunning
+        aborted.result = .error(code: "turn_aborted", message: "Interrupted")
+        snapshot(
+            VStack(spacing: 20) {
+                AgentTurnBubble(turn: .assistant(AgentAssistantTurn(
+                    id: "prior-turn", parts: [
+                        .text("The earlier answer remains available."),
+                        .thinking("Checking more documents"),
+                        .tool(aborted),
+                        .subagent(AgentSubagentCard(
+                            subagentId: "worker",
+                            specialist: "generic",
+                            title: "Comparing totals",
+                            task: "Compare totals",
+                            parentToolCallId: "spawn"
+                        )),
+                    ]
+                )))
+                .environment(\.conversationPresentation, ConversationTranscriptPresentation(dismissedMessageIds: ["prior-turn"]))
+                AgentTurnBubble(turn: .user(id: "followup", text: "Include a short summary."))
+                ConversationControlsPanel(
+                    controls: nil, error: "Couldn’t send yet. Your queued message is saved.", disabled: false, onChoice: { _ in }
+                )
+            }.padding(16),
+            name: "72g-conversation-interrupted-activity",
+            size: CGSize(width: 393, height: 400)
+        )
+    }
+
+    func testConversationChoicesAndQueue() {
+        snapshot(
+            VStack(spacing: 24) {
+                AgentTurnBubble(turn: .user(id: "original", text: "Compare this month's activity."))
+                ConversationQueuedBubble(
+                    controls: PreviewMocks.conversationControls,
+                    disabled: false,
+                    onSendNow: {}
+                )
+                ConversationControlsPanel(
+                    controls: PreviewMocks.conversationControls,
+                    error: nil,
+                    disabled: false,
+                    onChoice: { _ in }
+                )
+                AgentComposer(
+                    text: .constant("My answer"),
+                    busy: false,
+                    queueEnabled: true,
+                    disabled: false,
+                    speech: SpeechRecognizer.preview(state: .idle),
+                    onSend: { _, _ in },
+                    onCancel: {},
+                    focused: FocusState<Bool>().projectedValue
+                )
+            }.padding(.horizontal, 16),
+            name: "72a-conversation-choices-queue",
+            size: CGSize(width: 393, height: 650)
+        )
+    }
+
     func testAgentBusyStreaming() {
         let store = AppStore.preview(agentPreview: PreviewMocks.agentBusyStreaming)
         snapshot(AgentView(menuOpen: .constant(false)).environment(store), name: "72-agent-busy-streaming")
@@ -7590,9 +7816,9 @@ final class PreviewSnapshotTests: XCTestCase {
 
     /// Today's page: chips carrying each view's open count, the date
     /// heading, a carried task first, today's tasks, and what was done or
-    /// struck today, struck through, then the "Use Tell Omnesis to add
-    /// tasks." line. A stable gateway has no Suggested segment, shows no
-    /// proposal and no review banner.
+    /// struck today, struck through, and the bar's Tell Omnesis button (a
+    /// microphone with a plus badge) at the top right. A stable gateway has
+    /// no Suggested segment, shows no proposal and no review banner.
     func testTasksToday() {
         let view = NavigationStack {
             TasksContent(model: .fixture(
@@ -7603,6 +7829,7 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         snapshot(view, name: "310-tasks-today", size: CGSize(width: 393, height: 1500))
@@ -7624,6 +7851,7 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         snapshot(view, name: "310a-tasks-today-experimental", size: CGSize(width: 393, height: 1500))
@@ -7646,6 +7874,7 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         snapshot(view, name: "311-tasks-today-undo-toast", size: CGSize(width: 393, height: 1100))
@@ -7666,6 +7895,7 @@ final class PreviewSnapshotTests: XCTestCase {
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         snapshot(view, name: "310b-tasks-today-one-suggestion", size: CGSize(width: 393, height: 1500))
@@ -7693,6 +7923,7 @@ final class PreviewSnapshotTests: XCTestCase {
             )
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
         }
         .environment(AppStore.preview())
@@ -7765,6 +7996,7 @@ final class PreviewSnapshotTests: XCTestCase {
             )
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
         }
         .environment(AppStore.preview())
@@ -7801,6 +8033,7 @@ final class PreviewSnapshotTests: XCTestCase {
             TasksContent(model: .fixture(tasks: [], now: PreviewMocks.tasksNow))
                 .navigationTitle("Tasks")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar { TasksToolbar(menuOpen: .constant(false)) }
                 .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
         }
         .environment(AppStore.preview())
@@ -7818,6 +8051,7 @@ final class PreviewSnapshotTests: XCTestCase {
             ))
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { TasksToolbar(menuOpen: .constant(false)) }
         }
         .environment(AppStore.preview())
         .environment(\.dynamicTypeSize, .accessibility3)

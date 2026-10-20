@@ -45,6 +45,27 @@ function newSession(events: AgentEvent[]): {
 }
 
 describe("AgentSession", () => {
+  it("broadcasts consumed queue identities without putting them in model history", async () => {
+    const { session, captured } = newSession([]);
+    const ids = ["first-receipt", "second-receipt"];
+    const { completion } = session.send("Use a short table", { submissionIds: ids });
+    ids.push("later-receipt");
+    await completion;
+    expect(captured[0]).toEqual({
+      type: "agent.user.message",
+      payload: {
+        sessionId: "S",
+        userMessageId: "M",
+        text: "Use a short table",
+        submissionIds: ["first-receipt", "second-receipt"],
+      },
+    });
+    expect(session.historySnapshot()[0]).toEqual({
+      role: "user",
+      parts: [{ kind: "text", text: "Use a short table" }],
+    });
+  });
+
   it("gives a turn's model note to the model only, never to history or listeners", async () => {
     const seen: string[] = [];
     const backend: ChatBackend = {

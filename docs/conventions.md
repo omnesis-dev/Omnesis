@@ -355,6 +355,12 @@ event, without waiting for persistence, so an immediate text send cannot race
 the closing audio socket. A transport-owned model context failure is a turn
 failure; it must not make the default model's conversation permanently read-only.
 
+The voice lease also participates in ordinary conversation queue admission. Text
+can be durably queued during a call and runs after the lease ends; send-now
+controls cannot start a second backend in that session. Voice turn admission and
+clarification clearing use the queue's existing short serialization barrier,
+without holding it across model work.
+
 - Shared lifecycle: `packages/agent/src/session.ts`, `packages/gateway/src/agent/service.ts`
 - Realtime backend: `packages/gateway/src/realtime/backend.ts`
 - Media boundary: `packages/gateway/src/realtime/service.ts`, `packages/gateway/src/realtime/route.ts`

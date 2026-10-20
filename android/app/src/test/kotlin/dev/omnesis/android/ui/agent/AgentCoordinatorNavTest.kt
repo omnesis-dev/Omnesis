@@ -431,6 +431,50 @@ class AgentCoordinatorNavTest {
     }
 
     @Test
+    fun firstSentPromptNeverReturnsToNewChatAndAcknowledgementPreservesNewerDrafts() {
+        for (editBeforeAcknowledgement in listOf(false, true)) {
+            val posted = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse = when {
+                    request.path == "/agent/sessions" -> MockResponse().setBody(
+                        """{"sessionId":"s_minted","model":"m","backend":"b","messages":[]}""",
+                    )
+                    request.path?.endsWith("/messages") == true -> {
+                        posted.countDown()
+                        check(release.await(5, TimeUnit.SECONDS))
+                        MockResponse().setBody("""{"messageId":"a1","userMessageId":"u1"}""")
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+            val store = AgentComposerStore()
+            val coord = AgentCoordinator(store).also { coordinators += it }
+            coord.attachForTesting(client(), eventSource(), AgentCoordinator.UiState(hasClient = true))
+            coord.updateDraft("Compare fictional project estimates", "deep-research")
+            coord.send("Compare fictional project estimates", deepResearch = true)
+            coord.finishDraftSubmission()
+            assertTrue(posted.await(5, TimeUnit.SECONDS))
+            assertEquals("", store.read("", null).text)
+            assertEquals("Compare fictional project estimates", store.read("", "s_minted").text)
+            if (editBeforeAcknowledgement) coord.updateDraft("A newer unsent question", null)
+            release.countDown()
+            assertTrue(await { coord.state.value.chat.turns.filterIsInstance<AgentTurn.User>().any { it.id == "u1" } })
+            assertEquals(if (editBeforeAcknowledgement) "A newer unsent question" else "", store.read("", "s_minted").text)
+            coord.newConversation()
+            assertNull(coord.state.value.sessionId)
+            assertEquals("", coord.state.value.composer.text)
+            assertNull(coord.state.value.composer.commandId)
+            // A real unsent landing draft must survive another fresh-chat navigation.
+            coord.updateDraft("Unsent landing question", "deep-research")
+            coord.newConversation()
+            assertEquals("Unsent landing question", coord.state.value.composer.text)
+            assertEquals("deep-research", coord.state.value.composer.commandId)
+            coord.teardown()
+        }
+    }
+
+    @Test
     fun first_send_shows_bubble_and_busy_state_while_session_mint_is_in_flight() {
         server.dispatcher = routing(
             session = MockResponse()
@@ -982,9 +1026,10 @@ class AgentCoordinatorNavTest {
             ),
         )
 
-        coord.send("Follow up after stopping")
+        coord.send("Follow up after stopping", deepResearch = true)
 
         assertEquals("Follow up after stopping", coord.state.value.sendRejectedText)
+        assertEquals("deep-research", coord.state.value.sendRejectedCommandId)
         assertEquals("busy guard must not touch the gateway", 0, server.requestCount)
     }
 
@@ -1845,8 +1890,8 @@ class AgentCoordinatorNavTest {
             AgentCoordinator.UiState(hasClient = true, sessionId = "s_previous"),
         )
 
-        val composerGeneration = coord.state.value.composerGeneration
         coord.resumeConversation("s_recent")
+        val composerGeneration = coord.state.value.composerGeneration
         coord.newConversation()
 
         assertNull("the hour-old foreground policy owns the surface", coord.state.value.sessionId)

@@ -46,6 +46,13 @@ final class RealtimeConversationHandoffTests: XCTestCase {
     func testRepeatedTextVoiceTextModesKeepOneConversationAndItsCitations() async throws {
         let coordinator = coordinator()
         defer { coordinator.stopForTesting() }
+        let draftKey = coordinator.composerDraftKey
+        defer {
+            coordinator.saveDraft("", for: draftKey)
+            coordinator.saveDraftResearch(false, for: draftKey)
+        }
+        coordinator.updateComposerDraft("An unsent follow-up", for: draftKey)
+        coordinator.saveDraftResearch(true, for: draftKey)
         let ref = AgentDocRef(documentId: "fictional-doc", sourceType: "notes", sourceId: "fictional-notes", title: "Workshop")
         let record = AgentTrailRecord(
             recordKey: "fictional-row",
@@ -88,6 +95,9 @@ final class RealtimeConversationHandoffTests: XCTestCase {
             XCTAssertEqual(coordinator.trailAnnotations.byDoc[ref.documentId]?.quotes.count, 1)
         }
         XCTAssertEqual(RoutingStubProtocol.sessionRequestCount, 3)
+        XCTAssertEqual(coordinator.composerDraft, "An unsent follow-up")
+        XCTAssertEqual(coordinator.draft(for: draftKey), "An unsent follow-up")
+        XCTAssertTrue(coordinator.draftResearch(for: draftKey))
         XCTAssertEqual(RoutingStubProtocol.sendRequestCount, 0, "Switching modes must never resend a user message")
         for body in RoutingStubProtocol.sessionRequestBodies {
             let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -107,6 +117,15 @@ final class RealtimeConversationHandoffTests: XCTestCase {
             citations: [],
             conversations: []
         )
+        let freshDraftKey = coordinator.composerDraftKey
+        defer {
+            for key in [freshDraftKey, coordinator.composerDraftKey] {
+                coordinator.saveDraft("", for: key)
+                coordinator.saveDraftResearch(false, for: key)
+            }
+        }
+        coordinator.updateComposerDraft("A dictated draft, not yet sent", for: freshDraftKey)
+        coordinator.saveDraftResearch(true, for: freshDraftKey)
         let spoken: [ChatMessage] = [
             .user(parts: [.text("Hello from voice.")]),
             .assistant(parts: [.text("Hello there.")]),
@@ -114,6 +133,10 @@ final class RealtimeConversationHandoffTests: XCTestCase {
         RoutingStubProtocol.jsonBody = try snapshot(messages: spoken, id: "voice-first")
         try await RealtimeConversationHandoff.attach(id: "voice-first", to: coordinator)
         XCTAssertEqual(coordinator.sessionId, "voice-first")
+        XCTAssertEqual(coordinator.composerDraft, "A dictated draft, not yet sent")
+        XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "A dictated draft, not yet sent")
+        XCTAssertTrue(coordinator.draftResearch(for: coordinator.composerDraftKey))
+        XCTAssertEqual(coordinator.draft(for: freshDraftKey), "")
         let voiceTurns = coordinator.turns
         await coordinator.resumeConversation(id: "voice-first")
         XCTAssertEqual(coordinator.turns, voiceTurns)
@@ -138,6 +161,32 @@ final class RealtimeConversationHandoffTests: XCTestCase {
         XCTAssertEqual(coordinator.sessionId, "conversation")
         XCTAssertNil(coordinator.fatalError)
         XCTAssertFalse(coordinator.transcriptLoading)
+    }
+
+    func testVoiceAttachmentUsesCanonicalQueuedSubmissionReceiptWithoutDuplicatingText() async throws {
+        let coordinator = coordinator()
+        defer { coordinator.stopForTesting() }
+        RoutingStubProtocol.jsonBody = try snapshot(messages: [])
+        try await RealtimeConversationHandoff.attach(id: "conversation", to: coordinator)
+        let controls = try JSONDecoder().decode(ConversationControls.self, from: Data(#"""
+        {"busy":true,"capabilities":{"queueSendNow":true},"queuedMessages":[
+          {"id":"queued-receipt","text":"Include the totals","status":"queued"}]}
+        """#.utf8))
+        coordinator.installPreviewConversationControls(controls)
+        let accepted = AgentEvent.userMessage(
+            sessionId: "conversation",
+            userMessageId: "canonical-user",
+            text: "Include the totals",
+            submissionIds: ["queued-receipt"]
+        )
+        await coordinator.applyEventForTesting(accepted)
+        await coordinator.applyEventForTesting(accepted)
+        XCTAssertTrue(coordinator.presentedConversationControls?.queued.isEmpty == true)
+        XCTAssertEqual(coordinator.turns.filter {
+            if case .user = $0 { return true }
+            return false
+        }.count, 1)
+        XCTAssertEqual(RoutingStubProtocol.sendRequestCount, 0)
     }
 
     func testSelectingAnotherTextThreadSupersedesPendingVoiceHandoff() async throws {

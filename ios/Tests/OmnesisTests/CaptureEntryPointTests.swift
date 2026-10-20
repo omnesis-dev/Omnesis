@@ -15,7 +15,7 @@ final class CaptureEntryPointTests: XCTestCase {
             .deletingLastPathComponent()
     }
 
-    func testOnlyDrawerOwnsTheInAppCaptureAction() throws {
+    func testOnlyDrawerAndTasksOwnTheInAppCaptureAction() throws {
         let uiRoot = iosRoot.appendingPathComponent("Sources/Omnesis/UI")
         let drawer = uiRoot.appendingPathComponent("MainMenuDrawer.swift")
         let drawerSource = try source(at: drawer)
@@ -34,33 +34,36 @@ final class CaptureEntryPointTests: XCTestCase {
                 includingPropertiesForKeys: nil
             )?.allObjects as? [URL]
         )
+        // The Tasks bar is the one screen with a capture button of its own:
+        // tasks are added by telling Omnesis.
+        let tasks = uiRoot.appendingPathComponent("Tasks/TasksView.swift")
         let offenders = try files
-            .filter { $0.pathExtension == "swift" }
+            .filter { $0.pathExtension == "swift" && $0.standardizedFileURL != tasks.standardizedFileURL }
             .filter { try source(at: $0).contains("mic.badge.plus") }
             .map(\.lastPathComponent)
 
-        XCTAssertEqual(offenders, [], "A legacy capture toolbar button remains")
+        XCTAssertEqual(offenders, [], "A capture toolbar button outside Tasks")
 
         let captureKey = uiRoot.appendingPathComponent("Capture/CaptureView.swift")
         // Home installs the action the drawer calls; it draws no entry point of its own.
         let home = uiRoot.appendingPathComponent("HomeView.swift")
-        // Tasks are added by telling Omnesis, so the Tasks page's closing line
-        // links to the same capture. That line is its only use.
-        let tasks = uiRoot.appendingPathComponent("Tasks/TaskJournalBanners.swift")
+        // The Tasks bar's Tell Omnesis button opens the same capture, once.
         let tasksSource = try source(at: tasks)
-        XCTAssertTrue(tasksSource.contains("struct TaskCaptureHint"))
+        XCTAssertTrue(tasksSource.contains("struct TellOmnesisToolbarButton"))
         XCTAssertEqual(
             tasksSource.components(separatedBy: "openCapture?()").count - 1,
-            2,
-            "The Tasks hint opens capture from its link and its accessibility action, nowhere else"
+            1,
+            "The Tasks bar's button is the only place Tasks opens capture"
         )
-        let allowed = Set([drawer, captureKey, home, tasks].map(\.standardizedFileURL))
+        // The Tasks UI-test harness (DEBUG only) installs the action the way Home does.
+        let tasksHarness = uiRoot.appendingPathComponent("Tasks/TasksFanDemoSurface.swift")
+        let allowed = Set([drawer, captureKey, home, tasks, tasksHarness].map(\.standardizedFileURL))
         let actionOffenders = try files
             .filter { $0.pathExtension == "swift" && !allowed.contains($0.standardizedFileURL) }
             .filter { try source(at: $0).contains("openCapture") }
             .map(\.lastPathComponent)
 
-        XCTAssertEqual(actionOffenders, [], "In-app capture action escaped the drawer")
+        XCTAssertEqual(actionOffenders, [], "In-app capture action escaped the drawer and the Tasks bar")
     }
 
     func testExternalCaptureSurfaceIsControlOnly() throws {

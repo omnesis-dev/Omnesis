@@ -220,12 +220,14 @@ class DirectAnswerBackend implements ChatBackend {
   readonly name = "direct";
   readonly model = "direct";
   sawSpawnTool = false;
+  finalizerTools: string[] | undefined;
   async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
     const { sessionId, messageId } = input;
     this.sawSpawnTool = input.tools.some((t) => t.name === "spawn_subagent");
     yield { type: "agent.message.start", payload: { sessionId, messageId, role: "assistant" } };
     const evidencePacket = input.userMessage.includes("PRIVATE VERIFIED EVIDENCE PACKET");
     if (evidencePacket) {
+      this.finalizerTools = input.tools.map((tool) => tool.name);
       expect(input.userMessage).toContain(DOC_BUDGET);
       expect(input.userMessage).toContain(DOC_MARATHON);
     }
@@ -380,11 +382,34 @@ describe("Deep Research loop — deterministic replay", () => {
     }
   });
 
+  it.each(["interactive", "voice"] as const)(
+    "preserves the %s profile's clarification boundary in the research finalizer",
+    async (profile) => {
+      const { service, parent } = makeService();
+      try {
+        const { sessionId } = await service.createSession("device:A", { profile });
+        service.sendMessage("device:A", sessionId, "Research the Q4 budget and marathon entry", {
+          deepResearch: true,
+        });
+        await waitFor(() => parent.finalizerTools !== undefined, "the parent finalizer");
+        expect(parent.finalizerTools!.includes("ask_clarification")).toBe(
+          profile === "interactive",
+        );
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
+
   it("hands verified evidence to the parent finalizer and only its annotation reaches Timeline", async () => {
     const { service, captured, spawnedTasks, dir } = makeService();
     const { sessionId } = await service.createSession("device:A");
     service.sendMessage("device:A", sessionId, "Research the Q4 budget and marathon entry", {
       deepResearch: true,
+      submissionIds: ["research-receipt"],
+    });
+    expect(captured.find((event) => event.type === "agent.user.message")?.payload).toMatchObject({
+      submissionIds: ["research-receipt"],
     });
     expect(() =>
       service.sendMessage("device:A", sessionId, "Start another research run", {

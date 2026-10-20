@@ -317,13 +317,6 @@ fun suggestionsBannerText(count: Int, experimental: Boolean): String? = when {
 }
 
 /**
- * Whether a segment ends with the reminder that tasks are added through Tell Omnesis. Suggested
- * and Done hold what Omnesis or the past put there, so the reminder answers nothing there.
- */
-fun showsCaptureHint(segment: TaskSegment): Boolean =
-    segment != TaskSegment.SUGGESTED && segment != TaskSegment.DONE
-
-/**
  * Whether a long press on [task]'s row opens the action fan: any open task. A suggestion's fan
  * holds its own set of actions (see [TaskFanSession.SUGGESTION_ACTIONS]).
  */
