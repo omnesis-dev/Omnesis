@@ -51,6 +51,27 @@ describe("realtime route authority", () => {
     expect(await (await app.request("/agent/realtime")).json()).toEqual({ available: false });
     expect((await app.request("/agent/realtime/ws")).status).toBe(404);
   });
+  it.each([undefined, "1", "2"])(
+    "accepts supported media version %s including absent legacy version",
+    async (version) => {
+      const response = await fixture(owner).request("/agent/realtime/ws", {
+        headers: version ? { "X-Omnesis-Realtime-Version": version } : {},
+      });
+      expect(response.status).toBe(200);
+    },
+  );
+  it.each(["0", "3", "2.0", "future"])(
+    "rejects unsupported media version %s before upgrade",
+    async (version) => {
+      const response = await fixture(owner).request("/agent/realtime/ws", {
+        headers: { "X-Omnesis-Realtime-Version": version },
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: "Unsupported realtime protocol version (supported: 1–2)",
+      });
+    },
+  );
   it("requires a bearer credential and validates query before upgrade", async () => {
     const cookie: AuthContext = {
       ...owner,

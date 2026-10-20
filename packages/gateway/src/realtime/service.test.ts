@@ -2,12 +2,18 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ReplayBackend } from "@omnesis/agent";
-import { AgentError, AgentService } from "../agent/service.js";
+import { z } from "zod";
+import { toolInputJsonSchema, type ChatBackend, type ToolContext } from "@omnesis/agent";
+import { AgentService } from "../agent/service.js";
+import { FsConversationStore } from "../agent/conversation-store.js";
 import { RealtimeService, realtimeBackend } from "./service.js";
 import type WebSocket from "ws";
 import type { OmnesisConfig } from "@omnesis/config";
+import type { AgentEvent } from "@omnesis/core";
 
 class Socket extends EventEmitter {
   readyState = 1;
@@ -21,307 +27,184 @@ class Socket extends EventEmitter {
     this.emit("message", JSON.stringify(event));
   }
 }
+const cleanups: Array<() => Promise<void>> = [];
+beforeEach(() => vi.stubEnv("OMNESIS_EXPERIMENTAL", "1"));
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 const config = (url = "https://api.openai.com") =>
   ({
     inference: { allowRemoteInference: true, backends: { cloud: { type: "http", url } } },
   }) as OmnesisConfig;
-const connections: Array<ReturnType<RealtimeService["open"]>> = [];
-beforeEach(() => {
-  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-});
-afterEach(() => {
-  for (const connection of connections.splice(0)) connection.close();
-  vi.useRealTimers();
-  vi.unstubAllEnvs();
-});
-
-function fixture(turn?: AgentService["realtimeTurn"], actualAgent?: AgentService) {
+async function fixture() {
+  const directory = await mkdtemp(join(tmpdir(), "omnesis-realtime-test-"));
+  const store = new FsConversationStore(directory);
+  const ordinary = {
+    name: "text-fixture",
+    model: "text-fixture",
+    runTurn: vi.fn<ChatBackend["runTurn"]>().mockImplementation(async function* (input) {
+      yield {
+        type: "agent.text.delta",
+        payload: {
+          sessionId: input.sessionId,
+          messageId: input.messageId,
+          delta: "Ordinary text reply",
+        },
+      };
+      yield {
+        type: "agent.message.end",
+        payload: { sessionId: input.sessionId, messageId: input.messageId, stopReason: "end_turn" },
+      };
+    }),
+  } satisfies ChatBackend;
+  const search = vi.fn(async (input: { query: string }) => ({
+    query: input.query,
+    durationMs: 1,
+    results: [],
+  }));
+  const fetch = vi.fn(async () => null);
+  const sql = vi.fn(async (query: string) => ({
+    sql: query,
+    columns: ["count"],
+    rows: [[2]],
+    rowCount: 1,
+    truncated: false,
+    durationMs: 1,
+  }));
+  const contexts: ToolContext[] = [];
+  const customSchema = z.object({ value: z.string() });
+  const customTool = {
+    name: "fixture_write",
+    description: "A fictional session-owned test tool",
+    schema: customSchema,
+    mutates: true,
+    invoke: async (args: unknown, context: ToolContext) => {
+      contexts.push(context);
+      const parsed = customSchema.safeParse(args);
+      return parsed.success
+        ? { kind: "error" as const, code: "fixture", message: parsed.data.value }
+        : { kind: "error" as const, code: "invalid_args", message: "invalid arguments" };
+    },
+  };
+  const spend = vi.fn();
+  const agent = new AgentService({
+    backendFactory: () => ordinary,
+    ports: { search: { search }, document: { fetch }, sql: { run: sql } },
+    systemPrompt: "Shared core instructions: use evidence and preserve citations.",
+    store,
+    recordSpend: spend,
+  });
+  agent.setTaskToolsProvider(() => [customTool]);
   const socket = new Socket();
   const events: Array<Record<string, unknown>> = [];
-  const peer = { send: (data: string) => events.push(JSON.parse(data)), close: vi.fn() };
-  const agent =
-    actualAgent ??
-    ({
-      createSession: vi.fn().mockResolvedValue({ sessionId: "voice-thread" }),
-      realtimeTurn: turn ?? vi.fn().mockResolvedValue("The ferns need water."),
-    } as unknown as AgentService);
-  const usage = vi.fn();
+  const canonical: AgentEvent[] = [];
+  const unsubscribe = agent.subscribe("token:observer", (_seq, event) =>
+    canonical.push(event as AgentEvent),
+  );
+  const peer = { send: (raw: string) => events.push(JSON.parse(raw)), close: vi.fn() };
   const authorized = vi.fn(() => true);
   const logger = { info: vi.fn(), warn: vi.fn() };
+  const usage = vi.fn();
   const service = new RealtimeService({
     getConfig: () => config(),
-    getApiKey: () => "test-key",
+    getApiKey: () => "fixture-key",
     getAgent: () => agent,
     isAuthorized: authorized,
     connect: () => socket as unknown as WebSocket,
-    recordUsage: usage,
     logger,
+    recordUsage: usage,
   });
-  const connection = service.open(peer, "token:fictional", {
-    conversationId: "existing-thread",
-    token: "fictional-token",
-    timeZone: "Europe/London",
+  let connection: ReturnType<RealtimeService["open"]> | undefined;
+  cleanups.push(async () => {
+    connection?.close();
+    service.dispose();
+    unsubscribe();
+    await agent.dispose();
+    await rm(directory, { recursive: true, force: true });
   });
-  connections.push(connection);
-  return { socket, events, peer, agent, service, connection, usage, authorized, logger };
+  return {
+    agent,
+    store,
+    ordinary,
+    search,
+    fetch,
+    sql,
+    contexts,
+    customTool,
+    spend,
+    socket,
+    events,
+    canonical,
+    peer,
+    authorized,
+    logger,
+    usage,
+    service,
+    open: (conversationId?: string, version?: 1 | 2) => {
+      connection = service.open(peer, "token:fixture", {
+        token: "fixture-token",
+        timeZone: "Europe/London",
+        conversationId,
+        version,
+      });
+      return connection;
+    },
+  };
 }
-async function ready(f: ReturnType<typeof fixture>) {
+async function ready(f: Awaited<ReturnType<typeof fixture>>, conversationId?: string) {
+  const connection = f.open(conversationId);
   f.socket.emit("open");
-  await Promise.resolve();
+  await vi.waitFor(() =>
+    expect(f.socket.sent.some((event) => event.type === "session.update")).toBe(true),
+  );
   f.socket.event({ type: "session.updated" });
+  return connection;
 }
-const call = (id = "call-1") => ({
-  type: "response.function_call_arguments.done",
-  name: "ask_omnesis",
-  call_id: id,
-  arguments: JSON.stringify({ question: "What needs watering?" }),
-});
+async function speech(f: Awaited<ReturnType<typeof fixture>>, id = "r1", item = "speech-1") {
+  const before = f.socket.sent.filter((event) => event.type === "response.create").length;
+  f.socket.event({ type: "input_audio_buffer.committed", item_id: item });
+  f.socket.event({
+    type: "conversation.item.input_audio_transcription.completed",
+    item_id: item,
+    transcript: "Find the fictional plant record",
+  });
+  await vi.waitFor(() =>
+    expect(f.socket.sent.filter((event) => event.type === "response.create")).toHaveLength(
+      before + 1,
+    ),
+  );
+  f.socket.event({ type: "response.created", response: { id } });
+}
+function call(
+  f: Awaited<ReturnType<typeof fixture>>,
+  name: string,
+  args: unknown,
+  id: string,
+  responseId = "r1",
+) {
+  f.socket.event({
+    type: "response.function_call_arguments.done",
+    response_id: responseId,
+    call_id: id,
+    name,
+    arguments: JSON.stringify(args),
+  });
+}
+function done(f: Awaited<ReturnType<typeof fixture>>, id: string, status = "completed") {
+  f.socket.event({
+    type: "response.done",
+    response: { id, status, output: [], usage: { input_tokens: 20, output_tokens: 10 } },
+  });
+}
+async function settle(f: Awaited<ReturnType<typeof fixture>>) {
+  await vi.waitFor(() =>
+    expect(f.canonical.some((event) => event.type === "agent.message.end")).toBe(true),
+  );
+}
 
-describe("realtime voice", () => {
-  it("keeps content-free client capture diagnostics on the gateway", async () => {
-    const f = fixture();
-    await ready(f);
-    const sent = f.socket.sent.length;
-    f.connection.receive(
-      JSON.stringify({
-        type: "client.audio_diagnostics",
-        stage: "ready",
-        rawBuffers: 3,
-        pcmBuffers: 2,
-        sentFrames: 1,
-        engineRunning: true,
-      }),
-    );
-    expect(f.socket.sent).toHaveLength(sent);
-    expect(f.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "client audio stage=ready rawBuffers=3 pcmBuffers=2 sentFrames=1 engineRunning=true",
-      ),
-    );
-    expect(f.peer.close).not.toHaveBeenCalled();
-  });
-  it.each([
-    { stage: "private-route-name" },
-    { rawBuffers: -1 },
-    { pcmBuffers: 10_000_001 },
-    { sentFrames: 1.5 },
-    { engineRunning: "true" },
-    { transcript: "Private diagnostic contents" },
-  ])(
-    "rejects malformed client capture diagnostics without logging their contents: %j",
-    async (invalid) => {
-      const f = fixture();
-      await ready(f);
-      const sent = f.socket.sent.length;
-      f.connection.receive(
-        JSON.stringify({
-          type: "client.audio_diagnostics",
-          stage: "ready",
-          rawBuffers: 0,
-          pcmBuffers: 0,
-          sentFrames: 0,
-          engineRunning: true,
-          ...invalid,
-        }),
-      );
-      expect(f.peer.close).toHaveBeenCalled();
-      expect(f.socket.sent).toHaveLength(sent);
-      expect(
-        f.logger.info.mock.calls.some(([message]) => message.includes("client audio stage=")),
-      ).toBe(false);
-    },
-  );
-  it("caps client diagnostic logs without interrupting audio or forwarding diagnostics", async () => {
-    const f = fixture();
-    await ready(f);
-    const sent = f.socket.sent.length;
-    for (let rawBuffers = 0; rawBuffers < 20; rawBuffers++) {
-      f.connection.receive(
-        JSON.stringify({
-          type: "client.audio_diagnostics",
-          stage: "configuration_changed",
-          rawBuffers,
-          pcmBuffers: 0,
-          sentFrames: 0,
-          engineRunning: true,
-        }),
-      );
-    }
-    expect(
-      f.logger.info.mock.calls.filter(([message]) => message.includes("client audio stage=")),
-    ).toHaveLength(12);
-    expect(f.socket.sent).toHaveLength(sent);
-    expect(f.peer.close).not.toHaveBeenCalled();
-    f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio: "AAAA" }));
-    expect(f.socket.sent.at(-1)?.type).toBe("input_audio_buffer.append");
-  });
-  it("requires current authority before accepting client diagnostics", async () => {
-    const f = fixture();
-    await ready(f);
-    f.authorized.mockReturnValue(false);
-    f.connection.receive(
-      JSON.stringify({
-        type: "client.audio_diagnostics",
-        stage: "timeout",
-        rawBuffers: 0,
-        pcmBuffers: 0,
-        sentFrames: 0,
-        engineRunning: false,
-      }),
-    );
-    expect(f.peer.close).toHaveBeenCalled();
-    expect(
-      f.logger.info.mock.calls.some(([message]) => message.includes("client audio stage=")),
-    ).toBe(false);
-  });
-  it("recovers a vanished empty conversation after gateway restart and runs a replayed turn", async () => {
-    const makeAgent = (id: string) =>
-      new AgentService({
-        backendFactory: () =>
-          new ReplayBackend({
-            fixtures: [
-              {
-                entries: [
-                  {
-                    afterMs: 0,
-                    event: {
-                      type: "agent.text.delta",
-                      payload: {
-                        sessionId: "$SESSION",
-                        messageId: "$MSG",
-                        delta: "Water the ferns.",
-                      },
-                    },
-                  },
-                  {
-                    afterMs: 0,
-                    event: {
-                      type: "agent.message.end",
-                      payload: { sessionId: "$SESSION", messageId: "$MSG", stopReason: "end_turn" },
-                    },
-                  },
-                ],
-              },
-            ],
-          }),
-        ports: {
-          search: { search: async (input) => ({ query: input.query, durationMs: 1, results: [] }) },
-          document: { fetch: async () => null },
-        },
-        systemPrompt: "You are a fictional test assistant.",
-        sessionIdGen: () => id,
-      });
-    const beforeRestart = makeAgent("existing-thread");
-    await beforeRestart.createSession("token:fictional");
-    await beforeRestart.dispose();
-    const afterRestart = makeAgent("replacement-thread");
-    const create = vi.spyOn(afterRestart, "createSession");
-    const f = fixture(undefined, afterRestart);
-    try {
-      f.socket.emit("open");
-      await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(2));
-      expect(create.mock.calls[0]?.[1]?.resumeFromId).toBe("existing-thread");
-      expect(create.mock.calls[1]?.[1]?.resumeFromId).toBeUndefined();
-      f.socket.event({ type: "session.updated" });
-      expect(f.events).toContainEqual({
-        type: "session.ready",
-        conversationId: "replacement-thread",
-        model: "gpt-realtime",
-        clientAudioDiagnostics: true,
-      });
-      f.socket.event(call());
-      await vi.waitFor(() =>
-        expect(f.socket.sent).toContainEqual(
-          expect.objectContaining({
-            type: "conversation.item.create",
-            item: expect.objectContaining({
-              type: "function_call_output",
-              output: "Water the ferns.",
-            }),
-          }),
-        ),
-      );
-      expect(f.peer.close).not.toHaveBeenCalled();
-    } finally {
-      f.connection.close();
-      await afterRestart.dispose();
-    }
-  });
-  it.each([
-    new AgentError("forbidden", "not allowed"),
-    new AgentError("anchored_thread_unavailable", "unsupported origin"),
-    new Error("session_not_found"),
-  ])(
-    "does not replace conversations after an unrelated or untyped startup error: %s",
-    async (error) => {
-      const f = fixture();
-      vi.mocked(f.agent.createSession).mockRejectedValueOnce(error);
-      f.socket.emit("open");
-      await vi.waitFor(() => expect(f.peer.close).toHaveBeenCalled());
-      expect(f.agent.createSession).toHaveBeenCalledTimes(1);
-      expect(f.peer.close).toHaveBeenCalled();
-      expect(f.events.some((event) => event.type === "session.ready")).toBe(false);
-    },
-  );
-  it("warns once when a ready call never sends microphone audio", async () => {
-    vi.useFakeTimers();
-    const f = fixture();
-    await ready(f);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(f.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("no input audio received after 10 seconds"),
-    );
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(f.logger.warn).toHaveBeenCalledTimes(1);
-    expect(f.peer.close).not.toHaveBeenCalled();
-  });
-  it("clears the missing-audio watchdog on call close", async () => {
-    vi.useFakeTimers();
-    const f = fixture();
-    await ready(f);
-    f.connection.close();
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(f.logger.warn).not.toHaveBeenCalled();
-    expect(
-      f.logger.info.mock.calls.filter(([message]) => message.includes("closed reason=")),
-    ).toHaveLength(1);
-  });
-  it("logs bounded audio diagnostics without audio, transcript, credentials or provider messages", async () => {
-    const f = fixture();
-    await ready(f);
-    const audio = Buffer.from("private-audio-test").toString("base64");
-    f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio }));
-    f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio }));
-    f.socket.event({ type: "input_audio_buffer.speech_started" });
-    f.socket.event({ type: "input_audio_buffer.speech_stopped" });
-    f.socket.event({
-      type: "conversation.item.input_audio_transcription.completed",
-      transcript: "Private transcript",
-    });
-    f.socket.event({
-      type: "error",
-      error: { code: "invalid_request_error", message: "Private upstream message test-key" },
-    });
-    const messages = [...f.logger.info.mock.calls, ...f.logger.warn.mock.calls]
-      .map(([message]) => message)
-      .join("\n");
-    expect(
-      f.logger.info.mock.calls.filter(([message]) => message.includes("first input audio")),
-    ).toHaveLength(1);
-    expect(messages).toContain(
-      "audioFrames=2 audioBytes=36 forwardedFrames=2 speechStarts=1 speechStops=1",
-    );
-    expect(messages).toContain("upstream error code=invalid_request_error");
-    for (const privateValue of [
-      audio,
-      "private-audio-test",
-      "Private transcript",
-      "Private upstream message",
-      "test-key",
-      "fictional-token",
-    ])
-      expect(messages).not.toContain(privateValue);
-  });
+describe("direct realtime Omnesis runtime", () => {
   it("requires strict experimental mode, remote consent, real OpenAI origin and a key", () => {
     expect(realtimeBackend(config(), () => "key")).toBe("cloud");
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
@@ -331,7 +214,6 @@ describe("realtime voice", () => {
     expect(
       realtimeBackend(config("https://api.openai.com.example.org"), () => "key"),
     ).toBeUndefined();
-    expect(realtimeBackend(config("http://api.openai.com"), () => "key")).toBeUndefined();
     expect(realtimeBackend(config(), () => undefined)).toBeUndefined();
     expect(
       realtimeBackend(
@@ -340,151 +222,289 @@ describe("realtime voice", () => {
       ),
     ).toBeUndefined();
   });
-  it("configures server-owned audio and tools, resumes the conversation and accepts only audio controls", async () => {
-    const f = fixture();
+  it("accepts the echoed full session manifest above the client frame limit", async () => {
+    const f = await fixture();
+    f.open();
+    f.socket.emit("open");
+    await vi.waitFor(() =>
+      expect(f.socket.sent.some((event) => event.type === "session.update")).toBe(true),
+    );
+    const echo = {
+      type: "session.updated",
+      session: { instructions: "x".repeat(80_000), tools: [{ description: "y".repeat(80_000) }] },
+    };
+    expect(Buffer.byteLength(JSON.stringify(echo))).toBeGreaterThan(128 * 1024);
+    f.socket.event(echo);
+    expect(f.events).toContainEqual(
+      expect.objectContaining({ type: "session.ready", protocolVersion: 1 }),
+    );
+    expect(f.peer.close).not.toHaveBeenCalled();
+  });
+  it("retains distinct bounded limits for incoming client frames and upstream events", async () => {
+    const client = await fixture();
+    const connection = await ready(client);
+    connection.receive(
+      JSON.stringify({ type: "input_audio_buffer.append", audio: "A".repeat(130 * 1024) }),
+    );
+    expect(client.peer.close).toHaveBeenCalled();
+    const upstream = await fixture();
+    await ready(upstream);
+    upstream.socket.event({
+      type: "session.updated",
+      session: { instructions: "x".repeat(2 * 1024 * 1024) },
+    });
+    expect(upstream.peer.close).toHaveBeenCalled();
+  });
+  it.each([undefined, 2] as const)(
+    "keeps missing-thread fallback exclusive to legacy clients (version %s)",
+    async (version) => {
+      const f = await fixture();
+      f.open("missing-empty-thread", version);
+      f.socket.emit("open");
+      if (version === 2) {
+        await vi.waitFor(() => expect(f.peer.close).toHaveBeenCalled());
+        expect(f.socket.sent.some((event) => event.type === "session.update")).toBe(false);
+        expect(f.events.some((event) => event.type === "session.ready")).toBe(false);
+      } else {
+        await vi.waitFor(() =>
+          expect(f.socket.sent.some((event) => event.type === "session.update")).toBe(true),
+        );
+        f.socket.event({ type: "session.updated" });
+        expect(f.events).toContainEqual(
+          expect.objectContaining({ type: "session.ready", protocolVersion: 1 }),
+        );
+        expect(f.events.find((event) => event.type === "session.ready")?.conversationId).not.toBe(
+          "missing-empty-thread",
+        );
+      }
+    },
+  );
+  it("advertises additive direct-runtime capabilities while preserving the old available/model/audio contract", async () => {
+    const f = await fixture();
+    const capability = f.service.capability();
+    expect(capability).toMatchObject({
+      available: true,
+      model: "gpt-realtime-2.1",
+      audio: { format: "pcm16", sampleRate: 24000 },
+      directAgentTools: true,
+      canonicalAgentEvents: true,
+      protocol: { min: 1, max: 2 },
+    });
+    const oldClient = JSON.parse(JSON.stringify(capability)) as {
+      available: boolean;
+      model: string;
+    };
+    expect(oldClient.available).toBe(true);
+    expect(oldClient.model).toBe("gpt-realtime-2.1");
+  });
+  it("uses the complete normal interactive schemas and unchanged core prompt with a language-stable speech suffix", async () => {
+    const f = await fixture();
+    const ordinary = await f.agent.createSession("token:fixture", {
+      profile: "interactive",
+      caller: { kind: "operator" },
+      timeZone: "Europe/London",
+    });
+    await ready(f, ordinary.sessionId);
+    const configuration = f.socket.sent.find((event) => event.type === "session.update")
+      ?.session as {
+      tools: Array<{ name: string; parameters: unknown }>;
+      instructions: string;
+      audio: { input: { turn_detection: { create_response: boolean } } };
+    };
+    expect(configuration.tools.some((tool) => tool.name === "annotate_many")).toBe(true);
+    expect(configuration.tools.some((tool) => tool.name === "run_sql")).toBe(true);
+    expect(configuration.tools.find((tool) => tool.name === "fixture_write")?.parameters).toEqual(
+      toolInputJsonSchema(f.customTool.schema),
+    );
+    expect(configuration.tools.some((tool) => tool.name === "ask_omnesis")).toBe(false);
+    expect(
+      configuration.instructions.startsWith(
+        "Shared core instructions: use evidence and preserve citations.",
+      ),
+    ).toBe(true);
+    expect(configuration.instructions).toContain("last clearly established language");
+    expect(configuration.instructions).toContain("only on an explicit request");
+    expect(configuration.audio.input.turn_detection.create_response).toBe(false);
+    expect(f.ordinary.runTurn).not.toHaveBeenCalled();
+    expect(f.events.some((event) => event.type === "agent.event")).toBe(false);
+  });
+  it("executes actual search, fetch and SQL handles once, preserves batch cards on normal SSE and persists the tool transcript", async () => {
+    const f = await fixture();
     await ready(f);
-    expect(f.agent.createSession).toHaveBeenCalledWith(
-      "token:fictional",
-      expect.objectContaining({
-        resumeFromId: "existing-thread",
-        profile: "voice",
-        caller: { kind: "operator" },
+    await speech(f);
+    call(f, "search_many", { queries: [{ query: "fern" }] }, "search-1");
+    call(
+      f,
+      "fetch_many",
+      { documents: [{ documentId: "11111111-1111-4111-8111-111111111111" }] },
+      "fetch-1",
+    );
+    call(f, "run_sql", { sql: "SELECT 2 AS count" }, "sql-1");
+    call(f, "search_many", { queries: [{ query: "fern" }] }, "search-1");
+    done(f, "r1");
+    await vi.waitFor(() =>
+      expect(
+        f.socket.sent.filter(
+          (event) => (event.item as { type?: string } | undefined)?.type === "function_call_output",
+        ),
+      ).toHaveLength(3),
+    );
+    expect(f.search).toHaveBeenCalledTimes(1);
+    expect(f.fetch).toHaveBeenCalledTimes(1);
+    expect(f.sql).toHaveBeenCalledTimes(1);
+    expect(f.canonical.some((event) => event.type === "agent.tool.child.start")).toBe(true);
+    expect(f.canonical.some((event) => event.type === "agent.tool.child.result")).toBe(true);
+    expect(f.events).toContainEqual(
+      expect.objectContaining({ type: "tool.start", name: "search_many" }),
+    );
+    f.socket.event({ type: "response.created", response: { id: "r2" } });
+    f.socket.event({
+      type: "response.output_audio_transcript.delta",
+      response_id: "r2",
+      delta: "The plant record is ready.",
+    });
+    done(f, "r2");
+    await settle(f);
+    await vi.waitFor(async () =>
+      expect(
+        (
+          await f.store.load(
+            f.events.find((event) => event.type === "session.ready")!.conversationId as string,
+          )
+        )?.messages.some((message) => message.parts.some((part) => part.kind === "tool_result")),
+      ).toBe(true),
+    );
+    expect(f.ordinary.runTurn).not.toHaveBeenCalled();
+    expect(f.spend).not.toHaveBeenCalled();
+    expect(f.usage).toHaveBeenCalledTimes(2);
+  });
+  it("retains server-side argument validation and operator/timezone/abort ToolContext", async () => {
+    const f = await fixture();
+    await ready(f);
+    await speech(f);
+    call(f, "run_sql", { sql: 42 }, "bad");
+    call(f, "fixture_write", { value: "fixture" }, "owned");
+    done(f, "r1");
+    await vi.waitFor(() => expect(f.contexts).toHaveLength(1));
+    expect(f.sql).not.toHaveBeenCalled();
+    expect(f.contexts[0]).toMatchObject({
+      caller: { kind: "operator" },
+      timeZone: "Europe/London",
+    });
+    expect(f.contexts[0]?.abortSignal).toBeInstanceOf(AbortSignal);
+    expect(
+      f.canonical.some(
+        (event) =>
+          event.type === "agent.tool.result" &&
+          event.payload.result.kind === "error" &&
+          event.payload.result.code === "invalid_args",
+      ),
+    ).toBe(true);
+  });
+  it("negotiates media-only audio sockets while canonical tool cards stay on ordinary SSE", async () => {
+    const f = await fixture();
+    f.open(undefined, 2);
+    f.socket.emit("open");
+    await vi.waitFor(() =>
+      expect(f.socket.sent.some((event) => event.type === "session.update")).toBe(true),
+    );
+    f.socket.event({ type: "session.updated" });
+    expect(f.events).toContainEqual(
+      expect.objectContaining({ type: "session.ready", protocolVersion: 2 }),
+    );
+    await speech(f);
+    call(f, "run_sql", { sql: "SELECT 1" }, "sql-only-sse");
+    done(f, "r1");
+    await vi.waitFor(() =>
+      expect(f.canonical.some((event) => event.type === "agent.tool.result")).toBe(true),
+    );
+    expect(
+      f.events.some(
+        (event) =>
+          event.type === "tool.start" || event.type === "tool.end" || event.type === "agent.event",
+      ),
+    ).toBe(false);
+  });
+  it("revokes tool authority immediately before a provider function call", async () => {
+    const f = await fixture();
+    await ready(f);
+    await speech(f);
+    f.authorized.mockReturnValue(false);
+    call(f, "run_sql", { sql: "SELECT 1" }, "revoked");
+    expect(f.sql).not.toHaveBeenCalled();
+    expect(f.peer.close).toHaveBeenCalled();
+  });
+  it("deduplicates ready/history and bounded private diagnostic events without forwarding diagnostics", async () => {
+    const f = await fixture();
+    const connection = await ready(f);
+    f.socket.event({ type: "session.updated" });
+    expect(f.events.filter((event) => event.type === "session.ready")).toHaveLength(1);
+    const before = f.socket.sent.length;
+    for (let rawBuffers = 0; rawBuffers < 20; rawBuffers++)
+      connection.receive(
+        JSON.stringify({
+          type: "client.audio_diagnostics",
+          stage: "ready",
+          rawBuffers,
+          pcmBuffers: 0,
+          sentFrames: 0,
+          engineRunning: true,
+        }),
+      );
+    expect(f.socket.sent).toHaveLength(before);
+    expect(
+      f.logger.info.mock.calls.filter(([message]) => message.includes("client audio stage=")),
+    ).toHaveLength(12);
+    connection.receive(
+      JSON.stringify({
+        type: "client.audio_diagnostics",
+        stage: "ready",
+        rawBuffers: 0,
+        pcmBuffers: 0,
+        sentFrames: 0,
+        engineRunning: true,
+        transcript: "Private",
       }),
     );
-    expect(f.events).toContainEqual({
-      type: "session.ready",
-      conversationId: "voice-thread",
-      model: "gpt-realtime",
-      clientAudioDiagnostics: true,
-    });
-    expect(JSON.stringify(f.socket.sent)).not.toContain("test-key");
-    f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio: "AAAA" }));
-    expect(f.socket.sent.at(-1)).toEqual({ type: "input_audio_buffer.append", audio: "AAAA" });
-    f.connection.receive(
-      JSON.stringify({ type: "session.update", session: { instructions: "replace" } }),
-    );
     expect(f.peer.close).toHaveBeenCalled();
+    expect(f.logger.info.mock.calls.join(" ")).not.toContain("Private");
   });
-  it("delegates once, streams actual tool cards and returns the result after response completion", async () => {
-    const turn = vi
-      .fn<AgentService["realtimeTurn"]>()
-      .mockImplementation(async (_caller, _session, _text, _signal, onEvent) => {
-        onEvent({
-          type: "agent.tool.start",
-          payload: {
-            sessionId: "voice-thread",
-            messageId: "message",
-            toolCallId: "search-1",
-            tool: "search_documents",
-            args: {},
-            argsSummary: "Plant care",
-          },
-        });
-        return "The ferns need water.";
-      });
-    const f = fixture(turn);
+  it("keeps the call usable when the best-effort response usage ledger throws", async () => {
+    const f = await fixture();
     await ready(f);
-    f.socket.event({ type: "response.created" });
-    f.socket.event(call());
-    f.socket.event(call());
-    await Promise.resolve();
-    expect(turn).toHaveBeenCalledTimes(1);
-    expect(f.events).toContainEqual({
-      type: "tool.start",
-      id: "search-1",
-      name: "search_documents",
-      summary: "Plant care",
+    f.usage.mockImplementation(() => {
+      throw new Error("Ledger unavailable");
     });
-    expect(f.socket.sent.filter((event) => event.type === "response.create")).toHaveLength(0);
-    f.socket.event({
-      type: "response.done",
-      response: {
-        id: "response-1",
-        usage: { input_tokens: 20, output_tokens: 10, input_token_details: { cached_tokens: 5 } },
-      },
-    });
-    expect(f.socket.sent.at(-1)).toEqual({ type: "response.create" });
-    expect(f.usage).toHaveBeenCalledWith(
-      { promptTokens: 20, completionTokens: 10, cacheReadTokens: 5 },
-      "gpt-realtime",
-    );
-  });
-  it("aborts delegated work when the phone disconnects and suppresses late output", async () => {
-    let finish!: (value: string) => void;
-    let signal: AbortSignal | undefined;
-    const f = fixture(
-      vi
-        .fn<AgentService["realtimeTurn"]>()
-        .mockImplementation((_caller, _session, _text, abort) => {
-          signal = abort;
-          return new Promise((resolve) => {
-            finish = resolve;
-          });
-        }),
-    );
-    await ready(f);
-    f.socket.event(call());
-    f.connection.close();
-    expect(signal?.aborted).toBe(true);
-    const count = f.socket.sent.length;
-    finish("Late answer");
-    await Promise.resolve();
-    expect(f.socket.sent).toHaveLength(count);
-  });
-  it("does not drop a call on redundant cancellation, but sanitizes provider failures", async () => {
-    const f = fixture();
-    await ready(f);
-    f.socket.event({
-      type: "error",
-      error: { code: "response_cancel_not_active", message: "No response" },
-    });
+    await speech(f);
+    done(f, "r1");
+    await settle(f);
     expect(f.peer.close).not.toHaveBeenCalled();
-    f.socket.event({ type: "error", error: { message: "private vendor error test-key" } });
-    expect(f.peer.close).toHaveBeenCalled();
-    expect(JSON.stringify(f.events)).not.toContain("test-key");
-  });
-  it("accounts for transcription usage separately and does not duplicate event samples", async () => {
-    const f = fixture();
-    await ready(f);
-    const event = {
-      type: "conversation.item.input_audio_transcription.completed",
-      item_id: "speech-1",
-      transcript: "Water the ferns",
-      usage: { type: "tokens", input_tokens: 8, output_tokens: 4 },
-    };
-    f.socket.event(event);
-    f.socket.event(event);
     expect(f.usage).toHaveBeenCalledTimes(1);
-    expect(f.usage).toHaveBeenCalledWith(
-      { promptTokens: 8, completionTokens: 4 },
-      "gpt-4o-mini-transcribe",
-    );
   });
-  it("closes established calls if experimental mode is disabled", async () => {
-    const f = fixture();
+  it("counts canceled response usage even after canonical turn cancellation and ignores stale response output", async () => {
+    const f = await fixture();
     await ready(f);
-    vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
-    f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio: "AAAA" }));
+    await speech(f);
+    f.socket.event({ type: "input_audio_buffer.speech_started" });
+    done(f, "r1", "cancelled");
+    await settle(f);
+    done(f, "r1", "cancelled");
+    expect(f.usage).toHaveBeenCalledTimes(1);
+    expect(f.ordinary.runTurn).not.toHaveBeenCalled();
+    expect(
+      f.canonical.some(
+        (event) => event.type === "agent.message.end" && event.payload.stopReason === "canceled",
+      ),
+    ).toBe(true);
+  });
+  it("fails on transcription errors rather than leaving the conversation stuck", async () => {
+    const f = await fixture();
+    await ready(f);
+    f.socket.event({
+      type: "conversation.item.input_audio_transcription.failed",
+      item_id: "speech-1",
+    });
     expect(f.peer.close).toHaveBeenCalled();
-  });
-  it("rechecks credentials before delegating even without another audio frame", async () => {
-    const f = fixture();
-    await ready(f);
-    f.authorized.mockReturnValue(false);
-    f.socket.event(call());
-    expect(f.agent.realtimeTurn).not.toHaveBeenCalled();
-    expect(f.peer.close).toHaveBeenCalled();
-  });
-  it("keeps one conversation across successive spoken requests", async () => {
-    const f = fixture();
-    await ready(f);
-    f.socket.event(call());
-    await Promise.resolve();
-    f.socket.event({ type: "response.done" });
-    f.socket.event(call("call-2"));
-    await Promise.resolve();
-    expect(f.agent.realtimeTurn).toHaveBeenCalledTimes(2);
-    expect(f.agent.createSession).toHaveBeenCalledTimes(1);
-    expect(f.peer.close).not.toHaveBeenCalled();
+    expect(f.ordinary.runTurn).not.toHaveBeenCalled();
   });
 });

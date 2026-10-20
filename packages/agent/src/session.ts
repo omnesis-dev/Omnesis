@@ -142,6 +142,8 @@ export interface SessionOptions {
 }
 
 export interface SendOptions {
+  /** A transport-owned backend for this turn; the canonical session still owns its lifecycle. */
+  backend?: ChatBackend;
   /** External abort signal. Cancelling causes `agent.message.end { stopReason: "canceled" }`. */
   signal?: AbortSignal;
   /**
@@ -277,12 +279,12 @@ export class AgentSession {
 
   /** Returns the model the backend reported. */
   get model(): string {
-    return this.backend.model;
+    return (this.currentTurn?.backend ?? this.backend).model;
   }
 
   /** Returns the backend name (anthropic / replay / openai-compatible). */
   get backendName(): string {
-    return this.backend.name;
+    return (this.currentTurn?.backend ?? this.backend).name;
   }
 
   /**
@@ -317,6 +319,20 @@ export class AgentSession {
   /** Snapshot of the conversation history. Read-only. */
   historySnapshot(): ReadonlyArray<ChatMessage> {
     return this.history;
+  }
+
+  /** The same model-facing context and wrapped tools used by ordinary turns. */
+  modelContextSnapshot(): Pick<
+    import("./backend.js").TurnInput,
+    "systemPrompt" | "history" | "tools" | "timeZone" | "caller"
+  > {
+    return {
+      systemPrompt: this.systemPrompt,
+      history: this.historyView ? this.historyView(this.history) : [...this.history],
+      tools: this.tools,
+      timeZone: this.zone,
+      caller: this.speaksFor,
+    };
   }
 
   /**
@@ -449,6 +465,7 @@ export class AgentSession {
     const messageId = this.idGen();
     const userMessageId = this.idGen();
     const turn: TurnState = {
+      backend: opts.backend,
       messageId,
       abortController: new AbortController(),
       segments: [],
@@ -504,12 +521,13 @@ export class AgentSession {
         // leaves a coherent transcript. The backend still receives the
         // pre-turn snapshot per TurnInput's contract.
         this.history.push(userTurn);
-        const stream = this.backend.runTurn(
+        const stream = (opts.backend ?? this.backend).runTurn(
           {
             sessionId: this.sessionId,
             messageId: turn.messageId,
             history: priorHistory,
             userMessage: opts.modelNote ? `${text}\n\n${opts.modelNote}` : text,
+            ...(opts.modelNote ? { modelNote: opts.modelNote } : {}),
             tools: this.tools,
             timeZone: this.zone,
             caller: this.speaksFor,
@@ -781,22 +799,22 @@ export class AgentSession {
         ...failure,
         message: CONTEXT_WINDOW_EXCEEDED_MESSAGE,
         retryable: false,
-        backend: this.backend.name,
-        model: this.backend.model,
+        backend: (turn.backend ?? this.backend).name,
+        model: (turn.backend ?? this.backend).model,
       };
     } else if (event.payload.stopReason === "max_tokens" || failure?.code === "output_truncated") {
       failure = {
         code: "output_truncated",
         message: OUTPUT_TRUNCATED_MESSAGE,
         retryable: false,
-        backend: this.backend.name,
-        model: this.backend.model,
+        backend: (turn.backend ?? this.backend).name,
+        model: (turn.backend ?? this.backend).model,
       };
     } else if (failure) {
       failure = {
         ...failure,
-        backend: this.backend.name,
-        model: this.backend.model,
+        backend: (turn.backend ?? this.backend).name,
+        model: (turn.backend ?? this.backend).model,
       };
     } else if (event.payload.stopReason === "error") {
       const terminalError = turn.terminalError;
@@ -808,8 +826,21 @@ export class AgentSession {
           ? CONTEXT_WINDOW_EXCEEDED_MESSAGE
           : (terminalError?.message ?? "The model request failed before completing."),
         retryable: !contextExceeded && code !== "output_truncated",
-        backend: this.backend.name,
-        model: this.backend.model,
+        backend: (turn.backend ?? this.backend).name,
+        model: (turn.backend ?? this.backend).model,
+      };
+    }
+
+    if (turn.backend && failure?.code === "context_window_exceeded") {
+      // An override can have a smaller context than the conversation's default model.
+      // Preserve turn failure detail without making existing clients lock the whole thread.
+      failure = {
+        ...failure,
+        code: "provider_error",
+        message:
+          "This conversation exceeds this turn's model context window. Continue with the default model or start a new conversation.",
+        retryable: false,
+        provider: { ...failure.provider, code: "context_window_exceeded" },
       };
     }
 
@@ -1103,6 +1134,7 @@ export class AgentSession {
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 interface TurnState {
+  backend?: ChatBackend;
   messageId: string;
   abortController: AbortController;
   /** Recorded by `cancel()`; unset when the abort came through the caller's signal. */

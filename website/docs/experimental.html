@@ -219,10 +219,12 @@
         </p>
         <p>
           The gateway relays call audio to OpenAI's Realtime API; the OpenAI API key stays on the
-          gateway. Requests involving your data are handled by the configured Omnesis agent, with
-          its existing tools. Audio and the context needed to answer are sent to the configured
-          backends during the call. Realtime audio and agent inference incur their respective
-          backend charges. This control is available only on iOS.
+          gateway. The realtime model uses the same core instructions, complete tool definitions,
+          permissions and gateway tool implementations as a typed Omnesis conversation. Tool calls
+          and citations appear in the same conversation, and you can switch between typing and
+          speaking without starting another thread. Audio and conversation context are sent to
+          OpenAI during the call; realtime audio and transcription incur OpenAI charges. This
+          control is available only on iOS.
         </p>
 
         <h2 id="browser-extension">Browser extension notes and Find</h2>

@@ -11,6 +11,7 @@ const query = z.object({
   conversationId: z.string().min(1).max(256).optional(),
   timeZone: z.string().min(1).max(128).optional(),
 });
+const protocolVersion = z.enum(["1", "2"]).default("1");
 
 /** Owner-only native transport; bearer headers keep credentials out of URLs. */
 export function mountRealtimeRoutes(
@@ -29,6 +30,8 @@ export function mountRealtimeRoutes(
         return c.json({ error: "A device bearer token is required" }, 403);
       if (!query.safeParse(c.req.query()).success)
         return c.json({ error: "Invalid voice session options" }, 400);
+      if (!protocolVersion.safeParse(c.req.header("X-Omnesis-Realtime-Version")).success)
+        return c.json({ error: "Unsupported realtime protocol version (supported: 1–2)" }, 400);
       return next();
     },
     upgrade((c) => {
@@ -48,6 +51,9 @@ export function mountRealtimeRoutes(
               {
                 ...query.parse(c.req.query()),
                 token: c.req.header("Authorization")?.slice(7) ?? "",
+                version: Number(
+                  protocolVersion.parse(c.req.header("X-Omnesis-Realtime-Version")),
+                ) as 1 | 2,
               },
             );
           } catch {

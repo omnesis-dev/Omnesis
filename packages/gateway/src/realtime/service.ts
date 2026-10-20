@@ -5,12 +5,15 @@ import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { z } from "zod";
 import { createLogger, experimentalEnabled, normalizeTimeZone } from "@omnesis/core";
-import { AgentError, type AgentService, type CreateSessionOptions } from "../agent/service.js";
-import type { AgentEvent } from "@omnesis/core";
+import { REALTIME_MODEL, RealtimeBackend } from "./backend.js";
+import { RealtimeInputSequencer } from "./input-sequencer.js";
+import type { AgentService, RealtimeAgentSession } from "../agent/service.js";
 import type { OmnesisConfig } from "@omnesis/config";
 
-const MODEL = "gpt-realtime";
+const MODEL = REALTIME_MODEL;
 const MAX_FRAME_BYTES = 128 * 1024;
+// session.updated echoes the complete interactive prompt and tool manifest.
+const MAX_UPSTREAM_EVENT_BYTES = 2 * 1024 * 1024;
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 const MAX_CALL_MS = 30 * 60 * 1000;
 const MAX_CLIENT_DIAGNOSTICS = 12;
@@ -48,28 +51,6 @@ const clientEvent = z.discriminatedUnion("type", [
     .strict(),
 ]);
 const upstreamEvent = z.object({ type: z.string() }).passthrough();
-const functionCall = z.object({
-  type: z.literal("response.function_call_arguments.done"),
-  name: z.literal("ask_omnesis"),
-  call_id: z.string().min(1).max(256),
-  arguments: z.string().max(32_000),
-});
-const question = z.object({ question: z.string().trim().min(1).max(10_000) }).strict();
-const responseUsage = z.object({
-  response: z.object({
-    id: z.string(),
-    usage: z
-      .object({
-        input_tokens: z.number().int().nonnegative(),
-        output_tokens: z.number().int().nonnegative(),
-        input_token_details: z
-          .object({ cached_tokens: z.number().int().nonnegative().optional() })
-          .optional(),
-      })
-      .nullable()
-      .optional(),
-  }),
-});
 const transcriptionUsage = z.object({
   item_id: z.string(),
   usage: z.object({
@@ -125,11 +106,17 @@ export class RealtimeService {
   capability(): {
     available: boolean;
     model: string;
+    directAgentTools: boolean;
+    canonicalAgentEvents: boolean;
+    protocol: { min: number; max: number };
     audio: { format: string; sampleRate: number };
   } {
     return {
       available: !!this.backend() && !!this.deps.getAgent(),
       model: MODEL,
+      directAgentTools: true,
+      canonicalAgentEvents: true,
+      protocol: { min: 1, max: 2 },
       audio: { format: "pcm16", sampleRate: 24000 },
     };
   }
@@ -141,7 +128,7 @@ export class RealtimeService {
   open(
     peer: RealtimePeer,
     callerId: string,
-    options: { conversationId?: string; timeZone?: string; token: string },
+    options: { conversationId?: string; timeZone?: string; token: string; version?: 1 | 2 },
   ): RealtimeConnection {
     const backend = this.backend();
     const agent = this.deps.getAgent();
@@ -165,16 +152,18 @@ export class RealtimeService {
     const abort = new AbortController();
     let closed = false;
     let sessionId: string | undefined;
-    let busy = false;
-    let responseActive = false;
-    let pendingResponse = false;
-    const calls = new Set<string>();
+    let agentSession: RealtimeAgentSession | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let running = false;
+    let ready = false;
+    let closeAfterTurn = false;
+    const pendingTranscripts: Array<{ text: string; id: string }> = [];
     const accountedResponses = new Set<string>();
     const upstream =
       this.deps.connect?.(key) ??
       new WebSocket(`wss://api.openai.com/v1/realtime?model=${MODEL}`, {
         headers: { Authorization: `Bearer ${key}` },
-        maxPayload: MAX_FRAME_BYTES,
+        maxPayload: MAX_UPSTREAM_EVENT_BYTES,
         handshakeTimeout: 15_000,
       });
     const send = (event: unknown) => {
@@ -214,6 +203,10 @@ export class RealtimeService {
         `Call ${diagnosticId} closed reason=${closeReason} durationMs=${Date.now() - openedAt} audioFrames=${audioFrames} audioBytes=${audioBytes} forwardedFrames=${forwardedFrames} speechStarts=${speechStarts} speechStops=${speechStops} outputFrames=${outputFrames} outputBytes=${outputBytes}`,
       );
       abort.abort();
+      unsubscribe?.();
+      agentSession?.close();
+      void backendAdapter.dispose();
+      inputSequencer.dispose();
       upstream.close();
       this.active.delete(close);
       peer.close(1000, "Voice call ended");
@@ -234,104 +227,90 @@ export class RealtimeService {
     lifetime.unref();
     startup.unref();
     this.active.add(close);
-    const emitTool = (event: AgentEvent) => {
-      if (event.type === "agent.tool.start")
-        send({
-          type: "tool.start",
-          id: event.payload.toolCallId,
-          name: event.payload.tool,
-          summary: event.payload.argsSummary ?? event.payload.intent,
-        });
-      if (event.type === "agent.tool.result")
-        send({ type: "tool.end", id: event.payload.toolCallId, result: event.payload.result });
-      if (event.type.startsWith("agent.tool.")) send({ type: "agent.event", event });
-    };
-    const requestResponse = () => {
-      if (responseActive) {
-        pendingResponse = true;
-        return;
-      }
-      responseActive = true;
-      sendUpstream({ type: "response.create" });
-    };
-    const delegate = async (raw: unknown) => {
-      const call = functionCall.safeParse(raw);
-      if (!call.success || closed) return;
+    const backendAdapter = new RealtimeBackend(
+      (event) => {
+        if (!authorized()) {
+          close();
+          return;
+        }
+        sendUpstream(event);
+      },
+      authorized,
+      fail,
+    );
+    const drainTranscripts = () => {
+      if (closed || running || !agentSession || pendingTranscripts.length === 0) return;
       if (!authorized()) {
         close();
         return;
       }
-      const { call_id: id } = call.data;
-      if (calls.has(id)) return;
-      if (calls.size >= 256) {
+      const input = pendingTranscripts.shift()!;
+      backendAdapter.useInputItem(input.id);
+      running = true;
+      void agentSession
+        .run(input.text, backendAdapter, abort.signal)
+        .catch(fail)
+        .finally(() => {
+          running = false;
+          if (closeAfterTurn) fail();
+          else drainTranscripts();
+        });
+    };
+    const inputSequencer = new RealtimeInputSequencer((text, id) => {
+      if (pendingTranscripts.length >= 4) {
         fail();
         return;
       }
-      calls.add(id);
-      let result: string;
-      if (busy || !sessionId) result = "Another request is still running. Wait for its answer.";
-      else {
-        busy = true;
-        send({ type: "tool.start", id, name: "ask_omnesis", summary: "Asking Omnesis" });
-        try {
-          const args = question.parse(JSON.parse(call.data.arguments));
-          result = await agent.realtimeTurn(
-            callerId,
-            sessionId,
-            args.question,
-            abort.signal,
-            emitTool,
-          );
-        } catch {
-          result = "Omnesis could not complete this request. Please try again.";
-        } finally {
-          busy = false;
-        }
-        send({ type: "tool.end", id, result: { kind: "text", text: result } });
-      }
-      if (closed) return;
-      sendUpstream({
-        type: "conversation.item.create",
-        item: { type: "function_call_output", call_id: id, output: result },
-      });
-      requestResponse();
-    };
+      pendingTranscripts.push({ text, id });
+      drainTranscripts();
+    }, fail);
     upstream.on("open", () => {
       this.log.info(`Call ${diagnosticId} upstream connected`);
       void (async () => {
-        const sessionOptions = {
-          profile: "voice",
-          caller: { kind: "operator" },
-          ...(options.timeZone
-            ? { timeZone: normalizeTimeZone(options.timeZone) ?? undefined }
-            : {}),
-        } satisfies CreateSessionOptions;
-        let created: Awaited<ReturnType<AgentService["createSession"]>>;
-        try {
-          created = await agent.createSession(callerId, {
-            ...sessionOptions,
-            ...(options.conversationId ? { resumeFromId: options.conversationId } : {}),
-          });
-        } catch (error) {
-          if (
-            !options.conversationId ||
-            !(error instanceof AgentError) ||
-            error.code !== "session_not_found"
-          )
-            throw error;
-          if (closed) return;
-          this.log.info(`Call ${diagnosticId} starting fresh after missing conversation`);
-          created = await agent.createSession(callerId, sessionOptions);
+        const opened = await agent.openRealtimeSession(callerId, {
+          conversationId: options.conversationId,
+          ...(options.version === 2 ? {} : { missingConversationPolicy: "create" as const }),
+          timeZone: normalizeTimeZone(options.timeZone) ?? undefined,
+        });
+        if (closed) {
+          opened.close();
+          return;
         }
-        if (closed) return;
-        sessionId = created.sessionId;
+        agentSession = opened;
+        sessionId = opened.sessionId;
+        // Compatibility for older iOS callers; canonical conversation state stays on ordinary SSE.
+        unsubscribe = opened.subscribe((event) => {
+          if (
+            event.type === "agent.message.end" &&
+            event.payload.failure?.code === "provider_error" &&
+            event.payload.failure.provider?.code === "context_window_exceeded"
+          )
+            closeAfterTurn = true;
+          if (options.version === 2) return;
+          if (event.type === "agent.tool.start")
+            send({
+              type: "tool.start",
+              id: event.payload.toolCallId,
+              name: event.payload.tool,
+              summary: event.payload.argsSummary ?? event.payload.intent,
+            });
+          if (event.type === "agent.tool.result")
+            send({
+              type: "tool.end",
+              id: event.payload.toolCallId,
+              result: event.payload.result,
+            });
+        });
+        const configuration = backendAdapter.configuration(opened.context);
+        this.log.info(
+          `Call ${diagnosticId} context tools=${configuration.tools.length} instructionBytes=${Buffer.byteLength(configuration.instructions)} manifestBytes=${Buffer.byteLength(JSON.stringify(configuration.tools))}`,
+        );
         sendUpstream({
           type: "session.update",
           session: {
             type: "realtime",
             output_modalities: ["audio"],
-            instructions:
-              "You are Omnesis, a warm and concise voice interface to the owner's personal agent. For every substantive user request, call ask_omnesis with their full request, preserving context and details. Never invent personal facts or claim to have performed an action yourself. Speak the agent's answer naturally and faithfully. Casual greetings and clarifying questions can be answered directly. If interrupted, listen and continue naturally. Do not read tool syntax aloud.",
+            ...configuration,
             audio: {
               input: {
                 format: { type: "audio/pcm", rate: 24000 },
@@ -339,25 +318,11 @@ export class RealtimeService {
                 turn_detection: {
                   type: "server_vad",
                   interrupt_response: true,
-                  create_response: true,
+                  create_response: false,
                 },
               },
               output: { format: { type: "audio/pcm", rate: 24000 }, voice: "marin" },
             },
-            tools: [
-              {
-                type: "function",
-                name: "ask_omnesis",
-                description:
-                  "Ask the owner's Omnesis agent to answer or act using their personal data and full tools. Use for every substantive request.",
-                parameters: {
-                  type: "object",
-                  properties: { question: { type: "string" } },
-                  required: ["question"],
-                  additionalProperties: false,
-                },
-              },
-            ],
             tool_choice: "auto",
           },
         });
@@ -366,8 +331,16 @@ export class RealtimeService {
     upstream.on("message", (raw) => {
       if (closed) return;
       try {
+        if (!authorized()) {
+          close();
+          return;
+        }
+        if (Buffer.byteLength(raw.toString()) > MAX_UPSTREAM_EVENT_BYTES)
+          throw new Error("Upstream voice event too large");
         const event = upstreamEvent.parse(JSON.parse(raw.toString()));
         if (event.type === "input_audio_buffer.speech_started") {
+          backendAdapter.interrupt();
+          if (running) agentSession?.cancel();
           speechStarts += 1;
           this.log.info(
             `Call ${diagnosticId} speech started count=${speechStarts} audioFrames=${audioFrames} audioBytes=${audioBytes}`,
@@ -400,36 +373,71 @@ export class RealtimeService {
             }
           }
         }
-        if (event.type === "response.created") responseActive = true;
         if (event.type === "response.done") {
-          responseActive = false;
-          const sample = responseUsage.safeParse(event);
+          const usage = z
+            .object({
+              response: z.object({
+                id: z.string(),
+                usage: z
+                  .object({
+                    input_tokens: z.number().nonnegative(),
+                    output_tokens: z.number().nonnegative(),
+                    input_token_details: z
+                      .object({ cached_tokens: z.number().nonnegative().optional() })
+                      .optional(),
+                  })
+                  .nullable()
+                  .optional(),
+              }),
+            })
+            .safeParse(event);
           if (
-            sample.success &&
-            sample.data.response.usage &&
-            !accountedResponses.has(sample.data.response.id)
+            usage.success &&
+            usage.data.response.usage &&
+            !accountedResponses.has(usage.data.response.id)
           ) {
-            accountedResponses.add(sample.data.response.id);
-            const usage = sample.data.response.usage;
+            accountedResponses.add(usage.data.response.id);
+            const sample = usage.data.response.usage;
             try {
               this.deps.recordUsage?.(
                 {
-                  promptTokens: usage.input_tokens,
-                  completionTokens: usage.output_tokens,
-                  cacheReadTokens: usage.input_token_details?.cached_tokens,
+                  promptTokens: sample.input_tokens,
+                  completionTokens: sample.output_tokens,
+                  cacheReadTokens: sample.input_token_details?.cached_tokens,
                 },
                 MODEL,
               );
             } catch {
-              /* Accounting must not interrupt the call. */
+              // Accounting failure must not interrupt an otherwise valid voice call.
             }
           }
-          if (pendingResponse) {
-            pendingResponse = false;
-            requestResponse();
-          }
         }
+        if (event.type === "input_audio_buffer.committed") {
+          const input = z.object({ item_id: z.string().min(1).max(256) }).parse(event);
+          inputSequencer.commit(input.item_id);
+        }
+        if (event.type === "conversation.item.input_audio_transcription.failed") {
+          fail();
+          return;
+        }
+        if (event.type === "conversation.item.input_audio_transcription.completed") {
+          const input = z
+            .object({
+              item_id: z.string().min(1).max(256),
+              transcript: z.string().trim().max(100_000),
+            })
+            .parse(event);
+          inputSequencer.transcribe(input.item_id, input.transcript);
+        }
+        const accepted = backendAdapter.receive(event);
+        if (event.type.startsWith("response.") && !accepted) return;
         if (event.type === "session.updated") {
+          if (!agentSession) {
+            fail();
+            return;
+          }
+          if (ready) return;
+          ready = true;
           clearTimeout(startup);
           this.log.info(`Call ${diagnosticId} session ready`);
           if (!inputWatchdog) {
@@ -441,13 +449,12 @@ export class RealtimeService {
           }
           send({
             type: "session.ready",
+            protocolVersion: options.version ?? 1,
             conversationId: sessionId,
             model: MODEL,
             clientAudioDiagnostics: true,
           });
-        } else if (event.type === "response.function_call_arguments.done")
-          void delegate(event).catch(fail);
-        else if (event.type === "error") {
+        } else if (event.type === "error") {
           const error = z
             .object({
               error: z.object({
@@ -461,14 +468,9 @@ export class RealtimeService {
           this.log.warn(`Call ${diagnosticId} upstream error code=${safeCode}`);
           if (error.success && error.data.error.code === "response_cancel_not_active") return;
           if (error.success && error.data.error.param === "audio_end_ms") return;
-          if (
-            error.success &&
-            ["conversation_already_has_active_response", "response_in_progress"].includes(
-              error.data.error.code ?? "",
-            )
-          ) {
-            responseActive = true;
-            pendingResponse = true;
+          if (running) {
+            closeAfterTurn = true;
+            backendAdapter.fail(safeCode);
             return;
           }
           fail();
