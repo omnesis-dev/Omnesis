@@ -1410,6 +1410,17 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
     expect(code).toBe(1);
     expect(out).toContain("simulator destination contains an unsafe selector");
   });
+
+  it("rejects unknown signing modes before opening ssh", async () => {
+    const { code, out } = await runIosSnapshot([], {
+      extraEnv: {
+        OMNESIS_EPIC_MACOS_HOST: "unused",
+        OMNESIS_IOS_SNAPSHOT_SIGNING: "adhoc;false",
+      },
+    });
+    expect(code).toBe(1);
+    expect(out).toContain("OMNESIS_IOS_SNAPSHOT_SIGNING must be disabled or adhoc");
+  });
 });
 
 describe("scripts/android-render.sh macOS-host bridge guards (C20)", () => {
