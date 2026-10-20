@@ -1046,11 +1046,12 @@ export class AgentService {
       cancel: (id) => {
         this.cancelSession(this.requireSession(id).callerId, id);
       },
-      start: async (id, submission) => {
+      start: async (id, submission, submissionIds) => {
         const entry = this.requireSession(id);
         this.sendMessage(submission.callerId ?? entry.callerId, id, submission.text, {
           deepResearch: submission.deepResearch,
           acceptedSubmission: true,
+          submissionIds,
         });
         const completions = [...(this.activeTurnCompletions.get(id) ?? [])];
         const research = this.deepResearchRuns.get(id);
@@ -2352,7 +2353,12 @@ export class AgentService {
     callerId: CallerId,
     sessionId: string,
     text: string,
-    opts: { deepResearch?: boolean; notifyAfterMs?: number; acceptedSubmission?: boolean } = {},
+    opts: {
+      deepResearch?: boolean;
+      notifyAfterMs?: number;
+      acceptedSubmission?: boolean;
+      submissionIds?: string[];
+    } = {},
   ): { messageId: string; userMessageId: string } {
     if (!opts.acceptedSubmission && this.controls.active(sessionId)) {
       throw new AgentError("session_busy", "a queued message is being accepted or started");
@@ -2403,7 +2409,7 @@ export class AgentService {
       if (entry.session.busy) {
         throw new AgentError("session_busy", "session is busy; cancel the in-flight turn first");
       }
-      const result = this.runDeepResearch(sessionId, text);
+      const result = this.runDeepResearch(sessionId, text, opts.submissionIds);
       this.clearAnsweredClarification(entry, answeredClarificationId);
       return result;
     }
@@ -2413,11 +2419,14 @@ export class AgentService {
         sessionId,
         text,
         opts.notifyAfterMs,
+        opts.submissionIds,
       );
       this.clearAnsweredClarification(entry, answeredClarificationId);
       return result;
     }
-    const { messageId, userMessageId, completion } = this.startMessage(callerId, sessionId, text);
+    const { messageId, userMessageId, completion } = this.startMessage(callerId, sessionId, text, {
+      submissionIds: opts.submissionIds,
+    });
     // The streaming command returns immediately; event subscribers receive the
     // terminal error while this catch prevents an unhandled rejection.
     void completion.catch(() => {});
@@ -2459,6 +2468,7 @@ export class AgentService {
     sessionId: string,
     text: string,
     notifyAfterMs: number,
+    submissionIds?: string[],
   ): { messageId: string; userMessageId: string } {
     const entry = this.requireSession(sessionId);
     const acceptedAt = Date.now();
@@ -2490,7 +2500,7 @@ export class AgentService {
     const entryForBudget = this.sessions.get(sessionId);
     if (entryForBudget) entryForBudget.meta.notificationSatisfied = true;
     try {
-      started = this.startMessage(callerId, sessionId, text);
+      started = this.startMessage(callerId, sessionId, text, { submissionIds });
     } catch (err) {
       unsubscribe();
       if (entryForBudget) delete entryForBudget.meta.notificationSatisfied;
@@ -2854,6 +2864,7 @@ export class AgentService {
       signal?: AbortSignal;
       /** Spend bucket for this turn; defaults to ordinary interactive chat. */
       spendMechanism?: string;
+      submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string; completion: Promise<void> } {
     if (this.answerDeleteLocks.has(sessionId)) {
@@ -2915,6 +2926,7 @@ export class AgentService {
       }
       started = entry.session.send(text, {
         signal: opts.signal,
+        submissionIds: opts.submissionIds,
         ...(modelNote ? { modelNote } : {}),
       });
     } catch (err) {
@@ -3068,6 +3080,7 @@ export class AgentService {
   private runDeepResearch(
     sessionId: string,
     text: string,
+    submissionIds?: string[],
   ): { messageId: string; userMessageId: string } {
     const messageId = `dr_${crypto.randomUUID()}`;
     const userMessageId = `dr_${crypto.randomUUID()}`;
@@ -3173,7 +3186,14 @@ export class AgentService {
       rawEmit(makeEvent("agent.message.end", terminal));
     };
 
-    rawEmit(makeEvent("agent.user.message", { sessionId, userMessageId, text }));
+    rawEmit(
+      makeEvent("agent.user.message", {
+        sessionId,
+        userMessageId,
+        text,
+        ...(submissionIds?.length ? { submissionIds: [...submissionIds] } : {}),
+      }),
+    );
     rawEmit(makeEvent("agent.message.start", { sessionId, messageId, role: "assistant" }));
 
     const operation = (async () => {

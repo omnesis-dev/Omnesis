@@ -1,19 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-export function newQueueHandoffIds(hiddenIds, requestedIds) {
-  return [...new Set(requestedIds)].filter((id) => !hiddenIds?.has(id));
+export function newQueueHandoffIds(hiddenIds, requestedIds, consumedIds) {
+  return [...new Set(requestedIds)].filter((id) => !hiddenIds?.has(id) && !consumedIds?.has(id));
 }
 
 /** Presentation-only handoff: retain durable receipts, including failures. */
-export function visibleQueueControls(controls, hiddenIds) {
-  if (!controls || !hiddenIds?.size) return controls;
+export function visibleQueueControls(controls, hiddenIds, consumedIds) {
+  if (!controls || (!hiddenIds?.size && !consumedIds?.size)) return controls;
   return {
     ...controls,
     queuedMessages: controls.queuedMessages?.filter(
-      (message) => message.status !== "queued" || !hiddenIds.has(message.id),
+      (message) => message.status !== "queued" || (!hiddenIds?.has(message.id) && !consumedIds?.has(message.id)),
     ),
   };
+}
+
+/** An emitted user turn consumes exact receipts independently of a Send now request. */
+export function recordConsumedQueueReceipts(bySession, action) {
+  if (action.kind !== "agent.user.message") return bySession;
+  const { sessionId, submissionIds } = action.payload ?? {};
+  if (typeof sessionId !== "string" || !sessionId || !Array.isArray(submissionIds)) return bySession;
+  const ids = submissionIds.filter((id) => typeof id === "string" && id.length > 0 && id.length <= 128);
+  const previous = bySession.get(sessionId);
+  if (!ids.some((id) => !previous?.has(id))) return bySession;
+  const next = new Map(bySession);
+  next.set(sessionId, new Set([...(previous ?? []), ...ids]));
+  return next;
 }
 
 /** Hide before the HTTP/SSE race; restore only this attempt on failure. */

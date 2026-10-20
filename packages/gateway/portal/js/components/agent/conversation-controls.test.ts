@@ -186,6 +186,28 @@ describe("conversation controls", () => {
     await openMenu();
     expect(host.textContent).not.toContain("Send now");
   });
+  it("offers an inline queue action and blocks repeated activation while sending", async () => {
+    setup();
+    let finish;
+    const onSendNow = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const controls = { capabilities: { coalescedQueue: true, queueSendNow: true }, queuedMessages: [
+      { id: "one", text: "First paragraph", status: "queued" },
+      { id: "two", text: "Second paragraph", status: "queued" },
+    ] };
+    await act(async () => render(h(ConversationControls, { controls, onSendNow }), host));
+    const button = host.querySelector(".agent-queued-send-now");
+    expect(button.textContent).toBe("send now");
+    expect(button.parentElement.textContent).toBe("Queued – send now");
+    await act(async () => { button.click(); button.click(); });
+    expect(onSendNow).toHaveBeenCalledOnce();
+    expect(onSendNow).toHaveBeenCalledWith(["one", "two"]);
+    expect(button.disabled).toBe(true);
+    await act(async () => finish());
+    expect(button.disabled).toBe(false);
+    await act(async () => render(h(ConversationControls, { controls: { ...controls, capabilities: {} }, onSendNow }), host));
+    expect(host.querySelector(".agent-queued-send-now")).toBeNull();
+  });
+
   it("copies agent messages from the context menu and dismisses it with Escape", async () => {
     setup();
     await act(async () =>

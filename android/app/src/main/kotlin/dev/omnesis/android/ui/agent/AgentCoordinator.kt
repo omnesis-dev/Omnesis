@@ -249,6 +249,8 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         val controlsAvailable: Boolean = false,
         /** Presentation-only handoff. Retained across stale snapshots until this session is left. */
         val hiddenQueuedSubmissionIds: Set<String> = emptySet(),
+        /** SSE-confirmed receipts survive rollback of an uncertain Send now request. */
+        val deliveredSubmissionIds: Set<String> = emptySet(),
         val submissionsSending: Set<String> = emptySet(),
         val sessionId: String? = null,
         val model: String? = null,
@@ -310,7 +312,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
         val liveSessionMissingReason: String? = null,
     ) {
         val visibleQueuedMessages get() = controls.queuedMessages.filterNot {
-            it.status == "queued" && it.id in hiddenQueuedSubmissionIds
+            it.status == "queued" && (it.id in hiddenQueuedSubmissionIds || it.id in deliveredSubmissionIds)
         }
 
         /**
@@ -699,6 +701,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 controls = dev.omnesis.android.transport.client.ConversationControls(),
                 controlsAvailable = false,
                 hiddenQueuedSubmissionIds = emptySet(),
+                deliveredSubmissionIds = emptySet(),
                 model = null,
                 backend = null,
                 title = "",
@@ -745,6 +748,7 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 controls = dev.omnesis.android.transport.client.ConversationControls(),
                 controlsAvailable = false,
                 hiddenQueuedSubmissionIds = emptySet(),
+                deliveredSubmissionIds = emptySet(),
                 model = summary?.model,
                 backend = summary?.backend,
                 title = summary?.title ?: "",
@@ -1828,6 +1832,8 @@ class AgentCoordinator @Inject constructor(private val composerStore: AgentCompo
                 }
             it.copy(
                 chat = AgentReducer.reduce(it.chat, event),
+                deliveredSubmissionIds = if (event is AgentEvent.UserMessage)
+                    it.deliveredSubmissionIds + event.submissionIds else it.deliveredSubmissionIds,
                 terminalFailure = terminalFailure,
                 // A live event can advance the suffix while an older page is
                 // in flight. Invalidate that page rather than letting it

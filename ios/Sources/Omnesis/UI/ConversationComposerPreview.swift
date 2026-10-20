@@ -5,6 +5,8 @@
 import Foundation
 import SwiftUI
 
+#if canImport(UIKit)
+
 /// Own the fixture exactly as the production app owns its store. Session minting
 /// must update this store, never recreate the initial preview during rendering.
 @available(iOS 17.0, *)
@@ -32,6 +34,8 @@ struct ConversationComposerPreviewRoot: View {
         }
     }
 }
+
+#endif
 
 /// Deterministic HTTP acknowledgements for the real composer UI regression.
 @available(iOS 17.0, *)

@@ -26,7 +26,12 @@ sealed interface AgentEvent {
     val sessionId: String
 
     @Serializable
-    data class UserMessage(override val sessionId: String = "", val userMessageId: String = "", val text: String = "") : AgentEvent
+    data class UserMessage(
+        override val sessionId: String = "",
+        val userMessageId: String = "",
+        val text: String = "",
+        val submissionIds: List<String> = emptyList(),
+    ) : AgentEvent
 
     @Serializable
     data class MessageStart(override val sessionId: String = "", val messageId: String = "") : AgentEvent

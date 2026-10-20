@@ -541,6 +541,104 @@ extension ConversationControlsCompatibilityTests {
     }
 }
 
+@available(iOS 17.0, *)
+@MainActor
+extension ConversationControlsCompatibilityTests {
+    func testCoordinatorResetDoesNotPersistEmptyEditorOverAnotherConversationsDraft() {
+        let coordinator = coordinator()
+        let original = coordinator.composerDraftKey
+        coordinator.updateComposerDraft("Keep this unsent question", for: original)
+        coordinator.newConversation()
+        XCTAssertEqual(coordinator.composerDraft, "")
+        XCTAssertEqual(coordinator.draft(for: original), "Keep this unsent question")
+        coordinator.updateComposerDraft("A different draft", for: coordinator.composerDraftKey)
+        XCTAssertEqual(coordinator.draft(for: original), "Keep this unsent question")
+        XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "A different draft")
+        coordinator.updateComposerDraft("Late stale binding", for: original)
+        XCTAssertEqual(coordinator.draft(for: original), "Keep this unsent question")
+        XCTAssertEqual(coordinator.draft(for: coordinator.composerDraftKey), "A different draft")
+        coordinator.saveDraft("", for: original)
+        coordinator.saveDraft("", for: coordinator.composerDraftKey)
+    }
+
+    func testAutomaticDrainConsumesOnlyDeliveredReceiptsAcrossStaleSnapshots() async throws {
+        for eventFirst in [false, true] {
+            let coordinator = coordinator()
+            let queued = #"""
+            {"busy":true,"capabilities":{"coalescedQueue":true},"queuedMessages":[
+              {"id":"first","text":"Compare totals","status":"queued"},
+              {"id":"second","text":"Include counts","status":"queued"},
+              {"id":"newer","text":"Compare totals","status":"queued"}]}
+            """#
+            ConversationControlsStub.responses["controls"] = (200, queued)
+            if !eventFirst { await coordinator.refreshConversationControls() }
+            let event = try JSONDecoder().decode(AgentEvent.self, from: Data(#"""
+            {"type":"agent.user.message","payload":{"sessionId":"conversation-example",
+             "userMessageId":"different-wire-id","text":"Compare totals\n\nInclude counts",
+             "submissionIds":["first","second"]}}
+            """#.utf8))
+            await coordinator.applyEventForTesting(event)
+            await coordinator.refreshConversationControls()
+            await coordinator.applyEventForTesting(event)
+            XCTAssertEqual(coordinator.presentedConversationControls?.queued.map(\.id), ["newer"])
+            XCTAssertEqual(coordinator.conversationControls?.queued.count, 3)
+            XCTAssertEqual(coordinator.turns.count, 1)
+            coordinator.newConversation()
+            try coordinator.installPreviewConversationControls(JSONDecoder().decode(
+                ConversationControls.self, from: Data(queued.utf8)
+            ))
+            XCTAssertEqual(coordinator.presentedConversationControls?.queued.count, 3)
+        }
+    }
+
+    func testDeliveredReceiptsSurviveSendNowFailureButShowRealFailedStatus() async {
+        let coordinator = coordinator()
+        let queued = #"""
+        {"busy":true,"capabilities":{"queueSendNow":true},"queuedMessages":[
+          {"id":"receipt","text":"Compare totals","status":"queued"}]}
+        """#
+        ConversationControlsStub.responses["controls"] = (200, queued)
+        ConversationControlsStub.responses["send-now"] = (503, "Unavailable")
+        await coordinator.refreshConversationControls()
+        ConversationControlsStub.beforeResponse = { request in
+            guard request.url?.lastPathComponent == "send-now" else { return }
+            await coordinator.applyEventForTesting(.userMessage(
+                sessionId: "conversation-example",
+                userMessageId: "wire",
+                text: "Compare totals",
+                submissionIds: ["receipt"]
+            ))
+        }
+        await coordinator.sendQueuedMessagesNow(submissionIds: ["receipt"])
+        XCTAssertTrue(coordinator.presentedConversationControls?.queued.isEmpty == true)
+        XCTAssertNotNil(coordinator.submissionError)
+        ConversationControlsStub.responses["controls"] = (
+            200,
+            #"{"busy":false,"queuedMessages":[{"id":"receipt","text":"Compare totals","status":"failed"}]}"#
+        )
+        await coordinator.refreshConversationControls()
+        XCTAssertEqual(coordinator.presentedConversationControls?.queuedMessages.first?.status, "failed")
+    }
+
+    func testLegacyOrMalformedReceiptMetadataNeverGuessesFromText() async throws {
+        for metadata in ["", #", "submissionIds":null"#, #", "submissionIds":"future-shape""#] {
+            let coordinator = coordinator()
+            ConversationControlsStub.responses["controls"] = (
+                200,
+                #"{"busy":true,"queuedMessages":[{"id":"receipt","text":"Same text","status":"queued"}]}"#
+            )
+            await coordinator.refreshConversationControls()
+            let payload = """
+            {"type":"agent.user.message","payload":{"sessionId":"conversation-example",
+             "userMessageId":"wire","text":"Same text"\(metadata)}}
+            """
+            try await coordinator.applyEventForTesting(JSONDecoder().decode(AgentEvent.self, from: Data(payload.utf8)))
+            XCTAssertEqual(coordinator.presentedConversationControls?.queued.map(\.id), ["receipt"])
+            XCTAssertEqual(coordinator.turns.count, 1)
+        }
+    }
+}
+
 private final class ConversationControlsStub: URLProtocol {
     nonisolated(unsafe) static var responses: [String: (Int, String)] = [:]
     nonisolated(unsafe) static var requests: [URLRequest] = []

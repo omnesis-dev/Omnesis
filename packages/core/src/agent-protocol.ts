@@ -1559,6 +1559,8 @@ export const agentUserMessageEvent = z.object({
   sessionId: z.string(),
   userMessageId: z.string(),
   text: z.string(),
+  /** Durable queue receipts consumed by this user message; absent on legacy sends. */
+  submissionIds: z.array(z.string()).optional(),
 });
 
 export const agentMessageStartEvent = z.object({

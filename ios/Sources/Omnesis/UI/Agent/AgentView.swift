@@ -60,11 +60,13 @@ public struct AgentView: View {
     /// them.
     private var composerText: String {
         get { store.agent.composerDraft }
-        nonmutating set { store.agent.composerDraft = newValue }
+        nonmutating set {
+            store.agent.updateComposerDraft(newValue, for: loadedDraftKey)
+        }
     }
 
     private var composerTextBinding: Binding<String> {
-        Binding(get: { store.agent.composerDraft }, set: { store.agent.composerDraft = $0 })
+        Binding(get: { composerText }, set: { composerText = $0 })
     }
 
     @State private var scrollToBottomTrigger: Int = 0
@@ -257,9 +259,6 @@ public struct AgentView: View {
                 applyComposerFocusRequest()
             }
             .onDisappear { store.agent.agentSurfaceVisibilityChanged(false) }
-            .onChange(of: composerText) { _, text in
-                if let loadedDraftKey { store.agent.saveDraft(text, for: loadedDraftKey) }
-            }
             .onChange(of: store.agent.composerDraftKey) { _, _ in restoreComposerDraft() }
             .task(id: store.agent.sessionId) {
                 guard store.agent.sessionId != nil else { return }
@@ -618,7 +617,6 @@ public struct AgentView: View {
             Group {
                 if store.agent.terminalFailure != nil {
                     ContextWindowExceededCard {
-                        composerText = ""
                         composerFocused = false
                         store.agent.newConversation()
                     }

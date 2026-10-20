@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   handoffQueuedMessages,
+  recordConsumedQueueReceipts,
   newQueueHandoffIds,
   visibleQueueControls,
   // @ts-expect-error — portal modules are plain JS without sibling declarations.
@@ -88,5 +89,46 @@ describe("queued message handoff", () => {
     expect(restore).toHaveBeenCalledOnce();
     expect(refresh).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("automatic queued receipt consumption", () => {
+  const event = (sessionId: string, ids: unknown) => ({ kind: "agent.user.message", payload: { sessionId, submissionIds: ids } });
+
+  it("hides an emitted batch through stale polls and replay without hiding new identical text", () => {
+    let consumed = recordConsumedQueueReceipts(new Map(), event("first", ["one", "two"]));
+    expect(recordConsumedQueueReceipts(consumed, event("first", ["one", "two"]))).toBe(consumed);
+    const stale = { queuedMessages: [queued("one"), queued("two"), queued("new")] };
+    expect(visibleQueueControls(stale, undefined, consumed.get("first")).queuedMessages).toEqual([queued("new")]);
+    expect(visibleQueueControls(stale, undefined, consumed.get("second"))).toBe(stale);
+    expect(stale.queuedMessages).toHaveLength(3);
+    expect(newQueueHandoffIds(new Set(), ["one", "new"], consumed.get("first"))).toEqual(["new"]);
+  });
+
+  it("never guesses receipt identity for legacy or malformed events", () => {
+    const consumed = new Map();
+    for (const action of [
+      { kind: "agent.user.message", payload: { sessionId: "first", text: "Same follow-up" } },
+      event("first", "one"), event("", ["one"]), event("first", [null, 42, ""]),
+      { kind: "agent.message.delta", payload: { sessionId: "first", submissionIds: ["one"] } },
+    ]) expect(recordConsumedQueueReceipts(consumed, action)).toBe(consumed);
+  });
+
+  it("keeps an emitted receipt consumed when the overlapping Send now HTTP request fails", async () => {
+    const hidden = new Set<string>();
+    let consumed = new Map();
+    await handoffQueuedMessages({
+      hide: () => hidden.add("one"),
+      send: async () => {
+        consumed = recordConsumedQueueReceipts(consumed, event("first", ["one"]));
+        throw new Error("response lost");
+      },
+      restore: () => hidden.delete("one"), isCurrent: () => true, refresh: vi.fn(), onError: vi.fn(),
+    });
+    expect(hidden.size).toBe(0);
+    expect(visibleQueueControls({ queuedMessages: [queued("one")] }, hidden, consumed.get("first")).queuedMessages).toEqual([]);
+    const failed = { ...queued("one"), status: "failed", error: "Turn failed" };
+    expect(visibleQueueControls({ queuedMessages: [failed] }, hidden, consumed.get("first")).queuedMessages).toEqual([failed]);
   });
 });

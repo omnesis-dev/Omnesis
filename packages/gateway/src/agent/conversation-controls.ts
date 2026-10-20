@@ -77,7 +77,7 @@ interface ControlHost {
   persist(id: string): Promise<void>;
   busy(id: string): boolean;
   available(id: string): boolean;
-  start(id: string, submission: ConversationSubmission): Promise<void>;
+  start(id: string, submission: ConversationSubmission, submissionIds: string[]): Promise<void>;
   cancel(id: string): void;
 }
 const log = createLogger("gateway:agent").child("controls");
@@ -237,11 +237,15 @@ export class ConversationControls {
   private async execute(id: string, batch: ConversationSubmission[]): Promise<void> {
     let failed = false;
     try {
-      await this.host.start(id, {
-        ...batch[0]!,
-        text: batch.map((item) => item.text).join("\n\n"),
-        deepResearch: batch.some((item) => item.deepResearch),
-      });
+      await this.host.start(
+        id,
+        {
+          ...batch[0]!,
+          text: batch.map((item) => item.text).join("\n\n"),
+          deepResearch: batch.some((item) => item.deepResearch),
+        },
+        batch.map((item) => item.id),
+      );
     } catch {
       failed = true;
     }

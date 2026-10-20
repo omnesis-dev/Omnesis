@@ -247,6 +247,54 @@ class ConversationSubmissionTest {
         assertEquals("Second choice", coord.state.value.composer.pending.single().text)
     }
 
+    @Test fun automaticDrainConsumesExactReceiptsAtomicallyAndStaleControlsCannotResurrectThem() {
+        val coord = coordinator(sendNow = true)
+        val event = AgentEvent.UserMessage("session-one", "unrelated-message-id", "Follow up\n\nAnother queued message", listOf("queued", "second"))
+        coord.applyEventForTesting(event)
+        assertEquals(1, coord.state.value.chat.turns.filterIsInstance<AgentTurn.User>().size)
+        assertTrue(coord.state.value.visibleQueuedMessages.isEmpty())
+        controlsBody = """{"busy":true,"queuedMessages":[{"id":"queued","text":"Follow up","status":"queued"},{"id":"second","text":"Another queued message","status":"queued"},{"id":"new-receipt","text":"Follow up","status":"queued"}]}"""
+        coord.conversationSurfaceVisible("session-one", true)
+        await { coord.state.value.controls.queuedMessages.size == 3 }
+        assertEquals(listOf("new-receipt"), coord.state.value.visibleQueuedMessages.map { it.id })
+        coord.applyEventForTesting(event) // Replay does not duplicate the canonical user bubble.
+        assertEquals(1, coord.state.value.chat.turns.filterIsInstance<AgentTurn.User>().size)
+        val failed = coord.state.value.copy(controls = ConversationControls(queuedMessages = listOf(
+            ConversationSubmission("queued", "Follow up", "failed"),
+        )))
+        assertEquals("failed", failed.visibleQueuedMessages.single().status)
+        coord.newConversation()
+        assertTrue(coord.state.value.deliveredSubmissionIds.isEmpty())
+    }
+
+    @Test fun legacyEventsDoNotGuessQueueIdentityFromMatchingText() {
+        val coord = coordinator(sendNow = true)
+        coord.applyEventForTesting(AgentEvent.UserMessage("other-session", "foreign", "Follow up", listOf("queued")))
+        coord.applyEventForTesting(AgentEvent.UserMessage("session-one", "legacy-message", "Follow up"))
+        assertEquals(listOf("queued"), coord.state.value.visibleQueuedMessages.map { it.id })
+        assertTrue(coord.state.value.deliveredSubmissionIds.isEmpty())
+    }
+
+    @Test fun sendNowFailureCannotRestoreReceiptsAlreadyConfirmedByUserEvent() {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        sendNowReply = {
+            entered.countDown()
+            check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            MockResponse().setResponseCode(503)
+        }
+        controlsBody = """{"busy":true,"queuedMessages":[{"id":"queued","text":"Follow up","status":"queued"}]}"""
+        val coord = coordinator(sendNow = true)
+        coord.sendQueuedNow(listOf("queued"))
+        assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        coord.applyEventForTesting(AgentEvent.UserMessage("session-one", "server-user", "Follow up", listOf("queued")))
+        release.countDown()
+        await { coord.state.value.chat.lastTurnError != null }
+        assertTrue(coord.state.value.hiddenQueuedSubmissionIds.isEmpty())
+        assertTrue(coord.state.value.visibleQueuedMessages.isEmpty())
+        assertEquals(setOf("queued"), coord.state.value.deliveredSubmissionIds)
+    }
+
     @Test fun uncertainDeliverySurvivesCoordinatorRecreationAndRetriesSameId() {
         val store = AgentComposerStore()
         val first = coordinator(store)

@@ -581,6 +581,12 @@ public final class AgentCoordinator {
     /// whatever the field held before.
     var composerDraft = ""
 
+    /// Persist explicit editor changes, never a coordinator-driven session reset.
+    func updateComposerDraft(_ text: String, for key: String?) {
+        composerDraft = text
+        if let key, key == composerDraftKey, !submitting { saveDraft(text, for: key) }
+    }
+
     /// Send the composer's words. The composer empties at once; a send the
     /// gateway never accepted puts them back, unless newer words are there.
     @discardableResult
@@ -1921,7 +1927,8 @@ public final class AgentCoordinator {
             return
         }
         switch event {
-        case .userMessage(_, let userMessageId, let text):
+        case .userMessage(_, let userMessageId, let text, let submissionIds):
+            queueHandoff.delivered(ids: submissionIds)
             // Cross-device user-message sync. The originator already has
             // an optimistic bubble; the HTTP send-response stamps it with
             // this `userMessageId`. If we find a turn that matches, skip

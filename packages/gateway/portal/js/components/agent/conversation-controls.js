@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { MessageActions } from "./message-actions.js";
 
 function Clarification({ question, onAnswer }) {
@@ -32,6 +32,18 @@ function Clarification({ question, onAnswer }) {
 
 export function ConversationControls({ controls, unconfirmed, onAnswer, onSendNow }) {
   const [sendingNow, setSendingNow] = useState(false);
+  const sendingNowRef = useRef(false);
+  async function sendNow(group) {
+    if (sendingNowRef.current) return;
+    sendingNowRef.current = true;
+    setSendingNow(true);
+    try {
+      await onSendNow(group.map((message) => message.id));
+    } finally {
+      sendingNowRef.current = false;
+      setSendingNow(false);
+    }
+  }
   const queued = controls?.queuedMessages?.filter((message) => message.status === "queued") ?? [];
   const failed = controls?.queuedMessages?.filter((message) => message.status === "failed") ?? [];
   const groups = controls?.capabilities?.coalescedQueue
@@ -59,24 +71,13 @@ export function ConversationControls({ controls, unconfirmed, onAnswer, onSendNo
       : null}
     ${groups.map((group) => {
       const queuedText = group.map((message) => message.text).join("\n\n");
-      return html`<${MessageActions} text=${queuedText} action=${
-        controls?.capabilities?.queueSendNow && onSendNow
-          ? {
-              label: "Send now",
-              disabled: sendingNow,
-              onSelect: async () => {
-                setSendingNow(true);
-                try {
-                  await onSendNow(group.map((message) => message.id));
-                } finally {
-                  setSendingNow(false);
-                }
-              },
-            }
-          : null
-      }>
+      const canSendNow = controls?.capabilities?.queueSendNow && onSendNow;
+      return html`<${MessageActions} text=${queuedText} action=${canSendNow
+        ? { label: "Send now", disabled: sendingNow, onSelect: () => sendNow(group) }
+        : null}>
       <div class="agent-msg agent-msg-user agent-queued-message" aria-label="Queued messages">
-        <div class="agent-msg-body">${queuedText}</div><small>Queued</small>
+        <div class="agent-msg-body">${queuedText}</div>
+        <small>Queued${canSendNow ? html` – <button class="agent-queued-send-now" type="button" disabled=${sendingNow} onClick=${() => sendNow(group)}>send now</button>` : null}</small>
       </div>
     </${MessageActions}>`;
     })}

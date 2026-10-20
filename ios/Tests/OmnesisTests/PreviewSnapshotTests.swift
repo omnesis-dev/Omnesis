@@ -3344,9 +3344,21 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     func testConversationQueueHandoff() {
+        queueHandoffSnapshot(automatic: false)
+    }
+
+    func testConversationAutomaticQueueHandoff() {
+        queueHandoffSnapshot(automatic: true)
+    }
+
+    private func queueHandoffSnapshot(automatic: Bool) {
         let controls = PreviewMocks.conversationControls
         var handoff = ConversationQueueHandoff()
-        _ = handoff.begin(ids: controls.queued.map(\.id))
+        if automatic {
+            handoff.delivered(ids: controls.queued.map(\.id))
+        } else {
+            _ = handoff.begin(ids: controls.queued.map(\.id))
+        }
         let presented = handoff.presenting(controls)
         snapshot(
             VStack(spacing: 20) {
@@ -3365,7 +3377,7 @@ final class PreviewSnapshotTests: XCTestCase {
                     focused: FocusState<Bool>().projectedValue
                 )
             }.padding(16).background(Theme.bgPrimary),
-            name: "72h-conversation-queue-handoff",
+            name: automatic ? "72k-conversation-automatic-queue-handoff" : "72h-conversation-queue-handoff",
             size: CGSize(width: 393, height: 300)
         )
     }

@@ -27,7 +27,7 @@ import { useEffect, useReducer, useRef, useState } from "preact/hooks";
 
 import { conversationDraftRevision, migrateLandingDraft, migrateClarificationDraft, submissionForRetry, clearPendingSubmission, readPendingSubmission, readConversationDraft, writeConversationDraft, clearConversationDraft } from "../lib/conversation-draft.js";
 import { ConversationControls } from "../components/agent/conversation-controls.js";
-import { handoffQueuedMessages, newQueueHandoffIds, visibleQueueControls } from "../lib/queue-handoff.js";
+import { recordConsumedQueueReceipts, handoffQueuedMessages, newQueueHandoffIds, visibleQueueControls } from "../lib/queue-handoff.js";
 import { createAgentClient } from "../lib/agent-client.js";
 import {
   Composer,
@@ -289,7 +289,17 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   const [controls, setControls] = useState(null);
   const queueHandoffsRef = useRef(new Map());
   const [queueHandoffs, setQueueHandoffs] = useState(queueHandoffsRef.current);
-  const visibleControls = visibleQueueControls(controls, queueHandoffs.get(state.sessionId));
+  const consumedQueueReceiptsRef = useRef(new Map());
+  const [consumedQueueReceipts, setConsumedQueueReceipts] = useState(consumedQueueReceiptsRef.current);
+  const visibleControls = visibleQueueControls(controls, queueHandoffs.get(state.sessionId), consumedQueueReceipts.get(state.sessionId));
+  function dispatchConversationEvent(action) {
+    const consumed = recordConsumedQueueReceipts(consumedQueueReceiptsRef.current, action);
+    if (consumed !== consumedQueueReceiptsRef.current) {
+      consumedQueueReceiptsRef.current = consumed;
+      setConsumedQueueReceipts(consumed);
+    }
+    dispatch(action);
+  }
   const [editPrompt, setEditPrompt] = useState(null);
   const [unconfirmed, setUnconfirmed] = useState(null);
   const composerDraftKey = convoId ?? (shouldReplaceLandingUrl(window.location.pathname) ? "new" : (state.sessionId ?? "new"));
@@ -354,7 +364,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
           settleAgentTerminal(cancelGenerationRef);
           setActionFailure(null);
         }
-        dispatch({ kind: msg.type, payload: msg.payload });
+        dispatchConversationEvent({ kind: msg.type, payload: msg.payload });
         // After each completed turn, refresh the conversations list so
         // the sidebar reflects the new updatedAt + messageCount.
         if (msg.type === "agent.message.end") {
@@ -555,7 +565,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       // A busy turn can be reopened after derived SSE events have already
       // passed. Apply the server-projected active-turn replay after the parent
       // runtime snapshot, then drain only post-cursor buffered SSE below.
-      dispatchSessionReplay(dispatch, session.replayEvents);
+      dispatchSessionReplay(dispatchConversationEvent, session.replayEvents);
       const hasResearchCard = (session.replayEvents ?? []).some(
         (event) => event.type === "agent.subagent.spawned",
       );
@@ -950,7 +960,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         activeSessionIdRef.current = sessionId;
         if (pending.resumeFromId) {
           dispatch(resumedConversationAction(session));
-          dispatchSessionReplay(dispatch, session.replayEvents);
+          dispatchSessionReplay(dispatchConversationEvent, session.replayEvents);
         } else {
           dispatch({
             kind: "reset-conversation",
@@ -1043,7 +1053,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     const client = clientRef.current;
     const generation = sendGenerationRef.current;
     if (!sessionId || !client || state.terminalFailure) return;
-    const newlyHidden = newQueueHandoffIds(queueHandoffsRef.current.get(sessionId), submissionIds);
+    const newlyHidden = newQueueHandoffIds(queueHandoffsRef.current.get(sessionId), submissionIds, consumedQueueReceiptsRef.current.get(sessionId));
     if (!newlyHidden.length) return;
     setActionFailure(null);
     const updateMask = (hide) => {
@@ -1055,7 +1065,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       setQueueHandoffs(next);
     };
     await handoffQueuedMessages({
-      send: () => client.sendQueuedNow(sessionId, submissionIds),
+      send: () => client.sendQueuedNow(sessionId, newlyHidden),
       hide: () => updateMask(true),
       restore: () => updateMask(false),
       isCurrent: () => agentRequestIsCurrent(generation, sendGenerationRef.current, sessionId, activeSessionIdRef.current) && clientRef.current === client,

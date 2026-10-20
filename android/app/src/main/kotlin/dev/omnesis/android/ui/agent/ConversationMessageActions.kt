@@ -9,7 +9,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -21,7 +20,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -85,8 +83,8 @@ internal fun QueuedConversationBubble(state: AgentCoordinator.UiState, onSendNow
                         Text("Queued", style = MaterialTheme.typography.labelSmall, color = OmTheme.colors.textSecondary)
                         if (state.controlsAvailable && state.controls.capabilities.queueSendNow && state.canCompose) {
                             Text(" - ", style = MaterialTheme.typography.labelSmall, color = OmTheme.colors.textSecondary)
-                            Box(Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                                .clickable(role = Role.Button) { onSendNow(group.map { it.id }) }, contentAlignment = Alignment.Center) {
+                            // clickable expands the touch target without adding visible row height.
+                            Box(Modifier.clickable(role = Role.Button) { onSendNow(group.map { it.id }) }, contentAlignment = Alignment.Center) {
                                 Text("send now", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                             }
                         }

@@ -406,6 +406,10 @@ describe("Deep Research loop — deterministic replay", () => {
     const { sessionId } = await service.createSession("device:A");
     service.sendMessage("device:A", sessionId, "Research the Q4 budget and marathon entry", {
       deepResearch: true,
+      submissionIds: ["research-receipt"],
+    });
+    expect(captured.find((event) => event.type === "agent.user.message")?.payload).toMatchObject({
+      submissionIds: ["research-receipt"],
     });
     expect(() =>
       service.sendMessage("device:A", sessionId, "Start another research run", {

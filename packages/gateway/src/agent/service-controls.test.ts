@@ -8,6 +8,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AgentService } from "./service.js";
 import { FsConversationStore } from "./conversation-store.js";
 import type { ChatBackend } from "@omnesis/agent";
+import type { WsEvent } from "@omnesis/core";
 
 const services: AgentService[] = [];
 const dirs: string[] = [];
@@ -93,12 +94,28 @@ const request = (id: string, text: string) => ({
 it("drains durable followups after a legacy turn; retries do not duplicate turns", async () => {
   const h = await setup();
   const { sessionId } = await h.service.createSession("device:A");
+  const emitted: WsEvent[] = [];
+  h.service.subscribe("device:A", (_seq, event) => emitted.push(event));
   h.service.sendMessage("device:A", sessionId, "First");
   await h.service.submitMessage("device:B", sessionId, request("followup", "Second"));
   await h.service.submitMessage("device:B", sessionId, request("additional", "Third"));
   expect(h.turns.map((t) => t.text)).toEqual(["First"]);
   h.turns[0]!.finish();
   await vi.waitFor(() => expect(h.turns.map((t) => t.text)).toEqual(["First", "Second\n\nThird"]));
+  const users = emitted.filter((event) => event.type === "agent.user.message");
+  expect(users.map((event) => event.payload)).toEqual([
+    { sessionId, userMessageId: expect.any(String), text: "First" },
+    {
+      sessionId,
+      userMessageId: expect.any(String),
+      text: "Second\n\nThird",
+      submissionIds: ["followup", "additional"],
+    },
+  ]);
+  const replayed: WsEvent[] = [];
+  const unsubscribe = h.service.subscribe("device:B", (_seq, event) => replayed.push(event), 0);
+  expect(replayed.filter((event) => event.type === "agent.user.message")).toEqual(users);
+  unsubscribe();
   h.turns[1]!.finish();
   await vi.waitFor(async () =>
     expect((await h.store.load(sessionId))?.controls?.submissions[0]?.status).toBe("completed"),
