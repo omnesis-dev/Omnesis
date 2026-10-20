@@ -3,6 +3,35 @@
 
 #if DEBUG
 import Foundation
+import SwiftUI
+
+/// Own the fixture exactly as the production app owns its store. Session minting
+/// must update this store, never recreate the initial preview during rendering.
+@available(iOS 17.0, *)
+@MainActor
+struct ConversationComposerPreviewRoot: View {
+    @State private var store: AppStore
+    @State private var configured = false
+
+    init(seed: AppStore.AgentPreviewSeed) {
+        _store = State(initialValue: AppStore.preview(agentPreview: seed))
+    }
+
+    var body: some View {
+        if configured {
+            AgentView(menuOpen: .constant(false))
+                .environment(store)
+                .environment(\.appearanceStore, AppearanceStore(mode: .dark))
+        } else {
+            ProgressView()
+                .task {
+                    guard !configured else { return }
+                    ConversationComposerPreview.install(on: store.agent)
+                    configured = true
+                }
+        }
+    }
+}
 
 /// Deterministic HTTP acknowledgements for the real composer UI regression.
 @available(iOS 17.0, *)

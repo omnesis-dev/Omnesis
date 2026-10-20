@@ -211,17 +211,19 @@ public struct OmnesisApp: App {
     }
 
     /// The seeded agent transcript shown when `DEMO_AGENT_PREVIEW` is set.
+    @ViewBuilder
     private func agentPreviewRoot(_ seed: AppStore.AgentPreviewSeed) -> some View {
-        let store = AppStore.preview(agentPreview: seed)
-        if ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "conversation-controls" {
-            store.agent.installPreviewConversationControls(PreviewMocks.conversationControls)
-            if ProcessInfo.processInfo.environment["DEMO_COMPOSER_ACK"] != nil {
-                ConversationComposerPreview.install(on: store.agent)
+        if ProcessInfo.processInfo.environment["DEMO_COMPOSER_ACK"] != nil {
+            ConversationComposerPreviewRoot(seed: seed)
+        } else {
+            let store = AppStore.preview(agentPreview: seed)
+            if ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "conversation-controls" {
+                store.agent.installPreviewConversationControls(PreviewMocks.conversationControls)
             }
+            AgentView(menuOpen: .constant(false))
+                .environment(store)
+                .environment(\.appearanceStore, AppearanceStore(mode: .dark))
         }
-        return AgentView(menuOpen: .constant(false))
-            .environment(store)
-            .environment(\.appearanceStore, AppearanceStore(mode: .dark))
     }
     #endif
 }
