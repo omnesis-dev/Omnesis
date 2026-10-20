@@ -45,6 +45,7 @@ final class SpeechRecognizer {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
+    private var audioSessionLease = AudioSessionLease()
 
     // MARK: - Lifecycle
 
@@ -178,14 +179,16 @@ final class SpeechRecognizer {
         transcript = ""
         state = .listening
 
+        let activeGeneration = audioSessionLease.generation
         recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self else { return }
             DispatchQueue.main.async {
+                guard self.audioSessionLease.owns(activeGeneration) else { return }
                 if let result {
                     self.transcript = result.bestTranscription.formattedString
                 }
                 if error != nil || (result?.isFinal ?? false) {
-                    self.finishSession()
+                    self.finishSession(expectedGeneration: activeGeneration)
                 }
             }
         }
@@ -219,9 +222,10 @@ final class SpeechRecognizer {
         // Safety timeout — if the task never fires isFinal (can happen
         // when the user stops after very short input), force-finish
         // after 1.5s.
+        let activeGeneration = audioSessionLease.generation
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self, self.state == .finishing else { return }
-            self.finishSession()
+            guard let self, self.audioSessionLease.owns(activeGeneration), self.state == .finishing else { return }
+            self.finishSession(expectedGeneration: activeGeneration)
         }
     }
 
@@ -251,9 +255,11 @@ final class SpeechRecognizer {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement, options: .duckOthers)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+        audioSessionLease.begin()
     }
 
-    private func finishSession() {
+    private func finishSession(expectedGeneration: UUID? = nil) {
+        guard audioSessionLease.release(expectedGeneration: expectedGeneration) else { return }
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest = nil

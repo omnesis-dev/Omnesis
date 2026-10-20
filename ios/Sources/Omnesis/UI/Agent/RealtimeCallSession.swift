@@ -25,6 +25,9 @@ final class RealtimeCallSession {
     @ObservationIgnored private var receiver: Task<Void, Never>?
     @ObservationIgnored private var engine: AVAudioEngine?
     @ObservationIgnored private var player: AVAudioPlayerNode?
+    @ObservationIgnored private var captureMixer: AVAudioMixerNode?
+    @ObservationIgnored private var captureReadiness = RealtimeCaptureReadiness()
+    @ObservationIgnored private let log = AppLog.make(category: "agent.realtime")
     @ObservationIgnored private var timeout: Task<Void, Never>?
     @ObservationIgnored private var itemID: String?
     @ObservationIgnored private var assistantTranscriptStarted = false
@@ -109,9 +112,14 @@ final class RealtimeCallSession {
         self.engine = engine
         let input = engine.inputNode
         try input.setVoiceProcessingEnabled(true)
+        input.isVoiceProcessingInputMuted = false
         let inputFormat = input.outputFormat(forBus: 0)
-        guard let wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: true),
-              let converter = AVAudioConverter(from: inputFormat, to: wireFormat) else { throw URLError(.cannotDecodeContentData) }
+        log
+            .info(
+                "Input rate=\(inputFormat.sampleRate, privacy: .public) channels=\(inputFormat.channelCount, privacy: .public) voiceProcessing=\(input.isVoiceProcessingEnabled, privacy: .public)"
+            )
+        let encoder = try RealtimePCMEncoder(inputFormat: inputFormat)
+        captureMixer = RealtimeAudioGraph.connectCapture(input, format: inputFormat, engine: engine)
         let player = AVAudioPlayerNode()
         self.player = player
         engine.attach(player)
@@ -119,28 +127,41 @@ final class RealtimeCallSession {
         engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
         let captureGeneration = generation
         input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 24000 / inputFormat.sampleRate) + 1
-            guard let converted = AVAudioPCMBuffer(pcmFormat: wireFormat, frameCapacity: capacity) else { return }
-            var provided = false
-            var conversionError: NSError?
-            converter.convert(to: converted, error: &conversionError) { _, state in
-                if provided { state.pointee = .noDataNow
-                    return nil
+            do {
+                guard let data = try encoder.encode(buffer) else { return }
+                Task { @MainActor [weak self] in
+                    guard let self, generation == captureGeneration, connected else { return }
+                    if captureReadiness.receivePCMFrame(byteCount: data.count) {
+                        timeout?.cancel()
+                        status = "Listening"
+                        log.info("Realtime microphone is delivering PCM frames")
+                    }
+                    guard !muted else { return }
+                    send(RealtimeProtocol.audioAppend(data))
                 }
-                provided = true
-                state.pointee = .haveData
-                return buffer
-            }
-            guard conversionError == nil, let samples = converted.int16ChannelData else { return }
-            let data = Data(bytes: samples[0], count: Int(converted.frameLength) * 2)
-            Task { @MainActor [weak self] in
-                guard let self, generation == captureGeneration, !muted, connected else { return }
-                send(RealtimeProtocol.audioAppend(data))
+            } catch {
+                Task { @MainActor [weak self] in
+                    guard let self, generation == captureGeneration else { return }
+                    log.error("Realtime microphone conversion failed")
+                    fail(error)
+                }
             }
         }
+
         engine.prepare()
         try engine.start()
         player.play()
+        log.info("Realtime audio engine started; waiting for microphone frames")
+        timeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled, let self, generation == captureGeneration, !captureReadiness.isReady else { return }
+            log.error("Realtime microphone produced no frames before startup timeout")
+            fail(NSError(
+                domain: "RealtimeCall",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "The microphone did not start. End the call and try again."]
+            ))
+        }
     }
 
     private func receive(_ event: [String: Any]) throws {
@@ -151,7 +172,7 @@ final class RealtimeCallSession {
             timeout?.cancel()
             try beginAudio()
             connected = true
-            status = "Listening"
+            status = "Starting microphone…"
         case "input_audio_buffer.speech_started":
             interruptPlayback()
             transcript = ""
@@ -292,6 +313,7 @@ final class RealtimeCallSession {
         pendingFrames = 0
         playbackStarted = nil
         connected = false
+        captureReadiness = RealtimeCaptureReadiness()
         timeout?.cancel()
         receiver?.cancel()
         receiver = nil
@@ -302,6 +324,7 @@ final class RealtimeCallSession {
         player?.stop()
         engine = nil
         player = nil
+        captureMixer = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }

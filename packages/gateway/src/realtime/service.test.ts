@@ -30,6 +30,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   for (const connection of connections.splice(0)) connection.close();
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 
@@ -43,6 +44,7 @@ function fixture(turn?: AgentService["realtimeTurn"]) {
   } as unknown as AgentService;
   const usage = vi.fn();
   const authorized = vi.fn(() => true);
+  const logger = { info: vi.fn(), warn: vi.fn() };
   const service = new RealtimeService({
     getConfig: () => config(),
     getApiKey: () => "test-key",
@@ -50,6 +52,7 @@ function fixture(turn?: AgentService["realtimeTurn"]) {
     isAuthorized: authorized,
     connect: () => socket as unknown as WebSocket,
     recordUsage: usage,
+    logger,
   });
   const connection = service.open(peer, "token:fictional", {
     conversationId: "existing-thread",
@@ -57,7 +60,7 @@ function fixture(turn?: AgentService["realtimeTurn"]) {
     timeZone: "Europe/London",
   });
   connections.push(connection);
-  return { socket, events, peer, agent, service, connection, usage, authorized };
+  return { socket, events, peer, agent, service, connection, usage, authorized, logger };
 }
 async function ready(f: ReturnType<typeof fixture>) {
   f.socket.emit("open");
@@ -72,6 +75,65 @@ const call = (id = "call-1") => ({
 });
 
 describe("realtime voice", () => {
+  it("warns once when a ready call never sends microphone audio", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await ready(f);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("no input audio received after 10 seconds"),
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.logger.warn).toHaveBeenCalledTimes(1);
+    expect(f.peer.close).not.toHaveBeenCalled();
+  });
+  it("clears the missing-audio watchdog on call close", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await ready(f);
+    f.connection.close();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.logger.warn).not.toHaveBeenCalled();
+    expect(
+      f.logger.info.mock.calls.filter(([message]) => message.includes("closed reason=")),
+    ).toHaveLength(1);
+  });
+  it("logs bounded audio diagnostics without audio, transcript, credentials or provider messages", async () => {
+    const f = fixture();
+    await ready(f);
+    const audio = Buffer.from("private-audio-test").toString("base64");
+    f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio }));
+    f.connection.receive(JSON.stringify({ type: "input_audio_buffer.append", audio }));
+    f.socket.event({ type: "input_audio_buffer.speech_started" });
+    f.socket.event({ type: "input_audio_buffer.speech_stopped" });
+    f.socket.event({
+      type: "conversation.item.input_audio_transcription.completed",
+      transcript: "Private transcript",
+    });
+    f.socket.event({
+      type: "error",
+      error: { code: "invalid_request_error", message: "Private upstream message test-key" },
+    });
+    const messages = [...f.logger.info.mock.calls, ...f.logger.warn.mock.calls]
+      .map(([message]) => message)
+      .join("\n");
+    expect(
+      f.logger.info.mock.calls.filter(([message]) => message.includes("first input audio")),
+    ).toHaveLength(1);
+    expect(messages).toContain(
+      "audioFrames=2 audioBytes=36 forwardedFrames=2 speechStarts=1 speechStops=1",
+    );
+    expect(messages).toContain("upstream error code=invalid_request_error");
+    for (const privateValue of [
+      audio,
+      "private-audio-test",
+      "Private transcript",
+      "Private upstream message",
+      "test-key",
+      "fictional-token",
+    ])
+      expect(messages).not.toContain(privateValue);
+  });
   it("requires strict experimental mode, remote consent, real OpenAI origin and a key", () => {
     expect(realtimeBackend(config(), () => "key")).toBe("cloud");
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");

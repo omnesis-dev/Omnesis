@@ -584,7 +584,7 @@ public struct AgentView: View {
                         idlePrompt: DailyBriefCopy.composerPrompt(for: store.agent.conversationOrigin),
                         speech: speechRecognizer,
                         onRealtime: realtimeAvailable && store.experimentalEnabled ? {
-                            speechRecognizer.stopListening()
+                            speechRecognizer.cancel()
                             composerFocused = false
                             realtimePresented = true
                         } : nil,

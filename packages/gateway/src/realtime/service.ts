@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { z } from "zod";
-import { experimentalEnabled, normalizeTimeZone } from "@omnesis/core";
+import { createLogger, experimentalEnabled, normalizeTimeZone } from "@omnesis/core";
 import type { AgentEvent } from "@omnesis/core";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { AgentService } from "../agent/service.js";
@@ -80,6 +81,7 @@ export interface RealtimeDeps {
   getAgent(): AgentService | undefined;
   isAuthorized(token: string, callerId: string): boolean;
   connect?: (apiKey: string) => WebSocket;
+  logger?: Pick<ReturnType<typeof createLogger>, "info" | "warn">;
   recordUsage?: (
     usage: { promptTokens: number; completionTokens: number; cacheReadTokens?: number },
     model: string,
@@ -103,7 +105,10 @@ export function realtimeBackend(
 /** Each phone call owns its upstream socket and cancellation scope. No audio is persisted. */
 export class RealtimeService {
   private readonly active = new Set<() => void>();
-  constructor(private readonly deps: RealtimeDeps) {}
+  private readonly log: Pick<ReturnType<typeof createLogger>, "info" | "warn">;
+  constructor(private readonly deps: RealtimeDeps) {
+    this.log = deps.logger ?? createLogger("gateway:realtime");
+  }
 
   capability(): {
     available: boolean;
@@ -132,6 +137,18 @@ export class RealtimeService {
     if (!backend || !key || !agent || !this.deps.isAuthorized(options.token, callerId))
       throw new Error("Realtime voice is unavailable");
     if (this.active.size >= 4) throw new Error("All realtime voice slots are busy");
+    const diagnosticId = randomUUID();
+    const openedAt = Date.now();
+    let audioFrames = 0;
+    let audioBytes = 0;
+    let forwardedFrames = 0;
+    let outputFrames = 0;
+    let outputBytes = 0;
+    let speechStarts = 0;
+    let speechStops = 0;
+    let closeReason = "client_closed";
+    let inputWatchdog: ReturnType<typeof setTimeout> | undefined;
+    this.log.info(`Call ${diagnosticId} opening`);
     const abort = new AbortController();
     let closed = false;
     let sessionId: string | undefined;
@@ -160,15 +177,17 @@ export class RealtimeService {
       }
     };
     const sendUpstream = (event: unknown) => {
-      if (closed || upstream.readyState !== WebSocket.OPEN) return;
+      if (closed || upstream.readyState !== WebSocket.OPEN) return false;
       if (upstream.bufferedAmount > MAX_BUFFERED_BYTES) {
         close();
-        return;
+        return false;
       }
       try {
         upstream.send(JSON.stringify(event));
+        return true;
       } catch {
         close();
+        return false;
       }
     };
     const close = () => {
@@ -177,12 +196,17 @@ export class RealtimeService {
       clearTimeout(lifetime);
       clearTimeout(startup);
       clearInterval(authorityCheck);
+      clearTimeout(inputWatchdog);
+      this.log.info(
+        `Call ${diagnosticId} closed reason=${closeReason} durationMs=${Date.now() - openedAt} audioFrames=${audioFrames} audioBytes=${audioBytes} forwardedFrames=${forwardedFrames} speechStarts=${speechStarts} speechStops=${speechStops} outputFrames=${outputFrames} outputBytes=${outputBytes}`,
+      );
       abort.abort();
       upstream.close();
       this.active.delete(close);
       peer.close(1000, "Voice call ended");
     };
     const fail = () => {
+      closeReason = "connection_error";
       send({ type: "error", error: { message: "The voice connection failed. Please try again." } });
       close();
     };
@@ -260,6 +284,7 @@ export class RealtimeService {
       requestResponse();
     };
     upstream.on("open", () => {
+      this.log.info(`Call ${diagnosticId} upstream connected`);
       void (async () => {
         const created = await agent.createSession(callerId, {
           profile: "voice",
@@ -313,6 +338,22 @@ export class RealtimeService {
       if (closed) return;
       try {
         const event = upstreamEvent.parse(JSON.parse(raw.toString()));
+        if (event.type === "input_audio_buffer.speech_started") {
+          speechStarts += 1;
+          this.log.info(
+            `Call ${diagnosticId} speech started count=${speechStarts} audioFrames=${audioFrames} audioBytes=${audioBytes}`,
+          );
+        }
+        if (event.type === "input_audio_buffer.speech_stopped") {
+          speechStops += 1;
+          this.log.info(`Call ${diagnosticId} speech stopped count=${speechStops}`);
+        }
+        if (event.type === "response.output_audio.delta" && typeof event.delta === "string") {
+          outputFrames += 1;
+          outputBytes += Buffer.byteLength(event.delta, "base64");
+          if (outputFrames === 1)
+            this.log.info(`Call ${diagnosticId} first output audio bytes=${outputBytes}`);
+        }
         if (event.type === "conversation.item.input_audio_transcription.completed") {
           const sample = transcriptionUsage.safeParse(event);
           if (sample.success && !accountedResponses.has(`transcript:${sample.data.item_id}`)) {
@@ -361,6 +402,14 @@ export class RealtimeService {
         }
         if (event.type === "session.updated") {
           clearTimeout(startup);
+          this.log.info(`Call ${diagnosticId} session ready`);
+          if (!inputWatchdog) {
+            inputWatchdog = setTimeout(() => {
+              if (!closed && audioFrames === 0)
+                this.log.warn(`Call ${diagnosticId} no input audio received after 10 seconds`);
+            }, 10_000);
+            inputWatchdog.unref();
+          }
           send({ type: "session.ready", conversationId: sessionId, model: MODEL });
         } else if (event.type === "response.function_call_arguments.done")
           void delegate(event).catch(fail);
@@ -373,6 +422,9 @@ export class RealtimeService {
               }),
             })
             .safeParse(event);
+          const code = error.success ? error.data.error.code : undefined;
+          const safeCode = code && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : "unknown";
+          this.log.warn(`Call ${diagnosticId} upstream error code=${safeCode}`);
           if (error.success && error.data.error.code === "response_cancel_not_active") return;
           if (error.success && error.data.error.param === "audio_end_ms") return;
           if (
@@ -406,7 +458,11 @@ export class RealtimeService {
       }
     });
     upstream.on("error", fail);
-    upstream.on("close", close);
+    upstream.on("close", (code) => {
+      this.log.info(`Call ${diagnosticId} upstream closed code=${code}`);
+      if (!closed) closeReason = "upstream_closed";
+      close();
+    });
     return {
       close,
       receive: (raw) => {
@@ -418,7 +474,16 @@ export class RealtimeService {
         try {
           if (Buffer.byteLength(raw) > MAX_FRAME_BYTES) throw new Error("Voice frame too large");
           const event = clientEvent.parse(JSON.parse(raw));
-          sendUpstream(event);
+          if (event.type === "input_audio_buffer.append") {
+            audioFrames += 1;
+            audioBytes += Buffer.byteLength(event.audio, "base64");
+            if (audioFrames === 1)
+              this.log.info(
+                `Call ${diagnosticId} first input audio bytes=${audioBytes} upstreamReady=${upstream.readyState === WebSocket.OPEN}`,
+              );
+          }
+          if (sendUpstream(event) && event.type === "input_audio_buffer.append")
+            forwardedFrames += 1;
         } catch {
           fail();
         }

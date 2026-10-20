@@ -28,6 +28,14 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(RealtimeComposerSnapshot(), name: "realtime-composer", size: CGSize(width: 393, height: 130))
     }
 
+    func testRealtimeCallMicrophoneStarting() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeMicrophoneStarting),
+            name: "realtime-microphone-starting",
+            ignoresSafeArea: true
+        )
+    }
+
     func testRealtimeCallListening() {
         snapshot(RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening), name: "realtime-listening", ignoresSafeArea: true)
     }

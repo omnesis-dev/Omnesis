@@ -7209,6 +7209,13 @@ extension PreviewMocks {
         preloaded: dailyBriefPages
     )
 
+    @MainActor static var realtimeMicrophoneStarting: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Starting microphone…"
+        session.connected = true
+        return session
+    }
+
     @MainActor static var realtimeListening: RealtimeCallSession {
         let session = RealtimeCallSession()
         session.status = "Listening"

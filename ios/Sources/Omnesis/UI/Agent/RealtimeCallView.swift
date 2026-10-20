@@ -126,6 +126,10 @@ struct RealtimeCallView: View {
 }
 
 #if DEBUG
+#Preview("Voice · Starting microphone") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeMicrophoneStarting)
+}
+
 #Preview("Voice · Listening") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
 }
