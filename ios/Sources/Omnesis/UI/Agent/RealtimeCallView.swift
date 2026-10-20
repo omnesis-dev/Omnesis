@@ -48,7 +48,10 @@ struct RealtimeCallView: View {
                     if let error = session.error {
                         GatewayErrorView(context: "start the voice conversation", error: error, onRetry: {
                             session.error = nil
-                            if let pairing { Task { await session.start(pairing: pairing, conversationID: conversationID) } }
+                            if let pairing { Task { await session.start(
+                                pairing: pairing,
+                                conversationID: session.conversationID ?? conversationID
+                            ) } }
                         })
                         .frame(minHeight: GatewayErrorView.minScrollHeight)
                     } else {
@@ -107,7 +110,7 @@ struct RealtimeCallView: View {
         .padding(24)
         .background(Theme.bgPrimary)
         .foregroundStyle(Theme.textPrimary)
-        .task { if let pairing { await session.start(pairing: pairing, conversationID: conversationID) } }
+        .task { if let pairing { await session.start(pairing: pairing, conversationID: session.conversationID ?? conversationID) } }
         .onDisappear { session.stop()
             onEnd?(session.conversationID)
         }
