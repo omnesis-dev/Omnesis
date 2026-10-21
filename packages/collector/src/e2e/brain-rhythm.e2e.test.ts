@@ -45,31 +45,19 @@ import {
   waitFor,
 } from "./brain-bench/index.js";
 
+import { localHour } from "./brain-bench/local-calendar.js";
+
 compressCognitionCadences();
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
 /**
- * Local midnight of the day `ms` falls in — the same arithmetic the kit's
- * `bench.clock.localMidnight` does, restated here because the suites' boundary
- * constants are evaluated while the module and the `describe` bodies load,
- * before any bench exists to ask. Callers that want another day pass a
- * NOON-anchored instant plus whole days, which lands on the intended local day
- * either side of a DST shift.
- */
-function localMidnight(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-/**
  * The shared anchor for suites that pin their clock before observing rhythm
  * work. The synthesis suite instead follows the gateway's boot day because
  * it observes the first noticing run before moving the clock.
  */
-const D0_NOON = localMidnight(Date.now()) + 12 * HOUR;
+const D0_NOON = localHour(Date.now(), 12);
 
 const SRC_A = "synthetic:alpha@example.com";
 const SRC_B = "synthetic:beta@example.com";
@@ -161,7 +149,7 @@ describe("rhythm: the daily boundary", () => {
   let loopId = "";
   const DAILY_HOUR = 5;
   /** The boundary the suite drives across: tomorrow at `DAILY_HOUR`. */
-  const BOUNDARY = localMidnight(D0_NOON + DAY) + DAILY_HOUR * HOUR;
+  const BOUNDARY = localHour(D0_NOON + DAY, DAILY_HOUR);
   const CROSS_AT = BOUNDARY + 30 * 60_000;
   /** The day key that boundary belongs to; resolved once the bench exists. */
   let CROSSED_DAY = "";
@@ -393,11 +381,11 @@ describe("rhythm: the daily boundary", () => {
       documentType: "transaction",
       sourceId: SRC_A,
       providerId: SRC_A,
-      at: localMidnight(D0_NOON + 3 * DAY) + 12 * HOUR,
+      at: localHour(D0_NOON + 3 * DAY, 12),
     });
     await bench.docId("rhythm-alpha-txn-late");
 
-    const boundary = localMidnight(D0_NOON + 4 * DAY) + DAILY_HOUR * HOUR;
+    const boundary = localHour(D0_NOON + 4 * DAY, DAILY_HOUR);
     const day = bench.clock.localDay(boundary);
     await bench.clock.set(boundary + 30 * 60_000);
     await bench.markers.waitFor("daily_last_run_day", (v) => v === day, 60_000);
@@ -408,8 +396,8 @@ describe("rhythm: the daily boundary", () => {
     const fresh = runRows(bench, "daily").filter((r) => !before.has(r.id));
     expect(fresh.map((r) => r.dedupe_key)).toEqual([`daily:source:${SRC_A}:${day}`]);
     const skipped = [
-      bench.clock.localDay(localMidnight(D0_NOON + 2 * DAY) + DAILY_HOUR * HOUR),
-      bench.clock.localDay(localMidnight(D0_NOON + 3 * DAY) + DAILY_HOUR * HOUR),
+      bench.clock.localDay(localHour(D0_NOON + 2 * DAY, DAILY_HOUR)),
+      bench.clock.localDay(localHour(D0_NOON + 3 * DAY, DAILY_HOUR)),
     ];
     for (const missed of skipped) {
       expect(runRows(bench, "daily").filter((r) => r.dedupe_key?.endsWith(`:${missed}`))).toEqual(
@@ -483,8 +471,8 @@ describe("rhythm: the morning digest", () => {
     // Boot can already admit root maintenance. Rewinding to today's noon
     // strands that work behind a frozen clock, so start at the next local noon.
     const bootNow = (await bench.clock.now()).now;
-    const startNoon = localMidnight(localMidnight(bootNow) + 36 * HOUR) + 12 * HOUR;
-    DIGEST_BOUNDARY = localMidnight(startNoon + DAY) + DIGEST_HOUR * HOUR;
+    const startNoon = localHour(localHour(bootNow, 12) + DAY, 12);
+    DIGEST_BOUNDARY = localHour(startNoon + DAY, DIGEST_HOUR);
     DIGEST_AT = DIGEST_BOUNDARY + 10 * 60_000;
     DIGEST_DAY = bench.clock.localDay(DIGEST_BOUNDARY);
     await bench.clock.set(startNoon);
@@ -629,7 +617,7 @@ describe("rhythm: historical admission coverage", () => {
     sourceId = bench.harness.getSourceIds()[0]!;
     await bench.drainUntilQuiet();
     const instant = (await bench.clock.now()).now;
-    await bench.clock.set(localMidnight(instant) + 12 * HOUR);
+    await bench.clock.set(localHour(instant, 12));
     const { now } = await bench.clock.now();
     ids.forEach((id, i) =>
       seedHistory(bench, {
@@ -844,7 +832,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
     // captured. The first noticing run belongs to the gateway's frozen day.
     const { now } = await bench.clock.now();
     D0_DAY = bench.clock.localDay(now);
-    bootDayNoon = localMidnight(now) + 12 * HOUR;
+    bootDayNoon = localHour(now, 12);
     await waitFor(
       `boot-time noticing run for ${D0_DAY} to complete`,
       () => {
@@ -917,7 +905,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
 
   test("crossing into a new day fires the collision sweep on the shared-document key", async () => {
     expect(loopIds).toHaveLength(2);
-    const nextNoon = localMidnight(bootDayNoon + DAY) + 12 * HOUR;
+    const nextNoon = localHour(bootDayNoon + DAY, 12);
     const nextDay = bench.clock.localDay(nextNoon);
 
     await bench.clock.set(nextNoon);
@@ -971,7 +959,7 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
 
   test("a settled verdict is not re-bought while its loops stand untouched", async () => {
     const before = runRows(bench, "synthesis").map((r) => r.id);
-    const at = localMidnight(bootDayNoon + 2 * DAY) + 12 * HOUR;
+    const at = localHour(bootDayNoon + 2 * DAY, 12);
     await bench.clock.set(at);
     // A day the noticing producer is due for again: its marker reaching this
     // instant is the positive control, so the collision producer standing

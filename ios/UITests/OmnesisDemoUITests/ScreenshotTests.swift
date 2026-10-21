@@ -243,6 +243,10 @@ final class ScreenshotTests: XCTestCase {
 
     private func captureStoreScreenshot(named name: String) throws {
         Thread.sleep(forTimeInterval: 2)
+        dismissSystemAlerts()
+        let alertVisible = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists
+        XCTAssertFalse(alertVisible, "A system alert must not cover an App Store screenshot")
+        guard !alertVisible else { return }
         let root = ProcessInfo.processInfo.environment["STORE_SCREENSHOT_OUTPUT_DIR"]
             ?? "/tmp/omnesis-app-store-screenshots"
         let directory = URL(fileURLWithPath: root, isDirectory: true)
@@ -254,20 +258,25 @@ final class ScreenshotTests: XCTestCase {
     }
 
     /// Tap away any system permission alert presented on springboard.
-    /// Polls briefly (the alert is async after launch) and taps the first
-    /// known button it finds. Harmless no-op when no alert appears.
+    /// Permission requests can arrive in sequence. Keep draining until quiet
+    /// rather than returning after the first alert and photographing the next.
     private func dismissSystemAlerts() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let labels = ["Don't Allow", "Allow", "OK", "Continue", "Dismiss"]
-        let deadline = Date().addingTimeInterval(4)
+        let labels = ["Don't Allow", "Don’t Allow", "Allow", "OK", "Continue", "Dismiss"]
+        let deadline = Date().addingTimeInterval(10)
+        var quietAfter = Date().addingTimeInterval(4)
         while Date() < deadline {
+            var dismissed = false
             for label in labels {
-                let button = springboard.buttons[label]
+                let button = springboard.alerts.buttons[label].firstMatch
                 if button.exists {
                     button.tap()
-                    return
+                    dismissed = true
+                    quietAfter = Date().addingTimeInterval(1)
+                    break
                 }
             }
+            if !dismissed, !springboard.alerts.firstMatch.exists, Date() >= quietAfter { return }
             Thread.sleep(forTimeInterval: 0.3)
         }
     }

@@ -14,6 +14,7 @@ import {
   type ToolResult,
 } from "@omnesis/core";
 
+import { invokeToolHandle } from "./invoke-tool.js";
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 import {
   serializeToolResultForModel,
@@ -877,24 +878,16 @@ export class HttpChatBackend implements ChatBackend {
             } else if (!argsResult.ok) {
               result = toolArgsUnparseableResult(argsResult.error, tc.function.arguments);
             } else {
-              try {
-                result = await handle.invoke(argsResult.args, {
-                  sessionId,
-                  messageId,
-                  abortSignal: signal,
-                  timeZone,
-                  caller,
-                  ...childEventHooks({ sessionId, messageId, toolCallId: tc.id }, (event) =>
-                    progress.push(event),
-                  ),
-                });
-              } catch (err) {
-                result = {
-                  kind: "error",
-                  code: "tool_threw",
-                  message: (err as Error).message ?? "tool threw",
-                };
-              }
+              result = await invokeToolHandle(handle, argsResult.args, {
+                sessionId,
+                messageId,
+                abortSignal: signal,
+                timeZone,
+                caller,
+                ...childEventHooks({ sessionId, messageId, toolCallId: tc.id }, (event) =>
+                  progress.push(event),
+                ),
+              });
             }
             return { tc, result, durationMs: Date.now() - start };
           }),

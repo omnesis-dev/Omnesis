@@ -359,6 +359,8 @@ export interface TurnInput {
   history: ReadonlyArray<ChatMessage>;
   /** The just-arrived user message text. */
   userMessage: string;
+  /** Runtime-only contextual note, also included in userMessage for ordinary backends. */
+  modelNote?: string;
   /** Inline image inputs for vision-capable backends; callers check model support. */
   images?: ReadonlyArray<{ url: string }>;
   /** Tool handles the model may invoke. */
