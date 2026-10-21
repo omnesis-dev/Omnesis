@@ -83,6 +83,8 @@ describe("socket-backed canonical turns", () => {
     expect(configuration.instructions).toContain("Batch independent lookups");
     expect(configuration.instructions).toContain("Stop retrieving once there is enough evidence");
     expect(configuration.instructions).toContain("one to three short sentences");
+    expect(configuration.instructions).toContain("at most one brief acknowledgement");
+    expect(configuration.instructions).toContain("run the lookup silently");
     expect(configuration.tools).toEqual([]);
     await f.session.dispose();
   });
