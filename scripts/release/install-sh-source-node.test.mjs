@@ -71,17 +71,19 @@ function run(
     join(bin, "brew"),
     `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\ncase "$1" in --prefix) printf '%s\\n' '${prefix}' ;; upgrade|install) printf '%s' '${upgrade}' > '${kegFile}' ;; esac\n`,
   );
+  if (manager === "apt") executable(join(bin, "apt-get"), "#!/bin/sh\nexit 99\n");
   if (manager === "dnf")
     executable(
       join(bin, "dnf"),
       `#!/bin/sh\nprintf 'dnf %s\\n' "$*" >> '${calls}'\nprintf '%s' '${upgrade}' > '${currentFile}'\n`,
     );
-  const script = `${functions}\ninfo() { :; }\nfail() { printf '%s\\n' "$*" >&2; exit 1; }\nresolve_sudo() { return 0; }\nrun_nodesource_setup() { printf 'setup %s\\n' "$*" >> '${calls}'; }\napt_get() { printf 'apt %s\\n' "$*" >> '${calls}'; printf '%s' '${upgrade}' > '${currentFile}'; }\nrun_privileged() { "$@"; }\nresolve_method() { METHOD='${resolved}'; }\n${manager === "dnf" ? 'command() { if [ "$1" = -v ] && [ "$2" = apt-get ]; then return 1; fi; builtin command "$@"; }\n' : ""}METHOD='${method}'\nPLATFORM='${platform}'\n${command}\n`;
-  const result = spawnSync(manager === "dnf" ? "bash" : "sh", ["-eu", "-c", script], {
+  const script = `${functions}\ninfo() { :; }\nfail() { printf '%s\\n' "$*" >&2; exit 1; }\nresolve_sudo() { return 0; }\nrun_nodesource_setup() { printf 'setup %s\\n' "$*" >> '${calls}'; }\napt_get() { printf 'apt %s\\n' "$*" >> '${calls}'; printf '%s' '${upgrade}' > '${currentFile}'; }\nrun_privileged() { "$@"; }\nresolve_method() { METHOD='${resolved}'; }\nMETHOD='${method}'\nPLATFORM='${platform}'\n${command}\n`;
+  const result = spawnSync("/bin/sh", ["-eu", "-c", script], {
     encoding: "utf8",
     env: {
       ...process.env,
-      PATH: `${bin}:${process.env.PATH}`,
+      // Discover only fixture tools, including on hosts without apt-get.
+      PATH: bin,
       ...(forceColor === undefined ? {} : { FORCE_COLOR: forceColor }),
     },
   });
