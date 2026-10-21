@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import Observation
 @testable import Omnesis
 import SwiftUI
 import UIKit
@@ -24,6 +25,155 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testPeopleReadClientReadiness() throws {
+        let coordinator = AdminCoordinator()
+        let arrived = expectation(description: "The read client becoming available invalidates the view")
+        let initialIdentity = withObservationTracking {
+            coordinator.search.map { ObjectIdentifier($0) }
+        } onChange: {
+            arrived.fulfill()
+        }
+        XCTAssertNil(initialIdentity)
+        let client = try SearchClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.com")), token: "test-token")
+        coordinator.injectSearchClientForTesting(client)
+        wait(for: [arrived], timeout: 1)
+        let readyIdentity = coordinator.search.map { ObjectIdentifier($0) }
+        XCTAssertEqual(readyIdentity, ObjectIdentifier(client))
+        coordinator.injectSearchClientForTesting(client)
+        XCTAssertEqual(coordinator.search.map { ObjectIdentifier($0) }, readyIdentity)
+
+        let rotated = expectation(description: "A replacement read client invalidates the view")
+        withObservationTracking {
+            _ = coordinator.search
+        } onChange: {
+            rotated.fulfill()
+        }
+        let replacement = SearchClient(baseURL: client.baseURL, token: "replacement-token")
+        coordinator.injectSearchClientForTesting(replacement)
+        wait(for: [rotated], timeout: 1)
+        XCTAssertNotEqual(coordinator.search.map { ObjectIdentifier($0) }, readyIdentity)
+
+        let removed = expectation(description: "Pairing loss invalidates the read client")
+        withObservationTracking {
+            _ = coordinator.search
+        } onChange: {
+            removed.fulfill()
+        }
+        coordinator.stopAdmin()
+        wait(for: [removed], timeout: 1)
+        XCTAssertNil(coordinator.search)
+        snapshot(
+            PeopleView(menuOpen: .constant(false)).environment(AppStore.preview()),
+            name: "people-awaiting-read-client"
+        )
+    }
+
+    func testRealtimeComposer() {
+        snapshot(RealtimeComposerSnapshot(), name: "realtime-composer", size: CGSize(width: 393, height: 130))
+    }
+
+    func testRealtimeCallMicrophoneStarting() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeMicrophoneStarting).environment(AppStore.preview()),
+            name: "realtime-microphone-starting",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallListening() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening).environment(AppStore.preview()),
+            name: "realtime-listening",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallEnding() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeEnding).environment(AppStore.preview()),
+            name: "realtime-ending",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallTools() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore)
+                .preferredColorScheme(.dark),
+            name: "realtime-tools",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallSmallPhone() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore),
+            name: "realtime-small-phone",
+            size: CGSize(width: 375, height: 667),
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallAccessible() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeToolsStore)
+                .dynamicTypeSize(.accessibility3),
+            name: "realtime-accessible",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallSQL() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeSQLStore),
+            name: "realtime-sql",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallBatch() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools)
+                .environment(PreviewMocks.realtimeBatchStore),
+            name: "realtime-batch",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallCitations() {
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore),
+            name: "realtime-citations",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore),
+            name: "realtime-citations-small-phone",
+            size: CGSize(width: 375, height: 667),
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, freezeToolActivity: true, session: PreviewMocks.realtimeTools, citationsOpen: true)
+                .environment(PreviewMocks.realtimeCitationsStore).dynamicTypeSize(.accessibility3),
+            name: "realtime-citations-accessible",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallFailure() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure).environment(AppStore.preview()),
+            name: "realtime-failure",
+            ignoresSafeArea: true
+        )
+    }
+
     private static let outputDir = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
     private static let canvasSize = CGSize(width: 393, height: 852)
 
@@ -3390,6 +3540,7 @@ final class PreviewSnapshotTests: XCTestCase {
                 queueEnabled: true,
                 disabled: false,
                 speech: SpeechRecognizer.preview(state: .idle),
+                onRealtime: {},
                 onSend: { _, _ in },
                 onCancel: {},
                 focused: FocusState<Bool>().projectedValue
@@ -8371,5 +8522,22 @@ private struct PhoneSetupInPlaceOutcomeProbe: View {
                 try? await Task.sleep(for: .milliseconds(300))
                 coordinator.installPreview(flow: changed)
             }
+    }
+}
+
+private struct RealtimeComposerSnapshot: View {
+    @State private var text = ""
+    @FocusState private var focused: Bool
+    var body: some View {
+        AgentComposer(
+            text: $text,
+            busy: false,
+            disabled: false,
+            speech: SpeechRecognizer.preview(state: .idle),
+            onRealtime: {},
+            onSend: { _, _ in },
+            onCancel: {},
+            focused: $focused
+        )
     }
 }

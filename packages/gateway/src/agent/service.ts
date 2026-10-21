@@ -367,6 +367,14 @@ export interface AgentServiceDeps {
  * (currently only `agent.resync`) that carries no resumable position.
  */
 export type AgentEventListener = (seq: number, event: WsEvent) => void;
+export interface RealtimeAgentSession {
+  sessionId: string;
+  context: ReturnType<AgentSession["modelContextSnapshot"]>;
+  run(text: string, backend: ChatBackend, signal: AbortSignal): Promise<void>;
+  subscribe(listener: (event: AgentEvent) => void): () => void;
+  cancel(): void;
+  close(): Promise<void>;
+}
 
 export interface CreateSessionResult {
   sessionId: string;
@@ -962,6 +970,7 @@ export class AgentService {
   private readonly sessionRateLimitPatience = new Map<string, RateLimitPatience>();
   /** Per-caller event listeners (SSE clients). Outer key = callerId. */
   private readonly listeners = new Map<CallerId, Set<AgentEventListener>>();
+  private readonly realtimeOwners = new Map<string, symbol>();
   /** Destructive or metadata mutations that must exclude resumes and in-flight turns. */
   private readonly answerDeleteLocks = new Set<string>();
   /** Sessions running the out-of-band Deep Research orchestration loop. */
@@ -1054,6 +1063,7 @@ export class AgentService {
         return (
           entry.session.busy ||
           this.deepResearchActive.has(id) ||
+          this.realtimeOwners.has(id) ||
           this.activeTurnCompletions.has(id)
         );
       },
@@ -1274,6 +1284,11 @@ export class AgentService {
       }
       const live = this.sessions.get(opts.resumeFromId);
       if (live) {
+        if (this.realtimeOwners.has(opts.resumeFromId)) {
+          if (opts.profile !== undefined && opts.profile !== live.promptProfile)
+            throw new AgentError("session_busy", "conversation is in a voice call");
+          return this.liveSessionSnapshot(opts.resumeFromId, live);
+        }
         // Conversations are shared across admin callers — the resumer
         // takes over ownership so the per-caller cap accounting tracks
         // the current holder. Subsequent send/cancel through this
@@ -1316,28 +1331,7 @@ export class AgentService {
         // parent text/tool events have already passed on SSE. Include a
         // defensive view of those uncommitted segments in this resume response;
         // persistence continues to read canonical historySnapshot().
-        const messages = [...live.session.liveHistorySnapshot()];
-        const activeReplay = this.activeTurnReplays.get(opts.resumeFromId);
-        return {
-          sessionId: opts.resumeFromId,
-          model: live.session.model,
-          backend: live.session.backendName,
-          title: live.meta.fixedTitle ?? deriveTitle(messages),
-          // A live session can have a turn in flight — report it so a
-          // reconnecting client doesn't drop the in-flight state.
-          busy: live.session.busy || this.deepResearchActive.has(opts.resumeFromId),
-          messageCount: messages.length,
-          messages,
-          ...(live.meta.terminalFailure ? { terminalFailure: live.meta.terminalFailure } : {}),
-          ...(live.meta.lastTurnFailure ? { lastTurnFailure: live.meta.lastTurnFailure } : {}),
-          ...(live.meta.origin ? { origin: live.meta.origin } : {}),
-          ...((live.session.busy || this.deepResearchActive.has(opts.resumeFromId)) &&
-          activeReplay &&
-          (this.deepResearchActive.has(opts.resumeFromId) || activeReplay.events.length > 0)
-            ? { replayEvents: [...activeReplay.events] }
-            : {}),
-          eventCursor: this.nextSeq - 1,
-        };
+        return this.liveSessionSnapshot(opts.resumeFromId, live);
       }
     }
 
@@ -1359,7 +1353,12 @@ export class AgentService {
     for (const [id, entry] of this.sessions) {
       if (entry.callerId !== callerId) continue;
       perCaller++;
-      if (entry.session.busy || this.deepResearchActive.has(id) || this.controls.active(id))
+      if (
+        entry.session.busy ||
+        this.deepResearchActive.has(id) ||
+        this.realtimeOwners.has(id) ||
+        this.controls.active(id)
+      )
         continue;
       if (!oldestIdle || entry.lastActive < oldestIdle.lastActive) {
         oldestIdle = { id, lastActive: entry.lastActive };
@@ -1511,6 +1510,32 @@ export class AgentService {
       ...(resumedTerminalFailure ? { terminalFailure: resumedTerminalFailure } : {}),
       ...(resumedLastTurnFailure ? { lastTurnFailure: resumedLastTurnFailure } : {}),
       ...(resumedOrigin ? { origin: resumedOrigin } : {}),
+    };
+  }
+
+  /** Canonical live transcript and SSE cursor shared by normal resume and voice observers. */
+  private liveSessionSnapshot(sessionId: string, live: LiveSessionEntry): CreateSessionResult {
+    const messages = [...live.session.liveHistorySnapshot()];
+    const activeReplay = this.activeTurnReplays.get(sessionId);
+    return {
+      sessionId: sessionId,
+      model: live.session.model,
+      backend: live.session.backendName,
+      title: live.meta.fixedTitle ?? deriveTitle(messages),
+      // A live session can have a turn in flight — report it so a
+      // reconnecting client doesn't drop the in-flight state.
+      busy: live.session.busy || this.deepResearchActive.has(sessionId),
+      messageCount: messages.length,
+      messages,
+      ...(live.meta.terminalFailure ? { terminalFailure: live.meta.terminalFailure } : {}),
+      ...(live.meta.lastTurnFailure ? { lastTurnFailure: live.meta.lastTurnFailure } : {}),
+      ...(live.meta.origin ? { origin: live.meta.origin } : {}),
+      ...((live.session.busy || this.deepResearchActive.has(sessionId)) &&
+      activeReplay &&
+      (this.deepResearchActive.has(sessionId) || activeReplay.events.length > 0)
+        ? { replayEvents: [...activeReplay.events] }
+        : {}),
+      eventCursor: this.nextSeq - 1,
     };
   }
 
@@ -1853,6 +1878,8 @@ export class AgentService {
 
   /** Permanently remove a stored conversation. The Morning brief conversation is permanent. */
   async deleteConversation(id: string): Promise<boolean> {
+    if (this.realtimeOwners.has(id))
+      throw new AgentError("session_busy", "conversation is in a voice call");
     if (!this.store) return false;
     if (
       this.answerDeleteLocks.has(id) ||
@@ -2450,6 +2477,8 @@ export class AgentService {
       submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string } {
+    if (this.realtimeOwners.has(sessionId))
+      throw new AgentError("session_busy", "conversation is in a voice call");
     if (!opts.acceptedSubmission && this.controls.active(sessionId)) {
       throw new AgentError("session_busy", "a queued message is being accepted or started");
     }
@@ -2957,6 +2986,25 @@ export class AgentService {
       submissionIds?: string[];
     } = {},
   ): { messageId: string; userMessageId: string; completion: Promise<void> } {
+    return this.startSessionTurn(callerId, sessionId, text, opts);
+  }
+
+  private startSessionTurn(
+    callerId: CallerId,
+    sessionId: string,
+    text: string,
+    opts: {
+      recordSpend?: boolean;
+      signal?: AbortSignal;
+      spendMechanism?: string;
+      backend?: ChatBackend;
+      owner?: symbol;
+      submissionIds?: string[];
+    } = {},
+  ): { messageId: string; userMessageId: string; completion: Promise<void> } {
+    const owner = this.realtimeOwners.get(sessionId);
+    if (owner && owner !== opts.owner)
+      throw new AgentError("session_busy", "conversation is in a voice call");
     if (this.answerDeleteLocks.has(sessionId)) {
       throw new AgentError("session_busy", "conversation already has a deletion in progress");
     }
@@ -2967,6 +3015,8 @@ export class AgentService {
     // Any admin caller can drive a shared conversation. Ownership only feeds
     // cap accounting and persistence telemetry.
     entry.callerId = callerId;
+    entry.meta.model = opts.backend?.model ?? entry.session.model;
+    entry.meta.backend = opts.backend?.name ?? entry.session.backendName;
     // User-message content can carry secrets and PII; log only its length at
     // INFO. DEBUG remains an explicit operator opt-in.
     log.info(`session ${sessionId} user> (${text.length} chars)`);
@@ -2981,21 +3031,22 @@ export class AgentService {
     let turnUsage: AgentUsage | null = null;
     let turnStopReason: string | undefined;
     let turnRejected = false;
-    const unsubscribeSpend = this.recordSpend
-      ? entry.session.subscribe((event) => {
-          if (event.type !== "agent.message.end") return;
-          turnStopReason = event.payload.stopReason;
-          const u = event.payload.usage;
-          if (!u) return;
-          turnUsage = {
-            inputTokens: (turnUsage?.inputTokens ?? 0) + (u.inputTokens ?? 0),
-            outputTokens: (turnUsage?.outputTokens ?? 0) + (u.outputTokens ?? 0),
-            cacheReadTokens: (turnUsage?.cacheReadTokens ?? 0) + (u.cacheReadTokens ?? 0),
-            cacheCreationTokens:
-              (turnUsage?.cacheCreationTokens ?? 0) + (u.cacheCreationTokens ?? 0),
-          };
-        })
-      : undefined;
+    const unsubscribeSpend =
+      this.recordSpend && opts.recordSpend !== false
+        ? entry.session.subscribe((event) => {
+            if (event.type !== "agent.message.end") return;
+            turnStopReason = event.payload.stopReason;
+            const u = event.payload.usage;
+            if (!u) return;
+            turnUsage = {
+              inputTokens: (turnUsage?.inputTokens ?? 0) + (u.inputTokens ?? 0),
+              outputTokens: (turnUsage?.outputTokens ?? 0) + (u.outputTokens ?? 0),
+              cacheReadTokens: (turnUsage?.cacheReadTokens ?? 0) + (u.cacheReadTokens ?? 0),
+              cacheCreationTokens:
+                (turnUsage?.cacheCreationTokens ?? 0) + (u.cacheCreationTokens ?? 0),
+            };
+          })
+        : undefined;
 
     const replayGeneration = this.nextActiveTurnReplayGeneration++;
     this.activeTurnReplays.set(sessionId, {
@@ -3016,6 +3067,7 @@ export class AgentService {
       }
       started = entry.session.send(text, {
         signal: opts.signal,
+        ...(opts.backend ? { backend: opts.backend } : {}),
         submissionIds: opts.submissionIds,
         ...(modelNote ? { modelNote } : {}),
       });
@@ -3062,7 +3114,7 @@ export class AgentService {
         try {
           this.recordSpend({
             mechanism: opts.spendMechanism ?? INTERACTIVE_SPEND_MECHANISM,
-            modelId: entry.session.model,
+            modelId: opts.backend?.model ?? entry.session.model,
             usage: turnUsage,
             completed: !turnRejected && turnStopReason !== "canceled" && turnStopReason !== "error",
           });
@@ -3446,11 +3498,145 @@ export class AgentService {
     }
   }
 
+  /** Lease the ordinary interactive session for a transport-owned model backend. */
+  async openRealtimeSession(
+    callerId: CallerId,
+    options: { conversationId?: string; timeZone?: string; missingConversationPolicy?: "create" },
+  ): Promise<RealtimeAgentSession> {
+    if (this.disposing) throw new AgentError("session_busy", "agent service is shutting down");
+    const sessionOptions: CreateSessionOptions = {
+      profile: "interactive",
+      caller: { kind: "operator" },
+      timeZone: options.timeZone,
+    };
+    const { sessionId, entry, owner } = await this.withResumeGate(
+      options.conversationId ?? "__realtime_create__",
+      async () => {
+        let created: CreateSessionResult;
+        try {
+          created = await this.createSessionUnlocked(callerId, {
+            ...sessionOptions,
+            ...(options.conversationId ? { resumeFromId: options.conversationId } : {}),
+          });
+        } catch (error) {
+          if (
+            options.missingConversationPolicy !== "create" ||
+            !options.conversationId ||
+            !(error instanceof AgentError) ||
+            error.code !== "session_not_found"
+          )
+            throw error;
+          created = await this.createSessionUnlocked(callerId, sessionOptions);
+        }
+        const sessionId = created.sessionId;
+        const entry = this.requireSession(sessionId);
+        if (
+          entry.session.busy ||
+          this.deepResearchActive.has(sessionId) ||
+          this.realtimeOwners.has(sessionId) ||
+          this.controls.active(sessionId) ||
+          this.activeTurnCompletions.has(sessionId) ||
+          entry.meta.controls?.submissions.some((submission) => submission.status === "queued")
+        )
+          throw new AgentError("session_busy", "conversation is busy");
+        if (entry.meta.terminalFailure)
+          throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+        const owner = Symbol("realtime");
+        this.realtimeOwners.set(sessionId, owner);
+        return { sessionId, entry, owner };
+      },
+    );
+    let closed = false;
+    let voiceContextFailure: string | undefined;
+    let cancellationGeneration = 0;
+    let active: Promise<void> | undefined;
+    const unsubscribeFailure = entry.session.subscribe((event) => {
+      if (
+        event.type === "agent.message.end" &&
+        event.payload.failure?.code === "provider_error" &&
+        event.payload.failure.provider?.code === "context_window_exceeded"
+      )
+        voiceContextFailure = event.payload.failure.message;
+    });
+    let resolveReleased!: () => void;
+    const released = new Promise<void>((resolve) => {
+      resolveReleased = resolve;
+    });
+    const release = () => {
+      unsubscribeFailure();
+      resolveReleased();
+      if (this.realtimeOwners.get(sessionId) === owner) {
+        this.realtimeOwners.delete(sessionId);
+        this.controls.kick(sessionId);
+      }
+    };
+    return {
+      sessionId,
+      context: entry.session.modelContextSnapshot(),
+      subscribe: (listener) => entry.session.subscribe(listener),
+      run: async (text, backend, signal) => {
+        if (closed || signal.aborted || this.disposing)
+          throw new AgentError("session_busy", "voice call ended");
+        const generation = cancellationGeneration;
+        let completion: Promise<void> | undefined;
+        await this.controls.startTurn(sessionId, () => {
+          // A barge-in or hangup while awaiting durable controls must not start late work.
+          if (closed || signal.aborted || this.disposing || generation !== cancellationGeneration)
+            return;
+          if (voiceContextFailure)
+            throw new AgentError("context_window_exceeded", voiceContextFailure);
+          if (entry.meta.terminalFailure)
+            throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
+          this.touch(sessionId);
+          const answeredClarificationId = entry.meta.controls?.pendingClarification?.id;
+          active = this.startSessionTurn(callerId, sessionId, text, {
+            backend,
+            signal,
+            owner,
+            spendMechanism: "realtime-voice",
+            recordSpend: false,
+          }).completion;
+          completion = active;
+          this.clearAnsweredClarification(entry, answeredClarificationId);
+        });
+        return completion;
+      },
+      cancel: () => {
+        cancellationGeneration += 1;
+        if (!closed) entry.session.cancel("user");
+      },
+      close: () => {
+        if (closed) return released;
+        closed = true;
+        if (!entry.session.busy) {
+          release();
+          return released;
+        }
+        const unsubscribe = entry.session.subscribe((event) => {
+          if (event.type !== "agent.message.end") return;
+          unsubscribe();
+          release();
+        });
+        entry.session.cancel("system");
+        if (active)
+          void active
+            .finally(() => {
+              unsubscribe();
+              release();
+            })
+            .catch(() => {});
+        return released;
+      },
+    };
+  }
+
   conversationControls(sessionId: string) {
     return this.controls.snapshot(sessionId);
   }
 
   async submitMessage(callerId: CallerId, sessionId: string, input: SubmissionInput) {
+    if (this.realtimeOwners.has(sessionId) && input.mode === "interrupt")
+      throw new AgentError("session_busy", "End the voice call before sending a message now.");
     const entry = this.requireSession(sessionId);
     if (this.disposing || this.answerDeleteLocks.has(sessionId)) {
       throw new AgentError("session_busy", "The conversation is closing. Try again shortly.");
@@ -3463,6 +3649,11 @@ export class AgentService {
   }
 
   async sendQueuedNow(callerId: CallerId, sessionId: string, submissionIds: string[]) {
+    if (this.realtimeOwners.has(sessionId))
+      throw new AgentError(
+        "session_busy",
+        "End the voice call before sending queued messages now.",
+      );
     const entry = this.requireSession(sessionId);
     if (this.disposing || this.answerDeleteLocks.has(sessionId))
       throw new AgentError("session_busy", "The conversation is closing. Try again shortly.");
@@ -3829,6 +4020,7 @@ export class AgentService {
     if (
       entry.session.busy ||
       this.deepResearchActive.has(sessionId) ||
+      this.realtimeOwners.has(sessionId) ||
       this.controls.active(sessionId)
     ) {
       // The caller may be the original idle-timer firing (in which case

@@ -332,6 +332,40 @@ inserted into model-visible history.
 - Session normalization: `packages/agent/src/session.ts`
 - Machine classifier: `packages/agent/src/turn-outcome.ts`
 
+### Conversation transports share one agent session and event stream
+
+Text and realtime voice use the same `AgentSession`, interactive prompt, wrapped
+tool handles, canonical history, citation tracking and persistence lifecycle. A
+transport can supply a backend for one turn; it must not delegate the request to
+another conversational model or maintain a second conversation reducer. The
+realtime backend adds spoken-response guidance to the shared prompt and derives
+each model response's context from canonical history plus its current audio item.
+
+The existing `agent.*` SSE stream owns conversation state on every frontend.
+Voice reuses its snapshot/cursor handoff, tool cards and citation drawer. Its
+WebSocket carries audio and media lifecycle controls. The media protocol
+advertises a supported range; a client selects a mutually supported version.
+An omitted version retains the legacy media format, while the negotiated SSE
+version omits the legacy tool-event mirror. Missing capabilities or incompatible
+ranges disable the unsupported voice surface without affecting text chat.
+
+Ending a negotiated voice call acknowledges release of its session lease before
+the client returns to the text composer. Release follows the canonical terminal
+event, without waiting for persistence, so an immediate text send cannot race
+the closing audio socket. A transport-owned model context failure is a turn
+failure; it must not make the default model's conversation permanently read-only.
+
+The voice lease also participates in ordinary conversation queue admission. Text
+can be durably queued during a call and runs after the lease ends; send-now
+controls cannot start a second backend in that session. Voice turn admission and
+clarification clearing use the queue's existing short serialization barrier,
+without holding it across model work.
+
+- Shared lifecycle: `packages/agent/src/session.ts`, `packages/gateway/src/agent/service.ts`
+- Realtime backend: `packages/gateway/src/realtime/backend.ts`
+- Media boundary: `packages/gateway/src/realtime/service.ts`, `packages/gateway/src/realtime/route.ts`
+- Native handoff: `ios/Sources/Omnesis/Coordinators/RealtimeConversationHandoff.swift`
+
 ### A credential gate answers from the credential, a sync failure from the failure
 
 `credentialState()` says what state an account's credential is in. The
@@ -1123,6 +1157,7 @@ When you set out to write code that matches one of the patterns above, open the 
 | Typed worker dispatch              | `packages/gateway/src/workers/protocol.ts` + `packages/gateway/src/scheduler/write-ops.ts`                            |
 | Typed WS registry                  | `packages/core/src/ws-messages.ts`                                                                                    |
 | Negotiated protocol range          | `packages/gateway/src/subscriptions/delivery.ts` (`negotiatedDeliveryProtocol`)                                       |
+| Shared text/voice conversation     | `packages/agent/src/session.ts` + `packages/gateway/src/realtime/backend.ts`                                          |
 | Snapshot only from a complete read | `packages/source-sdk/src/snapshot.ts` + `packages/providers/apple/src/contacts.ts`                                    |
 | Absence marked, not deleted        | `packages/gateway/src/data/repositories/AbsenceRepository.ts`                                                         |
 | `omnesisConfigSchema`              | `packages/config/src/config-schema.ts`                                                                                |

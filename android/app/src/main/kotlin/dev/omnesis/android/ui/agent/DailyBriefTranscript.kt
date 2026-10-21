@@ -66,7 +66,8 @@ object DailyBriefCopy {
     const val THUMBS_UP = "Useful"
     const val THUMBS_DOWN = "Not useful"
     const val THUMBS_DOWN_TITLE = "What's off about this?"
-    const val NOT_INTERESTED_CHOICE = "Not interested in this kind of thing"
+    const val NOT_INTERESTED_CHOICE = "Not interested in this"
+    const val NOT_INTERESTED_NOTE_CHOICE = "Not interested — add a note"
     const val FACTUAL_ERROR_CHOICE = "Factual error — send a correction"
 
     /** The word beside the thumbs once a thumbs-down is given; nothing for a thumbs-up or none. */

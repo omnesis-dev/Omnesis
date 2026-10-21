@@ -179,6 +179,7 @@ describe("website docs", () => {
     const sidebar = experimental.match(/<aside class="docs-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? "";
     const subnav = sidebar.match(/<ul class="side-sub">[\s\S]*?<\/ul>/)?.[0] ?? "";
     expect([...subnav.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual([
+      "#realtime-voice",
       "#browser-extension",
       "#brain",
       "#watch",

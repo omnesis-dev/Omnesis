@@ -31,6 +31,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { enqueueKnowledgeWork } from "@omnesis/gateway/src/brain/knowledge/work.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { verifiedCollectionCreateRetries } from "./briefs-concurrency-retries.js";
 import {
   BrainBench,
   sourceInterpretations,
@@ -465,8 +466,20 @@ describe("Brain Bench — the operator surface", () => {
     expect(decision.docIds).toContain(invoiceDocId);
     expect(decision.subject).toMatch(/^knowledge maintenance batch /);
 
-    // Mutating calls become actions, in order; reads are counted, not listed.
-    expect(decision.actions.slice(0, 4).map((a) => a.tool)).toEqual([
+    // Collection CAS refusals remain visible in the audit. Only a fresh
+    // same-query read followed by the identical successful create explains one.
+    const executed = await bench.obs.executedTools(decision.runId, decision.attempt);
+    const failedSteps = executed.filter((step) => step.result?.kind === "error");
+    const verifiedRetries = verifiedCollectionCreateRetries(executed);
+    expect(failedSteps).toHaveLength(verifiedRetries.size);
+    const refused = decision.actions.filter((action) => !action.ok);
+    expect(refused).toHaveLength(verifiedRetries.size);
+    expect(refused.every((action) => action.tool === "open_loop_create")).toBe(true);
+    const successful = decision.actions.filter((action) => action.ok);
+    expect(decision.actions).toHaveLength(successful.length + verifiedRetries.size);
+
+    // Successful mutations become actions in semantic order; reads are counted.
+    expect(successful.slice(0, 4).map((a) => a.tool)).toEqual([
       "open_loop_create",
       "open_loop_ledger_append",
       "annotate_durable",
@@ -475,18 +488,14 @@ describe("Brain Bench — the operator surface", () => {
     // Canonical creation also offers the loop and annotation mirrors for
     // maintenance; maintenance settles an observation without a model turn.
     // Those saves are real mutations and must remain visible in the audit.
-    expect(decision.actions.slice(4).map((a) => a.tool)).toEqual([
-      "knowledge_save",
-      "knowledge_save",
-    ]);
+    expect(successful.slice(4).map((a) => a.tool)).toEqual(["knowledge_save", "knowledge_save"]);
     expect(
-      decision.actions
+      successful
         .slice(4)
         .map((a) => a.detail.split(" ").slice(0, 2).join(" "))
         .sort(),
     ).toEqual(["save doc_annotation", "save loop"]);
-    expect(decision.actions.every((a) => a.ok)).toBe(true);
-    expect(decision.actions[0]!.detail).toContain(INVOICE_MARKER);
+    expect(successful[0]!.detail).toContain(INVOICE_MARKER);
     // `open_loop_search` is research, not a decision.
     expect(decision.researchToolCalls).toBeGreaterThanOrEqual(1);
     expect(decision.finalText).toContain("batch complete");

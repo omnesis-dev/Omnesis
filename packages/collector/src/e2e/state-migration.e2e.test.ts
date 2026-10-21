@@ -2,8 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./synth-env.js";
-import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import https from "node:https";
+import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
 import Database from "better-sqlite3";
+import {
+  normalizeSourceMetaIcons,
+  _shutdownIconRasterizeWorker,
+} from "@omnesis/gateway/src/icon-normalizer.js";
+import { sourceDisplayMeta } from "../source-display-meta.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 /**
@@ -38,7 +44,24 @@ describe("state migration — an installed cursor through a real gateway", () =>
 
   afterAll(async () => {
     await harness.destroy();
+    await _shutdownIconRasterizeWorker();
   }, 15000);
+
+  test("normalizes the installed source and family icons without external requests", async () => {
+    const registered = harness.deviceForSource(SOURCE).engine.registeredSources();
+    const source = registered.find((entry) => entry.source.id === SOURCE)!.source;
+    const request = vi.spyOn(https, "request").mockImplementation(() => {
+      throw new Error("Synthetic metadata must not fetch hosted icons");
+    });
+    try {
+      const meta = await normalizeSourceMetaIcons(sourceDisplayMeta(source));
+      expect(meta.icon).toMatch(/^data:image\/png;base64,/);
+      expect(meta.family?.icon).toBe(meta.icon);
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      request.mockRestore();
+    }
+  });
 
   /**
    * Write a cursor the way a collector does, so the row is the one an upgrade
