@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   getTask: vi.fn(),
   taskAction: vi.fn(),
   undoTask: vi.fn(),
+  openTaskConversation: vi.fn(),
 }));
 const router = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock("../api.js", async (original) => ({ ...(await original<Record<string, unknown>>()), ...api }));
@@ -305,5 +306,52 @@ describe("an action in flight", () => {
     await act(async () => reply.resolve({ task: {}, receipt: { text: "Struck", undoSeq: 4 } }));
     await settle();
     expect(labelled("Done")?.hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("Chat about this", () => {
+  const venue = () => row("Book the venue walkthrough");
+  const chatButton = () =>
+    [...venue().querySelectorAll(".tasks-actions button")].find((b) =>
+      b.textContent?.includes("Chat about this"),
+    ) ?? null;
+  const actionLabels = () =>
+    [...venue().querySelectorAll(".tasks-actions button")].map((b) => b.textContent?.trim());
+
+  it("sits right of History, only where the gateway serves it", async () => {
+    await mount();
+    await act(async () => click(venue().querySelector(".tasks-row-title")));
+    expect(chatButton()).toBeNull();
+
+    render(null, host);
+    await mount({ chatAvailable: true });
+    await act(async () => click(venue().querySelector(".tasks-row-title")));
+    const labels = actionLabels();
+    expect(labels.slice(-2)).toEqual(["History", "Chat about this"]);
+  });
+
+  it("opens a new conversation about the task and shows it", async () => {
+    api.openTaskConversation.mockResolvedValue({ conversation: { id: "s_chat 1" } });
+    await mount({ chatAvailable: true });
+    await act(async () => click(venue().querySelector(".tasks-row-title")));
+    await act(async () => click(chatButton()));
+    await settle();
+    expect(api.openTaskConversation).toHaveBeenCalledWith("loop_a");
+    expect(router.navigate).toHaveBeenCalledWith("/portal/agent/s_chat%201");
+  });
+
+  it("says why when the conversation cannot be opened, and stays on the task", async () => {
+    api.openTaskConversation.mockRejectedValue(
+      Object.assign(new Error("503"), { serverMessage: "The agent is not available." }),
+    );
+    await mount({ chatAvailable: true });
+    await act(async () => click(venue().querySelector(".tasks-row-title")));
+    await act(async () => click(chatButton()));
+    await settle();
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(venue().querySelector(".tasks-chat-error")?.textContent).toBe(
+      "Couldn't open a chat: The agent is not available.",
+    );
+    expect(chatButton()?.hasAttribute("disabled")).toBe(false);
   });
 });

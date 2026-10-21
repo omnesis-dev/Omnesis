@@ -615,6 +615,90 @@ describe("conversation origin", () => {
   });
 });
 
+describe("task conversation origin", () => {
+  const dirs3: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs3.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  function fresh3(): FsConversationStore {
+    const d = mkdtempSync(join(tmpdir(), "omnesis-convo-task-origin-test-"));
+    dirs3.push(d);
+    return new FsConversationStore(join(d, "conversations"));
+  }
+  const base = {
+    callerId: "token:A",
+    model: "m",
+    backend: "b",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:05.000Z",
+    title: "Renew the studio lease",
+    pinned: false,
+    messages: [],
+  };
+  const origin = {
+    kind: "task",
+    taskId: "loop_lease",
+    runId: "loop_lease",
+    task: {
+      title: "Renew the studio lease",
+      state: "open",
+      due: "2026-03-20",
+      sourceCount: 3,
+    },
+    seedMessageCount: 0,
+  } as const;
+
+  async function loadRaw(s: FsConversationStore, id: string, rawOrigin: unknown) {
+    const dir = (s as unknown as { dir: string }).dir;
+    await s.save({ ...base, id });
+    const raw = JSON.parse(await readFile(join(dir, `${id}.json`), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    raw.origin = rawOrigin;
+    await writeFile(join(dir, `${id}.json`), JSON.stringify(raw), "utf8");
+    return s.load(id);
+  }
+
+  it("round-trips with its snapshot; list rows carry the anchor only", async () => {
+    const s = fresh3();
+    await s.save({ ...base, id: "s_task", origin: { ...origin, task: { ...origin.task } } });
+    expect((await s.load("s_task"))!.origin).toEqual(origin);
+    const anchor = { kind: "task", taskId: "loop_lease", runId: "loop_lease" };
+    expect((await s.list()).find((c) => c.id === "s_task")!.origin).toEqual(anchor);
+    const rebuilt = new FsConversationStore((s as unknown as { dir: string }).dir);
+    expect((await rebuilt.list()).find((c) => c.id === "s_task")!.origin).toEqual(anchor);
+  });
+
+  it("a snapshot without its title or state is dropped while the anchor survives", async () => {
+    const loaded = await loadRaw(fresh3(), "s_task_bad", {
+      kind: "task",
+      taskId: "loop_lease",
+      runId: "loop_lease",
+      task: { title: 42, state: "open" },
+    });
+    expect(loaded!.origin).toEqual({ kind: "task", taskId: "loop_lease", runId: "loop_lease" });
+    expect(loaded!.originUnrecognized).toBeUndefined();
+  });
+
+  it("malformed optional snapshot fields read as absent", async () => {
+    const loaded = await loadRaw(fresh3(), "s_task_partial", {
+      ...origin,
+      task: { title: "Renew the lease", state: "open", due: "next week", sourceCount: -1 },
+    });
+    expect(loaded!.origin).toEqual({
+      ...origin,
+      task: { title: "Renew the lease", state: "open", sourceCount: 0 },
+    });
+  });
+
+  it("an origin without a task id is refused rather than run as a plain chat", async () => {
+    const loaded = await loadRaw(fresh3(), "s_task_no_id", { kind: "task", runId: "loop_lease" });
+    expect(loaded!.origin).toBeUndefined();
+    expect(loaded!.originUnrecognized).toBe(true);
+  });
+});
+
 describe("deriveTitle", () => {
   it("uses the first user text message, truncated", () => {
     const msgs: ChatMessage[] = [

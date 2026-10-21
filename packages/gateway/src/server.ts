@@ -1776,6 +1776,7 @@ export function createServer(
     clock: opts?.briefsClock,
     effects: opts?.taskEffects,
     notes: getOmnesisNotesRuntime,
+    conversations: () => agentDeps.agentService ?? null,
   });
 
   // /temporal/* — the time index the portal's Calendar reads. Not gated on

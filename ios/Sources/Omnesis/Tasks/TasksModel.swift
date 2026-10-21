@@ -11,6 +11,7 @@ public protocol TasksService: Sendable {
     func detail(id: String) async throws -> TaskDetail
     func perform(_ action: TaskAction, on id: String) async throws -> TaskMutation
     func undo(seq: Int) async throws -> TaskMutation
+    func startConversation(about id: String) async throws -> ConversationSummary
 }
 
 extension TasksClient: TasksService {}
@@ -269,6 +270,21 @@ public final class TasksModel {
         return undone
     }
 
+    /// Starts a new chat about `task` and returns its conversation id, or
+    /// nil after showing why it could not be started.
+    public func startConversation(about task: TaskRecord) async -> String? {
+        guard let service, !busyIds.contains(task.id) else { return nil }
+        busyIds.insert(task.id)
+        defer { busyIds.remove(task.id) }
+        do {
+            return try await service.startConversation(about: task.id).sessionId
+        } catch {
+            present(text: Self.conversationMessage(for: error), undoSeq: nil, isError: true)
+            if Self.isRefusal(error) { await reread() }
+            return nil
+        }
+    }
+
     public func dismissToast() {
         toast = nil
     }
@@ -364,6 +380,22 @@ public final class TasksModel {
     private func present(text: String, undoSeq: Int?, isError: Bool) {
         toastCounter &+= 1
         toast = TaskToast(id: toastCounter, text: text, undoSeq: undoSeq, isError: isError)
+    }
+
+    /// One sentence for a chat that could not be started.
+    static func conversationMessage(for error: Error) -> String {
+        if let gateway = error as? GatewayClient.Error {
+            switch gateway {
+            case .notFound: return "That task no longer exists."
+            case .unauthorized, .forbidden: return "The gateway refused the chat. Re-pair this phone."
+            // 503 when no agent model is available; the gateway says which.
+            case .serverError:
+                if let message = gateway.gatewayMessage, !message.isEmpty { return message }
+            default: break
+            }
+        }
+        if error is URLError { return "Couldn't reach the gateway. Try again." }
+        return "Couldn't start a chat about this task. Try again."
     }
 
     /// One sentence for a failed command.

@@ -61,6 +61,7 @@ import { readDailyBriefDetail } from "./brain/observations/brief-detail.js";
 import { createBriefItemReactor } from "./brain/observations/brief-reactions.js";
 import { InterestEngine } from "./brain/interest/engine.js";
 import { buildTaskTools } from "./brain/tasks/tools.js";
+import { renderTaskConversationContext } from "./brain/tasks/conversation-context.js";
 import { TaskService, type TaskEffects } from "./brain/tasks/service.js";
 import { createOpenLoopMirror } from "./brain/steward/mirror.js";
 import { NoteAgent } from "./brain/note-agent/runner.js";
@@ -2759,6 +2760,8 @@ scheduler.schedule({
     }
   },
 });
+// A conversation about a task reads the task as it stands on every turn.
+agentLifecycle.setTaskContextProvider((origin) => renderTaskConversationContext(db, origin));
 agentLifecycle.setTaskToolsProvider((conversationId, context) =>
   buildTaskTools({
     db,

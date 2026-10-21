@@ -50,8 +50,9 @@ export interface ConversationUtterance {
 /** Canonical seed eligibility shared by rendering and interactive memory. */
 export function conversationEvidenceStart(record: ConversationRecord): number | null {
   if (record.originUnrecognized) return null;
-  // The Morning brief conversation has no hidden seed: every message is real.
-  if (!record.origin || record.origin.kind === "daily_brief") return 0;
+  // Only a watch-firing thread opens on a hidden seed; in the Morning brief
+  // conversation and a conversation about a task every message is real.
+  if (record.origin?.kind !== "watch_firing") return 0;
   const start = record.origin.seedMessageCount ?? 0;
   return !Number.isSafeInteger(start) || start <= 0 ? null : start;
 }

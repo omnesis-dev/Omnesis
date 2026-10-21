@@ -99,12 +99,15 @@ import {
   type SubmissionInput,
 } from "./conversation-controls.js";
 import {
+  clipTitle,
   deriveTitle,
   originAnchor,
   latestDailyBrief,
   DAILY_BRIEF_REF_LIMIT,
   type ConversationOrigin,
   type DailyBriefConversationOrigin,
+  type TaskConversationOrigin,
+  type TaskConversationOriginSnapshot,
   type WatchFiringConversationOrigin,
   type ConversationRecord,
   type ConversationStore,
@@ -483,6 +486,13 @@ export interface AnswerCandidateTrace {
  * ordinary chat over its last day.
  */
 export type DailyBriefContextProvider = (latest: { day: string; messageId: string }) => string;
+
+/**
+ * What a conversation about a task adds to the system prompt of every turn:
+ * the task as it stands when the turn starts, its history and its linked
+ * documents. Absent, the conversation runs as an ordinary chat.
+ */
+export type TaskContextProvider = (origin: TaskConversationOrigin) => string;
 
 /**
  * Builds the task tools a conversation gets, stamped with that conversation
@@ -990,6 +1000,12 @@ export class AgentService {
     this.dailyBriefContext = provider;
   }
 
+  private taskContext: TaskContextProvider | null = null;
+
+  setTaskContextProvider(provider: TaskContextProvider | null): void {
+    this.taskContext = provider;
+  }
+
   private taskTools: TaskToolsProvider | null = null;
 
   setTaskToolsProvider(provider: TaskToolsProvider | null): void {
@@ -1448,6 +1464,7 @@ export class AgentService {
       backend,
       tools: [...tools],
       systemPrompt,
+      systemPromptSection: () => this.originPromptSection(sessionId),
       initialHistory,
       ...(resumedOrigin?.kind === "daily_brief"
         ? {
@@ -1495,6 +1512,25 @@ export class AgentService {
       ...(resumedLastTurnFailure ? { lastTurnFailure: resumedLastTurnFailure } : {}),
       ...(resumedOrigin ? { origin: resumedOrigin } : {}),
     };
+  }
+
+  /**
+   * The system-prompt section a session's origin adds to each turn, built
+   * when the turn starts so it reflects the current state. Only a
+   * conversation about a task has one. A failure to build it leaves the turn
+   * with the plain prompt rather than failing the user's message.
+   */
+  private originPromptSection(sessionId: string): string {
+    const origin = this.sessions.get(sessionId)?.meta.origin;
+    if (origin?.kind !== "task" || !this.taskContext) return "";
+    try {
+      return this.taskContext(origin);
+    } catch (err) {
+      log.warn(
+        `task context for ${origin.taskId} in ${sessionId} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return "";
+    }
   }
 
   /**
@@ -1553,7 +1589,9 @@ export class AgentService {
       memory.push(
         buildConversationMemoryEvidenceTool(async () => {
           const live = this.sessions.get(sessionId);
-          if (!live || (live.meta.origin && live.meta.origin.kind !== "daily_brief")) return null;
+          // A watch-firing thread opens on a hidden briefing, which is not
+          // the user's words; every other conversation is.
+          if (!live || live.meta.origin?.kind === "watch_firing") return null;
           await this.persistConversation(sessionId, live.callerId, live.meta, undefined, false);
           return this.ensureConversationEvidence!(sessionId);
         }),
@@ -1691,6 +1729,7 @@ export class AgentService {
       backend,
       tools: [...this.buildInteractiveTools(sessionId, profile, entry.meta.origin?.kind)],
       systemPrompt,
+      systemPromptSection: () => this.originPromptSection(sessionId),
       initialHistory: entry.session.historySnapshot(),
       timeZone: entry.session.timeZone,
       caller: entry.session.caller,
@@ -2155,6 +2194,57 @@ export class AgentService {
       { role: "user", parts: [{ kind: "text", text: `(This morning's brief, ${latest.day}.)` }] },
       ...history.slice(start),
     ];
+  }
+
+  /**
+   * Open a new, empty conversation about one of the user's tasks. The record
+   * is written straight to the store, as the Morning brief conversation is,
+   * so the client's resume builds the live session in the client's own time
+   * zone. The title is the task's; the origin carries the task snapshot the
+   * client's context card draws. Every call opens a new conversation.
+   */
+  async openTaskConversation(
+    callerId: CallerId,
+    input: { taskId: string; snapshot: TaskConversationOriginSnapshot },
+  ): Promise<ConversationSummary> {
+    const store = this.store;
+    if (!store) throw new AgentError("agent_unconfigured", "no conversation store configured");
+    const backend = this.backendFactory("agent");
+    if (!backend) throw new AgentError("agent_unconfigured", "no agent model is assigned");
+    const id = this.sessionIdGen();
+    const now = new Date().toISOString();
+    const origin: TaskConversationOrigin = {
+      kind: "task",
+      taskId: input.taskId,
+      runId: input.taskId,
+      task: input.snapshot,
+      seedMessageCount: 0,
+    };
+    const record: ConversationRecord = {
+      id,
+      callerId,
+      model: backend.model,
+      backend: backend.name,
+      createdAt: now,
+      updatedAt: now,
+      title: clipTitle(input.snapshot.title.replace(/\s+/g, " ").trim()),
+      pinned: false,
+      origin,
+      messages: [],
+    };
+    await this.enqueueConversationMutation(id, () => store.save(record));
+    log.info(`conversation ${id} opened about task ${input.taskId}`);
+    return {
+      id,
+      title: record.title,
+      model: record.model,
+      backend: record.backend,
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      pinned: false,
+      origin,
+    };
   }
 
   /**

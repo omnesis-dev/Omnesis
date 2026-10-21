@@ -35,7 +35,7 @@ import { canDeleteConversation, deleteSidebarConversation } from "./lib/sidebar-
 import { releaseUpdateFromStatus } from "./lib/release-update.js";
 import { FleetHostUpdate } from "./components/fleet-host-update.js";
 import { TestInstanceCard } from "./components/test-instance-card.js";
-import { countLabel, localDay } from "./lib/tasks-model.js";
+import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
@@ -286,6 +286,7 @@ function App() {
   const [testInstance, setTestInstance] = useState(null);
   // Whether the gateway serves Tasks (`/status` → `tasks.available`).
   const [tasksAvailable, setTasksAvailable] = useState(false);
+  const [taskConversations, setTaskConversations] = useState(false);
   // Withhold demo-sensitive cards until the gateway has declared its mode.
   const [demo, setDemo] = useState(null);
   // A passive, gateway-owned release result. Null before the first successful
@@ -368,6 +369,7 @@ function App() {
       setDemo(status?.demo === true);
       setTestInstance(status?.testInstance ?? null);
       setTasksAvailable(status?.tasks?.available === true);
+      setTaskConversations(supportsTaskConversations(status?.capabilities));
       const nextReleaseUpdate = releaseUpdateFromStatus(status);
       setReleaseUpdate((current) =>
         current?.currentVersion === nextReleaseUpdate?.currentVersion &&
@@ -800,7 +802,7 @@ function App() {
           : route.view === "browser-notes"
           ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} />`
           : route.view === "tasks"
-          ? html`<${TasksView} taskView=${route.taskView} focusTaskId=${route.focusTaskId ?? null} experimental=${experimental} />`
+          ? html`<${TasksView} taskView=${route.taskView} focusTaskId=${route.focusTaskId ?? null} experimental=${experimental} chatAvailable=${taskConversations} />`
           : route.view === "capture"
           ? html`<${CaptureView} day=${route.day ?? null} experimental=${experimental} />`
           : route.view === "privacy"

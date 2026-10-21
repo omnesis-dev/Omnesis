@@ -7,10 +7,13 @@ import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.client.FieldChange
 import dev.omnesis.android.transport.client.TaskAction
 import dev.omnesis.android.transport.client.TaskView
+import dev.omnesis.android.transport.dto.ConversationOrigin
+import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.TaskCountsDto
 import dev.omnesis.android.transport.dto.TaskDetailDto
 import dev.omnesis.android.transport.dto.TaskDto
 import dev.omnesis.android.transport.dto.TaskMutationDto
+import dev.omnesis.android.transport.dto.TaskOriginSnapshot
 import dev.omnesis.android.transport.dto.TaskReceiptDto
 import dev.omnesis.android.transport.dto.TaskViewDto
 
@@ -113,6 +116,32 @@ internal class StatefulTasksGateway(tasks: List<TaskDto>, private val resolvedNo
         val before = entry.second
         tasks = tasks.map { if (it.id == before.id) before else it }
         return TaskMutationDto(before, TaskReceiptDto("Undone: ${before.title}", null))
+    }
+
+    /** The conversations "Chat about this" opened, newest last. */
+    val conversations = mutableListOf<ConversationSummary>()
+
+    /** Opens a new conversation about the task each time, as the gateway does. */
+    override suspend fun conversation(id: String): ConversationSummary {
+        val task = tasks.firstOrNull { it.id == id } ?: throw GatewayException.NotFound("no task $id")
+        val summary = ConversationSummary(
+            sessionId = "conv_${conversations.size + 1}",
+            title = task.title,
+            origin = ConversationOrigin(
+                kind = ConversationOrigin.TASK_KIND,
+                runId = task.id,
+                taskId = task.id,
+                task = TaskOriginSnapshot(
+                    title = task.title,
+                    state = task.state,
+                    due = task.dueDay,
+                    sourceCount = task.documents.size,
+                ),
+                seedMessageCount = 0,
+            ),
+        )
+        conversations += summary
+        return summary
     }
 
     private fun require(condition: Boolean, message: String) {

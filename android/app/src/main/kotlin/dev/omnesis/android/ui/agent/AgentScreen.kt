@@ -302,7 +302,8 @@ fun AgentContent(
                             pendingRestore = state.sendRejectedText,
                             pendingRestoreCommandId = state.sendRejectedCommandId,
                             onRestoreConsumed = onAckSendRejected,
-                            requestFocus = state.sessionId == null || state.composer.editingPrompt,
+                            requestFocus = state.sessionId == null || state.composer.editingPrompt ||
+                                awaitsFirstMessage(state),
                             composerGeneration = state.composerGeneration,
                             idlePlaceholder = DailyBriefCopy.composerPrompt(state.conversationOrigin),
                             initialText = state.composer.text,
@@ -968,7 +969,7 @@ private fun Transcript(
         ) {
             if (originCard != null) {
                 item(key = "transcript-origin") {
-                    ConversationOriginCard(originCard, onOpenWatch = onOpenWatch)
+                    ConversationOriginCard(originCard, onOpenWatch = onOpenWatch, onOpenTask = onOpenTask)
                 }
             }
             item(key = "transcript-pagination") {

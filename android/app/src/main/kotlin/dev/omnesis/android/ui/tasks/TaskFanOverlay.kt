@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AddTask
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DateRange
@@ -119,6 +120,9 @@ class TaskFanController {
     /** Runs a chosen action on its task. */
     var perform: (TaskDto, TaskFanAction) -> Unit = { _, _ -> }
 
+    /** The gateway opens conversations about tasks: a task's fan offers Chat about this. */
+    var chatAvailable: Boolean = false
+
     /** Every row's layout by task id: what a press lands on, and the row kept lit. */
     private val rows = mutableMapOf<String, LayoutCoordinates>()
 
@@ -177,6 +181,7 @@ class TaskFanController {
             mode = mode,
             tracking = tracking,
             suggestion = task.isSuggestion,
+            chat = chatAvailable,
         )
         this.task = task
         openings++
@@ -450,6 +455,7 @@ internal fun fanTargetTag(action: TaskFanAction): String = when (action) {
     TaskFanAction.NextWeek -> "nextWeek"
     TaskFanAction.Someday -> "someday"
     TaskFanAction.Ignore -> "ignore"
+    TaskFanAction.ChatAbout -> "chatAbout"
 }
 
 private fun fanIcon(action: TaskFanAction): ImageVector = when (action) {
@@ -470,4 +476,5 @@ private fun fanIcon(action: TaskFanAction): ImageVector = when (action) {
     TaskFanAction.NextWeek -> Icons.Outlined.DateRange
     TaskFanAction.Someday -> Icons.Outlined.HourglassEmpty
     TaskFanAction.Ignore -> Icons.Outlined.VisibilityOff
+    TaskFanAction.ChatAbout -> Icons.Outlined.ChatBubbleOutline
 }

@@ -767,20 +767,24 @@ public struct CreateSessionResponse: Decodable, Sendable, Equatable {
 
 /// Origin anchor for a conversation that did not start as a blank chat — a
 /// thread the agent opened itself when one of the operator's watches fired
-/// (`kind == "watch_firing"`), or the standing Morning brief conversation
-/// (`kind == "daily_brief"`). The per-kind fields are optional in the decode
-/// so an unknown future kind degrades to a plain conversation instead of
-/// failing the session decode.
+/// (`kind == "watch_firing"`), the standing Morning brief conversation
+/// (`kind == "daily_brief"`), or a chat about a task (`kind == "task"`). The
+/// per-kind fields are optional in the decode so an unknown future kind
+/// degrades to a plain conversation instead of failing the session decode.
 public struct ConversationOrigin: Decodable, Sendable, Equatable {
     public let kind: String
     /// The firing that opened the thread, when `kind == "watch_firing"`.
     public let firingId: String?
     /// The watch that fired — the thread's durable subject.
     public let watchId: String?
+    /// The task a `task` conversation is about.
+    public let taskId: String?
     public let runId: String
     /// Watch + firing content at thread creation — survives the watch's
     /// later renaming, editing or deletion.
     public let watch: WatchFiringOriginSnapshot?
+    /// The task as it stood when the conversation was started, for its card.
+    public let task: TaskConversationOriginSnapshot?
     /// Leading messages that are the folded run transcript.
     public let seedMessageCount: Int?
     /// Where each morning brief sits in a `daily_brief` thread, oldest first; empty on list summaries.
@@ -790,22 +794,26 @@ public struct ConversationOrigin: Decodable, Sendable, Equatable {
         kind: String,
         firingId: String? = nil,
         watchId: String? = nil,
+        taskId: String? = nil,
         runId: String,
         watch: WatchFiringOriginSnapshot? = nil,
+        task: TaskConversationOriginSnapshot? = nil,
         seedMessageCount: Int? = nil,
         briefs: [DailyBriefMessageRef] = []
     ) {
         self.kind = kind
         self.firingId = firingId
         self.watchId = watchId
+        self.taskId = taskId
         self.runId = runId
         self.watch = watch
+        self.task = task
         self.seedMessageCount = seedMessageCount
         self.briefs = briefs
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, firingId, watchId, runId, watch, seedMessageCount, briefs
+        case kind, firingId, watchId, taskId, runId, watch, task, seedMessageCount, briefs
     }
 
     public init(from decoder: Decoder) throws {
@@ -814,7 +822,10 @@ public struct ConversationOrigin: Decodable, Sendable, Equatable {
         firingId = try container.decodeIfPresent(String.self, forKey: .firingId)
         watchId = try container.decodeIfPresent(String.self, forKey: .watchId)
         runId = try container.decode(String.self, forKey: .runId)
+        taskId = try container.decodeIfPresent(String.self, forKey: .taskId)
         watch = try container.decodeIfPresent(WatchFiringOriginSnapshot.self, forKey: .watch)
+        // An unreadable task snapshot drops only the card.
+        task = try? container.decodeIfPresent(TaskConversationOriginSnapshot.self, forKey: .task)
         seedMessageCount = try container.decodeIfPresent(Int.self, forKey: .seedMessageCount)
         // A malformed reference is dropped on its own; the thread still opens.
         briefs = (try? container.decodeIfPresent([LossyDailyBriefRef].self, forKey: .briefs))?

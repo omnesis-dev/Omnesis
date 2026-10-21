@@ -157,4 +157,34 @@ class TasksClientTest {
 
         repeat(3) { assertEquals("no-store", server.takeRequest().getHeader("Cache-Control")) }
     }
+
+    @Test
+    fun chat_about_a_task_posts_an_empty_body_and_returns_the_new_conversation() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"conversation":{"id":"conv_example","title":"Renew the studio lease","messageCount":0,""" +
+                    """"origin":{"kind":"task","taskId":"loop/odd id","runId":"loop/odd id",""" +
+                    """"task":{"title":"Renew the studio lease","state":"open","sourceCount":2},"seedMessageCount":0}}}""",
+            ),
+        )
+
+        val conversation = client().conversation("loop/odd id")
+
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/tasks/loop%2Fodd%20id/conversation", request.path)
+        assertEquals("{}", request.body.readUtf8())
+        assertEquals("conv_example", conversation.sessionId)
+        assertEquals("loop/odd id", conversation.origin?.taskId)
+        assertEquals(2, conversation.origin?.task?.sourceCount)
+    }
+
+    @Test
+    fun chat_about_a_missing_task_is_not_found() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"task not found"}"""))
+
+        val error = runCatching { client().conversation("loop_gone") }.exceptionOrNull()
+
+        assertTrue(error is dev.omnesis.android.transport.GatewayException.NotFound)
+    }
 }

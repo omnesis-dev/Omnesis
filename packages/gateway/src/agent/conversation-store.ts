@@ -84,8 +84,8 @@ export interface ConversationRecord {
   pinned: boolean;
   /**
    * Where this conversation came from, when it did not start as a blank
-   * chat: a watch firing the agent opened, or the standing Morning brief
-   * conversation. Absent on plain conversations and on records written
+   * chat: a watch firing the agent opened, the standing Morning brief
+   * conversation, or a conversation the user opened about a task. Absent on plain conversations and on records written
    * before origins existed.
    */
   origin?: ConversationOrigin;
@@ -122,7 +122,10 @@ export interface ConversationRecord {
  * discriminated union over the anchor kinds that exist. Every kind resumes
  * on the main session profile.
  */
-export type ConversationOrigin = WatchFiringConversationOrigin | DailyBriefConversationOrigin;
+export type ConversationOrigin =
+  | WatchFiringConversationOrigin
+  | DailyBriefConversationOrigin
+  | TaskConversationOrigin;
 
 /**
  * The standing Morning brief conversation: one per gateway, pinned and
@@ -217,6 +220,43 @@ export type WatchFiringOriginSnapshot = {
   condition: string;
   /** When the firing happened (epoch ms). */
   firedAt: number;
+};
+
+/**
+ * A conversation the user opened about one of their tasks ("Chat about
+ * this"). It starts empty: the user's first message is the first message,
+ * and there is no hidden seed. Every turn's system prompt carries the task as
+ * it currently stands (see `TaskContextProvider` in `service.ts`).
+ */
+export type TaskConversationOrigin = {
+  kind: "task";
+  /** The task (open loop) the conversation is about. */
+  taskId: string;
+  /**
+   * The task id again, under the field name every origin carries, so a
+   * gateway that does not know this kind refuses to resume the thread
+   * instead of running it as a plain chat.
+   */
+  runId: string;
+  /**
+   * The task as it stood when the conversation was opened, for the client's
+   * context card. It is never refreshed, so the card still renders after the
+   * task changes or is deleted.
+   */
+  task?: TaskConversationOriginSnapshot;
+  /** Always 0: the conversation has no hidden seed. */
+  seedMessageCount?: number;
+};
+
+/** The task fields a client needs to draw the context card. */
+export type TaskConversationOriginSnapshot = {
+  title: string;
+  /** The task's state as `GET /tasks` reports it. */
+  state: string;
+  /** The day the task is due (`YYYY-MM-DD`), when it has a deadline. */
+  due?: string;
+  /** How many of the task's linked documents could be opened. */
+  sourceCount: number;
 };
 
 export interface ConversationSummary {
@@ -707,6 +747,8 @@ export function originAnchor(origin: ConversationOrigin): ConversationOrigin {
         runId: origin.runId,
         watchId: origin.watchId,
       };
+    case "task":
+      return { kind: "task", taskId: origin.taskId, runId: origin.runId };
     default:
       return assertNever(origin);
   }
@@ -768,6 +810,16 @@ function parseOrigin(value: unknown): ConversationOrigin | undefined {
       ...(seedMessageCount !== undefined ? { seedMessageCount } : {}),
     };
   }
+  if (o.kind === "task" && typeof o.taskId === "string" && o.taskId.length > 0) {
+    const task = parseTaskSnapshot(o.task);
+    return {
+      kind: "task",
+      taskId: o.taskId,
+      runId: o.runId,
+      ...(task ? { task } : {}),
+      ...(seedMessageCount !== undefined ? { seedMessageCount } : {}),
+    };
+  }
   if (o.kind === "daily_brief") {
     const briefs = Array.isArray(o.briefs)
       ? o.briefs.flatMap((ref: unknown): DailyBriefMessageRef[] => {
@@ -802,6 +854,21 @@ function parseWatchFiringSnapshot(value: unknown): WatchFiringOriginSnapshot | u
     name: s.name,
     condition: s.condition,
     firedAt: typeof s.firedAt === "number" ? s.firedAt : 0,
+  };
+}
+
+function parseTaskSnapshot(value: unknown): TaskConversationOriginSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const s = value as Record<string, unknown>;
+  if (typeof s.title !== "string" || typeof s.state !== "string") return undefined;
+  return {
+    title: s.title,
+    state: s.state,
+    ...(typeof s.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.due) ? { due: s.due } : {}),
+    sourceCount:
+      typeof s.sourceCount === "number" && Number.isInteger(s.sourceCount) && s.sourceCount >= 0
+        ? s.sourceCount
+        : 0,
   };
 }
 

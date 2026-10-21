@@ -22,6 +22,9 @@ struct TaskJournalPage: View {
     /// Opens the note composer for a task: "Done + note", or a suggestion's
     /// "Accept with note".
     var onNote: (TaskNoting) -> Void = { _ in }
+    /// Starts a chat about a task; nil when the gateway cannot, which keeps
+    /// Chat about this out of the fan.
+    var onChat: ((TaskRecord) -> Void)?
     /// A fan to show as soon as the rows are laid out — previews and
     /// snapshots.
     var initialFan: TaskFanPreview?
@@ -84,6 +87,8 @@ struct TaskJournalPage: View {
             // An open fan keeps the bounds it opened with: the toast coming
             // or going must not pull it out from under a finger.
             .onChange(of: viewport.size) { _, size in configureFan(size: size) }
+            // `/status` can report the chat capability after the page appeared.
+            .onChange(of: onChat != nil) { _, _ in configureFan(size: viewport.size) }
         }
         .coordinateSpace(.named(TaskFanOverlay.space))
         .onPreferenceChange(TaskRowFrameKey.self) { frames in fan.rowFrames = frames }
@@ -109,6 +114,7 @@ struct TaskJournalPage: View {
         metrics.targetHeight = max(44, fanTargetHeight)
         metrics.targetWidth = min(fanTargetWidth, max(140, size.width - metrics.lead - 2 * TaskRowView.textInset))
         fan.metrics = metrics
+        fan.offersChat = onChat != nil
         fan.perform = { action, task in run(action, on: task) }
         press.canBegin = { point in fan.pressedTask(at: point, in: page.tasks) != nil }
         press.began = { point in
@@ -141,6 +147,7 @@ struct TaskJournalPage: View {
         case .accept: Task { await model.perform(.accept(scheduledFor: .unchanged), on: task) }
         case .acceptWithNote: onNote(TaskNoting(task: task, purpose: .accept))
         case .ignore: Task { await model.perform(.ignore(reason: nil), on: task) }
+        case .chat: onChat?(task)
         case .otherMonth: fan.openForAccessibility(task, today: model.today, mode: .months(page: 0))
         case .acceptFor: fan.openForAccessibility(task, today: model.today, mode: .when)
         case .back, .laterMonths, .earlierMonths: break
@@ -219,7 +226,8 @@ struct TaskJournalPage: View {
                 onBullet: { Task { await model.tapBullet(task) } },
                 onAction: { action in Task { await model.perform(action, on: task) } },
                 onDocument: onDocument,
-                onFanAction: { run($0, on: task) }
+                onFanAction: { run($0, on: task) },
+                offersChat: onChat != nil
             )
             // The whole row is where a long press opens the fan.
             .background {

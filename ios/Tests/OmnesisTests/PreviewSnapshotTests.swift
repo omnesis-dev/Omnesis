@@ -6705,6 +6705,78 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "181-watch-firing-context-card-legacy")
     }
 
+    /// The task card pinned above a chat started from that task's fan: what
+    /// the chat is about, its state, due day and documents, and the way back
+    /// to the task.
+    func testTaskContextCard() {
+        let view = ScrollView {
+            TaskContextCard(
+                snapshot: PreviewMocks.taskConversationSnapshot,
+                taskId: PreviewMocks.taskConversationTaskId,
+                today: "2026-10-14"
+            )
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        .environment(NotificationRouter())
+        snapshot(view, name: "181a-task-context-card", size: CGSize(width: 393, height: 320))
+    }
+
+    /// A title that wraps over several lines, a due day already past (the
+    /// flag turns red) and a two-digit source count.
+    func testTaskContextCardLongOverdue() {
+        let view = ScrollView {
+            TaskContextCard(
+                snapshot: PreviewMocks.taskConversationSnapshotLong,
+                taskId: PreviewMocks.taskConversationTaskId,
+                today: "2026-10-14"
+            )
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        .environment(NotificationRouter())
+        snapshot(view, name: "181b-task-context-card-long-overdue", size: CGSize(width: 393, height: 360))
+    }
+
+    /// A task done since the chat started, with no due day and no
+    /// documents: the facts line holds the state alone.
+    func testTaskContextCardDoneNoSources() {
+        let view = ScrollView {
+            TaskContextCard(
+                snapshot: PreviewMocks.taskConversationSnapshotDone,
+                taskId: PreviewMocks.taskConversationTaskId,
+                today: "2026-10-14"
+            )
+            .padding()
+        }
+        .background(Theme.bgPrimary)
+        .environment(NotificationRouter())
+        snapshot(view, name: "181c-task-context-card-done", size: CGSize(width: 393, height: 300))
+    }
+
+    /// A chat just started from a task: the card at the top instead of the
+    /// landing screen, nothing said yet, the composer ready.
+    func testAgentTaskChatStarted() {
+        let store = AppStore.preview(agentPreview: PreviewMocks.taskConversationSeed)
+        snapshot(
+            AgentView(menuOpen: .constant(false))
+                .environment(store)
+                .environment(store.notificationRouter),
+            name: "71c-agent-task-chat-started"
+        )
+    }
+
+    /// The same chat after a first exchange: the card stays above the turns.
+    func testAgentTaskChatAnswered() {
+        let store = AppStore.preview(agentPreview: PreviewMocks.taskConversationAnsweredSeed)
+        snapshot(
+            AgentView(menuOpen: .constant(false))
+                .environment(store)
+                .environment(store.notificationRouter),
+            name: "71d-agent-task-chat-answered"
+        )
+    }
+
     /// The custom `omnesis.mic` symbol (Omnesis mark + microphone) the
     /// Control Center button uses. A ControlWidget can't be hosted in a
     /// test, so this renders the compiled symbol as a tinted template at
@@ -7801,6 +7873,7 @@ final class PreviewSnapshotTests: XCTestCase {
         tasks: [TaskRecord] = PreviewMocks.tasksToday,
         fan: TaskFanPreview,
         experimental: Bool = false,
+        offersChat: Bool = false,
         dynamicType: DynamicTypeSize = .large
     ) {
         let view = NavigationStack {
@@ -7812,6 +7885,7 @@ final class PreviewSnapshotTests: XCTestCase {
                     now: PreviewMocks.tasksNow
                 ),
                 experimental: experimental,
+                onChat: offersChat ? { _ in } : nil,
                 initialFan: fan
             )
             .navigationTitle("Tasks")
@@ -7833,6 +7907,16 @@ final class PreviewSnapshotTests: XCTestCase {
         renderFan(
             "320-tasks-fan-main",
             fan: TaskFanPreview(taskId: PreviewMocks.taskWithPerson.id, pressedAt: 0.72, highlight: .tomorrow)
+        )
+    }
+
+    /// A gateway that can start a chat about a task: the fan ends with Chat
+    /// about this, farthest from the thumb, here under the finger.
+    func testTasksFanChat() {
+        renderFan(
+            "320c-tasks-fan-chat",
+            fan: TaskFanPreview(taskId: PreviewMocks.taskWithPerson.id, pressedAt: 0.72, highlight: .chat),
+            offersChat: true
         )
     }
 

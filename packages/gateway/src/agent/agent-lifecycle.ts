@@ -704,6 +704,17 @@ export class AgentLifecycle {
     else delete this.routeDeps.briefItemReaction;
   }
 
+  /**
+   * A task conversation's per-turn context, kept here for the same reason as
+   * the Morning brief's: a model swap rebuilds the service.
+   */
+  private taskContext: import("./service.js").TaskContextProvider | null = null;
+
+  setTaskContextProvider(provider: import("./service.js").TaskContextProvider | null): void {
+    this.taskContext = provider;
+    this.routeDeps.agentService?.setTaskContextProvider(provider);
+  }
+
   private taskTools: import("./service.js").TaskToolsProvider | null = null;
 
   setTaskToolsProvider(provider: import("./service.js").TaskToolsProvider | null): void {
@@ -1196,6 +1207,7 @@ export class AgentLifecycle {
 
     if (agentService) this.deps.wsEventHandler.attachAgentService(agentService);
     if (agentService && this.taskTools) agentService.setTaskToolsProvider(this.taskTools);
+    if (agentService && this.taskContext) agentService.setTaskContextProvider(this.taskContext);
     if (agentService && this.dailyBriefContext) {
       agentService.setDailyBriefContextProvider(this.dailyBriefContext);
     }
@@ -1437,6 +1449,7 @@ export class AgentLifecycle {
     }
 
     if (newService && this.taskTools) newService.setTaskToolsProvider(this.taskTools);
+    if (newService && this.taskContext) newService.setTaskContextProvider(this.taskContext);
     if (newService && this.dailyBriefContext) {
       newService.setDailyBriefContextProvider(this.dailyBriefContext);
     }

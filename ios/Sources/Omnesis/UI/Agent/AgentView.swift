@@ -778,13 +778,13 @@ public struct AgentView: View {
                 // real content. The loaded set is bounded by the cursor pages
                 // reached as the user scrolls toward the start.
                 VStack(alignment: .leading, spacing: 14) {
-                    // A watch thread is a reply to a firing, not a blank
-                    // chat: pin the firing's card above the messages. The
-                    // folded run transcript that seeded the thread is
-                    // hidden (see AgentCoordinator.visibleMessages) — this
-                    // card carries that context for the reader instead.
-                    if let origin = store.agent.conversationOrigin, let watch = origin.watch {
-                        WatchFiringContextCard(snapshot: watch, watchId: origin.watchId)
+                    // A conversation about something — a watch firing, a
+                    // task — opens on that thing's card. A watch thread's
+                    // seeded run transcript is hidden (see
+                    // AgentCoordinator.visibleMessages); its card carries
+                    // that context for the reader instead.
+                    if let origin = store.agent.conversationOrigin {
+                        ConversationOriginCard(origin: origin)
                     }
                     ListPagingFooter(
                         state: store.agent.transcriptPaging,

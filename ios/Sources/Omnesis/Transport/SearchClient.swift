@@ -1356,6 +1356,8 @@ public struct StatusSnapshot: Decodable, Sendable {
     public let dictation: DictationStatus?
     /// Gateway personal vocabulary opt-in; absent on older gateways.
     public let transcriptionVocabulary: Bool
+    /// The optional features the gateway serves; none from a gateway that predates the map.
+    public let capabilities: GatewayCapabilities
 
     public init(
         documents: Documents,
@@ -1366,7 +1368,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         developer: Bool = false,
         tasks: TasksStatus? = nil,
         dictation: DictationStatus? = nil,
-        transcriptionVocabulary: Bool = false
+        transcriptionVocabulary: Bool = false,
+        capabilities: GatewayCapabilities = GatewayCapabilities()
     ) {
         self.documents = documents
         self.dbSizeBytes = dbSizeBytes
@@ -1377,6 +1380,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.tasks = tasks
         self.dictation = dictation
         self.transcriptionVocabulary = transcriptionVocabulary
+        self.capabilities = capabilities
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1389,6 +1393,7 @@ public struct StatusSnapshot: Decodable, Sendable {
         case tasks
         case dictation
         case transcriptionVocabulary
+        case capabilities
     }
 
     public init(from decoder: Decoder) throws {
@@ -1408,6 +1413,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         // rather than failing the whole snapshot.
         dictation = try? c.decodeIfPresent(DictationStatus.self, forKey: .dictation)
         transcriptionVocabulary = try c.decodeIfPresent(Bool.self, forKey: .transcriptionVocabulary) ?? false
+        // An unreadable map offers no features rather than failing the snapshot.
+        capabilities = (try? c.decodeIfPresent(GatewayCapabilities.self, forKey: .capabilities)) ?? GatewayCapabilities()
     }
 
     /// What the "on disk" stat shows: the gateway's whole footprint, or the

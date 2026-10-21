@@ -21,6 +21,8 @@ public enum TaskFanAction: Hashable, Sendable {
     case otherMonth
     /// Strikes the task: it leaves the lists but keeps its history.
     case cancelTask
+    /// Starts a new chat with Omnesis about the task.
+    case chat
     /// Moves the task to a month, `YYYY-MM`.
     case month(String)
     /// Takes on a suggestion as it stands.
@@ -74,7 +76,9 @@ public struct TaskFanTarget: Equatable, Sendable, Identifiable {
 /// order is fixed and counted outwards from the thumb — Done (Accept, on a
 /// suggestion) is always nearest. Near the top of the list the column flips
 /// downwards (mirrored, so the order by distance never changes); near the
-/// left edge it slides right to stay on screen.
+/// left edge it slides right to stay on screen. When the gateway can start
+/// a chat about a task (`offersChat`), a task's fan ends with Chat about
+/// this, farthest from the thumb.
 ///
 /// The fan lives only while the finger is down: slide onto a target and lift
 /// to act; lift anywhere else and nothing changes. A suggestion's fan offers
@@ -144,6 +148,8 @@ public struct TaskFanSession: Sendable {
     public let metrics: Metrics
     public let today: String
     public let kind: Kind
+    /// Whether a task's main fan offers Chat about this.
+    public let offersChat: Bool
     private let schedule: TaskSchedule
 
     public private(set) var mode: Mode = .main
@@ -165,6 +171,7 @@ public struct TaskFanSession: Sendable {
     ///   - anchor: where the finger pressed.
     ///   - bounds: where targets may go — the visible list, inside its safe area.
     ///   - today: the device's local day, `YYYY-MM-DD`.
+    ///   - offersChat: whether a task's main fan ends with Chat about this.
     ///   - tracking: whether a finger is down driving the fan; false when
     ///     VoiceOver opened it for taps.
     public init(
@@ -172,6 +179,7 @@ public struct TaskFanSession: Sendable {
         bounds: CGRect,
         today: String,
         kind: Kind = .task,
+        offersChat: Bool = false,
         schedule: TaskSchedule = TaskSchedule(),
         metrics: Metrics = Metrics(),
         mode: Mode = .main,
@@ -181,6 +189,7 @@ public struct TaskFanSession: Sendable {
         self.bounds = bounds
         self.today = today
         self.kind = kind
+        self.offersChat = offersChat
         self.schedule = schedule
         self.metrics = metrics
         self.tracking = tracking
@@ -333,6 +342,10 @@ public struct TaskFanSession: Sendable {
         (.cancelTask, "Cancel task"),
     ]
 
+    /// The target a task's main fan ends with when the gateway can start a
+    /// chat about it.
+    public static let chatAction: (TaskFanAction, String) = (.chat, "Chat about this")
+
     /// A suggestion's main fan: take it on as it stands, with a note, or for
     /// a time; say it is already done; or ignore it.
     public static let suggestionActions: [(TaskFanAction, String)] = [
@@ -405,7 +418,8 @@ public struct TaskFanSession: Sendable {
         highlighted = nil
         hoverSince = nil
         let labelled: [(TaskFanAction, String)] = switch mode {
-        case .main: kind == .suggestion ? Self.suggestionActions : Self.mainActions
+        case .main:
+            kind == .suggestion ? Self.suggestionActions : Self.mainActions + (offersChat ? [Self.chatAction] : [])
         case .when: Self.whenActions
         case .months(let page):
             Self.monthActions(page: page, today: today, schedule: schedule, perPage: metrics.monthsPerPage)
