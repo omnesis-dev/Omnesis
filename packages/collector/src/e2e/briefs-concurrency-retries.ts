@@ -65,10 +65,15 @@ export function verifiedCollectionCreateRetries(steps: readonly ExecutedTool[]):
       )
         break;
       const result = steps[next]!.result;
+      const loop = result?.data?.loop;
       if (
         result?.kind === "structured" &&
-        typeof result.data?.loop?.id === "string" &&
-        result.data.loop.title === step.args.title
+        loop !== null &&
+        typeof loop === "object" &&
+        "id" in loop &&
+        typeof loop.id === "string" &&
+        "title" in loop &&
+        loop.title === step.args.title
       ) {
         verified.add(index);
         break;
