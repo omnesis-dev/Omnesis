@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performScrollToNode
@@ -18,7 +19,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.DailyBriefReactionKind
@@ -54,11 +57,13 @@ class DailyBriefInteractionTest {
 
     private fun start(
         days: Int = 3,
+        // Today's brief is the conversation's last turn, so it opens there, unless a test answers it.
+        latestAnswer: String? = null,
         failingOnce: Set<String> = emptySet(),
         failingReactions: Set<String> = emptySet(),
         withNoteCapture: Boolean = false,
     ) {
-        val (origin, messages) = DailyBriefFixtures.conversation(days)
+        val (origin, messages) = DailyBriefFixtures.conversation(days, latestAnswer)
         loader = DailyBriefFixtures.Loader(DailyBriefFixtures.pages, failingOnce)
         sender = DailyBriefFixtures.Sender(failing = failingReactions)
         val state = AgentCoordinator.UiState(
@@ -115,13 +120,32 @@ class DailyBriefInteractionTest {
         compose.onNodeWithText("Reply about today's brief…").assertExists()
     }
 
-    /** Opening on a long history still lands on the latest brief, not the oldest day. */
+    /** Opening on a long history still lands on the latest brief, header first, not the oldest day. */
     @Test
     fun a_long_conversation_opens_at_its_latest_brief() {
         start(days = 14)
         node("dailyBrief.separator.2026-10-14").assertIsDisplayed()
         compose.onNodeWithContentDescription("Morning brief, sent at 07:05").assertIsDisplayed()
         node("dailyBrief.separator.2026-10-01").assertDoesNotExist()
+    }
+
+    /** Once today's brief has been answered, the conversation opens at the top of that answer. */
+    @Test
+    fun an_answered_brief_opens_at_the_top_of_the_latest_answer() {
+        val answer = (1..40).joinToString("\n\n") { n ->
+            when (n) {
+                1 -> "Opening line of the answer."
+                40 -> "Closing line of the answer."
+                else -> "Step $n of the invented plan for the day."
+            }
+        }
+        start(latestAnswer = answer)
+        val opening = compose.onNode(hasText("Opening line of the answer."), useUnmergedTree = true)
+        opening.assertIsDisplayed()
+        val top = opening.getUnclippedBoundsInRoot().top
+        val end = compose.onNode(hasText("Closing line of the answer."), useUnmergedTree = true).getUnclippedBoundsInRoot().top
+        val screen = compose.onRoot().getUnclippedBoundsInRoot().bottom
+        assertTrue("answer top at $top, its end at $end, screen $screen", top > 100.dp && top < 220.dp && end > screen)
     }
 
     /** A folded line reads its count itself, so it is right even before its separator scrolls in. */

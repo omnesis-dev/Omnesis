@@ -100,7 +100,7 @@ export function MessageBubble({ turn, citations, dispatch, header = null, footer
   }
   return html`
     <${MessageActions} text=${turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")} action=${turn.role === "user" && onEdit && canEdit ? { label: "Edit and resend", onSelect: () => onEdit(turn.parts.filter(part => part.kind === "text").map(part => part.text).join("\n\n")) } : null}>
-    <div class=${`agent-msg agent-msg-${turn.role}`}>
+    <div class=${`agent-msg agent-msg-${turn.role}`} data-turn-id=${turn.id}>
       ${header}
       <div class="agent-msg-body">
         ${turn.parts.map((part, i) =>

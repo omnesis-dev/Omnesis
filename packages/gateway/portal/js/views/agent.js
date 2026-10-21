@@ -163,6 +163,7 @@ export function scheduleReplayGapReconcile(
 }
 import { DevAnnotateButton } from "../components/dev-annotate-button.js";
 import { LoadMore } from "../components/load-more.js";
+import { anchorScrollTop, readingAnchor, replyEnded } from "../lib/reading-anchor.js";
 
 // Pushpin glyph marking a pinned conversation in the rail. The pin/unpin
 // action itself lives in the global sidebar's "…" menu (app.js); the rail
@@ -245,6 +246,11 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // turn change. If they were, we keep them pinned; if they had scrolled up
   // to read history we don't yank them back down on every delta.
   const pinnedToBottomRef = useRef(true);
+  // Set by a conversation load so the next transcript render applies the
+  // reading anchor (see `readingAnchor`), and the reply the reader was last
+  // positioned on or watched to its end.
+  const anchorOnLoadRef = useRef(false);
+  const seenReplyRef = useRef(null);
   // Guards the "first mount auto-resumes the most recent" branch from
   // re-firing later when the URL bounces back to `/portal/agent` via "+ New".
   // Without this, clicking "+ New" would always re-resume the last
@@ -363,6 +369,11 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         ) {
           settleAgentTerminal(cancelGenerationRef);
           setActionFailure(null);
+          anchorOnLoadRef.current = false;
+          seenReplyRef.current = replyEnded(
+            activeSessionIdRef.current,
+            document.visibilityState !== "hidden",
+          );
         }
         dispatchConversationEvent({ kind: msg.type, payload: msg.payload });
         // After each completed turn, refresh the conversations list so
@@ -503,6 +514,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         const page = await loadPersistedConversation(clientRef.current, id);
         if (loadSeq !== sessionLoadSeqRef.current) return;
         activeSessionIdRef.current = id;
+        anchorOnLoadRef.current = true;
         dispatch({
           kind: "load-conversation",
           sessionId: id,
@@ -548,6 +560,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       activeSessionIdRef.current = session.sessionId;
       if (session.busy === true) reloadAfterEndRef.current.add(session.sessionId);
       else reloadAfterEndRef.current.delete(session.sessionId);
+      anchorOnLoadRef.current = true;
       dispatch({
         kind: "load-conversation",
         sessionId: session.sessionId,
@@ -875,6 +888,22 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       olderHistoryScrollHeightRef.current = null;
       return;
     }
+    if (anchorOnLoadRef.current) {
+      anchorOnLoadRef.current = false;
+      const { turnId, seen } = readingAnchor(state, seenReplyRef.current);
+      seenReplyRef.current = seen;
+      const bubble = turnId
+        ? [...el.querySelectorAll("[data-turn-id]")].find((node) => node.getAttribute("data-turn-id") === turnId)
+        : null;
+      if (bubble) {
+        // A Morning brief opens under its day's separator.
+        const isBrief = Boolean(state.turns.find((turn) => turn.id === turnId)?.brief);
+        const target = (isBrief && bubble.closest(".brief-day")) || bubble;
+        el.scrollTop = anchorScrollTop(el, target);
+        pinnedToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 80;
+        return;
+      }
+    }
     if (pinnedToBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
@@ -937,6 +966,9 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // its pill after handing them off so the next send is an ordinary turn.
   async function send(text, options = {}) {
     if (!clientRef.current || state.terminalFailure) return false;
+    // Sending follows the transcript to the bottom, wherever the reader was.
+    anchorOnLoadRef.current = false;
+    pinnedToBottomRef.current = true;
     const sendGeneration = ++sendGenerationRef.current;
     cancelGenerationRef.current += 1;
     setActionFailure(null);

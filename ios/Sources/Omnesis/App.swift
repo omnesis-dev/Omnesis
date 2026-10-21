@@ -71,6 +71,8 @@ public struct OmnesisApp: App {
                 settingsPreviewRoot
             } else if Self.accessAuthorizationPreview {
                 accessAuthorizationPreviewRoot
+            } else if Self.agentReadingAnchorPreview {
+                LoadedAgentPreview(session: PreviewMocks.agentReadingAnchorSession)
             } else if let seed = Self.agentPreviewSeed {
                 if Self.agentPreviewDelayed {
                     DelayedAgentPreview(seed: seed)
@@ -196,6 +198,13 @@ public struct OmnesisApp: App {
     /// the first render. See `DelayedAgentPreview`.
     static var agentPreviewDelayed: Bool {
         ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "scroll-stress-delayed"
+    }
+
+    /// `reading-anchor` opens a stored conversation through the coordinator's
+    /// load path, as a resume does, so the transcript positions itself the
+    /// way a real open would. See `LoadedAgentPreview`.
+    static var agentReadingAnchorPreview: Bool {
+        ProcessInfo.processInfo.environment["DEMO_AGENT_PREVIEW"] == "reading-anchor"
     }
 
     /// `DEMO_MENU_REVEAL=list|capture|tasks|briefs` boots the menu-reveal UI-test
@@ -387,6 +396,26 @@ private struct DelayedAgentPreview: View {
             .task {
                 try? await Task.sleep(nanoseconds: 700_000_000)
                 store.installAgentPreview(seed)
+            }
+    }
+}
+
+/// Opens a stored conversation the way the app does: the surface first shows
+/// its empty state, then the session snapshot arrives and goes through the
+/// coordinator's load path, which decides where the transcript opens. Drives
+/// the reading-anchor UI test.
+@available(iOS 17.0, *)
+private struct LoadedAgentPreview: View {
+    let session: CreateSessionResponse
+    @State private var store: AppStore = .preview(agentPreview: nil)
+
+    var body: some View {
+        AgentView(menuOpen: .constant(false))
+            .environment(store)
+            .environment(\.appearanceStore, AppearanceStore(mode: .dark))
+            .task {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                await store.agent.applySnapshotForTesting(session, buffered: [])
             }
     }
 }

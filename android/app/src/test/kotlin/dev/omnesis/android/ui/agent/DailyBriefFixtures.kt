@@ -32,11 +32,14 @@ object DailyBriefFixtures {
     private fun brief(text: String) = ChatMessage.Assistant(listOf(AssistantPart.Text(text)))
     private fun user(text: String) = ChatMessage.User(listOf(UserPart.Text(text)))
 
+    const val ANSWER = "Start with the venue deposit; the quote holds the date until Friday."
+
     /**
      * [days] briefs ending today, each followed by a reply and its answer except the second to
-     * last, which nobody answered.
+     * last, which nobody answered. Today's answer is [latestAnswer]; null leaves today's brief
+     * unanswered, the last turn of the conversation.
      */
-    fun conversation(days: Int = 3): Pair<ConversationOrigin, List<ChatMessage>> {
+    fun conversation(days: Int = 3, latestAnswer: String? = ANSWER): Pair<ConversationOrigin, List<ChatMessage>> {
         val messages = mutableListOf<ChatMessage>()
         val refs = mutableListOf<DailyBriefMessageRef>()
         val last = LocalDate.of(2026, 10, 14)
@@ -50,9 +53,10 @@ object DailyBriefFixtures {
                 sentAt = if (n == days - 1) "2026-10-14T06:05:00.000Z" else null,
             )
             messages += brief(briefText(day))
-            if (n != days - 2) {
+            val answer = if (n == days - 1) latestAnswer else ANSWER
+            if (n != days - 2 && answer != null) {
                 messages += user("What is the first thing to do on ${day.dayOfWeek.name.lowercase()}?")
-                messages += brief("Start with the venue deposit; the quote holds the date until Friday.")
+                messages += brief(answer)
             }
         }
         val origin = ConversationOrigin(kind = ConversationOrigin.DAILY_BRIEF_KIND, runId = "run_example", briefs = refs)
