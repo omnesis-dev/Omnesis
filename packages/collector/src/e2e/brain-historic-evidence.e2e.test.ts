@@ -102,11 +102,16 @@ beforeAll(async () => {
     },
     behaviors: {
       dynamic: knowledgePuppet({
+        maxRevisionConflictRetries: 8,
         targets: (item) =>
           item.source && item.source.title !== archived.title && evidence.has(promise.title)
             ? ["console-project"]
             : [],
         plan(item, _ctx, steps) {
+          // A refreshed frontier requires fresh reconciliation and editing reads.
+          steps = steps.slice(
+            steps.findLastIndex((step) => step.name === "knowledge_next_frontier") + 1,
+          );
           if (item.source) {
             if ([equipment.title, project.title].includes(item.source.title)) return { calls: [] };
             const page =
@@ -126,17 +131,22 @@ beforeAll(async () => {
               call("knowledge_list", { kind: "wiki" }),
               call("knowledge_candidates", {}),
             ];
-            if (item.source.title === promise.title)
-              calls.push(
-                call("open_loop_search", { query: loopTitle }),
-                call("open_loop_create", {
-                  title: loopTitle,
-                  description: promise.content,
-                  confidence: 0.9,
-                  importance: 0.7,
-                  docs: [item.source.id],
-                }),
-              );
+            if (item.source.title === promise.title) {
+              calls.push(call("open_loop_search", { query: loopTitle }));
+              const found = z
+                .object({ loops: z.array(z.object({ id: z.string(), title: z.string() })) })
+                .safeParse(last(steps, "open_loop_search", "query", loopTitle));
+              if (!found.success || !found.data.loops.some((loop) => loop.title === loopTitle))
+                calls.push(
+                  call("open_loop_create", {
+                    title: loopTitle,
+                    description: promise.content,
+                    confidence: 0.9,
+                    importance: 0.7,
+                    docs: [item.source.id],
+                  }),
+                );
+            }
             if (item.source.title === cancellation.title) {
               calls.push(call("open_loop_search", { query: loopTitle }));
               const found = z

@@ -465,8 +465,9 @@ describe("Brain Bench — the operator surface", () => {
     expect(decision.docIds).toContain(invoiceDocId);
     expect(decision.subject).toMatch(/^knowledge maintenance batch /);
 
-    // Mutating calls become actions, in order; reads are counted, not listed.
-    expect(decision.actions.slice(0, 4).map((a) => a.tool)).toEqual([
+    // Conflicted mutations remain audited; successful calls retain plan order.
+    const successful = decision.actions.filter((action) => action.ok);
+    expect(successful.slice(0, 4).map((a) => a.tool)).toEqual([
       "open_loop_create",
       "open_loop_ledger_append",
       "annotate_durable",
@@ -475,18 +476,40 @@ describe("Brain Bench — the operator surface", () => {
     // Canonical creation also offers the loop and annotation mirrors for
     // maintenance; maintenance settles an observation without a model turn.
     // Those saves are real mutations and must remain visible in the audit.
-    expect(decision.actions.slice(4).map((a) => a.tool)).toEqual([
-      "knowledge_save",
-      "knowledge_save",
-    ]);
+    expect(successful.slice(4).map((a) => a.tool)).toEqual(["knowledge_save", "knowledge_save"]);
     expect(
-      decision.actions
+      successful
         .slice(4)
         .map((a) => a.detail.split(" ").slice(0, 2).join(" "))
         .sort(),
     ).toEqual(["save doc_annotation", "save loop"]);
-    expect(decision.actions.every((a) => a.ok)).toBe(true);
-    expect(decision.actions[0]!.detail).toContain(INVOICE_MARKER);
+    expect(successful[0]!.detail).toContain(INVOICE_MARKER);
+    const refs = await bench.obs.transcripts({ runId: decision.runId });
+    const { transcript } = await bench.obs.transcript(refs.items.at(-1)!.fileName);
+    const starts = new Map(
+      transcript.events
+        .filter((event) => event.type === "agent.tool.start")
+        .map((event) => {
+          const payload = event.payload as { toolCallId: string; tool: string };
+          return [payload.toolCallId, payload.tool] as const;
+        }),
+    );
+    const refused = transcript.events.flatMap((event) => {
+      if (event.type !== "agent.tool.result") return [];
+      const payload = event.payload as {
+        toolCallId: string;
+        result: { kind: string; code?: string };
+      };
+      const tool = starts.get(payload.toolCallId);
+      if (payload.result.kind !== "error" || !successful.some((action) => action.tool === tool))
+        return [];
+      expect(payload.result.code).toBe("revision_conflict");
+      return [tool];
+    });
+    // Every refused write remains visible beside the successful retry.
+    expect(decision.actions.filter((action) => !action.ok).map((action) => action.tool)).toEqual(
+      refused,
+    );
     // `open_loop_search` is research, not a decision.
     expect(decision.researchToolCalls).toBeGreaterThanOrEqual(1);
     expect(decision.finalText).toContain("batch complete");
