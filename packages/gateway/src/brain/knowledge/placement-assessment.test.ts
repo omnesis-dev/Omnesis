@@ -355,6 +355,19 @@ it("defers editorial improvement separately after factual review, without a comp
   ).toBeDefined();
 });
 
+it("explains that claim repair, unlike a whole-page review, cannot be deferred", () => {
+  db.exec("UPDATE knowledge_work SET reason='change'");
+  const input = proposal();
+  input.maintenance!.curationDeferral = {
+    reasonCode: "insufficient_useful_context",
+    reason: "No useful additional context.",
+  };
+  expect(() => saveKnowledgeNode(db, input, 2)).toThrow(
+    /defers only an offered whole-page review.*leave their review pending/,
+  );
+  expect(getKnowledgeNode(db, "cabinet")!.revision).toBe(1);
+});
+
 it("does not let editorial deferral settle unreviewed claims or change page content", () => {
   const input = proposal();
   input.maintenance!.curationDeferral = {

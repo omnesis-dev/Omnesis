@@ -212,6 +212,13 @@ any source of it is installed. Every consumer reads the list live
   large or deep to check are refused too. No new loop, annotation, temporal
   annotation or page claim can rest on one. A `knowledge_save` may carry the
   page's existing citations of an excluded document through unchanged.
+- **Maintenance.** A run cannot re-check a claim that cites an excluded
+  document, and that is not evidence against the claim. While none of the
+  claim's own references changed, maintenance does not offer it for review: the
+  engine settles its outcome as `skipped` (not examined, never verified) before
+  offering the page (`knowledge/unreadable-support.ts`), and the run keeps it
+  unchanged when it saves the page. A claim whose own reference changed or was
+  deleted is still offered, because a real change is the Brain's to judge.
 
 The interactive agent and its own memory tools are unaffected. Existing
 knowledge derived from an excluded source is kept and stays visible to Brain
@@ -370,7 +377,26 @@ Model-authored wiki and root replacements preserve existing claim identities
 unless `node.claimRemovals` explicitly names each omitted claim and its reason.
 `reviewedClaimIds` records review, not deletion permission. The writer rechecks
 removal intent and records it in the revision diff. Empty wiki replacements are
-refused. These checks prevent accidental omission, not semantic loss within a
+refused. One save, `knowledge_edit` included, cannot gut a page: it is refused,
+saving nothing, when it removes more than half of the page's claims and at least
+three, when it retitles the page while removing most of its claims (two or
+more), or when one removal reason covers more than two claims. Removing one or
+two claims, or two of a three-claim page under its title, stays an ordinary
+edit. The refusal comes before any paid check and names the paths that remain:
+keep claims that cannot be re-checked and leave their review pending, retire a
+page that no longer stands with `knowledge_retire`, or remove claims a few at a
+time, each for its own reason. Being unable to re-check a claim in a run is
+never a reason to remove it. `curationDeferral` defers only the editorial
+obligation of a whole-page review (`review=true`); claim repair cannot be
+deferred, and its refusal says so.
+Each offered page lists `pendingClaimIds`; a save settles the claims it
+changes or names in `reviewedClaimIds`, and the rest stay pending and are
+offered again in the same batch. A pending claim the save carried through with
+unchanged dependency versions keeps its verification state, so editing one claim
+never makes the page or its untouched claims stale. A pending claim whose
+recorded versions the save moved (because the run read a newer version of a
+reference it shares) is marked stale until it is reviewed: a new version map is
+not a review. These checks prevent accidental omission, not semantic loss within a
 retained claim; content quality still requires review. Root replacements also acknowledge
 removed readable wiki navigation with `node.navigationRemovals` entries naming
 the target and a bounded local reason. This applies even when claim IDs survive.
