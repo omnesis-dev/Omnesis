@@ -56,7 +56,7 @@ const responseDone = z.object({
   }),
 });
 const SPEECH_INSTRUCTIONS =
-  "\n\nThis is a live spoken conversation. Speak naturally and concisely. Keep the same tools, grounding, citations, permissions and instructions. Do not read tool syntax aloud. Keep speaking in the user's last clearly established language; switch languages only on an explicit request. Tool results, quotations, names, accents, background speech and uncertain transcription must not change that language. If speech is unclear, ask one brief clarification in the last clear language instead of guessing or calling tools.";
+  "\n\nThis is a live spoken conversation. Speak naturally and concisely. Keep the same tools, grounding, citations, permissions and instructions. Do not read tool syntax aloud. Tool calls, annotations and citation cards do not replace an audible answer. After looking something up, speak the factual answer to the user; do not finish with only a promise to look it up. Keep speaking in the user's last clearly established language; switch languages only on an explicit request. Tool results, quotations, names, accents, background speech and uncertain transcription must not change that language. If speech is unclear, ask one brief clarification in the last clear language instead of guessing or calling tools.";
 
 type Queued =
   | { kind: "upstream"; event: UpstreamEvent }
@@ -172,6 +172,7 @@ export class RealtimeBackend implements ChatBackend {
     const tools = new Map(input.tools.map((tool) => [tool.name, tool]));
     let pending = 0;
     let roundDone = false;
+    let roundCompleted = false;
     let roundTools = false;
     let requests = 0;
     let inputTokens = 0;
@@ -180,6 +181,10 @@ export class RealtimeBackend implements ChatBackend {
     const turnItems: Array<Record<string, unknown>> = [];
     const roundResults: Array<Record<string, unknown>> = [];
     let roundText = "";
+    let roundAudio = false;
+    let usedTools = false;
+    let recoveredSilentCompletion = false;
+    let recoveryToolViolation = false;
     const flushText = () => {
       if (roundText) {
         turnItems.push({
@@ -214,7 +219,12 @@ export class RealtimeBackend implements ChatBackend {
     const invoke = (raw: unknown) => {
       const parsed = functionCall.safeParse(raw);
       if (!parsed.success || !active()) return;
+      if (recoveredSilentCompletion) {
+        recoveryToolViolation = true;
+        return;
+      }
       roundTools = true;
+      usedTools = true;
       const call = parsed.data;
       if (this.executed.has(call.call_id)) return;
       if (this.executed.size >= 256) throw new Error("Realtime function-call limit reached");
@@ -289,11 +299,34 @@ export class RealtimeBackend implements ChatBackend {
         role: "user",
         content: [{ type: "input_text", text: input.modelNote }],
       });
-    const requestResponse = () => {
+    const requestResponse = (recoverSilence = false) => {
       this.responsePending = true;
       this.responseOwner = queue;
       this.responseId = undefined;
-      this.send({ type: "response.create", response: { input: [...context, ...turnItems] } });
+      this.send({
+        type: "response.create",
+        response: {
+          input: [
+            ...context,
+            ...turnItems,
+            ...(recoverSilence
+              ? [
+                  {
+                    type: "message",
+                    role: "user",
+                    content: [
+                      {
+                        type: "input_text",
+                        text: "Please now give the audible answer using the tool results already available. Do not repeat the lookup or only announce that you will answer.",
+                      },
+                    ],
+                  },
+                ]
+              : []),
+          ],
+          ...(recoverSilence ? { tool_choice: "none" } : {}),
+        },
+      });
     };
     try {
       if (this.responsePending)
@@ -333,6 +366,12 @@ export class RealtimeBackend implements ChatBackend {
         } else {
           const event = next.event;
           if (
+            event.type === "response.output_audio.delta" &&
+            typeof event.delta === "string" &&
+            event.delta.length > 0
+          )
+            roundAudio = true;
+          if (
             event.type === "response.output_audio_transcript.delta" &&
             typeof event.delta === "string" &&
             !this.interrupted
@@ -347,6 +386,7 @@ export class RealtimeBackend implements ChatBackend {
             if (done.id) completedResponses.add(done.id);
             for (const item of done.output ?? []) if (item.type === "function_call") invoke(item);
             roundDone = true;
+            roundCompleted = done.status === "completed";
             if (done.status === "cancelled") this.interrupted = true;
             if (done.status === "failed" || done.status === "incomplete") {
               const failure = this.modelFailure(
@@ -366,7 +406,43 @@ export class RealtimeBackend implements ChatBackend {
             }
           }
         }
+        if (recoveryToolViolation) {
+          yield wrapEvent("agent.message.end", {
+            ...base,
+            stopReason: "error",
+            failure: this.modelFailure("unexpected_recovery_tool_call"),
+          });
+          return;
+        }
         if (roundDone && pending === 0) {
+          if (
+            !this.interrupted &&
+            roundCompleted &&
+            !roundTools &&
+            usedTools &&
+            !roundAudio &&
+            !roundText.trim()
+          ) {
+            if (recoveredSilentCompletion) {
+              yield wrapEvent("agent.message.end", {
+                ...base,
+                stopReason: "error",
+                failure: {
+                  ...this.modelFailure("empty_spoken_response"),
+                  message: "The realtime model did not produce a spoken answer. Please try again.",
+                },
+              });
+              return;
+            }
+            recoveredSilentCompletion = true;
+            if (++requests >= DEFAULT_MAX_TOOL_ITERATIONS)
+              throw new Error("Realtime tool iteration limit reached");
+            roundDone = false;
+            roundAudio = false;
+            if (!active()) return;
+            requestResponse(true);
+            continue;
+          }
           if (this.interrupted || !roundTools) {
             yield wrapEvent("agent.message.end", {
               ...base,
@@ -384,7 +460,10 @@ export class RealtimeBackend implements ChatBackend {
           flushText();
           turnItems.push(...roundResults.splice(0));
           roundDone = false;
+          roundCompleted = false;
           roundTools = false;
+          roundAudio = false;
+          if (!active()) return;
           requestResponse();
         }
       }

@@ -36,9 +36,233 @@ function response(f: ReturnType<typeof fixture>, id: string) {
   f.backend.receive({ type: "response.created", response: { id } });
 }
 function done(f: ReturnType<typeof fixture>, id: string, status = "completed") {
-  f.backend.receive({ type: "response.done", response: { id, status, output: [] } });
+  f.backend.receive({
+    type: "response.done",
+    response: { id, status, output: [] },
+  });
 }
 describe("socket-backed canonical turns", () => {
+  it.each(["cancelled", "failed", "unknown", undefined])(
+    "does not recover a post-tool response with status %s",
+    async (status) => {
+      const f = fixture({
+        name: "fixture_tool",
+        description: "fixture",
+        schema: z.object({}),
+        invoke: async () => ({ kind: "structured", resultType: "fixture", data: {} }),
+      });
+      const turn = f.session.send("Explain the fictional workshop guide", { backend: f.backend });
+      const requests = () => f.sent.filter((event) => event.type === "response.create");
+      await vi.waitFor(() => expect(requests()).toHaveLength(1));
+      response(f, "lookup");
+      f.backend.receive({
+        type: "response.function_call_arguments.done",
+        response_id: "lookup",
+        call_id: "lookup-call",
+        name: "fixture_tool",
+        arguments: "{}",
+      });
+      done(f, "lookup");
+      await vi.waitFor(() => expect(requests()).toHaveLength(2));
+      response(f, "terminal");
+      f.backend.receive({
+        type: "response.done",
+        response: { id: "terminal", ...(status === undefined ? {} : { status }), output: [] },
+      });
+      await turn.completion;
+      expect(requests()).toHaveLength(2);
+      await f.session.dispose();
+    },
+  );
+
+  it.each(["audio", "transcript"])(
+    "does not replay an answer that already has %s output",
+    async (output) => {
+      const f = fixture({
+        name: "fixture_tool",
+        description: "fixture",
+        schema: z.object({}),
+        invoke: async () => ({
+          kind: "structured",
+          resultType: "fixture",
+          data: {},
+        }),
+      });
+      const turn = f.session.send("Explain the fictional workshop guide", {
+        backend: f.backend,
+      });
+      const requests = () => f.sent.filter((event) => event.type === "response.create");
+      await vi.waitFor(() => expect(requests()).toHaveLength(1));
+      response(f, "lookup");
+      f.backend.receive({
+        type: "response.function_call_arguments.done",
+        response_id: "lookup",
+        call_id: "lookup-call",
+        name: "fixture_tool",
+        arguments: "{}",
+      });
+      done(f, "lookup");
+      await vi.waitFor(() => expect(requests()).toHaveLength(2));
+      response(f, "answer");
+      f.backend.receive({
+        type:
+          output === "audio"
+            ? "response.output_audio.delta"
+            : "response.output_audio_transcript.delta",
+        response_id: "answer",
+        delta: output === "audio" ? "AAAA" : "The guide uses blue labels.",
+      });
+      done(f, "answer");
+      await turn.completion;
+      expect(requests()).toHaveLength(2);
+      await f.session.dispose();
+    },
+  );
+  it("does not retry an empty initial answer", async () => {
+    const f = fixture();
+    const turn = f.session.send("Hello", { backend: f.backend });
+    await vi.waitFor(() => expect(f.sent.some((e) => e.type === "response.create")).toBe(true));
+    response(f, "initial");
+    done(f, "initial");
+    await turn.completion;
+    expect(f.sent.filter((e) => e.type === "response.create")).toHaveLength(1);
+    await f.session.dispose();
+  });
+  it.each(["empty", "cancelled", "failed", "unexpected_tool", "unexpected_done_tool"])(
+    "settles %s recovery without another tool execution or recovery loop",
+    async (outcome) => {
+      const invoke = vi.fn(async () => ({
+        kind: "structured" as const,
+        resultType: "fixture",
+        data: {},
+      }));
+      const f = fixture({
+        name: "fixture_tool",
+        description: "fixture",
+        schema: z.object({}),
+        invoke,
+      });
+      const turn = f.session.send("Explain the fictional workshop guide", {
+        backend: f.backend,
+      });
+      const requests = () => f.sent.filter((event) => event.type === "response.create");
+      await vi.waitFor(() => expect(requests()).toHaveLength(1));
+      response(f, "lookup");
+      f.backend.receive({
+        type: "response.function_call_arguments.done",
+        response_id: "lookup",
+        call_id: "lookup-call",
+        name: "fixture_tool",
+        arguments: "{}",
+      });
+      done(f, "lookup");
+      await vi.waitFor(() => expect(requests()).toHaveLength(2));
+      response(f, "silent");
+      done(f, "silent");
+      await vi.waitFor(() => expect(requests()).toHaveLength(3));
+      expect(requests()[2].response).toEqual(expect.objectContaining({ tool_choice: "none" }));
+      response(f, "recovery");
+      if (outcome === "unexpected_tool")
+        f.backend.receive({
+          type: "response.function_call_arguments.done",
+          response_id: "recovery",
+          call_id: "new-call",
+          name: "fixture_tool",
+          arguments: "{}",
+        });
+      if (outcome.startsWith("unexpected"))
+        f.backend.receive({
+          type: "response.output_audio.delta",
+          response_id: "recovery",
+          delta: "AAAA",
+        });
+      if (outcome === "unexpected_done_tool")
+        f.backend.receive({
+          type: "response.done",
+          response: {
+            id: "recovery",
+            status: "completed",
+            output: [
+              { type: "function_call", call_id: "new-call", name: "fixture_tool", arguments: "{}" },
+            ],
+          },
+        });
+      else
+        done(
+          f,
+          "recovery",
+          outcome === "cancelled" || outcome === "failed" ? outcome : "completed",
+        );
+      await turn.completion;
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(requests()).toHaveLength(3);
+      if (outcome.startsWith("unexpected"))
+        expect(f.events).not.toContainEqual(
+          expect.objectContaining({
+            type: "agent.message.end",
+            payload: expect.objectContaining({ stopReason: "end_turn" }),
+          }),
+        );
+      expect(f.events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message.end",
+          payload: expect.objectContaining({
+            stopReason: outcome === "cancelled" ? "canceled" : "error",
+          }),
+        }),
+      );
+      await f.session.dispose();
+    },
+  );
+
+  it("recovers one silent completion after a tool without executing that tool again", async () => {
+    const invoke = vi.fn(async () => ({
+      kind: "structured" as const,
+      resultType: "fixture.guide",
+      data: { summary: "The fictional workshop guide uses blue labels." },
+    }));
+    const f = fixture({
+      name: "fixture_tool",
+      description: "fixture",
+      schema: z.object({}),
+      invoke,
+    });
+    const turn = f.session.send("Explain the workshop guide", {
+      backend: f.backend,
+    });
+    const requests = () => f.sent.filter((event) => event.type === "response.create");
+    await vi.waitFor(() => expect(requests()).toHaveLength(1));
+    response(f, "lookup");
+    f.backend.receive({
+      type: "response.function_call_arguments.done",
+      response_id: "lookup",
+      call_id: "guide-call",
+      name: "fixture_tool",
+      arguments: "{}",
+    });
+    done(f, "lookup");
+    await vi.waitFor(() => expect(requests()).toHaveLength(2));
+    response(f, "silent");
+    done(f, "silent");
+    await vi.waitFor(() => expect(requests()).toHaveLength(3));
+    response(f, "answer");
+    f.backend.receive({
+      type: "response.output_audio.delta",
+      response_id: "answer",
+      delta: "AAAA",
+    });
+    f.backend.receive({
+      type: "response.output_audio_transcript.delta",
+      response_id: "answer",
+      delta: "The guide uses blue labels.",
+    });
+    done(f, "answer");
+    await turn.completion;
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(f.session.historySnapshot())).toContain("The guide uses blue labels.");
+    expect(f.normal.runTurn).not.toHaveBeenCalled();
+    await f.session.dispose();
+  });
   it.each([
     ["failed", { error: { code: "context_length_exceeded" } }, "provider_error", "error"],
     ["incomplete", { reason: "max_output_tokens" }, "output_truncated", "max_tokens"],
