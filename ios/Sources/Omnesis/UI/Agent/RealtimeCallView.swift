@@ -49,7 +49,7 @@ struct RealtimeCallView: View {
                             .foregroundStyle(.white)
                     }
                     .accessibilityHidden(true)
-                    Text(session.muted && !session.ending ? "Microphone muted" : session.status)
+                    Text(displayedStatus)
                         .font(.title3.weight(.medium))
                         .accessibilityAddTraits(.updatesFrequently)
                     if let error = session.error {
@@ -59,6 +59,7 @@ struct RealtimeCallView: View {
                         })
                         .frame(minHeight: GatewayErrorView.minScrollHeight)
                     } else {
+                        if session.connected, let failure = activityTurn?.failure { AgentTurnFailureView(failure: failure) }
                         Text(conversationCaption)
                             .font(.body)
                             .foregroundStyle(session.transcript.isEmpty ? Theme.textSecondary : Theme.textPrimary)
@@ -138,7 +139,17 @@ struct RealtimeCallView: View {
 
     private var conversationCaption: String {
         if session.ending { return "Returning to your conversation…" }
+        if let notice = session.playbackNotice { return notice }
         return session.transcript.isEmpty ? "Speak naturally. You can interrupt Omnesis at any time." : session.transcript
+    }
+
+    private var displayedStatus: String {
+        guard session.connected, session.error == nil, !session.ending else { return session.status }
+        if session.muted { return "Microphone muted" }
+        if session.userSpeechActive { return "Listening" }
+        if session.status == "Listening", activityTurn?.failure != nil, !store.agent.busy { return "Reply interrupted" }
+        if session.status == "Listening", store.agent.busy, !session.userSpeechActive { return "Working…" }
+        return session.status
     }
 
     private func startCall() async {
@@ -170,6 +181,31 @@ struct RealtimeCallView: View {
 #Preview("Voice · Ending") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeEnding)
         .environment(AppStore.preview())
+}
+
+#Preview("Voice · Working") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
+        .environment(PreviewMocks.realtimeWorkingStore)
+}
+
+#Preview("Voice · Reply interrupted") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimePlaybackLimited)
+        .environment(AppStore.preview())
+}
+
+#Preview("Voice · Turn failed") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
+        .environment(PreviewMocks.realtimeTurnFailureStore)
+}
+
+#Preview("Voice · Closed after a failed reply") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure)
+        .environment(PreviewMocks.realtimeTurnFailureStore)
+}
+
+#Preview("Voice · Ending after a failed reply") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeEnding)
+        .environment(PreviewMocks.realtimeTurnFailureStore)
 }
 
 #Preview("Voice · Tool activity") {

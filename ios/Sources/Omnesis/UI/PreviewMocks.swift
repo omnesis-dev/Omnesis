@@ -7343,6 +7343,25 @@ extension PreviewMocks {
         return session
     }
 
+    @MainActor static var realtimePlaybackLimited: RealtimeCallSession {
+        let session = realtimeListening
+        session.playbackNotice = "That reply was too long. Ask for a shorter answer."
+        return session
+    }
+
+    @MainActor static var realtimeWorkingStore: AppStore {
+        realtimeStore()
+    }
+
+    @MainActor static var realtimeTurnFailureStore: AppStore {
+        let store = AppStore.preview()
+        store.agent.installPreviewState(
+            sessionId: "voice-preview", model: "preview", backend: "preview", title: "Voice conversation",
+            turns: [agentAssistantTurnProviderFailure], citations: [], conversations: [], busy: false
+        )
+        return store
+    }
+
     @MainActor static var realtimeTools: RealtimeCallSession {
         let session = realtimeListening
         session.status = "Thinking…"

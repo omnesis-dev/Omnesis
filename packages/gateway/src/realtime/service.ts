@@ -5,9 +5,10 @@ import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { z } from "zod";
 import { createLogger, experimentalEnabled, normalizeTimeZone } from "@omnesis/core";
+import { AgentError, type AgentService, type RealtimeAgentSession } from "../agent/service.js";
 import { REALTIME_MODEL, RealtimeBackend } from "./backend.js";
 import { RealtimeInputSequencer } from "./input-sequencer.js";
-import type { AgentService, RealtimeAgentSession } from "../agent/service.js";
+import { RealtimeDiagnostics } from "./diagnostics.js";
 import type { OmnesisConfig } from "@omnesis/config";
 
 const MODEL = REALTIME_MODEL;
@@ -138,6 +139,9 @@ export class RealtimeService {
       throw new Error("Realtime voice is unavailable");
     if (this.active.size >= 4) throw new Error("All realtime voice slots are busy");
     const diagnosticId = randomUUID();
+    const diagnostics = new RealtimeDiagnostics((message) =>
+      this.log.info(`Call ${diagnosticId} ${message}`),
+    );
     const openedAt = Date.now();
     let audioFrames = 0;
     let audioBytes = 0;
@@ -171,18 +175,21 @@ export class RealtimeService {
     const send = (event: unknown) => {
       if (closed) return;
       if ((peer.bufferedAmount ?? 0) > MAX_BUFFERED_BYTES) {
+        closeReason = "client_backpressure";
         close();
         return;
       }
       try {
         peer.send(JSON.stringify(event));
       } catch {
+        closeReason = "client_send_failed";
         close();
       }
     };
     const sendUpstream = (event: unknown) => {
       if (closed || upstream.readyState !== WebSocket.OPEN) return false;
       if (upstream.bufferedAmount > MAX_BUFFERED_BYTES) {
+        closeReason = "upstream_backpressure";
         close();
         return false;
       }
@@ -190,6 +197,7 @@ export class RealtimeService {
         upstream.send(JSON.stringify(event));
         return true;
       } catch {
+        closeReason = "upstream_send_failed";
         close();
         return false;
       }
@@ -213,13 +221,23 @@ export class RealtimeService {
       this.active.delete(close);
       peer.close(1000, "Voice call ended");
     };
-    const fail = () => {
-      closeReason = "connection_error";
+    const fail = (reason = "connection_error", error?: unknown) => {
+      if (closed) return;
+      closeReason = reason;
+      const admissionCode =
+        error instanceof AgentError &&
+        ["session_busy", "session_not_found", "context_window_exceeded"].includes(error.code)
+          ? error.code
+          : "none";
+      this.log.warn(`Call ${diagnosticId} failed reason=${reason} admissionCode=${admissionCode}`);
       send({ type: "error", error: { message: "The voice connection failed. Please try again." } });
       close();
     };
-    const lifetime = setTimeout(close, MAX_CALL_MS);
-    const startup = setTimeout(fail, 30_000);
+    const lifetime = setTimeout(() => {
+      closeReason = "call_duration_limit";
+      close();
+    }, MAX_CALL_MS);
+    const startup = setTimeout(() => fail("startup_timeout"), 30_000);
     const authorized = () =>
       this.capability().available && this.deps.isAuthorized(options.token, callerId);
     const authorityCheck = setInterval(() => {
@@ -235,10 +253,11 @@ export class RealtimeService {
           close();
           return;
         }
-        sendUpstream(event);
+        if (sendUpstream(event) && (event as { type?: string }).type === "response.create")
+          diagnostics.request();
       },
       authorized,
-      fail,
+      () => fail("cancellation_timeout"),
     );
     const interruptTurn = () => {
       backendAdapter.interrupt();
@@ -255,22 +274,25 @@ export class RealtimeService {
       running = true;
       void agentSession
         .run(input.text, backendAdapter, abort.signal)
-        .catch(fail)
+        .catch((error: unknown) => fail("turn_failed", error))
         .finally(() => {
           running = false;
           if (ending) return;
-          if (closeAfterTurn) fail();
+          if (closeAfterTurn) fail("provider_turn_failed");
           else drainTranscripts();
         });
     };
-    const inputSequencer = new RealtimeInputSequencer((text, id) => {
-      if (pendingTranscripts.length >= 4) {
-        fail();
-        return;
-      }
-      pendingTranscripts.push({ text, id });
-      drainTranscripts();
-    }, fail);
+    const inputSequencer = new RealtimeInputSequencer(
+      (text, id) => {
+        if (pendingTranscripts.length >= 4) {
+          fail("pending_input_limit");
+          return;
+        }
+        pendingTranscripts.push({ text, id });
+        drainTranscripts();
+      },
+      () => fail("transcription_timeout"),
+    );
     upstream.on("open", () => {
       this.log.info(`Call ${diagnosticId} upstream connected`);
       void (async () => {
@@ -287,6 +309,7 @@ export class RealtimeService {
         sessionId = opened.sessionId;
         // Compatibility for older iOS callers; canonical conversation state stays on ordinary SSE.
         unsubscribe = opened.subscribe((event) => {
+          diagnostics.agent(event);
           if (
             event.type === "agent.message.end" &&
             event.payload.failure?.code === "provider_error" &&
@@ -317,6 +340,7 @@ export class RealtimeService {
           session: {
             type: "realtime",
             output_modalities: ["audio"],
+            reasoning: { effort: "low" },
             ...configuration,
             audio: {
               input: {
@@ -336,7 +360,7 @@ export class RealtimeService {
             tool_choice: "auto",
           },
         });
-      })().catch(fail);
+      })().catch((error: unknown) => fail("session_open_failed", error));
     });
     upstream.on("message", (raw) => {
       if (closed || ending) return;
@@ -426,7 +450,7 @@ export class RealtimeService {
           inputSequencer.commit(input.item_id);
         }
         if (event.type === "conversation.item.input_audio_transcription.failed") {
-          fail();
+          fail("transcription_failed");
           return;
         }
         if (event.type === "conversation.item.input_audio_transcription.completed") {
@@ -440,9 +464,10 @@ export class RealtimeService {
         }
         const accepted = backendAdapter.receive(event);
         if (event.type.startsWith("response.") && !accepted) return;
+        diagnostics.upstream(event);
         if (event.type === "session.updated") {
           if (!agentSession) {
-            fail();
+            fail("session_not_open");
             return;
           }
           if (ready) return;
@@ -482,7 +507,7 @@ export class RealtimeService {
             backendAdapter.fail(safeCode);
             return;
           }
-          fail();
+          fail("provider_error");
         } else if (
           [
             "input_audio_buffer.speech_started",
@@ -499,10 +524,10 @@ export class RealtimeService {
         )
           send(event);
       } catch {
-        fail();
+        fail("invalid_upstream_event");
       }
     });
-    upstream.on("error", fail);
+    upstream.on("error", () => fail("upstream_socket_error"));
     upstream.on("close", (code) => {
       this.log.info(`Call ${diagnosticId} upstream closed code=${code}`);
       if (!closed) closeReason = "upstream_closed";
@@ -526,11 +551,14 @@ export class RealtimeService {
             pendingTranscripts.length = 0;
             inputSequencer.dispose();
             abort.abort();
-            void agentSession.close().then(() => {
-              if (closed) return;
-              send({ type: "session.ended", conversationId: sessionId });
-              close();
-            }, fail);
+            void agentSession.close().then(
+              () => {
+                if (closed) return;
+                send({ type: "session.ended", conversationId: sessionId });
+                close();
+              },
+              (error: unknown) => fail("session_end_failed", error),
+            );
             return;
           }
           if (event.type === "response.cancel") {
@@ -557,7 +585,7 @@ export class RealtimeService {
           if (sendUpstream(event) && event.type === "input_audio_buffer.append")
             forwardedFrames += 1;
         } catch {
-          fail();
+          fail("invalid_client_event");
         }
       },
     };

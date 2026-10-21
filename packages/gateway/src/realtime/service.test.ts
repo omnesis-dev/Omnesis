@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { toolInputJsonSchema, type ChatBackend, type ToolContext } from "@omnesis/agent";
-import { AgentService } from "../agent/service.js";
+import { AgentError, AgentService } from "../agent/service.js";
 import { FsConversationStore } from "../agent/conversation-store.js";
 import { RealtimeService, realtimeBackend } from "./service.js";
 import type WebSocket from "ws";
@@ -444,6 +444,7 @@ describe("direct realtime Omnesis runtime", () => {
       ?.session as {
       tools: Array<{ name: string; parameters: unknown }>;
       instructions: string;
+      reasoning: { effort: string };
       audio: {
         input: {
           noise_reduction: { type: string };
@@ -469,6 +470,7 @@ describe("direct realtime Omnesis runtime", () => {
     ).toBe(true);
     expect(configuration.instructions).toContain("last clearly established language");
     expect(configuration.instructions).toContain("only on an explicit request");
+    expect(configuration.reasoning).toEqual({ effort: "low" });
     expect(configuration.audio.input.noise_reduction).toEqual({ type: "near_field" });
     expect(configuration.audio.input.turn_detection).toEqual({
       type: "server_vad",
@@ -690,6 +692,30 @@ describe("direct realtime Omnesis runtime", () => {
       item_id: "speech-1",
     });
     expect(f.peer.close).toHaveBeenCalled();
+    expect(f.logger.warn.mock.calls.join(" ")).toContain("reason=transcription_failed");
     expect(f.ordinary.runTurn).not.toHaveBeenCalled();
+  });
+  it("identifies admission errors without recording private exception messages", async () => {
+    const f = await fixture();
+    vi.spyOn(f.agent, "openRealtimeSession").mockRejectedValue(
+      new AgentError("session_busy", "PRIVATE_SENTINEL"),
+    );
+    f.open();
+    f.socket.emit("open");
+    await vi.waitFor(() => expect(f.peer.close).toHaveBeenCalled());
+    expect(f.logger.warn.mock.calls.join(" ")).toContain(
+      "reason=session_open_failed admissionCode=session_busy",
+    );
+    expect(f.logger.warn.mock.calls.join(" ")).not.toContain("PRIVATE_SENTINEL");
+    expect(JSON.stringify(f.events)).not.toContain("PRIVATE_SENTINEL");
+  });
+
+  it("distinguishes outgoing audio backpressure from a user hangup", async () => {
+    const f = await fixture();
+    await ready(f);
+    Object.assign(f.peer, { bufferedAmount: 3 * 1024 * 1024 });
+    f.socket.event({ type: "input_audio_buffer.speech_started" });
+    expect(f.peer.close).toHaveBeenCalled();
+    expect(f.logger.info.mock.calls.join(" ")).toContain("closed reason=client_backpressure");
   });
 });

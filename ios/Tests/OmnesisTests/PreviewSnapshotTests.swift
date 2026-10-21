@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import AVFoundation
 import Observation
 @testable import Omnesis
 import SwiftUI
@@ -86,6 +87,163 @@ final class PreviewSnapshotTests: XCTestCase {
             name: "realtime-listening",
             ignoresSafeArea: true
         )
+    }
+
+    func testRealtimeCallWorking() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
+                .environment(PreviewMocks.realtimeWorkingStore),
+            name: "realtime-working",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallTurnFailure() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
+                .environment(PreviewMocks.realtimeTurnFailureStore),
+            name: "realtime-turn-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallClosedAfterFailure() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure)
+                .environment(PreviewMocks.realtimeTurnFailureStore),
+            name: "realtime-closed-after-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallEndingAfterFailure() {
+        snapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeEnding)
+                .environment(PreviewMocks.realtimeTurnFailureStore),
+            name: "realtime-ending-after-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimePlaybackOverflowPreservesCall() throws {
+        let session = RealtimeCallSession()
+        session.connected = true
+        session.configurePlaybackForTesting(maximumBytes: 512 * 1024)
+        var sent: [[String: Any]] = []
+        session.outgoingMessageForTesting = { message in
+            if let event = RealtimeProtocol.event(Data(message.utf8)) { sent.append(event) }
+        }
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "long-reply"]])
+        let audio = Data(repeating: 0, count: 80000).base64EncodedString()
+        try session.receiveForTesting(["type": "response.output_audio.delta", "item_id": "long-answer", "delta": audio])
+        XCTAssertTrue(session.connected)
+        XCTAssertNil(session.error)
+        XCTAssertNotNil(session.playbackNotice)
+        XCTAssertEqual(sent.filter { $0["type"] as? String == "response.cancel" }.count, 1)
+        XCTAssertEqual(sent.first?["type"] as? String, "conversation.item.truncate")
+        try session.receiveForTesting(["type": "response.output_audio.delta", "item_id": "long-answer", "delta": audio])
+        XCTAssertEqual(sent.filter { $0["type"] as? String == "response.cancel" }.count, 1)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-reply-interrupted",
+            ignoresSafeArea: true
+        )
+        // An aborted provider response may never be forwarded as response.done.
+        // A new response must still be audible, while stale old deltas stay dropped.
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "next-reply"]])
+        try session.receiveForTesting([
+            "type": "response.output_audio.delta", "item_id": "next-answer",
+            "delta": Data(repeating: 1, count: 4800).base64EncodedString(),
+        ])
+        XCTAssertGreaterThan(session.bufferedPlaybackBytesForTesting, 0)
+        try session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
+        XCTAssertNil(session.playbackNotice)
+        XCTAssertTrue(session.userSpeechActive)
+        XCTAssertTrue(session.connected)
+    }
+
+    func testRealtimePlaybackRendersBurstAndResetsItsPlayerEpoch() async throws {
+        let session = RealtimeCallSession()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1))
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try engine.start()
+        player.play()
+        session.configurePlaybackForTesting(engine: engine, player: player)
+        session.outgoingMessageForTesting = { _ in }
+        defer { session.stop() }
+        func audio(seconds: Int, value: UInt8) throws {
+            try session.receiveForTesting([
+                "type": "response.output_audio.delta", "item_id": "scripted-answer-\(value)",
+                "delta": Data(repeating: value, count: seconds * 24000 * 2).base64EncodedString(),
+            ])
+        }
+        // The previous implementation ended the call on this valid burst.
+        try audio(seconds: 31, value: 0x20)
+        XCTAssertTrue(session.connected)
+        XCTAssertEqual(session.scheduledPlaybackFramesForTesting, 48000)
+        let first = try await renderVoicePlayback(session, engine: engine, format: format)
+        XCTAssertGreaterThan(first, 0.2)
+        XCTAssertTrue(session.playbackIsEmptyForTesting)
+        // Tool execution can leave the player running with no scheduled audio.
+        // Its real node clock must advance across that gap before the final answer.
+        let silence = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+        for _ in 0 ..< 12 {
+            XCTAssertEqual(try engine.renderOffline(4096, to: silence), .success)
+            if let channel = silence.floatChannelData?[0] {
+                XCTAssertTrue((0 ..< Int(silence.frameLength)).allSatisfy { abs(channel[$0]) < 0.001 })
+            }
+            await Task.yield()
+        }
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "after-tool-gap"]])
+        try audio(seconds: 1, value: 0x40)
+        let finalAnswer = try await renderVoicePlayback(session, engine: engine, format: format)
+        XCTAssertGreaterThan(finalAnswer, 0.4)
+        XCTAssertTrue(session.connected)
+        // Leave an old queued reply behind, then interrupt and start a new one.
+        try audio(seconds: 3, value: 0x20)
+        engine.stop()
+        try session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
+        try engine.start()
+        player.play()
+        try session.receiveForTesting(["type": "input_audio_buffer.speech_stopped"])
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "after-interruption"]])
+        try audio(seconds: 1, value: 0x40)
+        let second = try await renderVoicePlayback(session, engine: engine, format: format)
+        XCTAssertGreaterThan(second, 0.4)
+        XCTAssertNil(session.error)
+        XCTAssertTrue(session.connected)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-rendered-playback",
+            ignoresSafeArea: true
+        )
+    }
+
+    private func renderVoicePlayback(
+        _ session: RealtimeCallSession, engine: AVAudioEngine, format: AVAudioFormat
+    ) async throws
+        -> Float {
+        let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+        var peak: Float = 0
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while !session.playbackIsEmptyForTesting, clock.now < deadline {
+            XCTAssertLessThanOrEqual(session.scheduledPlaybackFramesForTesting, 48000)
+            let result = try engine.renderOffline(4096, to: output)
+            XCTAssertEqual(result, .success)
+            if let channel = output.floatChannelData?[0] {
+                for index in 0 ..< Int(output.frameLength) {
+                    peak = max(peak, abs(channel[index]))
+                }
+            }
+            await Task.yield()
+        }
+        XCTAssertTrue(session.playbackIsEmptyForTesting, "Production playback did not drain its rendered buffers")
+        return peak
     }
 
     func testRealtimeCallEnding() {
