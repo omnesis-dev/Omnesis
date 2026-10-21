@@ -755,7 +755,7 @@ node_install_compatible() {
   CHECK_NODE="${1:-node}"
   command -v "$CHECK_NODE" >/dev/null 2>&1 || return 1
   if [ "${NODE_INSTALL_REQUIREMENT:-runtime}" = source ]; then
-    [ "$("$CHECK_NODE" -p 'const version = process.versions.node; const [major, minor] = version.split(".").map(Number); /^\d+\.\d+\.\d+$/.test(version) && ((major === 24 && minor >= 16) || (major === 26 && minor >= 1) || major > 26)' 2>/dev/null)" = true ]
+    "$CHECK_NODE" -e 'const version = process.versions.node; const [major, minor] = version.split(".").map(Number); process.exit(/^\d+\.\d+\.\d+$/.test(version) && ((major === 24 && minor >= 16) || (major === 26 && minor >= 1) || major > 26) ? 0 : 1)' 2>/dev/null
   else
     [ "$("$CHECK_NODE" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 24 ]
   fi

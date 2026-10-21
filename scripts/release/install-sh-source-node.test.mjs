@@ -45,6 +45,7 @@ function run(
     keg = version,
     command = "prepare_node_for_install",
     manager = "apt",
+    forceColor,
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-source-node-"));
@@ -62,7 +63,7 @@ function run(
   const fakeNode = (path, versionFile) =>
     executable(
       path,
-      `#!${process.execPath}\nconst fs=require('node:fs'),vm=require('node:vm');const version=fs.readFileSync(${JSON.stringify(versionFile)},'utf8');if(process.argv[2]==='--version')console.log('v'+version);else if(process.argv[2]==='-p')console.log(vm.runInNewContext(process.argv[3],{process:{versions:{node:version}}}));else process.exit(64);\n`,
+      `#!${process.execPath}\nconst fs=require('node:fs'),vm=require('node:vm');const version=fs.readFileSync(${JSON.stringify(versionFile)},'utf8');if(process.argv[2]==='--version')console.log('v'+version);else if(process.argv[2]==='-p')console.log(vm.runInNewContext(process.argv[3],{process:{versions:{node:version}}}));else if(process.argv[2]==='-e')vm.runInNewContext(process.argv[3],{process:{versions:{node:version},exit:process.exit}});else process.exit(64);\n`,
     );
   fakeNode(join(bin, "node"), currentFile);
   fakeNode(join(prefix, "bin", "node"), kegFile);
@@ -78,7 +79,11 @@ function run(
   const script = `${functions}\ninfo() { :; }\nfail() { printf '%s\\n' "$*" >&2; exit 1; }\nresolve_sudo() { return 0; }\nrun_nodesource_setup() { printf 'setup %s\\n' "$*" >> '${calls}'; }\napt_get() { printf 'apt %s\\n' "$*" >> '${calls}'; printf '%s' '${upgrade}' > '${currentFile}'; }\nrun_privileged() { "$@"; }\nresolve_method() { METHOD='${resolved}'; }\n${manager === "dnf" ? 'command() { if [ "$1" = -v ] && [ "$2" = apt-get ]; then return 1; fi; builtin command "$@"; }\n' : ""}METHOD='${method}'\nPLATFORM='${platform}'\n${command}\n`;
   const result = spawnSync(manager === "dnf" ? "bash" : "sh", ["-eu", "-c", script], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      ...(forceColor === undefined ? {} : { FORCE_COLOR: forceColor }),
+    },
   });
   return { ...result, calls: readFileSync(calls, "utf8") };
 }
@@ -99,6 +104,11 @@ describe("installer source Node requirements", () => {
       command: "NODE_INSTALL_REQUIREMENT=source; node_install_compatible",
     });
     expect(result.status === 0).toBe(satisfies(version, root.engines.node));
+  });
+  test("source compatibility uses exit status even when terminal colors are forced", () => {
+    const result = run("24.16.0", { forceColor: "1" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls).toBe("");
   });
   test("the development pin is accepted by the source predicate", () => {
     const version = readFileSync(new URL("../../.nvmrc", import.meta.url), "utf8").trim();
