@@ -12,6 +12,7 @@ const SYNTHETIC_PERIODIC_TASKS = new Set([
   "backfill.mergeRulesEval",
   "backfill.interactionScoresRefresh",
   "backfill.peopleCountsRefresh",
+  "backfill.mergeCandidatesDetect",
   "backfill.linkBatch",
   "backfill.linkReconcile",
   "nearDup.inboxFlush",
