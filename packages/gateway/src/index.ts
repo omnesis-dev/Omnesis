@@ -2342,13 +2342,15 @@ const httpShutdown = new GatewayHttpShutdown();
 const interestEngine = new InterestEngine({
   db,
   writeGate,
+  // Search's query embedder: a gate waits on these lookups, and the indexer
+  // worker's embedder can queue behind indexing for tens of seconds.
   getEmbedder: () => {
-    const embedder = getSemanticEmbedder();
+    const embedder = searchPipeline.queryEmbedder();
     if (!embedder) return null;
     // The model the live index was built with is the one answering queries,
     // also while a replacement is still being built.
     const modelId = getIndexEmbedModel(indexDb)?.name;
-    return modelId ? { modelId, embedQuery: embedder.embedQuery } : null;
+    return modelId ? { modelId, embedQuery: (text) => embedder.embedQuery(text) } : null;
   },
   // Only the Brain's gates read the ledger, and they exist in experimental
   // mode; a stable gateway records nothing.
