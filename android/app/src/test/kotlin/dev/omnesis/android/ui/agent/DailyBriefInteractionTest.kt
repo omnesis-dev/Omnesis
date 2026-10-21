@@ -4,6 +4,7 @@
 package dev.omnesis.android.ui.agent
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.performClick
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.DailyBriefReactionKind
+import dev.omnesis.android.ui.capture.TaskNoteKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -47,7 +49,15 @@ class DailyBriefInteractionTest {
     private lateinit var loader: DailyBriefFixtures.Loader
     private lateinit var sender: DailyBriefFixtures.Sender
 
-    private fun start(days: Int = 3, failingOnce: Set<String> = emptySet(), failingReactions: Set<String> = emptySet()) {
+    /** The note captures a thumbs-down opened, when the test gives it a capture to open. */
+    private val captures = mutableListOf<TaskNoteKind>()
+
+    private fun start(
+        days: Int = 3,
+        failingOnce: Set<String> = emptySet(),
+        failingReactions: Set<String> = emptySet(),
+        withNoteCapture: Boolean = false,
+    ) {
         val (origin, messages) = DailyBriefFixtures.conversation(days)
         loader = DailyBriefFixtures.Loader(DailyBriefFixtures.pages, failingOnce)
         sender = DailyBriefFixtures.Sender(failing = failingReactions)
@@ -77,6 +87,11 @@ class DailyBriefInteractionTest {
                             now = { DailyBriefFixtures.now },
                             zone = { DailyBriefFixtures.zone },
                             reactions = sender,
+                            noteCapture = if (withNoteCapture) {
+                                { capture, _ -> LaunchedEffect(capture) { captures += capture.kind } }
+                            } else {
+                                null
+                            },
                         ),
                     )
                 }
@@ -230,6 +245,35 @@ class DailyBriefInteractionTest {
         node("dailyBrief.thumbsDownDialog").assertDoesNotExist()
         node("dailyBrief.thumbsDown.obs_deposit").assertIsSelected()
         node("dailyBrief.reactionCaption.obs_deposit").assertExists()
+        assertEquals(listOf(DailyBriefFixtures.Reaction("obs_deposit", DailyBriefReactionKind.NOT_INTERESTED, null)), sender.sent)
+    }
+
+    /** Plain "Not interested" asks for no words, even where a capture could take them. */
+    @Test
+    fun not_interested_opens_no_note_capture() {
+        start(withNoteCapture = true)
+        node("dailyBrief.thumbsDown.obs_deposit").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText(DailyBriefCopy.NOT_INTERESTED_NOTE_CHOICE).assertExists()
+        node("dailyBrief.thumbsDownChoice.not_interested").performClick()
+        node("dailyBrief.thumbsDownContinue").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsDown.obs_deposit").assertIsSelected()
+        assertTrue(captures.isEmpty())
+        assertEquals(listOf(DailyBriefFixtures.Reaction("obs_deposit", DailyBriefReactionKind.NOT_INTERESTED, null)), sender.sent)
+    }
+
+    /** "Not interested — add a note" stands at once, then asks why. */
+    @Test
+    fun not_interested_with_a_note_stands_and_opens_the_capture() {
+        start(withNoteCapture = true)
+        node("dailyBrief.thumbsDown.obs_deposit").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsDownChoice.not_interested_note").performClick()
+        node("dailyBrief.thumbsDownContinue").performClick()
+        compose.waitForIdle()
+        node("dailyBrief.thumbsDown.obs_deposit").assertIsSelected()
+        assertEquals(listOf(TaskNoteKind.NOT_INTERESTED), captures)
         assertEquals(listOf(DailyBriefFixtures.Reaction("obs_deposit", DailyBriefReactionKind.NOT_INTERESTED, null)), sender.sent)
     }
 

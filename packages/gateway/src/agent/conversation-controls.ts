@@ -92,6 +92,13 @@ export class ConversationControls {
     return this.tails.has(id) || this.running.has(id);
   }
 
+  /** Serialize a synchronous turn start with durable submission acceptance. Never hold across model work. */
+  async startTurn(id: string, start: () => void): Promise<void> {
+    await this.lock(id, async () => {
+      start();
+    });
+  }
+
   snapshot(id: string): ConversationControlsSnapshot {
     const state = this.host.state(id);
     return structuredClone({

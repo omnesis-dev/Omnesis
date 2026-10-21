@@ -407,29 +407,30 @@ private fun LoadedFooter(
         scope.launch { onReact(item.observationId, reaction, null) }
     }
 
-    fun thumbsDown(item: DailyBriefItemDto, choice: DailyBriefReactionKind) {
+    fun thumbsDown(item: DailyBriefItemDto, choice: DailyBriefThumbsDown) {
+        val kind = choice.kind
         when (choice) {
+            DailyBriefThumbsDown.NOT_INTERESTED -> send(item, kind)
             // The reaction stands on its own; the words, if any come, are added to it.
-            DailyBriefReactionKind.NOT_INTERESTED -> {
-                send(item, choice)
+            DailyBriefThumbsDown.NOT_INTERESTED_WITH_NOTE -> {
+                send(item, kind)
                 if (noteCapture != null) {
                     pendingNote = PendingBriefNote(item, TaskNoteKind.NOT_INTERESTED, onCancel = {}) { words ->
-                        onReact(item.observationId, choice, words)
+                        onReact(item.observationId, kind, words)
                     }
                 }
             }
             // The reaction is sent once the words are; cancelling still disputes the item,
             // without a correction.
-            DailyBriefReactionKind.FACTUAL_ERROR -> {
+            DailyBriefThumbsDown.FACTUAL_ERROR -> {
                 if (noteCapture == null) {
-                    send(item, choice)
+                    send(item, kind)
                 } else {
-                    pendingNote = PendingBriefNote(item, TaskNoteKind.FACTUAL_ERROR, onCancel = { send(item, choice) }) { words ->
-                        onReact(item.observationId, choice, words)
+                    pendingNote = PendingBriefNote(item, TaskNoteKind.FACTUAL_ERROR, onCancel = { send(item, kind) }) { words ->
+                        onReact(item.observationId, kind, words)
                     }
                 }
             }
-            DailyBriefReactionKind.UP -> send(item, choice)
         }
     }
 
@@ -551,17 +552,38 @@ private class PendingBriefNote(
 }
 
 /**
- * The choice behind a thumbs-down: not worth the reader's time, or wrong. Continue hands the
- * choice back; the caller sends it and asks for the words.
+ * What a thumbs-down can say: not worth the reader's time, with or without their words on why,
+ * or wrong, with the correction. [tag] names its choice in tests.
+ */
+enum class DailyBriefThumbsDown(val kind: DailyBriefReactionKind, val title: String, val tag: String) {
+    NOT_INTERESTED(DailyBriefReactionKind.NOT_INTERESTED, DailyBriefCopy.NOT_INTERESTED_CHOICE, "not_interested"),
+    NOT_INTERESTED_WITH_NOTE(
+        DailyBriefReactionKind.NOT_INTERESTED,
+        DailyBriefCopy.NOT_INTERESTED_NOTE_CHOICE,
+        "not_interested_note",
+    ),
+    FACTUAL_ERROR(DailyBriefReactionKind.FACTUAL_ERROR, DailyBriefCopy.FACTUAL_ERROR_CHOICE, "factual_error"),
+}
+
+/**
+ * The choice behind a thumbs-down. Continue hands the choice back; the caller sends it and,
+ * when the choice asks for them, the words.
  */
 @Composable
 fun DailyBriefThumbsDownDialog(
     initial: DailyBriefReactionKind?,
     onCancel: () -> Unit,
-    onContinue: (DailyBriefReactionKind) -> Unit,
+    onContinue: (DailyBriefThumbsDown) -> Unit,
 ) {
     val c = OmTheme.colors
-    var choice by remember { mutableStateOf(initial ?: DailyBriefReactionKind.NOT_INTERESTED) }
+    var choice by remember {
+        mutableStateOf(
+            when (initial) {
+                DailyBriefReactionKind.FACTUAL_ERROR -> DailyBriefThumbsDown.FACTUAL_ERROR
+                else -> DailyBriefThumbsDown.NOT_INTERESTED
+            },
+        )
+    }
     AlertDialog(
         onDismissRequest = onCancel,
         containerColor = c.bgSecondary,
@@ -569,18 +591,9 @@ fun DailyBriefThumbsDownDialog(
         title = { Text(DailyBriefCopy.THUMBS_DOWN_TITLE, color = c.textPrimary) },
         text = {
             Column {
-                ThumbsDownChoice(
-                    kind = DailyBriefReactionKind.NOT_INTERESTED,
-                    title = DailyBriefCopy.NOT_INTERESTED_CHOICE,
-                    selected = choice == DailyBriefReactionKind.NOT_INTERESTED,
-                    onSelect = { choice = DailyBriefReactionKind.NOT_INTERESTED },
-                )
-                ThumbsDownChoice(
-                    kind = DailyBriefReactionKind.FACTUAL_ERROR,
-                    title = DailyBriefCopy.FACTUAL_ERROR_CHOICE,
-                    selected = choice == DailyBriefReactionKind.FACTUAL_ERROR,
-                    onSelect = { choice = DailyBriefReactionKind.FACTUAL_ERROR },
-                )
+                DailyBriefThumbsDown.entries.forEach { option ->
+                    ThumbsDownChoice(option, selected = choice == option, onSelect = { choice = option })
+                }
             }
         },
         confirmButton = {
@@ -597,7 +610,7 @@ fun DailyBriefThumbsDownDialog(
 }
 
 @Composable
-private fun ThumbsDownChoice(kind: DailyBriefReactionKind, title: String, selected: Boolean, onSelect: () -> Unit) {
+private fun ThumbsDownChoice(option: DailyBriefThumbsDown, selected: Boolean, onSelect: () -> Unit) {
     val c = OmTheme.colors
     Row(
         Modifier
@@ -605,12 +618,12 @@ private fun ThumbsDownChoice(kind: DailyBriefReactionKind, title: String, select
             .heightIn(min = 44.dp)
             .selectable(selected, role = Role.RadioButton, onClick = onSelect)
             .padding(vertical = OmSpacing.xs)
-            .testTag("dailyBrief.thumbsDownChoice.${kind.wire}"),
+            .testTag("dailyBrief.thumbsDownChoice.${option.tag}"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected, onClick = null)
         Spacer(Modifier.width(OmSpacing.sm))
-        Text(title, style = MaterialTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(option.title, style = MaterialTheme.typography.bodyMedium, color = c.textPrimary)
     }
 }
 

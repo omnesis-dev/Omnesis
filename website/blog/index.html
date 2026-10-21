@@ -129,7 +129,7 @@
         </div>
       </div>
     </nav>
-    <main id="main" class="blog-shell">
+    <main id="main" class="blog-shell blog-index">
       <header class="blog-intro">
         <p class="eyebrow">BUILDING OMNESIS</p>
         <h1>Notes from the build.</h1>
@@ -139,14 +139,6 @@
       </header>
       <div class="post-list">
         <article class="post-card">
-          <div class="post-meta">
-            <span>Adrien Conrath</span><time datetime="2026-10-18">October 18, 2026</time
-            ><span>22 min read</span>
-          </div>
-          <div class="post-tags">
-            <span class="post-tag">Engineering</span><span class="post-tag">People</span
-            ><span class="post-tag">Brain</span>
-          </div>
           <h2>
             <a href="/blog/people-merge">How Omnesis works out who is who across your sources</a>
           </h2>
@@ -155,22 +147,18 @@
             experimental Brain that can investigate whether two identities belong to the same
             person.
           </p>
-          <a
-            class="read-post"
-            href="/blog/people-merge"
-            aria-label="Read How Omnesis works out who is who across your sources"
-            >Read post <span aria-hidden="true">→</span></a
-          >
+          <div class="post-details">
+            <div class="post-meta">
+              <span>Adrien Conrath</span><time datetime="2026-10-18">October 18, 2026</time
+              ><span>22 min read</span>
+            </div>
+            <div class="post-tags">
+              <span class="post-tag">Engineering</span><span class="post-tag">People</span
+              ><span class="post-tag">Brain</span>
+            </div>
+          </div>
         </article>
         <article class="post-card">
-          <div class="post-meta">
-            <span>Adrien Conrath</span><time datetime="2026-10-13">October 13, 2026</time
-            ><span>6 min read</span>
-          </div>
-          <div class="post-tags">
-            <span class="post-tag">Engineering</span><span class="post-tag">Search</span
-            ><span class="post-tag">Browser</span>
-          </div>
           <h2>
             <a href="/blog/chrome-agentic-search"
               >I improved the Chrome extension to offer agentic search</a
@@ -180,21 +168,18 @@
             The Omnesis Chrome Extension allows capturing the web pages I see. I evolved it also
             help me find URLs I care about
           </p>
-          <a
-            class="read-post"
-            href="/blog/chrome-agentic-search"
-            aria-label="Read I improved the Chrome extension to offer agentic search"
-            >Read post <span aria-hidden="true">→</span></a
-          >
+          <div class="post-details">
+            <div class="post-meta">
+              <span>Adrien Conrath</span><time datetime="2026-10-13">October 13, 2026</time
+              ><span>6 min read</span>
+            </div>
+            <div class="post-tags">
+              <span class="post-tag">Engineering</span><span class="post-tag">Search</span
+              ><span class="post-tag">Browser</span>
+            </div>
+          </div>
         </article>
         <article class="post-card">
-          <div class="post-meta">
-            <span>Adrien Conrath</span><time datetime="2026-10-12">October 12, 2026</time
-            ><span>11 min read</span>
-          </div>
-          <div class="post-tags">
-            <span class="post-tag">Search</span><span class="post-tag">Engineering</span>
-          </div>
           <h2>
             <a href="/blog/bm25-search-speed"
               >How search works in Omnesis, and how I made it faster</a
@@ -204,21 +189,17 @@
             A walkthrough of the inner workings of Omnesis&#39; search engine and a short story of
             recent performance improvements
           </p>
-          <a
-            class="read-post"
-            href="/blog/bm25-search-speed"
-            aria-label="Read How search works in Omnesis, and how I made it faster"
-            >Read post <span aria-hidden="true">→</span></a
-          >
+          <div class="post-details">
+            <div class="post-meta">
+              <span>Adrien Conrath</span><time datetime="2026-10-12">October 12, 2026</time
+              ><span>11 min read</span>
+            </div>
+            <div class="post-tags">
+              <span class="post-tag">Search</span><span class="post-tag">Engineering</span>
+            </div>
+          </div>
         </article>
         <article class="post-card">
-          <div class="post-meta">
-            <span>Adrien Conrath</span><time datetime="2026-10-12">October 12, 2026</time
-            ><span>5 min read</span>
-          </div>
-          <div class="post-tags">
-            <span class="post-tag">Engineering</span><span class="post-tag">Voice</span>
-          </div>
           <h2>
             <a href="/blog/contextual-voice-vocabulary"
               >Improving voice transcription in Omnesis with a contextual custom vocabulary</a
@@ -229,21 +210,17 @@
             on your phone and watch. I’ve been working to leverage the context that Omnesis has
             about the author of the voice message to improve transcription.
           </p>
-          <a
-            class="read-post"
-            href="/blog/contextual-voice-vocabulary"
-            aria-label="Read Improving voice transcription in Omnesis with a contextual custom vocabulary"
-            >Read post <span aria-hidden="true">→</span></a
-          >
+          <div class="post-details">
+            <div class="post-meta">
+              <span>Adrien Conrath</span><time datetime="2026-10-12">October 12, 2026</time
+              ><span>5 min read</span>
+            </div>
+            <div class="post-tags">
+              <span class="post-tag">Engineering</span><span class="post-tag">Voice</span>
+            </div>
+          </div>
         </article>
         <article class="post-card">
-          <div class="post-meta">
-            <span>Adrien Conrath</span><time datetime="2026-10-01">October 1, 2026</time
-            ><span>8 min read</span>
-          </div>
-          <div class="post-tags">
-            <span class="post-tag">Brain</span><span class="post-tag">Engineering</span>
-          </div>
           <h2>
             <a href="/blog/brain-prompt-caching"
               >I cut the cost of my personal AI&#39;s background agent by 70%</a
@@ -255,12 +232,15 @@
             runs and cost about $20. Today I got that down to $6—mostly by realizing I&#39;d
             structured my prompts badly for provider caching.
           </p>
-          <a
-            class="read-post"
-            href="/blog/brain-prompt-caching"
-            aria-label="Read I cut the cost of my personal AI&#39;s background agent by 70%"
-            >Read post <span aria-hidden="true">→</span></a
-          >
+          <div class="post-details">
+            <div class="post-meta">
+              <span>Adrien Conrath</span><time datetime="2026-10-01">October 1, 2026</time
+              ><span>8 min read</span>
+            </div>
+            <div class="post-tags">
+              <span class="post-tag">Brain</span><span class="post-tag">Engineering</span>
+            </div>
+          </div>
         </article>
       </div>
     </main>

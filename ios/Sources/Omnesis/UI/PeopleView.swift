@@ -59,8 +59,9 @@ struct PeopleView: View {
                     await load(query: debouncedQuery)
                     await loadStats()
                 }
-                .task {
-                    await load(query: "")
+                .task(id: store.search.map { ObjectIdentifier($0) }) {
+                    guard store.search != nil else { return }
+                    await load(query: debouncedQuery)
                     await loadStats()
                 }
         }

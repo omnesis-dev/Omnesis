@@ -86,7 +86,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       - name: Install vN, update to vN+1, roll back a broken vN+2
@@ -114,7 +114,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       - name: Install the newest release, then the candidate over it
@@ -183,7 +183,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       # T1 installs the candidate as the newest release. T2 installs the newest
@@ -201,7 +201,7 @@ jobs:
           git show "$latest:scripts/install.sh" >"$out/upgrade/release-install.sh"
           echo "::notice title=Upgrade lane::from $latest (its own install.sh) to the candidate as v$next"
           tar -C "$out" -czf "$RUNNER_TEMP/fixtures.tgz" fresh upgrade
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: install-e2e-fixtures
           path: ${{ runner.temp }}/fixtures.tgz
@@ -236,7 +236,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       # Hosted macOS runners can be queued for hours while Linux ones start
@@ -247,7 +247,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           PARTNER: ${{ matrix.lane }} tailnet collector
         run: node scripts/install-e2e/partner.mjs wait --partner "$PARTNER" --timeout 14400
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: install-e2e-fixtures
           path: ${{ runner.temp }}
@@ -318,7 +318,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       # Hosted macOS runners can be queued for hours while Linux ones start
@@ -329,7 +329,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           PARTNER: ${{ matrix.lane }} tailnet gateway
         run: node scripts/install-e2e/partner.mjs wait --partner "$PARTNER" --timeout 14400
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: install-e2e-fixtures
           path: ${{ runner.temp }}

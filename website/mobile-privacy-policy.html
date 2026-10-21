@@ -322,6 +322,16 @@
           disclose that choice to users. Omnesis does not verify or enforce a provider's retention
           policy.
         </p>
+        <p>
+          With <code>OMNESIS_EXPERIMENTAL=1</code>, a configured OpenAI backend, and remote
+          inference allowed, iOS offers an unstable realtime voice conversation mode. During a call,
+          the app streams microphone audio to your gateway, which relays it to OpenAI for speech
+          recognition and spoken replies. Conversation history and the document or tool results
+          needed to answer are also sent to OpenAI. Omnesis does not save the call audio;
+          transcripts, tool activity, and citations remain in the ordinary conversation history on
+          your gateway. OpenAI's API privacy and retention terms apply to the relayed data. Ending
+          the call stops microphone capture and audio streaming.
+        </p>
 
         <h2 id="what-omnesis-does-not-do">What Omnesis does NOT do</h2>
         <ul>

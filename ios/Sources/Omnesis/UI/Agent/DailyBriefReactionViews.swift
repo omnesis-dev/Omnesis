@@ -16,9 +16,10 @@ typealias DailyBriefReactionHandler = (
     -> Bool
 
 /// The thumbs under a brief item. Up is one tap, and a second tap clears
-/// it. Down asks which kind of wrong: "Not interested" stands at once and
-/// then offers the Tell Omnesis screen for optional words; "Factual error"
-/// opens that screen for the correction and stands on Done or Cancel alike.
+/// it. Down asks which kind of wrong: "Not interested" stands at once, on
+/// its own or followed by the Tell Omnesis screen for the reader's words;
+/// "Factual error" opens that screen for the correction and stands on Done
+/// or Cancel alike.
 /// A down reaction shows its kind, and the words, as a caption; a reaction
 /// the gateway refused is put back with a one-line reason.
 /// What the Tell Omnesis screen opened from a thumbs down is for.
@@ -87,7 +88,10 @@ struct DailyBriefReactionBar: View {
             }
         }
         .confirmationDialog("Not useful", isPresented: $askingWhyNot, titleVisibility: .visible) {
-            Button("Not interested in this kind of thing") {
+            Button("Not interested in this") {
+                Task { await onReact(item.observationId, .notInterested, nil) }
+            }
+            Button("Not interested — add a note") {
                 Task { await onReact(item.observationId, .notInterested, nil) }
                 capture = Capture(purpose: .whyNot)
             }

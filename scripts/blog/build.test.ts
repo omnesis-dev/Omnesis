@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { build, parsePost, renderMarkdown, renderPost } from "./build.mjs";
+import { build, parsePost, renderMarkdown, renderPost, renderIndex } from "./build.mjs";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -48,6 +48,18 @@ async function post(root: string, slug: string, overrides = {}) {
 }
 
 describe("blog publishing", () => {
+  it("keeps each index title as the single descriptive link with its summary and metadata", () => {
+    const parsed = parsePost(source(), "bounded-queue.md");
+    const html = renderIndex([parsed]);
+    const article = html.match(/<article class="post-card">(.*?)<\/article>/s)?.[1];
+    expect(article).toBeDefined();
+    expect(article?.match(/<a /g)).toHaveLength(1);
+    expect(article).toContain('<h2><a href="/blog/bounded-queue">A bounded queue</a></h2>');
+    expect(article).toContain("Keeping tasks small.");
+    expect(article).toContain('<time datetime="2026-01-10">');
+    expect(article).toContain("Example author");
+    expect(article).toContain("Engineering");
+  });
   it("publishes newest posts first, excludes drafts/future posts, and updates sitemap", async () => {
     const root = await fixture();
     await post(root, "older", { date: "2026-01-01" });
