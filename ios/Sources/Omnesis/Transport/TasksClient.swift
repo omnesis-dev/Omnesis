@@ -80,9 +80,9 @@ public final class TasksClient: Sendable {
         return try decodeOrThrow(TaskMutation.self, from: data)
     }
 
-    // MARK: - Internals
+    // MARK: - Internals (shared with the client's extensions)
 
-    private func dispatch(method: String, path: String, body: Data?) async throws -> Data {
+    func dispatch(method: String, path: String, body: Data?) async throws -> Data {
         guard let requestURL = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
             throw GatewayClient.Error.invalidURL
         }
@@ -117,11 +117,11 @@ public final class TasksClient: Sendable {
         }
     }
 
-    private func decodeOrThrow<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    func decodeOrThrow<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do { return try decoder.decode(type, from: data) } catch { throw GatewayClient.Error.decoding("\(error)") }
     }
 
-    private func percentEncode(_ raw: String) -> String {
+    func percentEncode(_ raw: String) -> String {
         raw.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? raw
     }
 }

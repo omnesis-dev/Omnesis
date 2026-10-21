@@ -88,7 +88,7 @@ data class CreateSessionResponse(
 
 /**
  * Where a conversation came from, when it did not start as a blank chat. Absent on plain
- * threads. [kind] is `"watch_firing"` or `"daily_brief"`; any other kind decodes with every
+ * threads. [kind] is `"watch_firing"`, `"daily_brief"` or `"task"`; any other kind decodes with every
  * kind-specific field at its default, which keeps the thread an ordinary visible conversation
  * rather than hiding anything behind a card this build cannot draw.
  *
@@ -98,17 +98,22 @@ data class CreateSessionResponse(
  * type ConversationOrigin =
  *   | { kind: "watch_firing"; firingId: string; runId: string; watchId: string;
  *       watch?: WatchFiringOriginSnapshot; seedMessageCount?: number }
- *   | { kind: "daily_brief"; runId: string; briefs: DailyBriefMessageRef[] };
+ *   | { kind: "daily_brief"; runId: string; briefs: DailyBriefMessageRef[] }
+ *   | { kind: "task"; taskId: string; runId: string; task: TaskOriginSnapshot;
+ *       seedMessageCount: 0 };
  * ```
  */
 @Serializable
 data class ConversationOrigin(
     val kind: String = "",
-    /** The run that seeded the thread (a watch firing) or sent its latest brief. */
+    /** The run that seeded the thread (a watch firing) or sent its latest brief; a task conversation repeats its task id. */
     val runId: String? = null,
     /** The watch that fired — the thread's durable subject. */
     val watchId: String? = null,
     val watch: WatchFiringOriginSnapshot? = null,
+    /** The task a `task` conversation is about. */
+    val taskId: String? = null,
+    val task: TaskOriginSnapshot? = null,
     /**
      * How many messages at the start of the thread are the folded transcript of the run that
      * created it. Clients hide that prefix and show the origin's card in its place.
@@ -130,6 +135,9 @@ data class ConversationOrigin(
 
     companion object {
         const val DAILY_BRIEF_KIND = "daily_brief"
+
+        /** A conversation "Chat about this" opened about a task. */
+        const val TASK_KIND = "task"
     }
 }
 
@@ -188,6 +196,21 @@ data class WatchFiringOriginSnapshot(
     val condition: String = "",
     /** When the firing happened, in epoch milliseconds. */
     val firedAt: Long = 0L,
+)
+
+/**
+ * The task as it read when "Chat about this" opened the conversation, so the card still draws
+ * after the task is edited or deleted.
+ */
+@Serializable
+data class TaskOriginSnapshot(
+    val title: String = "",
+    /** The task's state as `/tasks` reports it: `open`, `snoozed`, `done` or `dismissed`. */
+    val state: String = "",
+    /** The local day the task is due (`YYYY-MM-DD`), when it has a deadline. */
+    val due: String? = null,
+    /** How many documents the task refers to. */
+    val sourceCount: Int = 0,
 )
 
 /** `POST /agent/sessions/:id/messages` response. */

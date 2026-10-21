@@ -328,6 +328,13 @@ class SessionManager @Inject constructor(
     val tasksAvailable: StateFlow<Boolean> = _tasksAvailable.asStateFlow()
 
     /**
+     * Whether the gateway opens a conversation about a task ("Chat about this"), from the same
+     * `/status` probe. Cleared on every rebuild like [tasksAvailable].
+     */
+    private val _taskConversationsAvailable = MutableStateFlow(false)
+    val taskConversationsAvailable: StateFlow<Boolean> = _taskConversationsAvailable.asStateFlow()
+
+    /**
      * The gateway-dictation gate from the same `/status` probe; null until it lands and
      * for a gateway that predates the field. Cleared on every rebuild, so a new pairing
      * starts on on-device dictation until its own gateway says otherwise.
@@ -488,6 +495,7 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = false
         _developerEnabled.value = false
         _tasksAvailable.value = false
+        _taskConversationsAvailable.value = false
         _dictation.value = null
         _relayConsentPrompt.value = null
         _pushPlan.value = PushPlanState.Checking
@@ -813,6 +821,7 @@ class SessionManager @Inject constructor(
             _experimentalEnabled.value = status.experimental
             _developerEnabled.value = status.developer
             _tasksAvailable.value = status.tasks?.available == true
+            _taskConversationsAvailable.value = status.taskConversations
             _dictation.value = status.dictation
             this.current()?.let { childScope ->
                 speechVocabulary.cache.warm(status.transcriptionVocabulary, Locale.getDefault().toLanguageTag(), childScope, ownerToken = vocabularyOwner, fetch = current.vocabulary::fetch)

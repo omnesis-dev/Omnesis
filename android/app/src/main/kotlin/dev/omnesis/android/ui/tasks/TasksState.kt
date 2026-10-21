@@ -184,6 +184,14 @@ data class TasksUiState(
      * "Accept with note" on a suggestion.
      */
     val noting: TaskDto? = null,
+    /** The gateway opens conversations about tasks, so a task's fan offers Chat about this. */
+    val chatAvailable: Boolean = false,
+    /** The task whose conversation is being created. */
+    val openingChat: String? = null,
+    /** A conversation the gateway just created, for the screen to open once. */
+    val openConversation: String? = null,
+    /** Why "Chat about this" did not open a conversation, said once and then cleared. */
+    val chatError: String? = null,
 ) {
     val entries: List<TaskJournalEntry> get() = TasksReducer.entries(segment, tasks)
 }

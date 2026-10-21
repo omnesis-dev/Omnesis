@@ -672,6 +672,12 @@ fun HomeScaffold(
                     onOpenSettings = openSettings,
                     onOpenDocument = { nav.navigate("document/${Uri.encode(it)}") },
                     onTellOmnesis = { openCapture(CaptureSurface.APP) },
+                    onOpenConversation = { id ->
+                        vm.resumeConversation(id)
+                        // The new conversation belongs in the menu's list from now on.
+                        vm.refreshConversations()
+                        bringAgentForward()
+                    },
                     experimental = experimental,
                 )
             }

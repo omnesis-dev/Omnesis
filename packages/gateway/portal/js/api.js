@@ -331,6 +331,11 @@ export const getTaskCounts = (date) => request("GET", "/tasks/counts", { query: 
 export const taskAction = (id, body) =>
   request("POST", `/tasks/${encodeURIComponent(id)}/actions`, { body });
 export const undoTask = (seq) => request("POST", "/tasks/undo", { body: { seq } });
+// "Chat about this": opens a new, empty conversation about the task and
+// answers `{ conversation }`, the conversation's summary. Offered only when
+// `/status` advertises `capabilities.taskConversations`.
+export const openTaskConversation = (id) =>
+  request("POST", `/tasks/${encodeURIComponent(id)}/conversation`, { body: {} });
 
 // Developer annotations (gateway OMNESIS_DEV_MODE). The route 404s when dev
 // mode is off; the floating capture button is only shown when /status reports

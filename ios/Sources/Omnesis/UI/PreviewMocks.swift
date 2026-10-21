@@ -2563,6 +2563,64 @@ enum PreviewMocks {
     static let watchFiringOriginWatchId = "wat_marathon_deadlines"
     static let longWatchFiringOriginWatchId = "wat_northstar_rebuild"
 
+    /// The task behind a chat the operator started from Tasks.
+    static let taskConversationTaskId = "loop_northstar_lease"
+    static let taskConversationSnapshot = TaskConversationOriginSnapshot(
+        title: "Renew the studio lease",
+        state: "open",
+        due: "2026-10-23",
+        sourceCount: 3
+    )
+    /// A long title, past its due day.
+    static let taskConversationSnapshotLong = TaskConversationOriginSnapshot(
+        title: "Agree the studio lease renewal terms with the landlord's agent before the notice period on the current lease ends",
+        state: "open",
+        due: "2026-10-09",
+        sourceCount: 12
+    )
+    /// Done since, with no due day and no documents.
+    static let taskConversationSnapshotDone = TaskConversationOriginSnapshot(
+        title: "Book the Q4 budget review room",
+        state: "done",
+        sourceCount: 0
+    )
+
+    /// The origin of a chat started from that task's fan.
+    static let taskConversationOrigin = ConversationOrigin(
+        kind: "task",
+        taskId: taskConversationTaskId,
+        runId: taskConversationTaskId,
+        task: taskConversationSnapshot,
+        seedMessageCount: 0
+    )
+
+    /// A chat about a task, just started: the card and nothing said yet.
+    static let taskConversationSeed: AppStore.AgentPreviewSeed = {
+        var seed = AppStore.AgentPreviewSeed()
+        seed.sessionId = "conv_task_northstar"
+        seed.title = taskConversationSnapshot.title
+        seed.origin = taskConversationOrigin
+        seed.connected = true
+        return seed
+    }()
+
+    /// The same chat once the operator has asked something.
+    static let taskConversationAnsweredSeed: AppStore.AgentPreviewSeed = {
+        var seed = taskConversationSeed
+        seed.turns = [
+            .user(id: "u-task-1", text: "What's left before I can sign the renewal?"),
+            .assistant(AgentAssistantTurn(
+                id: "a-task-1",
+                parts: [.text(
+                    "Two things: the landlord's revised rent schedule hasn't arrived yet, "
+                        + "and the insurance certificate on file expires in November."
+                )],
+                historyCompleted: true
+            )),
+        ]
+        return seed
+    }()
+
     /// The landing: no session yet, because one is minted lazily on the first send. The
     /// new-conversation button is absent — this already is one.
     static let agentEmptyConnected = AppStore.AgentPreviewSeed(

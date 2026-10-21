@@ -196,6 +196,20 @@ class TasksScreenshotTest {
         FanScreen(todayState, TaskFanPreview(taskId = due.id, highlight = TaskFanAction.Tomorrow))
     }
 
+    /**
+     * A gateway that opens conversations about tasks: Chat about this ends the fan, furthest
+     * from the thumb, and the finger has slid onto it.
+     */
+    @Test
+    fun tasks_fan_chat_dark() = capture("tasks_fan_chat_dark", dark = true) {
+        FanScreen(todayState.copy(chatAvailable = true), TaskFanPreview(taskId = due.id, highlight = TaskFanAction.ChatAbout))
+    }
+
+    @Test
+    fun tasks_fan_chat_light() = capture("tasks_fan_chat_light", dark = false) {
+        FanScreen(todayState.copy(chatAvailable = true), TaskFanPreview(taskId = due.id, highlight = TaskFanAction.ChatAbout))
+    }
+
     /** Near the top of the list the column hangs below the finger instead, in the same order. */
     @Test
     fun tasks_fan_near_top_dark() = capture("tasks_fan_near_top_dark", dark = true) {

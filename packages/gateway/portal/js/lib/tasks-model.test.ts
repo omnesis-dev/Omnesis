@@ -26,6 +26,8 @@ import {
   resolveTaskView,
   resolvedLabel,
   taskDocumentsShown,
+  supportsTaskConversations,
+  taskCardFacts,
   scheduleEditorState,
   scheduleFromEditor,
   scheduleLabel,
@@ -475,5 +477,34 @@ describe("an action in flight", () => {
     expect(actionAlreadyApplied({ action: "strike" }, alreadyDone)).toBe(false);
     expect(actionAlreadyApplied({ action: "complete" }, { code: "BAD_REQUEST" })).toBe(false);
     expect(actionAlreadyApplied({ action: "complete" }, new Error("network down"))).toBe(false);
+  });
+});
+
+describe("supportsTaskConversations", () => {
+  it("is on when the advertised range includes version 1", () => {
+    expect(supportsTaskConversations({ taskConversations: { min: 1, max: 1 } })).toBe(true);
+    expect(supportsTaskConversations({ taskConversations: { min: 1, max: 3 } })).toBe(true);
+  });
+
+  it("is off for an older gateway, a malformed entry or a range past this portal", () => {
+    expect(supportsTaskConversations(undefined)).toBe(false);
+    expect(supportsTaskConversations({})).toBe(false);
+    expect(supportsTaskConversations({ taskConversations: true })).toBe(false);
+    expect(supportsTaskConversations({ taskConversations: { min: 2, max: 2 } })).toBe(false);
+  });
+});
+
+describe("taskCardFacts", () => {
+  it("reads the state, the due day relative to today and the source count", () => {
+    expect(
+      taskCardFacts({ title: "t", state: "open", due: "2026-03-11", sourceCount: 1 }, "2026-03-10"),
+    ).toEqual(["Open", "Due tomorrow", "1 source"]);
+    expect(taskCardFacts({ title: "t", state: "dismissed", sourceCount: 0 }, "2026-03-10")).toEqual([
+      "Struck",
+    ]);
+  });
+
+  it("is empty without a snapshot", () => {
+    expect(taskCardFacts(undefined, "2026-03-10")).toEqual([]);
   });
 });

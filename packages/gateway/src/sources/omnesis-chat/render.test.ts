@@ -3,7 +3,7 @@
 
 import { describe, test, expect } from "vitest";
 
-import { renderConversation } from "./render.js";
+import { conversationEvidenceStart, renderConversation } from "./render.js";
 import type { ConversationRecord } from "../../agent/conversation-store.js";
 
 function makeRecord(overrides: Partial<ConversationRecord> = {}): ConversationRecord {
@@ -385,5 +385,25 @@ describe("renderConversation — citation harvest", () => {
       }),
     );
     expect(citations).toEqual([]);
+  });
+});
+
+describe("conversationEvidenceStart", () => {
+  test("a conversation about a task has no hidden seed: every message is evidence", () => {
+    expect(
+      conversationEvidenceStart(
+        makeRecord({
+          origin: { kind: "task", taskId: "loop_1", runId: "loop_1", seedMessageCount: 0 },
+        }),
+      ),
+    ).toBe(0);
+  });
+
+  test("a watch-firing thread starts after its seed, and without one is not evidence", () => {
+    const watch = { kind: "watch_firing", firingId: "f", runId: "f", watchId: "w" } as const;
+    expect(
+      conversationEvidenceStart(makeRecord({ origin: { ...watch, seedMessageCount: 2 } })),
+    ).toBe(2);
+    expect(conversationEvidenceStart(makeRecord({ origin: watch }))).toBeNull();
   });
 });

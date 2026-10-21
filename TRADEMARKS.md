@@ -85,6 +85,8 @@ The people graph illustration in `website/blog/images/people-merge/people-graph.
 
 The identity-comparison illustrations in `website/blog/images/people-merge/token-frequency.png` and `website/blog/images/people-merge/surname-conflict.png` use Gmail marks (Google LLC) and Apple Contacts marks (Apple Inc.) to identify the sources of example aliases. These marks remain the property of their respective owners. Their display is nominative and does not imply endorsement, partnership, or sponsorship.
 
+The generated diagrams and fictional interface recreations under `website/blog/images/omnesis-graph/` use Gmail and Google Drive marks (Google LLC) and WhatsApp marks (WhatsApp LLC) to identify the sources in an invented document trail. These marks remain the property of their respective owners. Their display is nominative and does not imply endorsement, partnership, or sponsorship.
+
 ## Community links
 
 The website footer uses the X and Discord marks to identify Omnesis's public account and community invite. The bundled SVGs come from [Simple Icons](https://simpleicons.org) under CC0-1.0. X and Discord own their respective marks; their use here does not imply endorsement or partnership.

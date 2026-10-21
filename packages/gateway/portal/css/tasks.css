@@ -416,6 +416,19 @@ button.tasks-bullet-struck:hover {
   margin-top: 4px;
 }
 
+/* "Chat about this": an icon before the label, like the row's meta items. */
+.tasks-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tasks-chat-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
 .tasks-select,
 .tasks-field select,
 .tasks-field input,

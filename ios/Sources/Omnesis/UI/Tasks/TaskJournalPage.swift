@@ -22,6 +22,9 @@ struct TaskJournalPage: View {
     /// Opens the note composer for a task: "Done + note", or a suggestion's
     /// "Accept with note".
     var onNote: (TaskNoting) -> Void = { _ in }
+    /// Starts a chat about a task; nil when the gateway cannot, which keeps
+    /// Chat about this out of the fan.
+    var onChat: ((TaskRecord) -> Void)?
     /// A fan to show as soon as the rows are laid out — previews and
     /// snapshots.
     var initialFan: TaskFanPreview?
@@ -84,6 +87,8 @@ struct TaskJournalPage: View {
             // An open fan keeps the bounds it opened with: the toast coming
             // or going must not pull it out from under a finger.
             .onChange(of: viewport.size) { _, size in configureFan(size: size) }
+            // `/status` can report the chat capability after the page appeared.
+            .onChange(of: onChat != nil) { _, _ in configureFan(size: viewport.size) }
         }
         .coordinateSpace(.named(TaskFanOverlay.space))
         .onPreferenceChange(TaskRowFrameKey.self) { frames in fan.rowFrames = frames }
@@ -109,6 +114,7 @@ struct TaskJournalPage: View {
         metrics.targetHeight = max(44, fanTargetHeight)
         metrics.targetWidth = min(fanTargetWidth, max(140, size.width - metrics.lead - 2 * TaskRowView.textInset))
         fan.metrics = metrics
+        fan.offersChat = onChat != nil
         fan.perform = { action, task in run(action, on: task) }
         press.canBegin = { point in fan.pressedTask(at: point, in: page.tasks) != nil }
         press.began = { point in
@@ -123,27 +129,39 @@ struct TaskJournalPage: View {
     /// bullet's path, which shows the row done at once. A time accepts a
     /// suggestion for then, and moves one of the person's own tasks there.
     private func run(_ action: TaskFanAction, on task: TaskRecord) {
-        let schedule = TaskSchedule()
-        let now = schedule.date(fromDay: model.today) ?? Date()
-        let plan: (String) -> TaskAction = { value in
-            task.isSuggestion ? .accept(scheduledFor: .set(value)) : .migrate(to: value)
+        if let when = scheduledValue(for: action) {
+            let plan: TaskAction = task.isSuggestion ? .accept(scheduledFor: .set(when)) : .migrate(to: when)
+            Task { await model.perform(plan, on: task) }
+            return
         }
         switch action {
         case .done: Task { await model.tapBullet(task) }
         case .doneWithNote: onNote(TaskNoting(task: task, purpose: .complete))
-        case .today: Task { await model.perform(plan(model.today), on: task) }
-        case .tomorrow: Task { await model.perform(plan(schedule.tomorrow(from: now)), on: task) }
-        case .thisMonth: Task { await model.perform(plan(schedule.month(now)), on: task) }
-        case .nextMonth: Task { await model.perform(plan(schedule.nextMonth(from: now)), on: task) }
-        case .month(let month): Task { await model.perform(plan(month), on: task) }
-        case .someday: Task { await model.perform(plan("someday"), on: task) }
+        case .today, .tomorrow, .thisMonth, .nextMonth, .month, .someday: break
         case .cancelTask: Task { await model.perform(.strike(reason: nil), on: task) }
         case .accept: Task { await model.perform(.accept(scheduledFor: .unchanged), on: task) }
         case .acceptWithNote: onNote(TaskNoting(task: task, purpose: .accept))
         case .ignore: Task { await model.perform(.ignore(reason: nil), on: task) }
+        case .chat: onChat?(task)
         case .otherMonth: fan.openForAccessibility(task, today: model.today, mode: .months(page: 0))
         case .acceptFor: fan.openForAccessibility(task, today: model.today, mode: .when)
         case .back, .laterMonths, .earlierMonths: break
+        }
+    }
+
+    /// The day, month or "someday" a scheduling fan action names, or nil for
+    /// every other action.
+    private func scheduledValue(for action: TaskFanAction) -> String? {
+        let schedule = TaskSchedule()
+        let now = schedule.date(fromDay: model.today) ?? Date()
+        switch action {
+        case .today: return model.today
+        case .tomorrow: return schedule.tomorrow(from: now)
+        case .thisMonth: return schedule.month(now)
+        case .nextMonth: return schedule.nextMonth(from: now)
+        case .month(let month): return month
+        case .someday: return "someday"
+        default: return nil
         }
     }
 
@@ -219,7 +237,8 @@ struct TaskJournalPage: View {
                 onBullet: { Task { await model.tapBullet(task) } },
                 onAction: { action in Task { await model.perform(action, on: task) } },
                 onDocument: onDocument,
-                onFanAction: { run($0, on: task) }
+                onFanAction: { run($0, on: task) },
+                offersChat: onChat != nil
             )
             // The whole row is where a long press opens the fan.
             .background {

@@ -4,6 +4,10 @@
 package dev.omnesis.android.transport.dto
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 
 /** `GET /status`. Mirrors the iOS `StatusSnapshot`. */
 @Serializable
@@ -44,7 +48,27 @@ data class StatusSnapshot(
      * the field, which reads as inactive: notes keep only the phone's transcript.
      */
     val dictation: DictationStatusDto? = null,
+    /**
+     * Optional features a client must ask about before offering them, each named with the
+     * protocol versions the gateway speaks (`{ min, max }`). Kept as raw JSON because the map
+     * mixes shapes and grows over time: one entry this build misreads must not cost the whole
+     * status. Absent on a gateway that predates the map.
+     */
+    val capabilities: JsonElement? = null,
 ) {
+    /** The gateway opens a conversation about a task (`POST /tasks/:id/conversation`). */
+    val taskConversations: Boolean
+        get() = speaks(TASK_CONVERSATIONS, TASK_CONVERSATIONS_VERSION)
+
+    /** Whether the capability [name] advertises a version range that includes [version]. */
+    private fun speaks(name: String, version: Int): Boolean {
+        val range = ((capabilities as? JsonObject)?.get(name) as? JsonObject) ?: return false
+        fun bound(key: String): Int? = (range[key] as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull
+        val min = bound("min") ?: return false
+        val max = bound("max") ?: return false
+        return version in min..max
+    }
+
     /**
      * What the "on disk" stat shows: the gateway's whole footprint, or the main
      * database alone from a gateway that does not report one.
@@ -55,6 +79,13 @@ data class StatusSnapshot(
     /** The total of `GET /status`'s `diskUsage`; the per-store breakdown is not rendered here. */
     @Serializable
     data class DiskUsage(val totalBytes: Long)
+
+    companion object {
+        const val TASK_CONVERSATIONS = "taskConversations"
+
+        /** The `taskConversations` protocol version this build speaks. */
+        const val TASK_CONVERSATIONS_VERSION = 1
+    }
 
     @Serializable
     data class Documents(

@@ -38,6 +38,8 @@ struct TaskRowView: View {
     var onDocument: (TaskDocument) -> Void = { _ in }
     /// Runs a fan action directly — VoiceOver's custom actions.
     var onFanAction: (TaskFanAction) -> Void = { _ in }
+    /// Whether the fan offers Chat about this, so VoiceOver does too.
+    var offersChat = false
 
     /// Whether a long press opens the action fan: any open task, a
     /// suggestion included. A resolved task is reopened instead.
@@ -129,6 +131,9 @@ struct TaskRowView: View {
                 Button("Next month") { onFanAction(.nextMonth) }
                 Button("Move to month…") { onFanAction(.otherMonth) }
                 Button("Cancel task") { onFanAction(.cancelTask) }
+                if offersChat {
+                    Button("Chat about this") { onFanAction(.chat) }
+                }
             } else if task.isResolved {
                 Button("Reopen", action: onBullet)
             }

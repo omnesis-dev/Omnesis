@@ -26,6 +26,8 @@ actor TasksDemoGateway: TasksService {
 
     /// Notes saved by accepting a suggestion with a note.
     private(set) var notes: [SavedNote] = []
+    /// Chats started about a task, oldest first, each with its full origin.
+    private(set) var conversations: [ConversationSummary] = []
     private var nextSeq = 100
     private let schedule: TaskSchedule
     /// The instant a task resolved "now" is stamped with.
@@ -129,6 +131,54 @@ actor TasksDemoGateway: TasksService {
         ledger.removeAll { $0.seq == seq }
         tasks[index] = entry.before
         return TaskMutation(task: entry.before, receipt: TaskReceipt(text: "Undone: \(entry.before.title)", undoSeq: nil))
+    }
+
+    // MARK: - Conversations
+
+    /// Starts a new chat about the task, as the gateway does: titled after
+    /// the task, with no messages, and a `task` origin whose snapshot the card
+    /// is drawn from. Like the gateway's list rows, the answer carries only
+    /// the origin's anchor; the snapshot comes with the resumed conversation
+    /// (`conversation(id:)`).
+    func startConversation(about id: String) async throws -> ConversationSummary {
+        guard let task = tasks.first(where: { $0.id == id }) else { throw GatewayClient.Error.notFound }
+        let summary = ConversationSummary(
+            sessionId: "conv_task_\(conversations.count + 1)",
+            title: task.title,
+            model: "claude-sonnet-4-6",
+            backend: "anthropic",
+            createdAt: resolvedNow,
+            updatedAt: resolvedNow,
+            messageCount: 0,
+            origin: ConversationOrigin(
+                kind: "task",
+                taskId: task.id,
+                runId: task.id,
+                task: TaskConversationOriginSnapshot(
+                    title: task.title,
+                    state: (task.state ?? .open).rawValue,
+                    due: task.dueDay,
+                    sourceCount: task.documents.count
+                ),
+                seedMessageCount: 0
+            )
+        )
+        conversations.append(summary)
+        return ConversationSummary(
+            sessionId: summary.sessionId,
+            title: summary.title,
+            model: summary.model,
+            backend: summary.backend,
+            createdAt: summary.createdAt,
+            updatedAt: summary.updatedAt,
+            messageCount: 0,
+            origin: ConversationOrigin(kind: "task", taskId: task.id, runId: task.id)
+        )
+    }
+
+    /// A started chat with its full origin, as resuming it answers.
+    func conversation(id: String) -> ConversationSummary? {
+        conversations.first { $0.sessionId == id }
     }
 
     // MARK: - Placement

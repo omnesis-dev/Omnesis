@@ -12,6 +12,7 @@ import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.client.TaskAction
 import dev.omnesis.android.transport.client.TaskView
+import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.TaskDetailDto
 import dev.omnesis.android.transport.dto.TaskDto
 import dev.omnesis.android.transport.dto.TaskMutationDto
@@ -22,6 +23,7 @@ import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +37,7 @@ internal interface TasksGateway {
     suspend fun detail(id: String): TaskDetailDto
     suspend fun act(id: String, action: TaskAction): TaskMutationDto
     suspend fun undo(seq: Long): TaskMutationDto
+    suspend fun conversation(id: String): ConversationSummary
 }
 
 private class SessionTasksGateway(private val session: SessionManager) : TasksGateway {
@@ -43,6 +46,7 @@ private class SessionTasksGateway(private val session: SessionManager) : TasksGa
     override suspend fun detail(id: String) = tasks.detail(id)
     override suspend fun act(id: String, action: TaskAction) = tasks.act(id, action)
     override suspend fun undo(seq: Long) = tasks.undo(seq)
+    override suspend fun conversation(id: String) = tasks.conversation(id)
 }
 
 /**
@@ -57,6 +61,8 @@ class TasksViewModel internal constructor(
     private val catalog: SourceCatalog? = null,
     private val countsStore: TaskCountsStore? = null,
     private val focusBus: TaskFocusBus? = null,
+    /** Whether the gateway opens conversations about tasks; absent reads as never. */
+    private val chatAvailable: Flow<Boolean>? = null,
     private val today: () -> LocalDate,
 ) : ViewModel() {
     @Inject constructor(
@@ -64,7 +70,14 @@ class TasksViewModel internal constructor(
         catalog: SourceCatalog,
         countsStore: TaskCountsStore,
         focusBus: TaskFocusBus,
-    ) : this(SessionTasksGateway(session), catalog, countsStore, focusBus, { LocalDate.now() })
+    ) : this(
+        SessionTasksGateway(session),
+        catalog,
+        countsStore,
+        focusBus,
+        session.taskConversationsAvailable,
+        { LocalDate.now() },
+    )
 
     /** A task document's source icon, resolved generically through the source catalog. */
     fun iconFor(sourceId: String): SourceIconModel = catalog?.iconModel(sourceId) ?: SourceIconModel()
@@ -75,6 +88,9 @@ class TasksViewModel internal constructor(
 
     init {
         load()
+        chatAvailable?.let { available ->
+            viewModelScope.launch { available.collect { on -> _state.update { it.copy(chatAvailable = on) } } }
+        }
         focusBus?.let { bus ->
             viewModelScope.launch {
                 bus.request.filterNotNull().collect { request ->
@@ -165,6 +181,7 @@ class TasksViewModel internal constructor(
             TaskFanAction.NextMonth -> mutate(task, TaskAction.Migrate(TaskDates.nextMonth(localDay)))
             is TaskFanAction.Month -> mutate(task, TaskAction.Migrate(action.month))
             TaskFanAction.CancelTask -> mutate(task, TaskAction.Strike())
+            TaskFanAction.ChatAbout -> chatAbout(task)
             TaskFanAction.Accept, TaskFanAction.AcceptWithNote, TaskFanAction.Today, TaskFanAction.NextWeek,
             TaskFanAction.Someday, TaskFanAction.Ignore,
             TaskFanAction.OtherMonth, TaskFanAction.Back, TaskFanAction.LaterMonths, TaskFanAction.EarlierMonths,
@@ -186,9 +203,36 @@ class TasksViewModel internal constructor(
             TaskFanAction.Someday -> accept(task, TaskDates.SOMEDAY)
             TaskFanAction.DoneWithNote, TaskFanAction.CancelTask,
             TaskFanAction.OtherMonth, TaskFanAction.Back, TaskFanAction.LaterMonths, TaskFanAction.EarlierMonths,
-            TaskFanAction.AcceptFor -> Unit
+            TaskFanAction.AcceptFor, TaskFanAction.ChatAbout -> Unit
         }
     }
+
+    /**
+     * "Chat about this": ask the gateway for a new conversation about [task], then hand its id
+     * to the screen to open. One request at a time, so a second tap while the first is in
+     * flight does not open two conversations. A refusal leaves the screen where it is and says
+     * so briefly.
+     */
+    fun chatAbout(task: TaskDto) {
+        if (_state.value.openingChat != null) return
+        _state.update { it.copy(openingChat = task.id, chatError = null) }
+        viewModelScope.launch {
+            try {
+                val conversation = gateway.conversation(task.id)
+                _state.update { it.copy(openingChat = null, openConversation = conversation.sessionId) }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Throwable) {
+                _state.update { it.copy(openingChat = null, chatError = chatErrorMessage(error)) }
+                if (error is GatewayException.NotFound) reread()
+            }
+        }
+    }
+
+    /** The screen opened [TasksUiState.openConversation]. */
+    fun conversationOpened() = _state.update { it.copy(openConversation = null) }
+
+    fun clearChatError() = _state.update { it.copy(chatError = null) }
 
     /**
      * The id the open note capture's accept sends, fixed for as long as the capture is open, so
@@ -352,4 +396,15 @@ internal fun isRefusal(error: Throwable): Boolean = when (error) {
     is GatewayException.NotFound -> true
     is GatewayException.ServerError -> error.status in 400..499
     else -> false
+}
+
+/**
+ * The one line a failed "Chat about this" shows. The gateway answers 503 when it has no agent
+ * to hold the conversation (no model assigned, or the agent switched off).
+ */
+internal fun chatErrorMessage(error: Throwable): String = when {
+    error is GatewayException.NotFound -> "This task no longer exists."
+    error is GatewayException.ServerError && error.status == 503 ->
+        "Couldn't open a chat: the agent isn't available. Check its model in Settings → Models."
+    else -> "Couldn't open a chat. ${classifyGatewayError(error)}"
 }

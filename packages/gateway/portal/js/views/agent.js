@@ -45,6 +45,7 @@ import {
 } from "./agent-reducer.js";
 import { navigate, replaceRoute, replaceUrl } from "../lib/router.js";
 import { canDeleteConversation } from "../lib/sidebar-conversations.js";
+import { localDay, taskCardFacts } from "../lib/tasks-model.js";
 import {
   conversationAgentTarget,
   freshAgentTarget,
@@ -1103,10 +1104,14 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   }
 
   const cloudRecovery = cloudInferenceRecovery(state);
-  const isHero = state.turns.length === 0 && !state.terminalFailure;
+  // A conversation with a context card opens on the card, even before its
+  // first message, rather than on the landing hero.
+  const isHero =
+    state.turns.length === 0 && !state.terminalFailure && !hasContextCard(state.conversationOrigin);
   // The Morning brief conversation reads by day: separators, brief headers,
   // what each brief was based on, and earlier days folded.
   const isBriefThread = state.conversationOrigin?.kind === "daily_brief";
+  const isTaskThread = state.conversationOrigin?.kind === "task";
   return html`
     <div class=${`agent-page${isHero ? " agent-page-hero" : ""}`}>
       <div class=${`agent-layout${isHero ? " agent-layout-hero" : ""}`}>
@@ -1158,9 +1163,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                   />`
                 : null}
 
-          ${state.turns.length === 0 &&
-          !state.terminalFailure &&
-          !hasContextCard(state.conversationOrigin)
+          ${isHero
             ? html`
               <div class="agent-hero">
                 <span class="agent-hero-mark" aria-hidden="true"></span>
@@ -1198,6 +1201,11 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                   ? html`<${WatchFiringContextCard}
                       snapshot=${state.conversationOrigin.watch}
                       watchId=${state.conversationOrigin.watchId} />`
+                  : null}
+                ${state.conversationOrigin?.kind === "task" && state.conversationOrigin.task
+                  ? html`<${TaskContextCard}
+                      snapshot=${state.conversationOrigin.task}
+                      taskId=${state.conversationOrigin.taskId} />`
                   : null}
                 <${LoadMore}
                   hasMore=${!state.busy && Boolean(state.messageNextCursor)}
@@ -1253,7 +1261,8 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                     }}
                     onCancel=${cancel}
                     experimental=${experimental}
-                    placeholder=${isBriefThread ? "Reply about today's brief…" : null}
+                    autoFocus=${isTaskThread && state.turns.length === 0}
+                    placeholder=${isBriefThread ? "Reply about today's brief…" : isTaskThread ? "Ask about this task…" : null}
                   />`}
             `}
         </section>
@@ -1373,6 +1382,46 @@ export function WatchFiringContextCard({ snapshot, watchId }) {
     <div class="agent-context-card-description">
       <code>${Number.isNaN(firedAt.getTime()) ? "" : firedAt.toLocaleString()}</code>
     </div>
+  `;
+  if (!href) return html`<div class="agent-context-card">${content}</div>`;
+  return html`
+    <a class="agent-context-card agent-context-card-link"
+       href=${href}
+       onClick=${onClick}>
+      ${content}
+    </a>
+  `;
+}
+
+// The task a "Chat about this" conversation is about, pinned above the
+// messages so it is plain what "this" means. Drawn from the snapshot stamped
+// when the conversation opened, so it survives the task changing or being
+// deleted; the agent itself reads the task as it currently stands. Clicking
+// it opens the task. Mirrors iOS's TaskContextCard.
+export function TaskContextCard({ snapshot, taskId }) {
+  const href = typeof taskId === "string" && taskId.length > 0
+    ? `/portal/tasks?task=${encodeURIComponent(taskId)}`
+    : null;
+  function onClick(e) {
+    if (!href || e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+    e.preventDefault();
+    navigate(href);
+  }
+  const facts = taskCardFacts(snapshot, localDay());
+  const content = html`
+    <div class="agent-context-card-kicker">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+        <path d="m5.5 8 1.75 1.75L10.5 6.5" />
+      </svg>
+      <span>About this task</span>
+      ${href ? html`<span class="agent-context-card-open" aria-hidden="true">Open task ›</span>` : null}
+    </div>
+    <div class="agent-context-card-title">${snapshot.title}</div>
+    ${facts.length > 0
+      ? html`<div class="agent-context-card-description">${facts.join(" · ")}</div>`
+      : null}
   `;
   if (!href) return html`<div class="agent-context-card">${content}</div>`;
   return html`
