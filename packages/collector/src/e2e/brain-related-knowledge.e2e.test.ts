@@ -5,6 +5,8 @@ import "./synth-env.js";
 import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 import { scheduleKnowledgeReview } from "../../../gateway/src/brain/knowledge/work-lifecycle.js";
+import { readKnowledgeSourceRevision } from "../../../gateway/src/brain/knowledge/source-revision.js";
+import { enqueueKnowledgeWork } from "../../../gateway/src/brain/knowledge/work.js";
 import {
   BrainBench,
   call,
@@ -55,6 +57,10 @@ it("carries a correction recorded on another document into the page that cites t
     `<claim id="charge" refs="source:${source}">${claim}</claim>`;
   const page = knowledgePuppet({
     plan(item, ctx, steps) {
+      // Reoffered sources must reconcile against a fresh read of the current page.
+      steps = steps.slice(
+        steps.findLastIndex((step) => step.name === "knowledge_next_frontier") + 1,
+      );
       if (item.source?.title === BROCHURE) {
         ids.brochure = item.source.id;
         ids.brochureRevision = item.source.contentHash;
@@ -62,9 +68,14 @@ it("carries a correction recorded on another document into the page that cites t
         if (!support.evidence) return { calls: support.calls };
         viewingMarkup = `<claim id="viewing" refs="${support.evidence.ref}">${support.evidence.text}</claim>`;
         viewingVersions = { [support.evidence.ref]: support.evidence.revision };
+        const reads = [...support.calls, call("knowledge_fetch", { id: pageId, editing: true })];
+        const existing = [...steps]
+          .reverse()
+          .find((step) => step.name === "knowledge_fetch" && step.args?.id === pageId);
+        if (!existing || structuredData(existing.result)) return { calls: reads };
         return {
           calls: [
-            ...support.calls,
+            ...reads,
             call("knowledge_list", { kind: "wiki" }),
             call("knowledge_candidates", {}),
             call("knowledge_propose_page", {
@@ -282,6 +293,40 @@ it("carries a correction recorded on another document into the page that cites t
     await expect.poll(pageText, { timeout: 90_000 }).toContain("£3,200 per quarter");
     await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
     await searchable("Flat 2 service charge quarter", "Flat 2");
+
+    // Publication catch-up can offer already interpreted evidence again.
+    bench.withWriteHandle((db) => {
+      const now = Date.now();
+      enqueueKnowledgeWork(
+        db,
+        {
+          id: "flat-two-brochure-revisit",
+          subjectId: ids.brochure,
+          subjectKind: "source",
+          reason: "review",
+          inputRevision: readKnowledgeSourceRevision(db, ids.brochure)!,
+          tier: "immediate",
+          dueAt: now,
+        },
+        now,
+      );
+    });
+    await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 120_000 });
+    expect(
+      bench.sql
+        .prepare("SELECT status FROM knowledge_work WHERE id='flat-two-brochure-revisit'")
+        .get(),
+    ).toMatchObject({ status: "completed" });
+    expect((await bench.obs.runsForSource(ids.brochure)).length).toBeGreaterThanOrEqual(2);
+    expect(
+      (await steps()).filter(
+        (step) =>
+          step.tool === "knowledge_save" &&
+          (step.args.node as { id?: string; expectedRevision?: number } | undefined)?.id ===
+            pageId &&
+          (step.args.node as { expectedRevision?: number }).expectedRevision === 0,
+      ),
+    ).toHaveLength(1);
 
     // The agent's correction arrives on its own document.
     phase = "corrected";
