@@ -129,20 +129,15 @@ struct TaskJournalPage: View {
     /// bullet's path, which shows the row done at once. A time accepts a
     /// suggestion for then, and moves one of the person's own tasks there.
     private func run(_ action: TaskFanAction, on task: TaskRecord) {
-        let schedule = TaskSchedule()
-        let now = schedule.date(fromDay: model.today) ?? Date()
-        let plan: (String) -> TaskAction = { value in
-            task.isSuggestion ? .accept(scheduledFor: .set(value)) : .migrate(to: value)
+        if let when = scheduledValue(for: action) {
+            let plan: TaskAction = task.isSuggestion ? .accept(scheduledFor: .set(when)) : .migrate(to: when)
+            Task { await model.perform(plan, on: task) }
+            return
         }
         switch action {
         case .done: Task { await model.tapBullet(task) }
         case .doneWithNote: onNote(TaskNoting(task: task, purpose: .complete))
-        case .today: Task { await model.perform(plan(model.today), on: task) }
-        case .tomorrow: Task { await model.perform(plan(schedule.tomorrow(from: now)), on: task) }
-        case .thisMonth: Task { await model.perform(plan(schedule.month(now)), on: task) }
-        case .nextMonth: Task { await model.perform(plan(schedule.nextMonth(from: now)), on: task) }
-        case .month(let month): Task { await model.perform(plan(month), on: task) }
-        case .someday: Task { await model.perform(plan("someday"), on: task) }
+        case .today, .tomorrow, .thisMonth, .nextMonth, .month, .someday: break
         case .cancelTask: Task { await model.perform(.strike(reason: nil), on: task) }
         case .accept: Task { await model.perform(.accept(scheduledFor: .unchanged), on: task) }
         case .acceptWithNote: onNote(TaskNoting(task: task, purpose: .accept))
@@ -151,6 +146,22 @@ struct TaskJournalPage: View {
         case .otherMonth: fan.openForAccessibility(task, today: model.today, mode: .months(page: 0))
         case .acceptFor: fan.openForAccessibility(task, today: model.today, mode: .when)
         case .back, .laterMonths, .earlierMonths: break
+        }
+    }
+
+    /// The day, month or "someday" a scheduling fan action names, or nil for
+    /// every other action.
+    private func scheduledValue(for action: TaskFanAction) -> String? {
+        let schedule = TaskSchedule()
+        let now = schedule.date(fromDay: model.today) ?? Date()
+        switch action {
+        case .today: return model.today
+        case .tomorrow: return schedule.tomorrow(from: now)
+        case .thisMonth: return schedule.month(now)
+        case .nextMonth: return schedule.nextMonth(from: now)
+        case .month(let month): return month
+        case .someday: return "someday"
+        default: return nil
         }
     }
 
