@@ -1906,6 +1906,15 @@ describe("full-validation workflow topology", () => {
     expect(workflow.concurrency).toBeUndefined();
   });
 
+  it("selects a supported Node runtime before topology fixture dependency resolution", () => {
+    const steps = workflows["topology-e2e"].jobs.topology.steps;
+    const setupIndex = steps.findIndex((step) => step.uses?.startsWith("actions/setup-node@"));
+    const laneIndex = steps.findIndex((step) => step.name === "lane [topology]");
+    expect(setupIndex).toBeGreaterThan(-1);
+    expect(setupIndex).toBeLessThan(laneIndex);
+    expect(steps[setupIndex].with["node-version"]).toBe("24");
+  });
+
   it("pins every target checkout and verifies its resolved revision", () => {
     for (const name of validationNames) {
       const workflow = workflows[name];
@@ -2487,8 +2496,9 @@ describe("external-harness conformance workflow", () => {
   });
 
   it("pins both upstream harnesses and installs Hermes from its locked exact commit", () => {
-    expect(integrationPackage.devDependencies.openclaw).toBe("2026.9.2");
-    expect(packageLock.packages["node_modules/openclaw"].version).toBe("2026.9.2");
+    const openclawVersion = integrationPackage.devDependencies.openclaw;
+    expect(openclawVersion).toMatch(/^\d+\.\d+\.\d+$/u);
+    expect(packageLock.packages["node_modules/openclaw"].version).toBe(openclawVersion);
     expect(workflow.env.HERMES_REPOSITORY).toBe("https://github.com/NousResearch/hermes-agent.git");
     expect(workflow.env.HERMES_COMMIT).toMatch(/^[0-9a-f]{40}$/u);
 

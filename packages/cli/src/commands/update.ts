@@ -80,6 +80,7 @@ import {
   type ServiceComponent,
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
+import { assertSourceTargetNode } from "../update/source-node.js";
 import { approveInteractive } from "../approve.js";
 import { restartHarness } from "../harness-restart.js";
 import {
@@ -411,6 +412,8 @@ function updateApplyStateStore(configDir: string): UpdateApplyStateStore {
 /** Effects the update flows need — injected so tests can fake them. */
 export interface UpdateFlowDeps {
   run: CommandRunner;
+  /** Refuse unsupported target source tooling before the checkout or services change. */
+  checkSourceNode(rootDir: string, targetCommit: string): Promise<void>;
   /** Completion proof for installer-managed source and container applies. */
   applyState: UpdateApplyStateStore;
   /** Signal ownership transferred while an apply and what follows it are mutable. */
@@ -2176,6 +2179,8 @@ export async function updateSourceCheckout(
     );
   }
 
+  await deps.checkSourceNode(opts.rootDir, targetCommit);
+
   let rawState: string | null;
   try {
     rawState = deps.applyState.read();
@@ -3012,6 +3017,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
 
   const deps: UpdateFlowDeps = {
     run: spawnRunner,
+    checkSourceNode: (rootDir, commit) => assertSourceTargetNode(spawnRunner, rootDir, commit),
     applyState: updateApplyStateStore(configDir),
     interruptions: updateInterruptionRouter,
     prepareSourceLauncher: (rootDir) => {

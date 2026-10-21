@@ -3,7 +3,7 @@
   "license": "AGPL-3.0-or-later",
   "private": true,
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.16.0 <25 || >=26.1.0"
   },
   "workspaces": [
     "extension",
@@ -123,7 +123,8 @@
     "tsx": "^4.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.18.0",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "@types/semver": "^7.7.1"
   },
   "nx": {
     "targets": {

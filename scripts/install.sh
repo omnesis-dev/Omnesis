@@ -8,7 +8,8 @@
 #
 # What it does, in order:
 #   1. Detect OS/arch (macOS + Linux; everything else gets an honest refusal).
-#   2. Ensure Node >= 24 (brew on macOS, NodeSource via apt/dnf on Linux).
+#   2. Ensure Node >= 24; source builds need >=24.16 <25 or >=26.1.
+#      Uses Homebrew on macOS or NodeSource via apt/dnf on Linux.
 #   3. Install the `omnesis` CLI from the newest stable source tag. `--method
 #      package` installs the published npm package instead, and `--method auto`
 #      prefers the package when the registry serves it.
@@ -729,10 +730,6 @@ ensure_source_build_tools() {
   source_build_tools_ready || fail "Source build tools are still unavailable after installation. Check make, cc, c++, and python3 on PATH, then re-run."
 }
 
-node_major() {
-  command -v node >/dev/null 2>&1 || { echo 0; return; }
-  node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0
-}
 
 # Homebrew puts itself on PATH from the login shell's profile, so a shell that
 # never read that profile — a command run over SSH, a scheduled job — can miss
@@ -752,20 +749,42 @@ find_brew() {
   return 1
 }
 
+# Source installs resolve development dependencies with a narrower Node range
+# than the compiled runtime. Keep this aligned with the root package engines.
+node_install_compatible() {
+  CHECK_NODE="${1:-node}"
+  command -v "$CHECK_NODE" >/dev/null 2>&1 || return 1
+  if [ "${NODE_INSTALL_REQUIREMENT:-runtime}" = source ]; then
+    "$CHECK_NODE" -e 'const version = process.versions.node; const [major, minor] = version.split(".").map(Number); process.exit(/^\d+\.\d+\.\d+$/.test(version) && ((major === 24 && minor >= 16) || (major === 26 && minor >= 1) || major > 26) ? 0 : 1)' 2>/dev/null
+  else
+    [ "$("$CHECK_NODE" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 24 ]
+  fi
+}
+
 ensure_node() {
-  if [ "$(node_major)" -ge 24 ]; then
+  NODE_INSTALL_REQUIREMENT="${1:-runtime}"
+  if [ "$NODE_INSTALL_REQUIREMENT" = source ]; then
+    NODE_INSTALL_RANGE=">=24.16.0 <25 || >=26.1.0 (source development dependencies)"
+  else
+    NODE_INSTALL_RANGE=">=24"
+  fi
+  if node_install_compatible; then
     info "Node $(node --version) found"
     return
   fi
 
   if [ "$PLATFORM" = darwin ]; then
-    BREW="$(find_brew)" || fail "Node >= 24 is required, and Homebrew was not found on PATH, in /opt/homebrew or in /usr/local. Install Node 24 from https://nodejs.org (or Homebrew from https://brew.sh) and re-run."
+    BREW="$(find_brew)" || fail "Node $NODE_INSTALL_RANGE is required, and Homebrew was not found on PATH, in /opt/homebrew or in /usr/local. Install Node 24 from https://nodejs.org (or Homebrew from https://brew.sh) and re-run."
     # node@24 is keg-only: an installed one is not on PATH, so look in its
     # prefix before installing it again.
     NODE_PREFIX="$("$BREW" --prefix node@24)"
     if [ -x "$NODE_PREFIX/bin/node" ] &&
-       [ "$("$NODE_PREFIX/bin/node" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 24 ]; then
+       node_install_compatible "$NODE_PREFIX/bin/node"; then
       info "Using Homebrew's node@24 at $NODE_PREFIX"
+    elif [ -x "$NODE_PREFIX/bin/node" ]; then
+      info "Upgrading Node 24 via Homebrew..."
+      "$BREW" upgrade node@24
+      NODE_PREFIX="$("$BREW" --prefix node@24)"
     else
       info "Installing Node 24 via Homebrew..."
       "$BREW" install node@24
@@ -778,7 +797,7 @@ ensure_node() {
   else
     # Linux: NodeSource repo via the native package manager (needs sudo,
     # like the git prerequisite above).
-    resolve_sudo || fail "Node >= 24 is required. Install it (e.g. https://github.com/nodesource/distributions) and re-run — no sudo/doas available to do it for you."
+    resolve_sudo || fail "Node $NODE_INSTALL_RANGE is required. Install it (e.g. https://github.com/nodesource/distributions) and re-run — no sudo/doas available to do it for you."
     if command -v apt-get >/dev/null 2>&1; then
       info "Installing Node 24 via NodeSource (apt)... commands shown as they run"
       run_nodesource_setup https://deb.nodesource.com/setup_24.x
@@ -788,11 +807,11 @@ ensure_node() {
       run_nodesource_setup https://rpm.nodesource.com/setup_24.x
       set -x; run_privileged dnf install -y nodejs; set +x
     else
-      fail "Node >= 24 is required. Install it for your distro (https://nodejs.org) and re-run. (Immutable/declarative distros: add nodejs_24 to your system config.)"
+      fail "Node $NODE_INSTALL_RANGE is required. Install it for your distro (https://nodejs.org) and re-run. (Immutable/declarative distros: add nodejs_24 to your system config.)"
     fi
   fi
 
-  [ "$(node_major)" -ge 24 ] || fail "Node install did not produce Node >= 24 on PATH."
+  node_install_compatible || fail "Node install did not produce Node $NODE_INSTALL_RANGE on PATH. Select a supported Node binary and re-run."
   info "Node $(node --version) ready"
 }
 
@@ -1038,6 +1057,12 @@ resolve_method() {
     info "No published $CLI_PKG@$(dist_tag) — installing from the tagged source instead."
     METHOD=source
   fi
+}
+
+prepare_node_for_install() {
+  ensure_node
+  resolve_method
+  [ "$METHOD" != source ] || ensure_node source
 }
 
 ensure_writable_prefix() {
@@ -4530,6 +4555,7 @@ harness_require_connect_support() {
     n|N|no|No|NO) fail "Nothing was changed. Update with: omnesis update — then run this line again." ;;
   esac
   ensure_node
+  [ -z "$HARNESS_EXISTING_ROOT" ] || ensure_node source
   [ -z "$HARNESS_EXISTING_ROOT" ] || ensure_git
   # This update only brings the CLI up to the connect it needs. --version and
   # --edge were already reported as choosing nothing on this run, so the
@@ -6438,6 +6464,7 @@ update_existing_install() {
   configure_network_budget
   stage "Preparing the host"
   ensure_node
+  [ -z "$RECORDED_SOURCE_ROOT" ] || ensure_node source
   ensure_git
   OMNESIS_BIN="$HOME/.local/bin/omnesis"
   run_machine_update "$RECORDED_SOURCE_ROOT"
@@ -6732,8 +6759,7 @@ main() {
   show_install_plan
   configure_network_budget
   stage "Preparing the host"
-  ensure_node
-  resolve_method
+  prepare_node_for_install
   if [ "$METHOD" = source ]; then
     require_source_build_memory
     ensure_git

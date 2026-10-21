@@ -78,6 +78,28 @@ export function orderByDependencies(packages) {
   return ordered;
 }
 
+/** Normalize npm's single-package JSON report across CLI versions. */
+export function parsePackReport(stdout) {
+  const report = JSON.parse(stdout);
+  // npm 12 keys reports by package name; older CLIs return an array.
+  const reports = Array.isArray(report)
+    ? report
+    : report && typeof report === "object" && typeof report.filename !== "string"
+      ? Object.values(report)
+      : [report];
+  const packed = reports.length === 1 ? reports[0] : undefined;
+  if (
+    !packed ||
+    typeof packed.integrity !== "string" ||
+    !packed.integrity ||
+    typeof packed.filename !== "string" ||
+    !packed.filename
+  ) {
+    throw new Error("npm pack reported no single tarball");
+  }
+  return packed;
+}
+
 /**
  * `npm pack` one staged directory into `tarballDir`; returns the tarball's
  * path and integrity. The tarball is what gets published, so the registry's
@@ -93,11 +115,29 @@ export async function packStagedPackage(stageDir, tarballDir) {
     // portal run to thousands, well past execFile's default buffer.
     { cwd: stageDir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
-  const [packed] = JSON.parse(stdout);
-  if (!packed?.integrity || !packed?.filename) {
-    throw new Error(`npm pack reported no tarball for ${stageDir}`);
-  }
+  const packed = parsePackReport(stdout);
   return { integrity: packed.integrity, tarball: join(tarballDir, packed.filename) };
+}
+
+/** Normalize an exact-version lookup; malformed success must never permit publication. */
+export function parsePublishedVersion(stdout) {
+  const report = JSON.parse(stdout);
+  // npm 12 returns an array even for one exact version; npm 11 returns the object.
+  const parsed = Array.isArray(report) ? (report.length === 1 ? report[0] : null) : report;
+  const distTags = parsed?.["dist-tags"];
+  if (
+    !parsed ||
+    typeof parsed["dist.integrity"] !== "string" ||
+    !parsed["dist.integrity"] ||
+    (distTags !== undefined &&
+      (!distTags ||
+        typeof distTags !== "object" ||
+        Array.isArray(distTags) ||
+        Object.values(distTags).some((version) => typeof version !== "string")))
+  ) {
+    throw new Error("npm view reported no single version with tarball integrity");
+  }
+  return { integrity: parsed["dist.integrity"], distTags: distTags ?? {} };
 }
 
 /**
@@ -127,11 +167,7 @@ export async function viewPublishedVersion(name, version, registry) {
       cause: err,
     });
   }
-  const trimmed = output.trim();
-  if (trimmed === "" || trimmed === "{}") return null;
-  const parsed = JSON.parse(trimmed);
-  if (typeof parsed["dist.integrity"] !== "string") return null;
-  return { integrity: parsed["dist.integrity"], distTags: parsed["dist-tags"] ?? {} };
+  return parsePublishedVersion(output);
 }
 
 export function publishTarball(tarball, { registry, tag, access }) {

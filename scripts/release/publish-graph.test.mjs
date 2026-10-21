@@ -6,8 +6,69 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { orderByDependencies, publishGraph } from "./publish-graph.mjs";
+import {
+  orderByDependencies,
+  parsePackReport,
+  parsePublishedVersion,
+  publishGraph,
+} from "./publish-graph.mjs";
 import { listPublishablePackages } from "./stage-packages.mjs";
+
+describe("npm pack JSON reports", () => {
+  const packed = { filename: "example-package-1.0.0.tgz", integrity: "sha512-example", files: [] };
+
+  test.each([packed, [packed], { "example-package": packed }])(
+    "accepts a single-package report: %j",
+    (report) => {
+      expect(parsePackReport(JSON.stringify(report))).toEqual(packed);
+    },
+  );
+
+  test.each([
+    null,
+    {},
+    [],
+    [packed, packed],
+    { first: packed, second: packed },
+    { "example-package": {} },
+    { filename: packed.filename },
+    { ...packed, integrity: 1 },
+  ])("rejects an incomplete or ambiguous report: %j", (report) => {
+    expect(() => parsePackReport(JSON.stringify(report))).toThrow("no single tarball");
+  });
+});
+
+describe("npm view exact-version JSON reports", () => {
+  const version = { "dist.integrity": "sha512-example", "dist-tags": { latest: "1.0.0" } };
+
+  test.each([version, [version]])("accepts the npm 11 and npm 12 reports: %j", (report) => {
+    expect(parsePublishedVersion(JSON.stringify(report))).toEqual({
+      integrity: "sha512-example",
+      distTags: { latest: "1.0.0" },
+    });
+  });
+
+  test("accepts a published version without tags", () => {
+    expect(parsePublishedVersion(JSON.stringify({ "dist.integrity": "sha512-example" }))).toEqual({
+      integrity: "sha512-example",
+      distTags: {},
+    });
+  });
+
+  test.each([
+    null,
+    {},
+    [],
+    [version, version],
+    { ...version, "dist.integrity": "" },
+    { ...version, "dist.integrity": 1 },
+    { ...version, "dist-tags": null },
+    { ...version, "dist-tags": [] },
+    { ...version, "dist-tags": { latest: 1 } },
+  ])("refuses to treat an invalid successful response as an absent version: %j", (report) => {
+    expect(() => parsePublishedVersion(JSON.stringify(report))).toThrow("no single version");
+  });
+});
 
 describe("orderByDependencies", () => {
   const entry = (name, deps = {}, field = "dependencies") => ({
@@ -345,6 +406,16 @@ describe("publishGraph against a disposable registry", () => {
     ).rejects.toThrow(/@example-test\/beta@1\.0\.0 failed to publish: registry unreachable/u);
     expect(registry.state.publishes).toEqual(["@example-test/alpha@1.0.0"]);
     expect(lines.at(-1)).toMatch(/^1 published, 0 already published, 1 failed, 1 not attempted/u);
+  }, 60_000);
+
+  test("a published version without integrity blocks publication instead of being overwritten", async () => {
+    registry.seed("@example-test/alpha", "1.0.0", {
+      name: "@example-test/alpha",
+      version: "1.0.0",
+    });
+    await expect(run()).rejects.toThrow("no single version with tarball integrity");
+    expect(registry.state.publishes).toEqual([]);
+    expect(registry.packages.has("@example-test/beta")).toBe(false);
   }, 60_000);
 
   test("a dry run packs every package and touches no registry", async () => {

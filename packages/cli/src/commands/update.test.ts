@@ -13,6 +13,7 @@ import {
   getUpdateLockProcessGroup,
   UpdateLockBusyError,
 } from "@omnesis/core";
+import { assertSourceNodeVersion } from "../update/source-node.js";
 import { CliError, EXIT_CANCELLED, EXIT_FAILURE, EXIT_USER_ERROR } from "../utils.js";
 import {
   activeSourceApplyState,
@@ -259,6 +260,7 @@ function makeDeps(
   const applyState = fakeApplyState();
   return {
     run: runner.run,
+    checkSourceNode: vi.fn(async () => {}),
     applyState: applyState.store,
     interruptions: new UpdateInterruptionRouter((code) => {
       throw new Error(`Unexpected update signal exit ${code}`);
@@ -527,6 +529,29 @@ describe("updateSourceCheckout", () => {
   const targetSha = { code: 0, stdout: "1122334455667788990011223344556677889900\n" };
   // The same commit HEAD is on: the checkout is already standing on the tag.
   const targetShaIsHead = head;
+
+  test.each(["24.15.0", "25.0.0", "26.0.0"])(
+    "refuses an unsupported source Node %s before checkout, services or installs",
+    async (version) => {
+      const runner = fakeRunner([managed, clean, clean, head, targetSha]);
+      const deps = makeDeps(runner, {
+        checkSourceNode: vi.fn(async (_root, commit) => {
+          expect(commit).toBe(targetSha.stdout.trim());
+          assertSourceNodeVersion({ engines: { node: ">=24.16.0 <25 || >=26.1.0" } }, version);
+        }),
+        stopService: vi.fn(async () => {}),
+        prepareSourceLauncher: vi.fn(),
+      });
+      await expect(
+        updateSourceCheckout({ rootDir, edge: false, dryRun: false, targetCommit: TARGET }, deps),
+      ).rejects.toThrow("rerun omnesis update");
+      expect(executed(runner)).toEqual([`git fetch origin ${TARGET}`]);
+      expect(deps.stopService).not.toHaveBeenCalled();
+      expect(deps.restartService).not.toHaveBeenCalled();
+      expect(deps.prepareSourceLauncher).not.toHaveBeenCalled();
+      expect(deps.backup).not.toHaveBeenCalled();
+    },
+  );
 
   test("fetches and builds an exact commit without consulting release tags", async () => {
     const runner = fakeRunner([managed, clean, clean, head, targetSha, clean, clean, clean, clean]);
