@@ -176,11 +176,6 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
     brain: {
       bootstrap: { enabled: false },
       derivationBarrier: "0s",
-      // The scripted saves below reuse the frontier's wiki collection receipt.
-      // A parallel maintenance run that writes any wiki node or candidate in
-      // between would turn the expected claim refusal into revision_conflict,
-      // so runs are serialized: no other run can move the collection.
-      workerConcurrency: 1,
       knowledge: { soonDelay: "1s", routineDelay: "6h" },
     },
     behaviors: {
@@ -206,7 +201,24 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
             step.result.kind === "error",
         );
         if (item && destructiveCheckRun === undefined) destructiveCheckRun = ctx.runId;
-        if (item && ctx.runId === destructiveCheckRun && refused.length < 3)
+        if (item && ctx.runId === destructiveCheckRun && refused.length < 3) {
+          // In a parallel-eligible maintenance run, saving an existing page
+          // needs a read receipt for it from this attempt's own tools: its
+          // own earlier save of the page, or an editing read. The review may
+          // be offered in the attempt that published the page or in a later
+          // one, so read it first and every scripted save reaches the claim
+          // checks below rather than the read-receipt refusal.
+          const frontierAt = steps.lastIndexOf(lastFrontier!);
+          const read = steps
+            .slice(frontierAt + 1)
+            .some(
+              (step) =>
+                step.name === "knowledge_fetch" &&
+                step.args?.id === pageId &&
+                step.args?.editing === true,
+            );
+          if (!read)
+            return { kind: "tool", name: "knowledge_fetch", args: { id: pageId, editing: true } };
           return {
             kind: "tool",
             name: "knowledge_save",
@@ -222,6 +234,7 @@ it("refuses destructive replacements and unavailable navigation, then accepts de
                     ),
             ),
           };
+        }
         return maintain(
           ctx,
           steps.filter((step) => !refused.includes(step)),
