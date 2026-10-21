@@ -132,14 +132,14 @@ function layout({ title, description, path, content, post, preview = false }) {
 ${preview ? '<meta name="robots" content="noindex, nofollow" />' : ""}${structured}<script src="/blog/blog.js" defer></script></head><body class="blog-page">${GENERATED}
 <a class="skip-link" href="#main">Skip to content</a>
 ${nav}
-<main id="main" class="blog-shell">${preview ? '<p class="post-tag" role="status">Local preview · Includes unpublished posts. Save changes and refresh to update.</p>' : ""}${content}</main>
+<main id="main" class="blog-shell${post ? "" : " blog-index"}">${preview ? '<p class="post-tag" role="status">Local preview · Includes unpublished posts. Save changes and refresh to update.</p>' : ""}${content}</main>
 ${footer}
 </body></html>`;
 }
 
 export function renderIndex(posts, { preview = false } = {}) {
   const list = posts.length
-    ? `<div class="post-list">${posts.map((post) => `<article class="post-card">${metadata(post)}<h2><a href="/blog/${post.slug}">${escapeHtml(post.title)}</a></h2><p class="post-description">${escapeHtml(post.description)}</p><a class="read-post" href="/blog/${post.slug}" aria-label="Read ${escapeHtml(post.title)}">Read post <span aria-hidden="true">→</span></a></article>`).join("")}</div>`
+    ? `<div class="post-list">${posts.map((post) => `<article class="post-card"><h2><a href="/blog/${post.slug}">${escapeHtml(post.title)}</a></h2><p class="post-description">${escapeHtml(post.description)}</p><div class="post-details">${metadata(post)}</div></article>`).join("")}</div>`
     : `<div class="empty-state"><span class="empty-mark" aria-hidden="true">01 /</span><h2>Posts coming soon.</h2></div>`;
   return layout({
     preview,
