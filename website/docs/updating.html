@@ -270,6 +270,13 @@
 
         <h2 id="updating">Updating</h2>
         <p>
+          Source updates check the target checkout's Node requirement before changing the checkout
+          or stopping services. If the installed Node version is unsupported, upgrade Node, ensure
+          <code>node</code> and <code>npm</code> select it on <code>PATH</code>, then rerun
+          <code>omnesis update</code>. Package installations retain their Node 24 runtime
+          requirement.
+        </p>
+        <p>
           <code>omnesis update</code> moves a machine to the newest stable release and restarts what
           runs there. It works the same for a source or Docker install, and Omnesis never starts it
           on its own. Run it on the gateway machine first, then on each other machine, or add
