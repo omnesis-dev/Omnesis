@@ -2,7 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { expect, test } from "vitest";
-import { verifiedConcurrentCreateRetries } from "./briefs-concurrency-retries.js";
+import {
+  verifiedCollectionCreateRetries,
+  verifiedConcurrentCreateRetries,
+} from "./briefs-concurrency-retries.js";
 import type { ExecutedTool } from "./brain-bench/obs.js";
 
 function recovered(): ExecutedTool[] {
@@ -39,6 +42,57 @@ function recovered(): ExecutedTool[] {
     },
   ];
 }
+
+function refreshedCreate(): ExecutedTool[] {
+  const steps = recovered().slice(0, 3);
+  steps[1]!.args.docs = ["source"];
+  steps[2]!.result = { kind: "structured", data: { loops: [] } };
+  steps.push({
+    tool: "open_loop_create",
+    args: { ...steps[1]!.args },
+    result: {
+      kind: "structured",
+      data: { loop: { id: "created", title: "Confirm observatory access" } },
+    },
+  });
+  return steps;
+}
+
+test("verifies a fresh same-query read and identical successful create after a collection CAS refusal", () => {
+  expect([...verifiedCollectionCreateRetries(refreshedCreate())]).toEqual([1]);
+});
+
+test("accounts for every refused attempt in a repeated fresh-read CAS recovery", () => {
+  const steps = refreshedCreate();
+  steps.splice(3, 0, structuredClone(steps[1]!), structuredClone(steps[2]!));
+  expect([...verifiedCollectionCreateRetries(steps)]).toEqual([1, 3]);
+});
+
+test.each([
+  "missing read",
+  "missing reread",
+  "changed query",
+  "changed intent",
+  "existing owner",
+  "intervening mutation",
+  "stale initial read",
+  "wrong failure",
+  "unrecovered failure",
+] as const)("does not excuse a collection retry with %s", (fault) => {
+  const steps = refreshedCreate();
+  if (fault === "missing read") steps.shift();
+  if (fault === "missing reread") steps.splice(2, 1);
+  if (fault === "changed query") steps[2]!.args.query = "other";
+  if (fault === "changed intent") steps[3]!.args.docs = ["other-source"];
+  if (fault === "existing owner") steps[2]!.result = recovered()[2]!.result;
+  if (fault === "intervening mutation")
+    steps.splice(3, 0, { tool: "open_loop_update", args: {}, result: { kind: "structured" } });
+  if (fault === "stale initial read")
+    steps.splice(1, 0, { tool: "open_loop_update", args: {}, result: { kind: "structured" } });
+  if (fault === "wrong failure") steps[1]!.result!.code = "invalid_arguments";
+  if (fault === "unrecovered failure") steps.pop();
+  expect([...verifiedCollectionCreateRetries(steps)]).toEqual([]);
+});
 
 test("separately accounts for a proven concurrent-create retry that adopts its winner", () => {
   expect([...verifiedConcurrentCreateRetries(recovered(), new Set(["winner"]))]).toEqual([0]);

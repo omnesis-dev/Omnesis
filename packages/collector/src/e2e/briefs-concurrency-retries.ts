@@ -12,6 +12,79 @@ function hits(step: ExecutedTool | undefined): Array<{ id: string; title: string
   return rows;
 }
 
+/** Prove a collection-CAS refusal was followed by a fresh read and identical successful create. */
+export function verifiedCollectionCreateRetries(steps: readonly ExecutedTool[]): Set<number> {
+  const verified = new Set<number>();
+  for (const [index, step] of steps.entries()) {
+    if (
+      step.tool !== "open_loop_create" ||
+      step.result?.kind !== "error" ||
+      step.result.code !== "revision_conflict" ||
+      !step.result.message?.startsWith(
+        "The reconciled collection changed or its read receipt is missing: loop.",
+      )
+    )
+      continue;
+    const initial = steps.slice(0, index).findLast((item) => item.tool === "open_loop_search");
+    const initialHits = hits(initial);
+    const limit = initial?.args.limit ?? 8;
+    if (
+      !initialHits ||
+      typeof initial?.args.query !== "string" ||
+      typeof step.args.title !== "string" ||
+      typeof limit !== "number" ||
+      initialHits.length >= limit ||
+      initialHits.some((row) => row.title === step.args.title) ||
+      steps
+        .slice(steps.indexOf(initial) + 1, index)
+        .some((item) =>
+          [
+            "open_loop_create",
+            "open_loop_update",
+            "open_loop_ledger_append",
+            "open_loop_delete",
+          ].includes(item.tool),
+        )
+    )
+      continue;
+    let cursor = index;
+    while (cursor < steps.length) {
+      const next = steps.findIndex((item, i) => i > cursor && item.tool === "open_loop_create");
+      if (next < 0 || !isDeepStrictEqual(steps[next]!.args, step.args)) break;
+      const between = steps.slice(cursor + 1, next);
+      const reread = between.findLast((item) => item.tool === "open_loop_search");
+      const refreshedHits = hits(reread);
+      if (
+        !isDeepStrictEqual(reread?.args, initial.args) ||
+        !refreshedHits ||
+        refreshedHits.length >= limit ||
+        refreshedHits.some((row) => row.title === step.args.title) ||
+        between.some((item) =>
+          ["open_loop_update", "open_loop_ledger_append", "open_loop_delete"].includes(item.tool),
+        )
+      )
+        break;
+      const result = steps[next]!.result;
+      if (
+        result?.kind === "structured" &&
+        typeof result.data?.loop?.id === "string" &&
+        result.data.loop.title === step.args.title
+      ) {
+        verified.add(index);
+        break;
+      }
+      if (
+        result?.kind !== "error" ||
+        result.code !== "revision_conflict" ||
+        result.message !== step.result.message
+      )
+        break;
+      cursor = next;
+    }
+  }
+  return verified;
+}
+
 /**
  * Failed-create ordinals within ONE attempt that demonstrably lost a concurrent
  * create race and adopted its winner. This is an expected CAS retry, not a
