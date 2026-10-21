@@ -2782,7 +2782,7 @@ describe("explicit initial inventory admission", () => {
   });
 });
 
-it("keeps untouched eligible claims pending after a partial page save", async () => {
+it("keeps untouched eligible claims pending, and as they were, after a partial page save", async () => {
   source();
   const markdown =
     '<claim id="first" refs="source:input">The workshop is on Friday.</claim>\n<claim id="second" refs="source:input">Venue provisional.</claim>';
@@ -2822,9 +2822,12 @@ it("keeps untouched eligible claims pending after a partial page save", async ()
   expect(next.done).toBe(false);
   const second = next.items.find((item) => item.id === "partial")!;
   expect(second.pendingClaimIds).toEqual(["second"]);
+  // The save carried the untouched claim's dependencies through unchanged, so
+  // it keeps its state and does not make the page stale.
   expect(second.node!.readOnly.claims.find((claim) => claim.id === "second")!.verification).toBe(
-    "stale",
+    "unverified",
   );
+  expect(getKnowledgeNode(db, "partial")!.validity).toBe("current");
   await engine.saveNode(
     batch.id,
     batch.runId,
@@ -2864,6 +2867,151 @@ it("keeps untouched eligible claims pending after a partial page save", async ()
       )
       .get(batch.id, second.inputFingerprint),
   ).toEqual({ status: "unchanged" });
+});
+
+it("marks a still-pending claim stale when a partial save moves its recorded input version", async () => {
+  source();
+  const markdown =
+    '<claim id="first" refs="source:input">The workshop is on Friday.</claim>\n<claim id="second" refs="source:input">Venue provisional.</claim>';
+  await service.save({
+    id: "refreshed",
+    kind: "wiki",
+    title: "Refreshed review",
+    markdown,
+    expectedRevision: 0,
+    inputVersions: { "source:input": "v1" },
+  });
+  db.exec("DELETE FROM knowledge_changes");
+  source("input", "v2", "The workshop is on Saturday. Venue provisional.");
+  await engine.tick();
+  const batch = batchFor("input");
+  const discovery = (await engine.next(batch.id, batch.runId)).items.find((item) => item.source)!;
+  await engine.completeSource(batch.id, batch.runId, discovery.id, discovery.inputFingerprint);
+  const offered = (await engine.next(batch.id, batch.runId)).items.find(
+    (item) => item.id === "refreshed",
+  )!;
+  expect(offered.pendingClaimIds).toEqual(["first", "second"]);
+  const v2 = service.reference("source:input").revision;
+  await engine.saveNode(
+    batch.id,
+    batch.runId,
+    offered.id,
+    offered.inputFingerprint,
+    {
+      id: "refreshed",
+      kind: "wiki",
+      title: "Refreshed review",
+      markdown: markdown.replace("Friday", "Saturday"),
+      expectedRevision: offered.node!.revision,
+      inputVersions: { "source:input": v2 },
+    },
+    ["first"],
+  );
+  // The new version map reached the unreviewed claim too: it is stale until reviewed.
+  expect(
+    db
+      .prepare(
+        "SELECT verification FROM knowledge_claims WHERE node_id='refreshed' AND id='second'",
+      )
+      .get(),
+  ).toEqual({ verification: "stale" });
+  expect(getKnowledgeNode(db, "refreshed")!.validity).toBe("stale");
+});
+
+describe("claims resting on a source excluded from the Brain", () => {
+  function session(revision: string) {
+    db.prepare(
+      `INSERT INTO documents VALUES('session','assistant-log:desk',?,?,'Planning session',?,?) ON CONFLICT(id) DO UPDATE SET content_hash=excluded.content_hash,content=excluded.content`,
+    ).run(
+      revision,
+      `The session chose the north hall (${revision}).`,
+      new Date(now).toISOString(),
+      new Date(now).toISOString(),
+    );
+    recordKnowledgeSourceChange(db, { documentId: "session", contentHash: revision }, now);
+    advanceKnowledgeCascade(db, 100, now);
+  }
+  const markdown =
+    '<claim id="fact" refs="source:input">The workshop begins Friday.</claim>\n<claim id="log" refs="source:session">The session chose the north hall.</claim>';
+  const page = (expectedRevision: number) => ({
+    id: "mixed",
+    kind: "wiki" as const,
+    title: "Workshop planning",
+    markdown,
+    expectedRevision,
+    inputVersions: {
+      "source:input": service.reference("source:input").revision,
+      "source:session": service.reference("source:session").revision,
+    },
+  });
+  const outcomes = (batchId: string) =>
+    db
+      .prepare(
+        "SELECT claim_id,status FROM knowledge_claim_outcomes WHERE batch_id=? AND node_id='mixed' ORDER BY claim_id,status",
+      )
+      .all(batchId);
+  beforeEach(async () => {
+    source();
+    session("s1");
+    await service.save({ ...page(0), metadata: { nextReviewAt: now } });
+    db.exec("DELETE FROM knowledge_changes");
+    settings = resolveBrainSettings({
+      bootstrap: { enabled: false },
+      excludedSources: ["assistant-log"],
+    });
+  });
+
+  it("are kept as they are rather than offered for review while their references are unchanged", async () => {
+    await engine.tick();
+    const batch = batchFor("mixed");
+    const offered = (await engine.next(batch.id, batch.runId)).items.find(
+      (item) => item.id === "mixed",
+    )!;
+    expect(offered.pendingClaimIds).toEqual(["fact"]);
+    expect(outcomes(batch.id)).toEqual([
+      { claim_id: "fact", status: "pending" },
+      { claim_id: "log", status: "skipped" },
+    ]);
+    // Reviewing the readable claim settles the page; the other claim survives untouched.
+    await engine.saveNode(
+      batch.id,
+      batch.runId,
+      offered.id,
+      offered.inputFingerprint,
+      page(offered.node!.revision),
+      ["fact"],
+      {
+        batchId: batch.id,
+        runId: batch.runId,
+        placementLibrary: { collection: "wiki", revision: 0 },
+      },
+      { status: "standalone", reason: "Self-contained workshop reference." },
+    );
+    expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
+    expect(getKnowledgeNode(db, "mixed")!.markdown).toBe(markdown);
+    expect(getKnowledgeNode(db, "mixed")!.validity).toBe("current");
+  });
+
+  it("are offered when their own excluded source changed", async () => {
+    session("s2");
+    await engine.tick();
+    const batch = batchFor("mixed");
+    const offered = (await engine.next(batch.id, batch.runId)).items.find(
+      (item) => item.id === "mixed",
+    )!;
+    expect(offered.pendingClaimIds).toContain("log");
+    expect(outcomes(batch.id)).not.toContainEqual({ claim_id: "log", status: "skipped" });
+  });
+
+  it("are offered as usual once the source is no longer excluded", async () => {
+    settings = resolveBrainSettings({ bootstrap: { enabled: false } });
+    await engine.tick();
+    const batch = batchFor("mixed");
+    const offered = (await engine.next(batch.id, batch.runId)).items.find(
+      (item) => item.id === "mixed",
+    )!;
+    expect(offered.pendingClaimIds).toEqual(["fact", "log"]);
+  });
 });
 
 it("never offers an observation for repair when its evidence changes, and leaves it unrewritten", async () => {

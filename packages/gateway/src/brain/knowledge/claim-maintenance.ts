@@ -52,10 +52,38 @@ export function pendingMaintenanceClaimIds(
     .map((row) => row.claim_id);
 }
 
-/** Called inside the accepted page write transaction, after claim validation. */
+/**
+ * Each claim's dependencies as one comparable signature: its references and the
+ * versions it observed them at. Read before a write replaces them.
+ */
+export function claimDependencySignatures(
+  db: Database.Database,
+  nodeId: string,
+): Map<string, string> {
+  const rows = db
+    .prepare<
+      [string],
+      { claim_id: string; ref: string; input_version_json: string }
+    >("SELECT claim_id,ref,input_version_json FROM knowledge_dependencies WHERE node_id=? ORDER BY claim_id,ref")
+    .all(nodeId);
+  const grouped = new Map<string, string[]>();
+  for (const row of rows) {
+    const refs = grouped.get(row.claim_id) ?? [];
+    refs.push(`${row.ref}\u0000${row.input_version_json}`);
+    grouped.set(row.claim_id, refs);
+  }
+  return new Map([...grouped].map(([id, refs]) => [id, refs.join("\u0001")]));
+}
+
+/**
+ * Called inside the accepted page write transaction, after claim validation.
+ * `previousDependencies` are the page's {@link claimDependencySignatures} read
+ * before the write replaced them.
+ */
 export function recordAcceptedClaimMaintenance(
   db: Database.Database,
   input: SaveKnowledgeNodeInput,
+  previousDependencies: ReadonlyMap<string, string>,
 ): void {
   if (!input.maintenance) return;
   const identity = { ...input.maintenance, nodeId: input.id };
@@ -108,14 +136,21 @@ export function recordAcceptedClaimMaintenance(
         `INSERT INTO knowledge_claim_outcomes(batch_id,node_id,input_fingerprint,claim_id,input_claim_revision,result_claim_revision,status)
       VALUES(?,?,?,?,0,?,'changed')`,
       ).run(identity.batchId, identity.nodeId, identity.inputFingerprint, id, revision);
-  const pending = pendingMaintenanceClaimIds(db, identity);
-  // A page write cannot silently refresh untouched eligible assertions merely
-  // because the caller supplied a new document-wide input-version map.
-  for (const id of pending)
+  // A page write cannot silently refresh an untouched eligible assertion merely
+  // because the caller supplied a new document-wide input-version map: a claim
+  // still pending whose recorded versions this write moved is stale until it
+  // is reviewed. One whose dependencies the write carried through unchanged
+  // keeps its state, so editing one claim never makes its untouched neighbours
+  // look broken.
+  const dependencies = claimDependencySignatures(db, input.id);
+  const refreshed = pendingMaintenanceClaimIds(db, identity).filter(
+    (id) => (dependencies.get(id) ?? "") !== (previousDependencies.get(id) ?? ""),
+  );
+  for (const id of refreshed)
     db.prepare(
       "UPDATE knowledge_claims SET verification='stale',verifier=NULL WHERE node_id=? AND id=?",
     ).run(input.id, id);
-  if (pending.length)
+  if (refreshed.length)
     db.prepare("UPDATE knowledge_nodes SET validity='stale' WHERE id=?").run(input.id);
 }
 

@@ -65,6 +65,7 @@ import type { MiddlewareHandler } from "hono";
 import type { AppEnv, AuthContext, RouteApp } from "./types.js";
 
 const MCP_HTTP_BODY_LIMIT_BYTES = 64 * 1024;
+const MCP_TOOL_INPUT_ELEMENTS_LIMIT = 10_000;
 const DIRECT_MANIFEST_CACHE_MS = 5_000;
 const GATEWAY_VERSION = readPackageVersion(import.meta.url);
 const log = createLogger("gateway:mcp-http");
@@ -271,6 +272,7 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
         { name: "omnesis", version: GATEWAY_VERSION },
         {
           capabilities: { tools: { listChanged: false } },
+          maxToolInputElements: MCP_TOOL_INPUT_ELEMENTS_LIMIT,
           instructions,
           supportedProtocolVersions: [
             ...new Set([...ANSWER_MCP_SUPPORTED_VERSIONS, ...DIRECT_MCP_SUPPORTED_VERSIONS]),
@@ -495,6 +497,7 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
       // an early streaming response prevents hosted clients from treating that
       // healthy silence as a dead HTTP request.
       responseMode: "sse",
+      maxRequestBodySize: MCP_HTTP_BODY_LIMIT_BYTES,
       maxSubscriptions: 0,
       onerror: (error) => log.warn(`MCP HTTP protocol error (${error.name})`),
     },

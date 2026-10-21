@@ -10,8 +10,8 @@
 # Why this exists: Xcode is macOS-only, so the snapshot suite cannot run on the
 # Linux dev box where the agent lives. This script codifies the offload recipe
 # into one reusable, generic, env-configured command: rsync the WORKING TREE
-# (uncommitted edits included), run the snapshot tests with code-signing
-# disabled (a simulator render needs none), and rsync the PNGs back.
+# (uncommitted edits included), run the snapshot tests with optional ad-hoc
+# signing (disabled by default), and rsync the PNGs back.
 #
 # It NEVER pushes, commits, or opens PRs on the host (all git mutations stay
 # with the caller), and it refuses to rsync onto live state: the macOS host is
@@ -41,6 +41,8 @@
 #   OMNESIS_IOS_SNAPSHOT_SCHEME   xcodebuild scheme (default: Omnesis)
 #   OMNESIS_IOS_SNAPSHOT_BUNDLE_ID app bundle built and removed from the
 #                                 simulator before the test (default: dev.omnesis.ios)
+#   OMNESIS_IOS_SNAPSHOT_SIGNING   disabled (default) or adhoc, for tests needing
+#                                 a signed simulator app without a team/profile.
 
 set -euo pipefail
 
@@ -84,6 +86,13 @@ BUNDLE_ID="${OMNESIS_IOS_SNAPSHOT_BUNDLE_ID:-dev.omnesis.ios}"
 OUT_DIR="${OMNESIS_IOS_SNAPSHOT_OUT:-/tmp/omnesis-snapshots}"
 
 fail() { echo "ios-snapshot: $*" >&2; exit 1; }
+
+SIGNING_MODE="${OMNESIS_IOS_SNAPSHOT_SIGNING:-disabled}"
+case "$SIGNING_MODE" in
+  disabled) SIGNING_SETTINGS='CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""' ;;
+  adhoc) SIGNING_SETTINGS='CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY=-' ;;
+  *) fail "OMNESIS_IOS_SNAPSHOT_SIGNING must be disabled or adhoc" ;;
+esac
 
 case ",$DEST," in
   *,id=*)
@@ -164,9 +173,9 @@ rsync -az --delete \
   "$ROOT/evals/universes/" "$HOST:$RESOLVED_TARGET/evals/universes/" \
   || fail "rsync of evals/universes to '$HOST' failed"
 
-# --- 2. run the snapshot suite over ssh, code-signing disabled. ----------------
-# A simulator render needs no signing, so we disable it (the scratch checkout
-# carries no Local.xcconfig team). `xcodegen generate` first so the project is
+# --- 2. run the snapshot suite over ssh. --------------------------------------
+# A simulator render needs no signing; hardware-backed tests can opt into ad-hoc
+# signing without a team or provisioning profile. `xcodegen generate` first so the project is
 # current for the rsynced sources. PNGs are written to a host-side dir we then
 # pull back; we run xcodebuild from inside ios/ so relative project paths hold.
 # The PreviewSnapshotTests suite writes its PNGs to /tmp/omnesis-snapshots on
@@ -180,7 +189,7 @@ REMOTE_OUT="$RESOLVED_TARGET/.omnesis-snapshots"
 # xcodebuild's status instead of aborting on it, gathers whatever rendered, and
 # reports the status last — after the PNGs have been collected and pulled back.
 REMOTE_LOG="$REMOTE_OUT/xcodebuild.log"
-echo "→ ssh $HOST: xcodegen generate + xcodebuild snapshot suite (code-signing disabled) …"
+echo "→ ssh $HOST: xcodegen generate + xcodebuild snapshot suite (signing: $SIGNING_MODE) …"
 set +e
 ssh "$HOST" "bash -lc '
   set -uo pipefail
@@ -205,8 +214,7 @@ ssh "$HOST" "bash -lc '
   \"\$simctl\" uninstall \"$SIMULATOR_SELECTOR\" \"$BUNDLE_ID\" >/dev/null 2>&1 || true
   # Keep build output inside this scratch so it can be retired without
   # touching the shared DerivedData on the host.
-  # Simulator render needs no signing — disable it so the scratch checkout
-  # builds with no provisioning team.
+  # Signing settings are fixed literals selected by the validated mode above.
   xcodebuild test \
     -project Omnesis.xcodeproj \
     -scheme \"$SCHEME\" \
@@ -214,7 +222,7 @@ ssh "$HOST" "bash -lc '
     -derivedDataPath \"$RESOLVED_TARGET/DerivedData\" \
     -only-testing:$ONLY_TESTING \
     OMNESIS_BUNDLE_ID=\"$BUNDLE_ID\" \
-    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=\"\" \
+    $SIGNING_SETTINGS \
     >\"$REMOTE_LOG\" 2>&1
   rc=\$?
   if [ \"\$rc\" -eq 0 ] && [ \"$SCHEME\" = Omnesis ]; then

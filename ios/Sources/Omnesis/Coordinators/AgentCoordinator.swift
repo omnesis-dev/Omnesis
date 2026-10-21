@@ -198,6 +198,14 @@ public final class AgentCoordinator {
         draftStore.write(text, key: key)
     }
 
+    /// A voice snapshot refreshes the same conversation without consuming its unsent text.
+    func restoreDraftAfterVoiceHandoff(from previousKey: String) {
+        if previousKey.hasSuffix(":new"), previousKey != composerDraftKey {
+            draftStore.move(from: previousKey, to: composerDraftKey)
+        }
+        composerDraft = draft(for: composerDraftKey)
+    }
+
     func draftHasBackup(for key: String) -> Bool {
         draftStore.hasBackup(key)
     }
@@ -695,10 +703,10 @@ public final class AgentCoordinator {
     /// and reconciles the view. An explicit open that's superseded while its
     /// fetch is in flight (a newer tap, a new conversation) is discarded via
     /// the `sessionChoiceCount` guard rather than clobbering the surface.
-    func resumeConversation(id: String) async {
+    func resumeConversation(id: String, forceRefresh: Bool = false) async {
         // Re-tapping the conversation already on screen is a no-op — don't
         // flash a skeleton over content that's already correct.
-        if id == sessionId, !transcriptLoading { return }
+        if id == sessionId, !transcriptLoading, !forceRefresh { return }
         sessionChoiceCount += 1
         let choice = sessionChoiceCount
         guard let client else { return }

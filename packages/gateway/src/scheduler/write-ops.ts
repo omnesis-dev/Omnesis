@@ -100,6 +100,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "knowledge.classifyInitialRootBatches", priority: "background" },
   { name: "knowledge.appendFrontier", priority: "background" },
   { name: "knowledge.frontierOutcome", priority: "background" },
+  { name: "knowledge.exemptUnreadableClaims", priority: "background" },
   { name: "knowledge.finishBatch", priority: "background" },
 
   { name: "vocabulary.advanceRebuild", priority: "background" },

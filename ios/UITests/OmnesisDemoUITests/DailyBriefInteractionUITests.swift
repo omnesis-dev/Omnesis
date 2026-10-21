@@ -174,12 +174,25 @@ final class DailyBriefInteractionUITests: XCTestCase {
         XCTAssertTrue(thumbsUp(Fixture.usefulItem).isSelected)
     }
 
-    func testThumbsDownNotInterestedStandsBeforeAnyWords() {
+    func testThumbsDownNotInterestedStandsWithoutAskingForWords() {
         XCTAssertTrue(wait { self.thumbsDown(Fixture.untouchedItem).isHittable }, "the thumbs are not on screen")
         thumbsDown(Fixture.untouchedItem).tap()
-        let choice = app.buttons["Not interested in this kind of thing"]
+        let choice = app.buttons["Not interested in this"]
         XCTAssertTrue(choice.waitForExistence(timeout: 5), "no choice of what is wrong")
+        XCTAssertTrue(app.buttons["Not interested — add a note"].exists)
         XCTAssertTrue(app.buttons["Factual error — send a correction"].exists)
+        choice.tap()
+        XCTAssertTrue(wait { self.reactionCaption(Fixture.untouchedItem).exists }, "no caption after Not interested")
+        XCTAssertEqual(reactionCaption(Fixture.untouchedItem).label, "Not interested")
+        XCTAssertFalse(app.staticTexts["Why not?"].exists, "words were asked for")
+        XCTAssertTrue(thumbsDown(Fixture.untouchedItem).isSelected)
+    }
+
+    func testThumbsDownNotInterestedWithANoteStandsBeforeAnyWords() {
+        XCTAssertTrue(wait { self.thumbsDown(Fixture.untouchedItem).isHittable }, "the thumbs are not on screen")
+        thumbsDown(Fixture.untouchedItem).tap()
+        let choice = app.buttons["Not interested — add a note"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5), "no choice of what is wrong")
         choice.tap()
         // The reaction stands at once, and the words are offered on Tell Omnesis.
         XCTAssertTrue(app.staticTexts["Why not?"].waitForExistence(timeout: 5), "the words were not offered")

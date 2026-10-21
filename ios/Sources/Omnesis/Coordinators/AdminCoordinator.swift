@@ -96,7 +96,6 @@ final class AdminCoordinator {
 
     @ObservationIgnored
     private(set) var adminClient: AdminClient?
-    @ObservationIgnored
     private(set) var searchClient: SearchClient?
     private(set) var watchesClient: WatchesClient?
     @ObservationIgnored

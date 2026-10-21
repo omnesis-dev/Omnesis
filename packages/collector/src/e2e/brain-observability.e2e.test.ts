@@ -31,6 +31,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { enqueueKnowledgeWork } from "@omnesis/gateway/src/brain/knowledge/work.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { verifiedCollectionCreateRetries } from "./briefs-concurrency-retries.js";
 import {
   BrainBench,
   sourceInterpretations,
@@ -465,8 +466,19 @@ describe("Brain Bench — the operator surface", () => {
     expect(decision.docIds).toContain(invoiceDocId);
     expect(decision.subject).toMatch(/^knowledge maintenance batch /);
 
-    // Conflicted mutations remain audited; successful calls retain plan order.
+    // Collection CAS refusals remain visible in the audit. Only a fresh
+    // same-query read followed by the identical successful create explains one.
+    const executed = await bench.obs.executedTools(decision.runId, decision.attempt);
+    const failedSteps = executed.filter((step) => step.result?.kind === "error");
+    const verifiedRetries = verifiedCollectionCreateRetries(executed);
+    expect(failedSteps).toHaveLength(verifiedRetries.size);
+    const refused = decision.actions.filter((action) => !action.ok);
+    expect(refused).toHaveLength(verifiedRetries.size);
+    expect(refused.every((action) => action.tool === "open_loop_create")).toBe(true);
     const successful = decision.actions.filter((action) => action.ok);
+    expect(decision.actions).toHaveLength(successful.length + verifiedRetries.size);
+
+    // Successful mutations become actions in semantic order; reads are counted.
     expect(successful.slice(0, 4).map((a) => a.tool)).toEqual([
       "open_loop_create",
       "open_loop_ledger_append",
@@ -484,32 +496,6 @@ describe("Brain Bench — the operator surface", () => {
         .sort(),
     ).toEqual(["save doc_annotation", "save loop"]);
     expect(successful[0]!.detail).toContain(INVOICE_MARKER);
-    const refs = await bench.obs.transcripts({ runId: decision.runId });
-    const { transcript } = await bench.obs.transcript(refs.items.at(-1)!.fileName);
-    const starts = new Map(
-      transcript.events
-        .filter((event) => event.type === "agent.tool.start")
-        .map((event) => {
-          const payload = event.payload as { toolCallId: string; tool: string };
-          return [payload.toolCallId, payload.tool] as const;
-        }),
-    );
-    const refused = transcript.events.flatMap((event) => {
-      if (event.type !== "agent.tool.result") return [];
-      const payload = event.payload as {
-        toolCallId: string;
-        result: { kind: string; code?: string };
-      };
-      const tool = starts.get(payload.toolCallId);
-      if (payload.result.kind !== "error" || !successful.some((action) => action.tool === tool))
-        return [];
-      expect(payload.result.code).toBe("revision_conflict");
-      return [tool];
-    });
-    // Every refused write remains visible beside the successful retry.
-    expect(decision.actions.filter((action) => !action.ok).map((action) => action.tool)).toEqual(
-      refused,
-    );
     // `open_loop_search` is research, not a decision.
     expect(decision.researchToolCalls).toBeGreaterThanOrEqual(1);
     expect(decision.finalText).toContain("batch complete");

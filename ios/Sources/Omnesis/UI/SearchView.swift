@@ -51,8 +51,8 @@ struct SearchView: View {
         }
         .omnesisColorScheme()
         #if DEBUG
-            .task {
-                guard !hasSearched,
+            .task(id: store.search.map { ObjectIdentifier($0) }) {
+                guard store.search != nil, !hasSearched,
                       let demoQuery = ProcessInfo.processInfo.environment["DEMO_SEARCH_QUERY"],
                       !demoQuery.isEmpty else { return }
                 query = demoQuery

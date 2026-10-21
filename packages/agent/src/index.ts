@@ -55,6 +55,10 @@ export {
   type ToolContext,
   UNATTRIBUTED_CALLER,
   summarizeToolArgs,
+  parseToolArgs,
+  toolArgsUnparseableResult,
+  childEventHooks,
+  ToolProgressQueue,
   summaryExcerpt,
   wrapEvent,
 } from "./backend.js";
@@ -321,3 +325,5 @@ export type {
   EntityContextSeedKind,
 } from "./tools/types.js";
 export { CitationReads } from "./tools/citation-reads.js";
+
+export { invokeToolHandle } from "./invoke-tool.js";

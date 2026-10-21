@@ -8,6 +8,7 @@ import {
   decisionPayloadErasureGeneration,
 } from "../decision-payload.js";
 import { brainSourceInclusionSql } from "../source-exclusion.js";
+import { unreadablePendingClaimIds } from "./unreadable-support.js";
 import { knowledgeNodeView, type KnowledgeNodeView } from "./node-view.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { WIKI_CURATION_TASK } from "./wiki-authoring.js";
@@ -674,6 +675,18 @@ export class KnowledgeEngine {
             this.deps.clock(),
           );
         }
+        // A claim resting on a source excluded from the Brain cannot be
+        // re-checked by this run; unless its own references changed, it is
+        // kept as it is rather than offered for review (unreadable-support.ts).
+        const excluded = this.deps.getSettings().excludedSources;
+        if (unreadablePendingClaimIds(this.deps.db, { ...item, batchId }, excluded).length > 0)
+          await this.deps.writeGate["knowledge.exemptUnreadableClaims"]({
+            batchId,
+            runId,
+            nodeId: item.nodeId,
+            inputFingerprint: item.inputFingerprint,
+            excluded,
+          });
         const excerpt = item.nodeId.startsWith("source:")
           ? this.sourceExcerpt(item.nodeId.slice(7))
           : null;

@@ -135,6 +135,7 @@
             <li>
               <a href="/docs/experimental" aria-current="page">Experimental</a>
               <ul class="side-sub">
+                <li><a href="#realtime-voice">Realtime voice on iOS</a></li>
                 <li><a href="#browser-extension">Browser extension</a></li>
                 <li><a href="#brain">Omnesis Brain</a></li>
                 <li><a href="#watch">Omnesis Watch</a></li>
@@ -149,10 +150,10 @@
         <h1>Experimental</h1>
         <p class="docs-lead">
           <code>OMNESIS_EXPERIMENTAL=1</code> enables unstable features: browser-extension page
-          notes and Find, <strong>Omnesis Brain</strong>, which reads your data in the background
-          and keeps cited notes and loops and writes a morning brief, and
-          <strong>Omnesis Watch</strong>, which tells you or an agent when a condition becomes true.
-          This page explains how to run, observe and stop them.
+          notes and Find, realtime voice conversations on iOS, <strong>Omnesis Brain</strong>, which
+          reads your data in the background and keeps cited notes and loops and writes a morning
+          brief, and <strong>Omnesis Watch</strong>, which tells you or an agent when a condition
+          becomes true. This page explains how to run, observe and stop them.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -205,6 +206,25 @@
           portal, the mobile apps and the CLI use it to show or hide these controls. The flag on the
           collector matters only for sources: a source marked experimental is offered in the source
           picker only by a collector that runs with the flag itself.
+        </p>
+
+        <h2 id="realtime-voice">Realtime voice on iOS</h2>
+        <p>
+          <code>OMNESIS_EXPERIMENTAL=1</code>, a configured OpenAI backend and
+          <code>inference.allowRemoteInference=true</code> enable an unstable speech-to-speech
+          prototype in the iOS app. Open an agent conversation and tap the voice-call button to the
+          right of the microphone. Allow microphone access, then speak naturally and hear the reply.
+          The call screen shows the agent's tool activity while it works. Use mute to pause your
+          microphone and hang up to end the call.
+        </p>
+        <p>
+          The gateway relays call audio to OpenAI's Realtime API; the OpenAI API key stays on the
+          gateway. The realtime model uses the same core instructions, complete tool definitions,
+          permissions and gateway tool implementations as a typed Omnesis conversation. Tool calls
+          and citations appear in the same conversation, and you can switch between typing and
+          speaking without starting another thread. Text queued during a call waits until the call
+          ends. Audio and conversation context are sent to OpenAI during the call; realtime audio
+          and transcription incur OpenAI charges. This control is available only on iOS.
         </p>
 
         <h2 id="browser-extension">Browser extension notes and Find</h2>

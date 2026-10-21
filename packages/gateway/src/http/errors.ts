@@ -171,7 +171,7 @@ export class InsufficientStorageError extends HttpError {
  * carries, and it stops at the path: the query string is not logged, so
  * search terms never are.
  */
-export function errorResponse(c: Context, err: HttpError) {
+export function errorResponse(c: Context, err: HttpError): Response {
   const body: { error: string; code: string; detail?: unknown } = {
     error: err.message,
     code: err.code,

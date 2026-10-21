@@ -7263,5 +7263,110 @@ extension PreviewMocks {
         now: { tasksNow },
         preloaded: dailyBriefPages
     )
+
+    @MainActor static var realtimeMicrophoneStarting: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Starting microphone…"
+        session.connected = true
+        return session
+    }
+
+    @MainActor static var realtimeListening: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Listening"
+        session.connected = true
+        return session
+    }
+
+    @MainActor static var realtimeEnding: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Ending call…"
+        session.ending = true
+        return session
+    }
+
+    @MainActor static var realtimeTools: RealtimeCallSession {
+        let session = realtimeListening
+        session.status = "Thinking…"
+        session.transcript = "What meetings do I have tomorrow?"
+        return session
+    }
+
+    @MainActor private static func realtimeStore(
+        calls: [AgentToolCall] = [], messages: [ChatMessage] = []
+    )
+        -> AppStore {
+        let store = AppStore.preview()
+        store.agent.installPreviewState(
+            sessionId: "voice-preview", model: "preview", backend: "preview", title: "Voice conversation",
+            turns: [.assistant(AgentAssistantTurn(id: "voice-answer", parts: calls.map { .tool($0) }, stopReason: nil, failure: nil))],
+            citations: AgentTurnBuilder.citations(from: messages), conversations: [], busy: true
+        )
+        store.agent.installPreviewTimeline(
+            annotations: AgentTurnBuilder.trailAnnotations(from: messages),
+            recordCitations: AgentTurnBuilder.recordCitations(from: messages)
+        )
+        return store
+    }
+
+    @MainActor static var realtimeToolsStore: AppStore {
+        realtimeStore(calls: [AgentToolCall(
+            toolCallId: "voice-search", tool: "search_documents", args: JSONAny(value: ["query": "tomorrow meetings"]),
+            argsSummary: "tomorrow meetings", argsKnown: true, result: nil, durationMs: nil
+        ), agentToolCallWikiReadComplete])
+    }
+
+    @MainActor static var realtimeSQLStore: AppStore {
+        let sql = "SELECT day, count(*) AS total FROM events GROUP BY day ORDER BY day"
+        return realtimeStore(calls: [AgentToolCall(
+            toolCallId: "voice-sql", tool: "run_sql", args: JSONAny(value: ["sql": sql]), argsSummary: sql, argsKnown: true,
+            result: .sqlRows(
+                sql: sql, columns: ["day", "total"],
+                rows: [[JSONAny(value: "Monday"), JSONAny(value: 3)], [JSONAny(value: "Tuesday"), JSONAny(value: 5)]],
+                rowCount: 2, truncated: false, durationMs: 12, sources: [], subjects: []
+            ), durationMs: 12
+        )])
+    }
+
+    @MainActor static var realtimeBatchStore: AppStore {
+        let queries = ["project notes", "workshop schedule"]
+        return realtimeStore(calls: [AgentToolCall(
+            toolCallId: "voice-batch", tool: "search_many", args: JSONAny(value: ["queries": queries.map { ["query": $0] }]),
+            argsSummary: queries.joined(separator: "; "), argsKnown: true, result: nil, durationMs: nil,
+            children: queries.enumerated().map { index, query in
+                AgentToolChild(
+                    index: index, tool: "search_documents", argsSummary: query,
+                    result: .searchResults(query: query, durationMs: 30, candidates: 0, results: [])
+                )
+            }
+        )])
+    }
+
+    @MainActor static var realtimeCitationsStore: AppStore {
+        let messages: [ChatMessage] = ["Workshop schedule", "Project checklist", "Planning notes", "Team discussion"]
+            .enumerated().flatMap { index, title -> [ChatMessage] in
+                let ref = AgentDocRef(
+                    documentId: "voice-doc-\(index)", sourceType: "notes", sourceId: "preview-notes", title: title,
+                    ts: 1_800_000_000_000 - Double(index * 86_400_000)
+                )
+                return [.assistant(parts: [.toolUse(
+                    toolCallId: "voice-cite-\(index)", tool: "annotate", args: JSONAny(value: ["documentId": ref.documentId])
+                )]), .user(parts: [.toolResult(
+                    toolCallId: "voice-cite-\(index)",
+                    result: .annotateRecorded(
+                        documentId: ref.documentId, ref: ref, quote: "Bring the project checklist to the workshop.",
+                        note: "The schedule and preparation details.", quoteAuthor: nil, quoteIsSelf: false
+                    )
+                )])]
+            }
+        return realtimeStore(messages: messages)
+    }
+
+    @MainActor static var realtimeFailure: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        session.status = "Call ended"
+        session.error = URLError(.notConnectedToInternet)
+        return session
+    }
 }
 #endif
