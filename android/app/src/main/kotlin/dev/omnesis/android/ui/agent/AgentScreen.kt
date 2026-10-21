@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,6 +64,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,7 +91,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
@@ -106,6 +111,7 @@ import dev.omnesis.android.ui.common.LANDING_MARK_CENTRE_Y
 import dev.omnesis.android.ui.common.landingPalette
 import dev.omnesis.android.ui.common.ListPagingFooter
 import dev.omnesis.android.ui.common.rememberPrependPagingAnchor
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @Composable
@@ -838,19 +844,34 @@ private fun Transcript(
     }
     val rowKeys = briefRows?.map { it.key } ?: turns.map { it.id }
 
-    // A conversation opens on its newest turn, so initial composition is not mistaken for a
-    // user reaching the older-history boundary. The Morning brief conversation opens on its
-    // latest brief instead, and stays there while the brief's items load beneath it. An anchored
-    // thread nobody has replied to yet has no turns at all, and its card is the whole screen —
-    // so that one starts at the top rather than one row past it.
+    // A finished reply opens at its own top (TranscriptReadingAnchor); anything else opens on
+    // the newest row and follows the bottom from there. Opening on a late row also keeps initial
+    // composition from being mistaken for a reader reaching the older-history boundary. An
+    // anchored thread nobody has replied to yet has no turns at all, and its card is the whole
+    // screen — so that one starts at the top rather than one row past it.
+    val foreground = LocalLifecycleOwner.current.lifecycle.currentStateAsState().value
+        .isAtLeast(Lifecycle.State.STARTED)
+    fun anchorRowIndex(turnId: String): Int? {
+        val row = if (briefRows != null) {
+            TranscriptReadingAnchor.briefRowIndex(briefRows, turnId)
+        } else {
+            turns.indexOfFirst { it.id == turnId }.takeIf { it >= 0 }
+        }
+        return row?.plus(leadingItemCount)
+    }
+    val opening = remember {
+        TranscriptReadingAnchor.step(turns, state.chat.busy, foreground, TranscriptReadingAnchor.Memory())
+    }
+    val openingIndex = (opening.placement as? TranscriptReadingAnchor.Placement.Reply)?.let { anchorRowIndex(it.turnId) }
+    var anchorMemory by remember { mutableStateOf(opening.memory) }
+    // True while the reader sits at the top of a reply with more of it below: bottom-following
+    // stays off until they reach the end themselves.
+    var holdingAnchor by remember { mutableStateOf(openingIndex != null) }
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = when {
-            briefRows != null -> {
-                val latest = briefRows.indexOfLast { it is DailyBriefRow.Separator }
-                if (latest >= 0) latest + leadingItemCount else (briefRows.size + leadingItemCount - 1).coerceAtLeast(0)
-            }
+            openingIndex != null -> openingIndex
             turns.isEmpty() -> 0
-            else -> turns.size + leadingItemCount - 1
+            else -> rowKeys.size + leadingItemCount - 1
         },
     )
     val scope = rememberCoroutineScope()
@@ -875,21 +896,49 @@ private fun Transcript(
             lastVisible >= total - 2
         }
     }
+    val followingBottom = stickToBottom && (!holdingAnchor || inInspection)
 
-    // Follow streaming content only while stuck. Re-keys on turn count and the trailing
-    // assistant's part count so each streamed part nudges the view down. The Morning brief
-    // conversation skips the first pass, which would carry it from its latest brief to the end;
-    // a send or a streamed reply still follows.
+    // One effect places the transcript after every change, so a reply being placed and the
+    // bottom-follow never race. A reload (the app returning to the foreground) can bring a reply
+    // the reader has not been placed on; it is placed like an opening one. A send or a busy agent
+    // hands the transcript back to bottom-following, which follows while stuck to the bottom and
+    // not held at a reply's top: once per new turn, streamed part or queued message.
     val lastAssistantParts = (turns.lastOrNull() as? AgentTurn.Assistant)?.parts?.size ?: 0
-    var holdOpeningPosition by remember { mutableStateOf(briefRows != null) }
-    LaunchedEffect(turns.size, lastAssistantParts, queuedConversationText(state.visibleQueuedMessages)) {
-        if (holdOpeningPosition) {
-            holdOpeningPosition = false
-            return@LaunchedEffect
+    val followKey = Triple(turns.size, lastAssistantParts, queuedConversationText(state.visibleQueuedMessages))
+    var followedKey by remember { mutableStateOf<Any?>(null) }
+    LaunchedEffect(turns.lastOrNull(), state.chat.busy, foreground, followKey) {
+        val step = TranscriptReadingAnchor.step(turns, state.chat.busy, foreground, anchorMemory)
+        anchorMemory = step.memory
+        val contentChanged = followKey != followedKey
+        followedKey = followKey
+        when (val placement = step.placement) {
+            is TranscriptReadingAnchor.Placement.Reply -> {
+                val index = anchorRowIndex(placement.turnId)
+                if (index != null && !inInspection) {
+                    listState.scrollToItem(index)
+                    holdingAnchor = listState.canScrollForward
+                }
+                return@LaunchedEffect
+            }
+            TranscriptReadingAnchor.Placement.FollowBottom -> holdingAnchor = false
+            TranscriptReadingAnchor.Placement.Keep -> Unit
         }
-        if (stickToBottom && !inInspection) {
-            listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+        if (contentChanged && stickToBottom && !holdingAnchor && !inInspection) {
+            // Outside this effect, so the next streamed token does not cut the scroll short, and a
+            // frame on, so the list has laid out the rows that just arrived.
+            scope.launch {
+                withFrameNanos { }
+                val last = listState.layoutInfo.totalItemsCount - 1
+                if (last >= 0) listState.animateScrollToItem(last)
+            }
         }
+    }
+    // The hold ends once the reader reaches the end of the transcript, which is at once when
+    // the reply fits on screen.
+    LaunchedEffect(holdingAnchor) {
+        if (!holdingAnchor) return@LaunchedEffect
+        snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && !listState.canScrollForward }.first { it }
+        holdingAnchor = false
     }
 
     LaunchedEffect(state.transcriptPrependVersion) {
@@ -1017,11 +1066,12 @@ private fun Transcript(
             }
         }
 
-        // Floating scroll-to-bottom chevron, centred above the composer. Shown only when
-        // the user has scrolled away from the bottom; tapping it re-arms the stick flag
-        // by jumping to the last item. Mirrors the iOS scrollToBottom chevron.
+        // Floating scroll-to-bottom chevron, centred above the composer. Shown whenever the
+        // transcript is not following the bottom — scrolled away, or held at a reply's top;
+        // tapping it re-arms the stick flag by jumping to the end of the last item. Mirrors the
+        // iOS scrollToBottom chevron.
         AnimatedVisibility(
-            visible = !stickToBottom,
+            visible = !followingBottom,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 96.dp),
@@ -1031,7 +1081,13 @@ private fun Transcript(
             GlassCircleButton(
                 onClick = {
                     scope.launch {
+                        holdingAnchor = false
                         listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+                        // A last item taller than the viewport is shown to its end, not its top.
+                        val info = listState.layoutInfo
+                        val last = info.visibleItemsInfo.lastOrNull() ?: return@launch
+                        val overflow = last.offset + last.size - (info.viewportEndOffset - info.afterContentPadding)
+                        if (overflow > 0) listState.animateScrollBy(overflow.toFloat())
                     }
                 },
                 contentDescription = "Scroll to latest",

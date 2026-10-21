@@ -74,10 +74,15 @@ public struct AgentView: View {
     @State private var scrollViewHeight: CGFloat = 0
     /// Whether the transcript should follow its latest message. Starts true
     /// so a conversation opens at the bottom; flips false when the user
-    /// scrolls up to read, and back to true when they return to the bottom
-    /// (or tap the chevron / switch conversations). Drives the reactive
-    /// `BottomStickController`.
+    /// scrolls up to read or a load opens at the reading anchor, and back to
+    /// true when they return to the bottom (or tap the chevron, send, or
+    /// switch conversations). Drives the reactive `BottomStickController`.
     @State private var stickToBottom: Bool = true
+    /// The marker of the turn a just-loaded transcript opened on (see
+    /// `readingAnchorMarker`). While set, the transcript re-aligns that turn's
+    /// top as its content lays out, until the person scrolls. See
+    /// `openAtReadingAnchor`.
+    @State private var readingHold: String?
     @State private var prependScrollTarget: TranscriptPrependScrollTarget?
     @State private var transcriptPagingInteractionArmed = false
     @State private var transcriptRowFrames: [String: CGRect] = [:]
@@ -581,6 +586,8 @@ public struct AgentView: View {
 
     private func submitComposer(_ text: String, command: SlashCommand? = nil) {
         composerFocused = false
+        // A send follows the conversation down, wherever the reader was.
+        scrollToBottomTrigger &+= 1
         Task {
             let sent = await store.agent.submitDraft(
                 text: text, deepResearch: command?.deepResearch ?? false
@@ -824,6 +831,7 @@ public struct AgentView: View {
                         // so the turn-count observer does not snap the expanded
                         // transcript back to its latest message.
                         stickToBottom = false
+                        readingHold = nil
                         Task {
                             guard await store.agent.loadOlderMessages(),
                                   let anchor,
@@ -994,6 +1002,7 @@ public struct AgentView: View {
             .modifier(BottomStickController(
                 proxy: proxy,
                 stick: $stickToBottom,
+                hold: $readingHold,
                 turnsEmpty: store.agent.turns.isEmpty
             ))
             // Streaming token follow + new-turn / first-load follow on iOS 17
@@ -1014,7 +1023,20 @@ public struct AgentView: View {
                 transcriptPagingInteractionArmed = false
                 transcriptRowFrames = [:]
                 stickToBottom = true
+                readingHold = nil
                 proxy.scrollTo("__bottom__", anchor: .bottom)
+            }
+            // A load that ends on a reply the reader has not seen opens at
+            // that reply's top instead of the bottom.
+            .onChange(of: store.agent.pendingReadingAnchor) { _, target in
+                if target != nil { openAtReadingAnchor(proxy) }
+            }
+            // A turn that starts while the reading anchor is held ends the
+            // hold; the transcript follows it if the reader is at the bottom.
+            .onChange(of: store.agent.busy) { _, busy in
+                guard busy, readingHold != nil else { return }
+                readingHold = nil
+                if !showScrollToBottom { stickToBottom = true }
             }
             .onChange(of: prependScrollTarget) { _, target in
                 guard let target else { return }
@@ -1037,15 +1059,45 @@ public struct AgentView: View {
                 // and transiently unstick mid-flight. The controller then
                 // converges as rows materialise.
                 stickToBottom = true
+                readingHold = nil
                 proxy.scrollTo("__bottom__", anchor: .bottom)
             }
             .onAppear {
-                if stickToBottom { proxy.scrollTo("__bottom__", anchor: .bottom) }
+                if !openAtReadingAnchor(proxy), stickToBottom {
+                    proxy.scrollTo("__bottom__", anchor: .bottom)
+                }
             }
             .onPreferenceChange(BottomAnchorKey.self) { minY in
                 bottomAnchorMinY = minY
             }
         }
+    }
+
+    /// Where the reading anchor puts a turn's top marker: below the floating
+    /// top buttons, which the transcript scrolls under.
+    static let readingAnchorPoint = UnitPoint(x: 0.5, y: 0.16)
+
+    /// Open the transcript at the top of the turn the coordinator chose for
+    /// this load, if it chose one. Unsticks first, so the bottom-stick
+    /// controller stops following the bottom, and holds the turn so rows that
+    /// lay out afterwards re-align it rather than pushing it away. Returns
+    /// whether there was a turn to open on.
+    @discardableResult
+    private func openAtReadingAnchor(_ proxy: ScrollViewProxy) -> Bool {
+        guard let turnId = store.agent.takeReadingAnchor() else { return false }
+        let target = readingAnchorMarkerId(turnId)
+        stickToBottom = false
+        readingHold = target
+        proxy.scrollTo(target, anchor: Self.readingAnchorPoint)
+        Task { @MainActor in
+            // Once the opened transcript has been laid out; this is the whole
+            // re-alignment on iOS 17, where the controller cannot observe
+            // the content's size.
+            try? await Task.sleep(for: .milliseconds(120))
+            guard readingHold == target, !stickToBottom else { return }
+            proxy.scrollTo(target, anchor: Self.readingAnchorPoint)
+        }
+        return true
     }
 
     /// Vertical alpha gradient used as the transcript ScrollView's mask.
@@ -1478,14 +1530,17 @@ private struct TranscriptPrependScrollTarget: Equatable {
 ///     tokens, content that arrives after the transcript opened) and we are still stuck to the bottom,
 ///     re-align to the `__bottom__` sentinel. `scrollTo` clamps to the real maximum offset, so this can
 ///     never land past the content end, and re-firing on every size change settles on the true bottom.
+///     Unstuck with a `hold` (the reading anchor a load opened on), re-align that turn's top instead.
 ///   - When only the OFFSET changes while the PERSON is scrolling, we recompute `stick`: at/near the
-///     end → keep following; dragged away → stop. An offset the system or a programmatic scroll moves
-///     (the first layout, a safe-area adjustment) never unsticks, or the transcript would open at its top.
+///     end → keep following; dragged away → stop. The person scrolling also releases the `hold`. An
+///     offset the system or a programmatic scroll moves (the first layout, a safe-area adjustment)
+///     never unsticks, or the transcript would open at its top.
 /// On iOS 17 (no `onScrollGeometryChange`) this is inert; `onChange`/`onAppear` follow best-effort there.
 @available(iOS 17.0, *)
 private struct BottomStickController: ViewModifier {
     let proxy: ScrollViewProxy
     @Binding var stick: Bool
+    @Binding var hold: String?
     let turnsEmpty: Bool
     @State private var personScrolling = false
 
@@ -1504,10 +1559,13 @@ private struct BottomStickController: ViewModifier {
                     // Content grew/shrank: follow if still stuck.
                     if stick, !turnsEmpty {
                         proxy.scrollTo("__bottom__", anchor: .bottom)
+                    } else if !stick, let hold {
+                        proxy.scrollTo(hold, anchor: AgentView.readingAnchorPoint)
                     }
                 } else if personScrolling {
                     // The person scrolled: update whether we are still following.
                     stick = new.distanceFromEnd <= Self.stickThreshold
+                    hold = nil
                 }
             }
             .onScrollPhaseChange { _, phase in

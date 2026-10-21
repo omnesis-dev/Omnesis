@@ -29,6 +29,24 @@ extension EnvironmentValues {
     }
 }
 
+@available(iOS 17.0, *)
+extension View {
+    /// A point at the top of a turn's row, which the transcript scrolls to when
+    /// a load opens at that turn. A `scrollTo` anchor aligns the same fraction
+    /// of the target and the viewport, so only a target with no height puts the
+    /// turn's top at that fraction of the screen whatever the turn's length.
+    func readingAnchorMarker(_ turnId: String) -> some View {
+        background(alignment: .top) {
+            Color.clear.frame(height: 1).id(readingAnchorMarkerId(turnId))
+        }
+    }
+}
+
+/// The scroll id of a turn's `readingAnchorMarker`.
+func readingAnchorMarkerId(_ turnId: String) -> String {
+    "reading-anchor-\(turnId)"
+}
+
 /// The transcript's turns. Every conversation shows them as bubbles; the
 /// Morning brief conversation groups them by day under each brief, with
 /// earlier days folded.
@@ -60,6 +78,7 @@ struct AgentTranscriptTurns: View {
                 editableBubble(turn)
                     .id(turn.id)
                     .pagingRowFrame(id: turn.id, in: scrollSpace)
+                    .readingAnchorMarker(turn.id)
             }
         }
     }
@@ -208,6 +227,7 @@ struct DailyBriefTranscriptView: View {
             }
             .id(briefTurn.id)
             .pagingRowFrame(id: briefTurn.id, in: scrollSpace)
+            .readingAnchorMarker(briefTurn.id)
         }
         DailyBriefFooter(
             day: brief.day,
@@ -232,6 +252,7 @@ struct DailyBriefTranscriptView: View {
         ConversationEditableTurn(turn: turn, disabled: editingDisabled, onEdit: onEdit)
             .id(turn.id)
             .pagingRowFrame(id: turn.id, in: scrollSpace)
+            .readingAnchorMarker(turn.id)
     }
 
     private func separatorId(_ brief: DailyBriefMessageRef) -> String {

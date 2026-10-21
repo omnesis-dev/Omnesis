@@ -5089,6 +5089,40 @@ enum PreviewMocks {
         )
     }()
 
+    /// First and last paragraphs of the reply `agentReadingAnchorSession`
+    /// ends on. The reading-anchor UI test asserts the first is on screen when
+    /// the conversation opens and the last is not.
+    static let agentReadingAnchorReplyStart = "READING-ANCHOR-REPLY-START"
+    static let agentReadingAnchorReplyEnd = "READING-ANCHOR-REPLY-END"
+
+    /// A stored conversation, as the gateway returns it on resume, that ends
+    /// on an assistant reply several screens tall: the shape the reading
+    /// anchor opens at the reply's top. Fictional content, no corpus.
+    static let agentReadingAnchorSession: CreateSessionResponse = {
+        let section = "This section of the training plan ramps mileage by ten percent "
+            + "each week, holds a cut-back week every fourth week, and keeps the long "
+            + "run under thirty percent of the weekly total."
+        let reply = ([agentReadingAnchorReplyStart]
+            + (1 ... 24).map { "Week \($0). \(section)" }
+            + [agentReadingAnchorReplyEnd])
+            .joined(separator: "\n\n")
+        var messages: [ChatMessage] = []
+        for i in 1 ... 4 {
+            messages.append(.user(parts: [.text("Quick check \(i): all good so far?")]))
+            messages.append(.assistant(parts: [.text("Yes, item \(i) is on track.")]))
+        }
+        messages.append(.user(parts: [.text("Write out the full sixteen-week plan.")]))
+        messages.append(.assistant(parts: [.text(reply)]))
+        return CreateSessionResponse(
+            sessionId: "s_reading_anchor",
+            model: "preview",
+            backend: "preview",
+            title: "Marathon plan",
+            messageCount: messages.count,
+            messages: messages
+        )
+    }()
+
     static let agentConversationControls = AppStore.AgentPreviewSeed(
         sessionId: "conversation-controls-preview",
         model: "preview",

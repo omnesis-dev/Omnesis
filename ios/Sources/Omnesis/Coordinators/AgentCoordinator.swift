@@ -127,6 +127,15 @@ public final class AgentCoordinator {
     private(set) var transcriptLoading: Bool = false
     private(set) var transcriptPaging = CursorPagingState()
 
+    /// The turn a just-loaded transcript should open on, with its top at the
+    /// top of the view, until the transcript takes it. See
+    /// `TranscriptReadingAnchor` for when a load sets one.
+    private(set) var pendingReadingAnchor: String?
+
+    /// The reply the reader was last positioned on, or watched finish.
+    @ObservationIgnored
+    private var readingAnchorSeen: TranscriptReadingAnchor.Seen?
+
     private(set) var conversations: [ConversationSummary] = []
     private(set) var conversationsLoading: Bool = false
     private(set) var conversationsLoadingMore: Bool = false
@@ -557,6 +566,7 @@ public final class AgentCoordinator {
         transcriptLoading = false
         transcriptVersion = 0
         transcriptPaging.reset()
+        pendingReadingAnchor = nil
         conversations = []
         conversationsLoading = false
         conversationsLoadingMore = false
@@ -825,6 +835,7 @@ public final class AgentCoordinator {
         liveSessionMissingReason = nil
         transcriptVersion = 0
         transcriptPaging.reset()
+        pendingReadingAnchor = nil
     }
 
     /// Reset the surface to the blank slate a brand-new conversation shows.
@@ -1027,6 +1038,7 @@ public final class AgentCoordinator {
             pendingSessionMint = nil
         }
         transcriptPaging.reset(nextCursor: session.messagePageInfo?.nextCursor)
+        placeReadingAnchor(messageCount: session.messageCount)
         for event in session.replayEvents {
             await handle(event: event)
         }
@@ -1068,6 +1080,28 @@ public final class AgentCoordinator {
         transcriptVersion = 0
         fatalError = nil
         transcriptPaging.reset(nextCursor: page.messagePageInfo.nextCursor)
+        placeReadingAnchor(messageCount: page.messageCount)
+    }
+
+    /// Decide where the transcript just loaded opens. A load that should
+    /// follow the bottom also drops an anchor an earlier load left untaken,
+    /// since that one named turns that have since been replaced.
+    private func placeReadingAnchor(messageCount: Int) {
+        let decision = TranscriptReadingAnchor.decide(
+            sessionId: sessionId,
+            busy: busy,
+            turns: turns,
+            messageCount: messageCount,
+            seen: readingAnchorSeen
+        )
+        readingAnchorSeen = decision.seen
+        pendingReadingAnchor = decision.turnId
+    }
+
+    /// Hand the transcript the turn to open on, once.
+    func takeReadingAnchor() -> String? {
+        defer { pendingReadingAnchor = nil }
+        return pendingReadingAnchor
     }
 
     /// Prepend one complete page of older persisted turns while preserving
@@ -1493,6 +1527,10 @@ public final class AgentCoordinator {
     /// by `busy` and cannot disturb the settled transcript.
     private func retireActiveTurn() {
         busy = false
+        readingAnchorSeen = TranscriptReadingAnchor.replyEnded(
+            sessionId: sessionId,
+            watching: surfaceVisible && appActive
+        )
         turnGeneration &+= 1
         cancelOperationGeneration &+= 1
         cancelError = nil
