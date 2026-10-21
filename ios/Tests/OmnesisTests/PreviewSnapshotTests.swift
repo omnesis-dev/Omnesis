@@ -2482,6 +2482,32 @@ final class PreviewSnapshotTests: XCTestCase {
 
     // MARK: - Phone setup
 
+    func testPhoneSetupPollingKeepsItsPredicateOnTheMainActor() async {
+        let host = FakePhoneSetupHost()
+        host.holdsPhotosEnable = true
+        let coordinator = PhoneSetupCoordinator(progressStore: PhoneSetupProgressStore(defaults: DictionaryDefaults()))
+        coordinator.install(host: host, steps: PhoneSetupRegistry.ios(host: host))
+        coordinator.presentFromSettings(deviceId: "11111111-1111-4111-8111-111111111111")
+        coordinator.toggle(PhotosSetupStep.sourceId)
+        coordinator.startSelectedSteps()
+        let running = Task { await coordinator.runCurrentStep() }
+        var polls = 0
+        let waiting = await eventually {
+            MainActor.assertIsolated()
+            polls += 1
+            // Exercise the predicate again after the helper actually suspends.
+            return polls > 1 && host.isHoldingEnable
+        }
+        XCTAssertTrue(waiting)
+        XCTAssertGreaterThan(polls, 1)
+        phoneSetupSnapshot(coordinator, name: "phone-setup-polling-main-actor", promptVisible: true)
+        coordinator.back()
+        host.releaseHeldEnable()
+        await running.value
+        XCTAssertTrue(host.enableSawCancellation)
+        XCTAssertNil(coordinator.busyStepId)
+    }
+
     private func phoneSetupSnapshot(
         _ coordinator: PhoneSetupCoordinator,
         name: String,
