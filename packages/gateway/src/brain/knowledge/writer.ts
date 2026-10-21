@@ -27,6 +27,7 @@ import { recordKnowledgeDecision } from "./decision-storage.js";
 import { advanceKnowledgeOwnerSync } from "./owner-sync.js";
 import { setKnowledgeLink } from "./links.js";
 import { retireKnowledgeWikiPage } from "./wiki-retirement.js";
+import { exemptUnreadableClaims } from "./unreadable-support.js";
 import { saveOwnedKnowledgeNode } from "./owner-adapters.js";
 import { attemptLegacyOwnerConversion } from "./owner-conversion.js";
 import {
@@ -132,6 +133,7 @@ export const knowledgeWriterHandlers = {
   "knowledge.startBatch": startKnowledgeBatch,
   "knowledge.appendFrontier": appendKnowledgeFrontier,
   "knowledge.frontierOutcome": setKnowledgeFrontierOutcome,
+  "knowledge.exemptUnreadableClaims": exemptUnreadableClaims,
   "knowledge.finishBatch": finishKnowledgeBatch,
   "knowledge.settleFrontier": settleKnowledgeFrontier,
   "knowledge.coverage": recordKnowledgeCoverage,
@@ -188,6 +190,7 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
     "knowledge.startBatch": (...args) => call("knowledge.startBatch", args),
     "knowledge.appendFrontier": (...args) => call("knowledge.appendFrontier", args),
     "knowledge.frontierOutcome": (...args) => call("knowledge.frontierOutcome", args),
+    "knowledge.exemptUnreadableClaims": (...args) => call("knowledge.exemptUnreadableClaims", args),
     "knowledge.finishBatch": (...args) => call("knowledge.finishBatch", args),
     "knowledge.settleFrontier": (...args) => call("knowledge.settleFrontier", args),
     "knowledge.coverage": (...args) => call("knowledge.coverage", args),
@@ -240,6 +243,7 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.startBatch": async (...args) => startKnowledgeBatch(db, ...args),
     "knowledge.appendFrontier": async (...args) => appendKnowledgeFrontier(db, ...args),
     "knowledge.frontierOutcome": async (...args) => setKnowledgeFrontierOutcome(db, ...args),
+    "knowledge.exemptUnreadableClaims": async (...args) => exemptUnreadableClaims(db, ...args),
     "knowledge.finishBatch": async (...args) => finishKnowledgeBatch(db, ...args),
     "knowledge.settleFrontier": async (...args) => settleKnowledgeFrontier(db, ...args),
     "knowledge.coverage": async (...args) => recordKnowledgeCoverage(db, ...args),

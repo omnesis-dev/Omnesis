@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { resolveBrainSettings } from "../config.js";
 import { KnowledgeService, type KnowledgeProposal } from "./service.js";
@@ -202,5 +202,104 @@ it("rechecks privacy inside the writer after asynchronous verification", async (
   });
   expect(db.prepare("SELECT revision FROM knowledge_nodes WHERE id='reference'").get()).toEqual({
     revision: 1,
+  });
+});
+
+describe("a single save cannot gut a page", () => {
+  const shelves = ["one", "two", "three", "four", "five", "six"].map((name) =>
+    claim(name, `Shelf ${name} holds one kind of tool.`),
+  );
+  const large = (extra: Partial<KnowledgeProposal> = {}) =>
+    input({ id: "large", title: "Workshop shelves", markdown: shelves.join(""), ...extra });
+  const keep = (...kept: number[]) => kept.map((index) => shelves[index]!).join("");
+  const removing = (ids: string[], reason?: (id: string) => string) =>
+    ids.map((id) => ({ id, reason: reason?.(id) ?? `Shelf ${id} was emptied and relabelled.` }));
+  const paint = claim("paint", "Paint stays sealed.");
+  beforeEach(async () => {
+    await service.save(large());
+  });
+
+  it("refuses removing more than half of the claims once three or more go, saving nothing", async () => {
+    const before = getKnowledgeNode(db, "large");
+    const gutted = large({
+      expectedRevision: 1,
+      markdown: keep(0, 1),
+      claimRemovals: removing(["three", "four", "five", "six"]),
+    });
+    await expect(service.save(gutted)).rejects.toMatchObject({
+      code: "claim_invalid",
+      message: expect.stringMatching(/removes 4 of the page's 6 claims.*knowledge_retire/),
+    });
+    expect(getKnowledgeNode(db, "large")).toEqual(before);
+    // The writer rechecks it on its own.
+    expect(() => saveKnowledgeNode(db, { ...gutted, enforceClaimPreservation: true }, 2)).toThrow(
+      /removes 4 of the page's 6 claims/,
+    );
+  });
+
+  it("allows removing half of the claims, each for its own reason", async () => {
+    const saved = await service.save(
+      large({
+        expectedRevision: 1,
+        markdown: keep(0, 1, 2),
+        claimRemovals: removing(["four", "five", "six"]),
+      }),
+    );
+    expect(saved.node.markdown).toBe(keep(0, 1, 2));
+  });
+
+  it("refuses one removal reason shared by more than two claims", async () => {
+    await expect(
+      service.save(
+        large({
+          expectedRevision: 1,
+          markdown: keep(0, 1, 2),
+          claimRemovals: removing(["four", "five", "six"], (id) =>
+            id === "six"
+              ? "cannot be re-checked  in this run."
+              : "Cannot be re-checked in this run.",
+          ),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "claim_invalid",
+      message: expect.stringContaining("same removal reason for 3 claims"),
+    });
+    // Two claims may share one reason.
+    const saved = await service.save(
+      large({
+        expectedRevision: 1,
+        markdown: keep(0, 1, 2, 3),
+        claimRemovals: removing(["five", "six"], () => "Duplicates shelf one."),
+      }),
+    );
+    expect(saved.node.revision).toBe(2);
+  });
+
+  it("refuses retitling a page while removing most of it, not the same small removal", async () => {
+    await service.save(input({ id: "small", markdown: first + second + paint }));
+    const removals = [
+      { id: "labels", reason: "Labels are covered by the signage page." },
+      { id: "tools", reason: "Tools moved to the equipment reference." },
+    ];
+    await expect(
+      service.save(
+        input({
+          id: "small",
+          title: "Paint storage",
+          expectedRevision: 1,
+          markdown: paint,
+          claimRemovals: removals,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "claim_invalid",
+      message: expect.stringContaining("retitles the page while removing 2 of its 3 claims"),
+    });
+    // Removing two of three claims under the same title is a reasonable small edit.
+    const saved = await service.save(
+      input({ id: "small", expectedRevision: 1, markdown: paint, claimRemovals: removals }),
+    );
+    expect(saved.node.markdown).toBe(paint);
   });
 });

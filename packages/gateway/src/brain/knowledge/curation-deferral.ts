@@ -31,18 +31,26 @@ export function assertCurationDeferral(
   if (!request) return false;
   const previous = getKnowledgeNode(db, input.id);
   if (
+    input.kind === "wiki" &&
+    previous &&
+    !db
+      .prepare(
+        "SELECT 1 FROM knowledge_work WHERE batch_id=? AND subject_id=? AND subject_kind='node' AND reason='review' AND (status='batched' OR (status='deferred' AND last_error='curation_insufficient_context'))",
+      )
+      .get(maintenance.batchId, input.id)
+  )
+    throw new KnowledgeStorageError(
+      "claim_invalid",
+      "Curation deferral defers only an offered whole-page review (review=true); this page is offered for claim repair, which cannot be deferred. Repair the claims you can re-check, keep the others unchanged and leave their review pending: this run's own earlier edits do not change that",
+    );
+  if (
     input.kind !== "wiki" ||
     !previous ||
     previous.title !== input.title ||
     maintenance.placementAssessment ||
     request.reasonCode !== "insufficient_useful_context" ||
     !request.reason.trim() ||
-    request.reason.length > 500 ||
-    !db
-      .prepare(
-        "SELECT 1 FROM knowledge_work WHERE batch_id=? AND subject_id=? AND subject_kind='node' AND reason='review' AND (status='batched' OR (status='deferred' AND last_error='curation_insufficient_context'))",
-      )
-      .get(maintenance.batchId, input.id)
+    request.reason.length > 500
   )
     throw new KnowledgeStorageError(
       "claim_invalid",

@@ -12,7 +12,7 @@ import { knowledgeOrganizationVersion } from "./organization-context.js";
 /** Repository mutations run exclusively through the gateway writer worker. */
 import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
 import { assertKnowledgeNavigation } from "./navigation.js";
-import { recordAcceptedClaimMaintenance } from "./claim-maintenance.js";
+import { claimDependencySignatures, recordAcceptedClaimMaintenance } from "./claim-maintenance.js";
 import { recordKnowledgePlacement } from "./placement-assessment.js";
 import { readKnowledgeCollectionRevision } from "./reconciliation.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
@@ -229,6 +229,7 @@ export function saveKnowledgeNode(
       existing?.created_at ?? now,
       now,
     );
+    const previousDependencies = claimDependencySignatures(db, input.id);
     // Explicit child cleanup also works for isolated repository tests with foreign_keys disabled.
     db.prepare("DELETE FROM knowledge_dependencies WHERE node_id=?").run(input.id);
     db.prepare("DELETE FROM knowledge_claims WHERE node_id=?").run(input.id);
@@ -286,7 +287,7 @@ export function saveKnowledgeNode(
         dep.relation,
         JSON.stringify(dep.inputVersion),
       );
-    recordAcceptedClaimMaintenance(db, input);
+    recordAcceptedClaimMaintenance(db, input, previousDependencies);
     const curationDeferral = recordCurationDeferral(db, input, now, curationProofRepair);
     const placementAssessment = curationDeferral
       ? undefined

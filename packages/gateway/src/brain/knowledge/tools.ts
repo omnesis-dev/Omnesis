@@ -40,7 +40,8 @@ import { assertKnowledgeSavePreflight } from "./save-preflight.js";
 import { applyWikiEdits, WikiEditError } from "./wiki-edit.js";
 import { WIKI_RETIREMENT_REASON_MAX } from "./wiki-retirement.js";
 import { getKnowledgeNode } from "./storage.js";
-import { ClaimMarkupError } from "./claims.js";
+import { ClaimMarkupError, parseClaimMarkup } from "./claims.js";
+import { assertKnowledgeClaimPreservation } from "./claim-preservation.js";
 import { knowledgePageRefForDocument } from "./document-context.js";
 import { RelatedKnowledgeCheck, type KnowledgeMirrorSearch } from "./related-knowledge.js";
 import type { CheckRecord } from "../record-check/check.js";
@@ -112,7 +113,7 @@ const proposal = z.strictObject(
       .max(1024)
       .optional()
       .describe(
-        "Wiki/root full replacement only: explicitly name each existing claim deliberately omitted and explain why. Preserve all other claim spans. reviewedClaimIds does not authorize removal. New pages cannot remove claims; empty wiki replacements are refused.",
+        "Wiki/root full replacement only: explicitly name each existing claim deliberately omitted and explain why that claim goes. Preserve all other claim spans. reviewedClaimIds does not authorize removal. New pages cannot remove claims; empty wiki replacements are refused. Not being able to re-check a claim in this run is never a removal reason. One save may not remove more than half of a page's claims once it removes three or more, retitle the page while removing most of it, or give one reason for more than two removals.",
       ),
     navigationRemovals: z
       .array(z.object({ targetId: id, reason: z.string().trim().min(1).max(1000) }).strict())
@@ -512,6 +513,16 @@ export function buildKnowledgeTools(
         inputFingerprint ?? "",
       );
     assertKnowledgeSavePreflight(service.deps.db, node, fence);
+    // Claim removals are refused before any paid check, not after it.
+    if (node.kind === "wiki" || node.kind === "root") {
+      const parsed = parseClaimMarkup(node.markdown);
+      assertKnowledgeClaimPreservation(
+        service.deps.db,
+        node,
+        parsed.claims.map((claim) => claim.id),
+        parsed.text,
+      );
+    }
     const creationReceipt = candidate
       ? publicationReads.receipt(candidate.id, input.creationAssessment)
       : undefined;
