@@ -105,6 +105,12 @@ export interface SessionOptions {
    */
   historyView?: (history: ReadonlyArray<ChatMessage>) => ChatMessage[];
   /**
+   * A section appended to `systemPrompt`, built again for every turn, so the
+   * model reads state that may have changed since the session was created.
+   * Returning an empty string appends nothing.
+   */
+  systemPromptSection?: () => string;
+  /**
    * IANA zone of the caller who opened this session, as their client
    * reported it. Rides every {@link ToolContext} so time-aware tools resolve
    * "today" against the user's calendar rather than the host machine's.
@@ -180,6 +186,7 @@ export class AgentSession {
 
   private history: ChatMessage[] = [];
   private readonly historyView: SessionOptions["historyView"];
+  private readonly systemPromptSection: SessionOptions["systemPromptSection"];
   private citations = new Map<string, Citation>();
   private currentTurn: TurnState | null = null;
 
@@ -197,6 +204,7 @@ export class AgentSession {
     this.rateLimitPatience = opts.rateLimitPatience;
     this.promptCacheKey = opts.promptCacheKey;
     this.historyView = opts.historyView;
+    this.systemPromptSection = opts.systemPromptSection;
     if (opts.initialHistory && opts.initialHistory.length > 0) {
       // Defensive copy: the caller may keep mutating its own copy
       // (we never do, but the API contract says we own the seed).
@@ -524,6 +532,8 @@ export class AgentSession {
     try {
       try {
         const priorHistory = this.historyView ? this.historyView(this.history) : [...this.history];
+        const section = this.systemPromptSection?.() ?? "";
+        const systemPrompt = section ? `${this.systemPrompt}\n\n${section}` : this.systemPrompt;
         // Append user turn to canonical history before asking the backend to
         // build its stream so even a synchronous backend-construction throw
         // leaves a coherent transcript. The backend still receives the
@@ -539,7 +549,7 @@ export class AgentSession {
             tools: this.tools,
             timeZone: this.zone,
             caller: this.speaksFor,
-            systemPrompt: this.systemPrompt,
+            systemPrompt,
             ...(this.reasoning === undefined ? {} : { reasoning: this.reasoning }),
             ...(this.rateLimitPatience === undefined
               ? {}

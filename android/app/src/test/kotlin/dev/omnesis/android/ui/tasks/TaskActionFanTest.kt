@@ -24,7 +24,17 @@ class TaskActionFanTest {
         mode: TaskFanSession.Mode = TaskFanSession.Mode.Main,
         tracking: Boolean = true,
         suggestion: Boolean = false,
-    ) = TaskFanSession(anchor, bounds, today, mode = mode, tracking = tracking, locale = Locale.UK, suggestion = suggestion)
+        chat: Boolean = false,
+    ) = TaskFanSession(
+        anchor,
+        bounds,
+        today,
+        mode = mode,
+        tracking = tracking,
+        locale = Locale.UK,
+        suggestion = suggestion,
+        chat = chat,
+    )
 
     private fun TaskFanSession.target(action: TaskFanAction) = targets.single { it.action == action }
 
@@ -44,6 +54,35 @@ class TaskActionFanTest {
             listOf("Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore"),
             session(suggestion = true).targets.map { it.label },
         )
+    }
+
+    /**
+     * A gateway that opens conversations about tasks adds Chat about this to a task's main fan,
+     * furthest from the thumb, so every other target keeps its place in the order. A
+     * suggestion's fan is about deciding on it and stays as it is.
+     */
+    @Test
+    fun chat_about_this_ends_a_tasks_main_fan_only_when_the_gateway_offers_it() {
+        assertEquals(
+            listOf("Done", "Done + note", "Tomorrow", "Next month", "Other month…", "Cancel task", "Chat about this"),
+            session(chat = true).targets.map { it.label },
+        )
+        assertEquals(
+            listOf("Accept", "Accept with note", "Accept for…", "Mark as done", "Ignore"),
+            session(suggestion = true, chat = true).targets.map { it.label },
+        )
+        // Only the main fans: the month and when fans are about moving the task.
+        val months = session(chat = true, tracking = false)
+        months.tap(TaskFanAction.OtherMonth)
+        assertTrue(months.targets.none { it.action == TaskFanAction.ChatAbout })
+    }
+
+    @Test
+    fun lifting_on_chat_about_this_performs_it() {
+        val fan = session(chat = true)
+        val target = fan.target(TaskFanAction.ChatAbout)
+        fan.move(target.center, nowMillis = 0)
+        assertEquals(TaskFanSession.Outcome.Perform(TaskFanAction.ChatAbout), fan.release(target.center, nowMillis = 10))
     }
 
     /** Accept for… leads to the times to plan it for; Other month… to the months; Back retraces the way. */

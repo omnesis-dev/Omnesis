@@ -1225,7 +1225,7 @@ public final class AgentCoordinator {
     /// Whether this build renders a pinned context card for the origin —
     /// the precondition for hiding the seeded transcript prefix.
     nonisolated static func hasContextCard(_ origin: ConversationOrigin) -> Bool {
-        origin.kind == "watch_firing" && origin.watch != nil
+        (origin.kind == "watch_firing" && origin.watch != nil) || origin.taskCard != nil
     }
 
     /// Where the Morning brief thread's turns must break, as indices into a page whose first message has

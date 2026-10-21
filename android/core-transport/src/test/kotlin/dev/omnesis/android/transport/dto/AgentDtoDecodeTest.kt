@@ -362,6 +362,36 @@ class AgentDtoDecodeTest {
     }
 
     @Test
+    fun a_task_conversations_origin_decodes_its_task_snapshot() {
+        val resp = OmnesisJson.decodeFromString<CreateSessionResponse>(
+            """{"sessionId":"s","model":"m","backend":"b","title":"Renew the studio lease","messageCount":0,"messages":[],"origin":{"kind":"task","taskId":"task_example","runId":"task_example","task":{"title":"Renew the studio lease","state":"open","due":"2026-11-02","sourceCount":3},"seedMessageCount":0}}""",
+        )
+        val origin = resp.origin!!
+        assertEquals(ConversationOrigin.TASK_KIND, origin.kind)
+        assertEquals("task_example", origin.taskId)
+        assertEquals(
+            TaskOriginSnapshot(title = "Renew the studio lease", state = "open", due = "2026-11-02", sourceCount = 3),
+            origin.task,
+        )
+        assertEquals(0, origin.seedMessageCount)
+
+        // A snapshot without a deadline omits `due`.
+        val undated = OmnesisJson.decodeFromString<ConversationSummary>(
+            """{"id":"c","title":"T","origin":{"kind":"task","taskId":"t","runId":"t","task":{"title":"T","state":"done","sourceCount":0},"seedMessageCount":0}}""",
+        )
+        assertEquals(null, undated.origin?.task?.due)
+        assertEquals("done", undated.origin?.task?.state)
+
+        // A conversation-list row carries only the anchor; the snapshot comes with the session.
+        val row = OmnesisJson.decodeFromString<ConversationSummary>(
+            """{"id":"c","title":"T","origin":{"kind":"task","taskId":"t","runId":"t"}}""",
+        )
+        assertEquals("t", row.origin?.taskId)
+        assertEquals(null, row.origin?.task)
+        assertTrue(row.deletable)
+    }
+
+    @Test
     fun message_end_decodes_authoritative_context_failure() {
         val event = OmnesisJson.decodeFromString<AgentEvent>(
             """{"type":"agent.message.end","payload":{"sessionId":"s","messageId":"m","stopReason":"error","failure":{"code":"context_window_exceeded","message":"This conversation no longer fits in the selected model's context window. Start a new conversation to continue.","retryable":false,"backend":"openai-compatible","model":"fictional-model"},"context":{"inputTokens":130000,"maxInputTokens":128000,"measurement":"provider_reported","limitSource":"provider","requestIteration":1}}}""",

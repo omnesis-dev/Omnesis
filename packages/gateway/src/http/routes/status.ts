@@ -84,6 +84,15 @@ export interface StatusRoutesDeps {
 }
 
 /**
+ * Wire features every gateway of this version serves, advertised on both
+ * `/health` and `/status` so a client shows an action only where it works.
+ * `taskConversations`: `POST /tasks/:id/conversation` ("Chat about this").
+ */
+const GENERAL_CAPABILITIES = {
+  taskConversations: { min: 1, max: 1 },
+} as const;
+
+/**
  * Health/config/status/db-size routes. Mirrors the original blocks at
  * server.ts:702-1161 and 1275-1283 (excluding the Portal block in between).
  */
@@ -127,6 +136,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       experimental: experimentalVisible(),
       capabilities: {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+        ...GENERAL_CAPABILITIES,
         ...(experimentalEnabled()
           ? {
               browserFeatures: { min: 1, max: 1 },
@@ -500,6 +510,9 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // Tasks are available on every install; `noteAgent` says whether a Tell
       // Omnesis note is read by an agent that can add and change them.
       tasks: { available: true, noteAgent: getNoteAgentActive?.() ?? false },
+      // The optional wire features an authenticated client decides about,
+      // the same entries `/health` names.
+      capabilities: GENERAL_CAPABILITIES,
       transcriptionVocabulary: getTranscriptionVocabularyEnabled?.() ?? false,
       // How long the gateway believes a client's "I am showing this
       // conversation" mark without a refresh. Clients pace their own refresh

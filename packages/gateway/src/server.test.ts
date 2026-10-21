@@ -394,6 +394,7 @@ describe("health endpoint", () => {
       expect(off.capabilities).toEqual({
         subscriptions: false,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+        taskConversations: { min: 1, max: 1 },
       });
 
       process.env.OMNESIS_SYNTHETIC = "1";
@@ -408,6 +409,7 @@ describe("health endpoint", () => {
       expect(on.capabilities).toEqual({
         subscriptions: true,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+        taskConversations: { min: 1, max: 1 },
         browserNotes: { min: 1, max: 1 },
         browserFind: { min: 1, max: 2 },
         browserFindSuggest: { min: 1, max: 1 },
@@ -8780,6 +8782,11 @@ describe("POST /sql", () => {
 });
 
 describe("GET /status", () => {
+  test("advertises task conversations to authenticated clients", async () => {
+    const body = await (await req("/status")).json();
+    expect(body.capabilities).toEqual({ taskConversations: { min: 1, max: 1 } });
+  });
+
   test("enables demo presentation only for OMNESIS_DEMO=1 and retains test identity", async () => {
     const names = ["OMNESIS_DEMO", "OMNESIS_TEST_INSTANCE"] as const;
     const saved = names.map((name) => process.env[name]);

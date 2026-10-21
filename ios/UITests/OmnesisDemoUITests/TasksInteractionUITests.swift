@@ -150,7 +150,7 @@ final class TasksInteractionUITests: XCTestCase {
         // the month fan opened under and onto Jan 2027.
         var touch = TouchPath(pressAt: anchor)
         touch.hold(0.7)
-        touch.slide(to: target(from: anchor, index: 4, of: 6))
+        touch.slide(to: target(from: anchor, index: 4, of: 7))
         touch.hold(0.9)
         touch.slide(to: target(from: anchor, index: 2, of: 8))
         touch.hold(0.2)
@@ -332,7 +332,7 @@ final class TasksInteractionUITests: XCTestCase {
 
     func testALongPressReleasedOffTheTargetsChangesNothing() throws {
         let title = Fixture.marathon
-        let anchor = try pressPoint(on: title, needing: 6)
+        let anchor = try pressPoint(on: title, needing: 7)
         var touch = TouchPath(pressAt: anchor)
         touch.hold(0.7)
         touch.slide(to: CGPoint(x: app.frame.maxX - 12, y: app.frame.maxY - 40))
@@ -418,6 +418,33 @@ final class TasksInteractionUITests: XCTestCase {
         XCTAssertTrue(wait { !self.app.buttons["Cancel capture"].exists }, "the capture stayed open")
         XCTAssertTrue(circle(complete: Fixture.marathon).waitForExistence(timeout: 5), "Tasks did not come back")
         XCTAssertTrue(chipLabel("Today").hasPrefix("Today (5)"), chipLabel("Today"))
+    }
+
+    // MARK: - 10. Chat about this
+
+    /// The fan's farthest target starts a chat about the task: the chat
+    /// opens on the task's card, empty, with its composer ready, and
+    /// the card leads back to the task's details. Leaves the chat in
+    /// `/tmp/omnesis-snapshots` for review.
+    func testChatAboutThisOpensAChatOnTheTasksCard() throws {
+        let title = Fixture.insurance
+        try fan(on: title, choose: 6)
+        let card = app.buttons["agent.taskContextCard"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "the chat did not open on the task's card")
+        XCTAssertTrue(card.label.contains(title), "the card names another task: \(card.label)")
+        XCTAssertTrue(card.label.contains("Open"), "the card does not say the task is open: \(card.label)")
+        let composer = app.textFields["agentComposer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5), "the chat has no composer")
+        XCTAssertFalse(app.staticTexts["Ask Omnesis about your corpus"].exists, "the chat opened on the landing screen")
+        XCTAssertTrue(composer.isEnabled, "the composer is not ready for a message")
+        keepScreenshot("tasks-chat-about-this")
+
+        card.tap()
+        XCTAssertTrue(app.navigationBars["Task"].waitForExistence(timeout: 5), "the card did not open the task")
+        XCTAssertTrue(
+            app.textFields[title].exists || app.textViews[title].exists || app.staticTexts[title].exists,
+            "the details show another task"
+        )
     }
 
     // MARK: - Helpers
@@ -572,8 +599,9 @@ final class TasksInteractionUITests: XCTestCase {
     }
 
     /// Long-press `title`, slide onto main-fan target `index` of `count`
-    /// (a task's fan holds six, a suggestion's five) and lift.
-    private func fan(on title: String, choose index: Int, of count: Int = 6) throws {
+    /// (a task's fan holds seven with Chat about this, a suggestion's five)
+    /// and lift.
+    private func fan(on title: String, choose index: Int, of count: Int = 7) throws {
         let anchor = try pressPoint(on: title, needing: count)
         var touch = TouchPath(pressAt: anchor)
         touch.hold(0.7)

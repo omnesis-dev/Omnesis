@@ -320,6 +320,43 @@ final class TasksClientTests: XCTestCase {
         XCTAssertEqual(edit["deadline"] as? NSDictionary, ["type": "on_day", "date": "2026-11-30"])
     }
 
+    /// `POST /tasks/:id/conversation` with an empty object, answered with the
+    /// new conversation's summary and its `task` origin.
+    func testStartConversationRequestAndDecode() async throws {
+        let session = MockSession()
+        session.body = """
+        {"conversation":{"id":"conv_42","title":"Pay the studio invoice","model":"claude-sonnet-4-6",
+         "backend":"anthropic","createdAt":"2026-10-14T09:00:00.000Z","updatedAt":"2026-10-14T09:00:00.000Z",
+         "messageCount":0,
+         "origin":{"kind":"task","taskId":"loop_1","runId":"loop_1",
+                   "task":{"title":"Pay the studio invoice","state":"open","sourceCount":1},
+                   "seedMessageCount":0}}}
+        """
+        let summary = try await client(session).startConversation(about: "loop_1")
+
+        let request = try XCTUnwrap(session.requests.first)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/tasks/loop_1/conversation")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer omn_t")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertTrue(try jsonBody(request).isEmpty)
+        XCTAssertEqual(summary.sessionId, "conv_42")
+        XCTAssertEqual(summary.messageCount, 0)
+        XCTAssertEqual(summary.origin?.taskCard?.title, "Pay the studio invoice")
+    }
+
+    func testStartConversationOnAMissingTaskIsNotFound() async {
+        let session = MockSession()
+        session.status = 404
+        session.body = #"{"error":"Task not found"}"#
+        do {
+            _ = try await client(session).startConversation(about: "loop_gone")
+            XCTFail("expected notFound")
+        } catch {
+            XCTAssertEqual(error as? GatewayClient.Error, .notFound)
+        }
+    }
+
     func testPerformAndUndoRoutes() async throws {
         let session = MockSession()
         session.body = Self.mutationJSON

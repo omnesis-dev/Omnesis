@@ -340,6 +340,35 @@
   background: var(--bg-secondary);
 }
 
+.post-body table:has(td:first-child > code) {
+  width: 100%;
+  max-width: var(--reading-width);
+  font-size: 1rem;
+}
+
+.post-body table:has(td:first-child > code) thead {
+  display: none;
+}
+
+.post-body table:has(td:first-child > code) td {
+  padding: 4px 16px 4px 0;
+  border-color: transparent;
+  vertical-align: top;
+}
+
+.post-body table:has(td:first-child > code) td:last-child {
+  padding-right: 0;
+}
+
+.post-body table:has(td:first-child > code) :is(th, td):first-child {
+  white-space: nowrap;
+}
+
+.post-body td:first-child > code {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .comments {
   max-width: var(--reading-width);
   margin-inline: auto;

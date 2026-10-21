@@ -6,6 +6,7 @@ package dev.omnesis.android.ui.tasks
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.client.TaskAction
 import dev.omnesis.android.transport.client.TaskView
+import dev.omnesis.android.transport.dto.ConversationSummary
 import dev.omnesis.android.transport.dto.TaskCountsDto
 import dev.omnesis.android.transport.dto.TaskDetailDto
 import dev.omnesis.android.transport.dto.TaskDto
@@ -13,8 +14,10 @@ import dev.omnesis.android.transport.dto.TaskMutationDto
 import dev.omnesis.android.transport.dto.TaskReceiptDto
 import dev.omnesis.android.transport.dto.TaskViewDto
 import java.time.LocalDate
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -54,6 +57,19 @@ class TasksViewModelTest {
         override suspend fun undo(seq: Long): TaskMutationDto {
             undone += seq
             return TaskMutationDto(null, TaskReceiptDto("Undone", null))
+        }
+
+        val conversationsAsked = mutableListOf<String>()
+        var failNextConversation: Throwable? = null
+
+        /** Held until released, to observe the screen while the request is in flight. */
+        var conversationGate: CompletableDeferred<Unit>? = null
+
+        override suspend fun conversation(id: String): ConversationSummary {
+            conversationsAsked += id
+            conversationGate?.await()
+            failNextConversation?.let { failNextConversation = null; throw it }
+            return ConversationSummary(sessionId = "conv_$id", title = tasks.first { it.id == id }.title)
         }
     }
 
@@ -274,5 +290,94 @@ class TasksViewModelTest {
         assertEquals("a", history.detail?.task?.id)
         vm.closeHistory()
         assertNull(vm.state.value.history)
+    }
+
+    // --- Chat about this ------------------------------------------------------------------------
+
+    @Test
+    fun the_fan_offers_chat_only_while_the_gateway_says_it_can() {
+        val available = MutableStateFlow(false)
+        val chatVm = TasksViewModel(gateway, chatAvailable = available) { sunday }
+        assertEquals(false, chatVm.state.value.chatAvailable)
+
+        available.value = true
+        assertEquals(true, chatVm.state.value.chatAvailable)
+
+        available.value = false
+        assertEquals(false, chatVm.state.value.chatAvailable)
+    }
+
+    @Test
+    fun chat_about_a_task_opens_the_conversation_the_gateway_created_once() {
+        val task = gateway.tasks.first()
+
+        vm.perform(task, TaskFanAction.ChatAbout)
+
+        assertEquals(listOf(task.id), gateway.conversationsAsked)
+        assertEquals("conv_${task.id}", vm.state.value.openConversation)
+        assertNull(vm.state.value.openingChat)
+        // Chatting changes nothing about the task.
+        assertTrue(gateway.actions.isEmpty())
+
+        vm.conversationOpened()
+        assertNull(vm.state.value.openConversation)
+    }
+
+    @Test
+    fun a_second_tap_while_the_first_chat_is_opening_asks_for_nothing_more() {
+        val task = gateway.tasks.first()
+        val gate = CompletableDeferred<Unit>()
+        gateway.conversationGate = gate
+
+        vm.chatAbout(task)
+        vm.chatAbout(task)
+        assertEquals(task.id, vm.state.value.openingChat)
+        assertNull(vm.state.value.openConversation)
+
+        gate.complete(Unit)
+        assertEquals(listOf(task.id), gateway.conversationsAsked)
+        assertEquals("conv_${task.id}", vm.state.value.openConversation)
+    }
+
+    @Test
+    fun a_refused_chat_says_why_and_opens_nothing() {
+        val task = gateway.tasks.first()
+        gateway.failNextConversation = GatewayException.ServerError(500, "boom")
+
+        vm.chatAbout(task)
+
+        assertNull(vm.state.value.openConversation)
+        assertNull(vm.state.value.openingChat)
+        assertEquals("Couldn't open a chat. The gateway returned an error (500).", vm.state.value.chatError)
+        // A task error dialog is for refused task changes, not for this.
+        assertNull(vm.state.value.actionError)
+
+        vm.clearChatError()
+        assertNull(vm.state.value.chatError)
+    }
+
+    @Test
+    fun a_chat_the_gateway_has_no_agent_for_says_so() {
+        gateway.failNextConversation = GatewayException.ServerError(503, "The agent is not available.")
+
+        vm.chatAbout(gateway.tasks.first())
+
+        assertEquals(
+            "Couldn't open a chat: the agent isn't available. Check its model in Settings → Models.",
+            vm.state.value.chatError,
+        )
+        assertNull(vm.state.value.openConversation)
+    }
+
+    @Test
+    fun chat_about_a_task_that_is_gone_says_so_and_rereads_the_list() {
+        val task = gateway.tasks.first()
+        gateway.failNextConversation = GatewayException.NotFound("no task")
+        val readsBefore = gateway.views.size
+
+        vm.chatAbout(task)
+
+        assertEquals("This task no longer exists.", vm.state.value.chatError)
+        assertEquals(readsBefore + 1, gateway.views.size)
     }
 }

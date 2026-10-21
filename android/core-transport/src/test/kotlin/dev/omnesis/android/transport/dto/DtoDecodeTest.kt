@@ -303,6 +303,26 @@ class DtoDecodeTest {
     }
 
     @Test
+    fun status_offers_task_conversations_only_for_a_range_this_build_speaks() {
+        fun status(capabilities: String?) = OmnesisJson.decodeFromString<StatusSnapshot>(
+            if (capabilities == null) """{"documents":{"total":3}}""" else """{"documents":{"total":3},"capabilities":$capabilities}""",
+        )
+
+        assertTrue(status("""{"sourceContract":{"min":1,"max":2},"subscriptions":true,"taskConversations":{"min":1,"max":1}}""").taskConversations)
+        assertTrue(status("""{"taskConversations":{"min":1,"max":3}}""").taskConversations)
+        // A gateway that predates the map or the entry, or speaks only later versions.
+        assertFalse(status(null).taskConversations)
+        assertFalse(status("""{"subscriptions":true}""").taskConversations)
+        assertFalse(status("""{"taskConversations":{"min":2,"max":2}}""").taskConversations)
+        // A misshapen entry or map reads as not offered and costs nothing else in the status.
+        val misshapen = status("""{"taskConversations":true}""")
+        assertFalse(misshapen.taskConversations)
+        assertEquals(3, misshapen.documents.total)
+        assertFalse(status("""{"taskConversations":{"min":"1","max":"1"}}""").taskConversations)
+        assertFalse(status("""[1]""").taskConversations)
+    }
+
+    @Test
     fun status_developer_decodes_and_defaults_to_false() {
         val on = OmnesisJson.decodeFromString<StatusSnapshot>(
             """{"documents":{"total":3},"developer":true}""",

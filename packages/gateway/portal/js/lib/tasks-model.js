@@ -478,3 +478,30 @@ export function taskDocumentsShown(documents, showAll) {
   if (showAll || all.length <= TASK_DOCUMENTS_SHOWN + 1) return { shown: all, hidden: 0 };
   return { shown: all.slice(0, TASK_DOCUMENTS_SHOWN), hidden: all.length - TASK_DOCUMENTS_SHOWN };
 }
+
+/**
+ * Whether the gateway serves "Chat about this" (`POST /tasks/:id/conversation`)
+ * in the version this portal speaks, read from `/status`'s `capabilities`.
+ */
+export function supportsTaskConversations(capabilities) {
+  const range = capabilities?.taskConversations;
+  return Number.isInteger(range?.min) && Number.isInteger(range?.max) && range.min <= 1 && range.max >= 1;
+}
+
+const TASK_STATE_LABELS = { open: "Open", snoozed: "Snoozed", done: "Done", dismissed: "Struck" };
+
+/**
+ * The facts under the title of a task conversation's context card, from the
+ * snapshot stamped when the conversation opened: its state, due day and how
+ * many sources it had.
+ */
+export function taskCardFacts(snapshot, today) {
+  if (!snapshot) return [];
+  const facts = [TASK_STATE_LABELS[snapshot.state] ?? snapshot.state];
+  if (typeof snapshot.due === "string" && DAY_RE.test(snapshot.due)) {
+    facts.push(`Due ${lowerIfRelative(relativeDayLabel(snapshot.due, today))}`);
+  }
+  const count = Number.isInteger(snapshot.sourceCount) ? snapshot.sourceCount : 0;
+  if (count > 0) facts.push(`${count} ${count === 1 ? "source" : "sources"}`);
+  return facts.filter(Boolean);
+}

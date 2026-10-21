@@ -3,6 +3,8 @@
 
 package dev.omnesis.android.transport.client
 
+import dev.omnesis.android.transport.dto.ConversationSummary
+import dev.omnesis.android.transport.dto.TaskConversationDto
 import dev.omnesis.android.transport.dto.TaskCountsResponseDto
 import dev.omnesis.android.transport.dto.TaskDetailDto
 import dev.omnesis.android.transport.dto.TaskMutationDto
@@ -196,6 +198,17 @@ class TasksClient(private val http: GatewayHttp) {
     /** `POST /tasks/:id/actions`. */
     suspend fun act(id: String, action: TaskAction): TaskMutationDto =
         http.postJsonSegments(listOf("tasks", id, "actions"), action.body())
+
+    /**
+     * `POST /tasks/:id/conversation` — open a new conversation about the task, titled with it
+     * and anchored to it, with no messages yet. Every call creates a new one. Offered only when
+     * `GET /status` advertises [dev.omnesis.android.transport.dto.StatusSnapshot.taskConversations].
+     */
+    suspend fun conversation(id: String): ConversationSummary =
+        http.postJsonSegments<JsonObject, TaskConversationDto>(
+            listOf("tasks", id, "conversation"),
+            buildJsonObject {},
+        ).conversation
 
     /** `POST /tasks/undo` — revert the ledger entry a receipt named. */
     suspend fun undo(seq: Long): TaskMutationDto =

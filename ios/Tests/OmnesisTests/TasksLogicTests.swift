@@ -341,6 +341,10 @@ final class TasksModelTests: XCTestCase {
             return TaskMutation(task: nil, receipt: TaskReceipt(text: "Undone", undoSeq: nil))
         }
 
+        func startConversation(about id: String) async throws -> ConversationSummary {
+            throw GatewayClient.Error.notFound
+        }
+
         private func respond() throws -> TaskMutation {
             if let failNext {
                 self.failNext = nil
@@ -662,6 +666,10 @@ private actor TasksGatewayFake: TasksService {
 
     func undo(seq: Int) async throws -> TaskMutation {
         TaskMutation(task: nil, receipt: TaskReceipt(text: "Undone", undoSeq: nil))
+    }
+
+    func startConversation(about id: String) async throws -> ConversationSummary {
+        throw GatewayClient.Error.notFound
     }
 }
 

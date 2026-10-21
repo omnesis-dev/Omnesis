@@ -65,6 +65,9 @@ sealed interface TaskFanAction {
     /** Takes a suggestion out of Tasks; Omnesis keeps tracking it. */
     data object Ignore : TaskFanAction
 
+    /** Opens a new conversation with Omnesis about the task. */
+    data object ChatAbout : TaskFanAction
+
     /** Whether the target changes what the fan shows rather than the task. */
     val isNavigation: Boolean
         get() = this == OtherMonth || this == Back || this == LaterMonths || this == EarlierMonths ||
@@ -110,6 +113,8 @@ class TaskFanSession(
     private val locale: Locale = Locale.getDefault(),
     /** The fan is a Brain suggestion's rather than one of the user's own tasks'. */
     val suggestion: Boolean = false,
+    /** The gateway opens conversations about tasks, so a task's main fan ends with Chat about this. */
+    val chat: Boolean = false,
 ) {
     sealed interface Mode {
         data object Main : Mode
@@ -275,7 +280,7 @@ class TaskFanSession(
         highlighted = null
         hoverSinceMillis = null
         val labelled = when (mode) {
-            Mode.Main -> if (suggestion) SUGGESTION_ACTIONS else MAIN_ACTIONS
+            Mode.Main -> mainActions(suggestion, chat)
             Mode.When -> WHEN_ACTIONS
             is Mode.Months -> monthActions(mode.page, today, metrics.monthsPerPage, locale)
         }
@@ -314,6 +319,20 @@ class TaskFanSession(
             TaskFanAction.Done to "Mark as done",
             TaskFanAction.Ignore to "Ignore",
         )
+
+        /** The last target of a task's main fan, furthest from the finger, when the gateway offers it. */
+        val CHAT_ACTION: Pair<TaskFanAction, String> = TaskFanAction.ChatAbout to "Chat about this"
+
+        /**
+         * The main fan for a task or a suggestion. A task's ends with Chat about this when [chat]
+         * holds; it goes last, so offering it never changes the order of the targets the thumb
+         * already knows. A suggestion's fan is about deciding on it and has no chat.
+         */
+        fun mainActions(suggestion: Boolean, chat: Boolean): List<Pair<TaskFanAction, String>> = when {
+            suggestion -> SUGGESTION_ACTIONS
+            chat -> MAIN_ACTIONS + CHAT_ACTION
+            else -> MAIN_ACTIONS
+        }
 
         /** "Accept for…": Back nearest the finger, then the times to plan the suggestion for. */
         val WHEN_ACTIONS: List<Pair<TaskFanAction, String>> = listOf(

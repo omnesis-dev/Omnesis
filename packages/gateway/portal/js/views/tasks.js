@@ -7,7 +7,9 @@
  * Interaction is click-first: the bullet completes a task (or reopens a
  * resolved one); a click anywhere else on the row's line expands it in place
  * to show its actions —
- * Done with an optional note, the quick moves, Strike, Edit and History.
+ * Done with an optional note, the quick moves, Strike, Edit, History and,
+ * where the gateway serves it, Chat about this, which opens a new
+ * conversation about the task.
  * Every change answers with a receipt that the toast shows with Undo. While
  * a change is in flight its row shows the outcome (a completion's check) and
  * takes no further action, and a completion the gateway finds already done
@@ -27,7 +29,7 @@
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { getTask, listTasks, taskAction, undoTask } from "../api.js";
+import { getTask, listTasks, openTaskConversation, taskAction, undoTask } from "../api.js";
 import { navigate } from "../lib/router.js";
 import { docHref, sourceIcon, sourceLabel } from "../lib/format.js";
 import {
@@ -64,7 +66,7 @@ function errorText(err) {
   return err?.serverMessage ?? err?.message ?? String(err);
 }
 
-export function TasksView({ taskView = "today", focusTaskId = null, experimental = false }) {
+export function TasksView({ taskView = "today", focusTaskId = null, experimental = false, chatAvailable = false }) {
   const view = resolveTaskView(taskView, experimental);
   const [today, setToday] = useState(() => localDay());
   const [data, setData] = useState(null);
@@ -190,6 +192,7 @@ export function TasksView({ taskView = "today", focusTaskId = null, experimental
     view=${view}
     today=${today}
     experimental=${experimental}
+    chatAvailable=${chatAvailable}
     expanded=${expandedId === task.id}
     focused=${focusTaskId === task.id}
     pending=${pending[task.id] ?? null}
@@ -313,7 +316,7 @@ export function isRowToggleClick(event) {
   return !String(window.getSelection?.() ?? "");
 }
 
-function TaskRow({ task, view, today, experimental, expanded, focused = false, pending = null, onToggle, act, onUndo }) {
+function TaskRow({ task, view, today, experimental, chatAvailable = false, expanded, focused = false, pending = null, onToggle, act, onUndo }) {
   const rowRef = useRef(null);
   // A task opened by a link is brought into view once it renders.
   useEffect(() => {
@@ -367,7 +370,7 @@ function TaskRow({ task, view, today, experimental, expanded, focused = false, p
       </div>
     </div>
     ${expanded && html`<div class="tasks-row-detail" id=${detailId}>
-      <${TaskDetail} task=${task} view=${view} today=${today} busy=${busy} act=${act} onUndo=${onUndo} />
+      <${TaskDetail} task=${task} view=${view} today=${today} busy=${busy} chatAvailable=${chatAvailable} act=${act} onUndo=${onUndo} />
     </div>`}
   </li>`;
 }
@@ -442,9 +445,24 @@ function SuggestionActions({ task, today, busy, act }) {
   </div>`;
 }
 
-function TaskDetail({ task, view, today, busy, act, onUndo }) {
+function TaskDetail({ task, view, today, busy, chatAvailable = false, act, onUndo }) {
   const [note, setNote] = useState("");
   const [mode, setMode] = useState("actions");
+  const [chat, setChat] = useState({ opening: false, error: null });
+  // "Chat about this": open a new conversation about the task, then show it.
+  // A failure stays here, under the actions, and the view does not move.
+  async function chatAbout() {
+    if (chat.opening) return;
+    setChat({ opening: true, error: null });
+    try {
+      const result = await openTaskConversation(task.id);
+      const id = result?.conversation?.id;
+      if (!id) throw new Error("The gateway did not return a conversation.");
+      navigate(`/portal/agent/${encodeURIComponent(id)}`);
+    } catch (err) {
+      setChat({ opening: false, error: `Couldn't open a chat: ${errorText(err)}` });
+    }
+  }
   const resolved = isResolved(task);
   const suggested = view === "suggested";
   return html`<div class="tasks-detail">
@@ -476,11 +494,18 @@ function TaskDetail({ task, view, today, busy, act, onUndo }) {
           ${resolved && html`<button type="button" class="btn-tiny" disabled=${busy} onClick=${() => act({ action: "reopen" })}>Reopen</button>`}
           ${!suggested && html`<button type="button" class="btn-tiny" onClick=${() => setMode("edit")}>Edit</button>`}
           <button type="button" class="btn-tiny" aria-expanded=${mode === "history"} onClick=${() => setMode(mode === "history" ? "actions" : "history")}>History</button>
+          ${chatAvailable && html`<button type="button" class="btn-tiny tasks-chat-btn" disabled=${chat.opening} onClick=${chatAbout}>
+            ${CHAT_ICON}${chat.opening ? "Opening…" : "Chat about this"}
+          </button>`}
         </div>
+        ${chat.error && html`<p class="tasks-chat-error" role="alert">${chat.error}</p>`}
         ${mode === "history" && html`<${TaskHistory} id=${task.id} lastUpdate=${task.lastUpdate} onUndo=${onUndo} />`}
       `}
   </div>`;
 }
+
+/** A speech bubble (Lucide `message-circle`) for "Chat about this". */
+const CHAT_ICON = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>`;
 
 function TaskEditor({ task, busy, act, onCancel }) {
   const initialSchedule = scheduleEditorState(task.scheduledFor);

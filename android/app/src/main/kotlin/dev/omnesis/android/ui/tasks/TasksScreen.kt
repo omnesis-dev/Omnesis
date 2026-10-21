@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.ui.tasks
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,6 +66,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
@@ -131,10 +133,22 @@ fun TasksScreen(
     onOpenSettings: () -> Unit = {},
     onOpenDocument: (String) -> Unit = {},
     onTellOmnesis: () -> Unit = {},
+    onOpenConversation: (String) -> Unit = {},
     experimental: Boolean = false,
     vm: TasksViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(state.openConversation) {
+        val conversationId = state.openConversation ?: return@LaunchedEffect
+        vm.conversationOpened()
+        onOpenConversation(conversationId)
+    }
+    val context = LocalContext.current
+    LaunchedEffect(state.chatError) {
+        val message = state.chatError ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        vm.clearChatError()
+    }
     LaunchedEffect(experimental, state.segment) {
         if (state.segment !in TaskSegment.visible(experimental)) vm.select(TaskSegment.TODAY)
     }
@@ -342,6 +356,7 @@ fun TasksContent(
 ) {
     val fan = rememberTaskFanController()
     fan.perform = actions.onFanAction
+    fan.chatAvailable = state.chatAvailable
     // A fan belongs to the list it opened over.
     LaunchedEffect(state.segment) { fan.dismiss() }
     Box(Modifier.fillMaxSize()) {
@@ -475,6 +490,7 @@ private fun TaskList(
                         pending = entry.task.id in state.pending,
                         experimental = experimental,
                         fanOpen = fan.task?.id == entry.task.id,
+                        chat = state.chatAvailable,
                         fan = fan,
                         actions = actions,
                         iconFor = iconFor,
@@ -698,6 +714,7 @@ private fun TaskRow(
     pending: Boolean,
     experimental: Boolean,
     fanOpen: Boolean,
+    chat: Boolean,
     fan: TaskFanController,
     actions: TaskRowActions,
     iconFor: (String) -> SourceIconModel,
@@ -736,7 +753,15 @@ private fun TaskRow(
                             fan.openForAccessibility(task, today, TaskFanSession.Mode.Months(0)); true
                         },
                         CustomAccessibilityAction("Cancel task") { actions.onFanAction(task, TaskFanAction.CancelTask); true },
-                    )
+                    ) + if (chat) {
+                        listOf(
+                            CustomAccessibilityAction("Chat about this") {
+                                actions.onFanAction(task, TaskFanAction.ChatAbout); true
+                            },
+                        )
+                    } else {
+                        emptyList()
+                    }
                     task.isResolved -> listOf(CustomAccessibilityAction("Reopen") { actions.onTapBullet(task); true })
                     else -> emptyList()
                 }
@@ -958,7 +983,7 @@ internal fun taskMeta(task: TaskDto, segment: TaskSegment, today: LocalDate): Li
 private val RELATIVE_PHRASES = setOf("Today", "Tomorrow", "Yesterday", "This month", "Someday")
 
 /** A relative phrase reads lower-case mid-sentence ("Due tomorrow"); a date keeps its capitals. */
-private fun inlinePhrase(phrase: String): String = if (phrase in RELATIVE_PHRASES) phrase.lowercase() else phrase
+internal fun inlinePhrase(phrase: String): String = if (phrase in RELATIVE_PHRASES) phrase.lowercase() else phrase
 
 @Composable
 private fun ProposalLine(

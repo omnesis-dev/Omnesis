@@ -56,7 +56,10 @@ export const initialState = () => ({
   // prefix (see `visibleMessages`), or the standing Morning brief
   // conversation (`{ kind: "daily_brief", runId, briefs: [{ day,
   // messageIndex, messageId }] }`), whose Timeline covers only the latest
-  // brief onward (see `timelineScopeStart`). Null for plain chats.
+  // brief onward (see `timelineScopeStart`), or a conversation the user
+  // opened about a task (`{ kind: "task", taskId, runId, task?,
+  // seedMessageCount: 0 }`), which has no seed and pins the task's card on
+  // top. Null for plain chats.
   conversationOrigin: null,
   // Absolute transcript index of the first loaded message: the history
   // pages load newest first, so earlier pages lower it. Lets the Timeline
@@ -246,10 +249,13 @@ export function visibleMessages(messages, origin) {
 
 /**
  * Whether this build renders a pinned context card for the origin — the
- * precondition for hiding the seeded transcript prefix.
+ * precondition for hiding the seeded transcript prefix, and why an empty
+ * conversation opens on the card instead of the landing hero.
  */
 export function hasContextCard(origin) {
-  return origin?.kind === "watch_firing" && Boolean(origin.watch);
+  if (origin?.kind === "watch_firing") return Boolean(origin.watch);
+  if (origin?.kind === "task") return Boolean(origin.task);
+  return false;
 }
 
 /**

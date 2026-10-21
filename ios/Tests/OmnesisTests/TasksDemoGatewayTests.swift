@@ -142,4 +142,27 @@ final class TasksDemoGatewayTests: XCTestCase {
         XCTAssertEqual(notes.map(\.taskId), ["s"])
         XCTAssertEqual(notes.map(\.text), ["Ask about the deposit"])
     }
+
+    /// Each Chat about this starts a new conversation titled after the task.
+    /// The answer carries the `task` anchor only; resuming it brings the
+    /// snapshot the card is drawn from. An unknown task is the gateway's 404.
+    func testStartingAChatAboutATask() async throws {
+        let gateway = gateway()
+        let first = try await gateway.startConversation(about: "p")
+        let second = try await gateway.startConversation(about: "p")
+        XCTAssertNotEqual(first.sessionId, second.sessionId)
+        XCTAssertEqual(first.title, "Planned today")
+        XCTAssertEqual(first.messageCount, 0)
+        XCTAssertEqual(first.origin?.taskId, "p")
+        XCTAssertEqual(first.origin?.runId, "p")
+        XCTAssertNil(first.origin?.taskCard)
+        let resumed = await gateway.conversation(id: first.sessionId)
+        XCTAssertEqual(resumed?.origin?.taskCard, TaskConversationOriginSnapshot(title: "Planned today", state: "open"))
+        do {
+            _ = try await gateway.startConversation(about: "gone")
+            XCTFail("a chat about an unknown task was started")
+        } catch {
+            XCTAssertEqual(error as? GatewayClient.Error, .notFound)
+        }
+    }
 }

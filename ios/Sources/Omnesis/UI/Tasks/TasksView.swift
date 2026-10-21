@@ -17,6 +17,7 @@ import SwiftUI
 struct TasksView: View {
     @Environment(AppStore.self) private var store
     @Environment(NotificationRouter.self) private var router: NotificationRouter?
+    @Environment(\.openAgentConversation) private var openAgentConversation
     @Binding var menuOpen: Bool
     @State private var focus: TaskFocusRequest?
 
@@ -32,10 +33,21 @@ struct TasksView: View {
             experimental: store.experimentalEnabled,
             menuOpen: $menuOpen,
             focus: focus,
+            openConversation: store.taskConversationsEnabled ? openAgentConversation : nil,
             onCounts: { counts in Task { await store.refreshTasksTodayCount(from: counts) } }
         )
         .id(store.tasks.map(ObjectIdentifier.init))
         .consumingTaskTargets(router, into: $focus)
+    }
+}
+
+@available(iOS 17.0, *)
+extension AppStore {
+    /// Whether the paired gateway can start a chat about a task, which is
+    /// what offers Chat about this on a task. False until `/status` has been
+    /// fetched, and for a gateway that does not advertise it.
+    var taskConversationsEnabled: Bool {
+        statusSnapshot?.capabilities.supportsTaskConversations ?? false
     }
 }
 
@@ -55,6 +67,10 @@ struct TasksScreen: View {
     @Binding var menuOpen: Bool
     /// A task to show with its details open, asked for from elsewhere in the app.
     var focus: TaskFocusRequest?
+    /// Opens a conversation by id in the Agent section. Nil when the
+    /// gateway cannot start a chat about a task, which keeps Chat about this
+    /// off every task.
+    var openConversation: ((String) -> Void)?
     /// Hears every fresh set of counts, so the menu's Tasks entry follows a
     /// change made here without a read of its own.
     var onCounts: (TaskCounts) -> Void = { _ in }
@@ -64,12 +80,14 @@ struct TasksScreen: View {
         experimental: Bool,
         menuOpen: Binding<Bool>,
         focus: TaskFocusRequest? = nil,
+        openConversation: ((String) -> Void)? = nil,
         onCounts: @escaping (TaskCounts) -> Void = { _ in }
     ) {
         self._model = State(initialValue: model)
         self.experimental = experimental
         self._menuOpen = menuOpen
         self.focus = focus
+        self.openConversation = openConversation
         self.onCounts = onCounts
     }
 
@@ -79,7 +97,10 @@ struct TasksScreen: View {
                 model: model,
                 experimental: experimental,
                 onOpen: { details = $0 },
-                onDocument: { path.append(.document(id: $0.id, title: $0.title)) }
+                onDocument: { path.append(.document(id: $0.id, title: $0.title)) },
+                onChat: openConversation.map { open in
+                    { (task: TaskRecord) in chat(about: task, then: open) }
+                }
             )
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
@@ -105,6 +126,17 @@ struct TasksScreen: View {
                 }
                 .omnesisColorScheme()
             }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+extension TasksScreen {
+    /// Starts a new chat about `task` and opens it, ready for the first
+    /// message. A failure stays on Tasks as a toast.
+    private func chat(about task: TaskRecord, then open: @escaping (String) -> Void) {
+        Task {
+            if let conversationId = await model.startConversation(about: task) { open(conversationId) }
         }
     }
 }
@@ -170,6 +202,8 @@ struct TasksContent: View {
     /// Opens a task's details.
     var onOpen: (TaskRecord) -> Void = { _ in }
     var onDocument: (TaskDocument) -> Void = { _ in }
+    /// Starts a chat about a task; nil keeps Chat about this out of the fan.
+    var onChat: ((TaskRecord) -> Void)?
     /// A fan to show as soon as the rows are laid out — previews and
     /// snapshots.
     var initialFan: TaskFanPreview?
@@ -239,6 +273,7 @@ struct TasksContent: View {
                     onOpen: onOpen,
                     onDocument: onDocument,
                     onNote: { noting = $0 },
+                    onChat: onChat,
                     initialFan: view == model.selected ? initialFan : nil
                 )
                 .tag(view)
@@ -439,6 +474,21 @@ struct TaskFanPreview {
         TasksContent(
             model: .fixture(tasks: PreviewMocks.tasksToday, counts: PreviewMocks.tasksTodayCounts, now: PreviewMocks.tasksNow),
             initialFan: TaskFanPreview(taskId: PreviewMocks.taskWithPerson.id, highlight: .tomorrow)
+        )
+        .navigationTitle("Tasks")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Tasks — fan, sliding onto Chat about this") {
+    NavigationStack {
+        TasksContent(
+            model: .fixture(tasks: PreviewMocks.tasksToday, counts: PreviewMocks.tasksTodayCounts, now: PreviewMocks.tasksNow),
+            onChat: { _ in },
+            initialFan: TaskFanPreview(taskId: PreviewMocks.taskWithPerson.id, highlight: .chat)
         )
         .navigationTitle("Tasks")
         .navigationBarTitleDisplayMode(.inline)

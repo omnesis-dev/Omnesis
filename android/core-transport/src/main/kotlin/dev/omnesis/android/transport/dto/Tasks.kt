@@ -19,6 +19,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * // GET  /tasks/:id                    -> { task: Task, history: TaskEvent[], undoSeq: number | null }
  * // POST /tasks/:id/actions            -> { task: Task | null, receipt: { text, undoSeq }, noteId? }
  * // POST /tasks/undo                   -> { task: Task | null, receipt: { text, undoSeq } }
+ * // POST /tasks/:id/conversation       -> { conversation: ConversationSummary }
  * type Task = {
  *   id: string; title: string; description: string;
  *   state: "open" | "snoozed" | "done" | "dismissed"; origin: "note" | "user" | "brain";
@@ -198,3 +199,7 @@ data class TaskMutationDto(
     val task: TaskDto? = null,
     val receipt: TaskReceiptDto = TaskReceiptDto(),
 )
+
+/** `POST /tasks/:id/conversation`: the new conversation, as `GET /agent/conversations` lists it. */
+@Serializable
+data class TaskConversationDto(val conversation: ConversationSummary)

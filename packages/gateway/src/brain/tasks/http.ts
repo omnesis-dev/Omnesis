@@ -5,7 +5,7 @@
  * `/tasks*` — the Tasks view's HTTP surface: the journal views, one task with
  * its history, and the user's task commands (create, complete, move, strike,
  * edit, accept or ignore a suggestion, confirm or keep a proposed change,
- * reopen, delete, undo).
+ * reopen, delete, undo), and opening a conversation about a task.
  *
  * Tasks are available on every install: a user can keep their own tasks with
  * no model assigned. Suggestions and proposals only appear when the Brain
@@ -16,12 +16,20 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { assertNever } from "@omnesis/core";
 import { scope } from "../../http/scope.js";
-import { BadRequestError, ConflictError, HttpError, NotFoundError } from "../../http/errors.js";
+import {
+  BadRequestError,
+  ConflictError,
+  HttpError,
+  NotFoundError,
+  ServiceUnavailableError,
+} from "../../http/errors.js";
 import { validateJson } from "../../http/validate.js";
 import { cognitionSpendDay } from "../storage/spend.js";
 import { isTaskSchedule, type TaskCommand, type TaskCommandResult } from "../storage/tasks.js";
+import { AgentError, type AgentService } from "../../agent/service.js";
 import { TASK_VIEWS, type TaskDocument, type TaskItem, type TaskView } from "./views.js";
 import { TaskService, type TaskEffects } from "./service.js";
+import { taskConversationSnapshot } from "./conversation-context.js";
 import type { OpenLoopLedgerEntry } from "../storage/types.js";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/wiring.js";
 import type { RouteApp } from "../../http/routes/types.js";
@@ -167,6 +175,12 @@ export interface MountTaskRoutesOpts {
   effects?: TaskEffects | undefined;
   /** Tell Omnesis capture, for a suggestion accepted with a note. */
   notes?: () => Pick<OmnesisNotesRuntime, "capture">;
+  /**
+   * The agent's conversations, for "Chat about this". Read per request: the
+   * agent service is rebuilt when its model changes, and is null while no
+   * agent model is available.
+   */
+  conversations?: () => Pick<AgentService, "openTaskConversation"> | null;
 }
 
 /** A Done-view cursor: `<resolvedAt ms>:<task id>`. */
@@ -253,6 +267,29 @@ export function mountTaskRoutes(app: RouteApp, opts: MountTaskRoutesOpts): void 
       history: history.events.map(taskEventDto),
       undoSeq: history.undoSeq,
     });
+  });
+
+  // "Chat about this": a new, empty conversation about the task, whose turns
+  // each carry the task's current state in the system prompt. Every call
+  // opens a new one. The body is empty.
+  app.post("/tasks/:id/conversation", scope.admin(), async (c) => {
+    const item = tasks.get(c.req.param("id"));
+    if (!item) throw new NotFoundError("Task not found");
+    const conversations = opts.conversations?.();
+    if (!conversations) throw new ServiceUnavailableError("The agent is not available.");
+    const tokenId = c.get("auth").tokenId;
+    if (!tokenId) throw new BadRequestError("missing token id");
+    try {
+      const conversation = await conversations.openTaskConversation(`token:${tokenId}`, {
+        taskId: item.row.id,
+        snapshot: taskConversationSnapshot(item, tasks.documents([item])),
+      });
+      return c.json({ conversation });
+    } catch (err) {
+      if (err instanceof AgentError && err.code === "agent_unconfigured")
+        throw new ServiceUnavailableError(err.message);
+      throw err;
+    }
   });
 
   app.post("/tasks", scope.admin(), validateJson(createBody), async (c) => {

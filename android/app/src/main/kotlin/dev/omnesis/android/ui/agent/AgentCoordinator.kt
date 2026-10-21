@@ -2111,8 +2111,18 @@ internal fun isBlankNewConversation(state: AgentCoordinator.UiState): Boolean =
 @VisibleForTesting
 internal fun hasContextCard(origin: ConversationOrigin?): Boolean = when (origin?.kind) {
     "watch_firing" -> origin.watch != null
+    ConversationOrigin.TASK_KIND -> origin.task != null
     else -> false
 }
+
+/**
+ * A task conversation nobody has written in yet: "Chat about this" opened it for the user to
+ * start, so the composer takes focus the way it does on a blank chat.
+ */
+internal fun awaitsFirstMessage(state: AgentCoordinator.UiState): Boolean =
+    state.conversationOrigin?.kind == ConversationOrigin.TASK_KIND &&
+        !state.transcriptLoading &&
+        state.chat.turns.isEmpty()
 
 /**
  * Legacy gateways can return the creating run's folded transcript before the messages the user
