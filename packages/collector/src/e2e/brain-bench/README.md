@@ -98,8 +98,10 @@ Use `contentContains` to select distinct decisions for actual source revisions.
 Negative gate scenarios specify `expectedRefusals: [{ tool, code }]` on the exact
 source decision. The puppet continues only after those declared canonical-tool
 refusals; unexpected errors preserve unfinished work. Rejected `knowledge_save`,
-`knowledge_edit` or `knowledge_discovery_complete` calls always stop and never count as
-settlement; a successful `knowledge_edit` settles its node exactly as `knowledge_save` does.
+`knowledge_edit`, `knowledge_retire` or `knowledge_discovery_complete` calls always stop and
+never count as settlement; a successful `knowledge_edit` settles its node exactly as
+`knowledge_save` does, and a successful `knowledge_retire` of the offered page settles it too
+(the retired page leaves the next frontier).
 
 `maintainNode` is an explicit scripted repair policy for existing owners/pages. It
 must call `knowledge_save` (or `knowledge_edit`) with the offered fingerprint, current revision and

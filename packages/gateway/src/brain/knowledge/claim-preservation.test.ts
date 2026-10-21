@@ -155,13 +155,13 @@ it("rechecks full replacement intent after asynchronous verification", async () 
   expect(getKnowledgeNode(db, "reference")!.markdown).toBe(first + second);
 });
 
-it.each(["missing", "hidden", "tombstoned"])(
+it.each(["missing", "erasing", "tombstoned"])(
   "uses the same unavailable boundary for %s update targets",
   async (mode) => {
     if (mode === "missing") db.prepare("DELETE FROM knowledge_nodes WHERE id='reference'").run();
-    else if (mode === "hidden")
+    else if (mode === "erasing")
       db.prepare(
-        "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('manual','v1',1,1)",
+        "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','reference','deleted',1)",
       ).run();
     else
       db.prepare(

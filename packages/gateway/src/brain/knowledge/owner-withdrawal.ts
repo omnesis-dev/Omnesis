@@ -11,7 +11,7 @@ import { knowledgeHash } from "./storage-validation.js";
 import { KnowledgeStorageError } from "./types.js";
 import type Database from "better-sqlite3";
 
-/** Belief withdrawal preserves stale dependents for repair; privacy deletion remains a purge. */
+/** Belief withdrawal keeps the owner node, withdrawn, and leaves its dependents stale for repair. */
 export function withdrawKnowledgeOwner(
   db: Database.Database,
   kind: "doc_annotation" | "person_annotation",

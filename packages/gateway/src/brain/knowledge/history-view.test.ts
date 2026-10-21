@@ -82,7 +82,7 @@ it("paginates immutable historical summaries and reconstructs oversized markup e
     readKnowledgeHistory(db, { id: "workshop", revision: 1, offset: original.length + 1 }),
   ).toThrow("outside");
 });
-it("immediately fences old-only private ancestry before physical history cleanup", () => {
+it("keeps history readable after a source only old revisions cite is deleted", () => {
   save(0);
   save(1, '<claim id="other" refs="">Historical workshop notes.</claim>');
   expect(readKnowledgeHistory(db, { id: "workshop", revision: 1 })).toHaveProperty("markdownChunk");
@@ -90,8 +90,8 @@ it("immediately fences old-only private ancestry before physical history cleanup
     "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('evidence','v1',1,20)",
   ).run();
   expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_revisions").get()).toEqual({ n: 2 });
-  expect(() => readKnowledgeHistory(db, { id: "workshop" })).toThrow("unavailable");
-  expect(() => readKnowledgeHistory(db, { id: "workshop", revision: 1 })).toThrow("unavailable");
+  expect(readKnowledgeHistory(db, { id: "workshop" })).toBeDefined();
+  expect(readKnowledgeHistory(db, { id: "workshop", revision: 1 })).toHaveProperty("markdownChunk");
 });
 it("finds legacy claim loss through long no-op tails and retains same-length edits", () => {
   const first = '<claim id="date" refs="source:evidence">Workshop starts Friday.</claim>';

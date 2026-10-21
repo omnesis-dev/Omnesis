@@ -88,7 +88,7 @@ it.each([
   expect(getKnowledgeNode(db, "wiki_overview")).toBeNull();
 });
 
-it("uses identical errors for missing, wrong-kind and privacy-hidden target IDs", async () => {
+it("uses identical errors for missing, wrong-kind and erased target IDs", async () => {
   const proposal = input("[Reference](wiki:wiki_reference)");
   const message = async () => {
     try {
@@ -103,7 +103,7 @@ it("uses identical errors for missing, wrong-kind and privacy-hidden target IDs"
   const wrong = await message();
   db.prepare("UPDATE knowledge_nodes SET kind='wiki' WHERE id='wiki_reference'").run();
   db.prepare(
-    "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('manual','v1',1,2)",
+    "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','node','wiki_reference','deleted',2)",
   ).run();
   expect(await message()).toBe(wrong);
   db.prepare("DELETE FROM knowledge_nodes WHERE id='wiki_reference'").run();

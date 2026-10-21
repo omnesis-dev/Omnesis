@@ -61,7 +61,7 @@ export { isKnowledgeNodeReadable, knowledgeNodeFence } from "./storage-fence.js"
 export {
   advanceKnowledgeCascade,
   invalidateKnowledgeDependents,
-  purgeKnowledgeBySource,
+  recordKnowledgeSourceDeletion,
   purgeKnowledgeNode,
   recordKnowledgeSourceChange,
 } from "./storage-invalidation.js";

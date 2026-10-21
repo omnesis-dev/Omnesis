@@ -20,6 +20,7 @@ interface Page {
   revision: number;
   meaningRevision: number;
   validity: string;
+  canonicalFields?: { withdrawn?: boolean };
   claims?: Array<{ id: string; verification: string; meaningRevision: number }>;
 }
 interface Batch {
@@ -106,7 +107,7 @@ describe("next generation brain progressive maintenance", () => {
     );
   });
 
-  it("repairs actual evidence changes, discovers new links and fences privacy deletion", async () => {
+  it("repairs actual evidence changes, discovers new links and reviews pages whose source is deleted", async () => {
     const sourceId = bench.harness.getSourceIds().find((id) => id.startsWith("gmail:"));
     expect(sourceId).toBeDefined();
     // Model a source whose initial collector sync has already claimed an epoch.
@@ -269,12 +270,21 @@ describe("next generation brain progressive maintenance", () => {
           .poll(async () => (await page("demo-camera"))?.markdown, { timeout: 120_000 })
           .toContain("loan is complete");
       } else if (step.id === "privacy-delete" || step.id === "suppressed-resurrection") {
-        expect(await page("demo-access")).toBeUndefined();
-        expect((await pages()).some((entry) => entry.markdown.includes("amber-paper-boat"))).toBe(
-          false,
-        );
+        // The deleted source is tombstoned and cannot come back; the page that
+        // cited it is invalidated for review, never deleted.
+        expect(
+          bench.sql
+            .prepare("SELECT deleted FROM knowledge_source_revisions WHERE document_id=?")
+            .get(documentIds.get("privacy-detail")!),
+        ).toEqual({ deleted: 1 });
+        expect(
+          bench.sql
+            .prepare("SELECT 1 FROM documents WHERE id=?")
+            .get(documentIds.get("privacy-detail")!),
+        ).toBeUndefined();
+        // Stale through the read fence at once, before the bounded cascade runs.
+        expect((await page("demo-access"))?.validity).toBe("stale");
         expect(await page("demo-gathering")).toBeDefined();
-        expect((await accessSearch()).results).toHaveLength(0);
       } else if (step.id === "conflicting-evidence") {
         await expect
           .poll(async () => (await page("demo-gathering"))?.markdown, { timeout: 120_000 })
@@ -296,6 +306,20 @@ describe("next generation brain progressive maintenance", () => {
           .toBe(true);
       } else if (step.id === "routine-boundary") {
         await bench.drainUntilQuiet({ includeUpcoming: false, timeoutMs: 180_000 });
+        // Review retired the page whose source was deleted; it left search.
+        expect(
+          bench.sql
+            .prepare(
+              "SELECT json_extract(fields_json,'$.withdrawn') AS withdrawn FROM knowledge_nodes WHERE id='demo-access'",
+            )
+            .get(),
+        ).toEqual({ withdrawn: 1 });
+        expect((await accessSearch()).results).toHaveLength(0);
+        expect(
+          (await pages()).some(
+            (entry) => entry.id !== "demo-access" && entry.markdown.includes("amber-paper-boat"),
+          ),
+        ).toBe(false);
         await expect
           .poll(async () => (await pages()).find((entry) => entry.kind === "root")?.markdown, {
             timeout: 120_000,
@@ -331,7 +355,13 @@ describe("next generation brain progressive maintenance", () => {
               ),
           ),
         ).toBe(true);
-        expect(all.filter((entry) => entry.kind === "wiki")).toHaveLength(2);
+        // The retired access page stays on record, withdrawn, beside the two live pages.
+        expect(
+          all
+            .filter((entry) => entry.kind === "wiki" && entry.canonicalFields?.withdrawn !== true)
+            .map((entry) => entry.id)
+            .sort(),
+        ).toEqual(["demo-camera", "demo-gathering"]);
         expect((await page("demo-gathering"))!.markdown).toContain("historical context");
         expect((await page("demo-camera"))!.markdown).toContain("loan is complete");
         const shared = bench.sql

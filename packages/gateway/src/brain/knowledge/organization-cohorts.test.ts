@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { reconsiderPublishedRetrieval } from "./retrieval-reconsideration.js";
 import { completeOrganizationBatch } from "./organization-writer.js";
-import { purgeKnowledgeBySource, advanceKnowledgeCascade } from "./storage-invalidation.js";
-import { createKnowledgeTables, saveKnowledgeNode } from "./storage.js";
+import { recordKnowledgeSourceDeletion, advanceKnowledgeCascade } from "./storage-invalidation.js";
+import { createKnowledgeTables, getKnowledgeNode, saveKnowledgeNode } from "./storage.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import {
   KNOWLEDGE_DISCOVERY_POLICY,
@@ -222,7 +222,7 @@ describe("bounded joint organization cohorts", () => {
     expect(
       db.prepare("SELECT outcome_json FROM knowledge_organization_cohorts").get(),
     ).toBeTruthy();
-    purgeKnowledgeBySource(db, "a", 200);
+    recordKnowledgeSourceDeletion(db, "a", 200);
     expect(db.prepare("SELECT * FROM knowledge_organization_cohorts").all()).toEqual([]);
     expect(db.prepare("SELECT * FROM knowledge_organization_members").all()).toEqual([]);
     expect(getOrganizationCohortForBatch(db, "batch-cohort")).toBeNull();
@@ -278,8 +278,8 @@ describe("bounded joint organization cohorts", () => {
     expect(complete("relevant-wiki", { "relevant-wiki": 1, extra: 1 })).toBe(false);
     expect(complete("relevant-wiki", { "relevant-wiki": 1 })).toBe(true);
   });
-  it.each(["stale", "private"])(
-    "rejects a %s target even when cohort evidence stayed current",
+  it.each(["changed", "deleted"])(
+    "rejects a target whose other evidence was %s even when cohort evidence stayed current",
     (state) => {
       evidence("a");
       evidence("b");
@@ -301,9 +301,9 @@ describe("bounded joint organization cohorts", () => {
         },
         101,
       );
-      if (state === "stale")
+      if (state === "changed")
         db.exec("UPDATE documents SET content_hash='v2' WHERE id='additional'");
-      else db.exec("INSERT INTO removed_sources VALUES('source-additional')");
+      else recordKnowledgeSourceDeletion(db, "additional", 102);
       expect(isOrganizationCohortCurrent(db, cohort)).toBe(true);
       expect(
         completeOrganizationCohort(
@@ -323,7 +323,7 @@ describe("bounded joint organization cohorts", () => {
       ).toBe(false);
     },
   );
-  it("purges an organized reason when a target's evidence outside the cohort is deleted", () => {
+  it("keeps an organized reason when a target's evidence outside the cohort is deleted", () => {
     evidence("a");
     evidence("b");
     const cohort = admit();
@@ -363,11 +363,13 @@ describe("bounded joint organization cohorts", () => {
     expect(db.prepare("SELECT node_id FROM knowledge_organization_targets").all()).toEqual([
       { node_id: "wiki" },
     ]);
-    purgeKnowledgeBySource(db, "additional", 200);
-    expect(getOrganizationCohortForBatch(db, cohort.batchId)).toBeNull();
-    expect(db.prepare("SELECT * FROM knowledge_organization_targets").all()).toEqual([]);
-    expect(db.prepare("SELECT * FROM knowledge_organization_members").all()).toEqual([]);
-    expect(db.prepare("SELECT * FROM knowledge_organization_cohorts").all()).toEqual([]);
+    recordKnowledgeSourceDeletion(db, "additional", 200);
+    // The target page survives as stale, so the cohort that placed it does too.
+    expect(getKnowledgeNode(db, "wiki")?.validity).toBe("stale");
+    expect(getOrganizationCohortForBatch(db, cohort.batchId)).not.toBeNull();
+    expect(db.prepare("SELECT node_id FROM knowledge_organization_targets").all()).toEqual([
+      { node_id: "wiki" },
+    ]);
   });
   it("checks cohort identity, disposition and retry before accepting completion", () => {
     evidence("a");

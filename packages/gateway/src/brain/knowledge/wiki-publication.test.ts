@@ -4,7 +4,11 @@
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
-import { createKnowledgeTables, saveKnowledgeNode } from "./storage.js";
+import {
+  createKnowledgeTables,
+  recordKnowledgeSourceDeletion,
+  saveKnowledgeNode,
+} from "./storage.js";
 import {
   assertNoOverlappingScope,
   assertWikiPublicationReceipt,
@@ -85,11 +89,9 @@ it("follows exact claim supports without broadening to neighboring claims", () =
   db.prepare("UPDATE documents SET content_hash='permit-v2' WHERE id='permit'").run();
   expect(() => assertWikiSourceDiversity(db, "combined")).toThrow("at least two");
 });
-it("refuses a removed second source before a cascade can run", () => {
+it("does not count a deleted second source", () => {
   page("complete", "permit");
-  db.exec(
-    "INSERT INTO knowledge_cascade_jobs(kind,target_kind,target_id,revision,created_at) VALUES('purge','source','permit','permit-v1',2)",
-  );
+  recordKnowledgeSourceDeletion(db, "permit", 2);
   expect(() => assertWikiSourceDiversity(db, "complete")).toThrow("at least two");
 });
 it("requires actual library, candidate and selected counterpart reads, without invalidating unrelated edits", () => {

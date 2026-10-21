@@ -22,7 +22,7 @@ import {
   persistOutcomeAssessment,
   readOutcomeAssessment,
 } from "./outcome-assessment.js";
-import { purgeKnowledgeBySource } from "./storage-invalidation.js";
+import { recordKnowledgeSourceDeletion } from "./storage-invalidation.js";
 import type { KnowledgeRunFence } from "./run-fence.js";
 
 let db: Database.Database, service: KnowledgeService, now: number;
@@ -159,7 +159,7 @@ it.each(["source-delete", "source-purge", "owner-delete"])(
   (operation) => {
     oldApproval();
     if (operation === "source-delete") db.prepare("DELETE FROM documents WHERE id='source'").run();
-    if (operation === "source-purge") purgeKnowledgeBySource(db, "source", now);
+    if (operation === "source-purge") recordKnowledgeSourceDeletion(db, "source", now);
     if (operation === "owner-delete") db.prepare("DELETE FROM open_loops WHERE id='task'").run();
     expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_outcome_assessments").get()).toEqual(
       { count: 0 },

@@ -205,6 +205,12 @@ export function knowledgePuppet(
             step.args?.inputFingerprint === item.inputFingerprint &&
             !(rereading && isSourceReadRefusal(step))
           );
+        // A retired page leaves the frontier; the next frontier settles it.
+        if (step.name === "knowledge_retire")
+          return (
+            step.args?.id === item.id &&
+            (step.result as { kind?: unknown } | null)?.kind === "structured"
+          );
         const node = step.args?.node;
         const saved = z
           .object({ node: z.object({ id: z.string(), revision: z.number() }) })
@@ -238,7 +244,9 @@ export function knowledgePuppet(
                 step.name === "knowledge_discovery_complete" &&
                 isSourceReadRefusal(step)
               ) &&
-              (((step.name === "knowledge_save" || step.name === "knowledge_edit") &&
+              (((step.name === "knowledge_save" ||
+                step.name === "knowledge_edit" ||
+                step.name === "knowledge_retire") &&
                 !item.source) ||
                 step.name === "knowledge_discovery_complete" ||
                 !policy

@@ -18,7 +18,7 @@ import {
   registerKnowledgeEvidence,
   getKnowledgeEvidence,
   recordKnowledgeSourceChange,
-  purgeKnowledgeBySource,
+  recordKnowledgeSourceDeletion,
   listKnowledgeChanges,
   knowledgeClaimFingerprint,
 } from "./storage.js";
@@ -317,7 +317,7 @@ describe("source revisions and privacy", () => {
     ).toBe(false);
     expect(getKnowledgeNode(db, "overview")?.revision).toBe(1);
   });
-  it("purges the full derivative chain and refuses pending writes against a deleted source", () => {
+  it("invalidates knowledge citing a deleted source and never deletes it", () => {
     const evidence = registerKnowledgeEvidence(
       db,
       { documentId: "schedule", contentHash: "hash-one", quote: "Friday" },
@@ -333,62 +333,117 @@ describe("source revisions and privacy", () => {
       }),
       11,
     );
-    expect(purgeKnowledgeBySource(db, "schedule", 12).sort()).toEqual(["overview", "project"]);
-    expect(getKnowledgeNode(db, "overview")).toBeNull();
-    expect(getKnowledgeEvidence(db, evidence.id)).toBeNull();
-    expect(listKnowledgeChanges(db).map((c) => c.kind)).toEqual([
-      "node_deleted",
-      "node_deleted",
-      "source_deleted",
+    saveKnowledgeNode(
+      db,
+      input("digest", {
+        markdown: '<claim id="when" refs="wiki:project#claim:date">Friday workshop.</claim>',
+        inputVersions: { "wiki:project#claim:date": 1 },
+      }),
+      11,
+    );
+    const revisionsBefore = db
+      .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM knowledge_revisions")
+      .get()!.count;
+
+    expect(recordKnowledgeSourceDeletion(db, "schedule", 12)).toEqual(["project"]);
+
+    const project = getKnowledgeNode(db, "project");
+    expect(project).toMatchObject({ revision: 2, validity: "stale" });
+    expect(project?.markdown).toContain("The workshop starts Friday.");
+    expect(getKnowledgeClaims(db, "project")[0]).toMatchObject({
+      id: "date",
+      verification: "stale",
+      refs: ["source:schedule"],
+    });
+    // A page reading the invalidated claim is stale through its support; a page
+    // that only links to it for navigation is untouched.
+    expect(getKnowledgeNode(db, "digest")).toMatchObject({ revision: 1, validity: "stale" });
+    expect(getKnowledgeNode(db, "overview")).toMatchObject({ revision: 1 });
+    expect(getKnowledgeNode(db, "overview")?.validity).not.toBe("stale");
+    expect(
+      listKnowledgeNodes(db)
+        .map((node) => node.id)
+        .sort(),
+    ).toEqual(["digest", "overview", "project"]);
+    expect(
+      db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM knowledge_revisions").get()!
+        .count,
+    ).toBe(revisionsBefore + 1);
+    expect(listKnowledgeChanges(db).map((c) => [c.kind, c.entityId])).toEqual([
+      ["node_changed", "project"],
+      ["node_changed", "overview"],
+      ["node_changed", "digest"],
+      ["node_invalidated", "project"],
+      ["source_deleted", "schedule"],
     ]);
-    expect(() => saveKnowledgeNode(db, input(), 13)).toThrow("Synthesis page is unavailable");
+
+    // The deleted source itself stays unreadable and can never be cited again.
+    expect(getKnowledgeEvidence(db, evidence.id)).toBeNull();
+    expect(() =>
+      saveKnowledgeNode(
+        db,
+        input("fresh", { inputVersions: { "source:schedule": "hash-one" } }),
+        13,
+      ),
+    ).toThrow("is unavailable");
     expect(
       recordKnowledgeSourceChange(db, { documentId: "schedule", contentHash: "hash-one" }, 14)
         .changed,
     ).toBe(false);
+
+    // Maintenance repairs the page by dropping the unsupported claim.
+    const repaired = saveKnowledgeNode(
+      db,
+      input("project", {
+        expectedRevision: 2,
+        markdown: '<claim id="pending" refs="">The workshop date is unconfirmed.</claim>',
+        inputVersions: {},
+        claims: [{ id: "pending", epistemicStatus: "unsupported" }],
+      }),
+      15,
+    );
+    expect(repaired.node).toMatchObject({ revision: 3 });
+    expect(getKnowledgeNode(db, "project")?.validity).not.toBe("stale");
   });
 });
 
 describe("bounded cascade recovery", () => {
-  it("fences every affected read before cleanup and resumes a persisted frontier", () => {
+  it("marks every dependent stale before cleanup and resumes a persisted frontier", () => {
     for (let index = 0; index < 130; index++)
       saveKnowledgeNode(db, input(`page-${String(index).padStart(3, "0")}`), 10);
-    purgeKnowledgeBySource(db, "schedule", 20);
-    expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_nodes").get()).toEqual({
-      count: 130,
-    });
-    expect(getKnowledgeNode(db, "page-129")).toBeNull();
-    expect(getKnowledgeClaims(db, "page-129")).toEqual([]);
-    expect(listKnowledgeNodes(db)).toEqual([]);
-    expect(() =>
-      saveKnowledgeNode(
-        db,
-        input("page-129", {
-          expectedRevision: 1,
-          markdown: "Removed references.",
-          inputVersions: {},
-        }),
-        21,
-      ),
-    ).toThrow("Synthesis page is unavailable");
+    const first = recordKnowledgeSourceDeletion(db, "schedule", 20);
+    expect(first.length).toBeLessThan(130);
+    expect(getKnowledgeNode(db, "page-129")).toMatchObject({ validity: "stale" });
+    expect(getKnowledgeClaims(db, "page-129")[0]?.verification).toBe("stale");
+    expect(listKnowledgeNodes(db, { limit: 500 })).toHaveLength(130);
     const image = db.serialize();
     db.close();
     db = new Database(image);
     db.pragma("foreign_keys=ON");
     let pending = true;
     let chunks = 0;
-    let deleted = 0;
+    let invalidated = first.length;
     while (pending && chunks++ < 40) {
       const result = advanceKnowledgeCascade(db, 13, 30 + chunks);
-      expect(result.deletedNodeIds.length).toBeLessThanOrEqual(13);
-      deleted += result.deletedNodeIds.length;
+      expect(result.deletedNodeIds).toEqual([]);
+      invalidated += result.invalidatedNodeIds.length;
       pending = result.pending;
     }
     expect(pending).toBe(false);
-    expect(deleted).toBe(130);
-    expect(() =>
-      saveKnowledgeNode(db, input("page-129", { markdown: "Replacement.", inputVersions: {} }), 99),
-    ).toThrow("Synthesis page is unavailable");
+    expect(invalidated).toBe(130);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_nodes").get()).toEqual({
+      count: 130,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM knowledge_claims WHERE verification='stale'").get(),
+    ).toEqual({ count: 130 });
+    expect(
+      saveKnowledgeNode(
+        db,
+        input("page-129", { expectedRevision: 2, markdown: "Workshop page.", inputVersions: {} }),
+        99,
+      ).node.revision,
+    ).toBe(3);
   });
   it("reports pending support loss as stale before bounded physical invalidation reaches it", () => {
     for (let index = 0; index < 130; index++) saveKnowledgeNode(db, input(`page-${index}`), 10);
@@ -423,7 +478,7 @@ it("permits mutually linked pages when their claim support graph is acyclic", ()
   expect(getKnowledgeClaims(db, "project")).toHaveLength(2);
 });
 
-it("retains immutable revisions with claim/field/ref diffs and strips histories on privacy deletion", () => {
+it("retains immutable revisions with claim/field/ref diffs, also after a cited source is deleted", () => {
   saveKnowledgeNode(db, input(), 10);
   saveKnowledgeNode(
     db,
@@ -457,12 +512,10 @@ it("retains immutable revisions with claim/field/ref diffs and strips histories 
     }),
     12,
   );
-  purgeKnowledgeBySource(db, "schedule", 13);
-  expect(getKnowledgeNode(db, "project")).toBeNull();
-  expect(listKnowledgeNodeRevisions(db, "project")).toEqual([]);
-  expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_revisions").get()).toEqual({
-    count: 0,
-  });
+  recordKnowledgeSourceDeletion(db, "schedule", 13);
+  expect(getKnowledgeNode(db, "project")).toMatchObject({ revision: 3 });
+  expect(getKnowledgeNode(db, "project")?.validity).not.toBe("stale");
+  expect(listKnowledgeNodeRevisions(db, "project").map((r) => r.revision)).toEqual([3, 2, 1]);
 });
 
 it("relevance-gate revalidation does not invent verification or propagate unchanged prose", () => {

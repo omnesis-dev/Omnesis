@@ -340,6 +340,52 @@ describe("knowledge puppet protocol", () => {
     };
     expect(next(ctx, [offered, fetched, refused])).toMatchObject({ kind: "final" });
   });
+  it("settles an offered page on a successful knowledge_retire and stops on a refused one", () => {
+    const next = knowledgePuppet({
+      plan: (item) => ({
+        calls: [
+          call("knowledge_retire", {
+            id: item.id,
+            expectedRevision: 2,
+            reason: "Its only sources were deleted.",
+          }),
+        ],
+      }),
+    });
+    const node = {
+      id: "page",
+      kind: "wiki",
+      title: "Workshop",
+      markdown: "Tagged page",
+      revision: 2,
+      ownerId: null,
+    };
+    const offered = frontier([
+      { id: "page", inputFingerprint: "fp", inputVersions: {}, depth: 0, node },
+    ]);
+    const fetched: ToolStep = {
+      name: "knowledge_fetch",
+      args: { id: "page", editing: true },
+      result: { kind: "structured", data: node },
+    };
+    const retire = next(ctx, [offered, fetched]);
+    expect(retire).toMatchObject({ kind: "tool", name: "knowledge_retire", args: { id: "page" } });
+    if (retire?.kind !== "tool") throw new Error("expected a retire call");
+    const retired: ToolStep = {
+      name: "knowledge_retire",
+      args: retire.args,
+      result: { kind: "structured", data: { id: "page", revision: 3, retired: true } },
+    };
+    expect(next(ctx, [offered, fetched, retired])).toMatchObject({
+      kind: "tool",
+      name: "knowledge_next_frontier",
+    });
+    const refused: ToolStep = {
+      ...retired,
+      result: { kind: "error", code: "revision_conflict", message: "Refused" },
+    };
+    expect(next(ctx, [offered, fetched, refused])).toMatchObject({ kind: "final" });
+  });
   it("only finishes when the real engine returns done", () => {
     const next = knowledgePuppet({ plan: () => ({ calls: [] }) });
     expect(next(ctx, [])).toMatchObject({ kind: "tool", name: "knowledge_next_frontier" });

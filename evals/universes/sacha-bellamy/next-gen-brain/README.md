@@ -77,20 +77,20 @@ quality claims about a live model and are not assertions already executed by the
 fixture loader test. Bind them to the implemented synthesis tools and decision
 rubrics, then assert the resulting production state:
 
-| Stage                     | Scripted behavior                                                          | Engine proof                                                                                                      |
-| ------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Recent bootstrap          | Organize gathering and loan topics; create independently completable loops | No duplicate pages or outcomes; root aggregation does not merge unrelated scheduling regions                      |
-| Exact replay              | No semantic change                                                         | No new source revision, no duplicate synthesis or maintenance                                                     |
-| New correction            | Discovery associates a new document; immediate tier                        | Current accepted time changes; unrelated guest-arrival claim stays stable                                         |
-| Existing source edit      | One-hour tier                                                              | Same document ID, new content hash; immediate invalidation before model repair                                    |
-| Late historical evidence  | Preserve current commitment; add history if useful                         | Older proposal cannot override newer acceptance                                                                   |
-| Parallel regions          | Routine tier for camera acknowledgement                                    | Separate pending component before shared evidence joins it                                                        |
-| Shared update             | Associate one source with both regions                                     | Coalesced overlapping work and one visit per complete input set                                                   |
-| Privacy delete and replay | No model permission required                                               | Removed access phrase absent from claims, wiki/root renderings and search; source tombstone prevents resurrection |
-| Unrelated note            | Decline new page and loop                                                  | Source remains searchable without synthetic page proliferation                                                    |
-| Contradiction             | Keep stronger accepted evidence; record uncertainty                        | Weak suggestion cannot silently replace current truth                                                             |
-| Clarification             | Resolve uncertainty                                                        | Existing page/loop identities survive                                                                             |
-| Routine boundary          | Process due work                                                           | Complete frontier, bounded root, no reopening completed outcomes                                                  |
+| Stage                    | Scripted behavior                                                          | Engine proof                                                                                                    |
+| ------------------------ | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Recent bootstrap         | Organize gathering and loan topics; create independently completable loops | No duplicate pages or outcomes; root aggregation does not merge unrelated scheduling regions                    |
+| Exact replay             | No semantic change                                                         | No new source revision, no duplicate synthesis or maintenance                                                   |
+| New correction           | Discovery associates a new document; immediate tier                        | Current accepted time changes; unrelated guest-arrival claim stays stable                                       |
+| Existing source edit     | One-hour tier                                                              | Same document ID, new content hash; immediate invalidation before model repair                                  |
+| Late historical evidence | Preserve current commitment; add history if useful                         | Older proposal cannot override newer acceptance                                                                 |
+| Parallel regions         | Routine tier for camera acknowledgement                                    | Separate pending component before shared evidence joins it                                                      |
+| Shared update            | Associate one source with both regions                                     | Coalesced overlapping work and one visit per complete input set                                                 |
+| Delete and replay        | Review the invalidated page; retire it when its subject is gone            | Page invalidated, never deleted; retired by review and gone from search; source tombstone prevents resurrection |
+| Unrelated note           | Decline new page and loop                                                  | Source remains searchable without synthetic page proliferation                                                  |
+| Contradiction            | Keep stronger accepted evidence; record uncertainty                        | Weak suggestion cannot silently replace current truth                                                           |
+| Clarification            | Resolve uncertainty                                                        | Existing page/loop identities survive                                                                           |
+| Routine boundary         | Process due work                                                           | Complete frontier, bounded root, no reopening completed outcomes                                                |
 
 Inject model failure, process restart, stale-write conflicts, root-size rejection,
 and malformed/unsupported claim writes around these same checkpoints in the E2E

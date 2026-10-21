@@ -4,9 +4,16 @@
 import Database from "better-sqlite3";
 import { beforeEach, afterEach, it, expect } from "vitest";
 import { likeSearchDocuments } from "../../search/like-search.js";
-import { createKnowledgeTables, saveKnowledgeNode, purgeKnowledgeBySource } from "./storage.js";
+import {
+  createKnowledgeTables,
+  saveKnowledgeNode,
+  recordKnowledgeSourceDeletion,
+} from "./storage.js";
 import { directKnowledgeGate } from "./writer.js";
-import { listKnowledgeProjectionCleanup } from "./mirror-storage.js";
+import {
+  listKnowledgeProjectionCleanup,
+  queueKnowledgeProjectionCleanup,
+} from "./mirror-storage.js";
 import { buildKnowledgeDocumentInput, createKnowledgeMirror } from "./mirror.js";
 import { renderKnowledgeRootContext } from "./root-context.js";
 import { isKnowledgeDocumentReadable } from "./retrieval-fence.js";
@@ -55,7 +62,7 @@ it("projects stripped synthesis into the normal index document contract with can
   });
   expect(buildKnowledgeDocumentInput(node).contentHash).toBe(projection.contentHash);
 });
-it("injects compact root context with truthful uncertainty and never exposes a privacy-fenced root", () => {
+it("injects compact root context with truthful uncertainty, stale once a cited source is deleted", () => {
   expect(renderKnowledgeRootContext(db)).toBe("");
   saveRoot();
   const context = renderKnowledgeRootContext(db);
@@ -63,8 +70,11 @@ it("injects compact root context with truthful uncertainty and never exposes a p
   expect(context).toContain("0/1 tagged claims have recorded verification");
   expect(context).not.toContain("<claim");
   expect(renderKnowledgeRootContext(db, 4)).not.toContain("Workshop");
-  purgeKnowledgeBySource(db, "evidence", 110);
-  expect(renderKnowledgeRootContext(db)).toBe("");
+  recordKnowledgeSourceDeletion(db, "evidence", 110);
+  expect(JSON.parse(renderKnowledgeRootContext(db).split("\n").at(-1)!)).toMatchObject({
+    validity: "stale",
+    supportCoverage: { partial: true },
+  });
 });
 it("fences index and corpus copies by their current canonical revision and privacy ancestry", () => {
   const node = saveRoot();
@@ -105,7 +115,7 @@ it("fences index and corpus copies by their current canonical revision and priva
     ),
   ).not.toContain("mirror");
   expect(isKnowledgeDocumentReadable(db, "evidence")).toBe(true);
-  purgeKnowledgeBySource(db, "evidence", 120);
+  recordKnowledgeSourceDeletion(db, "evidence", 120);
   expect(isKnowledgeDocumentReadable(db, "mirror")).toBe(false);
 });
 it("retains original mirror document IDs until index deletion acknowledges cleanup across a retry", async () => {
@@ -120,7 +130,10 @@ it("retains original mirror document IDs until index deletion acknowledges clean
     JSON.stringify(projection.metadata),
     "2025-01-01",
   );
-  purgeKnowledgeBySource(db, "evidence", 110);
+  // Deleting a cited source keeps the page, so it queues no mirror removal.
+  recordKnowledgeSourceDeletion(db, "evidence", 110);
+  expect(listKnowledgeProjectionCleanup(db)).toEqual([]);
+  queueKnowledgeProjectionCleanup(db, ["root"], 110);
   expect(listKnowledgeProjectionCleanup(db)).toEqual([{ documentId: "mirror", nodeId: "root" }]);
   const gate = directKnowledgeGate(db);
   const cleanupTimes: number[] = [];
@@ -179,7 +192,7 @@ it("retains original mirror document IDs until index deletion acknowledges clean
 it("preserves unknown ordinary stale-hit fallback but refuses authoritative removal", () => {
   expect(isKnowledgeDocumentReadable(db, "missing", "notes")).toBe(true);
   expect(isKnowledgeDocumentReadable(db, "missing", "brain-knowledge")).toBe(false);
-  purgeKnowledgeBySource(db, "missing", 1);
+  recordKnowledgeSourceDeletion(db, "missing", 1);
   expect(isKnowledgeDocumentReadable(db, "missing", "notes")).toBe(false);
   db.exec(
     "CREATE TABLE removed_sources(id TEXT PRIMARY KEY); INSERT INTO removed_sources VALUES('notes')",
@@ -237,8 +250,11 @@ it("keeps actual root wiki navigation after stripping claim tags, deduplicated a
   const tooSmall = renderKnowledgeRootContext(db, rootMarkup.markdown.length);
   expect(tooSmall.length).toBeLessThanOrEqual(rootMarkup.markdown.length);
   expect(tooSmall).not.toContain("Workshop Friday.");
-  purgeKnowledgeBySource(db, "evidence", 110);
-  expect(renderKnowledgeRootContext(db)).toBe("");
+  // A deleted source leaves the navigation in place while the root awaits review.
+  recordKnowledgeSourceDeletion(db, "evidence", 110);
+  expect(JSON.parse(renderKnowledgeRootContext(db).split("\n").at(-1)!).relatedPages).toEqual([
+    { id: "detail", title: "Workshop detail", ref: "wiki:detail" },
+  ]);
 });
 
 it("keeps stale-root framing, navigation and partial coverage within character budgets", () => {

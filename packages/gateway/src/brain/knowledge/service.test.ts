@@ -23,7 +23,7 @@ import {
   getKnowledgeDependencies,
   getKnowledgeNode,
   recordKnowledgeSourceChange,
-  purgeKnowledgeBySource,
+  recordKnowledgeSourceDeletion,
 } from "./storage.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { proposeKnowledgeCandidate, getKnowledgeCandidate } from "./discovery.js";
@@ -107,7 +107,7 @@ it.each(["source:evidence#evidence:absent", "wiki:absent#claim:detail"])(
   },
 );
 
-it.each(["purge", "revision", "invalidation"] as const)(
+it.each(["deletion", "revision", "invalidation"] as const)(
   "rechecks the saved node after asynchronous projection: %s",
   async (change) => {
     const brain = service(verifier);
@@ -129,7 +129,7 @@ it.each(["purge", "revision", "invalidation"] as const)(
     await projecting;
     // The canonical write did commit; only the asynchronous projection remains.
     expect(getKnowledgeNode(db, "project")?.revision).toBe(1);
-    if (change === "purge") purgeKnowledgeBySource(db, "evidence", 101);
+    if (change === "deletion") recordKnowledgeSourceDeletion(db, "evidence", 101);
     else if (change === "revision")
       await service(verifier).save({
         ...proposal("project"),
@@ -141,10 +141,8 @@ it.each(["purge", "revision", "invalidation"] as const)(
       recordKnowledgeSourceChange(db, { documentId: "evidence", contentHash: "v2" }, 101);
     }
     release();
-    await expect(saving).rejects.toMatchObject({
-      code: change === "purge" ? "reference_invalid" : "revision_conflict",
-    });
-    if (change === "invalidation") expect(getKnowledgeNode(db, "project")?.validity).toBe("stale");
+    await expect(saving).rejects.toMatchObject({ code: "revision_conflict" });
+    if (change !== "revision") expect(getKnowledgeNode(db, "project")?.validity).toBe("stale");
   },
 );
 it("rejects uncovered prose and never treats a whole-page reference as verified evidence", async () => {
@@ -849,13 +847,19 @@ it("does not inherit an unrelated sibling's source invalidation", async () => {
   ).toBe("verified");
   expect(getKnowledgeNode(db, "context-dependent")?.validity).toBe("current");
 });
-it("hides child references and downstream pages when a parent's source is pending deletion", async () => {
+it("marks child references and downstream pages stale when a parent's source is deleted", async () => {
   await nestedContextFixture();
   db.prepare(
     "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('scope','v1',1,101)",
   ).run();
-  expect(getKnowledgeNode(db, "context-dependent")).toBeNull();
-  expect(() => service().reference("wiki:nested-context#claim:child")).toThrow();
+  expect(
+    getKnowledgeClaims(db, "nested-context").find((claim) => claim.id === "child")?.verification,
+  ).toBe("stale");
+  expect(getKnowledgeNode(db, "context-dependent")?.validity).toBe("stale");
+  expect(service().reference("wiki:nested-context#claim:child").verified).toBe(false);
+  expect(() => service().reference("source:scope")).toThrow(
+    'Reference "source:scope" is unavailable',
+  );
 });
 it("changes a nested claim's meaning when its enclosing prose changes", async () => {
   const { brain, input } = await nestedContextFixture();

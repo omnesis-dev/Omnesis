@@ -66,11 +66,16 @@ it("preserves captured support across physical revision and unrelated navigation
   expect(isCapturedKnowledgeRootSupportCurrent(db, captured)).toBe(true);
   db.exec("UPDATE documents SET content_hash='v2' WHERE id='other'");
   expect(isCapturedKnowledgeRootSupportCurrent(db, captured)).toBe(true);
-  // Privacy remains whole-root, including the unrelated sibling's ancestry.
+  // Deleting the unrelated sibling's source invalidates that sibling only.
   db.exec(
     "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('other','v2',1,20)",
   );
   db.exec("DELETE FROM documents WHERE id='other'");
+  expect(isCapturedKnowledgeRootSupportCurrent(db, captured)).toBe(true);
+  // Deleting the captured claim's own source withdraws its support.
+  db.exec(
+    "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('record','v1',1,21)",
+  );
   expect(isCapturedKnowledgeRootSupportCurrent(db, captured)).toBe(false);
 });
 
@@ -232,7 +237,7 @@ it("refuses original-source ABA after same-byte restoration and successful repro
   expect(isCapturedKnowledgeRootSupportCurrent(db, captured)).toBe(false);
 });
 
-it("preserves historical privacy when an unrelated dependency was removed before capture", () => {
+it("keeps captured support when a dependency the root dropped before capture is deleted", () => {
   save({
     markdown:
       '<claim id="shape" refs="source:record">The prism has six faces.</claim>\n<claim id="colour" refs="source:other">The stand is blue.</claim>',
@@ -244,5 +249,5 @@ it("preserves historical privacy when an unrelated dependency was removed before
   db.exec(
     "INSERT INTO knowledge_source_revisions(document_id,content_hash,deleted,updated_at) VALUES('other','v1',1,20)",
   );
-  expect(isCapturedKnowledgeRootSupportCurrent(db, captured)).toBe(false);
+  expect(isCapturedKnowledgeRootSupportCurrent(db, captured)).toBe(true);
 });

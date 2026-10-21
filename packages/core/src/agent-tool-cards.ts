@@ -155,4 +155,5 @@ export const AGENT_TOOL_CARDS: Readonly<Record<string, AgentToolCard>> = Object.
   knowledge_propose_page: ephemeral("Propose wiki page", "wiki"),
   knowledge_save: ephemeral("Save wiki page", "wiki"),
   knowledge_edit: ephemeral("Edit wiki page", "wiki"),
+  knowledge_retire: ephemeral("Retire wiki page", "wiki"),
 });
