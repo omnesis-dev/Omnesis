@@ -56,7 +56,7 @@ import { readFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { defineCommand } from "citty";
 import { resolveHarnessBinary } from "@omnesis/agent-integration";
@@ -67,6 +67,7 @@ import {
   compareProductVersions,
   assertNever,
   DEFAULT_CONFIG_DIR,
+  distrustingNodeOptions,
   ensureGatewayTrust,
   readPackageVersion,
   SOURCE_COMMIT_PATTERN,
@@ -310,9 +311,18 @@ export const spawnRunner: CommandRunner = (spec, mode, control) =>
           ...spec.args,
         ]
       : spec.args;
+    // npm reaches the registry with its own CA store; keep the distrusted
+    // roots out of it the way this process keeps them out of its own.
+    const env = /^np[mx]$/u.test(basename(spec.command))
+      ? {
+          ...process.env,
+          ...spec.env,
+          NODE_OPTIONS: distrustingNodeOptions(spec.env?.NODE_OPTIONS),
+        }
+      : spec.env && { ...process.env, ...spec.env };
     const child = spawn(command, args, {
       cwd: spec.cwd,
-      ...(spec.env ? { env: { ...process.env, ...spec.env } } : {}),
+      ...(env ? { env } : {}),
       stdio: grouped
         ? mode === "capture"
           ? ["ignore", "pipe", "inherit", "pipe"]

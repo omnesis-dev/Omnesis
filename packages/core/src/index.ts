@@ -9,6 +9,17 @@
 // subpaths land via `package.json#exports`. The multi-package split (real `@omnesis/protocol`,
 // `@omnesis/config`, …) is the next increment after consumers
 // migrate.
+
+// First, so every thread that loads the barrel drops the distrusted
+// roots before anything it imports can open a socket.
+import "./tls-distrust.js";
+export {
+  DISTRUSTED_ROOT_SHA256,
+  distrustingNodeOptions,
+  isDistrustedRoot,
+  publicRoots,
+} from "./tls-distrust.js";
+
 export {
   ProviderType,
   ProviderId,

@@ -35,7 +35,7 @@ import {
   parseCodexCliVersion,
   type CodexRuntimeCommandInfo,
 } from "@omnesis/agent";
-import { codexPaths } from "@omnesis/core";
+import { codexPaths, distrustingNodeOptions } from "@omnesis/core";
 import { CODEX_RUNTIME_LOCK } from "./codex-runtime-lock.js";
 
 const execFileAsync = promisify(execFile);
@@ -578,6 +578,7 @@ function buildNpmEnv(
     npm_config_userconfig: join(npmHome, "npmrc"),
     npm_config_audit: "false",
     npm_config_fund: "false",
+    NODE_OPTIONS: distrustingNodeOptions(""),
   };
   for (const key of [
     "PATH",

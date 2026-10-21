@@ -194,6 +194,8 @@ describe("CodexRuntimeInstaller", () => {
     expect(npmEnv).not.toHaveProperty("OPENAI_API_KEY");
     expect(npmEnv).not.toHaveProperty("OMNESIS_TOKEN");
     expect(npmEnv?.HOME).not.toBe("/synthetic/operator-home");
+    // npm builds its own CA store; the preload keeps the distrusted roots out of it.
+    expect(npmEnv?.NODE_OPTIONS).toMatch(/^--import=file:\/\/\S+\/distrust-roots\.mjs$/u);
     await installer.discard(prepared);
   });
 

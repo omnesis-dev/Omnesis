@@ -3,7 +3,8 @@
 
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
-import { connect, rootCertificates } from "node:tls";
+import { connect } from "node:tls";
+import { publicRoots } from "@omnesis/core";
 
 /** The certificate a TLS client meets at a resource. */
 export interface PresentedCertificate {
@@ -36,7 +37,7 @@ export const probeServedCertificate: CertificateProbe = (resource) =>
       rejectUnauthorized: false,
       // Judged against the bundled public roots only, so a certificate this
       // process was told to trust does not pass for a public one.
-      ca: [...rootCertificates],
+      ca: publicRoots(),
       ...(isIP(host) === 0 ? { servername: host } : {}),
     });
     const finish = (presented: PresentedCertificate | null) => {
