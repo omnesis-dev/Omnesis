@@ -812,6 +812,25 @@ describe("SearchPipeline typed index previews", () => {
 });
 
 describe("SearchPipeline (embedder attached — stage reporting)", () => {
+  test("queryEmbedder is the attached search embedder, and none once cleared", () => {
+    const { db } = createTestDb();
+    const pipeline = new SearchPipeline({ indexDb: db });
+    expect(pipeline.queryEmbedder()).toBeUndefined();
+    const embedder = {
+      async embed(texts: string[]) {
+        return texts.map(() => new Float32Array(EMBEDDING_DIM));
+      },
+      async embedQuery() {
+        return new Float32Array(EMBEDDING_DIM);
+      },
+    };
+    pipeline.setEmbedder(embedder);
+    expect(pipeline.queryEmbedder()).toBe(embedder);
+    pipeline.setEmbedder(undefined);
+    expect(pipeline.queryEmbedder()).toBeUndefined();
+    closeTempDb(db);
+  });
+
   test("embedder attached → bm25 + vector both ran, fusion=rrf", async () => {
     const { db } = createTestDb();
     const mockUsearch = {
