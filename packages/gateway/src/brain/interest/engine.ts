@@ -94,8 +94,8 @@ const EMBED_BATCH = 16;
 const EMBED_TIMEOUT_MS = 30_000;
 /**
  * How long a lookup waits for its query vector. A gate is waiting on the
- * answer, and the shared query embedder can queue for tens of seconds behind
- * indexing, so a slow embedding gives way to matching by shared words.
+ * answer, so an embedder that is slow or stalled gives way to matching by
+ * shared words.
  */
 const QUERY_EMBED_TIMEOUT_MS = 10_000;
 
