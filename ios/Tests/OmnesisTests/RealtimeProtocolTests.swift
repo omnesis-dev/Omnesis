@@ -33,6 +33,18 @@ final class RealtimeProtocolTests: XCTestCase {
         XCTAssertEqual(event["audio"].flatMap { Data(base64Encoded: $0) }, pcm)
     }
 
+    func testRecoverableErrorsAreExplicitlyOptedInForOlderClientCompatibility() throws {
+        let pairing = try Pairing(
+            url: XCTUnwrap(URL(string: "https://gateway.example.com")),
+            token: "test-token",
+            accountId: "test-account",
+            deviceId: "test-device",
+            gatewayName: "Example gateway"
+        )
+        let request = try XCTUnwrap(RealtimeProtocol.socketRequest(pairing: pairing))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Omnesis-Realtime-Recoverable-Errors"), "1")
+    }
+
     func testMalformedServerMessageIsIgnored() {
         XCTAssertNil(RealtimeProtocol.event(Data("not JSON".utf8)))
         XCTAssertNil(RealtimeProtocol.event(Data("[]".utf8)))

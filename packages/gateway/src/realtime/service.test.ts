@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { IncomingMessage } from "node:http";
+import { Socket as NetSocket } from "node:net";
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,6 +25,7 @@ class Socket extends EventEmitter {
     this.sent.push(JSON.parse(raw));
   }
   close = vi.fn();
+  terminate = vi.fn();
   event(event: unknown) {
     this.emit("message", JSON.stringify(event));
   }
@@ -145,12 +148,13 @@ async function fixture() {
     logger,
     usage,
     service,
-    open: (conversationId?: string, version?: 1 | 2) => {
+    open: (conversationId?: string, version?: 1 | 2, recoverableErrors = false) => {
       connection = service.open(peer, "token:fixture", {
         token: "fixture-token",
         timeZone: "Europe/London",
         conversationId,
         version,
+        recoverableErrors,
       });
       return connection;
     },
@@ -160,8 +164,9 @@ async function ready(
   f: Awaited<ReturnType<typeof fixture>>,
   conversationId?: string,
   version?: 1 | 2,
+  recoverableErrors = false,
 ) {
-  const connection = f.open(conversationId, version);
+  const connection = f.open(conversationId, version, recoverableErrors);
   f.socket.emit("open");
   await vi.waitFor(() =>
     expect(f.socket.sent.some((event) => event.type === "session.update")).toBe(true),
@@ -327,7 +332,7 @@ describe("direct realtime Omnesis runtime", () => {
         expect(f.events).toContainEqual({ type: "session.ended", conversationId }),
       );
       if (activeTool) expect(toolSignal?.aborted).toBe(true);
-      expect(f.peer.close).toHaveBeenCalled();
+      expect(f.peer.close).toHaveBeenCalledWith(1000, "Voice call ended");
       expect(f.socket.sent.some((event) => event.type === "session.end")).toBe(false);
       expect(() =>
         f.agent.sendMessage(
@@ -683,6 +688,324 @@ describe("direct realtime Omnesis runtime", () => {
         (event) => event.type === "agent.message.end" && event.payload.stopReason === "canceled",
       ),
     ).toBe(true);
+  });
+  it.each([1, 2] as const)(
+    "sends actionable idle provider errors before closing legacy/version %s",
+    async (version) => {
+      const f = await fixture();
+      await ready(f, undefined, version);
+      f.socket.event({
+        type: "error",
+        error: { code: "credit_balance_exhausted", message: "PRIVATE_SENTINEL" },
+      });
+      expect(f.events.at(-1)).toMatchObject({
+        type: "error",
+        error: { code: "credit_balance_exhausted", retryable: false, fatal: true },
+      });
+      expect(f.peer.close).toHaveBeenCalledWith(1011, "voice_error:credit_balance_exhausted");
+      expect(JSON.stringify(f.events)).not.toContain("PRIVATE_SENTINEL");
+    },
+  );
+  it.each([1000, 1006, 1011])("treats unexpected upstream close %s as an error", async (code) => {
+    const f = await fixture();
+    await ready(f);
+    f.socket.emit("close", code);
+    expect(f.events.at(-1)).toMatchObject({
+      type: "error",
+      error: { code: "connection_error", fatal: true },
+    });
+    expect(f.peer.close).toHaveBeenCalledWith(1011, "voice_error:connection_error");
+  });
+  it("keeps canonical turn errors actionable without ending the call", async () => {
+    const f = await fixture();
+    await ready(f, undefined, 2, true);
+    await speech(f);
+    f.socket.event({
+      type: "response.done",
+      response: {
+        id: "r1",
+        status: "failed",
+        output: [],
+        status_details: { error: { code: "insufficient_quota" } },
+      },
+    });
+    await vi.waitFor(() => expect(f.events.some((event) => event.type === "error")).toBe(true));
+    expect(f.events.at(-1)).toMatchObject({
+      type: "error",
+      error: { code: "quota_exhausted", retryable: false, fatal: false },
+    });
+    expect(f.peer.close).not.toHaveBeenCalled();
+    await speech(f, "r2", "next-input");
+    done(f, "r2");
+    await settle(f);
+    expect(f.peer.close).not.toHaveBeenCalled();
+  });
+  it.each([1, 2] as const)(
+    "preserves legacy version %s call continuity on canonical failure",
+    async (version) => {
+      const f = await fixture();
+      await ready(f, undefined, version);
+      await speech(f);
+      f.socket.event({
+        type: "response.done",
+        response: {
+          id: "r1",
+          status: "failed",
+          output: [],
+          status_details: { error: { code: "insufficient_quota" } },
+        },
+      });
+      await settle(f);
+      expect(f.events.some((event) => event.type === "error")).toBe(false);
+      expect(f.peer.close).not.toHaveBeenCalled();
+    },
+  );
+  it("immediately reports fatal in-turn provider errors once before canonical close", async () => {
+    const f = await fixture();
+    await ready(f);
+    await speech(f);
+    f.socket.event({
+      type: "error",
+      error: { code: "model_not_found", message: "PRIVATE_SENTINEL" },
+    });
+    expect(f.events.at(-1)).toMatchObject({
+      type: "error",
+      error: { code: "model_unavailable", fatal: true },
+    });
+    await vi.waitFor(() => expect(f.peer.close).toHaveBeenCalled());
+    expect(f.events.filter((event) => event.type === "error")).toHaveLength(1);
+    expect(JSON.stringify(f.events)).not.toContain("PRIVATE_SENTINEL");
+  });
+  it("projects a reason-only content refusal into useful recoverable call copy", async () => {
+    const f = await fixture();
+    await ready(f, undefined, 2, true);
+    await speech(f);
+    f.socket.event({
+      type: "response.done",
+      response: {
+        id: "r1",
+        status: "incomplete",
+        output: [],
+        status_details: { reason: "content_filter" },
+      },
+    });
+    await settle(f);
+    expect(f.events.find((event) => event.type === "error")).toMatchObject({
+      error: { code: "content_filtered", retryable: false, fatal: false },
+    });
+    expect(f.peer.close).not.toHaveBeenCalled();
+  });
+  it.each([
+    [401, "authentication_failed"],
+    [403, "authentication_failed"],
+    [404, "model_unavailable"],
+    [429, "project_spend_limit_exceeded"],
+    [500, "provider_error"],
+  ] as const)(
+    "reports HTTP%s upgrade rejections with explicit handshake cleanup",
+    async (status, code) => {
+      const f = await fixture();
+      f.open();
+      const response = new IncomingMessage(new NetSocket());
+      response.statusCode = status;
+      f.socket.emit("unexpected-response", {}, response);
+      f.socket.emit("error", new Error("PRIVATE_SENTINEL"));
+      f.socket.emit("close", 1006);
+      response.emit(
+        "data",
+        JSON.stringify({
+          error: { code: "project_spend_limit_exceeded", message: "PRIVATE_SENTINEL" },
+        }),
+      );
+      response.emit("end");
+      await vi.waitFor(() => expect(f.socket.terminate).toHaveBeenCalledTimes(1));
+      expect(f.events.filter((event) => event.type === "error")).toEqual([
+        expect.objectContaining({ error: expect.objectContaining({ code, fatal: true }) }),
+      ]);
+      expect(f.peer.close).toHaveBeenCalledWith(1011, `voice_error:${code}`);
+      expect(f.logger.warn.mock.calls.join(" ")).toContain(`code=${code}`);
+      expect(response.destroyed).toBe(true);
+      expect(JSON.stringify([f.events, f.logger.warn.mock.calls])).not.toContain(
+        "PRIVATE_SENTINEL",
+      );
+    },
+  );
+  it("does not replace a prior fatal cause when HTTP handshake cleanup races close", async () => {
+    const f = await fixture();
+    const connection = f.open();
+    const response = new IncomingMessage(new NetSocket());
+    response.statusCode = 429;
+    f.socket.emit("unexpected-response", {}, response);
+    connection.fail("invalid_client_event");
+    response.emit("data", JSON.stringify({ error: { code: "credit_balance_exhausted" } }));
+    response.emit("end");
+    await vi.waitFor(() => expect(f.socket.terminate).toHaveBeenCalled());
+    expect(f.events.filter((event) => event.type === "error")).toEqual([
+      expect.objectContaining({ error: expect.objectContaining({ code: "protocol_error" }) }),
+    ]);
+    expect(f.peer.close).toHaveBeenCalledTimes(1);
+  });
+  it("does not retain arbitrary provider codes or prose in errors or logs", async () => {
+    const f = await fixture();
+    await ready(f);
+    f.socket.event({
+      type: "error",
+      error: { code: "private_sentinel", message: "PRIVATE_SENTINEL" },
+    });
+    expect(f.events.at(-1)).toMatchObject({ type: "error", error: { code: "provider_error" } });
+    expect(
+      JSON.stringify([f.events, f.logger.warn.mock.calls, f.logger.info.mock.calls]),
+    ).not.toMatch(/private_sentinel|PRIVATE_SENTINEL/);
+  });
+  it.each([
+    "project_spend_limit_exceeded",
+    "organization_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+  ])("preserves actionable %s through an actual turn failure", async (code) => {
+    const f = await fixture();
+    await ready(f, undefined, 2, true);
+    await speech(f);
+    f.socket.event({
+      type: "response.done",
+      response: { id: "r1", status: "failed", output: [], status_details: { error: { code } } },
+    });
+    await settle(f);
+    expect(f.events.find((event) => event.type === "error")).toMatchObject({
+      error: { code, retryable: false, fatal: false },
+    });
+    expect(f.peer.close).not.toHaveBeenCalled();
+    const ended = f.canonical.find((event) => event.type === "agent.message.end");
+    expect(ended).toMatchObject({ payload: { failure: { provider: { code }, retryable: false } } });
+  });
+  it.each(["peer-close", "session-end"])(
+    "preserves a reported fatal cause through %s before turn settlement",
+    async (mode) => {
+      const f = await fixture();
+      const connection = await ready(f, undefined, 2);
+      await speech(f);
+      f.socket.event({ type: "error", error: { code: "project_spend_limit_exceeded" } });
+      if (mode === "peer-close") connection.close();
+      else connection.receive(JSON.stringify({ type: "session.end" }));
+      await vi.waitFor(() => expect(f.peer.close).toHaveBeenCalled());
+      expect(f.events.filter((event) => event.type === "error")).toEqual([
+        expect.objectContaining({
+          error: expect.objectContaining({ code: "project_spend_limit_exceeded", fatal: true }),
+        }),
+      ]);
+      expect(f.peer.close).toHaveBeenCalledWith(1011, "voice_error:project_spend_limit_exceeded");
+    },
+  );
+  it("preserves the first fatal cause through repeated provider errors and transport close", async () => {
+    const f = await fixture();
+    await ready(f);
+    await speech(f);
+    f.socket.event({ type: "error", error: { code: "credit_balance_exhausted" } });
+    f.socket.event({ type: "error", error: { code: "server_error" } });
+    f.socket.emit("close", 1000);
+    await vi.waitFor(() => expect(f.peer.close).toHaveBeenCalled());
+    expect(f.events.filter((event) => event.type === "error")).toEqual([
+      expect.objectContaining({
+        error: expect.objectContaining({ code: "credit_balance_exhausted", fatal: true }),
+      }),
+    ]);
+    expect(f.peer.close).toHaveBeenCalledWith(1011, "voice_error:credit_balance_exhausted");
+  });
+  it.each(["invalid-client", "oversized-client", "invalid-upstream", "oversized-upstream"])(
+    "reports protocol failure for %s",
+    async (mode) => {
+      const f = await fixture();
+      const connection = await ready(f);
+      if (mode === "invalid-client") connection.receive("{}");
+      if (mode === "oversized-client") connection.receive(" ".repeat(128 * 1024 + 1));
+      if (mode === "invalid-upstream") f.socket.emit("message", "{}");
+      if (mode === "oversized-upstream") f.socket.emit("message", " ".repeat(2 * 1024 * 1024 + 1));
+      expect(f.events.at(-1)).toMatchObject({
+        type: "error",
+        error: { code: "protocol_error", fatal: true },
+      });
+    },
+  );
+  it.each(["transcription", "cancellation", "lifetime"])("reports %s deadlines", async (mode) => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    await ready(f);
+    if (mode === "cancellation") await speech(f);
+    if (mode === "transcription")
+      f.socket.event({ type: "input_audio_buffer.committed", item_id: "missing-transcription" });
+    if (mode === "cancellation") {
+      f.socket.event({ type: "input_audio_buffer.speech_started" });
+      await Promise.resolve();
+    }
+    await vi.advanceTimersByTimeAsync(mode === "lifetime" ? 30 * 60 * 1000 : 30000);
+    expect(
+      f.events.some(
+        (event) =>
+          event.type === "error" &&
+          (event.error as { code: string }).code ===
+            (mode === "lifetime" ? "call_limit_reached" : "timeout"),
+      ),
+    ).toBe(true);
+  });
+  it.each(["authentication_failed", "unavailable", "session_busy"])(
+    "classifies synchronous admission %s",
+    async (code) => {
+      const f = await fixture();
+      if (code === "authentication_failed") f.authorized.mockReturnValue(false);
+      if (code === "unavailable") vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+      if (code === "session_busy") for (let count = 0; count < 4; count++) f.open();
+      expect(() => f.open()).toThrow(
+        expect.objectContaining({
+          detail: expect.objectContaining({
+            code: code === "authentication_failed" ? "pairing_rejected" : code,
+          }),
+        }),
+      );
+    },
+  );
+  it("reports startup timeout and authorization revocation", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    f.open();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(f.events.at(-1)).toMatchObject({
+      type: "error",
+      error: { code: "timeout", fatal: true },
+    });
+  });
+  it("reports revoked authority instead of a normal hangup", async () => {
+    const f = await fixture();
+    const connection = await ready(f);
+    f.authorized.mockReturnValue(false);
+    connection.receive(JSON.stringify({ type: "input_audio_buffer.clear" }));
+    expect(f.events.at(-1)).toMatchObject({
+      type: "error",
+      error: { code: "pairing_rejected", fatal: true },
+    });
+    expect(f.peer.close).toHaveBeenCalledWith(1008, "voice_error:pairing_rejected");
+  });
+  it("does not recurse when neither error frames nor audio can be written", async () => {
+    const f = await fixture();
+    await ready(f);
+    vi.spyOn(f.peer, "send").mockImplementation(() => {
+      throw new Error("PRIVATE_SENTINEL");
+    });
+    f.socket.event({ type: "input_audio_buffer.speech_started" });
+    expect(f.peer.close).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(f.logger.warn.mock.calls)).not.toContain("PRIVATE_SENTINEL");
+  });
+  it("keeps intentional client hangup normal and reports service shutdown", async () => {
+    const f = await fixture();
+    const connection = await ready(f);
+    connection.close();
+    expect(f.events.some((event) => event.type === "error")).toBe(false);
+    expect(f.peer.close).toHaveBeenCalledWith(1000, "Voice call ended");
+    const other = await fixture();
+    await ready(other);
+    other.service.dispose();
+    expect(other.events.at(-1)).toMatchObject({
+      type: "error",
+      error: { code: "server_shutdown", fatal: true },
+    });
   });
   it("fails on transcription errors rather than leaving the conversation stuck", async () => {
     const f = await fixture();

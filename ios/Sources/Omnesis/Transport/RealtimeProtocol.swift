@@ -29,6 +29,7 @@ enum RealtimeProtocol {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(pairing.token)", forHTTPHeaderField: "Authorization")
         request.setValue(String(supportedVersion), forHTTPHeaderField: "X-Omnesis-Realtime-Version")
+        request.setValue("1", forHTTPHeaderField: "X-Omnesis-Realtime-Recoverable-Errors")
         return request
     }
 

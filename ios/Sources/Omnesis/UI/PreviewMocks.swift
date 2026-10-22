@@ -7505,5 +7505,19 @@ extension PreviewMocks {
         session.error = URLError(.notConnectedToInternet)
         return session
     }
+
+    @MainActor static var realtimeCreditFailure: RealtimeCallSession {
+        let session = RealtimeCallSession()
+        let failure = RealtimeCallFailure(code: "quota_exhausted", fatal: true, retryable: false)
+        session.status = failure.title
+        session.error = failure
+        return session
+    }
+
+    @MainActor static var realtimeRateLimited: RealtimeCallSession {
+        let session = realtimeListening
+        session.replyFailure = RealtimeCallFailure(code: "rate_limited", fatal: false, retryable: true)
+        return session
+    }
 }
 #endif

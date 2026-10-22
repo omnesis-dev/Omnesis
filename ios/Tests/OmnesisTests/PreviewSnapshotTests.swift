@@ -395,7 +395,16 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testRealtimePlaybackOverflowPreservesCall() throws {
         let session = RealtimeCallSession()
-        session.connected = true
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1))
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try engine.start()
+        player.play()
+        session.configurePlaybackForTesting(engine: engine, player: player)
+        defer { session.stop() }
         session.configurePlaybackForTesting(maximumBytes: 512 * 1024)
         var sent: [[String: Any]] = []
         session.outgoingMessageForTesting = { message in
@@ -596,6 +605,137 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(
             RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure).environment(AppStore.preview()),
             name: "realtime-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testCitationSpineContinuesThroughEventGap() throws {
+        let store = PreviewMocks.realtimeCitationsStore
+        let events = AgentTimelineBuilder.buildUnifiedTimeline(
+            byDoc: store.agent.trailAnnotations.byDoc,
+            records: store.agent.recordCitations
+        )
+        let event = try XCTUnwrap(events.first)
+        let row = TrailTimelineRow(
+            event: event,
+            annotations: store.agent.trailAnnotations,
+            accent: .blue,
+            nextAccent: .blue,
+            isFirstRow: false,
+            isLastRow: false
+        )
+        .environment(store)
+        .frame(width: 300)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color.white)
+        let renderer = ImageRenderer(content: row)
+        renderer.scale = 1
+        let image = try XCTUnwrap(renderer.uiImage)
+        let cg = try XCTUnwrap(image.cgImage)
+        var bytes = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+        let context = try XCTUnwrap(CGContext(
+            data: &bytes,
+            width: cg.width,
+            height: cg.height,
+            bitsPerComponent: 8,
+            bytesPerRow: cg.width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        // The source dot intentionally masks the first 24pt. Every pixel
+        // below it, including the event's bottom gap, must retain blue ink.
+        for y in 26 ..< max(26, cg.height - 2) {
+            let offset = (y * cg.width + 14) * 4
+            XCTAssertLessThan(Int(bytes[offset]), Int(bytes[offset + 2]), "Spine broke at row pixel \(y)")
+        }
+        snapshot(row, name: "citation-continuous-spine", size: CGSize(width: 300, height: image.size.height))
+        snapshot(
+            CitationsDrawer(
+                trailAnnotations: store.agent.trailAnnotations,
+                recordCitations: store.agent.recordCitations,
+                isOpen: .constant(true)
+            )
+            .environment(store),
+            name: "citation-shared-panel",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallImmediateCreditFailureSurvivesClose() throws {
+        let session = RealtimeCallSession()
+        do {
+            try session.receiveForTesting(["type": "error", "error": ["code": "quota_exhausted", "fatal": true, "retryable": false]])
+            XCTFail("Fatal provider error must stop the receive loop")
+        } catch { session.failForTesting(error) }
+        session.failForTesting(URLError(.networkConnectionLost))
+        XCTAssertFalse(session.connected)
+        XCTAssertEqual((session.error as? RealtimeCallFailure)?.code, "quota_exhausted")
+        XCTAssertEqual(GatewayErrorView.classify(session.error).title, "OpenAI credit or quota limit")
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-credit-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeCallRecoverableFailureKeepsCallAlive() throws {
+        let session = PreviewMocks.realtimeLongSpeech
+        try session.receiveForTesting(["type": "error", "error": ["code": "rate_limited", "fatal": false]])
+        XCTAssertTrue(session.connected)
+        XCTAssertNil(session.error)
+        XCTAssertEqual(session.replyFailure?.code, "rate_limited")
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-recoverable-failure",
+            ignoresSafeArea: true
+        )
+        try session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
+        XCTAssertNil(session.replyFailure)
+        XCTAssertTrue(session.connected)
+    }
+
+    func testRealtimeCallFailureWhileEndingIsNotDiscarded() throws {
+        let session = PreviewMocks.realtimeEnding
+        try session.receiveForTesting(["type": "error", "error": ["code": "session_end_failed", "fatal": true]])
+        XCTAssertEqual((session.error as? RealtimeCallFailure)?.code, "session_end_failed")
+        session.stop()
+        XCTAssertNotNil(session.error)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-end-failure",
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeProjectSpendLimitFailure() {
+        let session = PreviewMocks.realtimeCreditFailure
+        let failure = RealtimeCallFailure(code: "project_spend_limit_exceeded", fatal: true, retryable: false)
+        session.error = failure
+        session.status = failure.title
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-project-limit-failure",
+            ignoresSafeArea: true
+        )
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session)
+                .environment(AppStore.preview())
+                .dynamicTypeSize(.accessibility3),
+            name: "realtime-project-limit-accessible",
+            size: CGSize(width: 320, height: 568),
+            ignoresSafeArea: true
+        )
+    }
+
+    func testRealtimeMalformedAudioSurfacesProtocolFailure() throws {
+        let session = PreviewMocks.realtimeListening
+        try session.receiveForTesting(["type": "response.output_audio.delta", "delta": "not base64"])
+        XCTAssertEqual((session.error as? RealtimeCallFailure)?.code, "protocol_error")
+        XCTAssertFalse(session.connected)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-malformed-audio-failure",
             ignoresSafeArea: true
         )
     }

@@ -322,6 +322,39 @@ describe("socket-backed canonical turns", () => {
       await f.session.dispose();
     },
   );
+  it("preserves a known reason-only content refusal without copying provider prose", async () => {
+    const f = fixture();
+    const turn = f.session.send("Explain fictional inventory", { backend: f.backend });
+    await vi.waitFor(() =>
+      expect(f.sent.some((event) => event.type === "response.create")).toBe(true),
+    );
+    response(f, "filtered");
+    f.backend.receive({
+      type: "response.done",
+      response: {
+        id: "filtered",
+        status: "incomplete",
+        output: [],
+        status_details: { reason: "content_filter", message: "PRIVATE_SENTINEL" },
+      },
+    });
+    await turn.completion;
+    expect(f.events).toContainEqual(
+      expect.objectContaining({
+        type: "agent.message.end",
+        payload: expect.objectContaining({
+          failure: expect.objectContaining({
+            provider: { code: "content_filter" },
+            retryable: false,
+            message: "The voice provider could not answer this request. Try rephrasing it.",
+          }),
+        }),
+      }),
+    );
+    expect(JSON.stringify(f.events)).not.toContain("PRIVATE_SENTINEL");
+    expect(f.sent.filter((event) => event.type === "response.create")).toHaveLength(1);
+    await f.session.dispose();
+  });
   it.each([undefined, "PRIVATE_SENTINEL", "rate_limit_exceeded"])(
     "never retries quota type evidence with code %s",
     async (code) => {

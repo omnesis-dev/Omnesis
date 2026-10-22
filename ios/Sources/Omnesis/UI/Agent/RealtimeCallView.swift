@@ -39,28 +39,44 @@ struct RealtimeCallView: View {
                 .accessibilityLabel("Open citations")
             }
             GeometryReader { viewport in
-                RealtimeTranscriptScrollView {
-                    voiceHeader(size: dynamicTypeSize.isAccessibilitySize
-                        ? min(100, max(48, (viewport.size.height - 160) * 0.5))
-                        : min(164, max(64, (viewport.size.height - 140) * 0.55)))
-                } content: {
-                    VStack(spacing: 24) {
-                        if let error = session.error {
+                if let error = session.error {
+                    VStack(spacing: 0) {
+                        voiceHeader(size: dynamicTypeSize.isAccessibilitySize ? 48 : 80)
+                        ScrollView {
                             GatewayErrorView(context: "start the voice conversation", error: error, onRetry: {
                                 session.error = nil
                                 Task { await startCall() }
                             })
-                            .frame(minHeight: GatewayErrorView.minScrollHeight)
-                        } else {
-                            if session.connected, let failure = activityTurn?.failure { AgentTurnFailureView(failure: failure) }
+                        }
+                    }
+                } else {
+                    RealtimeTranscriptScrollView {
+                        voiceHeader(size: dynamicTypeSize.isAccessibilitySize
+                            ? min(100, max(48, (viewport.size.height - 160) * 0.5))
+                            : min(164, max(64, (viewport.size.height - 140) * 0.55)))
+                    } content: {
+                        VStack(spacing: 24) {
                             Text(conversationCaption)
                                 .font(.body)
                                 .foregroundStyle(session.transcript.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                                 .multilineTextAlignment(session.transcript.isEmpty ? .center : .leading)
                                 .lineSpacing(5)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            toolActivity
+                            if let failure = session.replyFailure {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Label(failure.title, systemImage: "exclamationmark.triangle")
+                                        .font(.headline)
+                                    Text(failure.errorDescription ?? "Please try again.")
+                                        .font(.body)
+                                }
+                                .foregroundStyle(Theme.warning)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityElement(children: .combine)
+                            }
+                            if session.connected, session.replyFailure == nil,
+                               let failure = activityTurn?.failure { AgentTurnFailureView(failure: failure) }
                         }
-                        toolActivity
                     }
                 }
             }
@@ -75,8 +91,9 @@ struct RealtimeCallView: View {
                 .accessibilityLabel(session.muted ? "Unmute microphone" : "Mute microphone")
                 Button {
                     Task {
+                        let dismissingFailure = session.error != nil
                         await session.end()
-                        dismiss()
+                        if dismissingFailure || session.error == nil { dismiss() }
                     }
                 } label: {
                     Image(systemName: "phone.down.fill")
@@ -181,6 +198,7 @@ struct RealtimeCallView: View {
     }
 
     private var displayedStatus: String {
+        if session.error is RealtimeCallFailure { return "Call interrupted" }
         guard session.connected, session.error == nil, !session.ending else { return session.status }
         if session.muted { return session.status == "Speaking" ? "Speaking" : "Microphone muted" }
         if session.userSpeechActive { return "Listening" }
@@ -327,6 +345,16 @@ struct RealtimeScrollDemoSurface: View {
 
 #Preview("Voice · Error") {
     RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeFailure)
+        .environment(AppStore.preview())
+}
+
+#Preview("Voice · OpenAI credit needed") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeCreditFailure)
+        .environment(AppStore.preview())
+}
+
+#Preview("Voice · Recoverable provider failure") {
+    RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeRateLimited)
         .environment(AppStore.preview())
 }
 #endif

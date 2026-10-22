@@ -6,9 +6,20 @@ import WebSocket from "ws";
 import { z } from "zod";
 import { createLogger, experimentalEnabled, normalizeTimeZone } from "@omnesis/core";
 import { AgentError, type AgentService, type RealtimeAgentSession } from "../agent/service.js";
+import { realtimeFailureCode, realtimeFailureDetails } from "./provider-failure.js";
 import { REALTIME_MODEL, RealtimeBackend } from "./backend.js";
+import { readHandshakeError } from "./handshake-error.js";
 import { RealtimeInputSequencer } from "./input-sequencer.js";
 import { RealtimeDiagnostics } from "./diagnostics.js";
+import {
+  callError,
+  providerCallError,
+  terminalCallError,
+  transportCallError,
+  RealtimeAdmissionError,
+  type RealtimeCallError,
+} from "./call-error.js";
+import type { AgentTerminalFailure } from "@omnesis/core";
 import type { OmnesisConfig } from "@omnesis/config";
 
 const MODEL = REALTIME_MODEL;
@@ -69,6 +80,7 @@ export interface RealtimePeer {
 export interface RealtimeConnection {
   receive(data: string): void;
   close(): void;
+  fail(reason: "invalid_client_event" | "client_socket_error"): void;
 }
 export interface RealtimeDeps {
   getConfig(): OmnesisConfig;
@@ -130,14 +142,24 @@ export class RealtimeService {
   open(
     peer: RealtimePeer,
     callerId: string,
-    options: { conversationId?: string; timeZone?: string; token: string; version?: 1 | 2 },
+    options: {
+      conversationId?: string;
+      timeZone?: string;
+      token: string;
+      version?: 1 | 2;
+      recoverableErrors?: boolean;
+    },
   ): RealtimeConnection {
     const backend = this.backend();
     const agent = this.deps.getAgent();
     const key = backend ? this.deps.getApiKey(backend) : undefined;
     if (!backend || !key || !agent || !this.deps.isAuthorized(options.token, callerId))
-      throw new Error("Realtime voice is unavailable");
-    if (this.active.size >= 4) throw new Error("All realtime voice slots are busy");
+      throw new RealtimeAdmissionError(
+        callError(
+          !this.deps.isAuthorized(options.token, callerId) ? "pairing_rejected" : "unavailable",
+        ),
+      );
+    if (this.active.size >= 4) throw new RealtimeAdmissionError(callError("session_busy"));
     const diagnosticId = randomUUID();
     const diagnostics = new RealtimeDiagnostics((message) =>
       this.log.info(`Call ${diagnosticId} ${message}`),
@@ -156,6 +178,10 @@ export class RealtimeService {
     this.log.info(`Call ${diagnosticId} opening`);
     const abort = new AbortController();
     let closed = false;
+    let rejectedHandshake = false;
+    let closeCode = 1000;
+    let wireCloseReason = "Voice call ended";
+    let terminalFailure: AgentTerminalFailure | undefined;
     let ending = false;
     let sessionId: string | undefined;
     let agentSession: RealtimeAgentSession | undefined;
@@ -163,6 +189,8 @@ export class RealtimeService {
     let running = false;
     let ready = false;
     let closeAfterTurn = false;
+    let fatalError: RealtimeCallError | undefined;
+    let providerFatalError: RealtimeCallError | undefined;
     const pendingTranscripts: Array<{ text: string; id: string }> = [];
     const accountedResponses = new Set<string>();
     const upstream =
@@ -175,30 +203,26 @@ export class RealtimeService {
     const send = (event: unknown) => {
       if (closed) return;
       if ((peer.bufferedAmount ?? 0) > MAX_BUFFERED_BYTES) {
-        closeReason = "client_backpressure";
-        close();
+        fail("client_backpressure");
         return;
       }
       try {
         peer.send(JSON.stringify(event));
       } catch {
-        closeReason = "client_send_failed";
-        close();
+        fail("client_send_failed");
       }
     };
     const sendUpstream = (event: unknown) => {
       if (closed || upstream.readyState !== WebSocket.OPEN) return false;
       if (upstream.bufferedAmount > MAX_BUFFERED_BYTES) {
-        closeReason = "upstream_backpressure";
-        close();
+        fail("upstream_backpressure");
         return false;
       }
       try {
         upstream.send(JSON.stringify(event));
         return true;
       } catch {
-        closeReason = "upstream_send_failed";
-        close();
+        fail("upstream_send_failed");
         return false;
       }
     };
@@ -218,10 +242,28 @@ export class RealtimeService {
       void backendAdapter.dispose();
       inputSequencer.dispose();
       upstream.close();
-      this.active.delete(close);
-      peer.close(1000, "Voice call ended");
+      this.active.delete(shutdown);
+      peer.close(closeCode, wireCloseReason);
     };
-    const fail = (reason = "connection_error", error?: unknown) => {
+    const report = (detail: RealtimeCallError) => {
+      if (detail.fatal) {
+        if (fatalError) return;
+        fatalError = detail;
+        closeCode = detail.code === "pairing_rejected" ? 1008 : 1011;
+        wireCloseReason = `voice_error:${detail.code}`;
+      }
+      if (closed || (peer.bufferedAmount ?? 0) > MAX_BUFFERED_BYTES) return;
+      try {
+        peer.send(JSON.stringify({ type: "error", error: detail }));
+      } catch {
+        /* Best effort when the peer is unwritable. */
+      }
+    };
+    const fail = (
+      reason = "connection_error",
+      error?: unknown,
+      detail = transportCallError(reason, error),
+    ) => {
       if (closed) return;
       closeReason = reason;
       const admissionCode =
@@ -229,30 +271,39 @@ export class RealtimeService {
         ["session_busy", "session_not_found", "context_window_exceeded"].includes(error.code)
           ? error.code
           : "none";
-      this.log.warn(`Call ${diagnosticId} failed reason=${reason} admissionCode=${admissionCode}`);
-      send({ type: "error", error: { message: "The voice connection failed. Please try again." } });
+      const firstFailure = fatalError ?? detail;
+      this.log.warn(
+        `Call ${diagnosticId} failed reason=${reason} admissionCode=${admissionCode} code=${firstFailure.code}`,
+      );
+      report(firstFailure);
       close();
     };
     const lifetime = setTimeout(() => {
-      closeReason = "call_duration_limit";
-      close();
+      fail("call_duration_limit", undefined, callError("call_limit_reached"));
     }, MAX_CALL_MS);
     const startup = setTimeout(() => fail("startup_timeout"), 30_000);
     const authorized = () =>
       this.capability().available && this.deps.isAuthorized(options.token, callerId);
-    const authorityCheck = setInterval(() => {
-      if (!authorized()) close();
-    }, 5_000);
+    const requireAuthority = () => {
+      if (authorized()) return true;
+      fail(
+        "authorization_lost",
+        undefined,
+        callError(
+          this.deps.isAuthorized(options.token, callerId) ? "unavailable" : "pairing_rejected",
+        ),
+      );
+      return false;
+    };
+    const authorityCheck = setInterval(requireAuthority, 5_000);
     authorityCheck.unref();
     lifetime.unref();
     startup.unref();
-    this.active.add(close);
+    const shutdown = () => fail("server_shutdown", undefined, callError("server_shutdown"));
+    this.active.add(shutdown);
     const backendAdapter = new RealtimeBackend(
       (event) => {
-        if (!authorized()) {
-          close();
-          return;
-        }
+        if (!requireAuthority()) return;
         if (sendUpstream(event) && (event as { type?: string }).type === "response.create")
           diagnostics.request(event);
       },
@@ -265,10 +316,7 @@ export class RealtimeService {
     };
     const drainTranscripts = () => {
       if (closed || ending || running || !agentSession || pendingTranscripts.length === 0) return;
-      if (!authorized()) {
-        close();
-        return;
-      }
+      if (!requireAuthority()) return;
       const input = pendingTranscripts.shift()!;
       backendAdapter.useInputItem(input.id);
       running = true;
@@ -278,7 +326,15 @@ export class RealtimeService {
         .finally(() => {
           running = false;
           if (ending) return;
-          if (closeAfterTurn) fail("provider_turn_failed");
+          if (closeAfterTurn)
+            fail(
+              "provider_turn_failed",
+              undefined,
+              providerFatalError ??
+                (terminalFailure
+                  ? terminalCallError(terminalFailure, true)
+                  : callError("provider_error")),
+            );
           else drainTranscripts();
         });
     };
@@ -310,12 +366,13 @@ export class RealtimeService {
         // Compatibility for older iOS callers; canonical conversation state stays on ordinary SSE.
         unsubscribe = opened.subscribe((event) => {
           diagnostics.agent(event);
-          if (
-            event.type === "agent.message.end" &&
-            event.payload.failure?.code === "provider_error" &&
-            event.payload.failure.provider?.code === "context_window_exceeded"
-          )
-            closeAfterTurn = true;
+          if (event.type === "agent.message.end" && event.payload.failure) {
+            terminalFailure = event.payload.failure;
+            if (terminalCallError(terminalFailure).code === "context_window_exceeded")
+              closeAfterTurn = true;
+            if (closeAfterTurn || options.recoverableErrors)
+              report(terminalCallError(terminalFailure, closeAfterTurn));
+          }
           if (options.version === 2) return;
           if (event.type === "agent.tool.start")
             send({
@@ -365,10 +422,7 @@ export class RealtimeService {
     upstream.on("message", (raw) => {
       if (closed || ending) return;
       try {
-        if (!authorized()) {
-          close();
-          return;
-        }
+        if (!requireAuthority()) return;
         if (Buffer.byteLength(raw.toString()) > MAX_UPSTREAM_EVENT_BYTES)
           throw new Error("Upstream voice event too large");
         const event = upstreamEvent.parse(JSON.parse(raw.toString()));
@@ -450,7 +504,7 @@ export class RealtimeService {
           inputSequencer.commit(input.item_id);
         }
         if (event.type === "conversation.item.input_audio_transcription.failed") {
-          fail("transcription_failed");
+          fail("transcription_failed", undefined, providerCallError({ error: event.error }));
           return;
         }
         if (event.type === "conversation.item.input_audio_transcription.completed") {
@@ -497,17 +551,20 @@ export class RealtimeService {
               }),
             })
             .safeParse(event);
-          const code = error.success ? error.data.error.code : undefined;
-          const safeCode = code && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : "unknown";
+          const safeCode = realtimeFailureDetails({ error: event.error }).code ?? "unknown";
           this.log.warn(`Call ${diagnosticId} upstream error code=${safeCode}`);
           if (error.success && error.data.error.code === "response_cancel_not_active") return;
           if (error.success && error.data.error.param === "audio_end_ms") return;
           if (running) {
             closeAfterTurn = true;
-            backendAdapter.fail(safeCode);
+            providerFatalError ??= providerCallError({ error: event.error });
+            report(providerFatalError);
+            backendAdapter.fail(
+              realtimeFailureCode(realtimeFailureDetails({ error: event.error })),
+            );
             return;
           }
-          fail("provider_error");
+          fail("provider_error", undefined, providerCallError({ error: event.error }));
         } else if (
           [
             "input_audio_buffer.speech_started",
@@ -527,20 +584,27 @@ export class RealtimeService {
         fail("invalid_upstream_event");
       }
     });
-    upstream.on("error", () => fail("upstream_socket_error"));
+    upstream.on("unexpected-response", (_request, response) => {
+      rejectedHandshake = true;
+      void readHandshakeError(response, abort.signal).then((detail) => {
+        if (!closed) fail("upstream_handshake_rejected", undefined, detail);
+        // With this listener ws does not abort a rejected handshake automatically.
+        upstream.terminate();
+      });
+    });
+    upstream.on("error", () => {
+      if (!rejectedHandshake) fail("upstream_socket_error");
+    });
     upstream.on("close", (code) => {
       this.log.info(`Call ${diagnosticId} upstream closed code=${code}`);
-      if (!closed) closeReason = "upstream_closed";
-      close();
+      if (!closed && !ending && !rejectedHandshake) fail("upstream_closed");
     });
     return {
       close,
+      fail,
       receive: (raw) => {
         if (closed || ending) return;
-        if (!authorized()) {
-          close();
-          return;
-        }
+        if (!requireAuthority()) return;
         try {
           if (Buffer.byteLength(raw) > MAX_FRAME_BYTES) throw new Error("Voice frame too large");
           const event = clientEvent.parse(JSON.parse(raw));
