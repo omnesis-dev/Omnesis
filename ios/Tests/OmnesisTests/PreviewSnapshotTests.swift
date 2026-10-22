@@ -246,6 +246,72 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testRealtimeScrollPreservesHostedStateEnvironmentAndLifecycle() async throws {
+        let model = VoiceScrollEnvironmentModel()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let host = UIHostingController(rootView: VoiceScrollEnvironmentRoot(model: model))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let loaded = await eventually { self.voiceScrollView(in: host.view) != nil && model.sawExpectedStore }
+        XCTAssertTrue(loaded, "The hosted content lost its AppStore environment")
+        let scroll = try XCTUnwrap(voiceScrollView(in: host.view))
+        model.button.sendActions(for: .touchUpInside)
+        let expanded = await eventually { scroll.contentSize.height > scroll.bounds.height * 2 }
+        XCTAssertTrue(expanded, "Internal SwiftUI state did not resize the hosted content")
+        let expandedHeight = scroll.contentSize.height
+        model.caption = "An incoming workshop update."
+        let updated = await eventually { model.seenCaption == model.caption }
+        XCTAssertTrue(updated)
+        XCTAssertGreaterThan(
+            scroll.contentSize.height,
+            expandedHeight * 0.9,
+            "A parent update reset private child state"
+        )
+        let readingOffset = scroll.contentOffset.y - 180
+        scroll.setContentOffset(CGPoint(x: 0, y: readingOffset), animated: false)
+        model.type = .accessibility3
+        let resizedText = await eventually {
+            model.seenType == .accessibility3 && scroll.contentSize.height > expandedHeight
+        }
+        XCTAssertTrue(resizedText, "Updated Dynamic Type did not cross the hosting boundary")
+        XCTAssertEqual(scroll.contentOffset.y, readingOffset, accuracy: 2)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 700)
+        window.layoutIfNeeded()
+        let resizedViewport = await eventually { scroll.bounds.width < 350 }
+        XCTAssertTrue(resizedViewport)
+        XCTAssertGreaterThan(voiceDistanceToBottom(scroll), 180, "Resizing stole paused reading")
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
+        let beforePresentation = scroll.contentSize.height
+        let modal = UIViewController()
+        modal.modalPresentationStyle = .fullScreen
+        host.present(modal, animated: false)
+        let presented = await eventually { modal.view.window != nil }
+        XCTAssertTrue(presented)
+        model.caption += "\n\n" + PreviewMocks.realtimeLongCaption
+        await withCheckedContinuation { continuation in
+            host.dismiss(animated: false) { continuation.resume() }
+        }
+        let returned = await eventually {
+            scroll.contentSize.height > beforePresentation && self.voiceDistanceToBottom(scroll) < 6
+        }
+        let metrics = "height=\(scroll.contentSize.height), prior=\(beforePresentation), distance=\(voiceDistanceToBottom(scroll))"
+        XCTAssertTrue(returned, "Returning from a sheet did not restore following: \(metrics)")
+        try writeSnapshotPNG(
+            captureVoiceHost(host),
+            to: Self.outputDir.appendingPathComponent("realtime-hosted-state-environment.png")
+        )
+        model.caption = "A short restored caption."
+        let restored = await eventually { model.seenCaption == model.caption }
+        XCTAssertTrue(restored)
+        model.button.sendActions(for: .touchUpInside)
+        let collapsed = await eventually { scroll.contentSize.height < scroll.bounds.height }
+        XCTAssertTrue(collapsed, "Private expansion state was lost during updates or presentation")
+        XCTAssertEqual(scroll.contentOffset.y, 0, accuracy: 2)
+    }
+
     private func voiceSnapshot(_ view: some View, name: String, size: CGSize? = nil) {
         for scheme in [ColorScheme.light, .dark] {
             renderInWindow(view, name: "\(name)-\(scheme)", scheme: scheme, size: size)
@@ -8926,5 +8992,94 @@ private struct RealtimeComposerSnapshot: View {
             onCancel: {},
             focused: $focused
         )
+    }
+}
+
+@MainActor
+@Observable
+private final class VoiceScrollEnvironmentModel {
+    let store = AppStore.preview()
+    let button = UIButton(type: .system)
+    var caption = "A short workshop caption."
+    var type = DynamicTypeSize.large
+    var seenCaption = ""
+    var seenType: DynamicTypeSize?
+    var sawExpectedStore = false
+
+    init() {
+        button.setTitle("Expand local content", for: .normal)
+    }
+}
+
+private struct VoiceScrollEnvironmentRoot: View {
+    let model: VoiceScrollEnvironmentModel
+
+    var body: some View {
+        RealtimeTranscriptScrollView {
+            Text("Voice scroll fixture")
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Theme.bgPrimary)
+        } content: {
+            VoiceScrollStatefulContent(model: model, caption: model.caption)
+        }
+        .environment(model.store)
+        .dynamicTypeSize(model.type)
+    }
+}
+
+private struct VoiceScrollStatefulContent: View {
+    let model: VoiceScrollEnvironmentModel
+    let caption: String
+    @State private var expanded = false
+    @Environment(AppStore.self) private var store
+    @Environment(\.dynamicTypeSize) private var type
+
+    var body: some View {
+        VStack(spacing: 16) {
+            VoiceScrollExpansionButton(button: model.button) { expanded.toggle() }.frame(height: 44)
+            if expanded { Text(PreviewMocks.realtimeLongCaption).font(.body) }
+            Text(caption)
+        }
+        .onAppear {
+            model.sawExpectedStore = store === model.store
+            model.seenCaption = caption
+            model.seenType = type
+        }
+        .onChange(of: caption) { _, value in model.seenCaption = value }
+        .onChange(of: type) { _, value in model.seenType = value }
+    }
+}
+
+private struct VoiceScrollExpansionButton: UIViewRepresentable {
+    let button: UIButton
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> UIButton {
+        button.addTarget(context.coordinator, action: #selector(Coordinator.activate), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_: UIButton, context: Context) {
+        context.coordinator.action = action
+    }
+
+    static func dismantleUIView(_ view: UIButton, coordinator: Coordinator) {
+        view.removeTarget(coordinator, action: #selector(Coordinator.activate), for: .touchUpInside)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func activate() {
+            action()
+        }
     }
 }
