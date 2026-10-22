@@ -15,14 +15,19 @@ struct RealtimeCallView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Omnesis").font(.title2.weight(.semibold))
-                    Text("Voice conversation · Experimental")
-                        .font(.caption).foregroundStyle(Theme.textSecondary)
+                    Text("Omnesis")
+                        .font((dynamicTypeSize.isAccessibilitySize ? Font.headline : .title2).weight(.semibold))
+                        .accessibilityLabel(dynamicTypeSize.isAccessibilitySize ? "Omnesis voice conversation. Experimental." : "Omnesis")
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Text("Voice conversation · Experimental")
+                            .font(.caption).foregroundStyle(Theme.textSecondary)
+                    }
                 }
                 Spacer()
                 Button {
@@ -34,8 +39,10 @@ struct RealtimeCallView: View {
                 .accessibilityLabel("Open citations")
             }
             GeometryReader { viewport in
-                RealtimeTranscriptScrollView(revision: conversationCaption) {
-                    voiceHeader(size: min(164, max(64, (viewport.size.height - 140) * 0.55)))
+                RealtimeTranscriptScrollView {
+                    voiceHeader(size: dynamicTypeSize.isAccessibilitySize
+                        ? min(100, max(48, (viewport.size.height - 160) * 0.5))
+                        : min(164, max(64, (viewport.size.height - 140) * 0.55)))
                 } content: {
                     VStack(spacing: 24) {
                         if let error = session.error {
@@ -81,7 +88,8 @@ struct RealtimeCallView: View {
                 .disabled(session.ending)
                 .accessibilityLabel("End voice conversation")
             }
-            Text("Audio is sent through your gateway to OpenAI.")
+            Text(dynamicTypeSize.isAccessibilitySize ? "Audio to OpenAI." : "Audio is sent through your gateway to OpenAI.")
+                .accessibilityLabel("Audio is sent through your gateway to OpenAI.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)

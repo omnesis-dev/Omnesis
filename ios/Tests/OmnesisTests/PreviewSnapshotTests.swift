@@ -231,6 +231,19 @@ final class PreviewSnapshotTests: XCTestCase {
             scroll.contentSize.height > resumedHeight && self.voiceDistanceToBottom(scroll) < 6
         }
         XCTAssertTrue(keptFollowing)
+        let coalescedOffset = scroll.contentOffset.y - 180
+        let coalescedHeight = scroll.contentSize.height
+        scroll.setContentOffset(CGPoint(x: 0, y: coalescedOffset), animated: false)
+        session.transcript += "\n\n" + PreviewMocks.realtimeLongCaption
+        let coalesced = await eventually { scroll.contentSize.height > coalescedHeight }
+        XCTAssertTrue(coalesced)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(
+            scroll.contentOffset.y,
+            coalescedOffset,
+            accuracy: 2,
+            "Speech arriving in the same layout pass took away manual reading"
+        )
     }
 
     private func voiceSnapshot(_ view: some View, name: String, size: CGSize? = nil) {

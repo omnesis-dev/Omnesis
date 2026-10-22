@@ -6,7 +6,6 @@ import SwiftUI
 
 /// Follows growing speech until the reader moves away; the header never moves.
 struct RealtimeTranscriptScrollView<Header: View, Content: View>: View {
-    let revision: String
     private let header: Header
     private let content: Content
     @State private var following = true
@@ -15,8 +14,7 @@ struct RealtimeTranscriptScrollView<Header: View, Content: View>: View {
     @State private var previousViewport: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
 
-    init(revision: String, @ViewBuilder header: () -> Header, @ViewBuilder content: () -> Content) {
-        self.revision = revision
+    init(@ViewBuilder header: () -> Header, @ViewBuilder content: () -> Content) {
         self.header = header()
         self.content = content()
     }
@@ -53,9 +51,6 @@ struct RealtimeTranscriptScrollView<Header: View, Content: View>: View {
                         following = previousFrame.maxY <= previousViewport + 36
                     }
                 }
-                .onChange(of: revision) { _, _ in
-                    if following, !dragging { proxy.scrollTo("realtime.latest", anchor: .bottom) }
-                }
                 .overlay(alignment: .bottom) {
                     if !following {
                         Button {
@@ -84,8 +79,12 @@ struct RealtimeTranscriptScrollView<Header: View, Content: View>: View {
         let viewportChanged = abs(viewport - previousViewport) > 0.5
         if !dragging, frame.maxY <= viewport + 36 {
             following = true
-        } else if let previousFrame, !resized, !viewportChanged, abs(previousFrame.minY - frame.minY) > 0.5 {
-            following = false
+        } else if let previousFrame, !viewportChanged {
+            // A reader can move back during the same layout pass that appends
+            // speech. Owned jumps toward the latest words move the other way.
+            let movedBack = frame.minY > previousFrame.minY + 0.5
+            let movedWithoutGrowth = !resized && abs(previousFrame.minY - frame.minY) > 0.5
+            if movedBack || movedWithoutGrowth { following = false }
         }
         previousFrame = frame
         previousViewport = viewport
@@ -97,7 +96,7 @@ struct RealtimeTranscriptScrollView<Header: View, Content: View>: View {
 
 #if DEBUG
 #Preview("Voice transcript · Streaming") {
-    RealtimeTranscriptScrollView(revision: PreviewMocks.realtimeLongCaption) {
+    RealtimeTranscriptScrollView {
         RealtimeVoiceHalo(activity: .agent, muted: false)
             .padding()
             .frame(maxWidth: .infinity)
