@@ -2,12 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Keeping a deleted source out of the Morning brief conversation.
+ * Keeping an erased observation out of the Morning brief conversation.
  *
- * Deleting a document deletes the observations that cite it, but a brief
- * already sent may have quoted them. Each pass finds those briefs and
- * replaces their text with a notice, then forgets their items so the brief
- * is redacted once.
+ * Erasing an observation outright (with the loop it was attached to, say)
+ * leaves no outcome record, but a brief already sent may have quoted it. Each
+ * pass finds those briefs and replaces their text with a notice, then forgets
+ * their items so the brief is redacted once. A source deletion never erases
+ * an observation, so it never redacts a brief.
  */
 
 import { listTaintedMorningBriefs } from "../storage/morning-brief-items.js";

@@ -9,9 +9,6 @@
  * that keeps recurring is recognised as a KNOWN recurrence — with its cadence
  * and recurrence count — rather than minted as a fresh loop each time.
  *
- * A privacy delete never writes here (see `cascadeOpenLoopPrivacyDelete`): a
- * privacy delete purges derived content, and a lingering trace would leak it.
- *
  * Same conventions as the sibling repositories: plain functions over a
  * better-sqlite3 handle, and every write takes an explicit `now` (unix ms) so
  * tests control time.

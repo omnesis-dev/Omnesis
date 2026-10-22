@@ -3,11 +3,6 @@
 
 import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
-import type {
-  ProposedTaskChange,
-  ObservationClaim,
-  ObservationScores,
-} from "../brain/storage/types.js";
 import type { ConversationEvidenceProjection } from "../sources/omnesis-chat/evidence-projection.js";
 
 import {
@@ -220,7 +215,6 @@ import {
   invalidateTemporalAnnotation,
   invalidateTemporalAnnotationsForDoc,
   markTemporalAnnotationsRefilePresented,
-  cascadeTemporalAnnotationPrivacyDelete,
   type CreateTemporalAnnotationInput,
   type UpdateTemporalAnnotationPatch,
   type TemporalAnnotationInvalidationResult,
@@ -286,11 +280,11 @@ import {
   resolveDocumentPeople,
   backfillManyPeople,
 } from "../domain/PeopleResolutionService.js";
+import { reviewBrainArtifactsForDeletedDocs } from "../brain/source-deletion-review.js";
 import {
   upsertDocuments,
   upsertWithCursorYieldable,
   deleteDocuments,
-  cascadeOpenLoopPrivacyDeleteWithMirrors,
   deleteDocumentForUser,
   deleteDocumentForRetention,
   completeDocumentRetention,
@@ -514,13 +508,11 @@ import {
   supersedeDocAnnotationBy,
   updateDocAnnotation,
   invalidateAnnotationsForDoc,
-  cascadeAnnotationPrivacyDelete,
   createPersonAnnotation,
   createPersonAnnotationSuperseding,
   supersedePersonAnnotationBy,
   revisePersonAnnotation,
   invalidatePersonAnnotationsForDoc,
-  cascadePersonAnnotationPrivacyDelete,
   mutateWithConsumptionDependencies,
   retractAnnotationWithDependentRechecks,
   recordCognitionSpend,
@@ -1565,8 +1557,8 @@ export const writerHandlers = {
   // `open_loop_delete` path); the storage default is trace-free.
   "cognition.openLoopDelete": (db: Db, id: string, now: number) =>
     deleteOpenLoop(db, id, { retire: true, now }),
-  "cognition.openLoopCascade": (db: Db, deletedDocIds: readonly string[]) =>
-    cascadeOpenLoopPrivacyDeleteWithMirrors(db, deletedDocIds),
+  "cognition.sourceDeletionReview": (db: Db, deletedDocIds: readonly string[]) =>
+    reviewBrainArtifactsForDeletedDocs(db, deletedDocIds, Date.now()),
   "cognition.annotationCreate": (db: Db, input: CreateDocAnnotationInput, now: number) =>
     createDocAnnotation(db, input, now, true),
   // Atomic create-and-supersede (belief revision): the successor row and the
@@ -1599,8 +1591,6 @@ export const writerHandlers = {
     ),
   "cognition.annotationInvalidate": (db: Db, docId: string, now: number) =>
     invalidateAnnotationsForDoc(db, docId, now),
-  "cognition.annotationPrivacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
-    cascadeAnnotationPrivacyDelete(db, deletedDocIds),
   "cognition.personAnnotationCreate": (
     db: Db,
     input: CreatePersonAnnotationInput,
@@ -1645,8 +1635,6 @@ export const writerHandlers = {
     }),
   "cognition.personAnnotationInvalidate": (db: Db, docId: string, now: number) =>
     invalidatePersonAnnotationsForDoc(db, docId, now),
-  "cognition.personAnnotationPrivacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
-    cascadePersonAnnotationPrivacyDelete(db, deletedDocIds),
   "conversationReadState.markSeen": (db: Db, conversationId: string): void =>
     markConversationOpened(db, conversationId),
   "conversationReadState.agentContentArrived": (
@@ -1787,8 +1775,6 @@ export const writerHandlers = {
     markTemporalAnnotationsRefilePresented(db, ids, runId);
     return null;
   },
-  "temporalAnnotations.privacyDelete": (db: Db, deletedDocIds: readonly string[]): string[] =>
-    cascadeTemporalAnnotationPrivacyDelete(db, deletedDocIds),
   "cognition.observationCreate": (
     db: Db,
     input: CreateObservationInput,
@@ -1973,6 +1959,11 @@ export const writerHandlers = {
  */
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import type {
+  ProposedTaskChange,
+  ObservationClaim,
+  ObservationScores,
+} from "../brain/storage/types.js";
 import type {
   VocabularySettings,
   ExtractedVocabularyDocument,

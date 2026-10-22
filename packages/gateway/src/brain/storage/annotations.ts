@@ -24,8 +24,8 @@
  *    fact downstream;
  *  - a cited document's content change SOFT-invalidates what it broke
  *    (`invalidated_at`, dropped from priors, kept for audit); a document
- *    deletion HARD-purges every annotation resting on it (privacy: derived
- *    text may embed the source).
+ *    deletion breaks the atoms citing it and keeps the annotation,
+ *    `unverified`, for review — it never deletes or invalidates one.
  *
  * ## Multi-evidence + the scalar mirror invariant
  *
@@ -125,8 +125,8 @@ export function createAnnotationStorageTables(db: Db): void {
       PRIMARY KEY (annotation_id, position)
     )
   `);
-  // "Which annotations rest on this document" — the invalidation guard and
-  // the privacy cascade key on the evidence atom.
+  // "Which annotations rest on this document" — content-change invalidation
+  // and source-deletion review key on the evidence atom.
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_doc_annotation_evidence_doc ON doc_annotation_evidence(evidence_doc_id)",
   );
@@ -662,6 +662,28 @@ export function listLiveAnnotationsForDoc(
 }
 
 /**
+ * Live annotations about `docId` that are kept for review after the document
+ * their scalar mirror cites was deleted: never served as priors, but the
+ * Brain's review must be able to read them to revise or retract them.
+ * Also lists annotations about a document that was itself deleted.
+ */
+export function listAnnotationsUnderReviewForDoc(
+  db: Db,
+  docId: string,
+  limit = 20,
+): DocAnnotationRow[] {
+  return db
+    .prepare<[string, number], DocAnnotationDbRow>(
+      `SELECT * FROM doc_annotations
+        WHERE ${knowledgeOwnerReadPredicate(db, "doc_annotations.id")} AND doc_id = ? AND invalidated_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.id = doc_annotations.evidence_doc_id)
+        ORDER BY created_at DESC, id DESC LIMIT ?`,
+    )
+    .all(docId, limit)
+    .map(rowToAnnotation);
+}
+
+/**
  * The one-belief conflict probe: every live annotation on `docId` whose
  * claim type matches `claimType` case-insensitively (stored rows may predate
  * boundary normalization). Matching happens in SQL over ALL live rows on the
@@ -811,7 +833,7 @@ function stampUnverified(db: Db, table: string, ids: readonly string[]): void {
  * `docId`, stamping `broken_at` on the atoms that no longer ground anything:
  * an atom citing `docId` whose quote no longer appears in `content` (empty
  * when the document row vanished), and any atom whose evidence document row
- * no longer EXISTS — a deletion path the privacy cascade never saw leaves
+ * no longer EXISTS — a deletion path that did not reground this annotation leaves
  * such atoms behind, and promoting one into the scalar mirror would leave the
  * annotation live-yet-unservable (every serving read requires the mirror doc
  * to exist). Returns the annotation's still-live atoms afterwards, in
@@ -866,13 +888,11 @@ export function breakAnnotationEvidenceForDoc(
  *    `verification_state = 'unverified'` with `last_verified_at` cleared, so
  *    the re-verification sweep re-judges the claim against what remains.
  *
- * The deletion-driven privacy purge (`cascadeAnnotationPrivacyDelete`) stays
- * blanket — derived text may embed the removed content. A vanished document
- * row degrades exactly like a content change that dropped every quote: the
- * atoms citing it break (un-regroundable) — as does any atom whose OWN
- * evidence document vanished via a path no cascade saw, so a promotion can
- * never re-point the mirror at a dead document — and only an annotation left
- * with no grounding at all dies.
+ * A vanished document row degrades exactly like a content change that
+ * dropped every quote: the atoms citing it break (un-regroundable) — as does
+ * any atom whose OWN evidence document vanished, so a promotion can never
+ * re-point the mirror at a dead document. A deliberate source deletion takes
+ * the gentler {@link reviewDocAnnotationsForDeletedDoc} path instead.
  *
  * `now` is the content-change event time; only annotations that existed AT
  * that moment (`created_at <= now`) are touched, so an annotation a later run
@@ -884,23 +904,61 @@ export function invalidateAnnotationsForDoc(
   docId: string,
   now: number,
 ): AnnotationInvalidationResult {
-  const txn = db.transaction((): AnnotationInvalidationResult => {
+  return regroundDocAnnotations(db, docId, now, "content").result;
+}
+
+/**
+ * A source document was deleted: the annotations about it or grounded in it
+ * survive. Every atom citing it is stamped broken (the quote stays on record,
+ * unservable), a survivor whose evidence[0] broke has its next live atom
+ * promoted into the scalar mirror, and every touched annotation — including
+ * one left with no live grounding, or whose subject was the deleted document
+ * — is re-stamped `unverified` so it is re-judged. Nothing is invalidated
+ * here: only a reviewed decision (revise, supersede, retract) may retire it.
+ * Returns the ids of the annotations it touched. Idempotent.
+ */
+export function reviewDocAnnotationsForDeletedDoc(db: Db, docId: string, now: number): string[] {
+  return regroundDocAnnotations(db, docId, now, "deleted").touched;
+}
+
+function regroundDocAnnotations(
+  db: Db,
+  docId: string,
+  now: number,
+  cause: "content" | "deleted",
+): { result: AnnotationInvalidationResult; touched: string[] } {
+  const txn = db.transaction((): { result: AnnotationInvalidationResult; touched: string[] } => {
+    // Index-driven: the annotations about the document, then those resting on
+    // a live atom of it. A deletion marks an annotation about the document
+    // once (a repeated pass finds it already unverified) and has no event-time
+    // guard: everything resting on the deleted document is affected.
+    const subject =
+      cause === "deleted" ? "AND verification_state IS NOT 'unverified'" : "AND created_at <= ?";
+    const atomTime = cause === "deleted" ? "" : "AND a.created_at <= ?";
     const candidates = db
       .prepare<
-        [string, string, number],
+        unknown[],
         { id: string; doc_id: string; evidence_doc_id: string; evidence_quote: string }
       >(
-        `SELECT id, doc_id, evidence_doc_id, evidence_quote FROM doc_annotations a
-          WHERE (doc_id = ? OR EXISTS (
-                  SELECT 1 FROM doc_annotation_evidence e
-                   WHERE e.annotation_id = a.id AND e.evidence_doc_id = ? AND e.broken_at IS NULL))
-            AND invalidated_at IS NULL AND created_at <= ?`,
+        `SELECT id, doc_id, evidence_doc_id, evidence_quote FROM doc_annotations
+          WHERE doc_id = ? AND invalidated_at IS NULL ${subject}
+         UNION
+         SELECT a.id, a.doc_id, a.evidence_doc_id, a.evidence_quote
+           FROM doc_annotation_evidence e JOIN doc_annotations a ON a.id = e.annotation_id
+          WHERE e.evidence_doc_id = ? AND e.broken_at IS NULL AND a.invalidated_at IS NULL ${atomTime}`,
       )
-      .all(docId, docId, now);
-    if (candidates.length === 0) return { invalidated: 0, flaggedUnverified: 0, promoted: 0 };
-    const doc = db
-      .prepare<[string], { content: string | null }>("SELECT content FROM documents WHERE id = ?")
-      .get(docId);
+      .all(...(cause === "deleted" ? [docId, docId] : [docId, now, docId, now]));
+    if (candidates.length === 0)
+      return { result: { invalidated: 0, flaggedUnverified: 0, promoted: 0 }, touched: [] };
+    const doc =
+      cause === "deleted"
+        ? undefined
+        : db
+            .prepare<
+              [string],
+              { content: string | null }
+            >("SELECT content FROM documents WHERE id = ?")
+            .get(docId);
     const docGone = doc === undefined;
     const content = doc?.content ?? "";
     const dead: string[] = [];
@@ -916,14 +974,18 @@ export function invalidateAnnotationsForDoc(
         now,
       );
       // A subject whose document row vanished is un-servable regardless of
-      // its grounding (every serving read requires the subject doc), so the
-      // annotation dies with it; otherwise only a fully-ungrounded one dies.
-      if (remaining.length === 0 || (docGone && c.doc_id === docId)) {
+      // its grounding (every serving read requires the subject doc), so on a
+      // content change the annotation dies with it; otherwise only a
+      // fully-ungrounded one dies. A deletion retires nothing by itself.
+      if (cause === "content" && (remaining.length === 0 || (docGone && c.doc_id === docId))) {
         dead.push(c.id);
         continue;
       }
-      const head = remaining[0]!;
-      if (head.evidenceDocId !== c.evidence_doc_id || head.evidenceQuote !== c.evidence_quote) {
+      const head = remaining[0];
+      if (
+        head &&
+        (head.evidenceDocId !== c.evidence_doc_id || head.evidenceQuote !== c.evidence_quote)
+      ) {
         // evidence[0] broke: promote the next surviving atom into the mirror.
         db.prepare<[string, string, string]>(
           `UPDATE doc_annotations SET evidence_doc_id = ?, evidence_quote = ? WHERE id = ?`,
@@ -934,20 +996,22 @@ export function invalidateAnnotationsForDoc(
     }
     stampInvalidated(db, "doc_annotations", dead, now);
     stampUnverified(db, "doc_annotations", survivors);
-    return { invalidated: dead.length, flaggedUnverified: survivors.length, promoted };
+    return {
+      result: { invalidated: dead.length, flaggedUnverified: survivors.length, promoted },
+      touched: survivors,
+    };
   });
   return txn();
 }
 
 /**
- * Privacy / deletion cascade: HARD-delete every annotation whose subject or
- * ANY evidence atom (live or broken — the blanket applies to everything the
- * annotation ever embedded) is one of `deletedDocIds`. A soft invalidation
- * would leave the derived `claim_text` / `evidence_quote` — which may embed
- * the deleted document's content — on disk, so a delete purges outright,
- * mirroring `cascadeOpenLoopPrivacyDelete`. Child evidence rows are purged
- * with their parents. Returns the deleted annotation ids. Chunks the id
- * lists so a large batch stays under SQLite's bound-variable ceiling.
+ * HARD-delete every annotation whose subject or ANY evidence atom (live or
+ * broken) is one of `deletedDocIds`, with its child evidence rows. Only the
+ * historical retired-web-documents migration uses this; a live source
+ * deletion never deletes an annotation (see
+ * {@link reviewDocAnnotationsForDeletedDoc}). Returns the deleted annotation
+ * ids. Chunks the id lists so a large batch stays under SQLite's
+ * bound-variable ceiling.
  */
 export function cascadeAnnotationPrivacyDelete(db: Db, deletedDocIds: readonly string[]): string[] {
   if (deletedDocIds.length === 0) return [];

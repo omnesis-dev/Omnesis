@@ -17,6 +17,7 @@ import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { annotationEvidenceFrame } from "../annotation-verification.js";
 import { withPersonProfileRead } from "../person-profile-test-tools.js";
+import { deleteDocumentsByIds } from "../../data/repositories/DocumentRepository.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { createOpenLoopMirror } from "../steward/mirror.js";
@@ -1559,6 +1560,35 @@ describe("annotation_search", () => {
     expect(body.data.annotations).toHaveLength(1);
     expect(body.data.annotations[0]?.evidenceDocId).toBe(evidence);
     expect(body.data.annotations[0]?.evidenceQuote).toBe("deposit is due friday");
+  });
+
+  test("lists annotations kept for review after their documents were deleted, marked and not as priors", async () => {
+    const subject = insertDoc(db, "d1", "subject body");
+    const evidence = insertDoc(db, "d2", "the venue deposit is due friday");
+    createDocAnnotation(
+      db,
+      {
+        id: "anno_review",
+        docId: subject,
+        claimType: "commitment-status",
+        claimText: "deposit not yet paid",
+        evidenceDocId: evidence,
+        evidenceQuote: "deposit is due friday",
+        confidence: 0.6,
+        claimBasis: "quoted",
+        createdByRun: "r1",
+      },
+      NOW,
+    );
+    deleteDocumentsByIds(db, [evidence, subject]);
+    const t = tool(buildTools(), "annotation_search");
+    const res = await t.invoke({ docId: subject }, CTX);
+    expect(res).toMatchObject({
+      kind: "structured",
+      data: { annotations: [{ id: "anno_review", underReview: true }] },
+    });
+    // Nothing kept for review about an unknown document: still not found.
+    expect(await t.invoke({ docId: "no-such-doc" }, CTX)).toMatchObject({ kind: "error" });
   });
 
   test("lists a person's live priors, resolving id or email to the canonical", async () => {

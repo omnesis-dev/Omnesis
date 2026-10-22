@@ -18,14 +18,7 @@ import { markLinkStatsDirty, markPeopleGraphDirty, markMergeRulesDirty } from ".
 import { extractPeopleFromMetadata, type DocumentProjection } from "../document-projection.js";
 import { documentsMetadataCodec, type DocumentsMetadata } from "../json-columns.js";
 import { applyDeclaredEdges } from "../../domain/EdgeDeclarationWriter.js";
-import {
-  cascadeAnnotationPrivacyDelete,
-  cascadeOpenLoopPrivacyDelete,
-  listLoopIdsCitingDocs,
-  cascadePersonAnnotationPrivacyDelete,
-  OPEN_LOOP_PROVIDER_ID,
-  OPEN_LOOP_SOURCE_ID,
-} from "../../brain/index.js";
+import { reviewBrainArtifactsForDeletedDocs } from "../../brain/source-deletion-review.js";
 import { sourcePrefixPredicate } from "../source-addressing.js";
 import { getPendingSourcePage } from "./PendingSourcePageRepository.js";
 import {
@@ -746,6 +739,10 @@ function nextChunkEnd(
  * up to one full reconcile interval (1h). When `expectedWipeEpoch` is set,
  * the single writer checks it before deleting so a stale snapshot cannot
  * remove documents inserted after a source wipe.
+ *
+ * The Brain artifacts built on a deleted document survive it: in the same
+ * transaction they lose their pointer to it and are queued for review
+ * (`reviewBrainArtifactsForDeletedDocs`).
  */
 /**
  * IN-list chunk for `deleteDocuments`, sized to stay within SQLite's
@@ -785,9 +782,10 @@ export function deleteDocuments(
           { id: string }
         >(`SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`)
         .all(providerId, sourceId, streamId, ...chunk);
-      purgeDocumentAnnotations(
+      reviewBrainArtifactsForDeletedDocs(
         db,
         matches.map((row) => row.id),
+        Date.now(),
       );
       db.prepare(
         `DELETE FROM documents WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id IN (${placeholders})`,
@@ -824,29 +822,6 @@ export function deleteDocuments(
   return deletedIds;
 }
 
-/** Retract grounded loops and mirrors atomically, recording mirror index cleanup. */
-export function cascadeOpenLoopPrivacyDeleteWithMirrors(
-  db: Db,
-  deletedDocIds: readonly string[],
-): { deletedLoopIds: string[]; deletedObservationIds: string[] } {
-  return db.transaction(() => {
-    const loopIds = listLoopIdsCitingDocs(db, deletedDocIds);
-    if (loopIds.length > 0) {
-      deleteDocuments(
-        db,
-        OPEN_LOOP_PROVIDER_ID,
-        OPEN_LOOP_SOURCE_ID,
-        loopIds,
-        undefined,
-        "",
-        "",
-        true,
-      );
-    }
-    return cascadeOpenLoopPrivacyDelete(db, deletedDocIds, loopIds);
-  })();
-}
-
 /**
  * Delete documents by their internal id, with the same derived-store
  * bookkeeping `deleteDocuments` does.
@@ -872,9 +847,10 @@ export function deleteDocumentsByIds(db: Db, documentIds: readonly string[]): st
           { id: string; source_id: string }
         >(`SELECT id, source_id FROM documents WHERE id IN (${placeholders})`)
         .all(...chunk);
-      purgeDocumentAnnotations(
+      reviewBrainArtifactsForDeletedDocs(
         db,
         matches.map((row) => row.id),
+        Date.now(),
       );
       db.prepare(`DELETE FROM documents WHERE id IN (${placeholders})`).run(...chunk);
       return matches;
@@ -897,14 +873,6 @@ export function deleteDocumentsByIds(db: Db, documentIds: readonly string[]): st
   markPeopleGraphDirty(db);
   markMergeRulesDirty(db);
   return deletedIds;
-}
-
-/** Annotations retain verbatim source text, including superseded audit rows.
- * Purge them inside the document's writer transaction so every deletion path
- * removes that text and an in-flight annotation write cannot race the purge. */
-function purgeDocumentAnnotations(db: Db, documentIds: readonly string[]): void {
-  cascadeAnnotationPrivacyDelete(db, documentIds);
-  cascadePersonAnnotationPrivacyDelete(db, documentIds);
 }
 
 /**
@@ -958,6 +926,9 @@ export function tombstoneDocuments(
  *      key so a later re-sync or re-capture can't resurrect the page. Without
  *      it only this copy goes: the source is free to bring the page back.
  *
+ * Like every deletion, it keeps the Brain artifacts built on the document
+ * (loops, Tasks, observations, annotations) and queues them for review.
+ *
  * Returns the deleted internal `document_id`s for the caller's index-side
  * cascade (`chunks` / `indexed_documents` live in a separate SQLite file).
  */
@@ -1007,16 +978,6 @@ export function deleteDocumentForUser(
   if (tombstone) {
     tombstoneDocuments(db, providerId, sourceId, allExternalIds, originalDocumentIds, streamId);
   }
-  // Privacy cascade into the Brain: loops and observations derived from a
-  // privacy-deleted document are deleted with it, and the
-  // cascaded loops' mirrored `open-loop` corpus docs (external id = loop
-  // id) go too. No tombstones for those mirrors — nothing re-syncs them.
-  const cascade = cascadeOpenLoopPrivacyDelete(db, deletedIds);
-  if (cascade.deletedLoopIds.length > 0) {
-    deletedIds.push(
-      ...deleteDocuments(db, OPEN_LOOP_PROVIDER_ID, OPEN_LOOP_SOURCE_ID, cascade.deletedLoopIds),
-    );
-  }
   return deletedIds;
 }
 
@@ -1024,10 +985,9 @@ export function deleteDocumentForUser(
  * Delete exactly one activity-trace document while retention is in progress.
  *
  * Unlike the user privacy delete, this does not expand attachment children.
- * Durable annotations can cite activity traces and are purged by the shared
- * document deletion primitive, including their superseded audit text. The
- * temporary tombstone closes the crash window while the index sidecar is
- * cleaned; the caller removes it immediately before unlinking the transcript.
+ * Brain artifacts citing the trace are kept and queued for review by the shared
+ * document deletion primitive, as for every deletion. The temporary tombstone
+ * closes the crash window while the index sidecar is cleaned; the caller removes it immediately before unlinking the transcript.
  */
 export function deleteDocumentForRetention(
   db: Db,

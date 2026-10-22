@@ -460,31 +460,25 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "cognition.openLoopRewritePeople", priority: "background" },
   { name: "cognition.openLoopLedgerAppend", priority: "background" },
   { name: "cognition.openLoopDelete", priority: "background" },
-  // Retract the loops (and their attached observations) whose supporting documents
-  // were deleted in bulk. Background: it trails a sweep the operator has
-  // already been told completed.
-  { name: "cognition.openLoopCascade", priority: "background" },
-  // Durable doc-annotation ops. The privacy-delete cascade rides a
-  // user-initiated document delete, so it takes user priority to complete
-  // promptly (derived text may embed the removed content); create/invalidate
-  // are ordinary background steward writes.
+  // Keep the loops, observations and annotations built on deleted documents
+  // and queue them for review. Background: it trails a deletion the operator
+  // has already been told completed; an HTTP delete raises it to user.
+  { name: "cognition.sourceDeletionReview", priority: "background" },
+  // Durable doc-annotation ops: ordinary background steward writes.
   { name: "cognition.annotationCreate", priority: "background" },
   { name: "cognition.annotationCreateSuperseding", priority: "background" },
   { name: "cognition.annotationSupersede", priority: "background" },
   { name: "cognition.annotationUpdate", priority: "background" },
   { name: "cognition.annotationDelete", priority: "background" },
   { name: "cognition.annotationInvalidate", priority: "background" },
-  { name: "cognition.annotationPrivacyDelete", priority: "user" },
   // Durable person-annotation ops — the person-keyed sibling of the doc ones.
-  // create/revise/retract/invalidate are ordinary background steward writes;
-  // privacyDelete rides a user-initiated document delete (user priority).
+  // create/revise/retract/invalidate are ordinary background steward writes.
   { name: "cognition.personAnnotationCreate", priority: "background" },
   { name: "cognition.personAnnotationCreateSuperseding", priority: "background" },
   { name: "cognition.personAnnotationSupersede", priority: "background" },
   { name: "cognition.personAnnotationRevise", priority: "background" },
   { name: "cognition.personAnnotationRetract", priority: "background" },
   { name: "cognition.personAnnotationInvalidate", priority: "background" },
-  { name: "cognition.personAnnotationPrivacyDelete", priority: "user" },
   // Developer annotations (OMNESIS_DEV_MODE): operator-authored data-quality
   // notes filed from the portal / app. User priority — they ride the HTTP
   // path and must not wait behind ingest.
@@ -549,7 +543,6 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // annotation sibling.
   { name: "temporalAnnotations.invalidateForDoc", priority: "background" },
   { name: "temporalAnnotations.refilePresented", priority: "background" },
-  { name: "temporalAnnotations.privacyDelete", priority: "user" },
   // Observations and the morning brief: background steward writes.
   { name: "cognition.observationCreate", priority: "background" },
   { name: "cognition.observationTransition", priority: "background" },

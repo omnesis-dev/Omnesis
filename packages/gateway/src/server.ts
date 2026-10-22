@@ -68,7 +68,7 @@ import { EventService } from "./http/services/EventService.js";
 import { DocumentService } from "./http/services/DocumentService.js";
 import { SourceDataRemovalService } from "./http/services/SourceDataRemovalService.js";
 import { AnalyticsSourceModeTransitionAdoption } from "./http/services/AnalyticsSourceModeTransitionAdoption.js";
-import { purgeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
+import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { PersonService } from "./http/services/PersonService.js";
 import { AnalyticsService } from "./http/services/AnalyticsService.js";
 import { StatusCache } from "./http/services/StatusCache.js";
@@ -751,7 +751,7 @@ export function createServer(
     indexWriteGate,
     analyticsDb: opts?.analyticsDb,
     sourceWriteEpochFence,
-    purgeAnnotationsFor: (documentIds) => purgeCognitiveStateThroughGate(db, w, documentIds),
+    cascadeCognitionFor: (documentIds) => cascadeCognitiveStateThroughGate(db, w, documentIds),
   });
   const documentService = new DocumentService({
     db,

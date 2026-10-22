@@ -3,9 +3,11 @@
 
 /**
  * A sync page containing only a tombstone commits its document and cursor
- * changes before the index and Brain stores can be cleaned. Exercise the real
- * HTTP route, writer, indexer and restart drain, including failures on each
- * side of that cross-store boundary.
+ * changes before the index and Brain cascades finish. Exercise the real HTTP
+ * route, writer, indexer and restart drain, including failures on each side of
+ * that cross-store boundary. The document's own rows always go; what the Brain
+ * built on it (an annotation, a loop and its mirror, an observation) is kept,
+ * loses its link to the document and is queued for review.
  */
 import "./synth-env.js";
 
@@ -102,6 +104,30 @@ function annotationExists(id: string): boolean {
           { present: number }
         >("SELECT 1 AS present FROM doc_annotations WHERE id = ?")
         .get(id) !== undefined,
+  );
+}
+
+/** A kept annotation's liveness and verification state. */
+function annotationState(
+  id: string,
+): { invalidated_at: number | null; verification_state: string | null } | undefined {
+  return gatewayDb((db) =>
+    db
+      .prepare<
+        [string],
+        { invalidated_at: number | null; verification_state: string | null }
+      >("SELECT invalidated_at, verification_state FROM doc_annotations WHERE id = ?")
+      .get(id),
+  );
+}
+
+/** Whether a loop still links to a document. */
+function loopCites(loop: string, docId: string): boolean {
+  return gatewayDb(
+    (db) =>
+      db
+        .prepare("SELECT 1 FROM open_loop_docs WHERE loop_id = ? AND doc_id = ?")
+        .get(loop, docId) !== undefined,
   );
 }
 
@@ -259,7 +285,7 @@ describe("sync tombstone cascade survives derived-store failures", () => {
     }
     for (const externalId of VICTIMS) {
       seedLoopAndObservation(externalId, documentId(externalId));
-      // The loop's corpus projection must be taken with its parent loop.
+      // The loop's corpus projection stays with its parent loop.
       await harness.pushDocument({
         providerId: "system",
         sourceId: "open-loops",
@@ -308,79 +334,89 @@ describe("sync tombstone cascade survives derived-store failures", () => {
     expect(response.status).toBe(500);
     expect(documentExists(VICTIMS[0])).toBe(false);
     expect(chunkCount(victimId)).toBeGreaterThan(0);
-    expect(annotationExists(`annotation-${VICTIMS[0]}`)).toBe(false);
     expect(pendingCascade(victimId)).toEqual({ indexDone: false, cognitionDone: true });
-    expect(rowExists("open_loops", loopId(VICTIMS[0]))).toBe(false);
-    expect(rowExists("observations", observationId(VICTIMS[0]))).toBe(false);
-    expect(documentExistsFor("open-loops", loopId(VICTIMS[0]))).toBe(false);
+    // What the Brain built on the document is kept, unlinked and queued for review.
+    expect(annotationState(`annotation-${VICTIMS[0]}`)).toEqual({
+      invalidated_at: null,
+      verification_state: "unverified",
+    });
+    expect(rowExists("open_loops", loopId(VICTIMS[0]))).toBe(true);
+    expect(loopCites(loopId(VICTIMS[0]), victimId)).toBe(false);
+    expect(rowExists("observations", observationId(VICTIMS[0]))).toBe(true);
+    expect(documentExistsFor("open-loops", loopId(VICTIMS[0]))).toBe(true);
     const mirrorId = mirrorIds.get(VICTIMS[0])!;
-    expect(chunkCount(mirrorId)).toBeGreaterThan(0);
-    expect(pendingCascade(mirrorId)).toEqual({ indexDone: false, cognitionDone: false });
+    expect(pendingCascade(mirrorId)).toBeUndefined();
 
     await harness.restartGateway(() => {
       indexDb((db) => db.exec("DROP TRIGGER fail_sync_index_delete"), false);
     });
     await waitForCondition(
-      () =>
-        pendingCascade(victimId) === undefined &&
-        pendingCascade(mirrorId) === undefined &&
-        chunkCount(victimId) === 0 &&
-        chunkCount(mirrorId) === 0 &&
-        !annotationExists(`annotation-${VICTIMS[0]}`),
+      () => pendingCascade(victimId) === undefined && chunkCount(victimId) === 0,
       120_000,
-      "restarted gateway to finish the index and Brain cascade",
+      "restarted gateway to finish the index cascade",
     );
     expect(await searchIds("Acedarivory")).not.toContain(victimId);
+    expect(annotationState(`annotation-${VICTIMS[0]}`)?.invalidated_at).toBeNull();
+    expect(rowExists("open_loops", loopId(VICTIMS[0]))).toBe(true);
+    expect(chunkCount(mirrorId)).toBeGreaterThan(0);
     expect(chunkCount(controlId)).toBeGreaterThan(0);
     expect(annotationExists(`annotation-${CONTROL}`)).toBe(true);
     expect(await searchIds("Cpineviolet")).toContain(controlId);
   }, 180_000);
 
-  test("a Brain delete failure preserves the remaining obligation across restart", async () => {
+  test("a Brain cascade failure preserves the remaining obligation across restart", async () => {
     const victimId = documentId(VICTIMS[1]);
     const controlId = documentId(CONTROL);
     expect(await searchIds("Bmapleindigo")).toContain(victimId);
-    gatewayDb(
-      (db) =>
-        db.exec(
-          `CREATE TRIGGER fail_sync_brain_delete BEFORE DELETE ON observations
-       WHEN OLD.id = '${observationId(VICTIMS[1])}'
-       BEGIN SELECT RAISE(ABORT, 'synthetic Brain delete failure'); END`,
-        ),
-      false,
-    );
+    // The cascade's coverage arm retracts the coverage of a source that no
+    // longer exists; failing it stops the Brain cascade after the writer
+    // transaction committed.
+    gatewayDb((db) => {
+      db.prepare(
+        `INSERT INTO cognition_coverage (source_id, workflow_id, workflow_version, eligible, processed, skipped, prompt_tokens, completion_tokens, last_progress_at, status)
+         VALUES ('fictional:removed@example.com', 'wf', 1, 1, 1, 0, 0, 0, 1, 'live')`,
+      ).run();
+      db.exec(
+        `CREATE TRIGGER fail_sync_brain_cascade BEFORE DELETE ON cognition_coverage
+         BEGIN SELECT RAISE(ABORT, 'synthetic Brain cascade failure'); END`,
+      );
+    }, false);
 
     const response = await deleteOnlyPage(VICTIMS[1], 2);
     const responseBody = await response.text();
     expect(response.status).toBe(500);
     expect(documentExists(VICTIMS[1]), responseBody).toBe(false);
     expect(chunkCount(victimId)).toBe(0);
-    // Document annotations are purged in the primary writer transaction;
-    // the observation and loop are the separate Brain cascade this trigger stops.
-    expect(annotationExists(`annotation-${VICTIMS[1]}`)).toBe(false);
+    // The review of what the Brain built on the document is part of the
+    // deleting transaction, so it landed whatever happened after.
+    expect(annotationState(`annotation-${VICTIMS[1]}`)?.verification_state).toBe("unverified");
     expect(rowExists("observations", observationId(VICTIMS[1]))).toBe(true);
     expect(rowExists("open_loops", loopId(VICTIMS[1]))).toBe(true);
+    expect(loopCites(loopId(VICTIMS[1]), victimId)).toBe(false);
     expect(documentExistsFor("open-loops", loopId(VICTIMS[1]))).toBe(true);
-    const mirrorId = mirrorIds.get(VICTIMS[1])!;
-    expect(chunkCount(mirrorId)).toBeGreaterThan(0);
     expect(pendingCascade(victimId)).toEqual({ indexDone: true, cognitionDone: false });
 
     await harness.restartGateway(() => {
-      gatewayDb((db) => db.exec("DROP TRIGGER fail_sync_brain_delete"), false);
+      gatewayDb((db) => db.exec("DROP TRIGGER fail_sync_brain_cascade"), false);
     });
     await waitForCondition(
-      () =>
-        pendingCascade(victimId) === undefined &&
-        pendingCascade(mirrorId) === undefined &&
-        !rowExists("observations", observationId(VICTIMS[1])) &&
-        !rowExists("open_loops", loopId(VICTIMS[1])) &&
-        !documentExistsFor("open-loops", loopId(VICTIMS[1])) &&
-        chunkCount(mirrorId) === 0,
+      () => pendingCascade(victimId) === undefined,
       120_000,
       "restarted gateway to finish the Brain cascade",
     );
     expect(await searchIds("Bmapleindigo")).not.toContain(victimId);
-    expect(chunkCount(mirrorId)).toBe(0);
+    expect(rowExists("observations", observationId(VICTIMS[1]))).toBe(true);
+    expect(rowExists("open_loops", loopId(VICTIMS[1]))).toBe(true);
+    expect(documentExistsFor("open-loops", loopId(VICTIMS[1]))).toBe(true);
+    expect(
+      gatewayDb((db) =>
+        db
+          .prepare(
+            "SELECT 1 FROM cognition_coverage WHERE source_id = 'fictional:removed@example.com'",
+          )
+          .get(),
+      ),
+    ).toBeUndefined();
     expect(chunkCount(controlId)).toBeGreaterThan(0);
     expect(annotationExists(`annotation-${CONTROL}`)).toBe(true);
     expect(await searchIds("Cpineviolet")).toContain(controlId);

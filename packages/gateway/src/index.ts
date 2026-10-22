@@ -87,7 +87,7 @@ import { createActivityRetentionTask } from "./activity-retention/task.js";
 import { createAbsenceSweepTask } from "./absence/task.js";
 import { createOwnershipRepairTask } from "./analytics/ownership-repair-task.js";
 import { directIndexWriteGate } from "./indexer/index-write-gate.js";
-import { purgeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
+import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { resolveRelaySettings } from "./push/relay-settings.js";
 import { generateSelfSigned, resolveTlsBundle } from "./tls.js";
 import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycle/addressing.js";
@@ -3320,8 +3320,8 @@ const absenceSweepBundle = createAbsenceSweepTask(
     ioGate,
     indexWriteGate: directIndexWriteGate(indexDb),
     analyticsDb,
-    purgeAnnotationsFor: (documentIds) =>
-      purgeCognitiveStateThroughGate(db, writeGate, documentIds),
+    cascadeCognitionFor: (documentIds) =>
+      cascadeCognitiveStateThroughGate(db, writeGate, documentIds),
     getMinObservations: () =>
       resolveRuntimeSettings(configStore.get()).snapshotAbsenceMinObservations,
     getMinAgeMs: () => resolveRuntimeSettings(configStore.get()).snapshotAbsenceMinAgeMs,

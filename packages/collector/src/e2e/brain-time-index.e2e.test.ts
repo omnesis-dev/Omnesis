@@ -20,7 +20,7 @@
  * ORDER-DEPENDENT by construction: the first test pushes every document and
  * fills the shared `docIds` map every later test reads, so none of them can
  * run on its own under a `-t` filter. The two closing tests run last because
- * they remove a document and the privacy cascade is destructive.
+ * they remove a document.
  */
 
 import "./synth-env.js";
@@ -783,10 +783,10 @@ describe("Brain Bench — steward-written temporal annotations", () => {
     }
   }, 120_000);
 
-  // ── the privacy cascade ────────────────────────────────────────────────
+  // ── source deletion ────────────────────────────────────────────────────
 
-  // Runs last: it removes a document, and the cascade is destructive.
-  test("removing a cited document hard-purges the annotation it grounded", async () => {
+  // Runs last: it removes a document.
+  test("removing a cited document keeps the annotation it grounded, ungrounded", async () => {
     const entry = await one("TIX-CASCADE");
     const docId = docIds.get(CASCADE_DOC.externalId)!;
     expect(entry.documents.map((d) => d.id)).toEqual([docId]);
@@ -801,29 +801,35 @@ describe("Brain Bench — steward-written temporal annotations", () => {
       .get(docId);
     expect(docRow!.n, "the document itself must be gone").toBe(0);
 
-    // The privacy cascade is a HARD delete, not the soft invalidation the
-    // deliberate `temporal_annotation_delete` path performs: an annotation's
-    // sentence can embed content derived from the removed document, so no
-    // row is kept for audit. The purge selects its victims from
-    // `temporal_annotation_documents` AFTER the document rows are gone —
-    // which is why that table's `document_id` deliberately carries no FK
-    // (the doc-link convention): links must outlive the document so the
-    // purge has something to key on, and they die with their annotation.
+    // A source deletion never deletes what the Brain built on it: the
+    // annotation stays live with its link to the document, and every atom
+    // citing the document is broken, so it reads as ungrounded until a
+    // reviewed `temporal_annotation_update` or delete settles it.
     const surviving = bench.sql
       .prepare<
         [string],
-        { n: number }
-      >("SELECT COUNT(*) AS n FROM temporal_annotations WHERE id = ?")
+        { invalidated_at: number | null }
+      >("SELECT invalidated_at FROM temporal_annotations WHERE id = ?")
       .get(entry.id);
-    expect(surviving!.n, "the annotation must be hard-purged, not left live").toBe(0);
+    expect(surviving, "the annotation must survive the deletion").toEqual({
+      invalidated_at: null,
+    });
     const links = bench.sql
       .prepare<
         [string],
         { n: number }
       >("SELECT COUNT(*) AS n FROM temporal_annotation_documents WHERE annotation_id = ?")
       .get(entry.id);
-    expect(links!.n).toBe(0);
-    expect(await items("TIX-CASCADE")).toHaveLength(0);
+    expect(links!.n).toBe(1);
+    expect(
+      bench.sql
+        .prepare<
+          [string, string],
+          { n: number }
+        >("SELECT COUNT(*) AS n FROM temporal_annotation_evidence WHERE annotation_id = ? AND document_id = ? AND broken_at IS NULL")
+        .get(entry.id, docId)!.n,
+    ).toBe(0);
+    expect(await items("TIX-CASCADE")).toHaveLength(1);
 
     // A document's removal touches nothing but its own dependents.
     expect(await items("TIX-DAY")).toHaveLength(1);

@@ -16,10 +16,44 @@ import {
   resolveKnowledgeReference,
   saveKnowledgeNode,
 } from "./storage.js";
+import { markKnowledgeOwnerForReview } from "./storage-invalidation.js";
+import { knowledgeEvidenceAvailability } from "./storage-source-fence.js";
 import { KnowledgeStorageError, type KnowledgeRevision } from "./types.js";
 import type Database from "better-sqlite3";
 
-/** Bounded deterministic conversion/reconciliation. Synthesis may refine its unverified prose later. */
+/**
+ * A pending owner change. `delete` erases the owner's node; `review` and
+ * `update` both project the owner into it, and `review` also queues the node
+ * for maintenance review. A later `update` never downgrades a pending `review`.
+ */
+type KnowledgeOwnerChangeOperation = "update" | "review" | "delete";
+
+/**
+ * Queue an owner that lost a cited source to a deletion for review. The
+ * change is durable: it waits in `knowledge_owner_changes` until the Brain's
+ * owner sync drains it, however long the Brain is off. A pending delete wins.
+ */
+export function queueKnowledgeOwnerReview(
+  db: Database.Database,
+  kind: KnowledgeOwnerKind,
+  ownerId: string,
+  now: number,
+): void {
+  db.prepare(
+    `INSERT INTO knowledge_owner_changes(kind,owner_id,operation,changed_at) VALUES(?,?,'review',?)
+     ON CONFLICT(kind,owner_id) DO UPDATE SET
+       operation=CASE WHEN knowledge_owner_changes.operation='delete' THEN 'delete' ELSE 'review' END,
+       changed_at=excluded.changed_at`,
+  ).run(kind, ownerId, now);
+}
+
+/**
+ * Bounded deterministic conversion/reconciliation. Synthesis may refine its
+ * unverified prose later. A `review` change reconciles the owner like an
+ * update and then marks its node stale and queues it for maintenance review:
+ * the owner lost a source it cited to a deletion and is kept for the Brain to
+ * judge.
+ */
 export function advanceKnowledgeOwnerSync(
   db: Database.Database,
   limit: number,
@@ -31,8 +65,15 @@ export function advanceKnowledgeOwnerSync(
   const rows = db
     .prepare<
       unknown[],
-      { seq: number; kind: KnowledgeOwnerKind; owner_id: string; operation: "update" | "delete" }
-    >(`SELECT seq,kind,owner_id,operation FROM knowledge_owner_changes ${ownerId === undefined ? "" : "WHERE owner_id=?"} ORDER BY CASE operation WHEN 'delete' THEN 0 ELSE 1 END,seq LIMIT ?`)
+      {
+        seq: number;
+        kind: KnowledgeOwnerKind;
+        owner_id: string;
+        operation: KnowledgeOwnerChangeOperation;
+      }
+    >(
+      `SELECT seq,kind,owner_id,operation FROM knowledge_owner_changes ${ownerId === undefined ? "" : "WHERE owner_id=?"} ORDER BY CASE operation WHEN 'delete' THEN 0 ELSE 1 END,seq LIMIT ?`,
+    )
     .all(...(ownerId === undefined ? [limit] : [ownerId, limit]));
   const updatedNodeIds: string[] = [];
   const deletedNodeIds: string[] = [];
@@ -47,6 +88,7 @@ export function advanceKnowledgeOwnerSync(
           return;
         }
         reconcileKnowledgeOwner(db, row.kind, row.owner_id, now);
+        if (row.operation === "review") markKnowledgeOwnerForReview(db, row.owner_id, now);
         updatedNodeIds.push(row.owner_id);
       })();
     } catch (error) {
@@ -65,6 +107,14 @@ export function advanceKnowledgeOwnerSync(
   };
 }
 
+function citesUnavailableSource(db: Database.Database, nodeId: string): boolean {
+  return getKnowledgeDependencies(db, nodeId).some(
+    (dep) =>
+      dep.targetKind === "source" &&
+      knowledgeEvidenceAvailability(db, dep.targetId) === "unavailable",
+  );
+}
+
 /** Reconcile exactly one persisted owner under the caller’s writer transaction. */
 export function reconcileKnowledgeOwner(
   db: Database.Database,
@@ -80,7 +130,10 @@ export function reconcileKnowledgeOwner(
         "claim_invalid",
         "Canonical owner identity collides with another synthesis node",
       );
-    if (!node || node.plainText !== owner.markdown) {
+    // A node still citing a source that has since been deleted cannot be
+    // re-saved as it stands; it is projected afresh from the canonical owner,
+    // which keeps only the sources still readable.
+    if (!node || node.plainText !== owner.markdown || citesUnavailableSource(db, node.id)) {
       saveKnowledgeNode(db, buildLegacyOwnerKnowledge(db, owner, node?.revision ?? 0, now), now);
     } else {
       const parsed = parseClaimMarkup(node.markdown);

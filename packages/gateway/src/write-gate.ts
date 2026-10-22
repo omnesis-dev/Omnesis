@@ -171,7 +171,6 @@ import {
   upsertWithCursor,
   prepareDocumentsForWrite,
   deleteDocuments,
-  cascadeOpenLoopPrivacyDeleteWithMirrors,
   deleteDocumentForUser,
   deleteDocumentForRetention,
   completeDocumentRetention,
@@ -305,7 +304,6 @@ import {
   invalidateTemporalAnnotation,
   invalidateTemporalAnnotationsForDoc,
   markTemporalAnnotationsRefilePresented,
-  cascadeTemporalAnnotationPrivacyDelete,
   type CreateTemporalAnnotationInput,
   type UpdateTemporalAnnotationPatch,
   type TemporalAnnotation,
@@ -315,6 +313,10 @@ import {
   markDocsBootstrapProcessed,
   readmitFailedBootstrapDoc,
 } from "./brain/storage/bootstrap.js";
+import {
+  reviewBrainArtifactsForDeletedDocs,
+  type SourceDeletionReview,
+} from "./brain/source-deletion-review.js";
 import {
   recordCognitionCoverage,
   retractOrphanCognitionCoverage,
@@ -558,13 +560,11 @@ import {
   supersedeDocAnnotationBy,
   updateDocAnnotation,
   invalidateAnnotationsForDoc,
-  cascadeAnnotationPrivacyDelete,
   createPersonAnnotation,
   createPersonAnnotationSuperseding,
   supersedePersonAnnotationBy,
   revisePersonAnnotation,
   invalidatePersonAnnotationsForDoc,
-  cascadePersonAnnotationPrivacyDelete,
   mutateWithConsumptionDependencies,
   retractAnnotationWithDependentRechecks,
   recordCognitionSpend,
@@ -1740,9 +1740,7 @@ export interface WriteGate extends KnowledgeWriteGate {
    * Durable doc-annotation ops. `createDocAnnotation` persists an
    * evidence-grounded prior; `invalidateAnnotationsForDoc` re-judges the
    * priors touching a changed document against its new content — quote broke
-   * → soft-dropped, quote survived → kept live but re-stamped `unverified`;
-   * `cascadeAnnotationPrivacyDelete` hard-purges those grounded on
-   * privacy-deleted documents (always blanket).
+   * → soft-dropped, quote survived → kept live but re-stamped `unverified`.
    */
   createDocAnnotation(input: CreateDocAnnotationInput, now: number): Promise<DocAnnotationRow>;
   /**
@@ -1776,24 +1774,21 @@ export interface WriteGate extends KnowledgeWriteGate {
   /** Hard-delete one prior by id (retract). False when it doesn't exist. */
   deleteDocAnnotation(id: string, now: number): Promise<boolean>;
   invalidateAnnotationsForDoc(docId: string, now: number): Promise<AnnotationInvalidationResult>;
-  cascadeAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
   /**
-   * Atomically delete loops grounded on the removed documents, their
-   * observations and mirrored corpus documents. Mirror index cleanup is
-   * queued durably.
+   * Keep every loop, observation and annotation built on deleted documents:
+   * drop their pointers to the documents, mark them stale and queue them for
+   * the Brain's review. Never deletes an artifact.
    */
-  cascadeOpenLoopPrivacyDelete(
+  reviewBrainArtifactsForDeletedDocs(
     deletedDocIds: readonly string[],
-  ): Promise<{ deletedLoopIds: string[]; deletedObservationIds: string[] }>;
+  ): Promise<SourceDeletionReview>;
   /**
    * Durable person-annotation ops (person-keyed sibling of the doc ones).
    * `createPersonAnnotation` persists an evidence-grounded prior about a
    * person; `revisePersonAnnotation`/`retractPersonAnnotation` edit/hard-remove
    * one (the person-annotation revise/retract tools);
    * `invalidatePersonAnnotationsForDoc` re-judges priors whose evidence doc
-   * changed (quote broke → soft-dropped, survived → kept unverified);
-   * `cascadePersonAnnotationPrivacyDelete` hard-purges those on a
-   * privacy-deleted evidence doc.
+   * changed (quote broke → soft-dropped, survived → kept unverified).
    */
   createPersonAnnotation(
     input: CreatePersonAnnotationInput,
@@ -1825,7 +1820,6 @@ export interface WriteGate extends KnowledgeWriteGate {
     docId: string,
     now: number,
   ): Promise<AnnotationInvalidationResult>;
-  cascadePersonAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
   /**
    * Conversation read state — whether an agent conversation holds something
    * the operator has not seen. Reads do not come through here: "which of
@@ -1994,7 +1988,6 @@ export interface WriteGate extends KnowledgeWriteGate {
    * lookup once that run completes.
    */
   markTemporalAnnotationsRefilePresented(ids: readonly string[], runId: string): Promise<void>;
-  cascadeTemporalAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
   /** Atomically create an observation and record its live annotation dependencies. */
   createObservation(
     input: CreateObservationInput,
@@ -2718,8 +2711,6 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("cognition.personAnnotationRetract", [id, now, budget]),
     invalidatePersonAnnotationsForDoc: (docId, now) =>
       call("cognition.personAnnotationInvalidate", [docId, now]),
-    cascadePersonAnnotationPrivacyDelete: (deletedDocIds) =>
-      call("cognition.personAnnotationPrivacyDelete", [deletedDocIds]),
     markConversationSeen: (conversationId) =>
       call("conversationReadState.markSeen", [conversationId]),
     recordConversationAgentContent: (conversationId, now) =>
@@ -2789,12 +2780,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     markTemporalAnnotationsRefilePresented: async (ids, runId) => {
       await call("temporalAnnotations.refilePresented", [ids, runId]);
     },
-    cascadeTemporalAnnotationPrivacyDelete: (deletedDocIds) =>
-      call("temporalAnnotations.privacyDelete", [deletedDocIds]),
-    cascadeAnnotationPrivacyDelete: (deletedDocIds) =>
-      call("cognition.annotationPrivacyDelete", [deletedDocIds]),
-    cascadeOpenLoopPrivacyDelete: (deletedDocIds) =>
-      call("cognition.openLoopCascade", [deletedDocIds]),
+    reviewBrainArtifactsForDeletedDocs: (deletedDocIds) =>
+      call("cognition.sourceDeletionReview", [deletedDocIds]),
     createObservation: (input, dependencies, now) =>
       call("cognition.observationCreate", [input, dependencies, now]),
     transitionObservation: (id, transition, now) =>
@@ -3388,10 +3375,8 @@ export function directWriteGate(db: Db): WriteGate {
         withdrawKnowledgeOwner(db, "doc_annotation", id, now),
       ),
     invalidateAnnotationsForDoc: async (docId, now) => invalidateAnnotationsForDoc(db, docId, now),
-    cascadeAnnotationPrivacyDelete: async (deletedDocIds) =>
-      cascadeAnnotationPrivacyDelete(db, deletedDocIds),
-    cascadeOpenLoopPrivacyDelete: async (deletedDocIds) =>
-      cascadeOpenLoopPrivacyDeleteWithMirrors(db, deletedDocIds),
+    reviewBrainArtifactsForDeletedDocs: async (deletedDocIds) =>
+      reviewBrainArtifactsForDeletedDocs(db, deletedDocIds, Date.now()),
     createPersonAnnotation: async (input, now, budget) =>
       createPersonAnnotation(db, input, now, budget),
     createPersonAnnotationSuperseding: async (input, supersedesId, now, budget) =>
@@ -3414,8 +3399,6 @@ export function directWriteGate(db: Db): WriteGate {
       }),
     invalidatePersonAnnotationsForDoc: async (docId, now) =>
       invalidatePersonAnnotationsForDoc(db, docId, now),
-    cascadePersonAnnotationPrivacyDelete: async (deletedDocIds) =>
-      cascadePersonAnnotationPrivacyDelete(db, deletedDocIds),
     markConversationSeen: async (conversationId) => markConversationOpened(db, conversationId),
     recordConversationAgentContent: async (conversationId, now) =>
       recordAgentMessage(db, conversationId, now),
@@ -3489,8 +3472,6 @@ export function directWriteGate(db: Db): WriteGate {
       invalidateTemporalAnnotationsForDoc(db, docId, now),
     markTemporalAnnotationsRefilePresented: async (ids, runId) =>
       markTemporalAnnotationsRefilePresented(db, ids, runId),
-    cascadeTemporalAnnotationPrivacyDelete: async (deletedDocIds) =>
-      cascadeTemporalAnnotationPrivacyDelete(db, deletedDocIds),
     createObservation: async (input, dependencies, now) =>
       mutateWithConsumptionDependencies(db, dependencies, "observation", input.id, now, () =>
         createObservation(db, input, now),

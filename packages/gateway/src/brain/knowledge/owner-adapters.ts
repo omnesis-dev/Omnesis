@@ -31,13 +31,10 @@ export type KnowledgeOwnerKind = Exclude<KnowledgeNodeKind, "wiki" | "root">;
 
 /**
  * Why a legacy owner cannot become a knowledge node from its current inputs:
- * it is missing or privacy-hidden, every source it cites is gone, or it cites
- * more sources than one bounded conversion can record.
+ * it is missing or privacy-hidden, or it cites more sources than one bounded
+ * conversion can record.
  */
-export type LegacyOwnerUnconvertibleReason =
-  | "owner_unavailable"
-  | "evidence_unavailable"
-  | "provenance_limit";
+export type LegacyOwnerUnconvertibleReason = "owner_unavailable" | "provenance_limit";
 
 export class LegacyOwnerConversionError extends KnowledgeStorageError {
   constructor(
@@ -434,13 +431,9 @@ export function buildLegacyOwnerKnowledge(
   const kind = owner.kind;
   const versions: Record<string, string> = {};
   // Generated mirrors are not evidence. Deleted or removed sources drop out;
-  // derived text survives only while some source it cites is still readable.
-  let cited = 0;
+  // the owner's text survives them, as unsupported context for review.
   for (const id of owner.evidenceDocumentIds) {
-    const availability = knowledgeEvidenceAvailability(db, id);
-    if (availability === "generated") continue;
-    cited++;
-    if (availability === "unavailable") continue;
+    if (knowledgeEvidenceAvailability(db, id) !== "readable") continue;
     const doc = db
       .prepare<
         [string],
@@ -449,12 +442,6 @@ export function buildLegacyOwnerKnowledge(
       .get(id);
     if (doc) versions[`source:${id}`] = doc.content_hash;
   }
-  if (cited && !Object.keys(versions).length)
-    throw new LegacyOwnerConversionError(
-      "reference_invalid",
-      "evidence_unavailable",
-      "Legacy evidence is unavailable; conversion cannot restore derived text",
-    );
   // Escape legacy claim-like syntax: migration must not interpret arbitrary old
   // text as authoritative new provenance markup.
   const escaped = owner.markdown.replace(/<\/?claim\b/g, (token) => `\\${token}`);

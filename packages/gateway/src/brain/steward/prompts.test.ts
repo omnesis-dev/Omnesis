@@ -2534,14 +2534,15 @@ describe("digest and decay-check prompt flavours", () => {
     expect(prompt).toContain("no decay check applies");
   });
 
-  test("a decay check whose source documents were all deleted steers toward deletion", () => {
+  test("a decay check whose source documents were all deleted never steers toward deletion", () => {
     const loopId = seedLoop({ docs: ["doc_wiped_1", "doc_wiped_2"] });
     const prompt = buildCognitionRunPrompt(
       claimed({ kind: "time_based", payload: { decayCheckLoopId: loopId } }),
       deps(),
     );
-    expect(prompt).toContain("DELETED");
-    expect(prompt).toContain("deleting it is the right call");
+    expect(prompt).toContain("Every source document this loop was built on has been deleted");
+    expect(prompt).toContain("not evidence that the obligation went away");
+    expect(prompt).not.toContain("deleting it is the right call");
   });
 
   test("a plain scheduled run still carries its stored prompt (the decay flavour never shadows it)", () => {

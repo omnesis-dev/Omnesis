@@ -57,7 +57,7 @@ import {
   countLiveDependentsForAnnotation,
   listLiveDependentsForAnnotation,
 } from "../../brain/storage/consumption-edges.js";
-import { purgeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
+import { cascadeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
 import {
   InvalidAnalyticsRecentCursorError,
   type AnalyticsDb,
@@ -533,8 +533,8 @@ export class DocumentService {
    * document-delete path here that yields deleted ids (explicit deletes + sync
    * reconcile); source removal runs the same cascade from `SourceService`.
    */
-  private async purgeAnnotationsFor(deletedDocIds: readonly string[]): Promise<void> {
-    await purgeCognitiveStateThroughGate(this.deps.db, this.deps.writeGate, deletedDocIds);
+  private async cascadeCognitionFor(deletedDocIds: readonly string[]): Promise<void> {
+    await cascadeCognitiveStateThroughGate(this.deps.db, this.deps.writeGate, deletedDocIds);
   }
 
   async deleteByIds(
@@ -572,7 +572,7 @@ export class DocumentService {
       if (indexWriteGate && deletedDocIds.length > 0) {
         indexCleanedRows = await indexWriteGate.deleteChunksByDocuments(deletedDocIds);
       }
-      await this.purgeAnnotationsFor(deletedDocIds);
+      await this.cascadeCognitionFor(deletedDocIds);
       log.debug(`Deleted ${externalIds.length} documents`, {
         providerId,
         sourceId,
@@ -655,7 +655,7 @@ export class DocumentService {
       if (indexWriteGate) {
         indexCleanedRows = await indexWriteGate.deleteChunksByDocuments(deletedDocIds);
       }
-      await this.purgeAnnotationsFor(deletedDocIds);
+      await this.cascadeCognitionFor(deletedDocIds);
       log.debug(
         `Privacy-deleted document ${externalId}: ${deletedDocIds.length} rows (incl. attachments), ${indexCleanedRows} index rows${tombstone ? "" : ", no tombstone"}`,
         { providerId, sourceId },
@@ -1013,7 +1013,7 @@ export class DocumentService {
           deleteIndex: indexWriteGate
             ? (ids) => indexWriteGate.deleteChunksByDocuments(ids)
             : undefined,
-          purgeCognition: (ids) => this.purgeAnnotationsFor(ids),
+          cascadeCognition: (ids) => this.cascadeCognitionFor(ids),
           acknowledge: (id, part) => w.acknowledgeAbsenceCascade(id, part),
         })
       : 0;
@@ -1286,7 +1286,7 @@ export class DocumentService {
           if (indexWriteGate && deletedIds.length > 0) {
             await indexWriteGate.deleteChunksByDocuments(deletedIds);
           }
-          await this.purgeAnnotationsFor(deletedIds);
+          await this.cascadeCognitionFor(deletedIds);
           if (outcome.disputed.length > 0) deletionDisputed = outcome.disputed.length;
         }
       }

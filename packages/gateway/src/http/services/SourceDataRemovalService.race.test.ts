@@ -167,7 +167,7 @@ describe("SourceDataRemovalService wipe barriers", () => {
       indexWriteGate,
       analyticsDb: analytics,
       sourceWriteEpochFence: fence,
-      purgeAnnotationsFor: async () => {},
+      cascadeCognitionFor: async () => {},
     });
   }
 

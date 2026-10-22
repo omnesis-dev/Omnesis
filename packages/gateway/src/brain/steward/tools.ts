@@ -76,6 +76,7 @@ import { containsNormalizedForContent } from "../quote-match.js";
 import {
   getDocAnnotation,
   listDocAnnotationEvidence,
+  listAnnotationsUnderReviewForDoc,
   listLiveAnnotationsForDoc,
   listLiveSameClaimTypeAnnotationsForDoc,
   type AnnotationClaimBasis,
@@ -92,6 +93,7 @@ import {
   enforcePersonProfileBudget,
   listLiveSameClaimTypePersonAnnotations,
   listPersonAnnotationEvidence,
+  listPersonAnnotationsUnderReview,
   type PersonAnnotationRow,
   type UpdatePersonAnnotationPatch,
 } from "../storage/person-annotations.js";
@@ -4000,7 +4002,9 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       "evidence doc id and verbatim quote — priors to re-ground, never facts. " +
       "Person results page the complete readable profile, with totals and its compact budget. " +
       "Follow every exact nextCursor before creating, consolidating or revising a person fact; " +
-      "compare the whole profile and keep the most useful supported context, not the first page.",
+      "compare the whole profile and keep the most useful supported context, not the first page. " +
+      "Rows marked underReview lost their evidence to a deleted document: they are not priors, " +
+      "and await your decision to revise or retract them.",
     schema: annotationSearchSchema,
     mutates: false,
     summarize: (args) => {
@@ -4038,8 +4042,13 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           createdAt: new Date(r.createdAt).toISOString(),
         }));
       if (a.docId !== undefined) {
-        if (!docExists(db, a.docId)) return notFound("document", a.docId);
-        const rows = listLiveAnnotationsForDoc(db, a.docId, limit);
+        // Annotations whose evidence document was deleted are kept for review:
+        // listed, marked, never counted as priors. They stay listed after
+        // their subject document itself was deleted.
+        const underReview = listAnnotationsUnderReviewForDoc(db, a.docId, limit);
+        const exists = docExists(db, a.docId);
+        if (!exists && underReview.length === 0) return notFound("document", a.docId);
+        const rows = exists ? listLiveAnnotationsForDoc(db, a.docId, limit) : [];
         // Consumption provenance: these priors are now in front of the model.
         deps.consumption?.note(
           "doc",
@@ -4047,7 +4056,10 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         );
         return ok("annotation.search_results", {
           docId: a.docId,
-          annotations: project(rows),
+          annotations: [
+            ...project(rows),
+            ...project(underReview).map((row) => ({ ...row, underReview: true })),
+          ],
         });
       }
       const personId = resolveLoopPersonRef(db, a.personId ?? "");
@@ -4062,7 +4074,18 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         "person",
         rows.map((r) => r.id),
       );
-      return ok("annotation.search_results", page);
+      // Facts whose evidence document was deleted are outside the readable
+      // profile; they are listed apart so the review can revise or retract them.
+      const underReview = listPersonAnnotationsUnderReview(db, personId, limit);
+      return ok(
+        "annotation.search_results",
+        underReview.length
+          ? {
+              ...page,
+              underReview: project(underReview).map((row) => ({ ...row, underReview: true })),
+            }
+          : page,
+      );
     },
   };
 

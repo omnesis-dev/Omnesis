@@ -132,6 +132,7 @@ export * from "./docs.js";
 export {
   sourceInterpretations,
   preserveCurrentOwner,
+  keepReviewedOwner,
   refreshCurrentOwner,
 } from "./source-interpretations.js";
 export type { SourceInterpretation } from "./source-interpretations.js";

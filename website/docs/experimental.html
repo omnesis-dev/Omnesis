@@ -1548,16 +1548,21 @@ comfortably within the promised time. An empty pass is a good outcome.</pre
         </p>
         <p>
           What Brain writes stays in the gateway's database with the rest of your data and is part
-          of <a href="/docs/updating#backup">backups</a>. To remove it:
+          of <a href="/docs/updating#backup">backups</a>.
         </p>
+        <p>
+          Deleting a document, whether for good (see
+          <a href="/docs/search#beyond-search">Search → Beyond search</a>), by a sync or by removing
+          its source, never deletes what Brain built on it. The document itself can no longer be
+          read or cited. The loops and tasks, observations and annotations that rested on it lose
+          their link to it, are marked stale and wait for Brain to review them. A dated fact keeps
+          its link but loses the evidence quoted from it, and is reviewed through any task it
+          belongs to; a wiki page's claims that relied on it turn stale. A review keeps, revises,
+          resolves or removes each one as a deliberate decision. Text they quoted from the document
+          stays with them until then.
+        </p>
+        <p>To remove what Brain wrote:</p>
         <ul>
-          <li>
-            Deleting a document for good (see
-            <a href="/docs/search#beyond-search">Search → Beyond search</a>) removes everything
-            Brain derived from it: the loops and observations built on it, the observations attached
-            to those loops, the annotations and dated facts that cite it, and the claims that quote
-            it.
-          </li>
           <li>
             <code>omnesis brain notes --wipe</code> clears the agent-notes file. It is the one
             direct write the <code>brain</code> command offers.

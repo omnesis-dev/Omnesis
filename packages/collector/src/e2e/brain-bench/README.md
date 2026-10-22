@@ -107,7 +107,11 @@ never count as settlement; a successful `knowledge_edit` settles its node exactl
 must call `knowledge_save` (or `knowledge_edit`) with the offered fingerprint, current revision and
 input versions. `preserveCurrentOwner` preserves only current legacy context claims and an empty
 overview. It keeps context relations unverified and refuses stale or custom owner
-prose; those need a scenario-specific repair. Omitting node maintenance deliberately
+prose; those need a scenario-specific repair. A source deletion never deletes an
+owner: it queues the owner's node, stale, for review. `keepReviewedOwner` is the
+review's keep decision, saving such an owner as it stands; a scenario applies it
+to the owners it means to keep, and any other decision (an `open_loop_update`,
+an `annotation_retract`, an `observation_withdraw`) is scripted like any other. Omitting node maintenance deliberately
 leaves it unfinished;
 a source creation plan cannot stand in for repairing an existing owner. Source
 revisions may be offered repeatedly, so decisions must inspect the offered content

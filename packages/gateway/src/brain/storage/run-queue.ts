@@ -1237,7 +1237,7 @@ export function cancelPendingCognitionRunsByDedupeKeys(
 /**
  * Withdraw scheduled runs by dedupe key, sparing any row that has ever been
  * claimed — the decay sweep's retraction of status-checks whose loop is no
- * longer open (closed, deleted, privacy-cascaded).
+ * longer open (closed or deleted).
  *
  * The queue keeps no running status on disk: an executing run is a `pending`
  * row with `last_attempt_at` set. A decay check that dismisses its own loop

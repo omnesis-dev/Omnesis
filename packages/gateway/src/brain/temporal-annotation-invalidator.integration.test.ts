@@ -206,7 +206,7 @@ beforeEach(() => {
     sourceDataRemoval: new SourceDataRemovalService({
       db,
       writeGate,
-      purgeAnnotationsFor: async () => {},
+      cascadeCognitionFor: async () => {},
     }),
   });
   subscribeTemporalAnnotationInvalidator({

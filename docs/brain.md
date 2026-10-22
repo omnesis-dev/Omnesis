@@ -53,9 +53,10 @@ and privacy cleanup continue when autonomous synthesis is stopped.
 Source writes record a durable change and invalidate affected evidence without
 calling a model. Invalidated claims remain visibly stale until maintenance.
 
-A source deletion is a change like an edit, whatever caused it: a sync
-tombstone, a snapshot-absence sweep, a source removal or an explicit delete.
-In the same transaction the document is tombstoned
+A source deletion never deletes Brain artifacts; everything built on it goes
+stale and is reviewed. A deletion is a change like an edit, whatever caused it:
+a sync tombstone, a snapshot-absence sweep, a source removal, a retention pass
+or an explicit delete. In the same transaction the document is tombstoned
 (`knowledge_source_revisions.deleted=1`), so it can never be read or newly
 cited again, and its own evidence passages, outcome assessments, unpublished
 candidates and organization cohorts are removed. Knowledge derived from it is
@@ -67,6 +68,39 @@ navigation are untouched, and retained history keeps its text. Maintenance then
 reconciles each stale page with the model: it rewrites a claim against current
 evidence, marks it unsupported, removes it with `node.claimRemovals`, or retires
 the whole page with `knowledge_retire`.
+
+The canonical owners built on the deleted document survive it the same way.
+Each loses only its pointer to the document, which can never be read again, and
+is marked stale in its own store:
+
+- A loop, and so a task in the owner's journal, keeps its state, title and
+  schedule. A ledger entry names the deleted document; the loop's
+  `last_update` does not move.
+- An observation keeps its summary, claims and state; its citation of the
+  document goes.
+- A document or person annotation keeps its claim. The evidence atoms citing
+  the document break, a surviving atom is promoted into the mirror, and the
+  annotation turns `unverified`, including one left with no live evidence or
+  whose subject was the deleted document. Nothing is invalidated.
+- A temporal annotation keeps its sentence, interval and link to the document;
+  its atoms citing the document break. It is reviewed through the loops it is
+  linked to; one linked to no loop stays, ungrounded, until a deliberate update
+  or delete.
+
+Each surviving loop, observation and annotation, and each loop a temporal
+annotation is linked to, is queued as a `review` owner change. The queue is
+durable: it waits however long the Brain is off. Owner sync then projects the
+owner without the deleted source (an owner whose every source is gone becomes
+unsupported text), marks its node stale and queues it for maintenance like a
+stale page. A later update to the owner never downgrades the pending review.
+Only a reviewed decision may then change or remove the artifact: a canonical
+update, `open_loop_delete`, `observation_withdraw`, an annotation revise,
+supersede or retract, or a `temporal_annotation_update` or delete. An
+annotation turned `unverified` is also re-judged by the re-verification sweep.
+An annotation whose evidence document is gone is never served as a prior, but
+`annotation_search` lists it marked `underReview` (for a person, apart from the
+readable profile), even when its subject document was deleted, so the review
+can revise or retract it.
 
 `knowledge_retire` is the Brain's only way to take a wiki page out of service,
 and it is a deliberate, reviewed act: it requires this run's
@@ -81,7 +115,9 @@ review. The root is never retired. Each retirement logs one content-free line,
 Only the deletion of a canonical owner record (a loop, observation or
 annotation) erases a knowledge node: that owner's own node, its history and
 the owner records attached to it, such as the observations of a deleted loop.
-Its dependents, including wiki pages, are invalidated, never deleted.
+That deletion is always the owner's own reviewed decision or the user's, never
+a consequence of a source deletion. Its dependents, including wiki pages, are
+invalidated, never deleted.
 
 Maintenance assignments distinguish affected-claim repair from whole-page
 curation (`review=true`), root orientation and evidence organization. Wiki curation carries an explicit
@@ -573,9 +609,9 @@ changed inputs.
 Legacy loops, observations and annotations convert into knowledge nodes through
 a bounded sweep. A conversion keeps the sources that are still readable
 evidence, ignores generated mirror documents it cites, and drops deleted or
-removed ones. An owner the sweep cannot convert (it is hidden, every source it
-cites is gone, or it cites too many) is set aside with its reason and an input
-fingerprint. The sweep skips it until that fingerprint changes or a backed-off
+removed ones; an owner whose every source is gone converts as unsupported text.
+An owner the sweep cannot convert (it is hidden, or it cites too many sources)
+is set aside with its reason and an input fingerprint. The sweep skips it until that fingerprint changes or a backed-off
 retry comes due: minutes for a write race, hours to a week for an input refusal.
 `conversionProgress` in bootstrap status and `conversion` in
 `/admin/brain/knowledge/status` count converted owners and set-aside owners by
@@ -956,7 +992,8 @@ which the decision model sees with its similarity and can discount. The owner's
 latest word on a thing is the one that counts: accepting a suggestion they had
 ignored supersedes the ignore, a changed thumbs supersedes the earlier one,
 and a statement about the same subject supersedes the previous statement. A
-purged observation or loop takes its examples with it; a deleted task's
+erased observation or loop (deleted outright, never by a source deletion)
+takes its examples with it; a deleted task's
 examples are kept as history but no longer count.
 
 The ledger exists only in experimental mode, where the gates that read it

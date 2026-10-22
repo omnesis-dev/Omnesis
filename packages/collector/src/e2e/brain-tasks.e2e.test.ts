@@ -33,6 +33,7 @@ import {
   call,
   compressCognitionCadences,
   email,
+  keepReviewedOwner,
   preserveCurrentOwner,
   ref,
   sourceInterpretations,
@@ -189,7 +190,11 @@ describe("brain bench: tasks", () => {
       },
       behaviors: {
         dynamic: sourceInterpretations({
-          maintainNode: preserveCurrentOwner,
+          // The loan task is kept when its card is deleted: the review's decision.
+          maintainNode: (item, ctx, steps) =>
+            item.node?.title === LOAN_TITLE
+              ? keepReviewedOwner(item, ctx, steps)
+              : preserveCurrentOwner(item, ctx, steps),
           sources: [
             {
               docTitle: SUGGESTIONS.title,
@@ -826,7 +831,7 @@ describe("brain bench: tasks", () => {
     expect((await view("today")).find((t) => t.title === ACCEPTED_TITLE)?.state).toBe("open");
   }, 300_000);
 
-  test("a task lists its documents, and deleting one of them purges the task", async () => {
+  test("a task lists its documents, and deleting one of them keeps the task for review", async () => {
     const now = (await bench.clock.now()).now;
     await bench.pushAndSettle([{ ...LOAN_CARD, at: now }]);
     loanCardId = await bench.docId(LOAN_CARD.externalId);
@@ -848,10 +853,13 @@ describe("brain bench: tasks", () => {
     expect(sources.size).toBe(1);
     expect([...sources][0]).not.toBe("");
 
-    // Deleting a document removes what was derived from it, the task included.
+    // Deleting a document never deletes the task built on it: the task stays
+    // in the journal, without its link to the deleted card, and is reviewed.
     await bench.deleteDoc(loanCardId);
     await bench.drainUntilQuiet({ includeUpcoming: false });
-    await expect(bench.obs.task(suggestion.id)).rejects.toMatchObject({ status: 404 });
-    expect((await view("anytime")).some((t) => t.id === suggestion.id)).toBe(false);
+    const kept = (await bench.obs.task(suggestion.id)).task;
+    expect(kept.state).toBe("open");
+    expect(kept.documents.map((d) => d.id)).toEqual([reminderId]);
+    expect((await view("anytime")).some((t) => t.id === suggestion.id)).toBe(true);
   }, 300_000);
 });

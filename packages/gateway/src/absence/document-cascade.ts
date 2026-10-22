@@ -8,7 +8,7 @@ export async function finishDocumentCascade(
   cascade: AbsenceCascade,
   ops: {
     deleteIndex?: (ids: readonly string[]) => Promise<number>;
-    purgeCognition: (ids: readonly string[]) => Promise<void>;
+    cascadeCognition: (ids: readonly string[]) => Promise<void>;
     acknowledge: (id: number, part: "index" | "cognition") => Promise<void>;
   },
 ): Promise<number> {
@@ -26,7 +26,7 @@ export async function finishDocumentCascade(
   }
   if (!cascade.cognitionDone) {
     try {
-      await ops.purgeCognition(cascade.documentIds);
+      await ops.cascadeCognition(cascade.documentIds);
       await ops.acknowledge(cascade.id, "cognition");
     } catch (error) {
       failed = true;

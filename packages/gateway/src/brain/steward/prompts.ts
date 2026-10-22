@@ -34,9 +34,9 @@
  *   - the decay-check flavour of `time_based` carries the loop's live
  *     state + recent ledger and frames the keep-or-delete judgment
  *     (keep = record via open_loop_update with decayCheckPassed); a
- *     check whose source documents were all privacy-deleted steers
- *     toward deletion, and a check on a vanished/non-open loop degrades
- *     to an explicit no-op instruction;
+ *     deleted source document is named but never steers toward deletion,
+ *     and a check on a vanished/non-open loop degrades to an explicit
+ *     no-op instruction;
  *   - `feedback` prompts re-examine a loop whose consumed annotation
  *     prior died (the provenance recheck).
  */
@@ -931,7 +931,7 @@ function buildDecayCheckRunPrompt(
   if (!loop) {
     parts.push(
       "",
-      `This is a decay status-check on open loop ${loopId}, but that loop no longer exists (a later run or a privacy delete removed it). There is nothing to check — finish without creating anything.`,
+      `This is a decay status-check on open loop ${loopId}, but that loop no longer exists (a later run or the owner removed it). There is nothing to check — finish without creating anything.`,
     );
     return parts.join("\n");
   }
@@ -1002,7 +1002,7 @@ function buildDecayCheckRunPrompt(
   if (allDocsGone) {
     parts.push(
       "",
-      "Every source document this loop was built on has been DELETED (privacy deletes). Unless your own investigation finds fresh corroborating material, the loop has lost its grounding — deleting it is the right call.",
+      "Every source document this loop was built on has been deleted. A deleted source is not evidence that the obligation went away: judge the loop on what your investigation can still find, as for any other loop.",
     );
   } else if (missingDocs.length > 0) {
     parts.push(

@@ -35,7 +35,7 @@ import {
 } from "../../data/repositories/MobilePermissionHealthRepository.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { epochScope, type SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
-import { purgeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
+import { cascadeCognitiveStateThroughGate } from "../../brain/cognitive-state-cascade.js";
 import { createDocAnnotation } from "../../brain/storage/annotations.js";
 import { createOpenLoop, getOpenLoop } from "../../brain/storage/open-loops.js";
 import { buildOpenLoopDocumentInput } from "../../brain/open-loop-source/document-projection.js";
@@ -107,7 +107,7 @@ function makeRemoval(
   return new SourceDataRemovalService({
     db,
     writeGate,
-    purgeAnnotationsFor: (ids) => purgeCognitiveStateThroughGate(db, writeGate, ids),
+    cascadeCognitionFor: (ids) => cascadeCognitiveStateThroughGate(db, writeGate, ids),
     ...overrides,
     analyticsDb: overrides.analyticsDb
       ? ({ prepareSourceRemoval: async () => {}, ...overrides.analyticsDb } as AnalyticsDb)
@@ -193,11 +193,11 @@ describe("SourceService.deleteSource", () => {
       expect(insideFence).toBe(true);
       throw new RowKeyError("Restore the missing parent before removing this source");
     });
-    const purgeAnnotationsFor = vi.fn(async () => {});
+    const cascadeCognitionFor = vi.fn(async () => {});
     const syncSourceSettingsToConfig = vi.fn(async () => {});
     const sourceDataRemoval = makeRemoval({
       analyticsDb: { prepareSourceRemoval } as unknown as AnalyticsDb,
-      purgeAnnotationsFor,
+      cascadeCognitionFor,
     });
     const service = makeService({
       sourceDataRemoval,
@@ -220,7 +220,7 @@ describe("SourceService.deleteSource", () => {
     expect(getSource(db, id)).not.toBeNull();
     expect(isSourceCleanupPending(db, id)).toBe(false);
     expect(getDocumentCount(db, id)).toBe(3);
-    expect(purgeAnnotationsFor).not.toHaveBeenCalled();
+    expect(cascadeCognitionFor).not.toHaveBeenCalled();
     expect(syncSourceSettingsToConfig).not.toHaveBeenCalled();
     expect(prepareSourceRemoval).toHaveBeenCalledWith(id, undefined);
     service.dispose();
@@ -230,20 +230,20 @@ describe("SourceService.deleteSource", () => {
     "%s wipe preflights ownership before deleting documents or annotations",
     async (scope) => {
       const sourceId = seedSourceWithDocs();
-      const purgeAnnotationsFor = vi.fn(async () => {});
+      const cascadeCognitionFor = vi.fn(async () => {});
       const deleteAnalyticsForSource = vi.fn(async () => []);
       const prepareSourceRemoval = vi.fn(async () => {
         throw new RowKeyError("Ownership recovery is incomplete");
       });
       const removal = makeRemoval({
-        purgeAnnotationsFor,
+        cascadeCognitionFor,
         analyticsDb: { prepareSourceRemoval, deleteAnalyticsForSource } as unknown as AnalyticsDb,
       });
       await expect(
         scope === "source" ? removal.deleteSource(sourceId) : removal.deleteProvider("google"),
       ).rejects.toMatchObject({ status: 409, code: "ANALYTICS_OWNERSHIP_UNRESOLVED" });
       expect(getDocumentCount(db, sourceId)).toBe(3);
-      expect(purgeAnnotationsFor).not.toHaveBeenCalled();
+      expect(cascadeCognitionFor).not.toHaveBeenCalled();
       expect(deleteAnalyticsForSource).not.toHaveBeenCalled();
     },
   );
@@ -303,11 +303,9 @@ describe("SourceService.deleteSource", () => {
     await vi.waitFor(() => expect(deleteIndexBySource).toHaveBeenCalledWith(sourceId));
   });
 
-  test("retracts the cognitive state grounded on the removed source's documents", async () => {
-    // Removing a source used to delete its documents wholesale and stop
-    // there — annotations quoting the removed content survived, dangling.
-    // Their evidence quote IS the document's text, so leaving them behind
-    // keeps a copy of what the operator asked to be gone.
+  test("keeps the annotations grounded on the removed source's documents, queued for review", async () => {
+    // A source removal is a deletion like any other: what the Brain built on
+    // the documents survives, loses its grounding and is reviewed.
     const sourceId = seedSourceWithDocs();
     const docId = db
       .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ? LIMIT 1")
@@ -329,8 +327,7 @@ describe("SourceService.deleteSource", () => {
       Date.now(),
     );
     // Assert against the TABLE, not the read helper: the reads already skip a
-    // row whose evidence document is gone, so they would mask a surviving row
-    // — and the row is where `evidence_quote` keeps its copy of the text.
+    // row whose evidence document is gone.
     const storedRows = (): number =>
       db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM doc_annotations").get()!.n;
     const storedQuotes = (): number =>
@@ -344,8 +341,26 @@ describe("SourceService.deleteSource", () => {
     );
 
     await vi.waitFor(() => expect(getDocumentCount(db, sourceId)).toBe(0));
-    expect(storedRows()).toBe(0);
-    expect(storedQuotes()).toBe(0);
+    expect(storedRows()).toBe(1);
+    expect(
+      db
+        .prepare(
+          "SELECT invalidated_at, verification_state FROM doc_annotations WHERE id = 'anno_1'",
+        )
+        .get(),
+    ).toEqual({ invalidated_at: null, verification_state: "unverified" });
+    expect(
+      db
+        .prepare<
+          [],
+          { n: number }
+        >("SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE broken_at IS NULL")
+        .get()!.n,
+    ).toBe(0);
+    expect(storedQuotes()).toBeGreaterThan(0);
+    expect(
+      db.prepare("SELECT operation FROM knowledge_owner_changes WHERE owner_id = 'anno_1'").get(),
+    ).toEqual({ operation: "review" });
   });
 
   test("rejects a new annotation after source removal is established", async () => {
@@ -373,7 +388,7 @@ describe("SourceService.deleteSource", () => {
     ).rejects.toThrow("source is being removed");
   });
 
-  test("keeps documents and removal pending when cognitive purge fails", async () => {
+  test("keeps documents and removal pending when the cognitive cascade fails", async () => {
     const sourceId = seedSourceWithDocs();
     const docId = db
       .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ? LIMIT 1")
@@ -394,25 +409,25 @@ describe("SourceService.deleteSource", () => {
       Date.now(),
     );
     const base = directWriteGate(db);
-    const cascadeAnnotationPrivacyDelete = vi.fn(async () => {
+    const reviewBrainArtifactsForDeletedDocs = vi.fn(async () => {
       throw new Error("cognition store unavailable");
     });
     const service = makeService({
-      writeGate: { ...base, cascadeAnnotationPrivacyDelete },
+      writeGate: { ...base, reviewBrainArtifactsForDeletedDocs },
     });
 
     await service.deleteSource(sourceId as never);
-    await vi.waitFor(() => expect(cascadeAnnotationPrivacyDelete).toHaveBeenCalled());
+    await vi.waitFor(() => expect(reviewBrainArtifactsForDeletedDocs).toHaveBeenCalled());
 
     expect(getDocumentCount(db, sourceId)).toBe(3);
     expect(isSourceCleanupPending(db, sourceId as never)).toBe(true);
     service.dispose();
   });
 
-  test("retracts cognitive state when a source's data is deleted without removing it", async () => {
+  test("keeps cognitive state for review when a source's data is deleted without removing it", async () => {
     // `POST /documents/delete-all/source/:id` empties a source in place — the
     // resync path. The cascade has to run here too, not only on removal, or
-    // annotations outlive the evidence they quote.
+    // annotations would keep resting on evidence that no longer exists.
     const sourceId = seedSourceWithDocs();
     const docId = db
       .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ? LIMIT 1")
@@ -442,13 +457,18 @@ describe("SourceService.deleteSource", () => {
     // Step 1 — the data sweep the clients issue first.
     await removal.deleteSource(sourceId);
     expect(getDocumentCount(db, sourceId)).toBe(0);
-    expect(storedRows(), "purged by the data sweep, not by source removal").toBe(0);
+    expect(storedRows(), "kept by the data sweep").toBe(1);
+    expect(
+      db.prepare("SELECT verification_state FROM doc_annotations WHERE id = 'anno_cli'").get(),
+      "marked by the data sweep, not by source removal",
+    ).toEqual({ verification_state: "unverified" });
 
     // Step 2 — removing the source row then finds nothing left to cascade.
     await makeService({ indexWriteGate: gate, wsServer: undefined }).deleteSource(
       sourceId as never,
     );
     expect(getSource(db, sourceId as never)).toBeNull();
+    expect(storedRows()).toBe(1);
   });
 
   test("source data wipe fails loudly when analytics cleanup fails", async () => {
@@ -502,10 +522,9 @@ describe("SourceService.deleteSource", () => {
     expect(deleteAnalyticsForSource).toHaveBeenCalledWith(sourceId);
   });
 
-  test("retracts the open loops built on a removed source, and their mirrors", async () => {
-    // The loop cascade ran only on single-document privacy delete. A bulk
-    // sweep left loops citing documents that no longer exist — and their
-    // mirror documents, which carry the loop's title and description.
+  test("keeps the open loops built on a removed source, and their mirrors", async () => {
+    // A bulk sweep is a deletion like any other: the loop and its mirror stay,
+    // only its link to the removed document goes.
     const sourceId = seedSourceWithDocs();
     const docId = db
       .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ? LIMIT 1")
@@ -537,8 +556,8 @@ describe("SourceService.deleteSource", () => {
     const { gate } = spyIndexGate();
     await makeRemoval({ indexWriteGate: gate }).deleteSource(sourceId);
 
-    expect(getOpenLoop(db, "loop_swept"), "loop retracted").toBeNull();
-    expect(mirrorCount(), "mirror document removed with it").toBe(0);
+    expect(getOpenLoop(db, "loop_swept"), "loop kept").toMatchObject({ docs: [] });
+    expect(mirrorCount(), "mirror document kept with it").toBe(1);
   });
 
   test("also notifies the collector when a WS server is present", async () => {
@@ -627,13 +646,13 @@ describe("SourceDataRemovalService.deleteStream", () => {
     const cursorBefore = db
       .prepare("SELECT * FROM sync_state WHERE source_id = ? ORDER BY device_id")
       .all(sourceId);
-    const purgeAnnotationsFor = vi.fn(async () => {});
+    const cascadeCognitionFor = vi.fn(async () => {});
     const prepareSourceRemoval = vi.fn(async () => {
       throw new RowKeyError("Ownership recovery is incomplete");
     });
     await expect(
       makeRemoval({
-        purgeAnnotationsFor,
+        cascadeCognitionFor,
         analyticsDb: { prepareSourceRemoval } as unknown as AnalyticsDb,
       }).deleteStream(sourceId, "device-a", { resetCursor: true }),
     ).rejects.toMatchObject({
@@ -645,18 +664,18 @@ describe("SourceDataRemovalService.deleteStream", () => {
     expect(
       db.prepare("SELECT * FROM sync_state WHERE source_id = ? ORDER BY device_id").all(sourceId),
     ).toEqual(cursorBefore);
-    expect(purgeAnnotationsFor).not.toHaveBeenCalled();
+    expect(cascadeCognitionFor).not.toHaveBeenCalled();
   });
 
   test("runs the cognition, index and analytics arms over the stream's ids, fenced on the device's row", async () => {
     const { sourceId, idsOf } = seedStreams();
     const doomed = idsOf("device-a");
-    const purgeAnnotationsFor = vi.fn(async (_ids: readonly string[]) => {});
+    const cascadeCognitionFor = vi.fn(async (_ids: readonly string[]) => {});
     const deleteChunksByDocuments = vi.fn(async (ids: readonly string[]) => ids.length);
     const deleteAnalyticsStream = vi.fn(async (_s: string, _d: string) => ["visit_days"]);
     const run = vi.fn((_scope: string, op: () => Promise<unknown>) => op());
     const removal = makeRemoval({
-      purgeAnnotationsFor,
+      cascadeCognitionFor,
       indexWriteGate: { deleteChunksByDocuments } as unknown as IndexWriteGate,
       analyticsDb: { deleteAnalyticsStream } as unknown as AnalyticsDb,
       sourceWriteEpochFence: { run } as unknown as SourceWriteEpochFence,
@@ -665,8 +684,8 @@ describe("SourceDataRemovalService.deleteStream", () => {
     const result = await removal.deleteStream(sourceId, "device-a");
 
     expect(result).toEqual({ deleted: 2, analyticsCleaned: ["visit_days"] });
-    expect(purgeAnnotationsFor).toHaveBeenCalledTimes(2);
-    for (const [ids] of purgeAnnotationsFor.mock.calls) expect([...ids].sort()).toEqual(doomed);
+    expect(cascadeCognitionFor).toHaveBeenCalledTimes(2);
+    for (const [ids] of cascadeCognitionFor.mock.calls) expect([...ids].sort()).toEqual(doomed);
     expect(deleteChunksByDocuments).toHaveBeenCalledTimes(1);
     expect([...deleteChunksByDocuments.mock.calls[0]![0]].sort()).toEqual(doomed);
     expect(deleteAnalyticsStream).toHaveBeenCalledWith(sourceId, "device-a");
@@ -676,7 +695,7 @@ describe("SourceDataRemovalService.deleteStream", () => {
     expect(idsOf("")).toHaveLength(1);
   });
 
-  test("retracts the cognitive state grounded on the stream's documents only, and keeps the source's coverage", async () => {
+  test("marks the cognitive state grounded on the stream's documents only, and keeps the source's coverage", async () => {
     const { sourceId, idsOf } = seedStreams();
     createDevice(db, { name: "phone-a", kind: "android" });
     const annotate = (id: string, docId: string) =>
@@ -709,7 +728,14 @@ describe("SourceDataRemovalService.deleteStream", () => {
 
     await makeRemoval().deleteStream(sourceId, "device-a");
 
-    expect(annotationIds()).toEqual(["anno_b"]);
+    expect(annotationIds()).toEqual(["anno_a", "anno_b"]);
+    expect(
+      db
+        .prepare(
+          "SELECT id FROM doc_annotations WHERE verification_state = 'unverified' ORDER BY id",
+        )
+        .all(),
+    ).toEqual([{ id: "anno_a" }]);
     expect(
       db
         .prepare<

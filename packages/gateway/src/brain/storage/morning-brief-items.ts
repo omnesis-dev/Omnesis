@@ -187,9 +187,9 @@ export function latestSentMorningBrief(db: Db): SentMorningBrief | null {
 }
 
 /**
- * Sent briefs that showed an observation since removed by a privacy delete:
- * its row is gone and, unlike one retired by age, it left no outcome record.
- * Such a brief's text may quote the deleted source.
+ * Sent briefs that showed an observation since erased outright: its row is
+ * gone and, unlike one retired by age, it left no outcome record. Such a
+ * brief's text may quote what was erased.
  */
 export function listTaintedMorningBriefs(
   db: Db,

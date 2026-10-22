@@ -427,7 +427,33 @@ export function deleteObservationsAttachedToLoops(
   return ids;
 }
 
-/** Delete every observation citing one of `docIds`. Returns the deleted ids. */
+/**
+ * Source documents were deleted: every observation citing one is kept. Only
+ * its citation of the deleted document is removed (that document can never be
+ * read again); its summary, claims and state stay as they are for the review
+ * that follows. Returns the ids of the observations that lost a citation.
+ * Idempotent.
+ */
+export function reviewObservationsForDeletedDocs(db: Db, docIds: readonly string[]): string[] {
+  if (docIds.length === 0) return [];
+  const rows = db
+    .prepare<[string], { observation_id: string; position: number }>(
+      `SELECT observation_id, position FROM observation_citations
+        WHERE doc_id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(JSON.stringify(docIds));
+  const unlink = db.prepare<[string, number]>(
+    "DELETE FROM observation_citations WHERE observation_id = ? AND position = ?",
+  );
+  for (const row of rows) unlink.run(row.observation_id, row.position);
+  return [...new Set(rows.map((row) => row.observation_id))];
+}
+
+/**
+ * Delete every observation citing one of `docIds`. Only the historical
+ * retired-web-documents migration uses this, through
+ * `cascadeOpenLoopPrivacyDelete`. Returns the deleted ids.
+ */
 export function deleteObservationsCitingDocs(db: Db, docIds: readonly string[]): string[] {
   if (docIds.length === 0) return [];
   const placeholders = docIds.map(() => "?").join(",");

@@ -28,7 +28,7 @@ const SOURCE = "example-notes:memory";
 const QUOTE = "I prefer afternoon meetings.";
 const deletionPaths = ["source", "ids", "user", "retention"] as const;
 
-describe("document deletion purges durable annotation text", () => {
+describe("document deletion keeps durable annotations for review", () => {
   let db: ReturnType<typeof createDatabase>;
   let path: string;
   let evidenceId: string;
@@ -112,7 +112,7 @@ describe("document deletion purges durable annotation text", () => {
   }
 
   test.each(deletionPaths)(
-    "%s deletion removes live, retired, and broken-evidence annotations",
+    "%s deletion keeps every annotation and breaks only the atoms citing the deleted document",
     (kind) => {
       remove(kind);
       expect(db.prepare("SELECT id FROM documents WHERE id = ?").get(evidenceId)).toBeUndefined();
@@ -120,14 +120,40 @@ describe("document deletion purges durable annotation text", () => {
         ["doc_annotations", "doc_annotation_evidence", "doc"],
         ["person_annotations", "person_annotation_evidence", "person"],
       ]) {
-        expect(db.prepare(`SELECT id FROM ${parent}`).all()).toEqual([
-          { id: `${prefix}-unrelated` },
+        // Nothing is deleted or invalidated by the deletion itself.
+        expect(db.prepare(`SELECT id, invalidated_at FROM ${parent} ORDER BY id`).all()).toEqual([
+          { id: `${prefix}-additional`, invalidated_at: null },
+          { id: `${prefix}-invalidated`, invalidated_at: 2 },
+          { id: `${prefix}-live`, invalidated_at: null },
+          { id: `${prefix}-superseded`, invalidated_at: 2 },
+          { id: `${prefix}-unrelated`, invalidated_at: null },
         ]);
-        expect(db.prepare(`SELECT annotation_id FROM ${child}`).all()).toEqual([
-          { annotation_id: `${prefix}-unrelated` },
-        ]);
+        expect(db.prepare(`SELECT COUNT(*) AS n FROM ${child}`).get()).toEqual({ n: 6 });
+        // The live annotation lost its only grounding: kept, unverified, its atom broken.
+        expect(
+          db.prepare(`SELECT verification_state FROM ${parent} WHERE id = ?`).get(`${prefix}-live`),
+        ).toEqual({ verification_state: "unverified" });
+        expect(
+          db
+            .prepare(`SELECT broken_at IS NOT NULL AS broken FROM ${child} WHERE annotation_id = ?`)
+            .all(`${prefix}-live`),
+        ).toEqual([{ broken: 1 }]);
+        // The one resting elsewhere is untouched.
+        expect(
+          db
+            .prepare(`SELECT broken_at FROM ${child} WHERE annotation_id = ?`)
+            .all(`${prefix}-unrelated`),
+        ).toEqual([{ broken_at: null }]);
       }
-      // A later writer request cannot reintroduce an annotation after deletion.
+      // Each kept live annotation is queued for review.
+      expect(
+        db
+          .prepare(
+            "SELECT owner_id FROM knowledge_owner_changes WHERE operation = 'review' ORDER BY owner_id",
+          )
+          .all(),
+      ).toEqual([{ owner_id: "doc-live" }, { owner_id: "person-live" }]);
+      // A later writer request cannot ground a new annotation on the deleted document.
       expect(() =>
         createDocAnnotation(
           db,
@@ -150,7 +176,7 @@ describe("document deletion purges durable annotation text", () => {
   );
 
   test.each(deletionPaths)(
-    "%s deletion rolls the annotation purge back when source deletion fails",
+    "%s deletion rolls the annotation review back when source deletion fails",
     (kind) => {
       db.exec(
         "CREATE TRIGGER reject_delete BEFORE DELETE ON documents BEGIN SELECT RAISE(ABORT, 'fixture deletion failure'); END",
@@ -167,15 +193,20 @@ describe("document deletion purges durable annotation text", () => {
   );
 
   test.each(deletionPaths)(
-    "%s deletion preserves evidence when an annotation purge fails",
+    "%s deletion keeps the document when marking an annotation for review fails",
     (kind) => {
       db.exec(
-        "CREATE TRIGGER reject_purge BEFORE DELETE ON person_annotations BEGIN SELECT RAISE(ABORT, 'fixture purge failure'); END",
+        "CREATE TRIGGER reject_review BEFORE UPDATE ON person_annotations BEGIN SELECT RAISE(ABORT, 'fixture review failure'); END",
       );
-      expect(() => remove(kind)).toThrow("fixture purge failure");
+      expect(() => remove(kind)).toThrow("fixture review failure");
       expect(db.prepare("SELECT id FROM documents WHERE id = ?").get(evidenceId)).toBeDefined();
-      // The earlier document-annotation purge and evidence-child deletes also
-      // roll back, so retrying sees the entire original provenance graph.
+      // The document-annotation marks and broken atoms roll back too, so a
+      // retry sees the entire original provenance graph.
+      expect(
+        db
+          .prepare("SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE broken_at IS NOT NULL")
+          .get(),
+      ).toEqual({ n: 1 });
       for (const table of ["doc_annotations", "person_annotations"]) {
         expect(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toEqual({ n: 5 });
       }

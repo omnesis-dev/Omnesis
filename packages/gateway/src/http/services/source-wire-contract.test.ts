@@ -64,7 +64,7 @@ beforeEach(() => {
       db,
       writeGate,
       sourceWriteEpochFence: fence,
-      purgeAnnotationsFor: async () => {},
+      cascadeCognitionFor: async () => {},
     }),
     listDevices: () => listDevices(db),
     notifySourceChange: () => {},
@@ -200,7 +200,7 @@ test.each(["cursor", "analytics", "unscoped analytics", "documents", "snapshot",
         db,
         writeGate,
         sourceWriteEpochFence: fence,
-        purgeAnnotationsFor: async () => {},
+        cascadeCognitionFor: async () => {},
       }),
     });
     const operations: Record<string, () => Promise<unknown>> = {

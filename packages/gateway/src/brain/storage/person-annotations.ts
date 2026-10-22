@@ -12,7 +12,7 @@
  * The subject is a person id, NOT a document — people merge and re-derive, so
  * there is no foreign key on `person_id` (the `open_loop_people` pattern). The
  * only document coupling is the evidence set, which drives BOTH the
- * content-change soft-invalidation and the privacy-delete hard purge.
+ * content-change soft-invalidation and the source-deletion review.
  *
  * Multi-evidence works exactly as in `annotations.ts` (read its module doc):
  * the atoms live in `person_annotation_evidence` with per-row `broken_at`
@@ -74,7 +74,7 @@ export function createPersonAnnotationStorageTables(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_person_annotations_person ON person_annotations(person_id)",
   );
-  // "Which annotations cite this document" — the invalidation / privacy cascade.
+  // "Which annotations cite this document" — invalidation and source-deletion review.
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_person_annotations_evidence ON person_annotations(evidence_doc_id)",
   );
@@ -516,9 +516,9 @@ const MERGE_CLASS_CTE = `RECURSIVE merge_class(id, depth) AS (
  * Only rows whose evidence doc still exists are returned: an annotation whose
  * grounding atom is gone is un-regroundable by definition, so it must not be
  * served as a prior on ANY surface (self-memory injection, the HTTP routes,
- * lookup hints). Deletion paths outside the privacy cascade (a source
- * remove/re-add that re-keys doc ids, dedup, migrations) would otherwise leave
- * a dangling claim injected forever.
+ * lookup hints). A deleted source document, or one re-keyed by a source
+ * remove/re-add, dedup or a migration, would otherwise leave a dangling claim
+ * injected forever.
  */
 export function listLivePersonAnnotationsForPerson(
   db: Db,
@@ -547,6 +547,30 @@ export function listLivePersonAnnotationsForPerson(
     )
     .all(...params);
   return rows.map(rowToPersonAnnotation);
+}
+
+/**
+ * Live facts about `personId` (or its merge class) kept for review after the
+ * document their scalar mirror cites was deleted. They are outside the
+ * readable profile — never served, budgeted or fingerprinted — but the
+ * Brain's review must be able to read them to revise or retract them.
+ */
+export function listPersonAnnotationsUnderReview(
+  db: Db,
+  personId: string,
+  limit = 20,
+): PersonAnnotationRow[] {
+  return db
+    .prepare<[string, number], PersonAnnotationDbRow>(
+      `WITH ${MERGE_CLASS_CTE}
+       SELECT * FROM person_annotations
+        WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND person_id IN (SELECT id FROM merge_class)
+          AND invalidated_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
+        ORDER BY COALESCE(updated_at, created_at) DESC, id DESC LIMIT ?`,
+    )
+    .all(personId, limit)
+    .map(rowToPersonAnnotation);
 }
 
 /**
@@ -615,33 +639,62 @@ const ID_CHUNK = 400;
  * surviving atom promoted into its scalar mirror, and every survivor is
  * re-stamped `verification_state = 'unverified'` with `last_verified_at`
  * cleared, so the re-verification sweep re-judges entailment against the
- * shifted content. The privacy purge stays blanket via
- * `cascadePersonAnnotationPrivacyDelete`. Keeps the `created_at <= now`
- * event-time guard. Idempotent.
+ * shifted content. A deliberate source deletion takes the gentler
+ * {@link reviewPersonAnnotationsForDeletedDoc} path instead. Keeps the
+ * `created_at <= now` event-time guard. Idempotent.
  */
 export function invalidatePersonAnnotationsForDoc(
   db: Db,
   docId: string,
   now: number,
 ): AnnotationInvalidationResult {
-  const txn = db.transaction((): AnnotationInvalidationResult => {
+  return regroundPersonAnnotations(db, docId, now, "content").result;
+}
+
+/**
+ * A source document was deleted: the person facts grounded in it survive.
+ * Every atom citing it is stamped broken, a survivor whose evidence[0] broke
+ * has its next live atom promoted into the scalar mirror, and every touched
+ * fact — including one left with no live grounding — is re-stamped
+ * `unverified` so it is re-judged. Nothing is invalidated here: only a
+ * reviewed decision (revise, supersede, retract) may retire a fact. Returns
+ * the ids of the annotations it touched. Idempotent.
+ */
+export function reviewPersonAnnotationsForDeletedDoc(db: Db, docId: string, now: number): string[] {
+  return regroundPersonAnnotations(db, docId, now, "deleted").touched;
+}
+
+function regroundPersonAnnotations(
+  db: Db,
+  docId: string,
+  now: number,
+  cause: "content" | "deleted",
+): { result: AnnotationInvalidationResult; touched: string[] } {
+  const txn = db.transaction((): { result: AnnotationInvalidationResult; touched: string[] } => {
+    // Index-driven from the live atoms citing the document. A deletion has no
+    // event-time guard: everything resting on the deleted document is affected.
     const candidates = db
       .prepare<
-        [string, number],
+        unknown[],
         { id: string; evidence_doc_id: string; evidence_quote: string; claim_basis: string }
       >(
-        `SELECT id, evidence_doc_id, evidence_quote, claim_basis FROM person_annotations a
-          WHERE EXISTS (
-                  SELECT 1 FROM person_annotation_evidence e
-                   WHERE e.annotation_id = a.id AND e.evidence_doc_id = ? AND e.broken_at IS NULL)
-            AND invalidated_at IS NULL AND created_at <= ?`,
+        `SELECT DISTINCT a.id, a.evidence_doc_id, a.evidence_quote, a.claim_basis
+           FROM person_annotation_evidence e JOIN person_annotations a ON a.id = e.annotation_id
+          WHERE e.evidence_doc_id = ? AND e.broken_at IS NULL AND a.invalidated_at IS NULL
+            ${cause === "deleted" ? "" : "AND a.created_at <= ?"}`,
       )
-      .all(docId, now);
-    if (candidates.length === 0) return { invalidated: 0, flaggedUnverified: 0, promoted: 0 };
-    const doc = db
-      .prepare<[string], { content: string | null }>("SELECT content FROM documents WHERE id = ?")
-      .get(docId);
-    const content = doc?.content ?? "";
+      .all(...(cause === "deleted" ? [docId] : [docId, now]));
+    if (candidates.length === 0)
+      return { result: { invalidated: 0, flaggedUnverified: 0, promoted: 0 }, touched: [] };
+    const content =
+      cause === "deleted"
+        ? ""
+        : (db
+            .prepare<
+              [string],
+              { content: string | null }
+            >("SELECT content FROM documents WHERE id = ?")
+            .get(docId)?.content ?? "");
     const dead: string[] = [];
     const survivors: string[] = [];
     let promoted = 0;
@@ -656,14 +709,18 @@ export function invalidatePersonAnnotationsForDoc(
         now,
       );
       if (
-        remaining.length === 0 ||
-        (c.claim_basis === "synthesized" && remaining.length < beforeCount)
+        cause === "content" &&
+        (remaining.length === 0 ||
+          (c.claim_basis === "synthesized" && remaining.length < beforeCount))
       ) {
         dead.push(c.id);
         continue;
       }
-      const head = remaining[0]!;
-      if (head.evidenceDocId !== c.evidence_doc_id || head.evidenceQuote !== c.evidence_quote) {
+      const head = remaining[0];
+      if (
+        head &&
+        (head.evidenceDocId !== c.evidence_doc_id || head.evidenceQuote !== c.evidence_quote)
+      ) {
         db.prepare<[string, string, string]>(
           `UPDATE person_annotations SET evidence_doc_id = ?, evidence_quote = ? WHERE id = ?`,
         ).run(head.evidenceDocId, head.evidenceQuote, c.id);
@@ -682,13 +739,16 @@ export function invalidatePersonAnnotationsForDoc(
       const batch = survivors.slice(i, i + ID_CHUNK);
       const placeholders = batch.map(() => "?").join(", ");
       // Cleared, not just aged — a previous entailment verdict no longer
-      // speaks to the shifted content, so the row leads the sweep's backlog.
+      // speaks to the shifted evidence, so the row leads the sweep's backlog.
       db.prepare<unknown[]>(
         `UPDATE person_annotations SET verification_state = 'unverified', last_verified_at = NULL
           WHERE id IN (${placeholders})`,
       ).run(...batch);
     }
-    return { invalidated: dead.length, flaggedUnverified: survivors.length, promoted };
+    return {
+      result: { invalidated: dead.length, flaggedUnverified: survivors.length, promoted },
+      touched: survivors,
+    };
   });
   return txn();
 }
@@ -749,9 +809,10 @@ export function listDueVerificationPersonAnnotations(
 }
 
 /**
- * Privacy cascade: HARD-delete every annotation ANY of whose evidence atoms
- * (live or broken — the blanket covers everything the annotation ever
- * embedded) cites a deleted document. Child rows are purged with parents.
+ * HARD-delete every annotation ANY of whose evidence atoms (live or broken)
+ * cites one of `deletedDocIds`, with its child rows. Only the historical
+ * retired-web-documents migration uses this; a live source deletion never
+ * deletes a person fact (see {@link reviewPersonAnnotationsForDeletedDoc}).
  */
 export function cascadePersonAnnotationPrivacyDelete(
   db: Db,

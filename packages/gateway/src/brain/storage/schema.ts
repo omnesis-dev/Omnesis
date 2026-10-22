@@ -82,11 +82,10 @@ export function createBriefsStorageTables(db: Db): void {
       WHERE state IN ('done', 'dismissed');
   `);
 
-  // docs[] normalized for the privacy-delete cascade: "which loops cite
-  // this document" must be an indexed lookup, not a JSON scan. No FK to
-  // documents(id) — the cascade is invoked explicitly from the privacy
-  // -delete path only, never implied by other document-delete paths
-  // (source wipes, re-syncs).
+  // docs[] normalized so "which loops cite this document" is an indexed
+  // lookup, not a JSON scan: a source deletion uses it to keep those loops
+  // and queue them for review. No FK to documents(id) — a document delete
+  // must never take a loop's rows with it.
   db.exec(`
     CREATE TABLE IF NOT EXISTS open_loop_docs (
       loop_id TEXT NOT NULL REFERENCES open_loops(id) ON DELETE CASCADE,
@@ -168,8 +167,8 @@ export function createBriefsStorageTables(db: Db): void {
     CREATE INDEX IF NOT EXISTS idx_observations_would_push
       ON observations(would_push_at) WHERE would_push_at IS NOT NULL;
   `);
-  // citations[] normalized for the privacy-delete cascade (indexed
-  // "which observations cite this document"). `position` keeps cited order.
+  // citations[] normalized for an indexed "which observations cite this
+  // document" (source-deletion review). `position` keeps cited order.
   db.exec(`
     CREATE TABLE IF NOT EXISTS observation_citations (
       observation_id TEXT NOT NULL REFERENCES observations(id) ON DELETE CASCADE,
@@ -404,9 +403,7 @@ export function createBriefsStorageTables(db: Db): void {
   // (`decayed`/`deleted`). Reconcile surfaces lexical matches from it so a
   // recurring commitment is recognised as a known recurrence. `title_norm`
   // is the recurrence key (see storage/retired-loops.ts); `cadence_days` and
-  // `recurrence_count` are derived from the prior trace sharing that key. A
-  // privacy delete NEVER writes here — it purges derived content, so a
-  // lingering trace would leak it (enforced in cascadeOpenLoopPrivacyDelete).
+  // `recurrence_count` are derived from the prior trace sharing that key.
   db.exec(`
     CREATE TABLE IF NOT EXISTS retired_loops (
       id TEXT PRIMARY KEY,

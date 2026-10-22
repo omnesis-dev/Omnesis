@@ -22,8 +22,8 @@ export interface SourceDataRemovalDeps {
   indexWriteGate?: IndexWriteGate;
   analyticsDb?: AnalyticsDb;
   sourceWriteEpochFence?: SourceWriteEpochFence;
-  /** The cognitive-state cascade over deleted document ids (`purgeCognitiveStateThroughGate`). */
-  purgeAnnotationsFor: (documentIds: readonly string[]) => Promise<void>;
+  /** The cognitive-state cascade over deleted document ids (`cascadeCognitiveStateThroughGate`). */
+  cascadeCognitionFor: (documentIds: readonly string[]) => Promise<void>;
 }
 
 /** Owns source/stream teardown and document-provider cleanup across stores. */
@@ -136,12 +136,12 @@ export class SourceDataRemovalService {
         )
         .all(sourceId, deviceId)
         .map((row) => row.id);
-      await this.deps.purgeAnnotationsFor(doomedDocIds);
+      await this.deps.cascadeCognitionFor(doomedDocIds);
       const { deleted, documentIds } = await this.deps.writeGate.deleteAllByStream(
         sourceId,
         deviceId,
       );
-      await this.deps.purgeAnnotationsFor([...new Set([...doomedDocIds, ...documentIds])]);
+      await this.deps.cascadeCognitionFor([...new Set([...doomedDocIds, ...documentIds])]);
 
       let indexDeleted = 0;
       let analyticsCleaned: string[] = [];
@@ -188,9 +188,9 @@ export class SourceDataRemovalService {
         .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ?")
         .all(sourceId)
         .map((row) => row.id);
-      await this.deps.purgeAnnotationsFor(doomedDocIds);
+      await this.deps.cascadeCognitionFor(doomedDocIds);
       const deleted = await this.deps.writeGate.deleteAllBySource(sourceId);
-      await this.deps.purgeAnnotationsFor(doomedDocIds);
+      await this.deps.cascadeCognitionFor(doomedDocIds);
 
       let indexDeleted = 0;
       let analyticsDropped: string[] = [];
@@ -239,9 +239,9 @@ export class SourceDataRemovalService {
         await this.prepareSourceRemoval(sourceId);
       }
       const doomedDocIds = doomedRows.map((row) => row.id);
-      await this.deps.purgeAnnotationsFor(doomedDocIds);
+      await this.deps.cascadeCognitionFor(doomedDocIds);
       const deleted = await this.deps.writeGate.deleteAllByProvider(providerId);
-      await this.deps.purgeAnnotationsFor(doomedDocIds);
+      await this.deps.cascadeCognitionFor(doomedDocIds);
 
       const cleanupErrors: unknown[] = [];
       for (const sourceId of new Set(doomedRows.map((row) => row.source_id))) {

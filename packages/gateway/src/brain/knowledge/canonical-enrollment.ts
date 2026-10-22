@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { KNOWLEDGE_OWNER_UPDATE_CONFLICT } from "./owner-triggers.js";
 import { readKnowledgeOwner, type KnowledgeOwnerKind } from "./owner-adapters.js";
 import { reconcileKnowledgeOwner } from "./owner-sync.js";
 import { isKnowledgeOwnerReadable } from "./storage-fence.js";
@@ -83,11 +84,12 @@ export function enrollCanonicalMutation(
       "Canonical repair exceeds the bounded conversion budget",
     );
   // Closing or correcting an existing owner remains valid when old evidence is
-  // unavailable. Keep conversion pending rather than restoring unsupported prose
-  // or rolling back the canonical action. The ordinary owner sweep retries it.
+  // unavailable. Its projection is left to owner sync, which keeps only the
+  // sources still readable, rather than rolling back the canonical action.
   if (owner.evidenceDocumentIds.some((id) => !isKnowledgeEvidenceReadable(db, id))) {
     db.prepare(
-      "INSERT INTO knowledge_owner_changes(kind,owner_id,operation,changed_at) VALUES(?,?,'update',?) ON CONFLICT(kind,owner_id) DO UPDATE SET operation='update',changed_at=excluded.changed_at",
+      `INSERT INTO knowledge_owner_changes(kind,owner_id,operation,changed_at) VALUES(?,?,'update',?)
+       ON CONFLICT(kind,owner_id) DO UPDATE SET ${KNOWLEDGE_OWNER_UPDATE_CONFLICT}`,
     ).run(owner.kind, owner.id, now);
     return;
   }

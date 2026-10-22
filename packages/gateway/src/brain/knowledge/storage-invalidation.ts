@@ -8,6 +8,7 @@ import { purgeKnowledgeOwner } from "./storage-owner-purge.js";
 import { knowledgeNodeFence } from "./storage-fence.js";
 import { snapshotKnowledgeRevision } from "./storage-history.js";
 import { appendKnowledgeChange } from "./storage-read.js";
+import { enqueueKnowledgeWork } from "./work.js";
 import type { KnowledgeNodeKind } from "./types.js";
 import type Database from "better-sqlite3";
 
@@ -267,31 +268,7 @@ export function advanceKnowledgeCascade(
               .map((claim) => claim.id)
           : [];
         if (row && affectedClaims.length) {
-          db.prepare(
-            "UPDATE knowledge_nodes SET validity='stale',revision=revision+1,updated_at=? WHERE id=?",
-          ).run(now, item.target_id);
-          const markClaim = db.prepare(
-            "UPDATE knowledge_claims SET verification='stale',verifier=NULL WHERE node_id=? AND id=?",
-          );
-          for (const claimId of affectedClaims) markClaim.run(item.target_id, claimId);
-          appendKnowledgeChange(db, {
-            kind: "node_invalidated",
-            entityId: item.target_id,
-            revision: String(row.revision + 1),
-            at: now,
-          });
-          snapshotKnowledgeRevision(
-            db,
-            item.target_id,
-            {
-              changedClaimIds: affectedClaims,
-              changedRefs: [],
-              changedFieldKeys: [],
-              titleChanged: false,
-              validityChanged: true,
-            },
-            now,
-          );
+          markKnowledgeNodeStale(db, item.target_id, affectedClaims, now);
           invalidatedNodeIds.push(item.target_id);
         }
       }
@@ -311,6 +288,82 @@ export function advanceKnowledgeCascade(
     return { pending, deletedNodeIds, invalidatedNodeIds };
   })();
 }
+/**
+ * Marks one node stale in a new revision of unchanged text: the named claims
+ * lose their verification, the node's validity turns stale and the change is
+ * journalled and kept in its history. Returns the new revision, or null when
+ * the node does not exist.
+ */
+function markKnowledgeNodeStale(
+  db: Db,
+  nodeId: string,
+  claimIds: readonly string[],
+  now: number,
+): number | null {
+  const row = db
+    .prepare<[string], { revision: number }>("SELECT revision FROM knowledge_nodes WHERE id=?")
+    .get(nodeId);
+  if (!row) return null;
+  db.prepare(
+    "UPDATE knowledge_nodes SET validity='stale',revision=revision+1,updated_at=? WHERE id=?",
+  ).run(now, nodeId);
+  const markClaim = db.prepare(
+    "UPDATE knowledge_claims SET verification='stale',verifier=NULL WHERE node_id=? AND id=?",
+  );
+  for (const claimId of claimIds) markClaim.run(nodeId, claimId);
+  const revision = row.revision + 1;
+  appendKnowledgeChange(db, {
+    kind: "node_invalidated",
+    entityId: nodeId,
+    revision: String(revision),
+    at: now,
+  });
+  snapshotKnowledgeRevision(
+    db,
+    nodeId,
+    {
+      changedClaimIds: [...claimIds],
+      changedRefs: [],
+      changedFieldKeys: [],
+      titleChanged: false,
+      validityChanged: true,
+    },
+    now,
+  );
+  return revision;
+}
+
+/**
+ * A canonical owner (a loop, observation or annotation) lost a source it cited
+ * to a deletion. The owner itself is kept; its node is marked stale and queued
+ * for maintenance review, where only a deliberate decision with a reason may
+ * revise, resolve or remove it. Does nothing when the node does not exist.
+ */
+export function markKnowledgeOwnerForReview(db: Db, nodeId: string, now: number): void {
+  return db.transaction(() => {
+    const revision = markKnowledgeNodeStale(db, nodeId, [], now);
+    if (revision === null) return;
+    if (
+      !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_work'").get()
+    )
+      return;
+    enqueueKnowledgeWork(
+      db,
+      {
+        id: `kw_review_${nodeId}_${revision}`,
+        subjectId: nodeId,
+        subjectKind: "node",
+        reason: "change",
+        inputRevision: String(revision),
+        tier: "routine",
+        dueAt: now,
+      },
+      now,
+    );
+    return;
+  })();
+}
+
 export function recordKnowledgeSourceChange(
   db: Db,
   input: { documentId: string; contentHash: string; deleted?: boolean },

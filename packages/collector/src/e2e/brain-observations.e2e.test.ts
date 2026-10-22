@@ -460,8 +460,16 @@ describe("brain bench: observations", () => {
     await bench.deleteDoc(allotmentDoc);
     await bench.drainUntilQuiet();
 
-    // A deleted cited document takes its observation with it.
-    expect(await bench.obs.observationsMatching(S.allotment.marker)).toHaveLength(0);
+    // A deleted cited document never takes its observation with it: the
+    // observation loses its citation and is queued for review.
+    const allotment = await bench.obs.observationsMatching(S.allotment.marker);
+    expect(allotment).toHaveLength(1);
+    expect(allotment[0]).toMatchObject({ citations: [] });
+    expect(
+      bench.sql
+        .prepare("SELECT 1 FROM knowledge_work WHERE subject_kind = 'node' AND subject_id = ?")
+        .get(allotment[0]!.id),
+    ).toBeDefined();
   }, 240_000);
 
   test("the morning recheck ships, holds and drops by the salience policy and ranks what ships", async () => {

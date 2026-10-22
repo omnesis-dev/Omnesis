@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { installConversationEvidence } from "./sources/omnesis-chat/evidence-projection.js";
 import Database from "better-sqlite3";
+import { installConversationEvidence } from "./sources/omnesis-chat/evidence-projection.js";
 type Db = Database.Database;
 import { installTemporalDocumentEpochs } from "./brain/knowledge/temporal-document-epochs.js";
 import { runSchemaSetup } from "./data/schema.js";
@@ -28,7 +28,6 @@ export {
   upsertWithCursor,
   upsertWithCursorYieldable,
   deleteDocuments,
-  cascadeOpenLoopPrivacyDeleteWithMirrors,
   deleteDocumentsByIds,
   DELETE_IN_LIST_CHUNK,
   deleteDocumentForUser,

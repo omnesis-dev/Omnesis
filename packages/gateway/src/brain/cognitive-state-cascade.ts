@@ -2,24 +2,23 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Retract the cognitive state grounded on documents that no longer exist.
+ * The cognitive state grounded on documents that no longer exist.
  *
- * Annotations, observations and open loops quote their evidence verbatim, so a
- * deleted document leaves behind both a dangling reference and a copy of the
- * content that was removed. Every path that deletes documents runs this, which
- * is why it is one function rather than a sequence each caller repeats — a
- * delete path that forgets a step is the failure mode worth designing out.
+ * A source deletion is a change like an edit: the loops, observations and
+ * annotations built on a deleted document survive it. They lose their pointer
+ * to the document, are marked stale and are queued for the Brain's review
+ * (see `source-deletion-review.ts`). Every path that deletes documents runs
+ * this, which is why it is one function rather than a sequence each caller
+ * repeats — a delete path that forgets a step is the failure mode worth
+ * designing out. The per-document delete primitives already do the same
+ * inside their own transaction; this pass covers the bulk wipes that remove
+ * rows wholesale, and finds nothing left to do after the others.
  *
- * Retracting a loop also strands its mirror: the open-loop source projects
- * every loop into a corpus document, and that projection carries the loop's
- * title and description. The writer removes both in one transaction and
- * records durable cleanup for the mirror's separate search index.
+ * The per-source coverage tallies ride along here too, though they are the one
+ * arm that reasons about the SOURCE rather than the documents named — see
+ * `storage/coverage.ts`.
  *
- * The per-source coverage tallies ride along here too, for the same reason,
- * though they are the one arm that reasons about the SOURCE rather than the
- * documents named — see `storage/coverage.ts`.
- *
- * Each store is guarded by a cheap existence check on the read handle, so an
+ * Each arm is guarded by a cheap existence check on the read handle, so an
  * install that never enabled the Brain pays nothing for the call.
  */
 
@@ -31,39 +30,37 @@ import {
   hasAnyOpenLoops,
   hasAnyPersonAnnotations,
 } from "./index.js";
+import type { SourceDeletionReview } from "./source-deletion-review.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
 
+/** Deleted documents handed to one writer op, so a bulk wipe never parks the writer. */
+export const SOURCE_DELETION_REVIEW_BATCH = 500;
+
 /** The write-gate slice this cascade needs. */
 export interface CognitiveStateCascadeOps {
-  cascadeAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
-  cascadePersonAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
-  cascadeTemporalAnnotationPrivacyDelete(deletedDocIds: readonly string[]): Promise<string[]>;
-  cascadeOpenLoopPrivacyDelete(
+  reviewBrainArtifactsForDeletedDocs(
     deletedDocIds: readonly string[],
-  ): Promise<{ deletedLoopIds: string[]; deletedObservationIds: string[] }>;
+  ): Promise<SourceDeletionReview>;
   retractOrphanCognitionCoverage(): Promise<number>;
 }
 
-/**
- * `purgeCognitiveStateForDocs` against the write gate. The writer's loop
- * cascade also removes mirrored documents in the same transaction.
- */
-export async function purgeCognitiveStateThroughGate(
+/** `cascadeCognitiveStateForDocs` against the write gate. */
+export async function cascadeCognitiveStateThroughGate(
   db: Db,
   gate: CognitiveStateCascadeOps,
   deletedDocIds: readonly string[],
 ): Promise<void> {
-  await purgeCognitiveStateForDocs(db, gate, deletedDocIds);
+  await cascadeCognitiveStateForDocs(db, gate, deletedDocIds);
 }
 
 /**
- * Purge every cognitive artifact grounded on `deletedDocIds`, and retract the
- * coverage of any source that has since ceased to exist. Safe to call with an
- * empty list, and safe to call twice — each cascade is a delete by id.
+ * Keep every cognitive artifact grounded on `deletedDocIds` and queue it for
+ * review, and retract the coverage of any source that has since ceased to
+ * exist. Safe to call with an empty list, and safe to call twice.
  */
-export async function purgeCognitiveStateForDocs(
+export async function cascadeCognitiveStateForDocs(
   db: Db,
   ops: CognitiveStateCascadeOps,
   deletedDocIds: readonly string[],
@@ -74,20 +71,19 @@ export async function purgeCognitiveStateForDocs(
   // and its coverage row would otherwise outlive it.
   if (hasAnyCognitionCoverage(db)) await ops.retractOrphanCognitionCoverage();
 
-  if (deletedDocIds.length === 0) return;
-
-  // Doc annotations: dangling, and their derived text may embed the removed
-  // content.
-  if (hasAnyDocAnnotations(db)) await ops.cascadeAnnotationPrivacyDelete(deletedDocIds);
-  // Person annotations ground in an evidence document too.
-  if (hasAnyPersonAnnotations(db)) await ops.cascadePersonAnnotationPrivacyDelete(deletedDocIds);
-  // A temporal annotation may embed content derived from a cited document.
-  if (hasAnyTemporalAnnotations(db))
-    await ops.cascadeTemporalAnnotationPrivacyDelete(deletedDocIds);
-  // Loops and observations built on the removed documents, and the
-  // observations attached to those loops. The writer removes each loop, its
-  // observations and its mirror together.
-  if (hasAnyOpenLoops(db) || hasAnyObservations(db)) {
-    await ops.cascadeOpenLoopPrivacyDelete(deletedDocIds);
-  }
+  if (
+    deletedDocIds.length === 0 ||
+    !(
+      hasAnyOpenLoops(db) ||
+      hasAnyObservations(db) ||
+      hasAnyDocAnnotations(db) ||
+      hasAnyPersonAnnotations(db) ||
+      hasAnyTemporalAnnotations(db)
+    )
+  )
+    return;
+  for (let i = 0; i < deletedDocIds.length; i += SOURCE_DELETION_REVIEW_BATCH)
+    await ops.reviewBrainArtifactsForDeletedDocs(
+      deletedDocIds.slice(i, i + SOURCE_DELETION_REVIEW_BATCH),
+    );
 }

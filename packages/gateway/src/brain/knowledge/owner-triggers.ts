@@ -4,6 +4,14 @@
 import { installKnowledgeReconciliationTriggers } from "./reconciliation.js";
 import type Database from "better-sqlite3";
 
+/**
+ * The conflict clause of an owner `update`: it refreshes the change time and
+ * never downgrades a pending `review` (an owner that lost a cited source to a
+ * deletion stays queued for review whatever else touches it).
+ */
+export const KNOWLEDGE_OWNER_UPDATE_CONFLICT =
+  "operation=CASE WHEN knowledge_owner_changes.operation='review' THEN 'review' ELSE 'update' END,changed_at=excluded.changed_at";
+
 /** Canonical table changes remain visible even when the model/scheduler is disabled. */
 export function installKnowledgeOwnerTriggers(db: Database.Database): void {
   installKnowledgeReconciliationTriggers(db);
@@ -74,12 +82,18 @@ export function installKnowledgeOwnerTriggers(db: Database.Database): void {
       continue;
     const guard = `NOT EXISTS(SELECT 1 FROM knowledge_owner_write_guard WHERE kind='${owner.kind}' AND owner_id=NEW.id)`;
     const queue = `INSERT INTO knowledge_owner_changes(kind,owner_id,operation,changed_at) VALUES('${owner.kind}',NEW.id,'update',CAST(unixepoch('subsec')*1000 AS INTEGER))
-      ON CONFLICT(kind,owner_id) DO UPDATE SET operation='update',changed_at=excluded.changed_at;`;
+      ON CONFLICT(kind,owner_id) DO UPDATE SET ${KNOWLEDGE_OWNER_UPDATE_CONFLICT};`;
+    // Recreated on every install so an existing database picks up the current
+    // conflict rule.
+    db.exec(
+      `DROP TRIGGER IF EXISTS knowledge_owner_${owner.kind}_insert; DROP TRIGGER IF EXISTS knowledge_owner_${owner.kind}_update;` +
+        (owner.kind === "loop" ? " DROP TRIGGER IF EXISTS knowledge_owner_loop_retire;" : ""),
+    );
     if (owner.kind === "loop")
       db.exec(`CREATE TRIGGER IF NOT EXISTS knowledge_owner_loop_retire AFTER DELETE ON open_loops
       WHEN EXISTS(SELECT 1 FROM knowledge_owner_retire_guard WHERE owner_id=OLD.id) BEGIN
         INSERT INTO knowledge_owner_changes(kind,owner_id,operation,changed_at) VALUES('loop',OLD.id,'update',CAST(unixepoch('subsec')*1000 AS INTEGER))
-        ON CONFLICT(kind,owner_id) DO UPDATE SET operation='update',changed_at=excluded.changed_at;
+        ON CONFLICT(kind,owner_id) DO UPDATE SET ${KNOWLEDGE_OWNER_UPDATE_CONFLICT};
       END`);
     db.exec(`
       CREATE TRIGGER IF NOT EXISTS knowledge_owner_${owner.kind}_insert AFTER INSERT ON ${owner.table} WHEN ${guard} BEGIN ${queue} END;

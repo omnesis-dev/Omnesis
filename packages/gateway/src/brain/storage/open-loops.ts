@@ -3,8 +3,8 @@
 
 /**
  * Open-loop repository — CRUD over `open_loops` + `open_loop_docs` +
- * `open_loop_ledger`, the loop-deletion invariant, and the privacy-delete
- * cascade.
+ * `open_loop_ledger`, the loop-deletion invariant, and what a source
+ * deletion does to the loops built on it.
  *
  * Same conventions as the other `data/repositories` modules: plain
  * functions over a better-sqlite3 handle, mutations take an explicit
@@ -18,13 +18,10 @@
  *    so an observation awaiting the morning brief never names a missing
  *    loop. Closed observations survive with the edge removed.
  *
- *  - **Privacy-delete cascade**: privacy-deleting a source document
- *    deletes every loop and observation derived from it (conservative:
- *    any loop whose `docs[]` — and any observation whose `citations[]` —
- *    contains the deleted document, plus ALL observations attached to a
- *    cascaded loop, closed included; derived agent text may embed the
- *    source content). The caller (the document privacy-delete path) then
- *    deletes the loops' mirrored corpus documents by external id.
+ *  - **Source deletion**: deleting a source document never deletes a loop.
+ *    The loop loses its pointer to the document, records the deletion in
+ *    its ledger and is queued for review (`reviewOpenLoopsForDeletedDocs`);
+ *    only a reviewed decision may then close or delete it.
  */
 
 import {
@@ -740,8 +737,7 @@ export interface DeleteOpenLoopResult {
  *
  * `retire` records a consolidation trace before the delete — the write-gated
  * `open_loop_delete` path sets it so an agent-issued delete leaves a
- * recurrence trace; direct/internal deletes (and the privacy cascade, which
- * has its own path) do not. `now` (unix ms) timestamps that trace; a retiring
+ * recurrence trace; direct/internal deletes do not. `now` (unix ms) timestamps that trace; a retiring
  * caller passes its cognition clock, so the trace — and the cadence arithmetic
  * keyed off `retired_at` — holds under an injected clock. The wall-clock
  * default exists for the trace-free internal paths only.
@@ -812,22 +808,6 @@ export interface OpenLoopPrivacyCascadeResult {
 }
 
 /**
- * Privacy-delete cascade. Given the internal ids of privacy-deleted
- * corpus documents, deletes every derived loop and observation. The caller
- * must then delete the cascaded loops' mirrored corpus documents (the
- * returned `deletedLoopIds` are their external ids) and cascade the
- * search index for them.
- *
- * All-states deletion here (closed observations included): a privacy delete
- * is about purging derived content.
- *
- * **Privacy invariant:** this path NEVER writes a `retired_loops`
- * consolidation trace. A retirement trace snapshots the loop's title and
- * description — derived content a privacy delete exists to purge — so leaving
- * one behind would leak exactly what was deleted. The direct `DELETE` below
- * (never `deleteOpenLoop`, which can retire) keeps that guarantee structural.
- */
-/**
  * Whether any open loop exists — the cheap guard the delete cascade reads so
  * an install that never enabled the Brain pays nothing for the check.
  */
@@ -837,26 +817,70 @@ export function hasAnyOpenLoops(db: Db): boolean {
   );
 }
 
-/** Loop identities remain readable until the loop cascade commits. */
-export function listLoopIdsCitingDocs(db: Db, documentIds: readonly string[]): string[] {
-  if (documentIds.length === 0) return [];
-  return db
+/** The ledger run id that marks an entry the gateway wrote for a source deletion. */
+export const SOURCE_DELETION_LEDGER_RUN_ID = "source-deletion";
+
+/**
+ * Source documents were deleted: every loop citing one is kept, exactly as it
+ * stands in the journal. Only the pointer to the deleted document is removed
+ * (it can never be read again), and a ledger entry records which document went
+ * so the review that follows knows what changed. The entry does not move the
+ * loop's `last_update`: nothing the owner did or the world reported touched it.
+ * Returns the ids of the loops that lost a document. Idempotent: a repeated
+ * call finds no pointer left to remove.
+ */
+export function reviewOpenLoopsForDeletedDocs(
+  db: Db,
+  deletedDocIds: readonly string[],
+  now: number,
+): string[] {
+  if (deletedDocIds.length === 0) return [];
+  const rows = db
+    .prepare<[string], { loop_id: string; doc_id: string }>(
+      `SELECT loop_id, doc_id FROM open_loop_docs
+        WHERE doc_id IN (SELECT value FROM json_each(?)) ORDER BY loop_id, doc_id`,
+    )
+    .all(JSON.stringify(deletedDocIds));
+  if (rows.length === 0) return [];
+  const unlink = db.prepare<[string, string]>(
+    "DELETE FROM open_loop_docs WHERE loop_id = ? AND doc_id = ?",
+  );
+  const note = db.prepare<[string, string, number, string]>(
+    "INSERT INTO open_loop_ledger (loop_id, run_id, at, note) VALUES (?, ?, ?, ?)",
+  );
+  for (const row of rows) {
+    unlink.run(row.loop_id, row.doc_id);
+    note.run(
+      row.loop_id,
+      SOURCE_DELETION_LEDGER_RUN_ID,
+      now,
+      `Source document ${row.doc_id} was deleted. The loop is kept and queued for review.`,
+    );
+  }
+  return [...new Set(rows.map((row) => row.loop_id))];
+}
+
+/**
+ * Delete every loop citing one of `deletedDocIds`, with the observations
+ * citing them or attached to those loops. Only the historical
+ * retired-web-documents migration uses this; a live source deletion never
+ * deletes a loop (see {@link reviewOpenLoopsForDeletedDocs}). The caller
+ * deletes the loops' mirrored corpus documents (the returned `deletedLoopIds`
+ * are their external ids). It never writes a `retired_loops` trace.
+ */
+export function cascadeOpenLoopPrivacyDelete(
+  db: Db,
+  deletedDocIds: readonly string[],
+): OpenLoopPrivacyCascadeResult {
+  if (deletedDocIds.length === 0) return { deletedLoopIds: [], deletedObservationIds: [] };
+
+  const loopIds = db
     .prepare<[string], { loop_id: string }>(
       `SELECT DISTINCT loop_id FROM open_loop_docs
        WHERE doc_id IN (SELECT value FROM json_each(?))`,
     )
-    .all(JSON.stringify(documentIds))
+    .all(JSON.stringify(deletedDocIds))
     .map((row) => row.loop_id);
-}
-
-export function cascadeOpenLoopPrivacyDelete(
-  db: Db,
-  deletedDocIds: readonly string[],
-  knownLoopIds?: readonly string[],
-): OpenLoopPrivacyCascadeResult {
-  if (deletedDocIds.length === 0) return { deletedLoopIds: [], deletedObservationIds: [] };
-
-  const loopIds = knownLoopIds ? [...knownLoopIds] : listLoopIdsCitingDocs(db, deletedDocIds);
   const observationIds = new Set(deleteObservationsCitingDocs(db, deletedDocIds));
   if (loopIds.length > 0) {
     for (const id of deleteObservationsAttachedToLoops(db, loopIds, { includeClosed: true }))

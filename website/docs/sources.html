@@ -1317,13 +1317,14 @@
           instead, pause the source.
         </p>
         <p>
-          Everything the source ingested — documents, analytics rows, search-index entries, and
-          anything derived from them — is then deleted in the background, queued behind indexing so
-          it does not interrupt work in flight. On a large mailbox that takes several minutes. Until
-          it finishes, the source stays in the list marked <strong>removing</strong>, and its
-          document count falls as the purge drains. If the gateway stops partway through, it resumes
-          the purge on the next start. You cannot add the same account again until the
-          <strong>removing</strong> row has gone; the re-added source then syncs from scratch.
+          Everything the source ingested — documents, analytics rows, search-index entries, and the
+          data derived from them — is then deleted in the background, queued behind indexing so it
+          does not interrupt work in flight. On a large mailbox that takes several minutes. Until it
+          finishes, the source stays in the list marked <strong>removing</strong>, and its document
+          count falls as the purge drains. If the gateway stops partway through, it resumes the
+          purge on the next start. You cannot add the same account again until the
+          <strong>removing</strong> row has gone; the re-added source then syncs from scratch. Tasks
+          and memories built on the removed documents stay, without their link to them.
         </p>
         <p>
           People survive the removal on the strength of what remains. An email address or phone

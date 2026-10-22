@@ -10,10 +10,9 @@
  * atom remains (kept for audit), a survivor whose evidence[0] broke gets the
  * next atom promoted into its scalar mirror, and every survivor is re-stamped
  * `unverified` for the re-verification sweep to re-judge (see
- * `storage/annotations.ts#invalidateAnnotationsForDoc`). The deletion-driven
- * HARD purge rides the DocumentService privacy-delete seam
- * (`cascadeAnnotationPrivacyDelete`), not the bus — `document.deleted` is not
- * emitted in this build.
+ * `storage/annotations.ts#invalidateAnnotationsForDoc`). A document deletion
+ * is handled by the deleting write itself (`source-deletion-review.ts`), not
+ * the bus — `document.deleted` is not emitted in this build.
  *
  * Hot-path discipline mirrors the waker: the bus handler does a cheap indexed
  * READ guard on the read handle and only then fires the (single-writer) write

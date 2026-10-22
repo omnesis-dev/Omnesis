@@ -96,7 +96,7 @@ const STALE_ANCESTOR_JOINS = `
         LEFT JOIN knowledge_nodes n ON a.kind='node' AND n.id=a.id
         LEFT JOIN knowledge_claims c ON a.kind='node' AND a.selector_kind='claim' AND c.node_id=a.id AND c.id=a.selector_id`;
 
-const OWNER_UPDATE_PENDING = `EXISTS(SELECT 1 FROM knowledge_owner_changes o WHERE o.owner_id=a.id AND o.operation='update')`;
+const OWNER_UPDATE_PENDING = `EXISTS(SELECT 1 FROM knowledge_owner_changes o WHERE o.owner_id=a.id AND o.operation IN ('update','review'))`;
 
 /**
  * A current ancestor that changed since the node observed it: a source document

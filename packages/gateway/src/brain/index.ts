@@ -4,8 +4,8 @@
 /**
  * The Briefs / Cognition Steward feature module (experimental; inert unless the
  * feature is active). This barrel is the module's stable surface for the
- * handful of shared-code extension points (schema setup, the document
- * privacy-delete cascade, the hidden-search registration); feature-
+ * handful of shared-code extension points (schema setup, the historical
+ * migrations' derived-state purge, the hidden-search registration); feature-
  * internal code imports the submodules directly.
  */
 
@@ -79,7 +79,6 @@ export {
 // Cognition Steward's tools mutate through it — single-writer invariant).
 export {
   cascadeOpenLoopPrivacyDelete,
-  listLoopIdsCitingDocs,
   hasAnyOpenLoops,
   createOpenLoop,
   updateOpenLoop,

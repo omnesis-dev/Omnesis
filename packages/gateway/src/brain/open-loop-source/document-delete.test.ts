@@ -2,12 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * End-to-end privacy-delete cascade at the repository level: privacy-
- * deleting a source document (`DELETE /documents/:id` →
- * `deleteDocumentForUser`) deletes the open loops and observations derived
- * from it AND the loops' mirrored `open-loop` corpus documents, whose
- * internal ids come back in the return value so the caller's index-side
- * cascade covers them.
+ * An explicit delete of a source document (`DELETE /documents/:id` →
+ * `deleteDocumentForUser`) at the repository level: the document goes and is
+ * tombstoned, while the open loops and observations derived from it, and the
+ * loops' mirrored `open-loop` corpus documents, are kept for review.
  */
 
 import { existsSync, unlinkSync } from "node:fs";
@@ -58,7 +56,7 @@ function docIdByExternal(db: Db, externalId: string): string | null {
   return row?.id ?? null;
 }
 
-describe("privacy-delete cascade through deleteDocumentForUser", () => {
+describe("an explicit document delete through deleteDocumentForUser", () => {
   let path: string;
   let db: Db;
   beforeEach(() => {
@@ -70,7 +68,7 @@ describe("privacy-delete cascade through deleteDocumentForUser", () => {
     cleanupDb(path);
   });
 
-  test("deleting a source document deletes derived loops, observations, and loop mirror docs", () => {
+  test("deleting a source document keeps derived loops, observations and loop mirror docs", () => {
     // A source document + a loop derived from it, mirrored into the corpus.
     upsertDocuments(db, [sourceDoc("msg_1", "Could you send the signed venue contract?")]);
     const sourceDocId = docIdByExternal(db, "msg_1");
@@ -106,19 +104,18 @@ describe("privacy-delete cascade through deleteDocumentForUser", () => {
       1000,
     );
 
-    // The privacy delete of the SOURCE document.
+    // The explicit delete of the SOURCE document.
     const deletedIds = deleteDocumentForUser(db, "google", "gmail-test", "msg_1");
 
-    // Both the source doc and the loop's mirror doc are reported for the
-    // caller's index-side cascade.
-    expect(deletedIds.sort()).toEqual([sourceDocId, mirrorDocId].sort());
-    // Rows are gone: source doc, mirror doc, loop, observation.
+    // Only the source doc goes, and only it is reported for the caller's
+    // index-side cascade.
+    expect(deletedIds).toEqual([sourceDocId]);
     expect(docIdByExternal(db, "msg_1")).toBeNull();
-    expect(docIdByExternal(db, "olp_1")).toBeNull();
-    expect(getOpenLoop(db, "olp_1")).toBeNull();
-    expect(getObservation(db, "obs_1")).toBeNull();
-    // The source doc is tombstoned; the internal mirror is not (nothing
-    // re-syncs it, and the agent must stay free to mint new loops).
+    // The loop, its mirror and the observation stay, without the dead pointer.
+    expect(docIdByExternal(db, "olp_1")).toBe(mirrorDocId);
+    expect(getOpenLoop(db, "olp_1")).toMatchObject({ state: "open", docs: [] });
+    expect(getObservation(db, "obs_1")).toMatchObject({ state: "live", citations: [] });
+    // The source doc is tombstoned.
     const tombstones = db
       .prepare<[], { external_id: string }>("SELECT external_id FROM removed_documents")
       .all()

@@ -11,8 +11,8 @@
  *     the corpus or the indexer);
  *   - future runs never read them (the open-loop ledger carries the
  *     durable history of reasoning);
- *   - they are exempt from the privacy-delete cascade (debug artifacts,
- *     like logs) — the retention prune is their only deletion path.
+ *   - no document deletion touches them (debug artifacts, like logs) —
+ *     the retention prune is their only deletion path.
  *
  * Retention: the gateway-wide activity-retention task prunes files once
  * their run finished outside the configured window. The legacy

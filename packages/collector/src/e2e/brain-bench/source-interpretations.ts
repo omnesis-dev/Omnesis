@@ -46,13 +46,20 @@ const reviewMetadata = z.object({
 });
 
 /** Preserve current legacy owner context or an empty overview; stale prose needs a scenario-specific repair. */
-export const preserveCurrentOwner: KnowledgePuppetPolicy["plan"] = (item, _ctx, steps) => {
+export const preserveCurrentOwner: KnowledgePuppetPolicy["plan"] = (item, _ctx, steps) =>
+  item.node?.validity === "current" ? preserveOwner(item, steps) : { calls: [] };
+
+/**
+ * The review's keep decision for an owner queued after a source it cited was
+ * deleted: save it as it stands. A scenario names the owners it keeps; any
+ * other stale owner still needs its own repair.
+ */
+export const keepReviewedOwner: KnowledgePuppetPolicy["plan"] = (item, _ctx, steps) =>
+  item.node?.ownerId ? preserveOwner(item, steps) : { calls: [] };
+
+function preserveOwner(item: PuppetKnowledgeItem, steps: readonly ToolStep[]): PuppetPlan {
   const node = item.node;
-  if (
-    !node ||
-    (!node.ownerId && !(node.kind === "root" && node.markdown === "")) ||
-    node.validity !== "current"
-  )
+  if (!node || (!node.ownerId && !(node.kind === "root" && node.markdown === "")))
     return { calls: [] };
   const claims = z.array(legacyClaim).safeParse(node.claims);
   const refs = z
@@ -120,7 +127,7 @@ export const preserveCurrentOwner: KnowledgePuppetPolicy["plan"] = (item, _ctx, 
       }),
     ],
   };
-};
+}
 
 /** Re-read a stale owner snapshot; pending canonical reconciliation may have finished since it was offered. */
 export const refreshCurrentOwner: KnowledgePuppetPolicy["plan"] = (item, ctx, steps) => {

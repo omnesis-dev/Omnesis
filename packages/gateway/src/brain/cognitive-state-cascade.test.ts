@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The cognitive-state cascade's coverage arm: removing a source retracts the
- * coverage claimed over it.
+ * The cognitive-state cascade: removing a source retracts the coverage claimed
+ * over it, and the artifacts built on deleted documents are kept for review.
  *
  * The claim matters more than the row. "This source's history has been
  * reviewed" is a statement about a corpus; once the source is gone the
@@ -24,7 +24,10 @@ import { createDatabase } from "../db.js";
 import { directWriteGate } from "../write-gate.js";
 import { upsertDocuments } from "../data/repositories/DocumentRepository.js";
 import { listPendingAbsenceCascades } from "../data/repositories/AbsenceRepository.js";
-import { purgeCognitiveStateForDocs } from "./cognitive-state-cascade.js";
+import {
+  cascadeCognitiveStateForDocs,
+  SOURCE_DELETION_REVIEW_BATCH,
+} from "./cognitive-state-cascade.js";
 import { listCognitionCoverage, recordCognitionCoverage } from "./storage/coverage.js";
 import { createOpenLoop, getOpenLoop } from "./storage/open-loops.js";
 import { createObservation, getObservation } from "./storage/observations.js";
@@ -45,7 +48,7 @@ function cleanupDb(path: string): void {
   }
 }
 
-describe("purgeCognitiveStateForDocs", () => {
+describe("cascadeCognitiveStateForDocs", () => {
   let path: string;
   let db: Db;
 
@@ -110,7 +113,7 @@ describe("purgeCognitiveStateForDocs", () => {
     // the cascade their ids — in that order.
     db.prepare("DELETE FROM sources WHERE id = ?").run("files:jamie@example.com");
     db.prepare("DELETE FROM documents WHERE id = ?").run(doomed);
-    await purgeCognitiveStateForDocs(db, directWriteGate(db), [doomed]);
+    await cascadeCognitiveStateForDocs(db, directWriteGate(db), [doomed]);
 
     expect(listCognitionCoverage(db).map((r) => r.sourceId)).toEqual(["mail:maya@example.com"]);
   });
@@ -122,7 +125,7 @@ describe("purgeCognitiveStateForDocs", () => {
     seedCoverage("mail:maya@example.com");
 
     db.prepare("DELETE FROM documents WHERE id = ?").run(doomed);
-    await purgeCognitiveStateForDocs(db, directWriteGate(db), [doomed]);
+    await cascadeCognitiveStateForDocs(db, directWriteGate(db), [doomed]);
 
     expect(listCognitionCoverage(db)).toHaveLength(1);
   });
@@ -135,7 +138,7 @@ describe("purgeCognitiveStateForDocs", () => {
     // Every document gone, the source still connected — a resync, not a
     // removal. Its history is still unreviewed and its tally still says so.
     db.prepare("DELETE FROM documents WHERE id = ?").run(doomed);
-    await purgeCognitiveStateForDocs(db, directWriteGate(db), [doomed]);
+    await cascadeCognitiveStateForDocs(db, directWriteGate(db), [doomed]);
 
     expect(listCognitionCoverage(db)).toHaveLength(1);
   });
@@ -146,12 +149,12 @@ describe("purgeCognitiveStateForDocs", () => {
     // outlive every trace of the source it describes.
     seedCoverage("files:jamie@example.com");
 
-    await purgeCognitiveStateForDocs(db, directWriteGate(db), []);
+    await cascadeCognitiveStateForDocs(db, directWriteGate(db), []);
 
     expect(listCognitionCoverage(db)).toHaveLength(0);
   });
 
-  test("a failed mirror delete rolls back the loop, observation and cleanup obligation for retry", async () => {
+  test("keeps the loops and observations built on deleted documents and queues them for review", async () => {
     const evidenceId = seedDoc("evidence-1", "notes-synth:local");
     const loopId = "olp_retry";
     createOpenLoop(
@@ -173,41 +176,54 @@ describe("purgeCognitiveStateForDocs", () => {
         id: "obs_retry",
         createdByRun: "run_1",
         summary: "Studio booking still unconfirmed",
+        citations: [evidenceId],
         relatedLoopIds: [loopId],
       },
       NOW,
     );
     const mirrorId = seedDoc(loopId, OPEN_LOOP_SOURCE_ID, OPEN_LOOP_PROVIDER_ID);
+    // A bulk wipe removes rows wholesale, then hands the cascade their ids.
     db.prepare("DELETE FROM documents WHERE id = ?").run(evidenceId);
-    const gate = directWriteGate(db);
-    const mirrorExists = () =>
-      db
-        .prepare<
-          [string, string, string],
-          { id: string }
-        >("SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?")
-        .get(OPEN_LOOP_PROVIDER_ID, OPEN_LOOP_SOURCE_ID, loopId) !== undefined;
-    db.exec(`
-      CREATE TRIGGER reject_mirror_delete BEFORE DELETE ON documents
-      WHEN OLD.provider_id = '${OPEN_LOOP_PROVIDER_ID}' AND OLD.source_id = '${OPEN_LOOP_SOURCE_ID}'
-      BEGIN SELECT RAISE(ABORT, 'mirror write unavailable'); END
-    `);
 
-    await expect(purgeCognitiveStateForDocs(db, gate, [evidenceId])).rejects.toThrow(
-      "mirror write unavailable",
-    );
-    expect(mirrorExists()).toBe(true);
-    expect(getOpenLoop(db, loopId)).not.toBeNull();
-    expect(getObservation(db, "obs_retry")).not.toBeNull();
+    await cascadeCognitiveStateForDocs(db, directWriteGate(db), [evidenceId]);
+
+    expect(getOpenLoop(db, loopId)).toMatchObject({ docs: [] });
+    expect(getObservation(db, "obs_retry")).toMatchObject({ citations: [] });
+    expect(db.prepare("SELECT id FROM documents WHERE id = ?").get(mirrorId)).toEqual({
+      id: mirrorId,
+    });
     expect(listPendingAbsenceCascades(db, 10)).toEqual([]);
-
-    db.exec("DROP TRIGGER reject_mirror_delete");
-    await purgeCognitiveStateForDocs(db, gate, [evidenceId]);
-    expect(mirrorExists()).toBe(false);
-    expect(getOpenLoop(db, loopId)).toBeNull();
-    expect(getObservation(db, "obs_retry")).toBeNull();
-    expect(listPendingAbsenceCascades(db, 10)).toMatchObject([
-      { documentIds: [mirrorId], indexDone: false, cognitionDone: false },
+    expect(
+      db
+        .prepare(
+          "SELECT kind, owner_id, operation FROM knowledge_owner_changes WHERE operation = 'review' ORDER BY kind",
+        )
+        .all(),
+    ).toEqual([
+      { kind: "loop", owner_id: loopId, operation: "review" },
+      { kind: "observation", owner_id: "obs_retry", operation: "review" },
     ]);
+  });
+
+  test("hands a bulk deletion to the writer in bounded batches", async () => {
+    createOpenLoop(
+      db,
+      { id: "olp_any", createdByRun: "run_1", title: "Any loop", confidence: 0.5, importance: 0.5 },
+      NOW,
+    );
+    const batches: number[] = [];
+    const ids = Array.from({ length: SOURCE_DELETION_REVIEW_BATCH * 2 + 1 }, (_, i) => `doc-${i}`);
+    await cascadeCognitiveStateForDocs(
+      db,
+      {
+        reviewBrainArtifactsForDeletedDocs: async (batch) => {
+          batches.push(batch.length);
+          return directWriteGate(db).reviewBrainArtifactsForDeletedDocs(batch);
+        },
+        retractOrphanCognitionCoverage: async () => 0,
+      },
+      ids,
+    );
+    expect(batches).toEqual([SOURCE_DELETION_REVIEW_BATCH, SOURCE_DELETION_REVIEW_BATCH, 1]);
   });
 });

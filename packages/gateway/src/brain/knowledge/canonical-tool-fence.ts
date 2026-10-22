@@ -48,8 +48,10 @@ const creates = new Set([
 function returnedOwnerIds(result: ToolResult): string[] {
   if (result.kind !== "structured" || !result.data || typeof result.data !== "object") return [];
   const data = result.data as Record<string, unknown>;
-  const rows = data.loops ?? data.observations ?? data.annotations ?? [data];
-  if (!Array.isArray(rows)) return [];
+  const listed = data.loops ?? data.observations ?? data.annotations ?? [data];
+  if (!Array.isArray(listed)) return [];
+  // Facts kept for review after their evidence was deleted are listed apart.
+  const rows = Array.isArray(data.underReview) ? [...listed, ...data.underReview] : listed;
   return rows.flatMap((row: unknown) =>
     row && typeof row === "object" && "id" in row && typeof row.id === "string" ? [row.id] : [],
   );

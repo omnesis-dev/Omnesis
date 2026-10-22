@@ -752,7 +752,7 @@ describe("snapshot absence: the deadline's currencies and what a swept row takes
     expect(storedIds(CALENDAR)).toEqual(calendarBefore);
   }, 300_000);
 
-  test("a swept row takes its index chunks, its annotations and its temporal projection with it", async () => {
+  test("a swept row takes its index chunks and its temporal projection with it, and keeps its annotations for review", async () => {
     const [event1, event2, event3] = calendarRowIds as [string, string, string];
     const event1DocId = documentIdFor(CALENDAR, event1);
     const event3DocId = documentIdFor(CALENDAR, event3);
@@ -799,9 +799,41 @@ describe("snapshot absence: the deadline's currencies and what a swept row takes
     expect(indexChunkCount(event3DocId)).toBe(0);
     expect(indexChunkCount(event1DocId)).toBeGreaterThan(0);
     // Cognitive state: the annotation about the deleted document and the one
-    // merely grounded on it both go; the control does not.
-    expect(storedAnnotationIds(ANNOTATIONS)).toEqual([CONTROL_ANNOTATION]);
-    expect(storedAnnotationEvidenceIds(ANNOTATIONS)).toEqual([CONTROL_ANNOTATION]);
+    // merely grounded on it are both kept for review — every atom citing the
+    // deleted document breaks and each turns unverified — while the control
+    // is untouched.
+    expect(storedAnnotationIds(ANNOTATIONS)).toEqual([...ANNOTATIONS].sort());
+    expect(
+      readDb((db) =>
+        db
+          .prepare<
+            string[],
+            { id: string; invalidated_at: number | null; verification_state: string | null }
+          >(
+            `SELECT id, invalidated_at, verification_state FROM doc_annotations
+              WHERE id IN (?, ?) ORDER BY id`,
+          )
+          .all(SUBJECT_ANNOTATION, EVIDENCE_ANNOTATION),
+      ),
+    ).toEqual(
+      [EVIDENCE_ANNOTATION, SUBJECT_ANNOTATION].sort().map((id) => ({
+        id,
+        invalidated_at: null,
+        verification_state: "unverified",
+      })),
+    );
+    expect(
+      readDb(
+        (db) =>
+          db
+            .prepare<
+              [string],
+              { n: number }
+            >("SELECT COUNT(*) AS n FROM doc_annotation_evidence WHERE evidence_doc_id = ? AND broken_at IS NULL")
+            .get(event3DocId)!.n,
+      ),
+    ).toBe(0);
+    expect(storedAnnotationEvidenceIds([CONTROL_ANNOTATION])).toEqual([CONTROL_ANNOTATION]);
     // The analytics plane, and the read model the unified temporal API answers
     // from. Event 2's projection goes with its row even though its document
     // survives — DuckDB has no cascade, so an orphaned projection is what a

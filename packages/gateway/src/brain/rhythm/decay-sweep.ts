@@ -170,8 +170,8 @@ export async function runDecaySweepPass(deps: DecaySweepDeps): Promise<DecaySwee
     scheduled += 1;
   }
 
-  // Retract pending checks for loops that are no longer open (closed,
-  // deleted, privacy-cascaded) — the run would only burn a model call to
+  // Retract pending checks for loops that are no longer open (closed or
+  // deleted) — the run would only burn a model call to
   // discover there is nothing to check. A check already claimed is left to
   // settle: it may be the very run that closed its loop.
   const eligibleKeys = new Set(loops.map((l) => decayCheckRunDedupeKey(l.id)));

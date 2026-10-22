@@ -52,6 +52,17 @@ function addDocAnnotation(id: string, evidenceDocId: string): void {
   );
 }
 
+/** An observation citing one source more than a conversion can record. */
+function addWideNote(): void {
+  const citations = Array.from({ length: 1025 }, (_, i) => `wide-${i}`);
+  for (const id of citations) addDocument(id);
+  createObservation(
+    db,
+    { id: "wide-note", createdByRun: "run", summary: "Budget threads", why: "", citations },
+    1,
+  );
+}
+
 function deferral(ownerId: string) {
   return db
     .prepare<
@@ -119,24 +130,37 @@ it("converts an owner that cites only generated mirrors without inventing proven
   expect(getKnowledgeDependencies(db, "mirror-note")).toEqual([]);
 });
 
-it("sets aside an owner whose every source is gone, backing off on each refusal", () => {
+it("converts an owner whose every source is gone as unsupported text", () => {
   addDocAnnotation("orphan-claim", "vanished-memo");
-  const first = attemptLegacyOwnerConversion(db, "doc_annotation", "orphan-claim", 10);
+  expect(attemptLegacyOwnerConversion(db, "doc_annotation", "orphan-claim", 10)).toEqual({
+    outcome: "converted",
+  });
+  expect(getKnowledgeNode(db, "orphan-claim")).toMatchObject({
+    kind: "doc_annotation",
+    plainText: "The budget review is on Thursday.",
+  });
+  expect(getKnowledgeDependencies(db, "orphan-claim")).toEqual([]);
+  expect(deferral("orphan-claim")).toBeUndefined();
+});
+
+it("sets aside an owner citing more sources than one conversion records, backing off on each refusal", () => {
+  addWideNote();
+  const first = attemptLegacyOwnerConversion(db, "observation", "wide-note", 10);
   expect(first).toEqual({
     outcome: "deferred",
-    reason: "evidence_unavailable",
+    reason: "provenance_limit",
     retryAt: 10 + 6 * HOUR,
   });
-  expect(getKnowledgeNode(db, "orphan-claim")).toBeNull();
-  expect(deferral("orphan-claim")).toMatchObject({
-    reason: "evidence_unavailable",
+  expect(getKnowledgeNode(db, "wide-note")).toBeNull();
+  expect(deferral("wide-note")).toMatchObject({
+    reason: "provenance_limit",
     attempts: 1,
-    input_fingerprint: legacyOwnerConversionFingerprint(db, "doc_annotation", "orphan-claim"),
+    input_fingerprint: legacyOwnerConversionFingerprint(db, "observation", "wide-note"),
   });
-  expect(attemptLegacyOwnerConversion(db, "doc_annotation", "orphan-claim", 20)).toMatchObject({
+  expect(attemptLegacyOwnerConversion(db, "observation", "wide-note", 20)).toMatchObject({
     retryAt: 20 + 12 * HOUR,
   });
-  expect(deferral("orphan-claim")?.attempts).toBe(2);
+  expect(deferral("wide-note")?.attempts).toBe(2);
 });
 
 it("sets aside a missing or privacy-hidden owner as unavailable", () => {
@@ -153,7 +177,7 @@ it("retries a write race soon and an input refusal slowly, both capped", () => {
   expect(legacyConversionRetryDelay("revision_conflict", 1)).toBe(5 * 60_000);
   expect(legacyConversionRetryDelay("revision_conflict", 3)).toBe(20 * 60_000);
   expect(legacyConversionRetryDelay("revision_conflict", 50)).toBe(6 * HOUR);
-  expect(legacyConversionRetryDelay("evidence_unavailable", 1)).toBe(6 * HOUR);
+  expect(legacyConversionRetryDelay("provenance_limit", 1)).toBe(6 * HOUR);
   expect(legacyConversionRetryDelay("claim_invalid", 2)).toBe(12 * HOUR);
   expect(legacyConversionRetryDelay("owner_unavailable", 50)).toBe(7 * 24 * HOUR);
 });
@@ -181,7 +205,7 @@ it("the sweep converts a valid owner once and leaves a broken one alone until it
     },
     1,
   );
-  addDocAnnotation("orphan-claim", "vanished-memo");
+  addWideNote();
   let now = 1_000;
   const gate = directKnowledgeGate(db);
   const convertOwner = vi.fn(gate["knowledge.convertOwner"]);
@@ -200,16 +224,16 @@ it("the sweep converts a valid owner once and leaves a broken one alone until it
 
   await upkeep.convert();
   expect(getKnowledgeNode(db, "budget-task")?.kind).toBe("loop");
-  expect(getKnowledgeNode(db, "orphan-claim")).toBeNull();
+  expect(getKnowledgeNode(db, "wide-note")).toBeNull();
   expect(convertOwner).toHaveBeenCalledTimes(2);
   expect(log.warn).toHaveBeenCalledTimes(1);
   expect(log.warn.mock.calls[0]?.[0]).toBe(
-    "Legacy owner conversion: 1 converted, 1 set aside (evidence_unavailable 1)",
+    "Legacy owner conversion: 1 converted, 1 set aside (provenance_limit 1)",
   );
   expect(readLegacyConversionStatus(db)).toEqual([
     { kind: "loop", converted: 1, deferred: {} },
-    { kind: "observation", converted: 0, deferred: {} },
-    { kind: "doc_annotation", converted: 0, deferred: { evidence_unavailable: 1 } },
+    { kind: "observation", converted: 0, deferred: { provenance_limit: 1 } },
+    { kind: "doc_annotation", converted: 0, deferred: {} },
   ]);
 
   // Every later pass wraps over the same set-aside owner without a writer attempt or a log line.
@@ -224,20 +248,21 @@ it("the sweep converts a valid owner once and leaves a broken one alone until it
   now += 6 * HOUR;
   await upkeep.convert();
   expect(convertOwner).toHaveBeenCalledTimes(3);
-  expect(deferral("orphan-claim")).toMatchObject({ attempts: 2, retry_at: now + 12 * HOUR });
+  expect(deferral("wide-note")).toMatchObject({ attempts: 2, retry_at: now + 12 * HOUR });
   await upkeep.convert();
   expect(convertOwner).toHaveBeenCalledTimes(3);
 
-  // The missing source is synced again: the changed fingerprint makes it eligible at once.
-  addDocument("vanished-memo");
+  // One cited source is deleted: the changed fingerprint makes it eligible at
+  // once, and it now fits one conversion.
+  db.prepare("DELETE FROM documents WHERE id = 'wide-0'").run();
   now += 60_000;
   await upkeep.convert();
   expect(convertOwner).toHaveBeenCalledTimes(4);
-  expect(getKnowledgeNode(db, "orphan-claim")?.kind).toBe("doc_annotation");
-  expect(deferral("orphan-claim")).toBeUndefined();
+  expect(getKnowledgeNode(db, "wide-note")?.kind).toBe("observation");
+  expect(deferral("wide-note")).toBeUndefined();
   expect(log.info).toHaveBeenLastCalledWith("Legacy owner conversion: 1 converted");
-  expect(readLegacyConversionStatus(db)[2]).toEqual({
-    kind: "doc_annotation",
+  expect(readLegacyConversionStatus(db)[1]).toEqual({
+    kind: "observation",
     converted: 1,
     deferred: {},
   });

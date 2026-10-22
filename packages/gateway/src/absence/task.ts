@@ -87,7 +87,7 @@ export interface AbsenceSweepTaskOptions {
    * ingest paths run behind a tombstone. Injected rather than reached for, so
    * the sweep owns no database handle of its own.
    */
-  purgeAnnotationsFor: (documentIds: readonly string[]) => Promise<void>;
+  cascadeCognitionFor: (documentIds: readonly string[]) => Promise<void>;
   /**
    * The structured plane's absence store. `presentIds` on a structured page
    * carries the same semantics and the same exposure as `presentExternalIds`,
@@ -157,7 +157,7 @@ export function createAbsenceSweepTask(
         deleteIndex: opts.indexWriteGate
           ? (ids) => opts.indexWriteGate!.deleteChunksByDocuments(ids)
           : undefined,
-        purgeCognition: opts.purgeAnnotationsFor,
+        cascadeCognition: opts.cascadeCognitionFor,
         acknowledge: (id, part) => opts.writeGate.acknowledgeAbsenceCascade(id, part),
       });
     }

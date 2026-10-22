@@ -257,7 +257,7 @@ function fixture(
         forgetAbsenceObserver,
       } as unknown as AnalyticsDb,
       indexWriteGate: { deleteChunksByDocuments } as unknown as IndexWriteGate,
-      purgeAnnotationsFor: async () => {},
+      cascadeCognitionFor: async () => {},
     }),
     ...(opts.modeAdoption
       ? {

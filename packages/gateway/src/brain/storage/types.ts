@@ -138,8 +138,7 @@ export function isOwnedTask(loop: Pick<OpenLoopRow, "origin" | "accepted">): boo
  * Why a loop left the active store, recorded on its consolidation trace.
  * `done` / `dismissed` are resolutions (the agent closed the loop); `decayed`
  * / `deleted` are removals via the write-gated delete (a loop the decay engine
- * had been checking vs. a plain delete). A privacy delete is deliberately NOT
- * an outcome — it purges derived content and must leave no trace behind.
+ * had been checking vs. a plain delete).
  */
 export type RetiredLoopOutcome = "done" | "dismissed" | "decayed" | "deleted";
 

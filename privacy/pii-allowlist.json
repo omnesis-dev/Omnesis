@@ -4452,7 +4452,7 @@
         "packages/gateway/src/brain/interactive-loop-port.test.ts",
         "packages/gateway/src/brain/merge-adjudication.test.ts",
         "packages/gateway/src/brain/open-loop-source/document-projection.test.ts",
-        "packages/gateway/src/brain/open-loop-source/privacy-cascade.test.ts",
+        "packages/gateway/src/brain/open-loop-source/document-delete.test.ts",
         "packages/gateway/src/brain/open-loop-source/source-meta.test.ts",
         "packages/gateway/src/brain/person-refs.test.ts",
         "packages/gateway/src/brain/person-refs.ts",
