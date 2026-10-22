@@ -10,7 +10,7 @@ import { resolveBrainSettings } from "../config.js";
 import {
   findRelatedKnowledge,
   knowledgeMirrorSearch,
-  relatedPageReviewQueue,
+  pageReviewQueue,
   withRelatedPageHints,
   type KnowledgeMirrorSearch,
 } from "./related-knowledge.js";
@@ -383,13 +383,15 @@ it("returns the write unchanged when the related-page lookup fails", async () =>
 
 it("brings a related page's review forward through the ordinary review schedule", async () => {
   await savePage();
-  await relatedPageReviewQueue(service)("flat");
+  await pageReviewQueue(service, "related_knowledge_changed")("flat");
   expect(getKnowledgeNode(db, "flat")!.metadata).toMatchObject({
     nextReviewAt: 10,
     reviewDecision: "defer",
     reviewReason: "related_knowledge_changed",
   });
-  await expect(relatedPageReviewQueue(service)("missing")).resolves.toBeUndefined();
+  await expect(
+    pageReviewQueue(service, "related_knowledge_changed")("missing"),
+  ).resolves.toBeUndefined();
 });
 
 it("maps knowledge mirror hits to their nodes and searches only the mirrors", async () => {

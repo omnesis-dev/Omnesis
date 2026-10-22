@@ -212,6 +212,46 @@ repair, like any other source.
 Newly arriving historical evidence is considered without treating its events
 as new commitments or allowing an old proposal to overwrite an accepted plan.
 
+## Pages state a subject, not a log
+
+A wiki page states the current understanding of one subject: what it is, how it
+stands now, its recurring patterns and its material exceptions. Individual
+events stay in their sources and the time index, and a page's earlier states
+stay in its revisions, so a page is never a chronological log of either.
+
+Automated status streams (build and deployment results, monitoring and uptime
+alerts, shipping updates, account, billing and transaction alerts) record
+events about a subject. Most of their notifications change nothing durable and
+leave every page unchanged. One that does change the understanding of its
+subject updates the page's current-state passage in place, with the change kept
+as a dated sentence in the section about that aspect. The same holds for a
+source discovery that names an existing page as its target and for a joint
+organization pass, whose cohort is a window of evidence interpreted around the
+same time, not a subject: no section is named for a date, a batch or a cohort.
+
+Two save-time checks hold this deterministically, before any paid check, on
+both `knowledge_save` and `knowledge_edit`:
+
+- A save that adds a date-named section to an existing page is refused when the
+  page would then have at least four date-named sections making up most of its
+  sections. A save that keeps or lowers that number (an in-place update, a
+  consolidation) always passes, as does a new page. The refusal brings the
+  page's next review forward, as a related-knowledge change does, and logs one
+  content-free line, `Wiki <id> queued for review: N of its M sections would be
+named by dates`; that whole-page review can consolidate the dated sections or
+  retire the page with `knowledge_retire`.
+- A new or changed title of four or more words that repeats the title of a
+  document the page cites (by word-set similarity of at least 0.8) is refused.
+  A page is named for its subject (a person, place, organization, system,
+  account, project, arrangement or event), not for a message's subject line, an
+  issue or ticket title or a notification headline. Shorter titles are names in
+  their own right and are never compared, and an unchanged title is never
+  re-checked.
+
+No existing page is rewritten or retired from code. A page that already reads
+as a log is consolidated by the Brain's own review the next time new evidence
+tries to extend it.
+
 ## Excluded sources
 
 `brain.excludedSources` names sources the Brain never processes. An entry is a

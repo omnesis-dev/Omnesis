@@ -1702,6 +1702,8 @@ describe("Cognition Steward run prompts", () => {
     expect(prompt).toContain("There is no page quota");
     expect(prompt).toContain("knowledge_organization_complete");
     expect(prompt).toContain("not the joint organization decision");
+    expect(prompt).toContain("Never write a section about the cohort, its date range or its batch");
+    expect(prompt).toContain("update that page's statement of the current state in place");
   });
 
   test("a malformed synthesis payload degrades to a no-op finish", () => {
@@ -2887,5 +2889,28 @@ test("separates actor and quoted context from current obligations in the shared 
   );
   expect(WIKI_AUTHORING_GUIDANCE).toContain(
     "When sources give one quantity different values (a fee, price, balance, size or date), never state both as facts.",
+  );
+});
+
+test("wiki guidance keeps status streams out of dated sections and names pages for subjects", () => {
+  // Phrased in categories, never for one kind of source.
+  for (const stream of [
+    "build and deployment results",
+    "monitoring and uptime alerts",
+    "shipping and delivery updates",
+    "account, billing and transaction alerts",
+  ])
+    expect(WIKI_AUTHORING_GUIDANCE).toContain(stream);
+  expect(WIKI_AUTHORING_GUIDANCE).toContain("Most of their notifications change nothing durable");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "never add a section named for the notification's date or batch",
+  );
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "update the passage it changes in place rather than appending another source-shaped or date-named section",
+  );
+  expect(WIKI_AUTHORING_GUIDANCE).not.toContain("Treat dated episodes as sections");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain("Give node.title a short name for the page's subject");
+  expect(WIKI_AUTHORING_GUIDANCE).toContain(
+    "A document's subject line, an issue or ticket title, or a notification headline names that document, not the subject",
   );
 });

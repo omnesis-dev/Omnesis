@@ -483,12 +483,14 @@ export function withRelatedPageHints(
 }
 
 /**
- * Brings a page's next review forward to now. The ordinary review nominator
- * and its worth gate still decide whether the review runs, so a queued page
- * costs at most one gate decision when nothing on it needs to change.
+ * Brings a page's next review forward to now, recording why. The ordinary
+ * review nominator and its worth gate still decide whether the review runs, so
+ * a queued page costs at most one gate decision when nothing on it needs to
+ * change.
  */
-export function relatedPageReviewQueue(
+export function pageReviewQueue(
   service: KnowledgeService,
+  reason: string,
 ): (pageId: string) => Promise<void> {
   return async (pageId) => {
     const page = getKnowledgeNode(service.deps.db, pageId);
@@ -501,7 +503,7 @@ export function relatedPageReviewQueue(
           expectedRevision: page.revision,
           nextReviewAt: now,
           decision: "defer",
-          reason: "related_knowledge_changed",
+          reason,
         },
         now,
       );
