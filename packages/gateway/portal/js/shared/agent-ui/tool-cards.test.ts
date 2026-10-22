@@ -38,6 +38,15 @@ describe("agent tool cards", () => {
     expect(EPHEMERAL_CARD_TOOLS.has("time_index_add")).toBe(true);
   });
 
+  it("lets task changes pass like lookups, while watch changes stay in the transcript", () => {
+    for (const tool of ["task_list", "task_create", "task_update", "task_undo"]) {
+      expect(EPHEMERAL_TOOLS.has(tool), tool).toBe(true);
+    }
+    for (const tool of ["watch_create", "watch_update", "watch_delete"]) {
+      expect(EPHEMERAL_TOOLS.has(tool), tool).toBe(false);
+    }
+  });
+
   it("dismisses exactly the ephemeral cards, and never draws the silent ones", () => {
     for (const [tool, card] of Object.entries(fixture)) {
       expect(EPHEMERAL_TOOLS.has(tool), tool).toBe(
