@@ -22,11 +22,13 @@ import {
   type ChatBackend,
   type TurnInput,
 } from "@omnesis/agent";
-import { realtimeResponseDone,
+import {
+  realtimeResponseDone,
   realtimeModelFailure,
   realtimeFailureCode,
   realtimeQuotaExhausted,
-  realtimeFailureDetails } from "./provider-failure.js";
+  realtimeFailureDetails,
+} from "./provider-failure.js";
 import { RealtimeRateLimit } from "./rate-limit.js";
 
 import {
