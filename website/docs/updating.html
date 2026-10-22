@@ -714,6 +714,28 @@
           trusting the recorded tag.
         </p>
 
+        <p>
+          Stable Docker updates select the newest release tag present in every image controlled by
+          <code>OMNESIS_IMAGE_TAG</code> in the Compose file, including the updater. This lookup
+          uses the container registry rather than npm, so a release does not need npm packages.
+          Independently versioned sidecars do not participate in release discovery. The combined
+          image is updated through its <code>gateway</code> service, preserving the mounted config
+          directory and paired collector identity.
+        </p>
+        <p>
+          Registry tag discovery is anonymous. For a private registry, authenticate Docker on the
+          host and rerun the installer with <code>--docker --version X.Y.Z</code> and the same
+          topology flags, config directory and image repository. A one-shot updater cannot use the
+          host's credential helper through the Docker socket alone. If you explicitly mount a
+          self-contained Docker credential configuration into the updater, you can instead use
+          <code>omnesis update --target-version X.Y.Z</code>; keep that credential mount out of the
+          running daemons. For a registry addressed as localhost, use Linux host networking or an
+          explicit target version; bridge-network registry discovery reaches the updater container’s
+          loopback, rather than the host’s. Standalone Compose installations update with a pinned
+          <code>OMNESIS_IMAGE_TAG</code>, <code>docker compose pull</code>, then
+          <code>docker compose up -d</code>, after a backup.
+        </p>
+
         <h2 id="adopt-source">Adopting a hand-made source install</h2>
         <p>
           A source checkout that you cloned and built by hand has no marker saying the installer

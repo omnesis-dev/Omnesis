@@ -124,6 +124,8 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     ["scripts/docker-topology/run.sh", ["topology"]],
     ["scripts/docker-e2e/run.sh", ["docker_security"]],
     ["scripts/lib/patched-files.mjs", ["docker_smoke"]],
+    ["scripts/docker/supervisor.mjs", ["docker_image", "docker_smoke"]],
+    ["scripts/docker/image-smoke.sh", ["docker_image", "docker_smoke"]],
     ["integrations/openclaw-omnesis-plugin/index.ts", ["harness"]],
   ])("%s selects the lanes that cover it", (file, lanes) => {
     const scope = scopeOf([file]);

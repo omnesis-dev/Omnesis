@@ -189,16 +189,17 @@ are safe.
 
 ### Compiled images
 
-Three production-runtime targets are published per release:
+Four production-runtime targets are published per release:
 `gateway-runtime` → `ghcr.io/omnesis-dev/omnesis-gateway`, `collector-runtime` →
-`omnesis-collector`, and `updater` → `omnesis-updater`, the one-shot image
+`omnesis-collector`, `combined-runtime` → `omnesis-combined`, and
+`updater` → `omnesis-updater`, the one-shot image
 `omnesis update` runs in on a Docker install.
 `scripts/runtime/stage-runtime.mjs` computes the transitive local workspace
 closure of the packages it is given (`--package omnesis`, whose closure
 already spans both daemons) and stages only transformed manifests,
-compiled output, and declared runtime assets. Both daemon images contain focused
+compiled output, and declared runtime assets. The daemon images contain focused
 production npm dependencies plus the `omnesis` CLI on PATH, run as UID/GID
-`10001:10001`, and store mutable state under `/var/lib/omnesis`; neither
+`10001:10001`, and store mutable state under `/var/lib/omnesis`; none
 contains the repository source tree, tsx, Python, a JavaScript package manager,
 or a native compiler toolchain. A bind mount or tmpfs at the state path must be owned by that
 UID/GID and mode 0700. The gateway image is designed to run with a read-only root
@@ -374,8 +375,14 @@ dispatch against an existing tag). In order:
   tag. Then publish either to the configured registry or, by default, to npmjs
   with provenance. The round trip runs whether or not publication is armed; it
   is the check that the staged graph installs and runs.
-- **images** — version-tagged multi-arch `omnesis-gateway` and
-  `omnesis-collector` images, built every run and pushed when armed.
+- **images** — version-tagged multi-arch `omnesis-gateway`,
+  `omnesis-collector`, `omnesis-combined`, and `omnesis-updater` images. Both
+  architectures are loaded and smoke-tested before publication. The combined
+  smoke initializes encrypted storage, checks its paired collector, recreates
+  the container against the same volume, and verifies persistent identity and
+  reconnection. Release images publish by default; set the repository variable
+  `OMNESIS_IMAGE_PUBLISH=0` only for an explicit rehearsal without publication.
+  npm publication keeps its separate `OMNESIS_RELEASE_PUBLISH=1` opt-in.
 - **github-release** — created on every run, armed or not. The release notes
   are the changelog section the release commit generated, plus the SHA-256 of
   `install.sh` and, when the packages were published, of every tarball. The
@@ -398,12 +405,13 @@ publisher skips every package the registry already holds byte for byte,
 publishes the rest, and refuses to continue past a version whose registry
 artifact differs from the one this tree stages.
 
-**Package and image publication is armed separately from the trigger.** Until
-the repository variable `OMNESIS_RELEASE_PUBLISH` is set to `1`, those steps run
-in dry-run: packages are packed and proven against a local registry rather than
-published, and images are built rather than pushed. The GitHub Release is not
-gated: a pushed tag always gets its release page and changelog, which is the
-whole release for a source install.
+**Images publish on a release by default.** The repository variable
+`OMNESIS_IMAGE_PUBLISH=0` disables image pushes for a rehearsal; both architectures
+are still built and tested. npm packages remain opt-in through
+`OMNESIS_RELEASE_PUBLISH=1`. The GitHub Release page is created after the image
+jobs succeed. Make each GHCR package public in its package settings before
+advertising anonymous Docker installation; repository visibility alone does not
+prove an image can be pulled anonymously.
 The package destination is a separate choice, not another arming switch. With
 `OMNESIS_RELEASE_REGISTRY` unset, the packages step uses npmjs,
 `secrets.NPM_TOKEN`, provenance, and the explicit public-publish override. Set
@@ -411,9 +419,8 @@ the repository variable to an HTTPS npm-compatible registry URL (loopback HTTP
 is also accepted) to use that URL for publication instead; that host receives only
 `secrets.OMNESIS_RELEASE_REGISTRY_TOKEN`, which must be nonempty, while the npmjs
 credential and override are never exposed to it. In both cases, publication
-still requires the exact `OMNESIS_RELEASE_PUBLISH=1`. That switch arms both
-packages and images; a package-only registry
-rehearsal must use the manual publisher below rather than arming the workflow.
+still requires the exact `OMNESIS_RELEASE_PUBLISH=1`. That switch controls npm packages only. For a package-registry rehearsal, also set
+`OMNESIS_IMAGE_PUBLISH=0` if images must not be published.
 
 ## Native modules and the platform matrix
 

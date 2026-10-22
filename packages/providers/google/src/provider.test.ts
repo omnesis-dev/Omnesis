@@ -189,6 +189,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -266,38 +267,42 @@ describe("parseOAuthCallbackUrl", () => {
 });
 
 describe("Google authenticate", () => {
-  test("the browser's redirect is caught on the port the flow is already holding", async () => {
-    const port = await freePort();
-    const configDir = await configDirWithClient(port);
-    let browserSaw = "";
-    const { session, shown, asked } = scriptedSession({
-      configDir,
-      // Answering the instant the redirect is shown is the whole point: an
-      // operator already signed in completes Google's consent in under a
-      // second, and a listener bound afterwards would never see it.
-      answer: async (challenge) => {
-        browserSaw = await completeInBrowser(challenge, port, { code: "browser-code" });
-        return await new Promise<never>(() => {});
-      },
-    });
+  test.each([undefined, "0.0.0.0"])(
+    "the browser redirect reaches the held listener (bind override: %s)",
+    async (bindHost) => {
+      vi.stubEnv("OMNESIS_OAUTH_CALLBACK_HOST", bindHost);
+      const port = await freePort();
+      const configDir = await configDirWithClient(port);
+      let browserSaw = "";
+      const { session, shown, asked } = scriptedSession({
+        configDir,
+        // Answering the instant the redirect is shown is the whole point: an
+        // operator already signed in completes Google's consent in under a
+        // second, and a listener bound afterwards would never see it.
+        answer: async (challenge) => {
+          browserSaw = await completeInBrowser(challenge, port, { code: "browser-code" });
+          return await new Promise<never>(() => {});
+        },
+      });
 
-    const result = await authenticateWith(session, {});
+      const result = await authenticateWith(session, {});
 
-    expect(browserSaw).toBe("Authentication successful! You can close this tab.");
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatchObject({ kind: "redirect", via: "loopback" });
-    expect(shown.map((c) => c.kind)).toContain("wait");
-    expect(gapi.getToken).toHaveBeenCalledWith("browser-code");
-    expect(result.accounts).toEqual([
-      { accountId: ACCOUNT, state: { status: "connected", scopes: SCOPES } },
-    ]);
-    expect(result.notices).toBeUndefined();
+      expect(browserSaw).toBe("Authentication successful! You can close this tab.");
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({ kind: "redirect", via: "loopback" });
+      expect(shown.map((c) => c.kind)).toContain("wait");
+      expect(gapi.getToken).toHaveBeenCalledWith("browser-code");
+      expect(result.accounts).toEqual([
+        { accountId: ACCOUNT, state: { status: "connected", scopes: SCOPES } },
+      ]);
+      expect(result.notices).toBeUndefined();
 
-    const saved = JSON.parse(
-      await readFile(join(configDir, "google", ACCOUNT, "tokens.json"), "utf-8"),
-    );
-    expect(saved.refresh_token).toBe("refresh-token");
-  });
+      const saved = JSON.parse(
+        await readFile(join(configDir, "google", ACCOUNT, "tokens.json"), "utf-8"),
+      );
+      expect(saved.refresh_token).toBe("refresh-token");
+    },
+  );
 
   test("a code brought back by hand finishes the same flow", async () => {
     // The browser is on another machine, so nothing reaches the loopback

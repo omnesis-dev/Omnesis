@@ -135,6 +135,9 @@
 #                                  pins an exact released image. `--edge` is
 #                                  refused because the installer resolves images
 #                                  cut at releases, not branch images.
+#   --combined                     (--docker) gateway and collector in one container
+#   --gateway-only                 (--docker) run only the gateway
+#   --docker-network host|bridge   (--docker) host enables Linux LAN discovery
 #   --build                        (--docker) build the images from the checkout
 #                                  this script came from instead of pulling the
 #                                  published ones
@@ -294,6 +297,12 @@ LOG_LEVEL="${OMNESIS_LOG_LEVEL:-info}"
 # The Docker role: containers instead of user services.
 DOCKER=0
 DOCKER_BUILD_FLAG=0
+DOCKER_COMBINED=0
+DOCKER_GATEWAY_ONLY=0
+DOCKER_NETWORK=bridge
+DOCKER_NETWORK_FLAG=0
+DOCKER_DAEMON_UID=""
+DOCKER_DAEMON_GID=""
 # A certificate the gateway container serves instead of minting its own, with
 # its key and, for a private CA, the CA the containers verify it against.
 TLS_CERT_PATH=""
@@ -396,6 +405,8 @@ stage() {
 show_install_plan() {
   if [ "$DOCKER" = 1 ]; then
     if [ "$COLLECTOR" = 1 ]; then PLAN_ROLE="Docker collector"
+    elif [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then PLAN_ROLE="Docker gateway"
+    elif [ "$DOCKER_COMBINED" = 1 ]; then PLAN_ROLE="Docker gateway and collector in one container"
     else PLAN_ROLE="Docker gateway and collector"; fi
     if [ -n "$PIN_VERSION" ]; then PLAN_RELEASE="release $PIN_VERSION"
     else PLAN_RELEASE="newest complete stable image release (resolved during install)"; fi
@@ -2789,6 +2800,7 @@ set_env() {
   else
     printf '%s=%s\n' "$KEY" "$VALUE" >> "$CONFIG_DIR/.env"
   fi
+  docker_own_path "$CONFIG_DIR/.env"
   sync_path "$CONFIG_DIR/.env"
   sync_path "$CONFIG_DIR"
 }
@@ -2800,6 +2812,7 @@ unset_env() {
   ENV_TMP="$CONFIG_DIR/.env.$$"
   ( umask 077; grep -Ev "^[[:space:]]*(export[[:space:]]+)?$KEY[[:space:]]*=" "$CONFIG_DIR/.env" > "$ENV_TMP" || true )
   mv "$ENV_TMP" "$CONFIG_DIR/.env"
+  docker_own_path "$CONFIG_DIR/.env"
   sync_path "$CONFIG_DIR/.env"
   sync_path "$CONFIG_DIR"
 }
@@ -2816,6 +2829,7 @@ append_env() {
     warn "$KEY already set in $CONFIG_DIR/.env — leaving it alone."
   else
     printf '%s=%s\n' "$KEY" "$VALUE" >> "$CONFIG_DIR/.env"
+    docker_own_path "$CONFIG_DIR/.env"
     sync_path "$CONFIG_DIR/.env"
     sync_path "$CONFIG_DIR"
   fi
@@ -3306,6 +3320,7 @@ arm_passphrase_keyring() {
   if [ -n "$PASS_MODE" ] && [ "$PASS_MODE" != 600 ]; then
     warn "$PASS_FILE is mode $PASS_MODE — every local account can read the passphrase that unseals your index. Restrict it (chmod 600) and re-run."
   fi
+  docker_own_path "$PASS_FILE"
   if OMNESIS_SECRET_STORE=passphrase OMNESIS_KEYRING_PASSPHRASE_FILE="$PASS_FILE" \
        "$OMNESIS_BIN" keyring init --backend passphrase; then
     KEYRING_READY=1
@@ -4795,7 +4810,13 @@ docker_registry_prepare() {
   if [ "$COLLECTOR" = 1 ]; then
     REGISTRY_REQUIRED_IMAGES="omnesis-collector omnesis-updater"
   else
-    REGISTRY_REQUIRED_IMAGES="omnesis-gateway omnesis-collector omnesis-updater"
+    if [ "$DOCKER_COMBINED" = 1 ]; then
+      REGISTRY_REQUIRED_IMAGES="omnesis-combined omnesis-updater"
+    elif [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
+      REGISTRY_REQUIRED_IMAGES="omnesis-gateway omnesis-updater"
+    else
+      REGISTRY_REQUIRED_IMAGES="omnesis-gateway omnesis-collector omnesis-updater"
+    fi
   fi
 }
 
@@ -5065,6 +5086,26 @@ docker_resolve_build_context() {
 # Create the directories the containers mount, before they are mounted. Docker
 # would otherwise create a missing one itself, owned by root, and every write
 # from the container's unprivileged account into it would fail.
+# Only files explicitly managed by this installer change ownership. Existing
+# databases and provider state are never recursively reassigned.
+docker_own_path() {
+  [ "$DOCKER" = 1 ] && [ -n "$DOCKER_DAEMON_UID" ] && [ "$(id -u)" = 0 ] || return 0
+  [ -e "$1" ] || return 0
+  [ ! -L "$1" ] || fail "Refusing to change ownership through symlink $1. Use a real file or directory for Docker state."
+  chown -h "$DOCKER_DAEMON_UID:$DOCKER_DAEMON_GID" "$1" || fail "Could not grant container ownership of $1."
+}
+
+docker_runtime_identity() {
+  HOST_UID="$(id -u)"
+  HOST_GID="$(id -g)"
+  DOCKER_DAEMON_UID="$HOST_UID"
+  DOCKER_DAEMON_GID="$HOST_GID"
+  if [ "$HOST_UID" = 0 ]; then
+    DOCKER_DAEMON_UID=10001
+    DOCKER_DAEMON_GID=10001
+  fi
+}
+
 docker_prepare_dirs() {
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
@@ -5076,6 +5117,10 @@ docker_prepare_dirs() {
   # exist before it is mounted or Docker creates it as root. A host that only
   # collects has no gateway and mints nothing.
   [ "$COLLECTOR" = 1 ] || mkdir -p "$CONFIG_DIR/tls"
+  docker_own_path "$CONFIG_DIR"
+  docker_own_path "$CONFIG_DIR/tls"
+  docker_own_path "$CONFIG_DIR/collector"
+  docker_own_path "$CONFIG_DIR/.env"
 }
 
 # The directory the collector container calls its own. On a gateway host that
@@ -5098,6 +5143,12 @@ docker_collector_config_dir() {
 docker_collector_gateway_url() {
   if [ "$COLLECTOR" = 1 ]; then
     printf '%s' "$PAIR_GATEWAY_URL"
+  elif [ -n "$TLS_PRIMARY_NAME" ] && [ "$DOCKER_NETWORK" = host ]; then
+    printf 'https://%s:%s' "$TLS_PRIMARY_NAME" "$GATEWAY_PORT"
+  elif [ "$DOCKER_NETWORK" = host ]; then
+    printf 'https://localhost:%s' "$GATEWAY_PORT"
+  elif [ "${1:-}" = local ] && [ "$DOCKER_COMBINED" = 1 ] && [ -z "$TLS_PRIMARY_NAME" ]; then
+    printf 'https://localhost:7600'
   elif [ -n "$TLS_PRIMARY_NAME" ]; then
     # A certificate the operator supplied covers its own names, not the
     # service name; the gateway answers to them on the compose network.
@@ -5130,14 +5181,17 @@ docker_project_name() {
 
 docker_compose_gateway_service() {
   printf '  gateway:\n'
-  printf '    image: "%s/omnesis-gateway:${OMNESIS_IMAGE_TAG}"\n' "$IMAGE_REPO"
+  DOCKER_GATEWAY_IMAGE=omnesis-gateway
+  DOCKER_GATEWAY_TARGET=gateway-runtime
+  if [ "$DOCKER_COMBINED" = 1 ]; then DOCKER_GATEWAY_IMAGE=omnesis-combined; DOCKER_GATEWAY_TARGET=combined-runtime; fi
+  printf '    image: "%s/%s:${OMNESIS_IMAGE_TAG}"\n' "$IMAGE_REPO" "$DOCKER_GATEWAY_IMAGE"
   if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
-    printf '    build:\n      context: %s\n      target: gateway-runtime\n' "$DOCKER_BUILD_CONTEXT"
+    printf '    build:\n      context: %s\n      target: %s\n' "$DOCKER_BUILD_CONTEXT" "$DOCKER_GATEWAY_TARGET"
   fi
   # The certificate the gateway mints for itself carries `DNS:gateway`, so the
   # collector verifies the name it dials instead of waving the check through.
   printf '    hostname: gateway\n'
-  if [ -n "$TLS_ALIAS_NAMES" ]; then
+  if [ -n "$TLS_ALIAS_NAMES" ] && [ "$DOCKER_NETWORK" != host ]; then
     # A supplied certificate covers the operator's names instead; the gateway
     # answers to every one of them on the compose network, so the collector
     # dials one and verifies it against the certificate as any client would.
@@ -5146,8 +5200,14 @@ docker_compose_gateway_service() {
       printf '          - %s\n' "$TLS_ALIAS"
     done
   fi
-  printf '    user: "%s:%s"\n' "$HOST_UID" "$HOST_GID"
-  printf '    ports:\n      - "%s:7600"\n' "$GATEWAY_PORT"
+  printf '    init: true\n    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
+  printf '    user: "%s:%s"\n' "$DOCKER_DAEMON_UID" "$DOCKER_DAEMON_GID"
+  if [ "$DOCKER_NETWORK" = host ]; then
+    printf '    network_mode: host\n'
+  else
+    printf '    ports:\n      - "%s:7600"\n' "$GATEWAY_PORT"
+    [ "$DOCKER_COMBINED" = 0 ] || docker_compose_oauth_ports
+  fi
   printf '    volumes:\n'
   printf '      # Mounted at the same absolute path it has on this host, so every path\n'
   printf '      # this install records means the same thing on both sides of the\n'
@@ -5156,6 +5216,11 @@ docker_compose_gateway_service() {
   printf '    environment:\n'
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$CONFIG_DIR"
   printf '      - OMNESIS_LOG_LEVEL=%s\n' "$LOG_LEVEL"
+  [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1\n'
+  [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_GATEWAY_PORT=%s\n' "$GATEWAY_PORT"
+  if [ "$DOCKER_COMBINED" = 1 ]; then
+    printf '      - OMNESIS_GATEWAY_URL=%s\n' "$(docker_collector_gateway_url local)"
+  fi
   if [ -n "$DOCKER_EXTRA_NAMES" ]; then
     # The host's own names, which the container cannot see, for the
     # certificate the gateway mints for itself: another machine dials those.
@@ -5166,12 +5231,24 @@ docker_compose_gateway_service() {
   # A first boot builds indexes, so the start period is generous: a check that
   # fails inside it does not count against the retries.
   printf '    healthcheck:\n'
-  printf '      test: ["CMD", "curl", "-sfk", "https://localhost:7600/health"]\n'
+  DOCKER_HEALTH_PORT=7600
+  [ "$DOCKER_NETWORK" != host ] || DOCKER_HEALTH_PORT="$GATEWAY_PORT"
+  printf '      test: ["CMD", "curl", "-sfk", "https://localhost:%s/health"]\n' "$DOCKER_HEALTH_PORT"
   printf '      interval: 5s\n      timeout: 3s\n      retries: 5\n      start_period: 120s\n'
   # The gateway drains and closes its stores on SIGTERM within its own budget;
   # Docker's default 10 s grace would SIGKILL it mid-close.
   printf '    stop_grace_period: 90s\n'
   printf '    restart: unless-stopped\n'
+}
+
+docker_compose_oauth_ports() {
+  for OAUTH_PORT in 3000 3001 3002 3003; do
+    if [ "$OAUTH_HOST_PORTS" = ephemeral ]; then
+      printf '      - "127.0.0.1:0:%s"\n' "$OAUTH_PORT"
+    else
+      printf '      - "127.0.0.1:%s:%s"\n' "$OAUTH_PORT" "$OAUTH_PORT"
+    fi
+  done
 }
 
 docker_compose_collector_service() {
@@ -5180,19 +5257,14 @@ docker_compose_collector_service() {
   if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
     printf '    build:\n      context: %s\n      target: collector-runtime\n' "$DOCKER_BUILD_CONTEXT"
   fi
-  printf '    user: "%s:%s"\n' "$HOST_UID" "$HOST_GID"
-  printf '    ports:\n'
-  printf '      # OAuth callback ports. A provider redirects the browser to\n'
-  printf '      # http://localhost:<port>, so the host side has to be the port that\n'
-  printf '      # provider is registered against, and cannot be moved without\n'
-  printf '      # re-registering every OAuth client.\n'
-  for OAUTH_PORT in 3000 3001 3002 3003; do
-    if [ "$OAUTH_HOST_PORTS" = ephemeral ]; then
-      printf '      - "0:%s"\n' "$OAUTH_PORT"
-    else
-      printf '      - "%s:%s"\n' "$OAUTH_PORT" "$OAUTH_PORT"
-    fi
-  done
+  printf '    init: true\n    cap_drop: [ALL]\n    security_opt: ["no-new-privileges:true"]\n'
+  printf '    user: "%s:%s"\n' "$DOCKER_DAEMON_UID" "$DOCKER_DAEMON_GID"
+  if [ "$DOCKER_NETWORK" = host ]; then
+    printf '    network_mode: host\n'
+  else
+    printf '    ports:\n'
+    docker_compose_oauth_ports
+  fi
   printf '    volumes:\n'
   printf '      # The whole config directory, even when this collector keeps its own\n'
   printf '      # subdirectory: the passphrase that unseals its secrets lives beside\n'
@@ -5202,6 +5274,7 @@ docker_compose_collector_service() {
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$(docker_collector_config_dir)"
   printf '      - OMNESIS_GATEWAY_URL=%s\n' "$(docker_collector_gateway_url)"
   printf '      - OMNESIS_LOG_LEVEL=%s\n' "$LOG_LEVEL"
+  [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1\n'
   docker_compose_ca_env
   if [ -n "$PAIR_FINGERPRINT" ]; then
     printf '      - OMNESIS_TRUST_FINGERPRINT=%s\n' "$PAIR_FINGERPRINT"
@@ -5224,6 +5297,7 @@ docker_compose_updater_service() {
   if [ "$DOCKER_BUILD_FLAG" = 1 ]; then
     printf '    build:\n      context: %s\n      target: updater\n' "$DOCKER_BUILD_CONTEXT"
   fi
+  [ "$DOCKER_NETWORK" != host ] || printf '    network_mode: host\n'
   printf '    user: "%s:%s"\n' "$HOST_UID" "$HOST_GID"
   if [ -n "$DOCKER_SOCKET_GID" ]; then
     printf '    group_add:\n      - "%s"\n' "$DOCKER_SOCKET_GID"
@@ -5530,8 +5604,6 @@ docker_tls_prepare() {
 docker_write_compose() {
   COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
   COMPOSE_PROJECT="$(docker_project_name)"
-  HOST_UID="$(id -u)"
-  HOST_GID="$(id -g)"
   {
     printf '# Generated by the Omnesis installer (install.sh --docker). Re-running the\n'
     printf '# installer rewrites it.\n'
@@ -5540,7 +5612,7 @@ docker_write_compose() {
     printf 'name: %s\n' "$COMPOSE_PROJECT"
     printf 'services:\n'
     [ "$COLLECTOR" = 1 ] || docker_compose_gateway_service
-    docker_compose_collector_service
+    if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_compose_collector_service; fi
     docker_compose_updater_service
   } > "$COMPOSE_FILE"
   set_env OMNESIS_IMAGE_TAG "$IMAGE_TAG"
@@ -5552,6 +5624,7 @@ docker_write_compose() {
 # install is not — the CLI it runs lives inside an image — so it is recorded.
 docker_record_method() {
   printf 'docker\n' > "$CONFIG_DIR/install-method"
+  docker_own_path "$CONFIG_DIR/install-method"
 }
 
 # The `omnesis` this host gets: a wrapper that runs the CLI in a container.
@@ -5746,6 +5819,7 @@ docker_propagate_keyring() {
     printf 'OMNESIS_SECRET_STORE=passphrase\n' >> "$COLLECTOR_ENV"
   grep -q '^OMNESIS_KEYRING_PASSPHRASE_FILE=' "$COLLECTOR_ENV" 2>/dev/null || \
     printf 'OMNESIS_KEYRING_PASSPHRASE_FILE=%s\n' "$KEYRING_CRED_FILE" >> "$COLLECTOR_ENV"
+  docker_own_path "$COLLECTOR_ENV"
 }
 
 print_docker_banner() {
@@ -5770,7 +5844,11 @@ print_docker_banner() {
   echo ""
   printf '\033[1mThe CLI runs in the containers:\033[0m\n'
   echo ""
-  echo "    omnesis sources add gmail"
+  if [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
+    echo "    omnesis devices pair --kind collector"
+  else
+    echo "    omnesis sources add gmail"
+  fi
   echo "    omnesis status"
   echo ""
   if [ "$COLLECTOR" != 1 ]; then
@@ -5796,8 +5874,10 @@ print_docker_banner() {
     print_docker_self_signed_join
   fi
   echo ""
-  echo "  - Multicast does not cross the Docker bridge, so a container collector"
-  echo "    cannot discover a gateway; name it with --gateway-url."
+  if [ "$DOCKER_NETWORK" = bridge ]; then
+    echo "  - Multicast does not cross the Docker bridge. For Linux LAN discovery,"
+    echo "    use --docker-network host; collectors can always use --gateway-url."
+  fi
   if [ "$KEYRING_READY" = 1 ]; then
     echo "  - A container has no OS keyring: encryption at rest runs on the passphrase"
     echo "    backend, sealed by $KEYRING_CRED_FILE (keep it, and keep it mode 0600)."
@@ -5821,17 +5901,44 @@ docker_warn_native_install() {
 }
 
 # One line turns this host into an Omnesis machine running in containers.
+# Use the existing project's exact file and service list before replacing it.
+# A split collector must stop before a combined process can open its state.
+docker_prepare_topology_transition() {
+  PREVIOUS_COMPOSE="$CONFIG_DIR/docker-compose.yml"
+  [ -f "$PREVIOUS_COMPOSE" ] || return 0
+  PREVIOUS_SERVICES="$(docker compose -f "$PREVIOUS_COMPOSE" config --services)" ||
+    fail "Could not inspect $PREVIOUS_COMPOSE. Repair the existing Compose project before changing its topology."
+  if printf '%s\n' "$PREVIOUS_SERVICES" | grep -qx gateway; then
+    [ "$COLLECTOR" = 0 ] || fail "This config directory holds a Docker gateway. A collector-only installation needs a separate OMNESIS_CONFIG_DIR; changing roles here would mix gateway and remote collector state."
+  else
+    [ "$COLLECTOR" = 1 ] || fail "This config directory holds a collector-only Docker installation. A gateway needs a separate OMNESIS_CONFIG_DIR; changing roles here does not migrate its state."
+  fi
+  if [ "$DOCKER_COMBINED" = 1 ] || [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
+    if printf '%s\n' "$PREVIOUS_SERVICES" | grep -qx collector; then
+      info "Stopping the previous project's separate collector before changing topology..."
+      docker compose -f "$PREVIOUS_COMPOSE" stop -t 90 collector || fail "Could not stop the previous collector; the existing Compose file was preserved."
+      docker compose -f "$PREVIOUS_COMPOSE" rm -f collector || fail "Could not remove the stopped collector; the existing Compose file was preserved."
+    fi
+  fi
+}
+
 docker_install() {
   ensure_docker
+  if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
   docker_socket_facts
   docker_validate_values
+  docker_runtime_identity
   docker_registry_prepare
   docker_warn_native_install
   docker_resolve_tag
   docker_resolve_build_context
   docker_preflight_images
+  docker_prepare_topology_transition
   docker_prepare_dirs
   docker_tls_adopt
+  docker_own_path "$TLS_CERT_PATH"
+  docker_own_path "$TLS_KEY_PATH"
+  docker_own_path "$TLS_CA_PATH"
   docker_tls_prepare
   docker_self_signed_names
   docker_write_compose
@@ -5859,12 +5966,12 @@ docker_install() {
   docker_up gateway
   if wait_for_gateway; then
     GATEWAY_HEALTHY=1
-    docker_up collector
+    if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_up collector; fi
     install_model
   else
     # Compose holds the collector until the gateway is healthy, so starting it
     # now lets it follow the gateway once that recovers.
-    docker_up collector
+    if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_up collector; fi
     fail_unhealthy_gateway
   fi
   print_docker_banner
@@ -6550,6 +6657,9 @@ parse_args() {
       --trust-fingerprint) PAIR_FINGERPRINT="$2"; PAIR_FINGERPRINT_FLAG=1; shift 2 ;;
       --code)       PAIR_CODE="$2"; PAIR_CODE_FLAG=1; shift 2 ;;
       --docker)     DOCKER=1; shift ;;
+      --combined) DOCKER_COMBINED=1; shift ;;
+      --gateway-only) DOCKER_GATEWAY_ONLY=1; shift ;;
+      --docker-network) DOCKER_NETWORK="$2"; DOCKER_NETWORK_FLAG=1; shift 2 ;;
       --build)      DOCKER_BUILD_FLAG=1; shift ;;
       --tls-cert)   TLS_CERT_PATH="$2"; TLS_FILES_FLAG=1; shift 2 ;;
       --tls-key)    TLS_KEY_PATH="$2"; TLS_FILES_FLAG=1; shift 2 ;;
@@ -6578,6 +6688,14 @@ main() {
   parse_args "$@"
   valid_gateway_port "$GATEWAY_PORT" || fail "--port must be a whole number from 1 through 65535."
   validate_hardened_flags
+  if [ "$DOCKER_COMBINED" = 1 ] || [ "$DOCKER_GATEWAY_ONLY" = 1 ] || [ "$DOCKER_NETWORK_FLAG" = 1 ]; then
+    [ "$DOCKER" = 1 ] || fail "--combined, --gateway-only and --docker-network are only meaningful with --docker."
+  fi
+  case "$DOCKER_NETWORK" in host|bridge) ;; *) fail "--docker-network must be host or bridge." ;; esac
+  if [ "$DOCKER_COMBINED" = 1 ]; then
+    [ "$COLLECTOR" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ] || fail "--combined cannot be used with --collector or --gateway-only."
+  fi
+  [ "$DOCKER_GATEWAY_ONLY" = 0 ] || [ "$COLLECTOR" = 0 ] || fail "--gateway-only cannot be used with --collector."
   if [ "$DOCKER" = 1 ]; then
     [ -z "$PIN_COMMIT" ] || \
       fail "--commit is source-only; Docker installs published images."

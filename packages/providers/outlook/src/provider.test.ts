@@ -100,6 +100,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -508,43 +509,47 @@ function captureState(): () => string {
 describe("Microsoft authenticate", () => {
   const ACCOUNT = "user@example.com";
 
-  test("the browser's redirect is caught on the port the flow is already holding", async () => {
-    const port = await freePort();
-    const configDir = await makeConfigDir();
-    const redirectUri = `http://127.0.0.1:${port}/auth/callback`;
-    const stateOf = captureState();
-    let browserSaw = "";
-    const { session, shown, asked } = scriptedSession({
-      configDir,
-      // Answering the instant the redirect is shown is the whole point: an
-      // operator already signed in completes consent in under a second, and a
-      // listener bound afterwards would never see it.
-      answer: async () => {
-        const query = new URLSearchParams({ code: "browser-code", state: stateOf() });
-        const response = await fetch(`http://127.0.0.1:${port}/auth/callback?${query}`);
-        browserSaw = await response.text();
-        return await new Promise<never>(() => {});
-      },
-    });
+  test.each([undefined, "0.0.0.0"])(
+    "the browser redirect reaches the held listener (bind override: %s)",
+    async (bindHost) => {
+      vi.stubEnv("OMNESIS_OAUTH_CALLBACK_HOST", bindHost);
+      const port = await freePort();
+      const configDir = await makeConfigDir();
+      const redirectUri = `http://127.0.0.1:${port}/auth/callback`;
+      const stateOf = captureState();
+      let browserSaw = "";
+      const { session, shown, asked } = scriptedSession({
+        configDir,
+        // Answering the instant the redirect is shown is the whole point: an
+        // operator already signed in completes consent in under a second, and a
+        // listener bound afterwards would never see it.
+        answer: async () => {
+          const query = new URLSearchParams({ code: "browser-code", state: stateOf() });
+          const response = await fetch(`http://127.0.0.1:${port}/auth/callback?${query}`);
+          browserSaw = await response.text();
+          return await new Promise<never>(() => {});
+        },
+      });
 
-    const result = await authenticateWith(session, { redirectUri });
+      const result = await authenticateWith(session, { redirectUri });
 
-    expect(browserSaw).toBe("Authentication successful! You can close this tab.");
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatchObject({ kind: "redirect", via: "loopback" });
-    expect(shown.map((c) => c.kind)).toContain("wait");
-    expect(msal.acquireTokenByCode).toHaveBeenCalledWith(
-      expect.objectContaining({
-        code: "browser-code",
-        redirectUri,
-        codeVerifier: "pkce-verifier",
-      }),
-    );
-    expect(result.accounts).toEqual([{ accountId: ACCOUNT, state: { status: "connected" } }]);
+      expect(browserSaw).toBe("Authentication successful! You can close this tab.");
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({ kind: "redirect", via: "loopback" });
+      expect(shown.map((c) => c.kind)).toContain("wait");
+      expect(msal.acquireTokenByCode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "browser-code",
+          redirectUri,
+          codeVerifier: "pkce-verifier",
+        }),
+      );
+      expect(result.accounts).toEqual([{ accountId: ACCOUNT, state: { status: "connected" } }]);
 
-    const saved = await readFile(join(configDir, "outlook", ACCOUNT, "tokens.json"), "utf-8");
-    expect(saved).toBe('{"cache":true}');
-  });
+      const saved = await readFile(join(configDir, "outlook", ACCOUNT, "tokens.json"), "utf-8");
+      expect(saved).toBe('{"cache":true}');
+    },
+  );
 
   test("a code brought back by hand finishes the same flow", async () => {
     // The browser is on another machine, so nothing reaches the loopback

@@ -80,6 +80,7 @@ import {
   type ServiceComponent,
 } from "@omnesis/core";
 import { upsertDotEnv } from "@omnesis/config";
+import { dockerReleaseImages, newestCommonDockerTag } from "../update/docker-registry.js";
 import { assertSourceTargetNode } from "../update/source-node.js";
 import { approveInteractive } from "../approve.js";
 import { restartHarness } from "../harness-restart.js";
@@ -138,7 +139,6 @@ import {
   normalizeVersion,
   npmGlobalApplyPlan,
   npmViewVersionSpec,
-  packageIndexUrl,
   planHostUpdate,
   planUpdate,
   readImageTag,
@@ -514,8 +514,8 @@ export interface UpdateFlowDeps {
    * the commands themselves and leave this undefined.
    */
   select?(version: string): Promise<void>;
-  /** Newest published version for a dist-tag, for installs with no npm binary. */
-  latestPublished?(distTag: string): Promise<string>;
+  /** Highest stable release shared by every image in this Compose project. */
+  latestDockerVersion?(composeFile: string): Promise<string>;
   /**
    * How to run the installed CLI for the harness refresh, read when the
    * refresh runs so it is the build the update installed. By path: the
@@ -2407,24 +2407,23 @@ export async function updateDocker(
   } else if (opts.targetVersion) {
     target = normalizeVersion(opts.targetVersion);
   } else {
-    // The product versions are lockstep, so the published CLI version is the
-    // tag every Omnesis image is published under. Resolved over the package
-    // index's HTTP API because the updater container carries no npm binary.
-    const resolve = deps.latestPublished;
+    // Docker releases may be published without npm packages. Resolve the
+    // actual project's complete image set, including its updater, from the
+    // container registries before any tag or state is changed.
+    const resolve = deps.latestDockerVersion;
     if (!resolve) {
       throw new CliError(
         `${c.red}No way to resolve the newest release. Pass --target-version to name one.${c.reset}`,
         EXIT_FAILURE,
       );
     }
-    const distTag = channelToDistTag("stable");
     let published: string;
     try {
-      published = await resolve(distTag);
+      published = await resolve(opts.composeFile);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new CliError(
-        `${c.red}Could not resolve ${CLI_PACKAGE}@${distTag}: ${detail}${c.reset}`,
+        `${c.red}Could not resolve a common container release: ${detail}${c.reset}`,
         EXIT_FAILURE,
       );
     }
@@ -2434,7 +2433,7 @@ export async function updateDocker(
     // registry answer, not something to act on.
     if (!isResolvedVersion(target)) {
       throw new CliError(
-        `${c.red}${CLI_PACKAGE}@${distTag} did not resolve to a version: ${target}${c.reset}`,
+        `${c.red}Container registry discovery did not resolve to a version: ${target}${c.reset}`,
         EXIT_FAILURE,
       );
     }
@@ -2761,26 +2760,35 @@ export function parseWaitForLockMinutes(raw: unknown): number | null | undefined
 /** A day: past that, a wait is a stuck update rather than a busy one. */
 const MAX_WAIT_FOR_LOCK_MINUTES = 24 * 60;
 
-/** How long a registry lookup may hang before it counts as no answer. */
-const REGISTRY_REQUEST_TIMEOUT_MS = 10_000;
-
-/**
- * The newest published version for a dist-tag, read from the package index's
- * HTTP API. A container install has no npm binary to ask, and the product
- * versions are lockstep, so the CLI package's version is the tag every
- * Omnesis image is published under. The index is the one the installer
- * resolves the same number from, `OMNESIS_PACKAGE_INDEX_URL` included, so a
- * fork or a mirror answers for the install and for every update after it.
- */
-async function latestPublishedVersion(distTag: string): Promise<string> {
-  const url = packageIndexUrl(distTag);
-  const res = await fetch(url, { signal: AbortSignal.timeout(REGISTRY_REQUEST_TIMEOUT_MS) });
-  if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
-  const body = (await res.json()) as { version?: string };
-  if (typeof body.version !== "string" || !body.version) {
-    throw new Error(`${url} returned no version`);
-  }
-  return body.version;
+/** Resolve exactly the images Compose will pull, including profile services. */
+async function latestDockerVersion(composeFile: string): Promise<string> {
+  const config = async (raw: boolean): Promise<string> => {
+    const result = await spawnRunner(
+      {
+        command: "docker",
+        args: [
+          "compose",
+          "-f",
+          composeFile,
+          "--profile",
+          "update",
+          "config",
+          ...(raw ? ["--no-interpolate"] : []),
+          "--format",
+          "json",
+        ],
+      },
+      "capture",
+    );
+    if (result.code !== 0)
+      throw new Error(
+        "Could not resolve the Compose project's images. Repair its configuration before updating.",
+      );
+    return result.stdout;
+  };
+  const raw = await config(true);
+  const rendered = await config(false);
+  return newestCommonDockerTag(dockerReleaseImages(raw, rendered));
 }
 
 /**
@@ -3108,7 +3116,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
           })
         : undefined,
     select: plan.kind === "docker" ? (tag) => selectImageTag(plan.projectDir, tag) : undefined,
-    latestPublished: latestPublishedVersion,
+    latestDockerVersion,
     awaitHealth: async (expectVersion, signal) => {
       await ensureTrust();
       await awaitGatewayHealth(

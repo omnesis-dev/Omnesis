@@ -783,21 +783,13 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </p>
 
         <h2 id="docker">Docker</h2>
-        <div class="callout warn">
-          <p>
-            The gateway and collector images are not published yet, so
-            <code>--docker</code> cannot pull them and the install stops. Until they are, use the
-            default source install. To try the Docker stack anyway, run the installer from a
-            checkout of this repository with <code>sh scripts/install.sh --docker --build</code>,
-            which builds the images on the machine.
-          </p>
-        </div>
         <p>
           The Docker install is the same installer with a flag. The gateway and the collector run as
           containers from published images tagged by release. The host needs Docker with the Compose
           plugin, <code>curl</code> and a POSIX shell; no Node, checkout or compiler. The installer
           uses release images only, so it refuses <code>--edge</code>;
-          <code>--version X.Y.Z</code> selects an exact release.
+          <code>--version X.Y.Z</code> selects an exact release. From a checkout,
+          <code>sh scripts/install.sh --docker --build</code> builds the images locally.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -896,6 +888,107 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             </p>
           </div>
         </div>
+
+        <h3 id="docker-topologies">Choose a topology</h3>
+        <p>
+          The default <code>--docker</code> install runs a gateway and a collector as separate
+          containers. Use <code>--docker --combined</code> for one container running both, or
+          <code>--docker --gateway-only</code> when every collector will run elsewhere. A combined
+          container stops both processes if either fails and drains the collector before stopping
+          the gateway. Every topology accepts additional native collectors: on a Mac, run the
+          installer with <code>--collector --gateway-url https://&lt;server&gt;:7600</code>
+          and redeem a fresh collector pairing code from the gateway. macOS sources need a native
+          Mac collector; mounting Mac files into a Linux container does not supply macOS APIs.
+        </p>
+        <p>
+          On Linux, add <code>--docker-network host</code> for Bonjour/mDNS discovery on the LAN.
+          Host networking shares the host interfaces and ports, including UDP 5353; allow multicast
+          on the trusted LAN in the host firewall. Port mappings are unnecessary in this mode.
+          Bridge mode is the default and needs an explicit gateway URL on other devices. Publishing
+          UDP 5353 alone does not bridge multicast discovery. Docker Desktop runs inside a VM; use
+          an explicit URL there. Only run one gateway on each chosen port.
+        </p>
+        <p>
+          OAuth callback ports 3000–3003 are published on host loopback in bridge mode. A provider
+          redirect to localhost refers to the computer running the browser. For a headless server
+          use the portal authentication flow where offered, or forward each needed port over SSH
+          (for example <code>ssh -L 3000:127.0.0.1:3000 user@&lt;server&gt;</code>) before opening
+          the authorization URL locally. Do not expose callback ports to the internet.
+        </p>
+        <p>
+          A collector sees only files mounted into its container. For a filesystem source, add a
+          read-only bind mount to the <code>collector</code> service (or <code>gateway</code> in
+          combined mode), such as <code>/srv/source-data:/sources/data:ro</code>, then configure the
+          source with its container path, <code>/sources/data</code>. Grant the container UID read
+          and directory traversal permissions on that source directory. Mount only the directories
+          that source needs. Store credentials, writable source caches and databases inside the
+          persistent config directory, rather than in the image or the read-only source mount.
+          Ordinary updates preserve Compose edits; rerunning the installer regenerates the file, so
+          retain and reapply your additional mounts when reconfiguring.
+        </p>
+        <h3 id="docker-compose">Standalone Compose</h3>
+        <p>
+          The repository includes <code>compose.yaml</code> for a combined container, independent of
+          the installer. Set <code>OMNESIS_IMAGE_TAG</code> to an exact published version and
+          <code>OMNESIS_PASSPHRASE_PATH</code> to an absolute path outside the repository containing
+          a strong random passphrase. The container runs as UID/GID 10001:10001; grant that identity
+          read access to the file without making it readable by other users. Compose file secrets
+          are bind mounts, not an encrypted secret store. Set <code>OMNESIS_TLS_EXTRA_NAMES</code>
+          to the server DNS names/IP addresses clients will use before first boot.
+        </p>
+        <p>
+          Before starting the daemons, run
+          <code
+            >docker compose run --rm --no-deps --entrypoint omnesis gateway keyring init --backend
+            passphrase</code
+          >, then
+          <code
+            >docker compose run --rm --no-deps --entrypoint omnesis gateway keyring export-recovery
+            --backend passphrase</code
+          >. Store the recovery material offline, then run <code>docker compose up -d</code>. The
+          named <code>state</code> volume contains the complete configuration directory. Stop with
+          <code>docker compose down</code>; adding <code>--volumes</code> destroys it. This
+          standalone example is managed through Compose; use the installer for its host CLI wrapper
+          and transactional <code>omnesis update</code> integration.
+        </p>
+        <h3 id="docker-unraid">Unraid</h3>
+        <p>
+          Enable Docker in Unraid Settings, then open the server terminal. Choose a persistent
+          appdata directory on a local pool, such as <code>/mnt/cache/appdata/omnesis</code>; keep
+          SQLite databases off SMB/NFS shares and do not let a mover relocate active database files.
+          Check the pool name on your server. Run
+          <code
+            >curl -fsSL https://omnesis.dev/install.sh |
+            OMNESIS_CONFIG_DIR=/mnt/cache/appdata/omnesis sh -s -- --docker --combined
+            --docker-network host</code
+          >. Follow the encryption prompts and store recovery material away from the server.
+        </p>
+        <p>
+          The generated Compose file stays in appdata. Manage it with
+          <code>docker compose -f /mnt/cache/appdata/omnesis/docker-compose.yml</code> and use
+          <code>omnesis update</code> for updates. If Compose is unavailable, install the Compose
+          plugin through your Unraid administration tooling before running the installer. A manual
+          Unraid Docker template can use the combined image, host networking, UID/GID 10001:10001
+          and an appdata mount at <code>/var/lib/omnesis</code>; initialize its passphrase keyring
+          before starting, as in the standalone Compose instructions. Never enable privileged mode
+          or mount the Docker socket into the daemon.
+        </p>
+        <p>
+          Persist and back up the <em>entire</em> config directory: all databases and sidecars,
+          attachments, source caches, credentials, tokens, TLS keys/certificates, sealed keyring,
+          configuration and Compose metadata. Stop both daemons for a filesystem backup, or use the
+          documented backup command. Include separately mounted passphrase files and supplied TLS
+          material in your recovery plan. A passphrase stored beside encrypted data protects neither
+          against theft of that complete directory nor a host administrator. Keep an offline
+          recovery copy; losing both unlock and recovery material loses encrypted data.
+        </p>
+        <p>
+          Tailscale can run on the Docker host (including the Unraid host); no privileged VPN
+          container is required. Pair other machines using its reachable DNS name and the TLS
+          configuration below. External MCP clients use the same gateway HTTPS endpoint as native
+          installs. A self-signed certificate needs explicit client trust; clients that require
+          publicly trusted HTTPS need a Tailscale or domain certificate and a reachable route.
+        </p>
 
         <h3 id="docker-tls">TLS in Docker</h3>
         <p>

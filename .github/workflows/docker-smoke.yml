@@ -16,8 +16,8 @@ env:
 # Two jobs on GitHub-hosted Linux runners, single-platform (the runner's native
 # amd64). The first drives the real installer and the real updater against
 # images built from this checkout; the second boots the compiled runtime
-# directly and asserts its hardening. docker.yml builds both platforms, arm64
-# under QEMU, and release.yml publishes them.
+# directly and asserts its hardening. docker.yml builds and boots both platforms on native runners; release.yml
+# tests and publishes both architectures.
 jobs:
   install-and-update:
     name: install.sh --docker, then an update across two tags
@@ -76,3 +76,6 @@ jobs:
 
       - name: lane [docker-runtime]
         run: node scripts/docker-runtime-smoke.mjs --build
+
+      - name: Verify Linux host-network Bonjour discovery
+        run: node scripts/docker/mdns-smoke.mjs omnesis-gateway-runtime:smoke

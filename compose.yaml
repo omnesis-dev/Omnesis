@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+# Standalone combined installation. See /docs/install#docker-compose for setup.
+# The installer generates its own compose file with host CLI/update integration.
+services:
+  gateway:
+    image: ghcr.io/omnesis-dev/omnesis-combined:${OMNESIS_IMAGE_TAG:?Set an exact release version}
+    hostname: gateway
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 90s
+    ports:
+      - "${OMNESIS_PORT:-7600}:7600"
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:3002:3002"
+      - "127.0.0.1:3003:3003"
+    environment:
+      OMNESIS_SECRET_STORE: passphrase
+      OMNESIS_KEYRING_PASSPHRASE_FILE: /run/secrets/keyring_passphrase
+      OMNESIS_TLS_EXTRA_NAMES: ${OMNESIS_TLS_EXTRA_NAMES:-}
+    volumes:
+      - state:/var/lib/omnesis
+    secrets:
+      - keyring_passphrase
+secrets:
+  keyring_passphrase:
+    file: ${OMNESIS_PASSPHRASE_PATH:?Set the absolute path to your owner-readable passphrase file}
+volumes:
+  state:
