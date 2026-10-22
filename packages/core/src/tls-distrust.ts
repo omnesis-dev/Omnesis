@@ -2,10 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Root certificates Mozilla has removed from NSS that the pinned Node.js
- * release still bundles. Node checks no revocation and reads no OneCRL, so a
- * root Mozilla distrusts stays trusted by every Omnesis process until Node
- * ships a newer store — this module closes that gap.
+ * Root certificates Mozilla has removed from NSS that a Node.js release the
+ * `engines` range still admits bundles (Node 24.22.1 and 26.12.1 dropped the
+ * emSign ones). Node checks no revocation and reads no OneCRL, so a
+ * root Mozilla distrusts stays trusted by every Omnesis process until it runs
+ * on a Node with a newer store — this module closes that gap.
  *
  * Importing it removes the roots from the current thread's default CA store.
  * The store is per thread, so the `@omnesis/core` barrel imports this module
@@ -13,7 +14,8 @@
  * before it opens a socket. Code that passes its own `ca:` list bypasses the
  * default store and must take `publicRoots()` instead of the bundled set.
  *
- * Remove an entry once the Node version the repo pins no longer bundles it.
+ * Remove an entry once the `engines` floor excludes every release that
+ * bundles it.
  */
 
 import { createHash } from "node:crypto";
