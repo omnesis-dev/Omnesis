@@ -2265,6 +2265,26 @@ describe("full-validation workflow topology", () => {
     ).toEqual([]);
   });
 
+  it("allows bounded package publication bodies in both smoke registries", async () => {
+    const { parse } = await import("yaml");
+    for (const filename of ["install-smoke.yml", "release.yml"]) {
+      const workflow = parse(readFileSync(join(repoRoot, ".github/workflows", filename), "utf8"));
+      const steps = Object.values(workflow.jobs).flatMap((job) => job.steps ?? []);
+      const writeConfig = steps.find((step) => step.run?.includes("<< 'VERDACCIO_CONF'"));
+      const document = writeConfig.run.match(/<< 'VERDACCIO_CONF'\n([\s\S]*?)\nVERDACCIO_CONF/);
+      expect(document, filename).not.toBeNull();
+      const config = parse(document[1]);
+      expect(config.max_body_size, filename).toBe("50mb");
+      // A package near 8 MiB exceeds the registry's default 10 MB JSON cap
+      // once encoded; the smoke registry must allow the publish envelope.
+      const publishBytes = Math.ceil((8 * 1024 * 1024) / 3) * 4 + 64 * 1024;
+      expect(publishBytes).toBeGreaterThan(10 * 1024 * 1024);
+      expect(publishBytes).toBeLessThan(50 * 1024 * 1024);
+      expect(config.packages["@omnesis/*"].publish).toBe("$all");
+      expect(config.packages["**"].publish).toBeUndefined();
+    }
+  });
+
   it("keeps source-install state isolated without discarding the runner npm cache", () => {
     const steps = workflows["install-smoke"].jobs.source.steps;
     const fixture = steps.find((step) => step.name === "Create exact-revision source remote");
