@@ -189,9 +189,20 @@ describe("real Maildir source through a real collector", () => {
   };
   /** Trigger one sync and wait until its final page has committed. */
   const syncAndWait = async (restart = false, id = sourceId): Promise<void> => {
+    if (!restart) {
+      await waitForCondition(
+        () =>
+          Promise.resolve(
+            collector.engine.getStatuses().find((s) => s.sourceId === id)?.state === "idle",
+          ),
+        30_000,
+        "the Maildir source is idle before requesting a sync",
+      );
+    }
     const before = lastSynced(id);
     const triggered = collector.engine.triggerSync(id, { restart });
     expect(triggered.error).toBeUndefined();
+    expect([...triggered.triggered, ...triggered.restarting]).toContain(id);
     await waitForCondition(
       () =>
         Promise.resolve(
