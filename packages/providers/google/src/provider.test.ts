@@ -84,7 +84,7 @@ async function configDirWithClient(port: number): Promise<string> {
 /** A port nothing is listening on. */
 async function freePort(): Promise<number> {
   const probe = createServer();
-  await new Promise<void>((ready) => probe.listen(0, ready));
+  await new Promise<void>((ready) => probe.listen(0, "127.0.0.1", ready));
   const { port } = probe.address() as AddressInfo;
   await new Promise<void>((closed) => probe.close(() => closed()));
   return port;
@@ -93,7 +93,7 @@ async function freePort(): Promise<number> {
 /** A port something else already holds, and the way to give it back. */
 async function occupiedPort(): Promise<{ port: number; release: () => Promise<void> }> {
   const squatter = createServer();
-  await new Promise<void>((ready) => squatter.listen(0, ready));
+  await new Promise<void>((ready) => squatter.listen(0, "127.0.0.1", ready));
   const { port } = squatter.address() as AddressInfo;
   return {
     port,

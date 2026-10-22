@@ -56,10 +56,23 @@ async function fixture({ fail, ignoreTerm = false } = {}) {
   `,
   );
   const child = spawn(process.execPath, [runner], { stdio: "pipe" });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  // Keep exit-based completion: a crashed runner can leave descendants holding pipes open.
   const done = new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
+  const diagnostics = async () => {
+    const recordedEvents = await readFile(events, "utf8");
+    return JSON.stringify({ stdout, stderr, events: recordedEvents });
+  };
   onTestFinished(async () => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     await done;
@@ -68,18 +81,18 @@ async function fixture({ fail, ignoreTerm = false } = {}) {
   for (let i = 0; i < 200; i++) {
     const log = await readFile(events, "utf8");
     if (log.includes("gateway:ready") && log.includes("collector:ready")) {
-      return { child, done, log: () => readFile(events, "utf8") };
+      return { child, done, log: () => readFile(events, "utf8"), diagnostics };
     }
     await delay(10);
   }
-  throw new Error("Mock daemon processes never reported readiness");
+  throw new Error(`Mock daemon processes never reported readiness: ${await diagnostics()}`);
 }
 
 for (const signal of ["SIGTERM", "SIGINT"]) {
   test(`${signal} drains collector before gateway and exits successfully`, async () => {
     const f = await fixture();
     f.child.kill(signal);
-    assert.deepEqual(await f.done, { code: 0, signal: null });
+    assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
     const log = await f.log();
     assert.ok(log.indexOf("collector:term") < log.indexOf("gateway:term"), log);
   });
@@ -87,14 +100,14 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
 for (const fail of ["gateway", "collector"]) {
   test(`${fail} failure stops its sibling and preserves failure status`, async () => {
     const f = await fixture({ fail });
-    assert.deepEqual(await f.done, { code: 7, signal: null });
+    assert.deepEqual(await f.done, { code: 7, signal: null }, await f.diagnostics());
     assert.match(await f.log(), new RegExp(`${fail === "gateway" ? "collector" : "gateway"}:term`));
   });
 }
 test("unresponsive daemons are killed after their drain deadline", async () => {
   const f = await fixture({ ignoreTerm: true });
   f.child.kill("SIGTERM");
-  assert.deepEqual(await f.done, { code: 0, signal: null });
+  assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
   assert.match(await f.log(), /collector:term/);
   assert.match(await f.log(), /gateway:term/);
 });

@@ -6,6 +6,7 @@ import { createPersonAnnotation } from "@omnesis/gateway/src/brain/storage/perso
 import { convertKnowledgeOwner } from "@omnesis/gateway/src/brain/knowledge/owner-adapters.js";
 import { enqueueKnowledgeWork } from "@omnesis/gateway/src/brain/knowledge/work.js";
 import { afterEach, expect, it } from "vitest";
+import { z } from "zod";
 import {
   BrainBench,
   waitFor,
@@ -15,6 +16,7 @@ import {
   ref,
   sourceInterpretations,
   preserveCurrentOwner,
+  structuredData,
   type DecisionServerRequest,
 } from "./brain-bench/index.js";
 
@@ -45,6 +47,18 @@ const thirdDoc = email({
 it("requires a complete profile read, blocks growth before verification and atomically consolidates supported observations", async () => {
   const judged: DecisionServerRequest["state"][] = [];
   const declinedRevision = "Maya prefers written agendas.";
+  let transition: { runId: string; attempt: number; frontierIndex: number } | undefined;
+  const pageSchema = z.object({
+    annotations: z.array(
+      z.object({
+        claimType: z.string(),
+        claimText: z.string(),
+        evidence: z.array(z.object({ docId: z.string(), quote: z.string() })),
+      }),
+    ),
+    profile: z.object({ totalFacts: z.number(), readComplete: z.boolean() }),
+    nextCursor: z.string().nullable(),
+  });
   let firstSource = "",
     secondSource = "",
     firstId = "",
@@ -126,43 +140,80 @@ it("requires a complete profile read, blocks growth before verification and atom
               { tool: "annotate_person", code: "revision_conflict" },
               { tool: "annotate_person", code: "profile_budget_exceeded" },
             ],
-            plan: (ctx) => ({
-              calls: [
+            plan: (ctx, _item, steps) => {
+              const prefix = [
                 lookup(),
                 call("fetch_many", {
                   documents: [{ documentId: firstSource }, { documentId: secondSource }],
                 }),
                 call("annotation_search", { personId: person, limit: 1 }),
-                call("annotate_person", {
-                  ...annotation(firstSource, "meeting-preference", preference, preference),
-                  supersedes: [firstId, secondId],
-                }),
-                call("annotation_search", {
-                  personId: person,
-                  limit: 1,
-                  cursor: ref("annotation_search", "nextCursor"),
-                }),
-                call("annotate_person", annotation(ctx.subject!, "call-preference", extra, extra)),
-                call("person_annotation_revise", {
-                  id: firstId,
-                  claimText: declinedRevision,
-                  reconciliationReason: "Proposed wording reduction for review.",
-                }),
-                call("annotate_person", {
-                  ...annotation(firstSource, "meeting-preference", preference, preference),
-                  additionalEvidence: [{ docId: secondSource, quote: preference }],
-                  supersedes: [firstId, secondId],
-                  reconciliationReason:
-                    "Both observations independently record the same preference; retain both source supports in one fact.",
-                }),
-                call("annotation_search", { personId: person }),
-                call("annotate_person", {
-                  ...annotation(firstSource, "meeting-preference", preference, preference),
-                  additionalEvidence: [{ docId: secondSource, quote: preference }],
-                  supersedes: ref("annotate_person", "id", 2),
-                }),
-              ],
-            }),
+              ];
+              const frontierIndex = steps.findLastIndex(
+                (step) => step.name === "knowledge_next_frontier",
+              );
+              const firstRead = steps
+                .slice(frontierIndex + 1)
+                .find((step) => step.name === "annotation_search" && step.args?.limit === 1);
+              const page = firstRead
+                ? pageSchema.parse(structuredData(firstRead.result))
+                : undefined;
+              // Decide from the first read of this offer. Later reads in the
+              // original plan observe its own consolidation and must not skip it.
+              if (page?.profile.totalFacts === 1 && page.profile.readComplete) {
+                expect(page.nextCursor).toBeNull();
+                expect(page.annotations).toHaveLength(1);
+                expect(page.annotations[0]).toMatchObject({
+                  claimType: "meeting-preference",
+                  claimText: preference,
+                });
+                expect(page.annotations[0]!.evidence).toEqual(
+                  expect.arrayContaining([
+                    { docId: firstSource, quote: preference },
+                    { docId: secondSource, quote: preference },
+                  ]),
+                );
+                return { calls: prefix };
+              }
+              if (page?.profile.totalFacts === 2 && !transition) {
+                transition = { runId: ctx.runId, attempt: ctx.attempt, frontierIndex };
+              }
+              return {
+                calls: [
+                  ...prefix,
+                  call("annotate_person", {
+                    ...annotation(firstSource, "meeting-preference", preference, preference),
+                    supersedes: [firstId, secondId],
+                  }),
+                  call("annotation_search", {
+                    personId: person,
+                    limit: 1,
+                    cursor: ref("annotation_search", "nextCursor"),
+                  }),
+                  call(
+                    "annotate_person",
+                    annotation(ctx.subject!, "call-preference", extra, extra),
+                  ),
+                  call("person_annotation_revise", {
+                    id: firstId,
+                    claimText: declinedRevision,
+                    reconciliationReason: "Proposed wording reduction for review.",
+                  }),
+                  call("annotate_person", {
+                    ...annotation(firstSource, "meeting-preference", preference, preference),
+                    additionalEvidence: [{ docId: secondSource, quote: preference }],
+                    supersedes: [firstId, secondId],
+                    reconciliationReason:
+                      "Both observations independently record the same preference; retain both source supports in one fact.",
+                  }),
+                  call("annotation_search", { personId: person }),
+                  call("annotate_person", {
+                    ...annotation(firstSource, "meeting-preference", preference, preference),
+                    additionalEvidence: [{ docId: secondSource, quote: preference }],
+                    supersedes: ref("annotate_person", "id", 2),
+                  }),
+                ],
+              };
+            },
           },
         ],
       }),
@@ -188,9 +239,14 @@ it("requires a complete profile read, blocks growth before verification and atom
     (a) => a.id !== firstId,
   )!.id;
   const [thirdSource] = await bench.pushAndSettle([thirdDoc]);
-  const run = await bench.obs.interpretationForSource(thirdSource!);
+  expect(transition).toBeDefined();
+  const original = transition!;
+  const { run } = await bench.obs.run(original.runId);
   expect(run.status).toBe("completed");
-  const calls = await bench.obs.executedTools(run.id);
+  const originalTools = await bench.obs.executedTools(run.id, original.attempt);
+  const offerTools = originalTools.slice(original.frontierIndex + 1);
+  const nextFrontier = offerTools.findIndex((step) => step.tool === "knowledge_next_frontier");
+  const calls = nextFrontier < 0 ? offerTools : offerTools.slice(0, nextFrontier);
   expect(
     calls.filter((c) => c.tool === "annotation_search").map((c) => c.result?.data?.profile),
   ).toMatchObject([
@@ -260,6 +316,51 @@ it("requires a complete profile read, blocks growth before verification and atom
           .get(active[0]!.id)?.n,
     ),
   ).toBe(2);
+
+  // A new revision of the same source is a real replay, even when its facts
+  // were already consolidated. It must retain the supported profile unchanged.
+  const previousRuns = new Set((await bench.obs.runsForSource(thirdSource!)).map((r) => r.id));
+  const previousJudgements = judged.length;
+  await bench.update(thirdDoc, `${extra}\nProfile review confirmed.`);
+  await bench.drainUntilQuiet();
+  const replayRuns = (await bench.obs.runsForSource(thirdSource!)).filter(
+    (r) => !previousRuns.has(r.id),
+  );
+  expect(replayRuns.length).toBeGreaterThan(0);
+  const replayProfiles = [];
+  for (const replay of replayRuns) {
+    expect(replay.status).toBe("completed");
+    const tools = await bench.obs.executedTools(replay.id);
+    replayProfiles.push(
+      ...tools
+        .filter((step) => step.tool === "annotation_search")
+        .map((step) => step.result?.data?.profile),
+    );
+    expect(
+      tools.filter(
+        (step) => step.tool === "annotate_person" || step.tool.startsWith("person_annotation_"),
+      ),
+    ).toEqual([]);
+  }
+  expect(replayProfiles).toEqual(
+    expect.arrayContaining([expect.objectContaining({ totalFacts: 1, readComplete: true })]),
+  );
+  expect((await bench.obs.personAnnotations(personId)).annotations).toEqual(active);
+  expect(
+    bench.withWriteHandle((db) =>
+      db.prepare("SELECT COUNT(*) AS n FROM person_annotations WHERE person_id=?").get(personId),
+    ),
+  ).toEqual({ n: 3 });
+  expect(
+    judged
+      .slice(previousJudgements)
+      .filter(
+        (state) =>
+          !(
+            state as { person_context?: { reconciliation?: { reason?: string } } }
+          ).person_context?.reconciliation?.reason?.startsWith("Explicit scheduled review:"),
+      ),
+  ).toEqual([]);
 }, 120_000);
 
 it.each(["irrelevant", "mixed"] as const)(
