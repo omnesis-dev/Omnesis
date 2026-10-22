@@ -78,31 +78,7 @@ struct AgentTurnBubble: View {
                     .environment(\.agentAnswerTextFollows, idx < (lastAnswerTextIndex ?? -1))
                 }
                 if let failure = assistant.failure {
-                    // Two registers, deliberately: the sentence says what went
-                    // wrong in the reader's language, the line beneath carries
-                    // the code and the provider's own disposition for whoever
-                    // has to go and fix the model assignment.
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(Theme.danger)
-                            Text(failure.message)
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.danger)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if let detail = failure.detailLine {
-                            Text(detail)
-                                .font(Theme.monospace(size: 10))
-                                .foregroundStyle(Theme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Theme.danger.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    AgentTurnFailureView(failure: failure)
                 }
                 if let stopped = assistant.stopped {
                     // A stop is not an error: no icon, no tinted chip — one

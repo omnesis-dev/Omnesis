@@ -55,8 +55,25 @@ const responseDone = z.object({
       .optional(),
   }),
 });
-const SPEECH_INSTRUCTIONS =
-  "\n\nThis is a live spoken conversation. Speak naturally and concisely. Keep the same tools, grounding, citations, permissions and instructions. Do not read tool syntax aloud. Tool calls, annotations and citation cards do not replace an audible answer. After looking something up, speak the factual answer to the user; do not finish with only a promise to look it up. Keep speaking in the user's last clearly established language; switch languages only on an explicit request. Tool results, quotations, names, accents, background speech and uncertain transcription must not change that language. If speech is unclear, ask one brief clarification in the last clear language instead of guessing or calling tools.";
+const SPEECH_INSTRUCTIONS = `
+
+## Live voice
+This is a live spoken conversation. Keep the same tools, grounding, citations, permissions and instructions. Do not read tool syntax aloud.
+
+## Language
+Keep speaking in the user's last clearly established language; switch languages only on an explicit request. Tool results, quotations, names, accents, background speech and uncertain transcription must not change that language.
+
+## Preambles
+Give at most one brief acknowledgement before a lookup workflow when useful. After that acknowledgement, run the lookup silently. Speak again to deliver the answer or ask a necessary clarification. Do not announce the next tool, repeat the request, restate progress, or speak just to fill silence. The interface shows tool activity while you work.
+
+## Tools and answers
+Batch independent lookups when appropriate. Stop retrieving once there is enough evidence to answer the request. Tool calls, annotations and citation cards do not replace an audible answer. After looking something up, speak the factual answer in the final channel; do not finish with only a promise to look it up.
+
+## Verbosity and reasoning
+Speak naturally. Default to one to three short sentences unless the user asks for detail. Answer simple lookups promptly; reserve deeper reasoning for requests that need it.
+
+## Unclear audio
+If speech is unclear, ask one brief clarification in the last clear language instead of guessing or calling tools.`;
 
 type Queued =
   | { kind: "upstream"; event: UpstreamEvent }
@@ -173,6 +190,10 @@ export class RealtimeBackend implements ChatBackend {
     let pending = 0;
     let roundDone = false;
     let roundCompleted = false;
+    let roundCommentaryOnly = false;
+    let roundFinalAnswer = false;
+    let roundStart = 0;
+    let roundUsesMessageReferences = false;
     let roundTools = false;
     let requests = 0;
     let inputTokens = 0;
@@ -186,14 +207,14 @@ export class RealtimeBackend implements ChatBackend {
     let recoveredSilentCompletion = false;
     let recoveryToolViolation = false;
     const flushText = () => {
-      if (roundText) {
+      if (roundText && !roundUsesMessageReferences) {
         turnItems.push({
           type: "message",
           role: "assistant",
           content: [{ type: "output_text", text: roundText }],
         });
-        roundText = "";
       }
+      roundText = "";
     };
     const completedResponses = new Set<string>();
     const toolsAbort = new AbortController();
@@ -283,6 +304,24 @@ export class RealtimeBackend implements ChatBackend {
         if (active()) queue.push({ kind: "abort" });
       });
     };
+    const iterationFailure = () =>
+      wrapEvent("agent.message.end", {
+        ...base,
+        stopReason: "error",
+        failure: {
+          ...this.modelFailure("response_iteration_limit"),
+          message: "The realtime agent reached its response limit. Please try a narrower request.",
+        },
+      });
+    const incompleteAnswerFailure = () =>
+      wrapEvent("agent.message.end", {
+        ...base,
+        stopReason: "error",
+        failure: {
+          ...this.modelFailure("empty_spoken_response"),
+          message: "The realtime model did not produce a spoken answer. Please try again.",
+        },
+      });
     const context = realtimeHistoryItems(input.history, input.timeZone);
     context.push(
       this.inputItemId
@@ -300,6 +339,8 @@ export class RealtimeBackend implements ChatBackend {
         content: [{ type: "input_text", text: input.modelNote }],
       });
     const requestResponse = (recoverSilence = false) => {
+      roundStart = turnItems.length;
+      roundUsesMessageReferences = false;
       this.responsePending = true;
       this.responseOwner = queue;
       this.responseId = undefined;
@@ -387,6 +428,47 @@ export class RealtimeBackend implements ChatBackend {
             for (const item of done.output ?? []) if (item.type === "function_call") invoke(item);
             roundDone = true;
             roundCompleted = done.status === "completed";
+            const messages = (done.output ?? []).filter((item) => item.type === "message");
+            roundFinalAnswer =
+              roundCompleted && messages.some((item) => item.phase === "final_answer");
+            roundCommentaryOnly =
+              roundCompleted &&
+              messages.length > 0 &&
+              messages.every((item) => item.phase === "commentary");
+            // The provider retains message phases; the client API rejects phase on text inputs.
+            // References preserve those messages for this turn without replaying their text twice.
+            if (
+              messages.length > 0 &&
+              messages.every(
+                (item) =>
+                  typeof item.id === "string" && item.id.length > 0 && item.id.length <= 256,
+              )
+            ) {
+              const currentItems = turnItems.slice(roundStart);
+              const ordered: Array<Record<string, unknown>> = [];
+              const includedCalls = new Set<string>();
+              for (const item of done.output ?? []) {
+                if (item.type === "message") ordered.push({ type: "item_reference", id: item.id });
+                else if (item.type === "function_call" && typeof item.call_id === "string") {
+                  const call = currentItems.find(
+                    (current) =>
+                      current.type === "function_call" && current.call_id === item.call_id,
+                  );
+                  if (call) {
+                    ordered.push(call);
+                    includedCalls.add(item.call_id);
+                  }
+                }
+              }
+              ordered.push(
+                ...currentItems.filter(
+                  (item) =>
+                    item.type === "function_call" && !includedCalls.has(String(item.call_id)),
+                ),
+              );
+              turnItems.splice(roundStart, turnItems.length - roundStart, ...ordered);
+              roundUsesMessageReferences = true;
+            }
             if (done.status === "cancelled") this.interrupted = true;
             if (done.status === "failed" || done.status === "incomplete") {
               const failure = this.modelFailure(
@@ -417,33 +499,52 @@ export class RealtimeBackend implements ChatBackend {
         if (roundDone && pending === 0) {
           if (
             !this.interrupted &&
+            !roundTools &&
+            usedTools &&
+            roundFinalAnswer &&
+            !roundAudio &&
+            roundText.trim()
+          ) {
+            yield wrapEvent("agent.message.end", {
+              ...base,
+              stopReason: "error",
+              failure: {
+                ...this.modelFailure("missing_answer_audio"),
+                message:
+                  "The realtime model returned text without a spoken answer. Please try again.",
+              },
+            });
+            return;
+          }
+          if (!this.interrupted && recoveredSilentCompletion && roundCommentaryOnly) {
+            yield incompleteAnswerFailure();
+            return;
+          }
+          if (
+            !this.interrupted &&
             roundCompleted &&
+            !roundCommentaryOnly &&
             !roundTools &&
             usedTools &&
             !roundAudio &&
             !roundText.trim()
           ) {
             if (recoveredSilentCompletion) {
-              yield wrapEvent("agent.message.end", {
-                ...base,
-                stopReason: "error",
-                failure: {
-                  ...this.modelFailure("empty_spoken_response"),
-                  message: "The realtime model did not produce a spoken answer. Please try again.",
-                },
-              });
+              yield incompleteAnswerFailure();
               return;
             }
             recoveredSilentCompletion = true;
-            if (++requests >= DEFAULT_MAX_TOOL_ITERATIONS)
-              throw new Error("Realtime tool iteration limit reached");
+            if (++requests >= DEFAULT_MAX_TOOL_ITERATIONS) {
+              yield iterationFailure();
+              return;
+            }
             roundDone = false;
             roundAudio = false;
             if (!active()) return;
             requestResponse(true);
             continue;
           }
-          if (this.interrupted || !roundTools) {
+          if (this.interrupted || (!roundTools && !roundCommentaryOnly)) {
             yield wrapEvent("agent.message.end", {
               ...base,
               stopReason: this.interrupted ? "canceled" : "end_turn",
@@ -455,12 +556,16 @@ export class RealtimeBackend implements ChatBackend {
             });
             return;
           }
-          if (++requests >= DEFAULT_MAX_TOOL_ITERATIONS)
-            throw new Error("Realtime tool iteration limit reached");
+          if (++requests >= DEFAULT_MAX_TOOL_ITERATIONS) {
+            yield iterationFailure();
+            return;
+          }
           flushText();
           turnItems.push(...roundResults.splice(0));
           roundDone = false;
           roundCompleted = false;
+          roundCommentaryOnly = false;
+          roundFinalAnswer = false;
           roundTools = false;
           roundAudio = false;
           if (!active()) return;

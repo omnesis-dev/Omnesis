@@ -10,6 +10,8 @@ import SwiftUI
 final class RealtimeCallSession {
     var status = "Connecting…"
     var transcript = ""
+    var playbackNotice: String?
+    private(set) var userSpeechActive = false
     var muted = false
     var error: Error?
     var connected = false
@@ -20,17 +22,19 @@ final class RealtimeCallSession {
     @ObservationIgnored private var engine: AVAudioEngine?
     @ObservationIgnored private var player: AVAudioPlayerNode?
     @ObservationIgnored private var captureMixer: AVAudioMixerNode?
+    @ObservationIgnored private var captureTapInstalled = false
     @ObservationIgnored private var captureReadiness = RealtimeCaptureReadiness()
     @ObservationIgnored private let log = AppLog.make(category: "agent.realtime")
     @ObservationIgnored private var timeout: Task<Void, Never>?
-    @ObservationIgnored private var itemID: String?
     @ObservationIgnored private var assistantTranscriptStarted = false
-    @ObservationIgnored private var playedFrames: Int64 = 0
-    @ObservationIgnored private var playbackStarted: Date?
+    @ObservationIgnored private var playback = RealtimePlaybackBuffer()
+    @ObservationIgnored private var discardingReply = false
+    @ObservationIgnored private var responseID: String?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var playbackGeneration = UUID()
+    @ObservationIgnored private var playbackControls: [String] = []
+    @ObservationIgnored private var playbackControlSender: Task<Void, Never>?
     @ObservationIgnored private var pendingSends = 0
-    @ObservationIgnored private var pendingFrames: Int64 = 0
     @ObservationIgnored private var clientAudioDiagnostics = false
     @ObservationIgnored private var configurationRestartAttempts = 0
     @ObservationIgnored private var captureInputFormat: AVAudioFormat?
@@ -48,6 +52,8 @@ final class RealtimeCallSession {
         let callGeneration = generation
         captureDiagnostics = RealtimeCaptureDiagnostics()
         transcript = ""
+        playbackNotice = nil
+        userSpeechActive = false
         assistantTranscriptStarted = false
         status = "Connecting…"
         let granted = await AVAudioApplication.requestRecordPermission()
@@ -145,29 +151,45 @@ final class RealtimeCallSession {
             status = "Starting microphone…"
         case "input_audio_buffer.speech_started":
             interruptPlayback()
+            playbackNotice = nil
+            userSpeechActive = true
             transcript = ""
             assistantTranscriptStarted = false
             status = "Listening"
-        case "input_audio_buffer.speech_stopped": status = "Thinking…"
+        case "input_audio_buffer.speech_stopped":
+            userSpeechActive = false
+            status = "Thinking…"
+        case "conversation.item.input_audio_transcription.completed":
+            if !assistantTranscriptStarted { transcript = event["transcript"] as? String ?? "" }
+        case "error":
+            let message = (event["error"] as? [String: Any])?["message"] as? String ?? "The voice conversation could not continue."
+            throw NSError(domain: "RealtimeCall", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
+        default: receivePlaybackEvent(event)
+        }
+    }
+
+    private func receivePlaybackEvent(_ event: [String: Any]) {
+        switch event["type"] as? String {
+        case "response.created":
+            if let id = (event["response"] as? [String: Any])?["id"] as? String, id != responseID {
+                responseID = id
+                discardingReply = false
+            }
         case "response.output_audio.delta":
-            if let encoded = event["delta"] as? String, let data = Data(base64Encoded: encoded) {
-                itemID = event["item_id"] as? String
-                play(data)
-                status = "Speaking"
+            if !discardingReply, let encoded = event["delta"] as? String, let data = Data(base64Encoded: encoded) {
+                play(data, itemID: event["item_id"] as? String)
+                if !discardingReply { status = "Speaking" }
             }
         case "response.output_audio_transcript.delta":
+            guard !discardingReply else { return }
             if !assistantTranscriptStarted { transcript = ""
                 assistantTranscriptStarted = true
             }
             transcript += event["delta"] as? String ?? ""
-        case "conversation.item.input_audio_transcription.completed":
-            if !assistantTranscriptStarted { transcript = event["transcript"] as? String ?? "" }
         case "response.done":
             // Playback can outlast the server response; its completion updates the label.
-            if playbackStarted == nil { status = "Listening" }
-        case "error":
-            let message = (event["error"] as? [String: Any])?["message"] as? String ?? "The voice conversation could not continue."
-            throw NSError(domain: "RealtimeCall", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
+            discardingReply = false
+            if playback.isEmpty { status = "Listening" }
         default: break
         }
     }
@@ -178,64 +200,6 @@ final class RealtimeCallSession {
             endHandshake.acknowledge(generation: generation)
         }
         return true
-    }
-
-    private func play(_ data: Data) {
-        guard pendingFrames + Int64(data.count / 2) <= 24000 * 30 else {
-            fail(NSError(
-                domain: "RealtimeCall",
-                code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Voice playback could not keep up. Please reconnect."]
-            ))
-            return
-        }
-        guard data.count.isMultiple(of: 2), !data.isEmpty,
-              let format = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(data.count / 2)),
-              let channel = buffer.floatChannelData?[0] else { return }
-        buffer.frameLength = buffer.frameCapacity
-        data.withUnsafeBytes { raw in
-            for index in 0 ..< Int(buffer.frameLength) {
-                let sample = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: index * 2, as: Int16.self))
-                channel[index] = Float(sample) / 32768
-            }
-        }
-        if playbackStarted == nil { playbackStarted = Date()
-            playedFrames = 0
-        }
-        playedFrames += Int64(buffer.frameLength)
-        pendingFrames += Int64(buffer.frameLength)
-        let totalFrames = playedFrames
-        let frameCount = Int64(buffer.frameLength)
-        let audioGeneration = playbackGeneration
-        player?.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, playbackGeneration == audioGeneration else { return }
-                pendingFrames = max(0, pendingFrames - frameCount)
-                guard playedFrames == totalFrames else { return }
-                playbackStarted = nil
-                if connected { status = "Listening" }
-            }
-        }
-    }
-
-    private func interruptPlayback() {
-        playbackGeneration = UUID()
-        if let itemID, let playbackStarted {
-            let elapsed = max(0, Int(Date().timeIntervalSince(playbackStarted) * 1000))
-            send([
-                "type": "conversation.item.truncate",
-                "item_id": itemID,
-                "content_index": 0,
-                "audio_end_ms": min(elapsed, Int(playedFrames * 1000 / 24000)),
-            ])
-        }
-        player?.stop()
-        player?.play()
-        playbackStarted = nil
-        playedFrames = 0
-        pendingFrames = 0
-        itemID = nil
     }
 
     func toggleMute() {
@@ -298,6 +262,28 @@ final class RealtimeCallSession {
         captureDiagnostics.snapshot
     }
 
+    var bufferedPlaybackBytesForTesting: Int {
+        playback.retainedPCMBytes
+    }
+
+    var scheduledPlaybackFramesForTesting: Int64 {
+        playback.scheduledFrames
+    }
+
+    var playbackIsEmptyForTesting: Bool {
+        playback.isEmpty
+    }
+
+    func configurePlaybackForTesting(maximumBytes: Int) {
+        playback = RealtimePlaybackBuffer(maximumBytes: maximumBytes)
+    }
+
+    func configurePlaybackForTesting(engine: AVAudioEngine, player: AVAudioPlayerNode) {
+        self.engine = engine
+        self.player = player
+        connected = true
+    }
+
     func stopEngineForConfigurationTest() {
         guard let engine else { return }
         engine.stop()
@@ -328,11 +314,16 @@ final class RealtimeCallSession {
         endHandshake.cancel(generation: generation)
         generation = UUID()
         playbackGeneration = UUID()
+        playbackControlSender?.cancel()
+        playbackControlSender = nil
+        playbackControls.removeAll()
         pendingSends = 0
-        pendingFrames = 0
-        playbackStarted = nil
+        playback.reset()
+        discardingReply = false
+        responseID = nil
         connected = false
         ending = false
+        userSpeechActive = false
         captureReadiness = RealtimeCaptureReadiness()
         timeout?.cancel()
         receiver?.cancel()
@@ -345,7 +336,8 @@ final class RealtimeCallSession {
     private func stopAudio() {
         audioObservers.forEach { NotificationCenter.default.removeObserver($0) }
         audioObservers = []
-        engine?.inputNode.removeTap(onBus: 0)
+        if captureTapInstalled { engine?.inputNode.removeTap(onBus: 0) }
+        captureTapInstalled = false
         engine?.stop()
         player?.stop()
         engine = nil
@@ -486,6 +478,7 @@ extension RealtimeCallSession {
                 }
             }
         }
+        captureTapInstalled = true
     }
 
     var microphoneStartupDiagnostic: String {
@@ -513,6 +506,11 @@ extension RealtimeCallSession {
             return
         }
         configurationRestartAttempts += 1
+        // Engine reinitialization invalidates scheduled sample times. Keep the
+        // call and microphone, but cancel this reply before resetting its epoch.
+        interruptPlayback()
+        discardingReply = true
+        send(["type": "response.cancel"])
         captureDiagnostics.advanceEpoch()
         do {
             RealtimeAudioGraph.connectOutput(format: current, engine: engine)
@@ -539,6 +537,123 @@ extension RealtimeCallSession {
             "sentFrames": capture.sentPackets,
             "engineRunning": engine?.isRunning ?? false,
         ])
+    }
+}
+
+extension RealtimeCallSession {
+    private func playerFrame(audible: Bool = false) -> Int64 {
+        guard let player, let time = player.lastRenderTime,
+              time.isSampleTimeValid || time.isHostTimeValid,
+              let position = player.playerTime(forNodeTime: time), position.isSampleTimeValid,
+              position.sampleRate.isFinite, position.sampleRate > 0 else { return 0 }
+        let frames = Double(position.sampleTime) * 24000 / position.sampleRate
+        let latency = audible ? max(0, player.outputPresentationLatency) * 24000 : 0
+        guard frames.isFinite, latency.isFinite else { return 0 }
+        return max(0, Int64(frames - latency))
+    }
+
+    private func play(_ data: Data, itemID: String?) {
+        guard playback.append(data, itemID: itemID) else { cancelOversizedReply(itemID: itemID)
+            return
+        }
+        pumpPlayback()
+    }
+
+    private func pumpPlayback() {
+        guard let player, let format = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1) else { return }
+        while let packet = playback.nextPacket(renderedFrame: playerFrame()) {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(packet.frameCount)),
+                  let channel = buffer.floatChannelData?[0] else { cancelOversizedReply()
+                return
+            }
+            buffer.frameLength = buffer.frameCapacity
+            packet.data.withUnsafeBytes { raw in
+                for index in 0 ..< Int(buffer.frameLength) {
+                    let sample = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: index * 2, as: Int16.self))
+                    channel[index] = Float(sample) / 32768
+                }
+            }
+            let audioGeneration = playbackGeneration
+            let token = packet.token
+            // Offline rendering has no device: dataPlayedBack applies only to
+            // device I/O, while dataRendered supplies the offline completion.
+            let callback: AVAudioPlayerNodeCompletionCallbackType =
+                engine?.isInManualRenderingMode == true ? .dataRendered : .dataPlayedBack
+            player.scheduleBuffer(
+                buffer,
+                at: AVAudioTime(sampleTime: packet.startFrame, atRate: 24000),
+                completionCallbackType: callback
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, playbackGeneration == audioGeneration else { return }
+                    playback.complete(token: token)
+                    pumpPlayback()
+                    if playback.isEmpty, connected { status = "Listening" }
+                }
+            }
+        }
+    }
+
+    private func cancelOversizedReply(itemID: String? = nil) {
+        interruptPlayback(additionalItemID: itemID)
+        discardingReply = true
+        playbackNotice = "That reply was too long. Ask for a shorter answer."
+        status = "Listening"
+        log.warning("Realtime playback memory budget reached; cancelling the reply")
+        send(["type": "response.cancel"])
+    }
+
+    private func interruptPlayback(additionalItemID: String? = nil) {
+        let cursor = playerFrame(audible: true)
+        var truncations = playback.truncations(at: cursor)
+        if let additionalItemID, !truncations.contains(where: { $0.itemID == additionalItemID }) {
+            truncations.append(playback.truncation(itemID: additionalItemID, at: cursor))
+        }
+        playbackGeneration = UUID()
+        sendPlaybackControls(truncations.map { item in
+            [
+                "type": "conversation.item.truncate",
+                "item_id": item.itemID,
+                "content_index": 0,
+                "audio_end_ms": item.audioEndMilliseconds,
+            ]
+        })
+        player?.stop()
+        if engine?.isRunning == true { player?.play() }
+        playback.reset()
+    }
+
+    /// Many unheard items must not overflow the microphone sender's eight-packet bound.
+    private func sendPlaybackControls(_ events: [[String: Any]]) {
+        #if DEBUG
+        if outgoingMessageForTesting != nil { events.forEach { send($0) }
+            return
+        }
+        #endif
+        guard let socket, !ending else { return }
+        guard playbackControls.count + events.count <= 1024 else { fail(URLError(.networkConnectionLost))
+            return
+        }
+        playbackControls += events.compactMap { event in
+            guard let data = try? JSONSerialization.data(withJSONObject: event) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+        guard playbackControlSender == nil, !playbackControls.isEmpty else { return }
+        let callGeneration = generation
+        playbackControlSender = Task { [weak self] in
+            defer {
+                if self?.generation == callGeneration { self?.playbackControlSender = nil }
+            }
+            do {
+                while let self, generation == callGeneration, !ending, !Task.isCancelled, !playbackControls.isEmpty {
+                    let text = playbackControls.removeFirst()
+                    try await socket.send(.string(text))
+                }
+            } catch {
+                guard let self, generation == callGeneration else { return }
+                fail(error)
+            }
+        }
     }
 }
 
