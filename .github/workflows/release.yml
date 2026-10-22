@@ -151,6 +151,8 @@ jobs:
         run: |
           cat > /tmp/verdaccio-release-${{ github.run_id }}.yml << 'VERDACCIO_CONF'
           storage: /verdaccio/storage
+          # npm publish embeds the tarball as base64 in a JSON document.
+          max_body_size: 50mb
           auth:
             htpasswd:
               file: /verdaccio/htpasswd
