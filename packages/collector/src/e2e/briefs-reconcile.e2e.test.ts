@@ -163,6 +163,84 @@ describe("Brain inert-when-off (experimental unset, model assigned)", () => {
   }, 60_000);
 });
 
+describe("Conversation debounce without historical discovery", () => {
+  test("conversation updates debounce into a single run", async () => {
+    const server = await startScriptedLoopModelServer({ behaviors: ARCS.behaviors });
+    const harness = new SyntheticE2EHarness({
+      gatewayMode: "experimental",
+      universe: "loops-test-life",
+      embedderBackend: "fake",
+      extraInference: {
+        backends: { scripted: { type: "http", url: server.url } },
+        assignments: { "background-agent": `scripted/${server.modelId}` },
+      },
+      extraGatewayConfig: {
+        brain: {
+          workerConcurrency: 2,
+          // Historical admission intentionally bypasses live-edit debounce.
+          bootstrap: { enabled: false },
+          knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeeds: 1, maxFrontierNodes: 1 },
+          conversationDebounce: "2s",
+          documentUpdateDebounce: "2s",
+        },
+      },
+    });
+    let db: Database.Database | undefined;
+    try {
+      await harness.start();
+      db = openHarnessDb(harness);
+      await harness.pushDocument({
+        externalId: "arc-conversation",
+        documentType: "conversation",
+        title: "Group chat: camping",
+        content: "first message",
+      });
+      await sleep(150);
+      await harness.pushDocument({
+        externalId: "arc-conversation",
+        documentType: "conversation",
+        title: "Group chat: camping",
+        content: "first message\nsecond message",
+      });
+      const docId = await waitFor("conversation document row", () =>
+        docIdByExternal(db!, "arc-conversation"),
+      );
+      await waitFor("debounced conversation work completed", () => {
+        const runs = runsForDoc(db!, docId);
+        const pending = db!
+          .prepare(
+            "SELECT 1 FROM knowledge_work WHERE subject_kind='source' AND subject_id=? AND status IN ('pending','batched') LIMIT 1",
+          )
+          .get(docId);
+        return runs.some((run) => run.status === "completed") && !pending ? true : null;
+      });
+      const runs = runsForDoc(db, docId);
+      expect(runs).toHaveLength(1);
+      const tools = await new BrainObs(harness).executedTools(runs[0]!.id);
+      expect(tools).toContainEqual(
+        expect.objectContaining({
+          tool: "fetch_many",
+          result: expect.objectContaining({
+            kind: "document.batch",
+            items: expect.arrayContaining([
+              expect.objectContaining({
+                document: expect.objectContaining({
+                  id: docId,
+                  content: "first message\nsecond message",
+                }),
+              }),
+            ]),
+          }),
+        }),
+      );
+    } finally {
+      db?.close();
+      await harness.destroy();
+      await server.close();
+    }
+  }, 90_000);
+});
+
 describe("Brain reconcile quality on loops-test-life (scripted backend)", () => {
   let harness: SyntheticE2EHarness;
   let server: ScriptedLoopModelServer;
@@ -912,31 +990,6 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
         expect(["fetch_many", "knowledge_discovery_complete"]).toContain(call.emitted.name);
       }
     }
-  }, 90_000);
-
-  test("conversation updates debounce into a single run", async () => {
-    await harness.pushDocument({
-      externalId: "arc-conversation",
-      documentType: "conversation",
-      title: "Group chat: camping",
-      content: "first message",
-    });
-    await sleep(150);
-    await harness.pushDocument({
-      externalId: "arc-conversation",
-      documentType: "conversation",
-      title: "Group chat: camping",
-      content: "first message\nsecond message",
-    });
-
-    const docId = await waitFor("conversation document row", () =>
-      docIdByExternal(db, "arc-conversation"),
-    );
-    await waitFor("debounced conversation run", () => {
-      const done = completedSourceRuns(docId);
-      return done.length >= 1 ? true : null;
-    });
-    expect(runsForDoc(db, docId)).toHaveLength(1);
   }, 90_000);
 
   test("a bare same-thread confirmation reconciles onto its loop via identity (no duplicate)", async () => {
