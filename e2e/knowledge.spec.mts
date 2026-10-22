@@ -4,6 +4,7 @@
 import "../packages/collector/src/e2e/synth-env.js";
 import Database from "better-sqlite3";
 import { test, expect } from "@playwright/test";
+import { createLogger } from "@omnesis/core";
 import { SyntheticE2EHarness } from "../packages/collector/src/e2e/synth-harness.js";
 import {
   createOpenLoop,
@@ -698,6 +699,26 @@ test("knowledge network failure offers a working retry", async ({ page }, info) 
 test("brain navigation remains usable across its existing sections", async ({ page }, info) => {
   page.setDefaultTimeout(15_000);
   const errors: string[] = [];
+  const stylesheetRequests: Array<{
+    path: string;
+    status?: number;
+    contentType?: string;
+    failure?: string;
+  }> = [];
+  page.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path.endsWith(".css"))
+      stylesheetRequests.push({
+        path,
+        status: response.status(),
+        contentType: response.headers()["content-type"],
+      });
+  });
+  page.on("requestfailed", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith(".css"))
+      stylesheetRequests.push({ path, failure: request.failure()?.errorText });
+  });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(url(`/portal/?token=${encodeURIComponent(token())}`));
@@ -740,9 +761,41 @@ test("brain navigation remains usable across its existing sections", async ({ pa
     await expect
       .poll(() => page.locator(".debug-workspace").evaluate((el) => getComputedStyle(el).width))
       .not.toBe("auto");
-    await expect
-      .poll(() => page.locator("body").evaluate((el) => getComputedStyle(el).fontFamily))
-      .not.toContain("Times New Roman");
+    try {
+      await expect
+        .poll(() => page.locator("body").evaluate((el) => getComputedStyle(el).fontFamily))
+        .not.toContain("Times New Roman");
+    } catch (error) {
+      const styles = await page
+        .evaluate(() => ({
+          fontFamily: getComputedStyle(document.body).fontFamily,
+          fontToken: getComputedStyle(document.documentElement).getPropertyValue("--font-sans"),
+          links: Array.from(
+            document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'),
+          ).map((link) => ({
+            path: new URL(link.href).pathname,
+            disabled: link.disabled,
+            media: link.media,
+            hasSheet: link.sheet !== null,
+          })),
+          sheets: Array.from(document.styleSheets).map((sheet) => {
+            const descriptor = {
+              path: sheet.href ? new URL(sheet.href).pathname : null,
+              disabled: sheet.disabled,
+            };
+            try {
+              return { ...descriptor, ruleCount: sheet.cssRules.length };
+            } catch (sheetError) {
+              return { ...descriptor, error: String(sheetError) };
+            }
+          }),
+        }))
+        .catch((diagnosticError: unknown) => ({ error: String(diagnosticError) }));
+      createLogger("e2e:portal").error(
+        `Portal stylesheet diagnostics: ${JSON.stringify({ section, stylesheetRequests, styles, pageErrors: errors })}`,
+      );
+      throw error;
+    }
     await expect
       .soft(
         page.locator(".cognition-content").getByText(/^Loading/),
