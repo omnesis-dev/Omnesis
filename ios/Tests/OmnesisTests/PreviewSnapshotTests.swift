@@ -393,7 +393,7 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    func testRealtimePlaybackOverflowPreservesCall() throws {
+    func testRealtimePlaybackOverflowPreservesCall() async throws {
         let session = RealtimeCallSession()
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
@@ -420,23 +420,33 @@ final class PreviewSnapshotTests: XCTestCase {
         XCTAssertEqual(sent.first?["type"] as? String, "conversation.item.truncate")
         try session.receiveForTesting(["type": "response.output_audio.delta", "item_id": "long-answer", "delta": audio])
         XCTAssertEqual(sent.filter { $0["type"] as? String == "response.cancel" }.count, 1)
-        snapshot(
-            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
-            name: "realtime-reply-interrupted",
-            ignoresSafeArea: true
-        )
         // An aborted provider response may never be forwarded as response.done.
         // A new response must still be audible, while stale old deltas stay dropped.
         try session.receiveForTesting(["type": "response.created", "response": ["id": "next-reply"]])
         try session.receiveForTesting([
             "type": "response.output_audio.delta", "item_id": "next-answer",
-            "delta": Data(repeating: 1, count: 4800).base64EncodedString(),
+            "delta": Data(repeating: 0x40, count: 4800).base64EncodedString(),
         ])
-        XCTAssertGreaterThan(session.bufferedPlaybackBytesForTesting, 0)
+        XCTAssertEqual(session.scheduledPlaybackFramesForTesting, 2400)
+        let resumedPeak = try await renderVoicePlayback(session, engine: engine, format: format)
+        XCTAssertGreaterThan(resumedPeak, 0.4)
+        XCTAssertTrue(session.playbackIsEmptyForTesting)
         try session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
         XCTAssertNil(session.playbackNotice)
         XCTAssertTrue(session.userSpeechActive)
         XCTAssertTrue(session.connected)
+        // Render only after media assertions: the real call view tears down
+        // its session on disappearance when the snapshot host is released.
+        try session.receiveForTesting(["type": "response.created", "response": ["id": "second-overflow"]])
+        try session.receiveForTesting(["type": "response.output_audio.delta", "item_id": "second-overflow", "delta": audio])
+        XCTAssertTrue(session.connected)
+        XCTAssertNotNil(session.playbackNotice)
+        XCTAssertEqual(sent.filter { $0["type"] as? String == "response.cancel" }.count, 2)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-reply-interrupted",
+            ignoresSafeArea: true
+        )
     }
 
     func testRealtimePlaybackRendersBurstAndResetsItsPlayerEpoch() async throws {
