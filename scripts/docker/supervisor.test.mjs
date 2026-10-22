@@ -72,7 +72,7 @@ async function fixture({ fail, ignoreTerm = false } = {}) {
     }
     await delay(10);
   }
-  throw new Error("Daemons did not start");
+  throw new Error("Mock daemon processes never reported readiness");
 }
 
 for (const signal of ["SIGTERM", "SIGINT"]) {
