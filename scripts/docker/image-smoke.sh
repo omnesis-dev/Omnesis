@@ -74,7 +74,7 @@ sys.exit(0 if any(d.get("kind")=="collector" and d.get("online") for d in items)
   done
 }
 stop_cleanly() {
-  docker stop --time 90 "$1" >/dev/null
+  docker stop --time 120 "$1" >/dev/null
   [ "$(docker inspect -f '{{.State.ExitCode}}' "$1")" = 0 ]
 }
 check_encryption() {
@@ -145,6 +145,8 @@ try {
     credentialLabel: "Docker smoke OAuth credential",
     capabilities: ["direct"],
   });
+  const accessToken = authorized.provider.savedTokens?.access_token;
+  assert(accessToken, "Approved MCP client has no access credential");
   try {
     const result = await authorized.client.listTools();
     assert(result.tools.length > 0, "Approved Direct client received no MCP tools");
@@ -156,7 +158,7 @@ try {
       const revoked = await fetch(`${gatewayUrl}/mcp`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${authorized.provider.savedTokens.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
           Accept: "application/json, text/event-stream",
         },
@@ -206,7 +208,7 @@ if(process.argv[2]==='seed') {
   }]});
   assert.equal(result.ingested,1);
 }
-const results=await call('/documents/search?q='+encodeURIComponent(title));
+const results=await call('/documents/search?q='+encodeURIComponent('sorting toy blocks'));
 assert.equal(results.results.length,1,'Persistent document is missing or duplicated');
 const document=await call('/documents/'+results.results[0].id);
 assert.equal(document.title,title);

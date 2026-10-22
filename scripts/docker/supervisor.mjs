@@ -3,11 +3,16 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+// Each daemon needs its full internal shutdown budget plus time to exit.
+// Compose must allow both sequential drains before killing the container.
+export const DEFAULT_COLLECTOR_DRAIN_MS = 40_000;
+export const DEFAULT_GATEWAY_DRAIN_MS = 65_000;
+
 /** Run both daemons as one failure domain. Docker owns restart policy. */
 export async function supervise({
   gateway = [process.execPath, "/app/packages/gateway/dist/index.js"],
   collector = [process.execPath, "/app/packages/collector/dist/main.js"],
-  drainMs = 40_000,
+  drainMs,
 } = {}) {
   process.umask(0o077);
   const children = [];
@@ -25,7 +30,7 @@ export async function supervise({
       if (error.code !== "ESRCH") throw error;
     }
   }
-  async function stopChild(child) {
+  async function stopChild(child, budgetMs) {
     signal(child, "SIGTERM");
     let timer;
     await Promise.race([
@@ -34,7 +39,7 @@ export async function supervise({
         timer = setTimeout(() => {
           signal(child, "SIGKILL");
           resolve();
-        }, drainMs);
+        }, budgetMs);
       }),
     ]);
     clearTimeout(timer);
@@ -46,7 +51,7 @@ export async function supervise({
     if (stopping) return;
     stopping = true;
     // Keep the gateway available while the collector flushes pages/cursors.
-    for (const child of [...children].reverse()) await stopChild(child);
+    for (const { child, budgetMs } of [...children].reverse()) await stopChild(child, budgetMs);
     process.removeListener("SIGTERM", onTerm);
     process.removeListener("SIGINT", onInt);
     finish(code);
@@ -91,7 +96,11 @@ export async function supervise({
         }
       });
     });
-    children.push(child);
+    children.push({
+      child,
+      budgetMs:
+        drainMs ?? (name === "gateway" ? DEFAULT_GATEWAY_DRAIN_MS : DEFAULT_COLLECTOR_DRAIN_MS),
+    });
   }
   return result;
 }

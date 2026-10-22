@@ -357,6 +357,7 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(Object.keys(compose.services)).toEqual(["gateway", "updater"]);
     expect(compose.services.gateway.image).toContain("/omnesis-combined:");
     expect(compose.services.gateway.build.target).toBe("combined-runtime");
+    expect(compose.services.gateway.stop_grace_period).toBe("120s");
     expect(compose.services.gateway.environment).toContain(
       "OMNESIS_GATEWAY_URL=https://localhost:7600",
     );
@@ -1836,6 +1837,21 @@ describe("install.sh --docker: a certificate the operator supplies", () => {
     const run = runInstaller("mismatch", [...QUIET, ...pair(tls), "--tls-ca", tls.caPath]);
     expect(run.status).not.toBe(0);
     expect(run.output).toContain("the pair does not belong together");
+  });
+
+  test("invalid TLS preserves the running split topology during a combined transition", () => {
+    const tls = supplyCertificate("transition-invalid-tls");
+    mintCert("transition-other-key");
+    copyFileSync(fixturePath("transition-other-key.key"), tls.keyPath);
+    const previous = "services:\n  gateway: {}\n  collector: {}\n";
+    writeFileSync(join(tls.configDir, "docker-compose.yml"), previous);
+    const run = runInstaller("transition-invalid-tls", [...QUIET, "--combined", ...pair(tls)], {
+      OMNESIS_TEST_OLD_SERVICES: "gateway\ncollector",
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("the pair does not belong together");
+    expect(composeAt(run)).toBe(previous);
+    expect(run.docker.some((call) => / (stop|rm) /.test(call))).toBe(false);
   });
 
   test("a native install is told where its own certificate goes instead", () => {

@@ -10,7 +10,7 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
-    stop_grace_period: 90s
+    stop_grace_period: 120s
     ports:
       - "${OMNESIS_PORT:-7600}:7600"
       - "127.0.0.1:3000:3000"

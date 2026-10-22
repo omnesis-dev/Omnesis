@@ -7,8 +7,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, onTestFinished } from "vitest";
+import { parse as parseYaml } from "yaml";
+import { GATEWAY_SHUTDOWN_BUDGET_MS } from "../../packages/core/src/gateway-lock.js";
+import { DEFAULT_COLLECTOR_DRAIN_MS, DEFAULT_GATEWAY_DRAIN_MS } from "./supervisor.mjs";
 
 const supervisorUrl = new URL("./supervisor.mjs", import.meta.url).href;
+
+test("shutdown budgets let the gateway finish and fit both drains inside Compose grace", async () => {
+  const compose = parseYaml(await readFile(new URL("../../compose.yaml", import.meta.url), "utf8"));
+  const grace = compose.services.gateway.stop_grace_period;
+  assert.match(grace, /^\d+s$/);
+  const graceMs = Number.parseInt(grace, 10) * 1000;
+  assert.ok(
+    DEFAULT_GATEWAY_DRAIN_MS > GATEWAY_SHUTDOWN_BUDGET_MS,
+    "Supervisor must wait beyond the gateway's own shutdown deadline",
+  );
+  assert.ok(
+    DEFAULT_COLLECTOR_DRAIN_MS + DEFAULT_GATEWAY_DRAIN_MS < graceMs,
+    "Compose must allow the collector and gateway to finish their sequential drains",
+  );
+});
+
 async function fixture({ fail, ignoreTerm = false } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "omnesis-supervisor-"));
   const events = join(dir, "events");

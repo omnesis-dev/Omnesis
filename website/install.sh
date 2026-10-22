@@ -5236,8 +5236,13 @@ docker_compose_gateway_service() {
   printf '      test: ["CMD", "curl", "-sfk", "https://localhost:%s/health"]\n' "$DOCKER_HEALTH_PORT"
   printf '      interval: 5s\n      timeout: 3s\n      retries: 5\n      start_period: 120s\n'
   # The gateway drains and closes its stores on SIGTERM within its own budget;
-  # Docker's default 10 s grace would SIGKILL it mid-close.
-  printf '    stop_grace_period: 90s\n'
+  # Docker's default 10 s grace would SIGKILL it mid-close. A combined image
+  # drains its collector first, so both sequential budgets must fit.
+  if [ "$DOCKER_COMBINED" = 1 ]; then
+    printf '    stop_grace_period: 120s\n'
+  else
+    printf '    stop_grace_period: 90s\n'
+  fi
   printf '    restart: unless-stopped\n'
 }
 
@@ -5903,7 +5908,7 @@ docker_warn_native_install() {
 # One line turns this host into an Omnesis machine running in containers.
 # Use the existing project's exact file and service list before replacing it.
 # A split collector must stop before a combined process can open its state.
-docker_prepare_topology_transition() {
+docker_validate_topology_transition() {
   PREVIOUS_COMPOSE="$CONFIG_DIR/docker-compose.yml"
   [ -f "$PREVIOUS_COMPOSE" ] || return 0
   PREVIOUS_SERVICES="$(docker compose -f "$PREVIOUS_COMPOSE" config --services)" ||
@@ -5913,6 +5918,10 @@ docker_prepare_topology_transition() {
   else
     [ "$COLLECTOR" = 1 ] || fail "This config directory holds a collector-only Docker installation. A gateway needs a separate OMNESIS_CONFIG_DIR; changing roles here does not migrate its state."
   fi
+}
+
+docker_prepare_topology_transition() {
+  [ -f "$PREVIOUS_COMPOSE" ] || return 0
   if [ "$DOCKER_COMBINED" = 1 ] || [ "$DOCKER_GATEWAY_ONLY" = 1 ]; then
     if printf '%s\n' "$PREVIOUS_SERVICES" | grep -qx collector; then
       info "Stopping the previous project's separate collector before changing topology..."
@@ -5933,7 +5942,7 @@ docker_install() {
   docker_resolve_tag
   docker_resolve_build_context
   docker_preflight_images
-  docker_prepare_topology_transition
+  docker_validate_topology_transition
   docker_prepare_dirs
   docker_tls_adopt
   docker_own_path "$TLS_CERT_PATH"
@@ -5941,6 +5950,7 @@ docker_install() {
   docker_own_path "$TLS_CA_PATH"
   docker_tls_prepare
   docker_self_signed_names
+  docker_prepare_topology_transition
   docker_write_compose
   docker_write_wrapper
   docker_record_method

@@ -969,9 +969,11 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>omnesis update</code> for updates. If Compose is unavailable, install the Compose
           plugin through your Unraid administration tooling before running the installer. A manual
           Unraid Docker template can use the combined image, host networking, UID/GID 10001:10001
-          and an appdata mount at <code>/var/lib/omnesis</code>; initialize its passphrase keyring
-          before starting, as in the standalone Compose instructions. Never enable privileged mode
-          or mount the Docker socket into the daemon.
+          and an appdata mount at <code>/var/lib/omnesis</code>. Set
+          <code>OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1</code> with host networking to keep callback
+          listeners on loopback; initialize its passphrase keyring before starting, as in the
+          standalone Compose instructions. Never enable privileged mode or mount the Docker socket
+          into the daemon.
         </p>
         <p>
           Persist and back up the <em>entire</em> config directory: all databases and sidecars,
@@ -1075,6 +1077,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>sudo</code> belongs to root, so <code>chown</code> both files to your user before
           installing. A publicly chained certificate like this one needs no <code>--tls-ca</code>,
           and phones paired against it keep working when it renews.
+        </p>
+        <p>
+          The renewal hook must preserve the container account's read access. Keep private keys mode
+          0600 and owned by the daemon UID/GID (10001:10001 for root-run Docker installs), or use an
+          equally restricted group grant. A renewal command running as root can replace a key with a
+          root-owned file the container cannot read. Mount the certificate directory so an atomic
+          file replacement is visible, and check <code>omnesis tls status</code>
+          after renewing.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

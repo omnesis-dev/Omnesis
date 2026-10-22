@@ -52,7 +52,7 @@ jobs:
   compiled-runtime-smoke:
     name: Compiled non-root gateway + seeded state
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,3 +79,12 @@ jobs:
 
       - name: Verify Linux host-network Bonjour discovery
         run: node scripts/docker/mdns-smoke.mjs omnesis-gateway-runtime:smoke
+
+      - name: Build standalone combined image
+        run: docker build --target combined-runtime -t omnesis-combined-runtime:compose-smoke .
+
+      - name: Verify checked-in standalone Compose installation
+        run: scripts/docker/compose-smoke.sh omnesis-combined-runtime:compose-smoke
+
+      - name: Verify root-run encrypted combined installation
+        run: scripts/docker/root-install-smoke.sh
