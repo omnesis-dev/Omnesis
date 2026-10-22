@@ -43,14 +43,16 @@ const secretEnv = [
   "-e",
   "OMNESIS_KEYRING_PASSPHRASE_FILE=/var/lib/omnesis/keyring.pass",
 ];
-const health = (address) =>
+const health = (address, certificate) =>
   new Promise((resolve, reject) => {
     const req = request(
       {
         hostname: address,
         port,
         path: "/health",
-        rejectUnauthorized: false,
+        // Trust only this disposable gateway, while connecting to each LAN IP.
+        ca: certificate,
+        servername: "localhost",
         timeout: 5000,
       },
       (res) => {
@@ -182,7 +184,9 @@ try {
       assert(entries.includes("scheme=https"));
       const fingerprint = entries.find((entry) => entry.startsWith("fp="))?.slice(3);
       assert.match(fingerprint ?? "", /^[a-f0-9]{64}$/);
-      for (const address of addresses) assert.equal(await health(address), fingerprint);
+      const certificate = await docker("exec", name, "cat", "/var/lib/omnesis/tls/cert.pem");
+      for (const address of addresses)
+        assert.equal(await health(address, certificate), fingerprint);
       verified = true;
       break;
     }
