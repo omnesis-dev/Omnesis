@@ -2,12 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
+import { realtimeFailureDetails } from "./provider-failure.js";
 import type { AgentEvent } from "@omnesis/core";
 import type { UpstreamEvent } from "./backend.js";
 
 const responseSummary = z.object({
   response: z.object({
     status: z.enum(["completed", "cancelled", "failed", "incomplete", "in_progress"]).optional(),
+    status_details: z.unknown().optional(),
     output: z.array(z.object({ type: z.string(), phase: z.string().optional() })).optional(),
     usage: z
       .object({
@@ -21,7 +23,7 @@ const responseSummary = z.object({
   }),
 });
 
-/** Timing and protocol metadata only: no audio, transcript, arguments, results or provider errors. */
+/** Timing and protocol metadata only: no audio, transcript, arguments, results or error messages. */
 export class RealtimeDiagnostics {
   private requests = 0;
   private requestedAt = 0;
@@ -30,18 +32,44 @@ export class RealtimeDiagnostics {
   private readonly speechStops = new Map<string, number>();
   private readonly tools = new Map<string, number>();
   private toolCount = 0;
+  private outputBudget: number | "inf" | "session" = "session";
 
   constructor(private readonly write: (message: string) => void) {}
 
-  request(): void {
+  request(event?: unknown): void {
     this.requests += 1;
     this.requestedAt = Date.now();
     this.firstAudioAt = undefined;
     this.audioBytes = 0;
-    this.write(`response requested round=${this.requests}`);
+    const parsed = z
+      .object({
+        response: z.object({
+          input: z.array(z.unknown()).optional(),
+          max_output_tokens: z.union([z.number().int().positive(), z.literal("inf")]).optional(),
+        }),
+      })
+      .safeParse(event);
+    const input = parsed.success ? (parsed.data.response.input ?? []) : [];
+    this.outputBudget = parsed.success
+      ? (parsed.data.response.max_output_tokens ?? "session")
+      : "session";
+    this.write(
+      `response requested round=${this.requests} inputItems=${input.length} inputBytes=${Buffer.byteLength(JSON.stringify(input))} outputBudget=${this.outputBudget}`,
+    );
   }
 
   upstream(event: UpstreamEvent): void {
+    if (event.type === "response.created") {
+      const parsed = z
+        .object({
+          response: z.object({
+            max_output_tokens: z.union([z.number().int().positive(), z.literal("inf")]).optional(),
+          }),
+        })
+        .safeParse(event);
+      if (parsed.success && parsed.data.response.max_output_tokens !== undefined)
+        this.outputBudget = parsed.data.response.max_output_tokens;
+    }
     const itemId = typeof event.item_id === "string" ? event.item_id : undefined;
     if (event.type === "input_audio_buffer.speech_stopped" && itemId && this.speechStops.size < 4)
       this.speechStops.set(itemId, Date.now());
@@ -58,9 +86,10 @@ export class RealtimeDiagnostics {
     if (event.type !== "response.done") return;
     const parsed = responseSummary.safeParse(event);
     if (!parsed.success) return;
-    const { output = [], usage, status = "unknown" } = parsed.data.response;
+    const { output = [], usage, status = "unknown", status_details } = parsed.data.response;
+    const failure = realtimeFailureDetails(status_details);
     this.write(
-      `response completed round=${this.requests} status=${status} durationMs=${Date.now() - this.requestedAt} firstAudioMs=${this.firstAudioAt === undefined ? "none" : this.firstAudioAt - this.requestedAt} audioBytes=${this.audioBytes} toolCalls=${output.filter((item) => item.type === "function_call").length} commentary=${output.some((item) => item.phase === "commentary")} finalAnswer=${output.some((item) => item.phase === "final_answer")} inputTokens=${usage?.input_tokens ?? 0} cachedTokens=${usage?.input_token_details?.cached_tokens ?? 0}`,
+      `response completed round=${this.requests} status=${status} durationMs=${Date.now() - this.requestedAt} firstAudioMs=${this.firstAudioAt === undefined ? "none" : this.firstAudioAt - this.requestedAt} audioBytes=${this.audioBytes} toolCalls=${output.filter((item) => item.type === "function_call").length} commentary=${output.some((item) => item.phase === "commentary")} finalAnswer=${output.some((item) => item.phase === "final_answer")} inputTokens=${usage?.input_tokens ?? 0} cachedTokens=${usage?.input_token_details?.cached_tokens ?? 0} outputBudget=${this.outputBudget} providerCode=${failure.code ?? "none"} providerType=${failure.type ?? "none"} providerReason=${failure.reason ?? "none"} providerStatus=${failure.statusType ?? "none"}`,
     );
   }
 

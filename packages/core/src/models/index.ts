@@ -165,6 +165,8 @@ export { PROVIDER_PRESETS, getPreset } from "./provider-presets.js";
 export {
   BACKGROUND_RATE_LIMIT_PATIENCE,
   rateLimitRetryDelayMs,
+  RateLimitRetryBudget,
+  abortableRateLimitSleep,
   retryRateLimitedRequest,
   type RateLimitPatience,
 } from "./http-rate-limit-retry.js";

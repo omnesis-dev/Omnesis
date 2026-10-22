@@ -254,7 +254,7 @@ export class RealtimeService {
           return;
         }
         if (sendUpstream(event) && (event as { type?: string }).type === "response.create")
-          diagnostics.request();
+          diagnostics.request(event);
       },
       authorized,
       () => fail("cancellation_timeout"),

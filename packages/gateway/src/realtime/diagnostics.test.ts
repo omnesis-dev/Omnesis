@@ -7,6 +7,57 @@ import { RealtimeDiagnostics } from "./diagnostics.js";
 afterEach(() => vi.useRealTimers());
 
 describe("realtime protocol diagnostics", () => {
+  it("records bounded request sizes and allowlisted failed-response metadata without provider messages", () => {
+    const lines: string[] = [];
+    const diagnostics = new RealtimeDiagnostics((line) => lines.push(line));
+    diagnostics.request({
+      type: "response.create",
+      response: {
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "PRIVATE_SENTINEL" }],
+          },
+        ],
+      },
+    });
+    diagnostics.upstream({ type: "response.created", response: { max_output_tokens: 4096 } });
+    diagnostics.upstream({
+      type: "response.done",
+      response: {
+        status: "failed",
+        status_details: {
+          type: "failed",
+          error: { code: "server_error", type: "server_error", message: "PRIVATE_SENTINEL" },
+        },
+      },
+    });
+    expect(lines.join("\n")).toContain("inputItems=1");
+    expect(lines.join("\n")).toMatch(/inputBytes=\d+/);
+    expect(lines.join("\n")).toContain("outputBudget=4096");
+    expect(lines.join("\n")).toContain("providerCode=server_error providerType=server_error");
+    expect(lines.join("\n")).not.toContain("PRIVATE_SENTINEL");
+    diagnostics.upstream({
+      type: "response.done",
+      response: {
+        status: "failed",
+        status_details: {
+          type: "PRIVATE_SENTINEL",
+          reason: "PRIVATE_SENTINEL",
+          error: {
+            code: "PRIVATE_SENTINEL",
+            type: "PRIVATE_SENTINEL",
+            message: "PRIVATE_SENTINEL",
+          },
+        },
+      },
+    });
+    expect(lines.at(-1)).toContain(
+      "providerCode=unrecognized providerType=unrecognized providerReason=unrecognized providerStatus=unrecognized",
+    );
+    expect(lines.join("\n")).not.toContain("PRIVATE_SENTINEL");
+  });
   it("separates transcription, first audio, response phases and tool execution without logging content", () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

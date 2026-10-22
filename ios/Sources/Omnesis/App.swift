@@ -67,7 +67,9 @@ public struct OmnesisApp: App {
             // simulator (which the offscreen snapshot harness can't — it
             // reports zero safe area); `scroll-stress` drives the
             // scroll-to-bottom UI test. No-op unless the env var is set.
-            if Self.settingsPreview {
+            if ProcessInfo.processInfo.environment["DEMO_REALTIME_SCROLL"] == "1" {
+                RealtimeScrollDemoSurface()
+            } else if Self.settingsPreview {
                 settingsPreviewRoot
             } else if Self.accessAuthorizationPreview {
                 accessAuthorizationPreviewRoot

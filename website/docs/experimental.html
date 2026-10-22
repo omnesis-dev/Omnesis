@@ -214,8 +214,11 @@
           <code>inference.allowRemoteInference=true</code> enable an unstable speech-to-speech
           prototype in the iOS app. Open an agent conversation and tap the voice-call button to the
           right of the microphone. Allow microphone access, then speak naturally and hear the reply.
-          The call screen shows the agent's tool activity while it works. Use mute to pause your
-          microphone and hang up to end the call.
+          The call screen shows the agent's tool activity while it works. The activity disk stays
+          fixed above the scrolling transcript, with different halos for your speech and the agent's
+          playback. Scrolling back pauses automatic following; use Latest speech to resume it.
+          Reduce Motion keeps the halos static. Use mute to pause your microphone and hang up to end
+          the call.
         </p>
         <p>
           The gateway relays call audio to OpenAI's Realtime API; the OpenAI API key stays on the
@@ -225,6 +228,12 @@
           speaking without starting another thread. Text queued during a call waits until the call
           ends. Audio and conversation context are sent to OpenAI during the call; realtime audio
           and transcription incur OpenAI charges. This control is available only on iOS.
+        </p>
+        <p>
+          Temporary provider rate limits are retried within a bounded wait, keeping completed tool
+          actions. If the provider's API credit or quota is exhausted, the conversation shows an
+          error instead of retrying. Restore the configured backend's API access before trying
+          again.
         </p>
 
         <h2 id="browser-extension">Browser extension notes and Find</h2>

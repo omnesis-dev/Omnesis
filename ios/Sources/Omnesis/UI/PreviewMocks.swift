@@ -7370,6 +7370,32 @@ extension PreviewMocks {
         return session
     }
 
+    static let realtimeLongCaption = (1 ... 12).map { index in
+        "Workshop section \(index). The studio has four worktables, a shelf for finished pieces, " +
+            "and a quiet corner for drawing. Set out the clay and tools before the group arrives. " +
+            "Leave the central aisle clear so everyone can move between the tables comfortably."
+    }.joined(separator: "\n\n")
+
+    @MainActor static var realtimeUserSpeaking: RealtimeCallSession {
+        let session = realtimeListening
+        try? session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
+        session.transcript = "How should I arrange the worktables for a pottery workshop?"
+        return session
+    }
+
+    @MainActor static var realtimeAgentSpeaking: RealtimeCallSession {
+        let session = realtimeListening
+        session.status = "Speaking"
+        session.transcript = "Arrange the worktables around a clear central aisle. Keep the tools within reach."
+        return session
+    }
+
+    @MainActor static var realtimeLongSpeech: RealtimeCallSession {
+        let session = realtimeAgentSpeaking
+        session.transcript = realtimeLongCaption
+        return session
+    }
+
     @MainActor static var realtimeEnding: RealtimeCallSession {
         let session = RealtimeCallSession()
         session.status = "Ending call…"

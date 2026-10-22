@@ -7,9 +7,34 @@ import {
   BACKGROUND_RATE_LIMIT_PATIENCE,
   rateLimitRetryDelayMs,
   retryRateLimitedRequest,
+  RateLimitRetryBudget,
+  abortableRateLimitSleep,
 } from "./http-rate-limit-retry.js";
 
 afterEach(() => vi.useRealTimers());
+
+it("shares a cumulative wait budget between admission and failed-request retries", () => {
+  const budget = new RateLimitRetryBudget({ maxTotalDelayMs: 45000, random: () => 0 });
+  expect(budget.reserveDelay(25000)).toBe(true);
+  expect(budget.retryDelayMs(1, 20000)).toBe(20000);
+  expect(budget.retryDelayMs(2)).toBeUndefined();
+  expect(budget.retryDelayMs(3)).toBeUndefined();
+});
+it("keeps an explicit fallback floor while jitter only increases it", () => {
+  const budget = new RateLimitRetryBudget({ maxTotalDelayMs: 45000, random: () => 0 });
+  expect(budget.retryDelayMs(1, 0, 10000)).toBe(10000);
+  expect(budget.retryDelayMs(2, 0, 20000)).toBe(20000);
+  expect(budget.retryDelayMs(3, 0, 40000)).toBeUndefined();
+});
+it("interrupts a long wait immediately on abort", async () => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  const waiting = abortableRateLimitSleep(25000, controller.signal);
+  const rejected = expect(waiting).rejects.toBeDefined();
+  controller.abort();
+  await rejected;
+  expect(vi.getTimerCount()).toBe(0);
+});
 
 describe("rateLimitRetryDelayMs", () => {
   it("parses Retry-After seconds and dates", () => {

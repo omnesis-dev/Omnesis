@@ -89,6 +89,195 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testRealtimeCallUserSpeaking() {
+        for scheme in [ColorScheme.light, .dark] {
+            renderInWindow(
+                RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeUserSpeaking)
+                    .environment(AppStore.preview()),
+                name: "realtime-user-speaking-\(scheme)",
+                scheme: scheme
+            )
+        }
+    }
+
+    func testRealtimeCallAgentSpeaking() {
+        for scheme in [ColorScheme.light, .dark] {
+            renderInWindow(
+                RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeAgentSpeaking)
+                    .environment(AppStore.preview()),
+                name: "realtime-agent-speaking-\(scheme)",
+                scheme: scheme
+            )
+        }
+    }
+
+    func testRealtimeCallLongCaption() {
+        for scheme in [ColorScheme.light, .dark] {
+            renderInWindow(
+                RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeLongSpeech)
+                    .environment(AppStore.preview()),
+                name: "realtime-long-caption-\(scheme)",
+                scheme: scheme
+            )
+        }
+    }
+
+    func testRealtimeCallLongCaptionSmallPhone() {
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeLongSpeech)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false),
+            name: "realtime-long-caption-small",
+            size: CGSize(width: 320, height: 568)
+        )
+    }
+
+    func testRealtimeCallLongCaptionAccessible() {
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeLongSpeech)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false)
+                .dynamicTypeSize(.accessibility3),
+            name: "realtime-long-caption-accessible"
+        )
+    }
+
+    func testRealtimeCallReducedMotion() {
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeUserSpeaking)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false),
+            name: "realtime-user-reduced-motion"
+        )
+    }
+
+    func testRealtimeCallShortAccessible() {
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeLongSpeech)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false)
+                .dynamicTypeSize(.accessibility3),
+            name: "realtime-short-accessible",
+            size: CGSize(width: 320, height: 568)
+        )
+    }
+
+    func testRealtimeCallMutedDuringPlayback() {
+        let session = PreviewMocks.realtimeAgentSpeaking
+        session.muted = true
+        voiceSnapshot(
+            RealtimeCallView(pairing: nil, session: session)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false),
+            name: "realtime-muted-playback"
+        )
+    }
+
+    func testRealtimeStreamingFollowsAndPreservesManualReading() async throws {
+        let session = PreviewMocks.realtimeLongSpeech
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let host = UIHostingController(rootView:
+            RealtimeCallView(pairing: nil, session: session)
+                .environment(AppStore.preview())
+                .environment(\.voiceHaloMotion, false)
+                .preferredColorScheme(.light)
+        )
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let appeared = await eventually { self.voiceScrollView(in: host.view) != nil }
+        XCTAssertTrue(appeared)
+        let scroll = try XCTUnwrap(voiceScrollView(in: host.view))
+        let loaded = await eventually { scroll.contentSize.height > scroll.bounds.height * 2 }
+        XCTAssertTrue(loaded)
+        let followed = await eventually { self.voiceDistanceToBottom(scroll) < 6 }
+        XCTAssertTrue(followed, "The initial long caption did not reveal its latest words")
+        let before = try voiceHeaderPixels(captureVoiceHost(host))
+        let initialHeight = scroll.contentSize.height
+        session.transcript += "\n\n" + PreviewMocks.realtimeLongCaption
+        let grew = await eventually {
+            scroll.contentSize.height > initialHeight && self.voiceDistanceToBottom(scroll) < 6
+        }
+        XCTAssertTrue(grew, "Streaming text stopped following the latest speech")
+        let followingImage = captureVoiceHost(host)
+        XCTAssertEqual(before, try voiceHeaderPixels(followingImage), "The voice disk moved with the caption")
+        try writeSnapshotPNG(followingImage, to: Self.outputDir.appendingPathComponent("realtime-stream-following.png"))
+        let readingOffset = scroll.contentOffset.y - 180
+        scroll.setContentOffset(CGPoint(x: 0, y: readingOffset), animated: false)
+        try await Task.sleep(for: .milliseconds(100))
+        let readingHeight = scroll.contentSize.height
+        session.transcript += "\n\n" + PreviewMocks.realtimeLongCaption
+        let appended = await eventually { scroll.contentSize.height > readingHeight }
+        XCTAssertTrue(appended)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(scroll.contentOffset.y, readingOffset, accuracy: 2, "Streaming took the reader away from older speech")
+        let readingImage = captureVoiceHost(host)
+        XCTAssertEqual(before, try voiceHeaderPixels(readingImage), "Scrolling older speech moved the voice disk")
+        try writeSnapshotPNG(readingImage, to: Self.outputDir.appendingPathComponent("realtime-stream-reading.png"))
+        // The real button tap and simultaneous drag/stream race are exercised
+        // in AgentScrollUITests, where XCTest materializes SwiftUI accessibility.
+        scroll.setContentOffset(CGPoint(
+            x: 0,
+            y: scroll.contentSize.height - scroll.bounds.height
+                + scroll.adjustedContentInset.bottom
+        ), animated: false)
+        let resumed = await eventually { self.voiceDistanceToBottom(scroll) < 6 }
+        XCTAssertTrue(resumed, "Returning to latest speech did not resume following")
+        let resumedHeight = scroll.contentSize.height
+        session.transcript += "\n\n" + PreviewMocks.realtimeLongCaption
+        let keptFollowing = await eventually {
+            scroll.contentSize.height > resumedHeight && self.voiceDistanceToBottom(scroll) < 6
+        }
+        XCTAssertTrue(keptFollowing)
+    }
+
+    private func voiceSnapshot(_ view: some View, name: String, size: CGSize? = nil) {
+        for scheme in [ColorScheme.light, .dark] {
+            renderInWindow(view, name: "\(name)-\(scheme)", scheme: scheme, size: size)
+        }
+    }
+
+    private func voiceScrollView(in view: UIView) -> UIScrollView? {
+        if let scroll = view as? UIScrollView, scroll.bounds.height > 100 { return scroll }
+        return view.subviews.lazy.compactMap { self.voiceScrollView(in: $0) }.first
+    }
+
+    private func voiceDistanceToBottom(_ scroll: UIScrollView) -> CGFloat {
+        max(0, scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height - scroll.contentOffset.y)
+    }
+
+    private func captureVoiceHost(_ host: UIViewController) -> UIImage {
+        host.view.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: host.view.bounds.size, format: format).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+    }
+
+    private func voiceHeaderPixels(_ image: UIImage) throws -> Data {
+        let crop = try XCTUnwrap(image.cgImage?.cropping(to: CGRect(x: 120, y: 88, width: 150, height: 156)))
+        var bytes = Data(count: crop.width * crop.height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { raw -> Bool in
+            guard let context = CGContext(
+                data: raw.baseAddress,
+                width: crop.width,
+                height: crop.height,
+                bitsPerComponent: 8,
+                bytesPerRow: crop.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ) else { return false }
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+            return true
+        }
+        XCTAssertTrue(drawn)
+        XCTAssertGreaterThan(Set(bytes).count, 20, "The fixed voice header rendered blank")
+        return bytes
+    }
+
     func testRealtimeCallWorking() {
         snapshot(
             RealtimeCallView(pairing: nil, session: PreviewMocks.realtimeListening)
@@ -502,10 +691,11 @@ final class PreviewSnapshotTests: XCTestCase {
         name: String,
         scheme: ColorScheme = .dark,
         capturePresentedChrome: Bool = false,
-        settle: TimeInterval = 0.6
+        settle: TimeInterval = 0.6,
+        size: CGSize? = nil
     ) {
         let isDark = scheme == .dark
-        let screen = UIScreen.main.bounds
+        let screen = CGRect(origin: .zero, size: size ?? UIScreen.main.bounds.size)
         let window = UIWindow(frame: screen)
         let host = UIHostingController(rootView:
             view

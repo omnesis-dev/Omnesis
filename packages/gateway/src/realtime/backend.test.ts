@@ -5,13 +5,18 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AgentSession, type ChatBackend, type ToolHandle, type ToolContext } from "@omnesis/agent";
 import { RealtimeBackend, realtimeHistoryItems } from "./backend.js";
-import type { AgentEvent } from "@omnesis/core";
+import type { AgentEvent, RateLimitPatience } from "@omnesis/core";
 
-function fixture(tool?: ToolHandle, onCancellationTimeout?: () => void) {
+function fixture(
+  tool?: ToolHandle,
+  onCancellationTimeout?: () => void,
+  authorized: () => boolean = () => true,
+  rateLimitPatience?: RateLimitPatience,
+) {
   const sent: Array<Record<string, unknown>> = [];
   const backend = new RealtimeBackend(
     (event) => sent.push(event as Record<string, unknown>),
-    () => true,
+    authorized,
     onCancellationTimeout,
   );
   const normal: ChatBackend = {
@@ -27,6 +32,7 @@ function fixture(tool?: ToolHandle, onCancellationTimeout?: () => void) {
     tools: tool ? [tool] : [],
     systemPrompt: "Core prompt",
     caller: { kind: "operator" },
+    ...(rateLimitPatience ? { rateLimitPatience } : {}),
   });
   const events: AgentEvent[] = [];
   session.subscribe((event) => events.push(event));
@@ -42,6 +48,352 @@ function done(f: ReturnType<typeof fixture>, id: string, status = "completed") {
   });
 }
 describe("socket-backed canonical turns", () => {
+  it.each([
+    null,
+    { type: null, reason: null, error: null },
+    {
+      type: "failed",
+      reason: null,
+      error: { code: null, type: "server_error", message: "PRIVATE_SENTINEL" },
+    },
+  ])("accepts nullable provider failure fields without exposing messages: %j", async (details) => {
+    const f = fixture();
+    const turn = f.session.send("Explain fictional inventory", { backend: f.backend });
+    await vi.waitFor(() =>
+      expect(f.sent.some((event) => event.type === "response.create")).toBe(true),
+    );
+    response(f, "failed");
+    f.backend.receive({
+      type: "response.done",
+      response: { id: "failed", status: "failed", status_details: details, output: [] },
+    });
+    await turn.completion;
+    expect(f.events).toContainEqual(
+      expect.objectContaining({
+        type: "agent.message.end",
+        payload: expect.objectContaining({
+          failure: expect.objectContaining({ code: "provider_error" }),
+        }),
+      }),
+    );
+    expect(JSON.stringify(f.events)).not.toContain("PRIVATE_SENTINEL");
+    await f.session.dispose();
+  });
+  it("bounds repeated rate-limit failures and reports the canonical rate_limited code", async () => {
+    const f = fixture();
+    const turn = f.session.send("Explain fictional inventory", { backend: f.backend });
+    const requests = () => f.sent.filter((event) => event.type === "response.create");
+    await vi.waitFor(() => expect(requests()).toHaveLength(1));
+    vi.useFakeTimers();
+    try {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        response(f, `limited-${attempt}`);
+        f.backend.receive({
+          type: "response.done",
+          response: {
+            id: `limited-${attempt}`,
+            status: "failed",
+            status_details: { error: { code: "rate_limit_exceeded", type: "tokens" } },
+            output: [],
+          },
+        });
+        await vi.advanceTimersByTimeAsync(25000);
+      }
+      await turn.completion;
+      expect(requests()).toHaveLength(3);
+      expect(f.events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message.end",
+          payload: expect.objectContaining({
+            failure: expect.objectContaining({ code: "rate_limited", retryable: true }),
+          }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+      await f.session.dispose();
+    }
+  });
+  it.each(["answer", "cancel", "dispose", "explicit_zero_patience"])(
+    "honors production voice patience and immediate %s during a 25-second refill",
+    async (action) => {
+      const f = fixture(
+        undefined,
+        undefined,
+        () => true,
+        action === "explicit_zero_patience" ? { maxTotalDelayMs: 0 } : undefined,
+      );
+      const first = f.session.send("Fictional inventory", { backend: f.backend });
+      await vi.waitFor(() =>
+        expect(f.sent.some((event) => event.type === "response.create")).toBe(true),
+      );
+      response(f, "first");
+      f.backend.receive({
+        type: "response.done",
+        response: {
+          id: "first",
+          status: "completed",
+          output: [],
+          usage: { input_tokens: 100000, output_tokens: 0 },
+        },
+      });
+      await first.completion;
+      vi.useFakeTimers();
+      try {
+        f.backend.receive({
+          type: "rate_limits.updated",
+          rate_limits: [{ name: "tokens", limit: 200000, remaining: 0, reset_seconds: 50 }],
+        });
+        const second = f.session.send("Fictional inventory", { backend: f.backend });
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(f.sent.filter((event) => event.type === "response.create")).toHaveLength(
+          action === "explicit_zero_patience" ? 2 : 1,
+        );
+        if (action === "cancel" || action === "dispose") {
+          if (action === "cancel") f.session.cancel();
+          else await f.backend.dispose();
+          await second.completion;
+          expect(f.sent.filter((event) => event.type === "response.create")).toHaveLength(1);
+          return;
+        }
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(f.sent.filter((event) => event.type === "response.create")).toHaveLength(2);
+        response(f, "second");
+        done(f, "second");
+        await second.completion;
+      } finally {
+        vi.useRealTimers();
+        await f.session.dispose();
+      }
+    },
+  );
+  it("retries only an empty rate-limited response with identical completed tool context", async () => {
+    const invoke = vi.fn(async () => ({
+      kind: "structured" as const,
+      resultType: "fixture.inventory",
+      data: { count: 24 },
+    }));
+    const f = fixture({
+      name: "fixture_tool",
+      description: "fixture",
+      schema: z.object({}),
+      invoke,
+    });
+    const turn = f.session.send("Count fictional workshop supplies", { backend: f.backend });
+    const requests = () => f.sent.filter((event) => event.type === "response.create");
+    await vi.waitFor(() => expect(requests()).toHaveLength(1));
+    response(f, "lookup");
+    f.backend.receive({
+      type: "response.function_call_arguments.done",
+      response_id: "lookup",
+      call_id: "inventory-call",
+      name: "fixture_tool",
+      arguments: "{}",
+    });
+    done(f, "lookup");
+    await vi.waitFor(() => expect(requests()).toHaveLength(2));
+    response(f, "limited");
+    vi.useFakeTimers();
+    try {
+      f.backend.receive({
+        type: "response.done",
+        response: {
+          id: "limited",
+          status: "failed",
+          status_details: { error: { code: "rate_limit_exceeded", type: "tokens" } },
+          output: [],
+        },
+      });
+      await vi.advanceTimersByTimeAsync(9999);
+      expect(requests()).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1101);
+      expect(requests()).toHaveLength(3);
+      expect(requests()[2]).toEqual(requests()[1]);
+      response(f, "limited-again");
+      f.backend.receive({
+        type: "response.done",
+        response: {
+          id: "limited-again",
+          status: "failed",
+          status_details: { error: { code: "rate_limit_exceeded", type: "tokens" } },
+          output: [],
+        },
+      });
+      await vi.advanceTimersByTimeAsync(19999);
+      expect(requests()).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(2101);
+      expect(requests()).toHaveLength(4);
+      expect(requests()[3]).toEqual(requests()[1]);
+      response(f, "answer");
+      f.backend.receive({
+        type: "response.output_audio.delta",
+        response_id: "answer",
+        delta: "AAAA",
+      });
+      f.backend.receive({
+        type: "response.output_audio_transcript.delta",
+        response_id: "answer",
+        delta: "There are 24 supplies.",
+      });
+      done(f, "answer");
+      await turn.completion;
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(f.events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message.end",
+          payload: expect.objectContaining({ stopReason: "end_turn" }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+      await f.session.dispose();
+    }
+  });
+  it.each(["cancel", "revoke"])(
+    "does not send a delayed rate-limit retry after %s",
+    async (action) => {
+      let authorized = true;
+      const f = fixture(undefined, undefined, () => authorized);
+      const turn = f.session.send("Explain fictional inventory", { backend: f.backend });
+      await vi.waitFor(() =>
+        expect(f.sent.some((event) => event.type === "response.create")).toBe(true),
+      );
+      response(f, "limited");
+      vi.useFakeTimers();
+      try {
+        f.backend.receive({
+          type: "response.done",
+          response: {
+            id: "limited",
+            status: "failed",
+            status_details: { error: { code: "rate_limit_exceeded" } },
+            output: [],
+          },
+        });
+        await vi.advanceTimersByTimeAsync(1);
+        if (action === "cancel") f.session.cancel();
+        else authorized = false;
+        await vi.advanceTimersByTimeAsync(20000);
+        await turn.completion;
+        expect(f.sent.filter((event) => event.type === "response.create")).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+        await f.session.dispose();
+      }
+    },
+  );
+  it.each(["server_error", "credit_balance_exhausted", "insufficient_quota", "partial_rate_limit"])(
+    "does not retry %s failures",
+    async (code) => {
+      const f = fixture();
+      const turn = f.session.send("Explain fictional inventory", { backend: f.backend });
+      await vi.waitFor(() =>
+        expect(f.sent.some((event) => event.type === "response.create")).toBe(true),
+      );
+      response(f, "failed");
+      if (code === "partial_rate_limit")
+        f.backend.receive({
+          type: "response.output_audio.delta",
+          response_id: "failed",
+          delta: "AAAA",
+        });
+      f.backend.receive({
+        type: "response.done",
+        response: {
+          id: "failed",
+          status: "failed",
+          status_details: {
+            error: { code: code === "partial_rate_limit" ? "rate_limit_exceeded" : code },
+          },
+          output: [],
+        },
+      });
+      await turn.completion;
+      expect(f.sent.filter((event) => event.type === "response.create")).toHaveLength(1);
+      if (code.includes("quota") || code.includes("credit"))
+        expect(f.events).toContainEqual(
+          expect.objectContaining({
+            type: "agent.message.end",
+            payload: expect.objectContaining({
+              failure: expect.objectContaining({ retryable: false }),
+            }),
+          }),
+        );
+      await f.session.dispose();
+    },
+  );
+  it.each([undefined, "PRIVATE_SENTINEL", "rate_limit_exceeded"])(
+    "never retries quota type evidence with code %s",
+    async (code) => {
+      const f = fixture();
+      const turn = f.session.send("Explain fictional inventory", { backend: f.backend });
+      await vi.waitFor(() =>
+        expect(f.sent.some((event) => event.type === "response.create")).toBe(true),
+      );
+      response(f, "quota");
+      f.backend.receive({
+        type: "response.done",
+        response: {
+          id: "quota",
+          status: "failed",
+          output: [],
+          status_details: { error: { code, type: "insufficient_quota" } },
+        },
+      });
+      await turn.completion;
+      expect(f.sent.filter((event) => event.type === "response.create")).toHaveLength(1);
+      expect(f.events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message.end",
+          payload: expect.objectContaining({
+            failure: expect.objectContaining({
+              code: "provider_error",
+              retryable: false,
+              message:
+                "The provider API credit or quota is exhausted. Check billing or limits before trying again.",
+              provider: expect.objectContaining({ type: "insufficient_quota" }),
+            }),
+          }),
+        }),
+      );
+      expect(JSON.stringify(f.events)).not.toContain("PRIVATE_SENTINEL");
+      await f.session.dispose();
+    },
+  );
+  it("retains allowlisted provider failure codes and types without retaining error messages", async () => {
+    const f = fixture();
+    const turn = f.session.send("Explain the fictional workshop guide", { backend: f.backend });
+    await vi.waitFor(() =>
+      expect(f.sent.some((event) => event.type === "response.create")).toBe(true),
+    );
+    response(f, "failed-response");
+    f.backend.receive({
+      type: "response.done",
+      response: {
+        id: "failed-response",
+        status: "failed",
+        status_details: {
+          type: "failed",
+          error: { code: "server_error", type: "server_error", message: "PRIVATE_SENTINEL" },
+        },
+        output: [],
+      },
+    });
+    await turn.completion;
+    expect(f.events).toContainEqual(
+      expect.objectContaining({
+        type: "agent.message.end",
+        payload: expect.objectContaining({
+          failure: expect.objectContaining({
+            code: "provider_error",
+            provider: { code: "server_error", type: "server_error" },
+          }),
+        }),
+      }),
+    );
+    expect(JSON.stringify(f.events)).not.toContain("PRIVATE_SENTINEL");
+    await f.session.dispose();
+  });
   it.each(["cancelled", "failed", undefined])(
     "does not continue commentary from a %s response",
     async (status) => {

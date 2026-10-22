@@ -74,7 +74,7 @@ export function rateLimitRetryDelayMs(headers: Headers, nowMs = Date.now()): num
   return resets.length > 0 ? Math.min(...resets.map((entry) => entry.delayMs)) : undefined;
 }
 
-function abortableSleep(delayMs: number, signal?: AbortSignal): Promise<void> {
+export function abortableRateLimitSleep(delayMs: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason);
@@ -92,6 +92,42 @@ function abortableSleep(delayMs: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** Protocol-independent retry timing; HTTP and streamed providers share the same patience. */
+export class RateLimitRetryBudget {
+  readonly maxAttempts: number;
+  private readonly maxTotalDelayMs: number;
+  private totalDelayMs = 0;
+  constructor(
+    private readonly options: Pick<
+      HttpRateLimitRetryOptions,
+      "maxAttempts" | "maxTotalDelayMs" | "baseDelayMs" | "random"
+    > = {},
+  ) {
+    this.maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS));
+    this.maxTotalDelayMs = Math.max(0, options.maxTotalDelayMs ?? DEFAULT_MAX_TOTAL_DELAY_MS);
+  }
+  reserveDelay(delayMs: number): boolean {
+    if (
+      !Number.isFinite(delayMs) ||
+      delayMs < 0 ||
+      this.totalDelayMs + delayMs > this.maxTotalDelayMs
+    )
+      return false;
+    this.totalDelayMs += delayMs;
+    return true;
+  }
+  retryDelayMs(attempt: number, providerDelayMs = 0, minimumDelayMs = 0): number | undefined {
+    if (attempt >= this.maxAttempts) return undefined;
+    const random = this.options.random ?? Math.random;
+    const exponentialMs =
+      Math.max(0, this.options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS) * 2 ** (attempt - 1);
+    const jitteredMs = exponentialMs * (0.8 + 0.4 * random());
+    const providerMs = Math.max(0, providerDelayMs, minimumDelayMs) * (1 + 0.1 * random());
+    const delayMs = Math.ceil(Math.max(jitteredMs, providerMs));
+    return this.reserveDelay(delayMs) ? delayMs : undefined;
+  }
+}
+
 /**
  * Retry an HTTP request only when it returns 429, before any response is
  * consumed. `request` receives the 1-based attempt number, so a caller can give
@@ -101,31 +137,24 @@ export async function retryRateLimitedRequest(
   request: (attempt: number) => Promise<Response>,
   options: HttpRateLimitRetryOptions = {},
 ): Promise<Response> {
-  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS));
-  const maxTotalDelayMs = Math.max(0, options.maxTotalDelayMs ?? DEFAULT_MAX_TOTAL_DELAY_MS);
-  const baseDelayMs = Math.max(0, options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS);
-  const random = options.random ?? Math.random;
+  const budget = new RateLimitRetryBudget(options);
   const now = options.now ?? Date.now;
-  const sleep = options.sleep ?? abortableSleep;
-  let totalDelayMs = 0;
+  const sleep = options.sleep ?? abortableRateLimitSleep;
 
   for (let attempt = 1; ; attempt += 1) {
     const response = await request(attempt);
-    if (response.status !== 429 || attempt >= maxAttempts) return response;
-
-    const exponentialMs = baseDelayMs * 2 ** (attempt - 1);
-    const jitteredMs = exponentialMs * (0.8 + 0.4 * random());
+    if (response.status !== 429 || attempt >= budget.maxAttempts) return response;
     // A provider's reset time is shared by every request it rejected, so it is
     // jittered upward: concurrent callers that all hit the same quota spread
     // out after the reset instead of colliding with it again at once.
-    const providerDelayMs =
-      (rateLimitRetryDelayMs(response.headers, now()) ?? 0) * (1 + 0.1 * random());
-    const delayMs = Math.ceil(Math.max(jitteredMs, providerDelayMs));
-    if (totalDelayMs + delayMs > maxTotalDelayMs) return response;
+    const delayMs = budget.retryDelayMs(
+      attempt,
+      rateLimitRetryDelayMs(response.headers, now()) ?? 0,
+    );
+    if (delayMs === undefined) return response;
 
     await response.body?.cancel().catch(() => undefined);
     options.onRetry?.({ attempt: attempt + 1, delayMs });
     await sleep(delayMs, options.signal);
-    totalDelayMs += delayMs;
   }
 }

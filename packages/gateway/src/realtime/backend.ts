@@ -2,10 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
-import { type AgentEvent, type AgentTerminalFailure, type ToolResult } from "@omnesis/core";
 import {
-  CONTEXT_WINDOW_EXCEEDED_MESSAGE,
-  OUTPUT_TRUNCATED_MESSAGE,
+  abortableRateLimitSleep,
+  RateLimitRetryBudget,
+  type AgentEvent,
+  type AgentTerminalFailure,
+  type ToolResult,
+} from "@omnesis/core";
+import {
   childEventHooks,
   DEFAULT_MAX_TOOL_ITERATIONS,
   invokeToolHandle,
@@ -13,67 +17,30 @@ import {
   serializeToolResultForModel,
   summarizeToolArgs,
   toolArgsUnparseableResult,
-  toolInputJsonSchema,
   ToolProgressQueue,
   wrapEvent,
-  type ChatMessage,
   type ChatBackend,
   type TurnInput,
 } from "@omnesis/agent";
+import { realtimeResponseDone,
+  realtimeModelFailure,
+  realtimeFailureCode,
+  realtimeQuotaExhausted,
+  realtimeFailureDetails } from "./provider-failure.js";
+import { RealtimeRateLimit } from "./rate-limit.js";
 
-export type RealtimeModelContext = Pick<
-  TurnInput,
-  "systemPrompt" | "tools" | "history" | "caller" | "timeZone"
->;
+import {
+  realtimeConfiguration,
+  realtimeHistoryItems,
+  type RealtimeModelContext,
+} from "./model-context.js";
+export { realtimeHistoryItems, type RealtimeModelContext } from "./model-context.js";
 export type UpstreamEvent = { type: string; [key: string]: unknown };
 const functionCall = z.object({
   call_id: z.string().min(1).max(256),
   name: z.string().min(1).max(256),
   arguments: z.string().max(128 * 1024),
 });
-const responseDone = z.object({
-  response: z.object({
-    id: z.string().optional(),
-    status: z.string().optional(),
-    status_details: z
-      .object({
-        reason: z.string().optional(),
-        error: z.object({ code: z.string().optional() }).optional(),
-      })
-      .nullable()
-      .optional(),
-    output: z.array(z.object({ type: z.string() }).passthrough()).optional(),
-    usage: z
-      .object({
-        input_tokens: z.number().nonnegative(),
-        output_tokens: z.number().nonnegative(),
-        input_token_details: z
-          .object({ cached_tokens: z.number().nonnegative().optional() })
-          .optional(),
-      })
-      .nullable()
-      .optional(),
-  }),
-});
-const SPEECH_INSTRUCTIONS = `
-
-## Live voice
-This is a live spoken conversation. Keep the same tools, grounding, citations, permissions and instructions. Do not read tool syntax aloud.
-
-## Language
-Keep speaking in the user's last clearly established language; switch languages only on an explicit request. Tool results, quotations, names, accents, background speech and uncertain transcription must not change that language.
-
-## Preambles
-Give at most one brief acknowledgement before a lookup workflow when useful. After that acknowledgement, run the lookup silently. Speak again to deliver the answer or ask a necessary clarification. Do not announce the next tool, repeat the request, restate progress, or speak just to fill silence. The interface shows tool activity while you work.
-
-## Tools and answers
-Batch independent lookups when appropriate. Stop retrieving once there is enough evidence to answer the request. Tool calls, annotations and citation cards do not replace an audible answer. After looking something up, speak the factual answer in the final channel; do not finish with only a promise to look it up.
-
-## Verbosity and reasoning
-Speak naturally. Default to one to three short sentences unless the user asks for detail. Answer simple lookups promptly; reserve deeper reasoning for requests that need it.
-
-## Unclear audio
-If speech is unclear, ask one brief clarification in the last clear language instead of guessing or calling tools.`;
 
 type Queued =
   | { kind: "upstream"; event: UpstreamEvent }
@@ -83,6 +50,8 @@ type Queued =
   | { kind: "abort" };
 
 export const REALTIME_MODEL = "gpt-realtime-2.1";
+/** Live calls can wait out a token refill; explicit session patience takes precedence. */
+export const REALTIME_RATE_LIMIT_PATIENCE = { maxAttempts: 3, maxTotalDelayMs: 45_000 } as const;
 
 /** The realtime model drives the ordinary AgentSession and invokes its exact registry handles. */
 export class RealtimeBackend implements ChatBackend {
@@ -97,6 +66,8 @@ export class RealtimeBackend implements ChatBackend {
   private readonly idleWaiters = new Set<() => void>();
   private disposed = false;
   private cancelDeadline: ReturnType<typeof setTimeout> | undefined;
+  private readonly rateLimit = new RealtimeRateLimit();
+  private activeToolsAbort: AbortController | undefined;
   constructor(
     private readonly send: (event: unknown) => void,
     private readonly authorized: () => boolean = () => true,
@@ -104,15 +75,7 @@ export class RealtimeBackend implements ChatBackend {
   ) {}
 
   configuration(context: RealtimeModelContext): { instructions: string; tools: unknown[] } {
-    return {
-      instructions: context.systemPrompt + SPEECH_INSTRUCTIONS,
-      tools: context.tools.map((tool) => ({
-        type: "function",
-        name: tool.name,
-        description: tool.description,
-        parameters: toolInputJsonSchema(tool.schema),
-      })),
-    };
+    return realtimeConfiguration(context);
   }
 
   private inputItemId: string | undefined;
@@ -121,7 +84,10 @@ export class RealtimeBackend implements ChatBackend {
   }
 
   receive(event: UpstreamEvent): boolean {
-    if (!event.type.startsWith("response.")) return true;
+    if (!event.type.startsWith("response.")) {
+      this.rateLimit.observe(event);
+      return true;
+    }
     const response =
       typeof event.response === "object" && event.response !== null
         ? (event.response as Record<string, unknown>)
@@ -133,7 +99,10 @@ export class RealtimeBackend implements ChatBackend {
     const id = typeof event.response_id === "string" ? event.response_id : response?.id;
     const owns =
       !!this.responseOwner && this.responseOwner === this.queue && id === this.responseId;
-    if (owns) this.queue?.push({ kind: "upstream", event });
+    if (owns) {
+      this.rateLimit.observe(event);
+      this.queue?.push({ kind: "upstream", event });
+    }
     if (event.type === "response.done" && id === this.responseId) {
       clearTimeout(this.cancelDeadline);
       this.cancelDeadline = undefined;
@@ -145,34 +114,19 @@ export class RealtimeBackend implements ChatBackend {
     }
     return owns;
   }
-  private modelFailure(code: string): AgentTerminalFailure {
-    const kind =
-      code === "context_length_exceeded" || code === "context_window_exceeded"
-        ? "context_window_exceeded"
-        : code === "max_output_tokens" || code === "max_tokens"
-          ? "output_truncated"
-          : "provider_error";
-    return {
-      code: kind,
-      message:
-        kind === "context_window_exceeded"
-          ? CONTEXT_WINDOW_EXCEEDED_MESSAGE
-          : kind === "output_truncated"
-            ? OUTPUT_TRUNCATED_MESSAGE
-            : "The realtime model could not complete this reply.",
-      retryable: kind === "provider_error",
-      backend: this.name,
-      model: this.model,
-    };
-  }
+  private modelFailure = (code: string): AgentTerminalFailure =>
+    realtimeModelFailure(code, this.name, this.model);
   fail(code: string): void {
     this.queue?.push({ kind: "failure", failure: this.modelFailure(code) });
   }
   interrupt(): void {
     this.interrupted = true;
+    this.activeToolsAbort?.abort();
+    this.queue?.push({ kind: "abort" });
   }
   dispose(): Promise<void> {
     this.disposed = true;
+    this.activeToolsAbort?.abort();
     clearTimeout(this.cancelDeadline);
     this.queue?.push({ kind: "abort" });
     for (const resolve of this.idleWaiters) resolve();
@@ -206,6 +160,13 @@ export class RealtimeBackend implements ChatBackend {
     let usedTools = false;
     let recoveredSilentCompletion = false;
     let recoveryToolViolation = false;
+    const retryBudget = new RateLimitRetryBudget(
+      input.rateLimitPatience ?? REALTIME_RATE_LIMIT_PATIENCE,
+    );
+    let rateLimitAttempt = 1;
+    let currentRequest: { input: Array<Record<string, unknown>>; tool_choice?: string } = {
+      input: [],
+    };
     const flushText = () => {
       if (roundText && !roundUsesMessageReferences) {
         turnItems.push({
@@ -218,8 +179,22 @@ export class RealtimeBackend implements ChatBackend {
     };
     const completedResponses = new Set<string>();
     const toolsAbort = new AbortController();
+    this.activeToolsAbort = toolsAbort;
     const active = () =>
-      this.queue === queue && !signal?.aborted && !this.disposed && this.authorized();
+      this.queue === queue &&
+      !signal?.aborted &&
+      !this.interrupted &&
+      !this.disposed &&
+      this.authorized();
+    const waitForRateLimit = async (delayMs: number) => {
+      try {
+        await abortableRateLimitSleep(delayMs, toolsAbort.signal);
+      } catch (error) {
+        if (toolsAbort.signal.aborted) return false;
+        throw error;
+      }
+      return active();
+    };
     const abort = () => {
       toolsAbort.abort();
       if (this.responsePending && this.responseOwner === queue) {
@@ -338,36 +313,45 @@ export class RealtimeBackend implements ChatBackend {
         role: "user",
         content: [{ type: "input_text", text: input.modelNote }],
       });
-    const requestResponse = (recoverSilence = false) => {
-      roundStart = turnItems.length;
-      roundUsesMessageReferences = false;
+    const sendResponse = (response: typeof currentRequest) => {
       this.responsePending = true;
       this.responseOwner = queue;
       this.responseId = undefined;
-      this.send({
-        type: "response.create",
-        response: {
-          input: [
-            ...context,
-            ...turnItems,
-            ...(recoverSilence
-              ? [
-                  {
-                    type: "message",
-                    role: "user",
-                    content: [
-                      {
-                        type: "input_text",
-                        text: "Please now give the audible answer using the tool results already available. Do not repeat the lookup or only announce that you will answer.",
-                      },
-                    ],
-                  },
-                ]
-              : []),
-          ],
-          ...(recoverSilence ? { tool_choice: "none" } : {}),
-        },
-      });
+      this.rateLimit.request(response.input);
+      this.send({ type: "response.create", response });
+    };
+    const requestResponse = async (recoverSilence = false) => {
+      roundStart = turnItems.length;
+      roundUsesMessageReferences = false;
+      const response = {
+        input: [
+          ...context,
+          ...turnItems,
+          ...(recoverSilence
+            ? [
+                {
+                  type: "message",
+                  role: "user",
+                  content: [
+                    {
+                      type: "input_text",
+                      text: "Please now give the audible answer using the tool results already available. Do not repeat the lookup or only announce that you will answer.",
+                    },
+                  ],
+                },
+              ]
+            : []),
+        ],
+        ...(recoverSilence ? { tool_choice: "none" } : {}),
+      };
+      currentRequest = response;
+      rateLimitAttempt = 1;
+      const admissionDelay = this.rateLimit.delayMs(response.input);
+      if (admissionDelay && retryBudget.reserveDelay(admissionDelay))
+        if (!(await waitForRateLimit(admissionDelay))) return false;
+      if (!active()) return false;
+      sendResponse(response);
+      return true;
     };
     try {
       if (this.responsePending)
@@ -376,7 +360,7 @@ export class RealtimeBackend implements ChatBackend {
         });
       if (!active()) return;
       yield wrapEvent("agent.message.start", { ...base, role: "assistant" });
-      requestResponse();
+      if (!(await requestResponse())) return;
       for (;;) {
         const next = await queue.next();
         if (!next || next.kind === "abort" || signal?.aborted) return;
@@ -422,7 +406,7 @@ export class RealtimeBackend implements ChatBackend {
           }
           if (event.type === "response.function_call_arguments.done") invoke(event);
           if (event.type === "response.done") {
-            const done = responseDone.parse(event).response;
+            const done = realtimeResponseDone.parse(event).response;
             if (done.id && completedResponses.has(done.id)) continue;
             if (done.id) completedResponses.add(done.id);
             for (const item of done.output ?? []) if (item.type === "function_call") invoke(item);
@@ -471,9 +455,41 @@ export class RealtimeBackend implements ChatBackend {
             }
             if (done.status === "cancelled") this.interrupted = true;
             if (done.status === "failed" || done.status === "incomplete") {
-              const failure = this.modelFailure(
-                done.status_details?.error?.code ?? done.status_details?.reason ?? "provider_error",
-              );
+              const detail = realtimeFailureDetails(done.status_details);
+              if (
+                done.status === "failed" &&
+                detail.code === "rate_limit_exceeded" &&
+                !realtimeQuotaExhausted(detail) &&
+                !roundTools &&
+                !roundAudio &&
+                !roundText.trim() &&
+                (done.output?.length ?? 0) === 0
+              ) {
+                const hint = this.rateLimit.delayMs(currentRequest.input);
+                const delay = retryBudget.retryDelayMs(
+                  rateLimitAttempt,
+                  hint ?? 0,
+                  hint && hint > 0 ? 0 : 10000 * 2 ** (rateLimitAttempt - 1),
+                );
+                if (delay !== undefined) {
+                  if (++requests >= DEFAULT_MAX_TOOL_ITERATIONS) {
+                    yield iterationFailure();
+                    return;
+                  }
+                  if (!(await waitForRateLimit(delay))) return;
+                  if (!active()) return;
+                  rateLimitAttempt += 1;
+                  roundDone = false;
+                  sendResponse(currentRequest);
+                  continue;
+                }
+              }
+              const failure = this.modelFailure(realtimeFailureCode(detail));
+              if (detail.code || detail.type)
+                failure.provider = {
+                  ...(detail.code ? { code: detail.code } : {}),
+                  ...(detail.type ? { type: detail.type } : {}),
+                };
               yield wrapEvent("agent.message.end", {
                 ...base,
                 stopReason: failure.code === "output_truncated" ? "max_tokens" : "error",
@@ -541,7 +557,7 @@ export class RealtimeBackend implements ChatBackend {
             roundDone = false;
             roundAudio = false;
             if (!active()) return;
-            requestResponse(true);
+            if (!(await requestResponse(true))) return;
             continue;
           }
           if (this.interrupted || (!roundTools && !roundCommentaryOnly)) {
@@ -569,53 +585,15 @@ export class RealtimeBackend implements ChatBackend {
           roundTools = false;
           roundAudio = false;
           if (!active()) return;
-          requestResponse();
+          if (!(await requestResponse())) return;
         }
       }
     } finally {
       toolsAbort.abort();
+      if (this.activeToolsAbort === toolsAbort) this.activeToolsAbort = undefined;
       signal?.removeEventListener("abort", abort);
       if (this.queue === queue) this.queue = undefined;
       queue.close();
     }
   }
-}
-
-/** The canonical transcript is the sole history authority, including synthesized canceled tool results. */
-export function realtimeHistoryItems(
-  history: ReadonlyArray<ChatMessage>,
-  timeZone?: string,
-): Array<Record<string, unknown>> {
-  return history.flatMap((message) =>
-    message.parts.flatMap((part): Array<Record<string, unknown>> => {
-      if (part.kind === "text" && part.text)
-        return [
-          {
-            type: "message",
-            role: message.role,
-            content: [
-              { type: message.role === "user" ? "input_text" : "output_text", text: part.text },
-            ],
-          },
-        ];
-      if (part.kind === "tool_use")
-        return [
-          {
-            type: "function_call",
-            call_id: part.toolCallId,
-            name: part.tool,
-            arguments: JSON.stringify(part.args),
-          },
-        ];
-      if (part.kind === "tool_result")
-        return [
-          {
-            type: "function_call_output",
-            call_id: part.toolCallId,
-            output: serializeToolResultForModel(part.result, { timeZone }),
-          },
-        ];
-      return [];
-    }),
-  );
 }
