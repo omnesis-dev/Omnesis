@@ -60,11 +60,23 @@ describe("safe voice failures", () => {
   });
   it("projects canonical failures without copying arbitrary messages", () => {
     expect(
-      terminalCallError({ code: "rate_limited", message: "PRIVATE_SENTINEL", retryable: true }),
+      terminalCallError({
+        code: "rate_limited",
+        message: "PRIVATE_SENTINEL",
+        retryable: true,
+        backend: "fixture-backend",
+        model: "fixture-model",
+      }),
     ).toMatchObject({ code: "rate_limited", fatal: false });
     expect(
       JSON.stringify(
-        terminalCallError({ code: "provider_error", message: "PRIVATE_SENTINEL", retryable: true }),
+        terminalCallError({
+          code: "provider_error",
+          message: "PRIVATE_SENTINEL",
+          retryable: true,
+          backend: "fixture-backend",
+          model: "fixture-model",
+        }),
       ),
     ).not.toContain("PRIVATE_SENTINEL");
   });
