@@ -52,6 +52,14 @@ On top sits a built-in **agent**, in the web portal and the iOS and Android apps
 
 <p align="center"><sub>One question, every source: spending reconstruction, people catch-up, and health trends. <a href="https://omnesis.dev/#demos">Explore the live demos →</a></sub></p>
 
+<p align="left">
+  <a href="https://omnesis.dev/docs/connect">
+    <img src="website/demos/chatgpt-apple-health-and-audit.gif" alt="Connect ChatGPT to Omnesis, ask about Apple Health, and audit the data shared with ChatGPT" width="29%">
+  </a>
+</p>
+
+<p><sub>Connect ChatGPT to Omnesis and audit the data it shares. <a href="https://omnesis.dev/docs/connect">Connect your agents →</a></sub></p>
+
 ## Contents
 
 [Quick start](#quick-start) · [Sources](#sources) · [Using Omnesis](#using-omnesis) · [Privacy](#privacy) · [How it works](#how-it-works) · [Documentation](#documentation) · [Development](#development) · [Community](#community--support) · [License](#license) · [Experimental](#experimental-brain-and-watch)
