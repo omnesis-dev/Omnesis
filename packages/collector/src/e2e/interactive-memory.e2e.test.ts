@@ -318,15 +318,14 @@ describe("interactive durable memory without the experimental Brain", () => {
     // unverified, kept for review.
     await harness.gatewayJson(`/agent/conversations/${sessionId}`, { method: "DELETE" });
     expect(await annotations(harness, `/people/${selfId}/annotations`)).toEqual([]);
-    expect(
-      db
-        .prepare<
-          [string],
-          { invalidated_at: number | null; verification_state: string | null }
-        >("SELECT invalidated_at, verification_state FROM person_annotations WHERE evidence_doc_id = ? ORDER BY invalidated_at IS NULL")
-        .all(prepared.documentId),
-    ).toEqual([
-      { invalidated_at: expect.any(Number), verification_state: expect.anything() },
+    const kept = db
+      .prepare<
+        [string],
+        { invalidated_at: number | null; verification_state: string | null }
+      >("SELECT invalidated_at, verification_state FROM person_annotations WHERE evidence_doc_id = ?")
+      .all(prepared.documentId);
+    expect(kept).toHaveLength(2);
+    expect(kept.filter((row) => row.invalidated_at === null)).toEqual([
       { invalidated_at: null, verification_state: "unverified" },
     ]);
     expect(
