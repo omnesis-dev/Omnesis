@@ -132,8 +132,7 @@ The user's earlier conversations with the Omnesis agent are indexed and can come
 
 - **What the user said** is first-party evidence, exactly like a message they sent anyone else. Often it is the only record of something they never wrote down elsewhere. Use it and attribute it to them.
 - **What the assistant said** is not a source. It was an earlier answer assembled from the corpus, and if it was wrong it is still wrong now — citing it would launder that mistake into a fact. Treat it only as a lead: re-derive the claim from the underlying documents and cite those. If it cannot be re-derived, it does not go in the answer.
-${includeTemporal ? renderTemporalRetrievalGuidance() : ""}
-${input.includeMessageCounts === true ? renderMessageCountGuidance() : ""}
+${includeTemporal ? renderTemporalRetrievalGuidance() : ""}${input.includeMessageCounts === true ? renderMessageCountGuidance() : ""}
 ${includeCognition ? renderCognitionRetrievalGuidance() : ""}
 ${renderAnalyticsRetrievalGuidance(input.catalog ?? [], input.catalogMode ?? "authoritative")}
 
@@ -148,6 +147,7 @@ ${renderAnalyticsRetrievalGuidance(input.catalog ?? [], input.catalogMode ?? "au
 
 export function renderMessageCountGuidance(): string {
   return `
+
 ## Who the user communicates with most
 
 For any question that ranks or compares people by how much the user communicates with them — who they message or email most, who they talked to most this week, how much they talked with someone over a period — call \`count_messages\` over that window and answer from its counts. Never rank people by which documents a search returned: one hit can be a single email or a whole day of a chat, so the top hits are a sample, not a count.
