@@ -20,10 +20,12 @@ const SOURCE_TYPE = "things";
 
 // Replica synchronization must not depend on an external icon CDN. Keep the
 // real provider and its descriptor contract, with a transparent fixture pixel.
+const thingsFixtureIcon = thingsDefinition.icon;
+if (!thingsFixtureIcon) throw new Error("Things replica fixture requires the provider icon");
 const thingsFixtureDefinition = {
   ...thingsDefinition,
   icon: {
-    ...thingsDefinition.icon,
+    ...thingsFixtureIcon,
     url: undefined,
     imageDataUri:
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=",
