@@ -30,22 +30,22 @@ On top sits a built-in **agent**, in the web portal and the iOS and Android apps
 <p align="center">
   <a href="https://omnesis.dev/#demos">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="website/demos/trip_spending.webp">
-      <img src="website/demos/light/trip_spending.webp" alt="View the Omnesis cross-source spending demo" width="29%">
+      <source media="(prefers-color-scheme: dark)" srcset="website/demos/trip_spending.gif">
+      <img src="website/demos/light/trip_spending.gif" alt="View the Omnesis cross-source spending demo" width="29%">
     </picture>
   </a>
   &nbsp;
   <a href="https://omnesis.dev/#demos">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="website/demos/person_catchup.webp">
-      <img src="website/demos/light/person_catchup.webp" alt="View the Omnesis people catch-up demo" width="29%">
+      <source media="(prefers-color-scheme: dark)" srcset="website/demos/person_catchup.gif">
+      <img src="website/demos/light/person_catchup.gif" alt="View the Omnesis people catch-up demo" width="29%">
     </picture>
   </a>
   &nbsp;
   <a href="https://omnesis.dev/#demos">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="website/demos/sleep_recovery.webp">
-      <img src="website/demos/light/sleep_recovery.webp" alt="View the Omnesis health-trend demo" width="29%">
+      <source media="(prefers-color-scheme: dark)" srcset="website/demos/sleep_recovery.gif">
+      <img src="website/demos/light/sleep_recovery.gif" alt="View the Omnesis health-trend demo" width="29%">
     </picture>
   </a>
 </p>
