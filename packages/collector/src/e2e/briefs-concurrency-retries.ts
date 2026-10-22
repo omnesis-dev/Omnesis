@@ -137,14 +137,67 @@ export function verifiedConcurrentCreateRetries(
       initialHits.some((row) => row.title === title)
     )
       continue;
-    const retryIndex = steps.findIndex((item, i) => i > index && item.tool === "open_loop_search");
-    if (retryIndex < 0) continue;
-    const retry = steps[retryIndex]!;
-    if (typeof initial?.args.query !== "string" || !isDeepStrictEqual(retry.args, initial.args))
-      continue;
-    const winners = hits(retry)?.filter((row) => row.title === title);
-    if (winners?.length !== 1) continue;
-    const winner = winners[0]!;
+    if (typeof initial?.args.query !== "string") continue;
+    const loopMutation = (item: ExecutedTool) =>
+      [
+        "open_loop_create",
+        "open_loop_update",
+        "open_loop_ledger_append",
+        "open_loop_delete",
+      ].includes(item.tool);
+    let retryIndex = -1;
+    let winner: { id: string; title: string } | undefined;
+    let cursor = index;
+    // Unrelated collection changes can cause several exact fresh-read retries
+    // before the competing owner becomes visible. Prove the entire chain.
+    while (cursor < steps.length) {
+      const readIndex = steps.findIndex(
+        (item, i) => i > cursor && item.tool === "open_loop_search",
+      );
+      if (readIndex < 0) break;
+      // A blind repeated create remains unverified under the initial-read
+      // guard above; it must not erase this earlier, legitimate refusal.
+      if (
+        steps
+          .slice(cursor + 1, readIndex)
+          .some(
+            (item) =>
+              loopMutation(item) &&
+              !(
+                item.tool === "open_loop_create" &&
+                isDeepStrictEqual(item.args, step.args) &&
+                item.result?.kind === "error" &&
+                item.result.code === step.result?.code &&
+                item.result.message === step.result?.message
+              ),
+          )
+      )
+        break;
+      const retry = steps[readIndex]!;
+      const rows = hits(retry);
+      if (!isDeepStrictEqual(retry.args, initial.args) || !rows || rows.length >= limit) break;
+      const winners = rows.filter((row) => row.title === title);
+      if (winners.length === 1) {
+        retryIndex = readIndex;
+        winner = winners[0];
+        break;
+      }
+      if (winners.length !== 0) break;
+      const nextCreate = steps.findIndex((item, i) => i > readIndex && loopMutation(item));
+      const repeated = steps[nextCreate];
+      if (
+        !repeated ||
+        repeated.tool !== "open_loop_create" ||
+        !isDeepStrictEqual(repeated.args, step.args) ||
+        repeated.result?.kind !== "error" ||
+        repeated.result.code !== step.result.code ||
+        repeated.result.message !== step.result.message ||
+        steps.slice(readIndex + 1, nextCreate).some((item) => item.tool === "open_loop_search")
+      )
+        break;
+      cursor = nextCreate;
+    }
+    if (retryIndex < 0 || !winner) continue;
     if (!permittedWinnerIds.has(winner.id)) continue;
     if (initialHits.some((row) => row.id === winner.id)) continue;
     // Any successful duplicate in this attempt invalidates the classification.
@@ -194,4 +247,17 @@ export function verifiedConcurrentCreateRetries(
     if (adoption?.result?.kind === "structured" || routed) verified.add(ordinal);
   }
   return verified;
+}
+
+/** Convert strict collection recovery step indexes to failed-create ordinals. */
+export function verifiedCollectionCreateRetryOrdinals(steps: readonly ExecutedTool[]): Set<number> {
+  const indexes = verifiedCollectionCreateRetries(steps);
+  const ordinals = new Set<number>();
+  let ordinal = 0;
+  for (const [index, step] of steps.entries()) {
+    if (step.tool !== "open_loop_create" || step.result?.kind !== "error") continue;
+    if (indexes.has(index)) ordinals.add(ordinal);
+    ordinal += 1;
+  }
+  return ordinals;
 }

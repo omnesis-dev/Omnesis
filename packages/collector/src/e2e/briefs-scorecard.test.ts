@@ -325,22 +325,24 @@ describe("computeScorecardMetrics", () => {
       SET,
       observations(perfectLoops(), {
         mutatingToolCalls: 25,
-        mutatingToolCallsFailed: 4,
+        mutatingToolCallsFailed: 5,
+        verifiedCollectionCreateRetries: 1,
         verifiedConcurrentCreateRetries: 1,
         verifiedFrontierRetries: 1,
         mutatingToolCallsUncorrected: 2,
       }),
       1,
     );
-    expect(result.counts.mutatingToolCallsFailed).toBe(4);
+    expect(result.counts.mutatingToolCallsFailed).toBe(5);
     expect(result.counts.verifiedConcurrentCreateRetries).toBe(1);
     expect(result.counts.malformedToolCallsFailed).toBe(2);
     expect(result.counts.mutatingToolCallsFailed).toBe(
       result.counts.verifiedConcurrentCreateRetries +
         result.counts.verifiedFrontierRetries +
+        result.counts.verifiedCollectionCreateRetries +
         result.counts.malformedToolCallsFailed,
     );
-    expect(result.metrics.malformedToolCallRateRaw).toBe(4 / 25);
+    expect(result.metrics.malformedToolCallRateRaw).toBe(5 / 25);
     expect(result.metrics.malformedToolCallRate).toBe(2 / 25);
   });
 

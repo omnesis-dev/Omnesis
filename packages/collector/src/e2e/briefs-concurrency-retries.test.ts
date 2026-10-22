@@ -4,6 +4,7 @@
 import { expect, test } from "vitest";
 import {
   verifiedCollectionCreateRetries,
+  verifiedCollectionCreateRetryOrdinals,
   verifiedConcurrentCreateRetries,
 } from "./briefs-concurrency-retries.js";
 import type { ExecutedTool } from "./brain-bench/obs.js";
@@ -198,4 +199,87 @@ test.each([
   expect([...verifiedConcurrentCreateRetries(steps, new Set(["winner"]))]).toEqual(
     fault === "valid" ? [0] : [],
   );
+});
+
+test("accounts for each fresh-read CAS refusal before a concurrent winner is adopted", () => {
+  const steps = recovered();
+  steps.splice(2, 0, structuredClone(steps[0]!), structuredClone(steps[1]!));
+  expect([...verifiedConcurrentCreateRetries(steps, new Set(["winner"]))]).toEqual([0, 1]);
+});
+
+test.each([
+  "full refreshed page",
+  "changed refreshed query",
+  "different retried create",
+  "invalid refreshed metadata",
+  "wrong retry failure",
+  "wrong retry message",
+  "intervening mutation",
+  "unrecovered chain",
+] as const)("does not excuse the early concurrent refusal with %s", (fault) => {
+  const steps = recovered();
+  steps.splice(2, 0, structuredClone(steps[0]!), structuredClone(steps[1]!));
+  if (fault === "full refreshed page")
+    steps[2]!.result = {
+      kind: "structured",
+      data: {
+        loops: Array.from({ length: 8 }, (_, index) => ({
+          id: `other-${index}`,
+          title: `Other subject ${index}`,
+        })),
+      },
+    };
+  if (fault === "changed refreshed query") steps[2]!.args.query = "another subject";
+  if (fault === "different retried create") steps[3]!.args.title = "Another intent";
+  if (fault === "invalid refreshed metadata")
+    steps[2]!.result = { kind: "structured", data: { loops: [{ id: "bad" }] } };
+  if (fault === "wrong retry failure") steps[3]!.result!.code = "invalid_args";
+  if (fault === "wrong retry message") steps[3]!.result!.message = "Owner revision changed";
+  if (fault === "intervening mutation")
+    steps.splice(3, 0, { tool: "open_loop_update", args: {}, result: { kind: "structured" } });
+  if (fault === "unrecovered chain") steps.splice(4);
+  expect(verifiedConcurrentCreateRetries(steps, new Set(["winner"])).has(0)).toBe(false);
+});
+
+test("maps collection step indexes to failed-create ordinals without swallowing other failures", () => {
+  const steps = refreshedCreate();
+  steps.unshift(
+    {
+      tool: "open_loop_create",
+      args: { title: "Unrelated malformed call" },
+      result: { kind: "error", code: "invalid_args" },
+    },
+    { tool: "knowledge_save", args: {}, result: { kind: "error", code: "invalid_args" } },
+  );
+  expect([...verifiedCollectionCreateRetries(steps)]).toEqual([3]);
+  expect([...verifiedCollectionCreateRetryOrdinals(steps)]).toEqual([1]);
+});
+
+test("keeps successful collection retries and adopted-winner retries disjoint", () => {
+  const winnerSteps = recovered();
+  for (const step of winnerSteps) {
+    if (step.args.query) step.args.query = "launch access";
+    if (step.args.title) step.args.title = "Confirm launch access";
+  }
+  winnerSteps[2]!.result!.data = { loops: [{ id: "winner", title: "Confirm launch access" }] };
+  const steps = [...refreshedCreate(), ...winnerSteps];
+  const collection = verifiedCollectionCreateRetryOrdinals(steps);
+  const concurrent = verifiedConcurrentCreateRetries(steps, new Set(["winner"]));
+  expect([...collection]).toEqual([0]);
+  expect([...concurrent]).toEqual([1]);
+  expect([...collection].filter((ordinal) => concurrent.has(ordinal))).toEqual([]);
+});
+
+test("keeps a blind repeated create in the malformed partition", () => {
+  const steps = recovered();
+  steps.splice(2, 0, structuredClone(steps[1]!));
+  const rawFailures = steps.filter(
+    (step) => step.tool === "open_loop_create" && step.result?.kind === "error",
+  ).length;
+  const concurrent = verifiedConcurrentCreateRetries(steps, new Set(["winner"]));
+  const collection = verifiedCollectionCreateRetryOrdinals(steps);
+  expect(rawFailures).toBe(2);
+  expect([...concurrent]).toEqual([0]);
+  expect(collection.size).toBe(0);
+  expect(rawFailures - concurrent.size - collection.size).toBe(1);
 });

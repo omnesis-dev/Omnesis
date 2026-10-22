@@ -185,6 +185,29 @@ function planFor(
   }
 
   if (action.kind === "inform") {
+    const listed = structuredData(
+      steps.findLast((step) => step.name === "observation_list")?.result,
+    );
+    const matches = (rows: unknown, states: readonly string[]) =>
+      Array.isArray(rows) &&
+      rows.some(
+        (row: unknown) =>
+          row !== null &&
+          typeof row === "object" &&
+          "summary" in row &&
+          row.summary === action.observation &&
+          "state" in row &&
+          typeof row.state === "string" &&
+          states.includes(row.state) &&
+          "citations" in row &&
+          Array.isArray(row.citations) &&
+          row.citations.includes(docId),
+      );
+    if (
+      matches(listed?.observations, ["live", "held"]) ||
+      matches(listed?.recentlyShipped, ["shipped"])
+    )
+      return [{ name: "observation_list", args: {} }];
     // Awareness only: a standalone observation, no loop and no loop search.
     return [
       { name: "observation_list", args: {} },

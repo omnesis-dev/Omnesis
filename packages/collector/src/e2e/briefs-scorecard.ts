@@ -35,7 +35,10 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
 import { verifiedFrontierRetries } from "./briefs-frontier-retries.js";
-import { verifiedConcurrentCreateRetries } from "./briefs-concurrency-retries.js";
+import {
+  verifiedConcurrentCreateRetries,
+  verifiedCollectionCreateRetryOrdinals,
+} from "./briefs-concurrency-retries.js";
 import { BrainObs } from "./brain-bench/obs.js";
 import { readMaintenanceProgress } from "./brain-bench/maintenance-progress.js";
 import { generateArcSet, type Arc, type ArcDocument, type ArcSet } from "./briefs-arcs.js";
@@ -643,6 +646,8 @@ export interface ScorecardObservations {
   verifiedConcurrentCreateRetries?: number;
   /** Observed stale-frontier retries followed by a fresh save and completed batch. */
   verifiedFrontierRetries?: number;
+  /** Fresh same-query collection-CAS recovery ending in an identical successful create. */
+  verifiedCollectionCreateRetries?: number;
   /** Errored mutating calls never followed by a successful same-tool call
    * in the same run (see `countUncorrectedFailures`) — the gated slice. */
   mutatingToolCallsUncorrected: number;
@@ -709,6 +714,7 @@ async function collectScorecardObservations(
   let mutatingToolCallsUncorrected = 0;
   let verifiedCreateRetries = 0;
   let verifiedFrontierRetryCount = 0;
+  let verifiedCollectionRetryCount = 0;
   const obs = new BrainObs(harness);
   let scheduledRuns = 0;
   for (const decision of decisions.items) {
@@ -759,6 +765,11 @@ async function collectScorecardObservations(
         .length === failedCreates.length
         ? verifiedConcurrentCreateRetries(steps, permittedWinnerIds)
         : new Set<number>();
+    const collectionRetries =
+      steps.filter((step) => step.tool === "open_loop_create" && step.result?.kind === "error")
+        .length === failedCreates.length
+        ? verifiedCollectionCreateRetryOrdinals(steps)
+        : new Set<number>();
     const frontierRetries =
       steps.filter((step) => step.tool === "knowledge_save" && step.result?.kind === "error")
         .length === failedSaves.length
@@ -776,9 +787,16 @@ async function collectScorecardObservations(
         return false;
       }
       if (action.tool !== "open_loop_create" || action.ok) return true;
-      if (!verified.has(failedCreateOrdinal++)) return true;
-      verifiedCreateRetries += 1;
-      return false;
+      const ordinal = failedCreateOrdinal++;
+      if (verified.has(ordinal)) {
+        verifiedCreateRetries += 1;
+        return false;
+      }
+      if (collectionRetries.has(ordinal)) {
+        verifiedCollectionRetryCount += 1;
+        return false;
+      }
+      return true;
     });
     mutatingToolCallsUncorrected += countUncorrectedFailures(malformedActions);
     for (const action of decision.actions) {
@@ -872,6 +890,7 @@ async function collectScorecardObservations(
     mutatingToolCallsFailed,
     verifiedConcurrentCreateRetries: verifiedCreateRetries,
     verifiedFrontierRetries: verifiedFrontierRetryCount,
+    verifiedCollectionCreateRetries: verifiedCollectionRetryCount,
     mutatingToolCallsUncorrected,
     scheduledRuns,
   };
@@ -931,6 +950,7 @@ export interface ScorecardCounts {
   mutatingToolCallsFailed: number;
   verifiedConcurrentCreateRetries: number;
   verifiedFrontierRetries: number;
+  verifiedCollectionCreateRetries: number;
   malformedToolCallsFailed: number;
   mutatingToolCallsUncorrected: number;
   scheduledRuns: number;
@@ -1109,10 +1129,12 @@ export function computeScorecardMetrics(
     mutatingToolCallsFailed: observations.mutatingToolCallsFailed,
     verifiedConcurrentCreateRetries: observations.verifiedConcurrentCreateRetries ?? 0,
     verifiedFrontierRetries: observations.verifiedFrontierRetries ?? 0,
+    verifiedCollectionCreateRetries: observations.verifiedCollectionCreateRetries ?? 0,
     malformedToolCallsFailed:
       observations.mutatingToolCallsFailed -
       (observations.verifiedConcurrentCreateRetries ?? 0) -
-      (observations.verifiedFrontierRetries ?? 0),
+      (observations.verifiedFrontierRetries ?? 0) -
+      (observations.verifiedCollectionCreateRetries ?? 0),
     mutatingToolCallsUncorrected: observations.mutatingToolCallsUncorrected,
     scheduledRuns: observations.scheduledRuns,
     promptTokens: observations.promptTokens,

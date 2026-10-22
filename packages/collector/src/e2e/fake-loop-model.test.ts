@@ -1268,3 +1268,49 @@ test("maintenance adopts duplicate evidence through an owner read and source rou
     args: { id: "source:fixture", inputFingerprint: "fp", targets: ["winner"] },
   });
 });
+
+test.each([
+  ["live", "observations", "Weather update", DOC_ID, "final"],
+  ["held", "observations", "Weather update", DOC_ID, "final"],
+  ["shipped", "recentlyShipped", "Weather update", DOC_ID, "final"],
+  ["dropped", "observations", "Weather update", DOC_ID, "tool"],
+  ["dropped", "recentlyShipped", "Weather update", DOC_ID, "tool"],
+  ["live", "observations", "Weather update", "other-document", "tool"],
+  ["live", "observations", "Different update", DOC_ID, "tool"],
+] as const)(
+  "inform reoffer respects %s in %s with summary %s and citation %s",
+  (state, bucket, summary, citation, expected) => {
+    const title = "Weather bulletin";
+    const turn = decideNextTurn(
+      history(dataPrompt("created"), [
+        {
+          name: "fetch_many",
+          args: { documents: [{ documentId: DOC_ID }] },
+          result: fetchResult(title),
+        },
+        {
+          name: "observation_list",
+          args: {},
+          result: {
+            kind: "structured",
+            resultType: "observation.list",
+            data: {
+              observations: [],
+              recentlyShipped: [],
+              [bucket]: [{ id: "prior", state, summary, citations: [citation] }],
+            },
+          },
+        },
+      ]),
+      behaviors(title, {
+        onCreated: { kind: "inform", marker: "weather-bulletin", observation: "Weather update" },
+      }),
+    );
+    expect(turn.kind, JSON.stringify(turn)).toBe(expected);
+    if (expected === "tool")
+      expect(turn).toMatchObject({
+        name: "observation_note",
+        args: { summary: "Weather update", citations: [DOC_ID] },
+      });
+  },
+);
