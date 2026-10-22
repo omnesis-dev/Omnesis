@@ -22,6 +22,7 @@ import { createSearchManyTool } from "./search-many.js";
 import { createFetchManyTool } from "./fetch-many.js";
 import { createLookupDocumentByUrlTool } from "./lookup-document-by-url.js";
 import { createLookupPeopleTool } from "./lookup-people.js";
+import { createCountMessagesTool } from "./count-messages.js";
 import { createPlanTool, PlanStore } from "./plan.js";
 import { createRunSqlTool } from "./run-sql.js";
 import {
@@ -120,6 +121,12 @@ export function buildBuiltinTools(opts: BuiltinToolsOptions): ToolHandle[] {
   }
   if (opts.ports.person) {
     tools.push(createLookupPeopleTool({ port: opts.ports.person }));
+  }
+  // Read-only per-person message counts. A wired port is the gate; callers
+  // whose grant is restricted to some sources are never given one, because the
+  // port reads every source.
+  if (opts.ports.messageCounts) {
+    tools.push(createCountMessagesTool({ port: opts.ports.messageCounts }));
   }
   if (opts.ports.documentByUrl) {
     tools.push(createLookupDocumentByUrlTool({ port: opts.ports.documentByUrl }));
@@ -220,6 +227,7 @@ export const GENERIC_SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "trace_connections",
   "run_sql",
   "lookup_people",
+  "count_messages",
   "annotate_many",
   "search_loops",
   "fetch_loop",

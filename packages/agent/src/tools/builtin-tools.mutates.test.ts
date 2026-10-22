@@ -43,6 +43,7 @@ const CATALOG: ReadonlyArray<readonly [name: string, mutates: boolean]> = [
   ["run_sql", false],
   ["cite_record", true],
   ["lookup_people", false],
+  ["count_messages", false],
   ["lookup_document_by_url", false],
   ["watches_list", false],
   ["watch_get", false],

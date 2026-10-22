@@ -72,6 +72,12 @@ export interface SystemPromptInput {
    */
   temporal?: boolean;
   /**
+   * Whether the `count_messages` tool is wired for this session. Gates the
+   * tool's bullet and the guidance on ranking people by how much the user
+   * communicates with them.
+   */
+  messageCounts?: boolean;
+  /**
    * Pre-rendered durable profile of the user — the self person's live
    * annotations (`renderSelfMemoryBlock`), injected so the agent knows who the
    * user is without re-deriving. Restricted callers receive no profile.
@@ -256,6 +262,7 @@ function buildSubagentSystemPrompt(input: SystemPromptInput): string {
     catalogMode: "context",
     includeTemporal: input.temporal === true,
     includeCognition: input.experimental === true,
+    includeMessageCounts: input.messageCounts === true,
     graphContext: input.graphContext === true,
   });
   const selfMemorySection =
@@ -346,6 +353,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     catalogMode: "context",
     includeTemporal: false,
     includeCognition: false,
+    includeMessageCounts: input.messageCounts === true,
     graphContext: input.graphContext === true,
   });
 
@@ -356,6 +364,9 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     ? `\n- **\`list_loops(limit?, mode?)\`** — active tracked outcome candidates, ordered by stored importance. Default navigation shortlists records for relevant detail reads; it does not establish counts, absence, or outstanding real-world work. For a complete recorded inventory or count, choose mode: "snapshot", use the maximum limit rather than guessing \`search_loops\` terms, then inspect \`truncated\`; when true, qualify that the capped result is incomplete. READ-ONLY.\n- **\`search_loops(query, limit?)\`** — keyword search across the same open loops, for when you have a specific topic/person and don't want the whole list (e.g. "the deposit refund"). READ-ONLY. Empty results is a clean "nothing tracked matches".\n- **\`fetch_loop(loopId)\`** — open one loop in full: its state, importance, deadline, the people it concerns, its source documents, and its recent history. READ-ONLY.\n- **\`entity_context(kind, id, depth?)\`** — reap the whole cognitive neighbourhood around ONE entity (a document, a person, or a loop) in a single call: the loops, source documents, people (with any notes), and dated entries the background agent has **linked** to it. **For "what am I tracking about X" / "what's connected to X", call this FIRST and build your answer from what it returns — don't reconstruct that tracked neighbourhood with a wave of \`search_loops\` / \`fetch_loop\` / \`fetch_many\` calls.** It reflects what the background agent has curated, not the whole corpus, so if the question is genuinely "everything about X" you may add ONE confirming \`search_many\` — but reap first, then build on it. \`fetch_*\` a returned id only when you need a document's full body. READ-ONLY.`
     : "";
   const loopsSection = input.experimental ? renderCognitionRetrievalGuidance() : "";
+  const messageCountToolBullet = input.messageCounts
+    ? `\n- **\`count_messages({ from, to?, timeZone?, sourceIds?, limit? })\`** — how many messages the user exchanged with each person over a window, counted across every messaging source and ranked. **For "who do I message / email / talk to most", call this instead of ranking search hits.** See **Who the user communicates with most** below. READ-ONLY.`
+    : "";
   const temporalToolBullet = input.temporal
     ? `\n- **\`temporal_query({ from, to, timeZone?, origins?, kinds?, limit?, cursor? })\`** — everything dated overlapping a window, from every source that publishes structured time, in ONE call. **For "what's happening today / this week / what's coming up", call this FIRST** rather than issuing a \`run_sql\` per calendar table — a per-table sweep only covers the tables you thought to name. It also returns the dates written in the user's documents' text (\`origin: "mention"\`), and for "when is …" about one thing it lists the dates in the documents you pass as \`documentIds\`. It is a starting point, not the whole answer: entries carry different levels of authority, \`coverage\` names the sources it could not speak for, and results page. READ-ONLY; empty results is a successful call. See **Time** below.`
     : "";
@@ -465,7 +476,7 @@ ${traceConnectionsBullet(input.graphContext)}
 - **\`annotate_many({ annotations: [ { documentId, quote?, quoteAuthor?, note? }, … ] })\`** — mark the **documents** whose information you used in your answer; this is the **only** way a document lands on the Timeline panel. Copy each \`documentId\` from a document result (\`search_many\`, \`fetch_many\`, \`lookup_document_by_url\`, or \`trace_connections\`) — never pass a raw \`run_sql\` row value. If an item returns an error, resolve its canonical id and retry it before answering. Record every citation for the answer in one call (1–16 annotations). See the **Timeline** section below for when and how.
 - **\`cite_record(reference, snapshot)\`** — the structured twin of \`annotate\` for a single analytics **row**. When a fact in your answer traces to one specific row a \`run_sql\` query returned, cite that row: pass the row's \`reference\` exactly as it appeared in the query result's \`rowIdentities[i]\` (only non-null entries are citable — aggregates and joins have no row identity) plus the row's column values you saw as \`snapshot\`. The cited record appears on the same Timeline at its real event time. A row from a timeless table (no event time) cannot be cited.
 - **\`plan(add?, complete?)\`** — show the user a small TODO list of what you're about to do. Use this **instead of prose narration** when a question needs more than one sequential step. See the **Plan panel** section below.
-- **\`spawn_subagent({ title?, task })\`** — launch a generic read-only worker in its own fresh context for one substantial, self-contained branch, then collect it with \`join_subagents\`. See **When to delegate to a sub-agent** below.${watchToolsBullets}${temporalToolBullet}${loopToolsBullets}
+- **\`spawn_subagent({ title?, task })\`** — launch a generic read-only worker in its own fresh context for one substantial, self-contained branch, then collect it with \`join_subagents\`. See **When to delegate to a sub-agent** below.${watchToolsBullets}${temporalToolBullet}${messageCountToolBullet}${loopToolsBullets}
 
 ${retrievalPlaybook}
 
@@ -589,7 +600,7 @@ Rule of thumb: ask yourself "could the reader figure out the note's content from
 
 **Say when you read the question differently.** If you take a word to mean something other than what it says — a nickname, a guess at which person, trip or bill they mean — or set aside part of the question you can't match, such as an organisation or place that isn't in the records or couldn't exist, say so in the answer ("If you mean the dog's vet bill, …", "There's no record of a Riverside Estate account; your Studio Northstar one is …") instead of quietly answering a different question.
 
-**Rank across every source.** A question that ranks or compares across the user's life — who they message most, where they spend most, which day was busiest — covers every source that holds such records, not the first one you search. Don't filter it to one source unless they named it, and if you could only count part of it, say which sources the answer covers.
+**Rank across every source.** A question that ranks or compares across the user's life — who they message most, where they spend most, which day was busiest — covers every source that holds such records, not the first one you search. Don't filter it to one source unless they named it, and if you could only count part of it, say which sources the answer covers.${input.messageCounts ? " Rank people with `count_messages`: the top hits of a search are a sample, not a count." : ""}
 
 **Keep the source's figures.** Amounts, currencies, dates and names go into your answer exactly as the source gives them, even when you translate the surrounding words: a 1 200 € transfer stays 1 200 €, never £1,200. Convert only when asked, and then show both.
 

@@ -65,6 +65,7 @@ object AgentToolCards {
         "trace_connections" to ephemeral("Trace connections", "trail"),
         "entity_context" to ephemeral("Gather context", "trail"),
         "lookup_people" to ephemeral("Find people", "people"),
+        "count_messages" to ephemeral("Count messages", "people"),
         "lookup_document_by_url" to ephemeral("Look up URL", "link"),
         "search_loops" to ephemeral("Search loops", "loop"),
         "fetch_loop" to ephemeral("Open loop", "loop"),

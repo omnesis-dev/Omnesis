@@ -76,6 +76,7 @@ import {
   renderSourceRestrictedAnswerSection,
   rendersTimeline,
 } from "./system-prompt.js";
+import { createGatewayMessageCountPort, type MessageCountGate } from "./message-count-port.js";
 import type { ConversationNotification } from "./conversation-notifier.js";
 import type { WatchDefinition } from "@omnesis/watch";
 import type { PreflightOutcome } from "../watch/preflight.js";
@@ -140,6 +141,8 @@ export interface AgentServiceDeps {
   /** Read-worker gate for `lookup_people`. When wired the person port runs the
    *  heavy assembly off the main event loop; absent, it runs synchronously. */
   personLookupGate?: PersonLookupGate;
+  /** Read-worker gate for `count_messages`; absent, the count runs synchronously. */
+  messageCountGate?: MessageCountGate;
   /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
   mentionWorthGateActive?: () => boolean;
   /**
@@ -420,6 +423,7 @@ export function createAgentService(
       knowledgeRootContext: restricted ? root.text : root.text + renderKnowledgePageDirectory(db),
       memoryWrites: options.memoryWrites === true && !restricted,
       temporal: !restricted,
+      messageCounts: !restricted,
       operatorInstructions,
       citationSurface: options.citationSurface,
       copyableValues: options.copyableValues === true,
@@ -451,6 +455,11 @@ export function createAgentService(
       // contract) and the document store (to resolve a bound document id).
       record: createGatewayRecordPort(db, analyticsDb),
       person: createGatewayPersonPort(db, { lookupGate: deps.personLookupGate }),
+      // Unscoped, like `temporal`, so the source-restricted answer scope below
+      // never gets it.
+      messageCounts: createGatewayMessageCountPort(db, {
+        ...(deps.messageCountGate ? { gate: deps.messageCountGate } : {}),
+      }),
       watch: experimentalVisible()
         ? createGatewayWatchPort({
             getAuthoring: deps.getWatchAuthoring,
@@ -634,6 +643,8 @@ export interface AgentLifecycleDeps {
   claudeCodeService?: ClaudeCodeService | null;
   /** Read-worker gate forwarded to the person port for off-thread `lookup_people`. */
   personLookupGate?: PersonLookupGate;
+  /** Read-worker gate forwarded to the message-count port for off-thread `count_messages`. */
+  messageCountGate?: MessageCountGate;
   /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
   mentionWorthGateActive?: () => boolean;
   /** Worker-coordinated bounded index cleanup for activity retention. */
@@ -942,6 +953,7 @@ export class AgentLifecycle {
         conversationReadState: this.conversationReadState,
         notifyConversation: this.deps.notifyConversation,
         personLookupGate: this.deps.personLookupGate,
+        ...(this.deps.messageCountGate ? { messageCountGate: this.deps.messageCountGate } : {}),
         ...(this.deps.mentionWorthGateActive
           ? { mentionWorthGateActive: this.deps.mentionWorthGateActive }
           : {}),

@@ -64,6 +64,8 @@ export interface ReadOnlyRetrievalPlaybookInput {
   fetchBatchLimit?: number;
   includeTemporal?: boolean;
   includeCognition?: boolean;
+  /** Whether `count_messages` is available. Defaults to false. */
+  includeMessageCounts?: boolean;
   /** Direct clients discover their permitted schema through list_tables. */
   catalogMode?: "authoritative" | "runtime" | "discovery" | "context";
   /**
@@ -130,7 +132,7 @@ The user's earlier conversations with the Omnesis agent are indexed and can come
 
 - **What the user said** is first-party evidence, exactly like a message they sent anyone else. Often it is the only record of something they never wrote down elsewhere. Use it and attribute it to them.
 - **What the assistant said** is not a source. It was an earlier answer assembled from the corpus, and if it was wrong it is still wrong now — citing it would launder that mistake into a fact. Treat it only as a lead: re-derive the claim from the underlying documents and cite those. If it cannot be re-derived, it does not go in the answer.
-${includeTemporal ? renderTemporalRetrievalGuidance() : ""}
+${includeTemporal ? renderTemporalRetrievalGuidance() : ""}${input.includeMessageCounts === true ? renderMessageCountGuidance() : ""}
 ${includeCognition ? renderCognitionRetrievalGuidance() : ""}
 ${renderAnalyticsRetrievalGuidance(input.catalog ?? [], input.catalogMode ?? "authoritative")}
 
@@ -141,6 +143,20 @@ ${renderAnalyticsRetrievalGuidance(input.catalog ?? [], input.catalogMode ?? "au
 - Stop once the request is settled by sufficient evidence, but do not confuse the first plausible result with completeness.
 - If the available sources genuinely cannot settle the question, state the gap plainly. Never fill it with speculation or general knowledge.
 - **Corpus is fixed at capture time.** Omnesis cannot browse or search the live internet: every record reflects what the user saw when it was captured. When the request needs current outside-world facts, report what the corpus shows, then use your own search or browse tools for the live half.`;
+}
+
+export function renderMessageCountGuidance(): string {
+  return `
+
+## Who the user communicates with most
+
+For any question that ranks or compares people by how much the user communicates with them — who they message or email most, who they talked to most this week, how much they talked with someone over a period — call \`count_messages\` over that window and answer from its counts. Never rank people by which documents a search returned: one hit can be a single email or a whole day of a chat, so the top hits are a sample, not a count.
+
+- Leave \`sourceIds\` unset unless the user named a source, so every messaging source is counted.
+- Rank by \`messages\`. \`groupMessages\` is activity in group conversations the person belongs to, not messages they exchanged with the user; mention it separately when it matters.
+- A counterpart with \`sentByThem\` but no \`sentByYou\` is usually a newsletter or notification sender, not someone the user corresponds with; leave such senders out of a "who do I talk to" answer unless asked about senders.
+- Say which sources the count covers, from \`sources\`. Search or fetch afterwards only to say what the conversations were about.
+`;
 }
 
 export function renderTemporalRetrievalGuidance(): string {
