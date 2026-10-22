@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, onTestFinished } from "vitest";
@@ -28,18 +29,37 @@ test("shutdown budgets let the gateway finish and fit both drains inside Compose
   );
 });
 
-async function fixture({ fail, ignoreTerm = false } = {}) {
+async function fixture({
+  fail,
+  ignoreTerm = false,
+  duplicateKillFails = false,
+  authGrandchild = false,
+} = {}) {
   const dir = await mkdtemp(join(tmpdir(), "omnesis-supervisor-"));
   const events = join(dir, "events");
   await writeFile(events, "");
+  const auth = join(dir, "auth.mjs");
+  await writeFile(
+    auth,
+    `
+    import { appendFileSync } from 'node:fs';
+    import { createServer } from 'node:net';
+    process.on('SIGTERM', () => {});
+    const server = createServer();
+    server.listen(0, '127.0.0.1', () => appendFileSync(process.argv[2], 'auth:port:' + server.address().port + '\\n'));
+  `,
+  );
   const daemon = join(dir, "daemon.mjs");
   await writeFile(
     daemon,
     `
     import { appendFileSync } from 'node:fs';
-    const [name, file, fail, ignore] = process.argv.slice(2);
+    import { spawn } from 'node:child_process';
+    const [name, file, fail, ignore, auth] = process.argv.slice(2);
     const log = (event) => appendFileSync(file, name + ':' + event + '\\n');
     process.on('SIGTERM', () => { log('term'); if (ignore !== 'true') process.exit(0); });
+    log('pid:' + process.pid);
+    if (auth && name === 'collector') spawn(process.execPath, [auth, file], {stdio:'inherit'});
     log('ready');
     if (fail === name) setTimeout(() => process.exit(7), 100);
     setInterval(() => {}, 1000);
@@ -50,8 +70,22 @@ async function fixture({ fail, ignoreTerm = false } = {}) {
     runner,
     `
     import { supervise } from ${JSON.stringify(supervisorUrl)};
+    import { appendFileSync } from 'node:fs';
+    const kill = process.kill.bind(process);
+    const killed = new Set();
+    process.kill = (pid, signal) => {
+      if (${JSON.stringify(duplicateKillFails)} && signal === 'SIGKILL' && killed.has(pid)) {
+        throw Object.assign(new Error('Repeated process-group SIGKILL'), {code:'EPERM'});
+      }
+      const result = kill(pid, signal);
+      if (pid < 0 && signal === 'SIGKILL') {
+        killed.add(pid);
+        appendFileSync(${JSON.stringify(events)}, 'killed:' + -pid + '\\n');
+      }
+      return result;
+    };
     const command = (name) => [process.execPath, ${JSON.stringify(daemon)}, name,
-      ${JSON.stringify(events)}, ${JSON.stringify(fail || "")}, ${JSON.stringify(String(ignoreTerm))}];
+      ${JSON.stringify(events)}, ${JSON.stringify(fail || "")}, ${JSON.stringify(String(ignoreTerm))}, ${JSON.stringify(authGrandchild ? auth : "")}];
     process.exitCode = await supervise({gateway: command('gateway'), collector: command('collector'), drainMs: 150});
   `,
   );
@@ -76,11 +110,28 @@ async function fixture({ fail, ignoreTerm = false } = {}) {
   onTestFinished(async () => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     await done;
+    // A failed runner may leave its mock daemons alive. Only these recorded
+    // fixture groups are ours; groups already killed must not be signalled twice.
+    const recorded = await readFile(events, "utf8");
+    const killed = new Set([...recorded.matchAll(/^killed:(\d+)$/gm)].map((m) => Number(m[1])));
+    for (const match of recorded.matchAll(/^(?:gateway|collector):pid:(\d+)$/gm)) {
+      const pid = Number(match[1]);
+      if (killed.has(pid)) continue;
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
     await rm(dir, { recursive: true, force: true });
   });
   for (let i = 0; i < 200; i++) {
     const log = await readFile(events, "utf8");
-    if (log.includes("gateway:ready") && log.includes("collector:ready")) {
+    if (
+      log.includes("gateway:ready") &&
+      log.includes("collector:ready") &&
+      (!authGrandchild || log.includes("auth:port:"))
+    ) {
       return { child, done, log: () => readFile(events, "utf8"), diagnostics };
     }
     await delay(10);
@@ -111,6 +162,41 @@ test("unresponsive daemons are killed after their drain deadline", async () => {
   assert.match(await f.log(), /collector:term/);
   assert.match(await f.log(), /gateway:term/);
 });
+test("deadline shutdown sends only one SIGKILL to each process group", async () => {
+  const f = await fixture({ ignoreTerm: true, duplicateKillFails: true });
+  f.child.kill("SIGTERM");
+  assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
+  const events = await f.log();
+  assert.match(events, /collector:term/);
+  assert.match(events, /gateway:term/);
+  assert.equal([...events.matchAll(/^killed:\d+$/gm)].length, 2, events);
+});
+
+test("normal daemon exit still kills an auth grandchild holding its process group", async () => {
+  const f = await fixture({ authGrandchild: true });
+  const port = Number(/^auth:port:(\d+)$/m.exec(await f.log())?.[1]);
+  assert.ok(Number.isInteger(port) && port > 0);
+  f.child.kill("SIGTERM");
+  assert.deepEqual(await f.done, { code: 0, signal: null }, await f.diagnostics());
+  // Group termination is asynchronous for grandchildren; prove the listener
+  // actually disappears, rather than checking only that a signal was requested.
+  for (let i = 0; i < 200; i++) {
+    const server = createServer();
+    try {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, "127.0.0.1", resolve);
+      });
+      await new Promise((resolve) => server.close(resolve));
+      return;
+    } catch (error) {
+      if (error.code !== "EADDRINUSE") throw error;
+      await delay(10);
+    }
+  }
+  assert.fail(`Owned auth grandchild still holds port ${port}: ${await f.diagnostics()}`);
+});
+
 test("spawn failure terminates the service", async () => {
   const { supervise } = await import(supervisorUrl);
   assert.equal(

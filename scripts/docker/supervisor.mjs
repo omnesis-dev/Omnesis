@@ -33,18 +33,21 @@ export async function supervise({
   async function stopChild(child, budgetMs) {
     signal(child, "SIGTERM");
     let timer;
+    let groupKilled = false;
     await Promise.race([
       child.done,
       new Promise((resolve) => {
         timer = setTimeout(() => {
           signal(child, "SIGKILL");
+          groupKilled = true;
           resolve();
         }, budgetMs);
       }),
     ]);
     clearTimeout(timer);
-    // The daemon can exit while an auth subprocess remains in its group.
-    signal(child, "SIGKILL");
+    // A normally exited daemon can leave auth children in its group. A group
+    // killed at the deadline needs no second signal (Darwin can return EPERM).
+    if (!groupKilled) signal(child, "SIGKILL");
     await child.done;
   }
   async function stop(code) {
