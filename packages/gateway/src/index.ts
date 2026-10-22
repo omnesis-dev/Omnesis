@@ -1386,6 +1386,8 @@ const agentLifecycle = new AgentLifecycle({
   // Read-worker gate — `lookup_people` runs its heavy assembly off the main
   // event loop (fires on nearly every agent turn).
   personLookupGate: ioGate,
+  // `count_messages` walks every message document in its window off the main loop.
+  messageCountGate: ioGate,
   mentionWorthGateActive,
   deleteDocumentIndexBatch: async (documentId, limit, sourceDeleted) => {
     return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);

@@ -36,6 +36,7 @@ import {
   type PersonSortBy,
 } from "../data/repositories/PersonRepository.js";
 import { assemblePersonLookup } from "../domain/person-lookup.js";
+import { countMessagesByPerson, type MessageCountsQuery } from "../domain/message-counts.js";
 import { likeSearchDocuments } from "../search/like-search.js";
 import { computeSeedFromContacts } from "../domain/ContactCardBootstrap.js";
 import {
@@ -173,6 +174,10 @@ export const ioHandlers = {
   // in (computed main-thread) — the worker never reads env.
   "io.lookupPeople": (db: Db, query: string, limit: number, opts: { experimental: boolean }) =>
     assemblePersonLookup(db, query, limit, opts),
+
+  // Per-person message counts (agent `count_messages`). Walks every message
+  // document in the window, so it runs on a read worker at user priority.
+  "io.messageCounts": (db: Db, query: MessageCountsQuery) => countMessagesByPerson(db, query),
 
   // Enriched merge-candidate list (GET /people/merge-candidates). Scans the
   // whole pending set (≤5000) with union-find clustering + ranking; ran on the

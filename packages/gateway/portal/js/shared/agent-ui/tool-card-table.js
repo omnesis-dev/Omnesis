@@ -28,6 +28,7 @@ export const AGENT_TOOL_CARDS = Object.freeze({
   trace_connections: ephemeral("Trace connections", "trail"),
   entity_context: ephemeral("Gather context", "trail"),
   lookup_people: ephemeral("Find people", "people"),
+  count_messages: ephemeral("Count messages", "people"),
   lookup_document_by_url: ephemeral("Look up URL", "link"),
   search_loops: ephemeral("Search loops", "loop"),
   fetch_loop: ephemeral("Open loop", "loop"),

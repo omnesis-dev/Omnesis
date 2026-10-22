@@ -453,7 +453,36 @@ export interface DocumentMetadataFieldSpec {
    * for group chats and a contact's name for one-to-one chats still does.
    */
   identifiesPeople?: boolean;
+  /**
+   * What the field measures about a message document, for consumers that count
+   * how much the user communicates with each person.
+   *
+   * - `"message-count"` — a `number` field holding how many messages the
+   *   document holds, for a source that rolls several messages into one
+   *   document (a chat's day, say). Without it, each document counts as one
+   *   message.
+   * - `"group-conversation"` — a `boolean` field that is true when the
+   *   document is a conversation among several people. Its messages are then
+   *   shared by the group rather than exchanged with any one member. Without
+   *   it, a document that rolls up several messages counts as a group when
+   *   more than one other person takes part.
+   *
+   * A profile declares each meaning on at most one field.
+   */
+  semantics?: DocumentFieldSemantics;
 }
+
+/** The meanings a document metadata field can declare; see `DocumentMetadataFieldSpec.semantics`. */
+export const DOCUMENT_FIELD_SEMANTICS = ["message-count", "group-conversation"] as const;
+export type DocumentFieldSemantics = (typeof DOCUMENT_FIELD_SEMANTICS)[number];
+
+/** The field type each declared meaning requires. */
+const DOCUMENT_FIELD_SEMANTICS_TYPE: Readonly<
+  Record<DocumentFieldSemantics, DocumentMetadataFieldSpec["type"]>
+> = {
+  "message-count": "number",
+  "group-conversation": "boolean",
+};
 
 /**
  * What a source's documents can be asked about: which kinds of thing it
@@ -1433,6 +1462,7 @@ export function validateDocumentEventProfile(
     throw new Error(`${where} declares more than ${DOCUMENT_PROFILE_MAX_FIELDS} metadata fields.`);
   }
   const seenPaths = new Set<string>();
+  const seenSemantics = new Set<DocumentFieldSemantics>();
   for (const field of fields) {
     const at = `${where} field '${field.path}'`;
     if (!METADATA_PATH.test(field.path)) {
@@ -1489,6 +1519,19 @@ export function validateDocumentEventProfile(
     // A phrase two values both claim resolves to whichever the reader reaches
     // first, which is a coin toss dressed as a mapping.
     if (field.valueAliases) validateCategoricalPhraseSpace(values, field.valueAliases, at);
+    if (field.semantics !== undefined) {
+      const required = DOCUMENT_FIELD_SEMANTICS_TYPE[field.semantics];
+      if (required === undefined) {
+        throw new Error(`${at} has unsupported semantics '${String(field.semantics)}'.`);
+      }
+      if (field.type !== required) {
+        throw new Error(`${at} declares '${field.semantics}' semantics but is not a ${required}.`);
+      }
+      if (seenSemantics.has(field.semantics)) {
+        throw new Error(`${where} declares '${field.semantics}' semantics on two fields.`);
+      }
+      seenSemantics.add(field.semantics);
+    }
   }
 }
 

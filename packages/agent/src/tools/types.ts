@@ -184,6 +184,77 @@ export interface PersonPort {
   lookup(input: PersonPortInput, signal?: AbortSignal): Promise<PersonPortResult>;
 }
 
+// ─── count_messages ───────────────────────────────────────────────────────
+
+export interface MessageCountPortInput {
+  /** Window start, in the `temporal_query` window grammar. */
+  from: string;
+  /** Exclusive window end in the same grammar; the whole `from` period when absent. */
+  to?: string;
+  /** IANA zone the window's dates are read in. */
+  timeZone: string;
+  /** Restrict the count to these sources; every source when absent. */
+  sourceIds?: readonly string[];
+  /** How many people to return, most messaged first. */
+  limit: number;
+}
+
+/** One person the user exchanged messages with in the window. */
+export interface MessageCountPerson {
+  personId: string;
+  name: string;
+  /** Messages in conversations with this person alone, and single messages they were on. */
+  messages: number;
+  /** Messages in group conversations they took part in, shared by the whole group. */
+  groupMessages: number;
+  /** Message documents (an email, a chat's day) they were on. */
+  documents: number;
+  /** Of those messages, the ones the user sent, where the source records a sender. */
+  sentByYou: number;
+  /** Of those messages, the ones this person sent, where the source records a sender. */
+  sentByThem: number;
+  sourceIds: string[];
+  /** When the most recent of those documents was written. */
+  lastAt: string;
+}
+
+/** What one source contributed to a count. */
+export interface MessageCountSource {
+  sourceId: string;
+  documents: number;
+  messages: number;
+  /**
+   * `declared-count` when the source records how many messages each document
+   * holds; `document` when each document counts as one message.
+   */
+  countedPer: "declared-count" | "document";
+}
+
+export interface MessageCountsBody {
+  people: MessageCountPerson[];
+  /** Everyone the user exchanged a message with in the window. */
+  totalPeople: number;
+  /** More people than `people` lists. */
+  truncated: boolean;
+  /** Every source that contributed, most messages first. */
+  sources: MessageCountSource[];
+  /** Whether the user's own person is known; when false they may appear as a counterpart. */
+  selfKnown: boolean;
+}
+
+export interface MessageCountPortResult extends MessageCountsBody {
+  window: { from: string; toExclusive: string; timeZone: string };
+  durationMs: number;
+}
+
+/**
+ * Counts the messages the user exchanged with each person over a window,
+ * across every messaging source. READ-ONLY.
+ */
+export interface MessageCountPort {
+  count(input: MessageCountPortInput, signal?: AbortSignal): Promise<MessageCountPortResult>;
+}
+
 // ─── trace_connections ──────────────────────────────────────────────────────────
 
 export interface TrailPortOptions {
@@ -908,6 +979,12 @@ export interface ToolPorts {
    */
   documentByUrl?: DocumentByUrlPort;
   person?: PersonPort;
+  /**
+   * Optional READ-ONLY message-count port. The registry registers
+   * `count_messages` whenever it is wired; a caller restricted to some
+   * sources is never given one, because the port reads every source.
+   */
+  messageCounts?: MessageCountPort;
   trail?: TrailPort;
   sql?: SqlPort;
   /**

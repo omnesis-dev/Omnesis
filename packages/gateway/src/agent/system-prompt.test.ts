@@ -156,6 +156,24 @@ describe("buildSystemPrompt — temporal query", () => {
   });
 });
 
+describe("buildSystemPrompt — message counts", () => {
+  test("tells the agent and its workers to count, not rank search hits, when the tool is wired", () => {
+    const prompt = buildSystemPrompt({ messageCounts: true });
+    expect(prompt).toContain("`count_messages({ from, to?, timeZone?, sourceIds?, limit? })`");
+    expect(prompt).toContain("## Who the user communicates with most");
+    expect(prompt).toContain("Rank people with `count_messages`");
+    const worker = buildSystemPrompt({ audience: "subagent", messageCounts: true });
+    expect(worker).toContain("## Who the user communicates with most");
+  });
+
+  test("says nothing about it when the tool is not wired", () => {
+    for (const audience of ["interactive", "subagent"] as const) {
+      const prompt = buildSystemPrompt({ audience, messageCounts: false });
+      expect(prompt).not.toContain("count_messages");
+    }
+  });
+});
+
 describe("buildSystemPrompt — watches (experimental)", () => {
   /**
    * The gate, not the wording: automations are experimental on every client, so

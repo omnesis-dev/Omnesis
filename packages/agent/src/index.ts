@@ -206,6 +206,13 @@ export {
   type LookupPeopleToolDeps,
 } from "./tools/lookup-people.js";
 export {
+  createCountMessagesTool,
+  countMessagesArgsSchema,
+  COUNT_MESSAGES_MAX_LIMIT,
+  type CountMessagesArgs,
+  type CountMessagesToolDeps,
+} from "./tools/count-messages.js";
+export {
   createLookupDocumentByUrlTool,
   lookupDocumentByUrlArgsSchema,
   type LookupDocumentByUrlArgs,
@@ -319,6 +326,12 @@ export type {
   LoopSearchPortInput,
   LoopSearchPortResult,
   TemporalReadPort,
+  MessageCountPort,
+  MessageCountPortInput,
+  MessageCountPortResult,
+  MessageCountPerson,
+  MessageCountSource,
+  MessageCountsBody,
   EntityContextPort,
   EntityContextResult,
   EntityContextSeed,

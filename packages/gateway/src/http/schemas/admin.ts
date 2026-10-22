@@ -11,6 +11,7 @@
  */
 import { z } from "zod";
 import { PERSON_ROLES } from "@omnesis/types";
+import { DOCUMENT_FIELD_SEMANTICS } from "@omnesis/source-sdk";
 import { isSafeUrlCanonicalizerPattern } from "../../known-url-pattern-safety.js";
 import { accountDescriptorSchema } from "./account-descriptor.js";
 import {
@@ -608,6 +609,10 @@ const documentMetadataFieldSpecSchema = z.object({
   // filter that singles out a person disclosed to the operator as if it named
   // nobody.
   identifiesPeople: z.boolean().optional(),
+  // What the field measures for message counting. Like `identifiesPeople`, an
+  // undeclared key would be stripped and the agent's message counts would
+  // silently fall back to one message per document.
+  semantics: z.enum(DOCUMENT_FIELD_SEMANTICS).optional(),
 });
 export const sourceDocumentProfilesBody = z.object({
   entries: z.array(

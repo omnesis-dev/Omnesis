@@ -136,11 +136,13 @@ export const appleIMessageDocumentProfile: DocumentEventProfile = {
       path: "extra.isGroup",
       type: "boolean",
       description: "Whether the chat has more than one other member.",
+      semantics: "group-conversation",
     },
     {
       path: "extra.messageCount",
       type: "number",
       description: "Number of messages exchanged in the chat that day, excluding reactions.",
+      semantics: "message-count",
     },
     {
       path: "extra.chatName",

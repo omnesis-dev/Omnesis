@@ -136,6 +136,60 @@ describe("validateDocumentEventProfile", () => {
     expect(() => validateDocumentEventProfile(bad, "test")).toThrow(/unsupported personRole 'cc'/);
   });
 
+  it("accepts message-count and group-conversation semantics on fields of the matching type", () => {
+    const declared = profile({
+      metadataFields: [
+        {
+          path: "extra.count",
+          type: "number",
+          description: "Messages held.",
+          semantics: "message-count",
+        },
+        {
+          path: "extra.group",
+          type: "boolean",
+          description: "Whether it is a group.",
+          semantics: "group-conversation",
+        },
+      ],
+    });
+    expect(() => validateDocumentEventProfile(declared, "test")).not.toThrow();
+  });
+
+  it("rejects a semantics on a field of the wrong type", () => {
+    const wrong = profile({
+      metadataFields: [
+        {
+          path: "extra.count",
+          type: "string",
+          description: "Messages held.",
+          semantics: "message-count",
+        },
+      ],
+    });
+    expect(() => validateDocumentEventProfile(wrong, "test")).toThrow(/not a number/);
+  });
+
+  it("rejects the same semantics declared on two fields", () => {
+    const twice = profile({
+      metadataFields: [
+        {
+          path: "extra.a",
+          type: "number",
+          description: "Messages held.",
+          semantics: "message-count",
+        },
+        {
+          path: "extra.b",
+          type: "number",
+          description: "Also messages.",
+          semantics: "message-count",
+        },
+      ],
+    });
+    expect(() => validateDocumentEventProfile(twice, "test")).toThrow(/on two fields/);
+  });
+
   it("names the context in the error so the offending source is identifiable", () => {
     const bad = profile({ documentTypes: ["Email"] });
     expect(() => validateDocumentEventProfile(bad, "defineSource('mailbox')")).toThrow(

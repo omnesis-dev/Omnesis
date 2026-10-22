@@ -47,6 +47,11 @@
     "label": "Find people",
     "icon": "people"
   },
+  "count_messages": {
+    "presentation": "ephemeral",
+    "label": "Count messages",
+    "icon": "people"
+  },
   "lookup_document_by_url": {
     "presentation": "ephemeral",
     "label": "Look up URL",

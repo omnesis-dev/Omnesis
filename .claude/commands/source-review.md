@@ -578,6 +578,10 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   emits compiles a watch that can never fire; an undeclared field is absent
   from the watch journal.
 - `identifiesPeople: true` on any field whose values can name a human.
+- A source that rolls several messages into one document (a chat's day)
+  marks its message-count field `semantics: "message-count"`, and its group
+  flag, if it has one, `semantics: "group-conversation"`. Without them the
+  agent's `count_messages` counts each document as one message.
 - Two sources must be distinguishable by profile alone (the catalog hides
   source names).
 - `documentTemporalProjections` use only the closed field set
