@@ -208,7 +208,15 @@ describe("configured agent voice lease", () => {
     expect(new Set(results.map((result) => result.messageId)).size).toBe(1);
     expect(f.inputs).toHaveLength(2);
     expect(f.inputs[1]?.userMessage.trim()).toBe(chunks.join("").trim());
-    await f.service.sendMessage("token:fixture", voice.sessionId, "Continue in text").completion;
+    const resumed = f.service.sendMessage("token:fixture", voice.sessionId, "Continue in text");
+    await vi.waitFor(() =>
+      expect(
+        f.events.some(
+          (event) =>
+            event.type === "agent.message.end" && event.payload.messageId === resumed.messageId,
+        ),
+      ).toBe(true),
+    );
     expect(f.inputs).toHaveLength(3);
   });
   it("starts a fresh streamed receipt after prior pending work becomes running", async () => {
@@ -250,7 +258,7 @@ describe("configured agent voice lease", () => {
       if (input.userMessage === "Original fictional request") {
         reading.resolve();
         await read.promise;
-        abortedBeforeWrite = signal.aborted;
+        abortedBeforeWrite = signal?.aborted ?? false;
         const tool = input.tools.find((candidate) => candidate.name === "fixture_write")!;
         await tool.invoke(
           {},
