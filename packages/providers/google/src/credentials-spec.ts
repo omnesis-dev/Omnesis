@@ -75,7 +75,14 @@ export const googleCredentialsSpec: ProviderCredentialsSpec = {
         title: "Configure the consent screen and publish to Production",
         body:
           "Pick **External**, then **Create**. Fill in the app name (e.g. `Omnesis`) " +
-          "and your email. You don't need a logo or homepage URL.\n\n" +
+          "and your email. You don't need a logo.\n\n" +
+          "If Google asks for an app home page and a privacy policy (the **Branding** " +
+          "page's **App domain** section), you don't need a website of your own: Google " +
+          "reviews these links only when an app is submitted for verification, which " +
+          "Omnesis doesn't need. Enter `https://omnesis.dev` as the home page, " +
+          "`https://omnesis.dev/privacy` as the privacy policy, and add `omnesis.dev` " +
+          "under **Authorized domains**, or use any public page you control. Don't " +
+          "submit the app for verification.\n\n" +
           "On the **Scopes** page, leave the defaults — Omnesis declares its scopes at " +
           "auth time, you don't need to register them here.\n\n" +
           "**Publish the app.** On the **Audience** page (older console: the consent " +
