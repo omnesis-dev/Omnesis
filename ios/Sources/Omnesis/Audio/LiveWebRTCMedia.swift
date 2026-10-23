@@ -128,13 +128,13 @@ final class LiveWebRTCMedia: NSObject, LiveVoiceMedia {
         }
         audio.initializeInput { [weak self] error in
             Task { @MainActor in
-                guard let self, !closed, Self.configurationLease.owns(generation) else { return }
+                guard let self, !self.closed, Self.configurationLease.owns(generation) else { return }
                 guard error == nil else {
-                    fail(RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true))
+                    self.fail(RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true))
                     return
                 }
-                inputInitialized = true
-                finishCaptureIfReady()
+                self.inputInitialized = true
+                self.finishCaptureIfReady()
             }
         }
     }
