@@ -22,30 +22,65 @@ final class LiveWebRTCMedia: NSObject, LiveVoiceMedia {
     private var meter: Task<Void, Never>?
     private var closed = false
     private var audioActive = false
-    private static let factory: RTCPeerConnectionFactory = {
-        RTCInitializeSSL()
-        return RTCPeerConnectionFactory()
-    }()
+    private static var configurationLease = AudioSessionLease()
+    private var configurationGeneration: UUID?
+    private let log = AppLog.make(category: "agent.realtime")
+    private var captureProgress = LiveMicrophoneProgress()
+    private var captureReady = false
+    private var samplesReady = false
+    private var inputInitialized = false
+    private var captureWaiter: CheckedContinuation<Void, Error>?
+    private var captureDeadline: Task<Void, Never>?
+    private var audioDeviceRequested = false
+    #if DEBUG
+    private(set) var capturedDurationForTesting = 0.0
+    private(set) var captureStatsSummaryForTesting = "No statistics received"
+    #endif
+    private static let initializedSSL: Void = { _ = RTCInitializeSSL() }()
+    private var factory: RTCPeerConnectionFactory?
+    private var inFlightOperations = 0
+    private var releaseScheduled = false
+    #if DEBUG
+    var onReleasedForTesting: (() -> Void)?
+    var beforeOfferForTesting: (@MainActor () async -> Void)?
+    #endif
 
     func offer() async throws -> String {
-        let configuration = RTCConfiguration()
-        configuration.sdpSemantics = .unifiedPlan
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-        guard let peer = Self.factory.peerConnection(with: configuration, constraints: constraints, delegate: self) else {
-            throw URLError(.cannotCreateFile)
+        guard !closed else { throw CancellationError() }
+        guard !Self.configurationLease.owns(Self.configurationLease.generation) else {
+            throw RealtimeCallFailure(code: "session_busy", fatal: true, retryable: true)
         }
-        self.peer = peer
+        inFlightOperations += 1
+        defer { finishOperation() }
+        Self.configurationLease.begin()
+        let generation = Self.configurationLease.generation
+        configurationGeneration = generation
         let audio = RTCAudioSession.sharedInstance()
         audio.useManualAudio = true
         audio.isAudioEnabled = false
         audio.add(self)
-        let source = Self.factory.audioSource(with: constraints)
-        let track = Self.factory.audioTrack(with: source, trackId: "microphone")
+        _ = Self.initializedSSL
+        let factory = RTCPeerConnectionFactory()
+        self.factory = factory
+        try prepareInput(audio, generation: generation)
+        let configuration = RTCConfiguration()
+        configuration.sdpSemantics = .unifiedPlan
+        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        guard let peer = factory.peerConnection(with: configuration, constraints: constraints, delegate: self) else {
+            throw RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true)
+        }
+        self.peer = peer
+        let source = factory.audioSource(with: constraints)
+        let track = factory.audioTrack(with: source, trackId: "microphone")
         track.isEnabled = false
         microphone = track
         peer.add(track, streamIds: ["voice"])
         channel = peer.dataChannel(forLabel: "oai-events", configuration: RTCDataChannelConfiguration())
         channel?.delegate = self
+        #if DEBUG
+        await beforeOfferForTesting?()
+        #endif
+        guard !closed else { throw CancellationError() }
         let offer: RTCSessionDescription = try await withCheckedThrowingContinuation { continuation in
             peer.offer(for: constraints) { sdp, error in
                 if let error {
@@ -68,12 +103,39 @@ final class LiveWebRTCMedia: NSObject, LiveVoiceMedia {
 
     func connect(answer: String) async throws {
         guard let peer, !closed else { throw CancellationError() }
+        inFlightOperations += 1
+        defer { finishOperation() }
         try await setDescription(RTCSessionDescription(type: .answer, sdp: answer), local: false, peer: peer)
         guard !closed else { throw CancellationError() }
         if peer.connectionState == .connected { return }
         try await withCheckedThrowingContinuation { continuation in
             connecting = continuation
             armDeadline()
+        }
+    }
+
+    private func prepareInput(_ audio: RTCAudioSession, generation: UUID) throws {
+        // This pinned vendor intentionally defaults to output-only AudioUnits.
+        // Queue input before unit creation; completion waits until the manual
+        // audio gate opens, so awaiting it during SDP negotiation would deadlock.
+        let configuration = RTCAudioSessionConfiguration()
+        configuration.category = AVAudioSession.Category.playAndRecord.rawValue
+        configuration.mode = AVAudioSession.Mode.voiceChat.rawValue
+        configuration.categoryOptions = [.defaultToSpeaker, .allowBluetoothHFP]
+        RTCAudioSessionConfiguration.setWebRTC(configuration)
+        guard audio.setInitialMicrophoneMute(false) else {
+            throw RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true)
+        }
+        audio.initializeInput { [weak self] error in
+            Task { @MainActor in
+                guard let self, !self.closed, Self.configurationLease.owns(generation) else { return }
+                guard error == nil else {
+                    self.fail(RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true))
+                    return
+                }
+                self.inputInitialized = true
+                self.finishCaptureIfReady()
+            }
         }
     }
 
@@ -102,8 +164,48 @@ final class LiveWebRTCMedia: NSObject, LiveVoiceMedia {
         }
     }
 
+    func startMicrophone() async throws {
+        guard !closed else { throw CancellationError() }
+        guard let configurationGeneration, Self.configurationLease.owns(configurationGeneration) else {
+            throw RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true)
+        }
+        log.info("Live microphone capture requested")
+        enableMicrophone(true)
+        guard !closed else { throw CancellationError() }
+        if captureReady { return }
+        try await withCheckedThrowingContinuation { continuation in
+            captureWaiter = continuation
+            captureDeadline = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(8)) } catch { return }
+                guard let self, !closed else { return }
+                let audio = RTCAudioSession.sharedInstance()
+                log.error("Live capture timeout; device requested: \(audioDeviceRequested, privacy: .public)")
+                log.error("SDK active: \(audio.isActive, privacy: .public); audio enabled: \(audio.isAudioEnabled, privacy: .public)")
+                log.error("Input channels: \(audio.inputNumberOfChannels, privacy: .public)")
+                fail(RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true))
+            }
+        }
+    }
+
+    private func observeCaptureDuration(_ duration: Double) {
+        guard !captureReady, captureProgress.observe(duration: duration) else { return }
+        samplesReady = true
+        finishCaptureIfReady()
+    }
+
+    private func finishCaptureIfReady() {
+        guard !captureReady, inputInitialized, samplesReady else { return }
+        captureReady = true
+        captureDeadline?.cancel()
+        captureDeadline = nil
+        let waiter = captureWaiter
+        captureWaiter = nil
+        log.info("Live microphone captured sample duration advanced")
+        waiter?.resume()
+    }
+
     func enableMicrophone(_ enabled: Bool) {
-        guard !closed else { return }
+        guard !closed, let configurationGeneration, Self.configurationLease.owns(configurationGeneration) else { return }
         if enabled, !audioActive {
             let audio = RTCAudioSession.sharedInstance()
             audio.lockForConfiguration()
@@ -125,25 +227,74 @@ final class LiveWebRTCMedia: NSObject, LiveVoiceMedia {
     private func startMeter() {
         meter = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, let peer, !closed else { return }
-                let report = await peer.statistics()
+                guard let self, !closed, let report = await readStatistics() else { return }
                 guard !closed else { return }
                 var input = 0.0
                 var output = 0.0
                 for item in report.statistics.values {
+                    if item.type == "media-source", let duration = item.values["totalSamplesDuration"] as? NSNumber {
+                        observeCaptureDuration(duration.doubleValue)
+                        #if DEBUG
+                        capturedDurationForTesting = duration.doubleValue
+                        #endif
+                    }
                     guard let level = item.values["audioLevel"] as? NSNumber else { continue }
                     if item.type == "media-source" { input = max(input, level.doubleValue) }
                     if item.type == "inbound-rtp" { output = max(output, level.doubleValue) }
                 }
+                #if DEBUG
+                let types = Set(report.statistics.values.map(\.type)).sorted()
+                let sourceKeys = report.statistics.values
+                    .filter { $0.type == "media-source" }
+                    .flatMap(\.values.keys)
+                    .sorted()
+                captureStatsSummaryForTesting = "types=\(types); source fields=\(sourceKeys); duration=\(capturedDurationForTesting)"
+                #endif
                 onLevels?(microphone?.isEnabled == true ? min(1, max(0, input)) : 0, min(1, max(0, output)))
                 do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
             }
         }
     }
 
+    private func readStatistics() async -> RTCStatisticsReport? {
+        guard let peer, !closed else { return nil }
+        inFlightOperations += 1
+        defer { finishOperation() }
+        return await peer.statistics()
+    }
+
+    private func finishOperation() {
+        inFlightOperations -= 1
+        if closed { scheduleRelease() }
+    }
+
+    private func scheduleRelease() {
+        guard inFlightOperations == 0, !releaseScheduled, configurationGeneration != nil else { return }
+        releaseScheduled = true
+        // Wait until operation locals have unwound. Their peer/source objects
+        // retain the factory; an old ADM must terminate its global pending
+        // input request before a replacement call can acquire the lease.
+        Task { @MainActor [self] in
+            factory = nil
+            if let generation = configurationGeneration {
+                _ = Self.configurationLease.release(expectedGeneration: generation)
+                configurationGeneration = nil
+            }
+            #if DEBUG
+            let released = onReleasedForTesting
+            onReleasedForTesting = nil
+            released?()
+            #endif
+        }
+    }
+
     private func fail(_ error: Error) {
         guard !closed else { return }
         deadline?.cancel()
+        captureDeadline?.cancel()
+        let capture = captureWaiter
+        captureWaiter = nil
+        capture?.resume(throwing: error)
         gathering?.resume(throwing: error)
         gathering = nil
         connecting?.resume(throwing: error)
@@ -154,6 +305,10 @@ final class LiveWebRTCMedia: NSObject, LiveVoiceMedia {
     func close() {
         guard !closed else { return }
         closed = true
+        captureDeadline?.cancel()
+        let capture = captureWaiter
+        captureWaiter = nil
+        capture?.resume(throwing: CancellationError())
         deadline?.cancel()
         meter?.cancel()
         gathering?.resume(throwing: CancellationError())
@@ -168,18 +323,31 @@ final class LiveWebRTCMedia: NSObject, LiveVoiceMedia {
         microphone = nil
         channel = nil
         peer = nil
+        guard let configurationGeneration else { return }
         let audio = RTCAudioSession.sharedInstance()
+        audio.remove(self)
+        guard Self.configurationLease.owns(configurationGeneration) else { return }
         audio.lockForConfiguration()
         audio.isAudioEnabled = false
         if audioActive { try? audio.setActive(false) }
         audioActive = false
-        audio.useManualAudio = false
+        // This SDK is dedicated to Live calls. Re-enabling automatic audio
+        // would reopen canPlayOrRecord during asynchronous peer teardown.
         audio.unlockForConfiguration()
-        audio.remove(self)
+        scheduleRelease()
     }
 }
 
 extension LiveWebRTCMedia: RTCPeerConnectionDelegate, RTCDataChannelDelegate, RTCAudioSessionDelegate {
+    nonisolated func audioSessionDidStartPlayOrRecord(_ session: RTCAudioSession) {
+        Task { @MainActor [weak self] in
+            guard let self, !closed else { return }
+            // This SDK notification precedes AudioUnit initialization; it is
+            // diagnostic only and must never resolve microphone readiness.
+            audioDeviceRequested = true
+        }
+    }
+
     nonisolated func audioSession(_ audioSession: RTCAudioSession, audioUnitStartFailedWithError error: Error) {
         Task { @MainActor [weak self] in
             self?.fail(RealtimeCallFailure(code: "microphone_failed", fatal: true, retryable: true))

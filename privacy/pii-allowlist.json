@@ -12177,6 +12177,21 @@
       "value": "No Brain",
       "paths": ["packages/gateway/src/brain/tasks/http.test.ts"],
       "reason": "Invented fixture text (a fictional name from the repo's example list, or a capitalised UI phrase), not corpus data."
+    },
+    {
+      "value": "Test Suite",
+      "paths": ["scripts/ci/verify-ios-e2e-results.test.mjs"],
+      "reason": "Public xcresulttool TestNodeType enum value, not a person's name."
+    },
+    {
+      "value": "Test Case",
+      "paths": ["scripts/ci/verify-ios-e2e-results.test.mjs"],
+      "reason": "Public xcresulttool TestNodeType enum value, not a person's name."
+    },
+    {
+      "value": "Expected Failure",
+      "paths": ["scripts/ci/verify-ios-e2e-results.test.mjs"],
+      "reason": "Public xcresulttool TestResult enum value, not a person's name."
     }
   ],
   "secretFixtures": [
