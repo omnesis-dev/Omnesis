@@ -87,7 +87,7 @@ FROM node:24-slim AS runtime-base
 # The upgrade applies Debian security fixes published after the node:24-slim
 # tag was last rebuilt, so a published image never ships a fixed vulnerability.
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates tini \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx \
@@ -95,6 +95,9 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && groupadd --gid 10001 omnesis \
     && useradd --uid 10001 --gid omnesis --create-home --shell /usr/sbin/nologin omnesis \
     && install -d -m 0700 -o omnesis -g omnesis /var/lib/omnesis
+# Config mounts retain their host path, including /root/.config/omnesis for
+# root installs. Only this image's root home needs traversal by the daemon.
+RUN chmod 0711 /root
 WORKDIR /app
 # The CLI entry point every image carries. `docker compose exec <service>
 # omnesis …` is the supported way to drive an install, so the binary has to be
@@ -105,7 +108,8 @@ COPY --from=runtime-dependencies /app/node_modules ./node_modules
 COPY --from=runtime-dependencies /opt/workspace-dependencies/packages ./packages
 ENV HOME=/home/omnesis \
     OMNESIS_CONFIG_DIR=/var/lib/omnesis \
-    NODE_ENV=production
+    NODE_ENV=production \
+    OMNESIS_OAUTH_CALLBACK_HOST=0.0.0.0
 
 # ── Compiled, unprivileged gateway runtime ───────────────────────────────────
 # Build with: docker build --target gateway-runtime -t omnesis-gateway-runtime .
@@ -115,7 +119,7 @@ COPY --from=runtime-build --chmod=0555 /app/scripts/seeded-state ./scripts/seede
 EXPOSE 7600
 USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl --fail --insecure --silent --show-error https://127.0.0.1:7600/health >/dev/null || exit 1
+  CMD curl --fail --insecure --silent --show-error "https://127.0.0.1:${OMNESIS_GATEWAY_PORT:-7600}/health" >/dev/null || exit 1
 ENTRYPOINT ["/app/scripts/seeded-state/entrypoint.sh"]
 CMD ["node", "packages/gateway/dist/index.js"]
 
@@ -136,6 +140,18 @@ USER 10001:10001
 # the WebSocket session it holds with the gateway, which only the gateway can
 # attest to, so a probe from inside this container would assert nothing.
 CMD ["node", "packages/collector/dist/main.js"]
+
+# ── Gateway and collector in one container ────────────────────────────────────
+# The daemons share one durable config directory, including locally scoped
+# collector credentials. The collector's existing local bootstrap flow waits
+# for the gateway and trusts its persisted certificate; no token enters argv.
+FROM gateway-runtime AS combined-runtime
+COPY --chmod=0555 scripts/docker/supervisor.mjs /app/scripts/docker/supervisor.mjs
+EXPOSE 3000 3001 3002 3003
+# tini reaps orphaned provider subprocesses; the supervisor forwards signals
+# to both daemon groups and lets the collector drain before the gateway.
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/scripts/seeded-state/entrypoint.sh"]
+CMD ["node", "/app/scripts/docker/supervisor.mjs"]
 
 # ── Updater ───────────────────────────────────────────────────────────────────
 # `omnesis update` replaces the running containers, which is why it is a

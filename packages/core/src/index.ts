@@ -1278,3 +1278,5 @@ export {
 
 export { browserUrlIdentity } from "./url-normalize.js";
 export type { BrowserUrlIdentitySpec } from "./url-normalize.js";
+
+export { oauthCallbackHost } from "./oauth-callback-host.js";

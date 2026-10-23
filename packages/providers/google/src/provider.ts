@@ -20,6 +20,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import {
   createLogger,
+  oauthCallbackHost,
   CredentialPersistError,
   DEFAULT_CONFIG_DIR,
   MissingCredentialsError,
@@ -55,16 +56,6 @@ export const SCOPES = [
  */
 const DEFAULT_REDIRECT_URI = "http://localhost:3000/oauth2callback";
 const DEFAULT_CALLBACK_PORT = 3000;
-/**
- * Loopback, explicitly.
- *
- * The redirect is followed by a browser on this machine, so nothing outside it
- * ever needs to reach this listener — and binding every interface both exposes
- * the flow on whatever networks the host is on and makes the bind collide with
- * any process holding this port on any single address, even while loopback
- * itself is free.
- */
-const DEFAULT_CALLBACK_HOST = "localhost";
 const DEFAULT_CALLBACK_PATH = "/oauth2callback";
 /** How long the loopback listener waits for the browser before giving up. */
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -567,7 +558,7 @@ function bindCallbackListener(
     }, timeoutMs);
     deadline.unref?.();
 
-    server.listen(port, () => {
+    server.listen(port, oauthCallbackHost("127.0.0.1"), () => {
       bound({
         result,
         close: () => {
@@ -837,7 +828,7 @@ function waitForAuthCode(expectedState: string): Promise<string> {
       }
       reject(err);
     });
-    server.listen(DEFAULT_CALLBACK_PORT, DEFAULT_CALLBACK_HOST);
+    server.listen(DEFAULT_CALLBACK_PORT, oauthCallbackHost());
 
     setTimeout(() => {
       server.close();

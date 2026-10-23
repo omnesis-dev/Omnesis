@@ -122,6 +122,13 @@ fi
 
 for ARG in "$@"; do
   case "$ARG" in
+    config)
+      if [ -n "\${OMNESIS_TEST_OLD_SERVICES:-}" ]; then
+        printf '%s\\n' "$OMNESIS_TEST_OLD_SERVICES"
+      else
+        awk '/^  [a-z-]+:/ { sub(/:$/, "", $1); print $1 }' "$3"
+      fi
+      exit 0 ;;
     pull)
       if [ -n "\${OMNESIS_TEST_PULL_FAIL:-}" ]; then
         [ -z "\${OMNESIS_TEST_PULL_ERROR:-}" ] || printf '%s\\n' "$OMNESIS_TEST_PULL_ERROR" >&2
@@ -286,6 +293,119 @@ afterEach(destroyFixture);
 const QUIET = ["--docker", "--no-model", "--no-keyring", "--version", "9.9.0"];
 
 describe("install.sh --docker: what it puts on this host", () => {
+  test.each(["--combined", "--gateway-only"])(
+    "%s removes only the prior separate collector",
+    (flag) => {
+      const name = `transition-${flag}`;
+      const home = prepareHome(name);
+      const configDir = join(home, ".config", "omnesis");
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        join(configDir, "docker-compose.yml"),
+        "name: old-project\nservices:\n  gateway: {}\n  collector: {}\n",
+      );
+      const run = runInstaller(name, [...QUIET, flag], {
+        OMNESIS_TEST_OLD_SERVICES: "gateway\ncollector",
+      });
+      expect(run.status).toBe(0);
+      expect(run.docker.filter((call) => / (stop|rm) /.test(call))).toEqual([
+        `docker compose -f ${configDir}/docker-compose.yml stop -t 90 collector`,
+        `docker compose -f ${configDir}/docker-compose.yml rm -f collector`,
+      ]);
+      expect(parseYaml(composeAt(run)).services.collector).toBeUndefined();
+    },
+  );
+
+  test("refuses to change a collector-only config into a gateway", () => {
+    const home = prepareHome("refuse-role-move");
+    const configDir = join(home, ".config", "omnesis");
+    mkdirSync(configDir, { recursive: true });
+    const previous = "services:\n  collector: {}\n";
+    writeFileSync(join(configDir, "docker-compose.yml"), previous);
+    const run = runInstaller("refuse-role-move", QUIET, { OMNESIS_TEST_OLD_SERVICES: "collector" });
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("separate OMNESIS_CONFIG_DIR");
+    expect(composeAt(run)).toBe(previous);
+    expect(run.docker.some((call) => / (stop|rm) /.test(call))).toBe(false);
+  });
+
+  test("a root installer keeps daemons unprivileged without recursively changing state", () => {
+    writeExecutable(
+      fixturePath("fake-bin", "id"),
+      '#!/bin/sh\ncase "$1" in -u|-g) echo 0 ;; *) echo root ;; esac\n',
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "chown"),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >> "$OMNESIS_TEST_CHOWN"\n',
+    );
+    const ownershipLog = fixturePath("ownership.log");
+    const run = runInstaller("root-install", QUIET, { OMNESIS_TEST_CHOWN: ownershipLog });
+    expect(run.status).toBe(0);
+    const compose = parseYaml(composeAt(run));
+    expect(compose.services.gateway.user).toBe("10001:10001");
+    expect(compose.services.collector.user).toBe("10001:10001");
+    expect(compose.services.updater.user).toBe("0:0");
+    const ownership = readFileSync(ownershipLog, "utf8");
+    expect(ownership).toContain(`-h 10001:10001 ${run.configDir}`);
+    expect(ownership).not.toMatch(/(^|\s)-[a-zA-Z]*[Rr]/);
+  });
+
+  test("combined topology runs both daemons in the gateway service", () => {
+    const run = runInstaller("combined", [...QUIET, "--combined", "--build"]);
+    expect(run.status).toBe(0);
+    const compose = parseYaml(composeAt(run));
+    expect(Object.keys(compose.services)).toEqual(["gateway", "updater"]);
+    expect(compose.services.gateway.image).toContain("/omnesis-combined:");
+    expect(compose.services.gateway.build.target).toBe("combined-runtime");
+    expect(compose.services.gateway.stop_grace_period).toBe("120s");
+    expect(compose.services.gateway.environment).toContain(
+      "OMNESIS_GATEWAY_URL=https://localhost:7600",
+    );
+    expect(compose.services.gateway.ports).toContain("127.0.0.1:3000:3000");
+    expect(compose.services.updater.environment).toContain(
+      "OMNESIS_GATEWAY_URL=https://gateway:7600",
+    );
+    expect(run.docker.some((call) => / up -d collector$/.test(call))).toBe(false);
+  });
+
+  test("gateway-only omits the collector", () => {
+    const run = runInstaller("gateway-only", [...QUIET, "--gateway-only"]);
+    expect(run.status).toBe(0);
+    expect(Object.keys(parseYaml(composeAt(run)).services)).toEqual(["gateway", "updater"]);
+    expect(run.docker.some((call) => / up -d collector$/.test(call))).toBe(false);
+  });
+
+  test("host networking publishes the configured gateway port directly", () => {
+    const run = runInstaller("host-network", [
+      ...QUIET,
+      "--docker-network",
+      "host",
+      "--port",
+      "17600",
+    ]);
+    expect(run.status).toBe(0);
+    const compose = parseYaml(composeAt(run));
+    expect(compose.services.gateway.network_mode).toBe("host");
+    expect(compose.services.collector.network_mode).toBe("host");
+    for (const service of [compose.services.gateway, compose.services.collector]) {
+      expect(service.init).toBe(true);
+      expect(service.cap_drop).toEqual(["ALL"]);
+      expect(service.security_opt).toEqual(["no-new-privileges:true"]);
+    }
+    expect(compose.services.updater.network_mode).toBe("host");
+    expect(compose.services.gateway.ports).toBeUndefined();
+    expect(compose.services.collector.ports).toBeUndefined();
+    expect(compose.services.gateway.environment).toContain("OMNESIS_GATEWAY_PORT=17600");
+    expect(compose.services.gateway.environment).toContain("OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1");
+    expect(compose.services.collector.environment).toContain(
+      "OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1",
+    );
+    expect(compose.services.collector.environment).toContain(
+      "OMNESIS_GATEWAY_URL=https://localhost:17600",
+    );
+    expect(compose.services.gateway.healthcheck.test.at(-1)).toBe("https://localhost:17600/health");
+  });
+
   test.skipIf(!HAS_PTY)("never offers native Codex or Claude Code setup", () => {
     writeExecutable(fixturePath("fake-bin", "codex"), "#!/bin/sh\nexit 0\n");
     writeExecutable(fixturePath("fake-bin", "claude"), "#!/bin/sh\nexit 0\n");
@@ -323,7 +443,7 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(compose).toContain(`- OMNESIS_CONFIG_DIR=${run.configDir}`);
     // A provider redirects a browser at these, so they stay published.
     for (const port of ["3000:3000", "3001:3001", "3002:3002", "3003:3003"]) {
-      expect(compose).toContain(`- "${port}"`);
+      expect(compose).toContain(`- "127.0.0.1:${port}"`);
     }
     // The socket is the updater's alone, and the updater never starts with the
     // rest of the stack.
@@ -1088,7 +1208,7 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.status).toBe(0);
     const compose = composeAt(run);
     for (const port of [3000, 3001, 3002, 3003]) {
-      expect(compose).toContain(`- "0:${port}"`);
+      expect(compose).toContain(`- "127.0.0.1:0:${port}"`);
       expect(compose).not.toContain(`- "${port}:${port}"`);
     }
   });
@@ -1719,6 +1839,21 @@ describe("install.sh --docker: a certificate the operator supplies", () => {
     expect(run.output).toContain("the pair does not belong together");
   });
 
+  test("invalid TLS preserves the running split topology during a combined transition", () => {
+    const tls = supplyCertificate("transition-invalid-tls");
+    mintCert("transition-other-key");
+    copyFileSync(fixturePath("transition-other-key.key"), tls.keyPath);
+    const previous = "services:\n  gateway: {}\n  collector: {}\n";
+    writeFileSync(join(tls.configDir, "docker-compose.yml"), previous);
+    const run = runInstaller("transition-invalid-tls", [...QUIET, "--combined", ...pair(tls)], {
+      OMNESIS_TEST_OLD_SERVICES: "gateway\ncollector",
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain("the pair does not belong together");
+    expect(composeAt(run)).toBe(previous);
+    expect(run.docker.some((call) => / (stop|rm) /.test(call))).toBe(false);
+  });
+
   test("a native install is told where its own certificate goes instead", () => {
     const run = runInstallerRaw("native-tls", ["--tls-cert", "/x.crt", "--tls-key", "/x.key"]);
     expect(run.status).not.toBe(0);
@@ -1740,6 +1875,13 @@ describe("install.sh --docker: a certificate the operator supplies", () => {
 
 describe("install.sh --docker: the flags it refuses", () => {
   const cases = [
+    [["--combined"], "only meaningful with --docker"],
+    [["--gateway-only"], "only meaningful with --docker"],
+    [["--docker-network", "bridge"], "only meaningful with --docker"],
+    [["--docker", "--combined", "--collector"], "--combined cannot"],
+    [["--docker", "--combined", "--gateway-only"], "--combined cannot"],
+    [["--docker", "--gateway-only", "--collector"], "--gateway-only cannot"],
+    [["--docker", "--docker-network", "invalid"], "must be host or bridge"],
     [["--docker", "--client-only"], "One role per invocation"],
     [["--docker", "--method", "package"], "--method selects how the CLI is installed"],
     [["--docker", "--source-dir", "/tmp/x"], "--source-dir is where a source install"],

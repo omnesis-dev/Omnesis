@@ -1772,8 +1772,8 @@ describe("release.yml verification permissions", () => {
       ],
       [
         "images",
-        "Build ${{ needs.verify.outputs.armed == 'true' && 'and push' || '(no push — not armed)' }}",
-        "needs.verify.outputs.armed == 'true'",
+        "Build ${{ needs.verify.outputs.images_armed == 'true' && 'and push' || '(no push — not armed)' }}",
+        "needs.verify.outputs.images_armed == 'true'",
       ],
     ]) {
       const steps = workflow.jobs[jobName].steps;

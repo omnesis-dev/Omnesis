@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+# Linux Engine only: docker compose -f compose.yaml -f compose.host.yaml up -d
+services:
+  gateway:
+    network_mode: host
+    ports: !reset []
+    environment:
+      OMNESIS_GATEWAY_PORT: ${OMNESIS_PORT:-7600}
+      OMNESIS_OAUTH_CALLBACK_HOST: 127.0.0.1

@@ -1755,7 +1755,7 @@ describe("updateDocker", () => {
         events.push(`awaitHealth ${expected}`);
         return Promise.resolve();
       }),
-      latestPublished: vi.fn(() => Promise.resolve("0.4.2")),
+      latestDockerVersion: vi.fn(() => Promise.resolve("0.4.2")),
       ...overrides,
     });
   }
@@ -1792,9 +1792,9 @@ describe("updateDocker", () => {
   test("the newest published release becomes the image tag", async () => {
     const events: string[] = [];
     const runner = dockerRunner(events);
-    const latestPublished = vi.fn(() => Promise.resolve("0.4.2"));
-    await updateDocker(opts(), dockerDeps(events, runner, { latestPublished }));
-    expect(latestPublished).toHaveBeenCalledWith("latest");
+    const latestDockerVersion = vi.fn(() => Promise.resolve("0.4.2"));
+    await updateDocker(opts(), dockerDeps(events, runner, { latestDockerVersion }));
+    expect(latestDockerVersion).toHaveBeenCalledWith(composeFile);
   });
 
   test("a failed pull records the previous tag again and brings the gateway back", async () => {
@@ -1890,7 +1890,7 @@ describe("updateDocker", () => {
     await expect(
       updateDocker(
         opts({ targetVersion: "0.4.0" }),
-        dockerDeps(events, runner, { latestPublished: undefined }),
+        dockerDeps(events, runner, { latestDockerVersion: undefined }),
       ),
     ).rejects.toMatchObject({ exitCode: EXIT_USER_ERROR });
     expect(events).toEqual([]);
@@ -1903,7 +1903,7 @@ describe("updateDocker", () => {
     const runner = dockerRunner(events);
     const landed = await updateDocker(
       opts(),
-      dockerDeps(events, runner, { latestPublished: () => Promise.resolve("0.4.1") }),
+      dockerDeps(events, runner, { latestDockerVersion: () => Promise.resolve("0.4.1") }),
     );
     expect(landed).toBe("0.4.1");
     expect(events).toContain(`docker compose -f ${composeFile} pull`);
@@ -1920,7 +1920,7 @@ describe("updateDocker", () => {
     const landed = await updateDocker(
       opts(),
       dockerDeps(events, runner, {
-        latestPublished: () => Promise.resolve("0.4.1"),
+        latestDockerVersion: () => Promise.resolve("0.4.1"),
         applyState: state.store,
       }),
     );
@@ -1937,7 +1937,7 @@ describe("updateDocker", () => {
     const landed = await updateDocker(
       opts(),
       dockerDeps(events, runner, {
-        latestPublished: () => Promise.resolve("0.4.1"),
+        latestDockerVersion: () => Promise.resolve("0.4.1"),
         servedVersion: () => Promise.resolve("0.4.1"),
         applyState: state.store,
       }),
@@ -2223,7 +2223,7 @@ describe("updateDocker", () => {
     const runner = dockerRunner(events);
     const landed = await updateDocker(
       opts({ force: true }),
-      dockerDeps(events, runner, { latestPublished: () => Promise.resolve("0.4.1") }),
+      dockerDeps(events, runner, { latestDockerVersion: () => Promise.resolve("0.4.1") }),
     );
     expect(landed).toBe("0.4.1");
     expect(events).toEqual([
@@ -2244,7 +2244,7 @@ describe("updateDocker", () => {
     await updateDocker(
       opts(),
       dockerDeps(events, runner, {
-        latestPublished: () => Promise.resolve("0.4.1"),
+        latestDockerVersion: () => Promise.resolve("0.4.1"),
         servedVersion: () => Promise.resolve("0.4.0"),
       }),
     );
@@ -2357,7 +2357,7 @@ describe("updateDocker", () => {
       const events: string[] = [];
       const runner = dockerRunner(events);
       await expect(
-        updateDocker(opts(), dockerDeps(events, runner, { latestPublished: undefined })),
+        updateDocker(opts(), dockerDeps(events, runner, { latestDockerVersion: undefined })),
       ).rejects.toMatchObject({
         exitCode: EXIT_FAILURE,
         message: expect.stringMatching(/--target-version/u),
@@ -2372,7 +2372,7 @@ describe("updateDocker", () => {
         updateDocker(
           opts(),
           dockerDeps(events, runner, {
-            latestPublished: () => Promise.reject(new Error("HTTP 503")),
+            latestDockerVersion: () => Promise.reject(new Error("HTTP 503")),
           }),
         ),
       ).rejects.toMatchObject({
@@ -2390,7 +2390,7 @@ describe("updateDocker", () => {
       await expect(
         updateDocker(
           opts(),
-          dockerDeps(events, runner, { latestPublished: () => Promise.resolve("latest") }),
+          dockerDeps(events, runner, { latestDockerVersion: () => Promise.resolve("latest") }),
         ),
       ).rejects.toMatchObject({
         exitCode: EXIT_FAILURE,

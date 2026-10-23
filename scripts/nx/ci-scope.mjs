@@ -126,9 +126,10 @@ export function pullRequestScope(files, plan, bundleFiles, projectCount) {
     apple: any(files, appleOnly),
     android: any(files, /^android\//) || plan.bundles.some((name) => name.startsWith("android-")),
     android_render: any(files, /^android\//),
-    docker_image: deploys,
+    docker_image: deploys || any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/),
     docker_smoke:
       deploys ||
+      any(files, /^(?:scripts\/docker\/|compose(?:\.[^/]+)?\.yaml$)/) ||
       any(
         files,
         /^scripts\/(?:docker-(?:install-smoke\.sh|runtime-smoke\.mjs)|lib\/patched-files\.mjs)$/,

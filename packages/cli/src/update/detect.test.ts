@@ -738,12 +738,10 @@ describe("planUpdate", () => {
   });
 
   test("--registry and a non-default --channel are refused on a container install", () => {
-    // A container install does consult a package index for the release number,
-    // so the refusal has to say what --registry does not select rather than
-    // that no npm index is read at all.
+    // Container releases follow the registries declared in Compose.
     expect(planUpdate(docker, flags({ registry: "https://r.example.com" }))).toMatchObject({
       kind: "refuse",
-      message: expect.stringMatching(/OMNESIS_PACKAGE_INDEX_URL/u),
+      message: expect.stringMatching(/Compose project/u),
     });
     expect(planUpdate(docker, flags({ channel: "beta" }))).toMatchObject({
       kind: "refuse",

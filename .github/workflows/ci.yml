@@ -446,6 +446,17 @@ jobs:
           NODE_OPTIONS: "--max-old-space-size=4096"
         run: exec node scripts/run-check.mjs typecheck
 
+      - name: lane [macos-collector-docker-compatibility]
+        # Exercise IPv4 OAuth conflicts and daemon process-group shutdown before
+        # the complete macOS unit suite, so platform regressions surface quickly.
+        run: |
+          exec node scripts/run-check.mjs unit \
+            packages/providers/google/src/provider.test.ts \
+            packages/providers/outlook/src/provider.test.ts \
+            scripts/docker/supervisor.test.mjs
+        env:
+          TZ: UTC
+
       - name: lane [macos-unit]
         # `test:unit` minus `test:unit:smoke` and `test:openclaw`, the two that
         # spawn a real gateway. Both run on Linux for the same target.
