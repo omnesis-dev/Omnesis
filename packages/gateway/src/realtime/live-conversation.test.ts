@@ -62,7 +62,7 @@ describe("configured-agent Live delegation", () => {
     await drain();
     // The delegation's offset is not a transcript watermark; this must not deadlock.
     expect(agent.submit).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ text: "Find today's appointments." }),
+      expect.objectContaining({ stream: true, text: "Find today's appointments." }),
     );
     expect(host.send).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -88,10 +88,26 @@ describe("configured-agent Live delegation", () => {
     );
   });
 
+  it("keeps distinct delegation and transcript identities unambiguous", async () => {
+    const { conversation, agent } = harness();
+    conversation.ready();
+    conversation.receive(input("c", "Check the schedule."));
+    conversation.receive(request("a:b"));
+    await drain();
+    conversation.receive(input("b:c", "Check tomorrow too."));
+    conversation.receive(request("a"));
+    await drain();
+    const calls = vi.mocked(agent.submit).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![0].clientMessageId).not.toBe(calls[1]![0].clientMessageId);
+  });
+
   it("preserves work during overlapping speech and suppresses a superseded spoken result", async () => {
     const { conversation, agent, host } = harness();
     const completions: Array<(value: VoiceTurnResult) => void> = [];
-    agent.submit = vi.fn(() => new Promise((resolve) => completions.push(resolve)));
+    agent.submit = vi.fn(
+      () => new Promise<VoiceTurnResult>((resolve) => completions.push(resolve)),
+    );
     conversation.ready();
     conversation.receive(input("one", "Check the Friday schedule."));
     conversation.receive(request("first"));
@@ -111,6 +127,7 @@ describe("configured-agent Live delegation", () => {
         .filter(([event]) => event.type === "session.commentary.append")
         .map(([event]) => event.content),
     ).toEqual(["Thursday result."]);
+    expect(host.send).toHaveBeenCalledWith(expect.objectContaining({ delegation_id: "second" }));
     expect(agent.cancel).not.toHaveBeenCalled();
   });
 
@@ -137,7 +154,7 @@ describe("configured-agent Live delegation", () => {
     let complete!: (result: VoiceTurnResult) => void;
     agent.submit = vi.fn(
       () =>
-        new Promise((resolve) => {
+        new Promise<VoiceTurnResult>((resolve) => {
           complete = resolve;
         }),
     );
@@ -195,7 +212,9 @@ describe("configured-agent Live delegation", () => {
   it("durably submits post-offset continuations without requiring another delegation", async () => {
     const { conversation, agent, host } = harness();
     const completions: Array<(value: VoiceTurnResult) => void> = [];
-    agent.submit = vi.fn(() => new Promise((resolve) => completions.push(resolve)));
+    agent.submit = vi.fn(
+      () => new Promise<VoiceTurnResult>((resolve) => completions.push(resolve)),
+    );
     conversation.ready();
     conversation.receive({ ...input("first", "Check my schedule "), end_ms: 500 });
     conversation.receive({ ...request("early"), offset_ms: 600 });
@@ -235,13 +254,13 @@ describe("configured-agent Live delegation", () => {
     let complete!: (result: VoiceTurnResult) => void;
     agent.submit = vi.fn(
       () =>
-        new Promise((resolve) => {
+        new Promise<VoiceTurnResult>((resolve) => {
           complete = resolve;
         }),
     );
     conversation.ready();
-    conversation.receive(input("one", "Check the Friday schedule."));
     conversation.receive(request("one"));
+    conversation.receive(input("one", "Check the Friday schedule."));
     await drain();
     conversation.receive(request("two"));
     complete({ messageId: "old", text: "Friday's result.", stopReason: "end_turn" });
@@ -256,7 +275,7 @@ describe("configured-agent Live delegation", () => {
     let reject!: (reason: Error) => void;
     agent.submit = vi.fn(
       () =>
-        new Promise((_resolve, fail) => {
+        new Promise<VoiceTurnResult>((_resolve, fail) => {
           reject = fail;
         }),
     );
@@ -278,7 +297,7 @@ describe("configured-agent Live delegation", () => {
     let complete!: (result: VoiceTurnResult) => void;
     agent.submit = vi.fn(
       () =>
-        new Promise((resolve) => {
+        new Promise<VoiceTurnResult>((resolve) => {
           complete = resolve;
         }),
     );
@@ -296,9 +315,8 @@ describe("configured-agent Live delegation", () => {
     expect(host.send.mock.calls.some(([event]) => event.type === "session.commentary.append")).toBe(
       false,
     );
-    expect(host.send).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "session.thinking.append" }),
-    );
+    expect(agent.submit).toHaveBeenCalledTimes(2);
+    expect(host.send).not.toHaveBeenCalled();
     expect(agent.cancel).not.toHaveBeenCalled();
   });
 });

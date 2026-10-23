@@ -2,8 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it, vi } from "vitest";
-import { createVoiceSession, type ConversationTurnReceipt } from "./voice-session.js";
-import type { ChatMessage } from "@omnesis/agent";
+import {
+  createVoiceSession,
+  withVoiceMutationAdmission,
+  type ConversationTurnReceipt,
+} from "./voice-session.js";
+import { z } from "zod";
+import type { ChatMessage, ToolHandle } from "@omnesis/agent";
 
 function fixture(history: ChatMessage[]) {
   let active = true;
@@ -72,6 +77,67 @@ describe("configured voice session projection", () => {
       (await f.session.submit({ clientMessageId: "delegation-1", text: "Fictional question" }))
         .text,
     ).toBe("");
+  });
+  it.each(["annotate_many", "cite_record"])(
+    "preserves the answer around final %s citations",
+    async (tool) => {
+      const f = fixture([
+        {
+          role: "assistant",
+          parts: [
+            { kind: "text", text: "The invented observatory has three domes." },
+            { kind: "tool_use", toolCallId: "citation", tool, args: {} },
+          ],
+        },
+        {
+          role: "user",
+          parts: [
+            {
+              kind: "tool_result",
+              toolCallId: "citation",
+              result: { kind: "error", code: "fixture", message: "Fixture result" },
+            },
+          ],
+        },
+      ]);
+      expect(
+        (await f.session.submit({ clientMessageId: "citation-answer", text: "Invented question" }))
+          .text,
+      ).toBe("The invented observatory has three domes.");
+    },
+  );
+  it("preserves tool metadata and prototype while wrapping only writes", async () => {
+    const invoke = vi.fn(async () => ({
+      kind: "error" as const,
+      code: "fixture",
+      message: "Fixture result",
+    }));
+    class FixtureTool implements ToolHandle {
+      name = "fixture_write";
+      description = "Invented mutation";
+      schema = z.object({});
+      mutates = true;
+      invoke = invoke;
+      summarize() {
+        return "Invented summary";
+      }
+    }
+    const original = new FixtureTool();
+    const admit = vi.fn(
+      async (
+        _ctx: Parameters<ToolHandle["invoke"]>[1],
+        operation: () => ReturnType<ToolHandle["invoke"]>,
+      ) => operation(),
+    );
+    const wrapped = withVoiceMutationAdmission(original, admit);
+    expect(wrapped).toBeInstanceOf(FixtureTool);
+    expect(wrapped.schema).toBe(original.schema);
+    expect(wrapped.summarize?.({})).toBe("Invented summary");
+    await wrapped.invoke({}, { sessionId: "fixture-session", messageId: "fixture-message" });
+    expect(admit).toHaveBeenCalledOnce();
+    expect(invoke).toHaveBeenCalledOnce();
+    const read = { ...original, mutates: false };
+    expect(withVoiceMutationAdmission(read, admit)).toBe(read);
   });
   it("detaches listeners and rejects fresh submissions without canceling accepted work", async () => {
     const f = fixture([]);

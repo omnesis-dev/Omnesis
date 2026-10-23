@@ -82,7 +82,10 @@ export class LiveConversation {
   private scheduled = false;
   private revision = 0;
   private inputRevision = 0;
-  private currentDelegation: { id: string; offset: number } | undefined;
+  private currentDelegation:
+    | { id: string; offset: number; firstInputRevision?: number }
+    | undefined;
+  private latestTask: { delegationId: string; inputRevision: number } | undefined;
   private readonly seenTranscripts = new Set<string>();
   private readonly seenDelegations = new Set<string>();
   private callerFragments: Array<{ text: string; start: number; end: number; id: string }> = [];
@@ -144,7 +147,19 @@ export class LiveConversation {
       this.seenDelegations.add(id);
       // Delegation IDs provide correlation, not transcript boundaries. Continue
       // forwarding caller speech under the latest correlation until it changes.
-      this.currentDelegation = { id, offset: parsed.data.offset_ms };
+      // ASR may already have admitted this newer input under the previous ID.
+      // Adopt its still-current work instead of dropping its eventual answer or
+      // executing it again when the matching delegation notification arrives.
+      const adoptsCurrentTask =
+        this.currentDelegation?.firstInputRevision !== undefined &&
+        this.currentDelegation.firstInputRevision < this.inputRevision &&
+        this.latestTask?.inputRevision === this.inputRevision;
+      if (adoptsCurrentTask && this.latestTask) this.latestTask.delegationId = id;
+      this.currentDelegation = {
+        id,
+        offset: parsed.data.offset_ms,
+        ...(adoptsCurrentTask ? { firstInputRevision: this.inputRevision } : {}),
+      };
       this.schedule();
     }
   }
@@ -171,12 +186,16 @@ export class LiveConversation {
     this.callerFragments = [];
     const revision = ++this.revision;
     const inputRevision = this.inputRevision;
+    this.currentDelegation.firstInputRevision ??= inputRevision;
+    const task = { delegationId: id, inputRevision };
+    this.latestTask = task;
     const clientMessageId = createHash("sha256")
-      .update(`${this.host.callId}:${id}:${selected.map((fragment) => fragment.id).join(":")}`)
+      .update(JSON.stringify([this.host.callId, id, selected.map((fragment) => fragment.id)]))
       .digest("hex");
     this.host.replyFailure(undefined);
     void this.host.agent
       .submit({
+        stream: true,
         clientMessageId,
         text,
         spokenContext: JSON.stringify({
@@ -195,12 +214,12 @@ export class LiveConversation {
           if (
             inputRevision !== this.inputRevision ||
             this.callerFragments.length > 0 ||
-            this.currentDelegation?.id !== id
+            this.currentDelegation?.id !== task.delegationId
           ) {
             // New speech is not cancellation. Quiet, scoped context avoids forcing
             // an old answer aloud while the voice frontend handles a correction.
             this.say(
-              id,
+              task.delegationId,
               `The prior backend request was ${JSON.stringify(text)}. More caller speech arrived afterward. These are only prior-request results; delegate any changed substantive request before answering it. Prior result: ${result.text || "No verified answer is available."}`,
               "session.thinking.append",
             );
@@ -209,15 +228,18 @@ export class LiveConversation {
           if (result.failure) {
             const detail = terminalCallError(result.failure, false);
             this.host.replyFailure(detail);
-            this.say(id, detail.message);
+            this.say(task.delegationId, detail.message);
           } else if (result.stopReason === "canceled") {
-            this.say(id, "The agent's work was stopped. No further result is available.");
+            this.say(
+              task.delegationId,
+              "The agent's work was stopped. No further result is available.",
+            );
           } else if (result.text) {
-            this.say(id, result.text);
+            this.say(task.delegationId, result.text);
           } else {
             const detail = callError("provider_error", false);
             this.host.replyFailure(detail);
-            this.say(id, detail.message);
+            this.say(task.delegationId, detail.message);
           }
         },
         () => {
@@ -225,12 +247,12 @@ export class LiveConversation {
           if (
             inputRevision !== this.inputRevision ||
             this.callerFragments.length > 0 ||
-            this.currentDelegation?.id !== id
+            this.currentDelegation?.id !== task.delegationId
           )
             return;
           const detail = callError("provider_error", false);
           this.host.replyFailure(detail);
-          this.say(id, detail.message);
+          this.say(task.delegationId, detail.message);
         },
       )
       .catch(() => this.host.fail(callError("connection_error")));

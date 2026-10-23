@@ -4,6 +4,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { childEventHooks, type ChatBackend, type TurnInput } from "@omnesis/agent";
 import { LiveVoiceService } from "../realtime/live-service.js";
@@ -175,6 +176,223 @@ async function* researchedAnswer(
 }
 
 describe("configured agent voice lease", () => {
+  it("durably coalesces streamed deltas into one owned pending turn without losing spacing or duplicates", async () => {
+    const reading = deferred();
+    const release = deferred();
+    const f = await fixture(async function* (input) {
+      if (input.userMessage === "Held invented research") {
+        reading.resolve();
+        await release.promise;
+      }
+      yield* answer(input);
+    });
+    const voice = await f.service.openVoiceSession("token:fixture");
+    const held = voice.submit({ ...submit("held", "Held invented research"), stream: true });
+    await reading.promise;
+    const chunks = Array.from({ length: 70 }, (_, index) => ` word${index}`);
+    const pending = chunks.map((text, index) =>
+      voice.submit({ ...submit(`fragment-${index}`, text), stream: true }),
+    );
+    const duplicate = voice.submit({ ...submit("fragment-8", chunks[8]!), stream: true });
+    await vi.waitFor(() =>
+      expect(f.service.conversationControls(voice.sessionId).queuedMessages[0]?.text).toBe(
+        chunks.join(""),
+      ),
+    );
+    expect(f.service.conversationControls(voice.sessionId).queuedMessages).toHaveLength(1);
+    expect((await f.store.load(voice.sessionId))?.controls?.submissions).toHaveLength(2);
+    await voice.close();
+    release.resolve();
+    await held;
+    const results = await Promise.all([...pending, duplicate]);
+    expect(new Set(results.map((result) => result.messageId)).size).toBe(1);
+    expect(f.inputs).toHaveLength(2);
+    expect(f.inputs[1]?.userMessage.trim()).toBe(chunks.join("").trim());
+    await f.service.sendMessage("token:fixture", voice.sessionId, "Continue in text").completion;
+    expect(f.inputs).toHaveLength(3);
+  });
+  it("starts a fresh streamed receipt after prior pending work becomes running", async () => {
+    const started = deferred();
+    const release = deferred();
+    const f = await fixture(async function* (input) {
+      if (input.userMessage === "First invented request") {
+        started.resolve();
+        await release.promise;
+      }
+      yield* answer(input);
+    });
+    const voice = await f.service.openVoiceSession("token:fixture");
+    const first = voice.submit({ ...submit("first", "First invented request"), stream: true });
+    await started.promise;
+    const second = voice.submit({ ...submit("second", "Second invented request"), stream: true });
+    await vi.waitFor(() =>
+      expect(f.service.conversationControls(voice.sessionId).queuedMessages).toHaveLength(1),
+    );
+    expect(f.service.conversationControls(voice.sessionId).queuedMessages[0]?.id).toBe("second");
+    release.resolve();
+    expect((await first).messageId).not.toBe((await second).messageId);
+    expect(f.inputs.map((input) => input.userMessage)).toEqual([
+      "First invented request",
+      "Second invented request",
+    ]);
+    await voice.close();
+  });
+  it("cancels a superseded voice batch only at the mutation boundary", async () => {
+    const read = deferred();
+    const reading = deferred();
+    const write = vi.fn(async () => ({
+      kind: "error" as const,
+      code: "fixture",
+      message: "Admitted fixture write",
+    }));
+    let abortedBeforeWrite = true;
+    const f = await fixture(async function* (input, signal) {
+      if (input.userMessage === "Original fictional request") {
+        reading.resolve();
+        await read.promise;
+        abortedBeforeWrite = signal.aborted;
+        const tool = input.tools.find((candidate) => candidate.name === "fixture_write")!;
+        await tool.invoke(
+          {},
+          {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            caller: input.caller,
+            abortSignal: signal,
+          },
+        );
+      }
+      yield* answer(input);
+    });
+    f.service.setTaskToolsProvider(() => [
+      {
+        name: "fixture_write",
+        description: "Invented write",
+        schema: z.object({}),
+        mutates: true,
+        invoke: write,
+      },
+    ]);
+    const voice = await f.service.openVoiceSession("token:fixture");
+    const first = voice.submit(submit("original", "Original fictional request"));
+    await reading.promise;
+    const correction = voice.submit(submit("correction", "Corrected fictional request"));
+    await vi.waitFor(() =>
+      expect(
+        f.service
+          .conversationControls(voice.sessionId)
+          .queuedMessages.some((item) => item.id === "correction"),
+      ).toBe(true),
+    );
+    read.resolve();
+    expect((await first).stopReason).toBe("canceled");
+    expect((await correction).stopReason).toBe("end_turn");
+    expect(abortedBeforeWrite).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+    await voice.close();
+  });
+  it("keeps ordinary text mutation admission unchanged when later text is queued", async () => {
+    const reading = deferred();
+    const release = deferred();
+    const write = vi.fn(async () => ({
+      kind: "error" as const,
+      code: "fixture",
+      message: "Invented write",
+    }));
+    const f = await fixture(async function* (input, signal) {
+      if (input.userMessage === "Original text request") {
+        reading.resolve();
+        await release.promise;
+        await input.tools
+          .find((candidate) => candidate.name === "fixture_write")!
+          .invoke(
+            {},
+            {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+              caller: input.caller,
+              abortSignal: signal,
+            },
+          );
+      }
+      yield* answer(input);
+    });
+    f.service.setTaskToolsProvider(() => [
+      {
+        name: "fixture_write",
+        description: "Invented write",
+        schema: z.object({}),
+        mutates: true,
+        invoke: write,
+      },
+    ]);
+    const created = await f.service.createSession("token:fixture");
+    await f.service.submitMessage("token:fixture", created.sessionId, {
+      ...submit("original", "Original text request"),
+      mode: "queue",
+    });
+    await reading.promise;
+    await f.service.submitMessage("token:fixture", created.sessionId, {
+      ...submit("later", "Later text request"),
+      mode: "queue",
+    });
+    release.resolve();
+    await vi.waitFor(() =>
+      expect(f.service.conversationControls(created.sessionId).busy).toBe(false),
+    );
+    expect(write).toHaveBeenCalledOnce();
+    expect(f.inputs).toHaveLength(2);
+  });
+  it("admits an unchanged voice write once and releases the controls lock before it completes", async () => {
+    const writing = deferred();
+    const release = deferred();
+    const write = vi.fn(async () => {
+      writing.resolve();
+      await release.promise;
+      return { kind: "error" as const, code: "fixture", message: "Fixture write completed" };
+    });
+    const f = await fixture(async function* (input, signal) {
+      if (input.userMessage === "Original fictional request") {
+        await input.tools
+          .find((candidate) => candidate.name === "fixture_write")!
+          .invoke(
+            {},
+            {
+              sessionId: input.sessionId,
+              messageId: input.messageId,
+              caller: input.caller,
+              abortSignal: signal,
+            },
+          );
+      }
+      yield* answer(input);
+    });
+    f.service.setTaskToolsProvider(() => [
+      {
+        name: "fixture_write",
+        description: "Invented write",
+        schema: z.object({}),
+        mutates: true,
+        invoke: write,
+      },
+    ]);
+    const voice = await f.service.openVoiceSession("token:fixture");
+    const first = voice.submit(submit("original", "Original fictional request"));
+    await writing.promise;
+    const correction = voice.submit(submit("correction", "Corrected fictional request"));
+    await vi.waitFor(() =>
+      expect(
+        f.service
+          .conversationControls(voice.sessionId)
+          .queuedMessages.some((item) => item.id === "correction"),
+      ).toBe(true),
+    );
+    release.resolve();
+    expect((await first).stopReason).toBe("end_turn");
+    expect((await correction).stopReason).toBe("end_turn");
+    expect(write).toHaveBeenCalledOnce();
+    await voice.close();
+  });
   it("runs the configured model with ordinary prompt/tools/spend and keeps text/voice/text history", async () => {
     const f = await fixture();
     const created = await f.service.createSession("token:fixture", {
@@ -313,17 +531,17 @@ describe("configured agent voice lease", () => {
     cleanups.unshift(async () => {
       await live.dispose();
     });
-    const answer = await live.create("token:fixture", "fixture-token", {
+    const liveAnswer = await live.create("token:fixture", "fixture-token", {
       sdp: "fixture-offer",
       clientSessionId: "22222222-2222-4222-8222-222222222222",
       conversationId: initial.sessionId,
     });
-    expect(answer).toMatchObject({
+    expect(liveAnswer).toMatchObject({
       conversationId: initial.sessionId,
       model: "configured-model",
       backend: "configured-backend",
     });
-    live.ready("token:fixture", "fixture-token", answer.id);
+    live.ready("token:fixture", "fixture-token", liveAnswer.id);
     callbacks?.onEvent({
       type: "session.input_transcript.delta",
       event_id: "fixture-input",
@@ -341,13 +559,14 @@ describe("configured agent voice lease", () => {
     );
     expect(
       sent
-        .filter((command) => command.type === "session.commentary.append")
-        .map((command) => command.content)
+        .flatMap((command) =>
+          command.type === "session.commentary.append" ? [command.content] : [],
+        )
         .join(" "),
     ).toContain("Fictional verified answer");
     expect(f.inputs).toHaveLength(2);
     expect(f.events.some((event) => event.type === "agent.citation")).toBe(true);
-    expect(await live.end("token:fixture", "fixture-token", answer.id)).toMatchObject({
+    expect(await live.end("token:fixture", "fixture-token", liveAnswer.id)).toMatchObject({
       ended: true,
       usageConfirmed: true,
     });

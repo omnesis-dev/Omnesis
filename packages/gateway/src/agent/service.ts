@@ -24,6 +24,7 @@
 import {
   createVoiceSession,
   voiceTranscriptModelNote,
+  withVoiceMutationAdmission,
   type VoiceAgentSession,
   type ConversationTurnReceipt,
 } from "./voice-session.js";
@@ -42,6 +43,7 @@ import {
   type AgentMessageEndEvent,
   type AgentProviderFailureDetail,
   type AgentTerminalFailure,
+  type ToolResult,
   type AgentUsage,
   type CapabilityRole,
   type RateLimitPatience,
@@ -981,6 +983,14 @@ export class AgentService {
   private readonly listeners = new Map<CallerId, Set<AgentEventListener>>();
   private readonly realtimeOwners = new Map<string, symbol>();
   private readonly voiceOwners = new Map<string, symbol>();
+  private readonly voiceSubmissionIds = new Map<string, Set<string>>();
+  private readonly voiceMutationBatches = new Map<
+    string,
+    {
+      messageId?: string;
+      admissionRevision: number;
+    }
+  >();
   private readonly sessionObservers = new Map<string, Set<(event: AgentEvent) => void>>();
   /** Destructive or metadata mutations that must exclude resumes and in-flight turns. */
   private readonly answerDeleteLocks = new Set<string>();
@@ -1653,7 +1663,32 @@ export class AgentService {
     // tools populate has no viewer. Withholding them removes several model
     // rounds from every spoken turn; the trade, accepted deliberately, is that
     // reopening a voice conversation in the app shows no Timeline.
-    return profile === "voice" ? selectNonCitationTools(base) : base;
+    const tools = profile === "voice" ? selectNonCitationTools(base) : base;
+    return tools.map((handle) =>
+      withVoiceMutationAdmission(handle, (ctx, invoke) => {
+        const batch = this.voiceMutationBatches.get(sessionId);
+        if (!batch) return invoke();
+        return this.controls.admitOperation(sessionId, () => {
+          const stopped: ToolResult = {
+            kind: "error",
+            code: "canceled",
+            message: "The voice request was superseded before this action started.",
+          };
+          if (
+            this.voiceMutationBatches.get(sessionId) !== batch ||
+            batch.messageId !== ctx.messageId ||
+            ctx.abortSignal?.aborted
+          )
+            return Promise.resolve(stopped);
+          const newerInput = this.controls.admissionRevision(sessionId) !== batch.admissionRevision;
+          if (newerInput) {
+            this.requireSession(sessionId).session.cancel("system");
+            return Promise.resolve(stopped);
+          }
+          return invoke();
+        });
+      }),
+    );
   }
 
   /**
@@ -3580,25 +3615,65 @@ export class AgentService {
       attached,
       closedError: () => new AgentError("session_busy", "voice call ended"),
       subscribe: (listener) => this.observeSession(sessionId, listener),
-      accept: async (input, admit, accepted) => {
+      accept: async (input, admit, accepted, appendToPending) => {
         if (entry.meta.terminalFailure)
           throw new AgentError("context_window_exceeded", entry.meta.terminalFailure.message);
-        const submission = submissionInputSchema.parse({ ...input, mode: "queue" });
-        await this.controls.submit(sessionId, submission, callerId, {
-          admit,
-          accepted,
-          answerPendingClarification: true,
-        });
-        this.touch(sessionId);
+        const { stream, ...message } = input;
+        const submission = submissionInputSchema.parse({ ...message, mode: "queue" });
+        if (stream) submission.text = input.text;
+        try {
+          const result = await this.controls.submit(sessionId, submission, callerId, {
+            admit,
+            ...(stream ? { appendToPending } : {}),
+            accepted: (actualId) => {
+              let ids = this.voiceSubmissionIds.get(sessionId);
+              if (!ids) {
+                ids = new Set();
+                this.voiceSubmissionIds.set(sessionId, ids);
+              }
+              ids.add(actualId);
+              accepted(actualId);
+            },
+            answerPendingClarification: true,
+          });
+          this.touch(sessionId);
+          return result.submission.id;
+        } catch (error) {
+          this.forgetSettledVoiceSubmissions(sessionId);
+          throw error;
+        }
       },
-      wait: (id) => this.controls.waitForResult(sessionId, id),
-      cancel: (ids) => this.controls.cancelSubmitted(sessionId, ids),
+      wait: async (id) => {
+        try {
+          return await this.controls.waitForResult(sessionId, id);
+        } finally {
+          this.forgetSettledVoiceSubmissions(sessionId);
+        }
+      },
+      cancel: async (ids) => {
+        try {
+          await this.controls.cancelSubmitted(sessionId, ids);
+        } finally {
+          this.forgetSettledVoiceSubmissions(sessionId);
+        }
+      },
       release: () => {
         if (this.voiceOwners.get(sessionId) !== owner) return;
         this.voiceOwners.delete(sessionId);
         this.controls.kick(sessionId);
       },
     });
+  }
+
+  private forgetSettledVoiceSubmissions(sessionId: string): void {
+    const ids = this.voiceSubmissionIds.get(sessionId);
+    if (!ids) return;
+    const state = this.sessions.get(sessionId)?.meta.controls;
+    for (const id of ids) {
+      const item = state?.submissions.find((candidate) => candidate.id === id);
+      if (!item || item.status === "completed" || item.status === "failed") ids.delete(id);
+    }
+    if (ids.size === 0) this.voiceSubmissionIds.delete(sessionId);
   }
 
   private async runSubmittedTurn(
@@ -3608,6 +3683,15 @@ export class AgentService {
   ): Promise<ConversationTurnReceipt | void> {
     const entry = this.requireSession(id);
     const historyStart = entry.session.historySnapshot().length;
+    const voiceOrigin =
+      submissionIds.some((key) => this.voiceSubmissionIds.get(id)?.has(key)) ||
+      submission.spokenContext !== undefined;
+    const mutationBatch: { messageId?: string; admissionRevision: number } | undefined = voiceOrigin
+      ? {
+          admissionRevision: this.controls.admissionRevision(id),
+        }
+      : undefined;
+    if (mutationBatch) this.voiceMutationBatches.set(id, mutationBatch);
     let messageId: string | undefined;
     let terminal: AgentMessageEndEvent | undefined;
     const unsubscribe = this.observeSession(id, (event) => {
@@ -3622,6 +3706,7 @@ export class AgentService {
         submissionIds,
       });
       messageId = started.messageId;
+      if (mutationBatch) mutationBatch.messageId = messageId;
       const completions = [...(this.activeTurnCompletions.get(id) ?? [])];
       const research = this.deepResearchRuns.get(id);
       if (research) completions.push(research.completion);
@@ -3639,6 +3724,10 @@ export class AgentService {
       };
     } finally {
       unsubscribe();
+      if (mutationBatch && this.voiceMutationBatches.get(id) === mutationBatch)
+        this.voiceMutationBatches.delete(id);
+      for (const key of submissionIds) this.voiceSubmissionIds.get(id)?.delete(key);
+      this.forgetSettledVoiceSubmissions(id);
     }
   }
 
@@ -4206,6 +4295,8 @@ export class AgentService {
   async dispose(): Promise<void> {
     this.disposing = true;
     this.voiceOwners.clear();
+    this.voiceSubmissionIds.clear();
+    this.voiceMutationBatches.clear();
     // Cancel every live child sub-agent first so a long child turn
     // doesn't keep the loop alive past SIGTERM.
     for (const [, set] of this.childSessions) {

@@ -51,6 +51,16 @@ visible-history projection seeds the speech frontend. Ending media releases its
 lease without canceling accepted work; explicit Stop and authority revocation
 cancel only submissions owned by that lease.
 
+Before a voice-origin turn starts a mutating tool, admission shares the
+conversation controls' acceptance lock. Newer queued input stops the superseded
+turn at that boundary; an operation already admitted retains its normal
+cancellation semantics. Read-only work continues without a second execution
+queue. Transcript deltas append only to an unstarted submission owned by the
+voice lease; fragment IDs share that canonical receipt without consuming another
+ordinary queue slot. Each append advances the admission revision checked before
+mutations. Citation tools decorate the canonical answer, so speech preserves answer
+text around citations while discarding preambles before further research.
+
 Live media uses WebRTC to the provider, with gateway-owned authenticated signaling
 and sideband control. A separate versioned optional capability preserves the legacy
 Realtime transport. The lifecycle stream carries safe call status and errors, not

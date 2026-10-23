@@ -31,6 +31,10 @@ settings:
     MARKETING_VERSION: "0.6.0"
     CURRENT_PROJECT_VERSION: "330"
     TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad
+    # The pinned WebRTC binary has an arm64 simulator slice. Apply this
+    # consistently to apps, hosted tests and their embedded iOS targets;
+    # physical-device and watchOS architectures retain Xcode's defaults.
+    "ARCHS[sdk=iphonesimulator*]": arm64
     SWIFT_STRICT_CONCURRENCY: targeted
     # Point at our custom Info.plist + entitlements (instead of letting
     # XcodeGen regenerate defaults).

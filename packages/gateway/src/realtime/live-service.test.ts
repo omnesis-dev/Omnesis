@@ -10,7 +10,7 @@ import { LiveVoiceService } from "./live-service.js";
 import { mountLiveVoiceRoutes } from "./live-route.js";
 import type { AppEnv } from "../http/routes/types.js";
 import type { LiveProvider, LiveProviderCallbacks } from "./live-provider.js";
-import type { VoiceAgentSession } from "../agent/voice-session.js";
+import type { VoiceAgentSession, VoiceTurnResult } from "../agent/voice-session.js";
 
 const owner = "token:00000000-0000-4000-8000-000000000002";
 const token = "fixture-token";
@@ -53,7 +53,7 @@ function harness() {
   const openVoiceSession = vi.fn(() => Promise.resolve(agent));
   const recordUsage = vi.fn(() => Promise.resolve());
   const agentService = { openVoiceSession };
-  const service = new LiveVoiceService({
+  const service: LiveVoiceService = new LiveVoiceService({
     backend: () => "voice-provider",
     getApiKey: () => "PRIVATE_PROVIDER_KEY",
     getAgent: () => (agentAvailable ? agentService : undefined),
@@ -224,7 +224,7 @@ describe("Live configured-agent lifecycle", () => {
     let finish!: (value: { messageId: string; text: string; stopReason: "end_turn" }) => void;
     h.agent.submit = vi.fn(
       () =>
-        new Promise((resolve) => {
+        new Promise<VoiceTurnResult>((resolve) => {
           finish = resolve;
         }),
     );

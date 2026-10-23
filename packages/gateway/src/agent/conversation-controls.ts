@@ -91,6 +91,7 @@ const log = createLogger("gateway:agent").child("controls");
 
 /** Serializes acceptance and start barriers; the conversation owns durable state. */
 export class ConversationControls {
+  private readonly revisions = new WeakMap<ConversationControlState, number>();
   private readonly tails = new Map<string, Promise<unknown>>();
   private readonly running = new Map<string, Promise<ConversationTurnReceipt | undefined>>();
   private readonly resultWaiters = new Map<
@@ -189,6 +190,16 @@ export class ConversationControls {
     });
   }
 
+  /** Admit synchronously with queue acceptance, then await tool work outside the lock. */
+  async admitOperation<T>(id: string, start: () => Promise<T>): Promise<T> {
+    const admitted = await this.lock(id, async () => ({ execution: start() }));
+    return admitted.execution;
+  }
+
+  admissionRevision(id: string): number {
+    return this.revisions.get(this.host.state(id)) ?? 0;
+  }
+
   snapshot(id: string): ConversationControlsSnapshot {
     const state = this.host.state(id);
     return structuredClone({
@@ -208,7 +219,8 @@ export class ConversationControls {
     options: {
       admit?: () => boolean;
       answerPendingClarification?: boolean;
-      accepted?: () => void;
+      accepted?: (submissionId: string) => void;
+      appendToPending?: ReadonlySet<string>;
     } = {},
   ): Promise<ConversationControlsSnapshot & { submission: ConversationSubmission }> {
     const submission = await this.lock(id, async () => {
@@ -230,13 +242,52 @@ export class ConversationControls {
             "This message ID was already used for another message.",
           );
         }
-        options.accepted?.();
+        options.accepted?.(prior.id);
         return structuredClone(prior);
       }
       if (input.clarificationId && state.pendingClarification?.id !== input.clarificationId) {
         throw new ConversationControlError(
           "This question has already been answered or replaced. Refresh the conversation.",
         );
+      }
+      const pending = options.appendToPending
+        ? [...state.submissions]
+            .reverse()
+            .find((item) => item.status === "queued" && options.appendToPending!.has(item.id))
+        : undefined;
+      if (pending) {
+        const queuedLength = state.submissions
+          .filter((item) => item.status === "queued")
+          .map((item) => item.text)
+          .join("\n\n").length;
+        if (queuedLength + input.text.length > 10_000)
+          throw new ConversationControlError(
+            "The queued message is too long. Wait for it to send before adding more.",
+          );
+        const previous = {
+          text: pending.text,
+          spokenContext: pending.spokenContext,
+          clarificationId: pending.clarificationId,
+        };
+        const question = state.pendingClarification;
+        if (options.answerPendingClarification && question) {
+          pending.clarificationId = question.id;
+          delete state.pendingClarification;
+        }
+        pending.text += input.text;
+        if (input.spokenContext !== undefined) pending.spokenContext = input.spokenContext;
+        options.accepted?.(pending.id);
+        try {
+          await this.host.persist(id);
+        } catch (error) {
+          pending.text = previous.text;
+          pending.spokenContext = previous.spokenContext;
+          pending.clarificationId = previous.clarificationId;
+          if (question) state.pendingClarification = question;
+          throw error;
+        }
+        this.revisions.set(state, (this.revisions.get(state) ?? 0) + 1);
+        return structuredClone(pending);
       }
       // Bound unstarted work without discarding idempotency receipts for completed turns.
       if (state.submissions.filter((s) => s.status === "queued").length >= 32) {
@@ -263,7 +314,7 @@ export class ConversationControls {
       if (next.clarificationId || input.mode === "interrupt") delete state.pendingClarification;
       if (input.mode === "interrupt" || input.clarificationId) state.submissions.unshift(next);
       else state.submissions.push(next);
-      options.accepted?.();
+      options.accepted?.(next.id);
       try {
         await this.host.persist(id);
       } catch (error) {
@@ -271,6 +322,7 @@ export class ConversationControls {
         if (previousQuestion) state.pendingClarification = previousQuestion;
         throw error;
       }
+      this.revisions.set(state, (this.revisions.get(state) ?? 0) + 1);
       // Acceptance is durable before cancellation; a lost HTTP response is safely retryable.
       if (input.mode === "interrupt") this.host.cancel(id);
       return structuredClone(next);
