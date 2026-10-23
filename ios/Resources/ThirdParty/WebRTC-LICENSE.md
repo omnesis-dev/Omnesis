@@ -1,5 +1,4 @@
 # webrtc
-
 ```
 Copyright (c) 2011, The WebRTC project authors. All rights reserved.
 
@@ -34,7 +33,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # abseil-cpp
-
 ```
 
                                  Apache License
@@ -243,7 +241,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # boringssl
-
 ```
 
                                  Apache License
@@ -487,7 +484,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # dav1d
-
 ```
 Copyright © 2018, VideoLAN and dav1d authors
 All rights reserved.
@@ -516,7 +512,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # fft
-
 ```
 /*
  * Copyright(c)1995,97 Mark Olesen &lt;olesen@me.QueensU.CA&gt;
@@ -547,7 +542,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # fiat
-
 ```
 The Apache License, Version 2.0 (Apache-2.0)
 
@@ -568,7 +562,6 @@ limitations under the License.
 ```
 
 # g711
-
 ```
 /*
  * SpanDSP - a series of DSP components for telephony
@@ -588,7 +581,6 @@ limitations under the License.
 ```
 
 # g722
-
 ```
 /*
  * SpanDSP - a series of DSP components for telephony
@@ -614,7 +606,6 @@ limitations under the License.
 ```
 
 # libaom
-
 ```
 Copyright (c) 2016, Alliance for Open Media. All rights reserved.
 
@@ -647,7 +638,6 @@ POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # libc++
-
 ```
 ==============================================================================
 The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
@@ -964,7 +954,6 @@ THE SOFTWARE.
 ```
 
 # libc++abi
-
 ```
 ==============================================================================
 The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
@@ -1281,29 +1270,28 @@ THE SOFTWARE.
 ```
 
 # libsrtp
-
 ```
 /*
- *
+ *	
  * Copyright (c) 2001-2017 Cisco Systems, Inc.
  * All rights reserved.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- *
+ * 
  *   Redistributions of source code must retain the above copyright
  *   notice, this list of conditions and the following disclaimer.
- *
+ * 
  *   Redistributions in binary form must reproduce the above
  *   copyright notice, this list of conditions and the following
  *   disclaimer in the documentation and/or other materials provided
  *   with the distribution.
- *
+ * 
  *   Neither the name of the Cisco Systems, Inc. nor the names of its
  *   contributors may be used to endorse or promote products derived
  *   from this software without specific prior written permission.
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
  * &quot;AS IS&quot; AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
@@ -1322,7 +1310,6 @@ THE SOFTWARE.
 ```
 
 # libvpx
-
 ```
 Copyright (c) 2010, The WebM Project authors. All rights reserved.
 
@@ -1359,7 +1346,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # libyuv
-
 ```
 Copyright 2011 The LibYuv Project Authors. All rights reserved.
 
@@ -1394,7 +1380,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # llvm-libc
-
 ```
 ==============================================================================
 The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
@@ -1678,7 +1663,6 @@ SOFTWARE.
 ```
 
 # ooura
-
 ```
 /*
  * http://www.kurims.kyoto-u.ac.jp/~ooura/fft.html
@@ -1692,7 +1676,6 @@ SOFTWARE.
 ```
 
 # opus
-
 ```
 Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
                     Jean-Marc Valin, Timothy B. Terriberry,
@@ -1742,7 +1725,6 @@ https://datatracker.ietf.org/ipr/1526/
 ```
 
 # perfetto
-
 ```
                                  Apache License
                            Version 2.0, January 2004
@@ -2033,7 +2015,6 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # pffft
-
 ```
 Copyright (c) 2013  Julien Pommier ( pommier@modartt.com )
 
@@ -2084,7 +2065,6 @@ SOFTWARE.
 ```
 
 # protobuf
-
 ```
 Copyright 2008 Google Inc.  All rights reserved.
 
@@ -2122,7 +2102,6 @@ support library is itself covered by the above license.
 ```
 
 # rnnoise
-
 ```
 Copyright (c) 2017, Mozilla
 Copyright (c) 2007-2017, Jean-Marc Valin
@@ -2159,7 +2138,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 # spl_sqrt_floor
-
 ```
 /*
  * Written by Wilco Dijkstra, 1996. The following email exchange establishes the
@@ -2190,3 +2168,4 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 ```
+
