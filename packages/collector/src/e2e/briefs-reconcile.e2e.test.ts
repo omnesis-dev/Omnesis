@@ -598,12 +598,24 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     } finally {
       writer.close();
     }
-    await waitFor("completed confirmation source review", () =>
-      db.prepare("SELECT 1 FROM knowledge_work WHERE id=? AND status='completed'").get(reviewId)
-        ? true
-        : null,
-    );
+    // Frontier completion settles the work before the model turn is finalized.
+    // Observe the exact review's run, rather than only its completed work receipt.
+    const completedReview = await waitFor("completed confirmation source review", () => {
+      const review = db
+        .prepare<[string, string], { runId: string }>(
+          `SELECT batch.run_id AS runId FROM knowledge_work work
+           JOIN knowledge_batches batch ON batch.id=work.batch_id
+           JOIN cognition_runs run ON run.id=batch.run_id
+           WHERE work.id=? AND work.subject_kind='source' AND work.subject_id=?
+           AND work.status='completed' AND run.status='completed'`,
+        )
+        .get(reviewId, fulfilmentDocId);
+      return review && completedSourceRuns(fulfilmentDocId).length >= 2 ? review : null;
+    });
     expect(completedSourceRuns(fulfilmentDocId).length).toBeGreaterThanOrEqual(2);
+    expect(completedSourceRuns(fulfilmentDocId).map((run) => run.id)).toContain(
+      completedReview.runId,
+    );
     expect(
       server.calls.filter(
         (call) =>
