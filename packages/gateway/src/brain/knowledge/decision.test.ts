@@ -68,7 +68,8 @@ describe("knowledge decision scores", () => {
         expect(question.instructions).toContain(
           "Apart from such routine status notifications, where evidence supplies a concrete personal",
         );
-        expect((question as { criteria: string[] }).criteria[0]).toContain(
+        if (question.type !== "score") throw new Error("discovery is a score question");
+        expect(question.criteria[0]).toContain(
           "a routine machine-generated status notification that changes the state of nothing the owner tracks",
         );
         expect(question.instructions).toContain("recipient's existing ownership or account");
