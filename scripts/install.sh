@@ -566,6 +566,9 @@ cleanup_temp_files() {
   if [ -n "${SOURCE_CHECKOUT_TMP:-}" ] && [ -d "$SOURCE_CHECKOUT_TMP" ]; then
     rm -rf "$SOURCE_CHECKOUT_TMP"
   fi
+  if [ -n "${NPM_TRUST_DIR:-}" ] && [ -d "$NPM_TRUST_DIR" ]; then
+    rm -rf "$NPM_TRUST_DIR"
+  fi
   if [ -n "${INSTALL_UPDATE_HEARTBEAT_PID:-}" ]; then
     kill "$INSTALL_UPDATE_HEARTBEAT_PID" >/dev/null 2>&1 || true
     wait "$INSTALL_UPDATE_HEARTBEAT_PID" 2>/dev/null || true
@@ -762,6 +765,7 @@ node_install_compatible() {
 }
 
 ensure_node() {
+  : "${NPM_TRUST_DIR:=$(mktemp -d)}"
   NODE_INSTALL_REQUIREMENT="${1:-runtime}"
   if [ "$NODE_INSTALL_REQUIREMENT" = source ]; then
     NODE_INSTALL_RANGE=">=24.16.0 <25 || >=26.1.0 (source development dependencies)"
@@ -968,6 +972,36 @@ require_source_build_memory() {
   fail "Building Omnesis from source needs about 3.5 GB of memory, and this machine can use ${SOURCE_BUILD_MEMORY_MB} MB. Install on a machine with more memory, or, if this one has swap to spare, re-run with OMNESIS_BUILD_MEMORY_MB=4096 to build anyway."
 }
 
+
+# npm reaches the registry with Node's bundled CA store and checks no
+# revocation, so a root Mozilla has removed from NSS stays trusted by npm until
+# Node ships a newer store. Every npm the installer runs preloads a filter that
+# drops those roots (the set in packages/core/src/tls-distrust.ts, which a test
+# holds this list to). It filters the default store only, so a ca or cafile
+# the user configured for npm still wins. `npm run` reaches no registry, so a
+# build keeps exactly the NODE_OPTIONS it was given.
+npm() {
+  [ "${1:-}" != run ] || { command npm "$@"; return; }
+  # Private (0700). ensure_node makes it first, in the installer's own shell,
+  # so cleanup_temp_files can remove it; this covers an npm before that.
+  : "${NPM_TRUST_DIR:=$(mktemp -d)}"
+  NPM_TRUST_PRELOAD="$NPM_TRUST_DIR/distrust-roots.mjs"
+  [ -f "$NPM_TRUST_PRELOAD" ] || cat >"$NPM_TRUST_PRELOAD" <<'EOF'
+import { createHash } from "node:crypto";
+import tls from "node:tls";
+const distrusted = new Set([
+  "86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b",
+  "125609aa301da0a249b97a8239cb6a34216f44dcac9f3954b14292f2e8c8608f",
+  "bc4d809b15189d78db3e1d8cf4f9726a795da1643ca5f1358e1ddb0edc0d7eb3",
+]);
+const keep = (pem) => !distrusted.has(createHash("sha256").update(Buffer.from(pem.replace(/-----(?:BEGIN|END) CERTIFICATE-----|\s/gu, ""), "base64")).digest("hex"));
+if (typeof tls.setDefaultCACertificates === "function") {
+  const current = tls.getCACertificates("default");
+  if (!current.every(keep)) tls.setDefaultCACertificates(current.filter(keep));
+}
+EOF
+  NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--import=file://$NPM_TRUST_PRELOAD" command npm "$@"
+}
 
 npm_flags() {
   # shellcheck disable=SC2086

@@ -10,6 +10,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   acquireUpdateLock,
   adoptUpdateLock,
+  DISTRUSTED_ROOT_SHA256,
   getUpdateLockProcessGroup,
   UpdateLockBusyError,
 } from "@omnesis/core";
@@ -127,6 +128,32 @@ describe("spawnRunner environment", () => {
       );
       expect(result.code).toBe(0);
       expect(result.stdout).toBe("--max-old-space-size=4096|path");
+    },
+  );
+});
+
+describe("spawnRunner trust for npm", () => {
+  test.skipIf(process.platform === "win32")(
+    "npm gets a preload that keeps the distrusted roots out of its CA store",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-npm-trust-"));
+      try {
+        // A stand-in npm: whatever Node it starts inherits the runner's NODE_OPTIONS.
+        const npm = join(dir, "npm");
+        writeFileSync(
+          npm,
+          `#!/bin/sh\nexec "${process.execPath}" -e 'const d=new Set(${JSON.stringify([...DISTRUSTED_ROOT_SHA256])});process.stdout.write(String(require("node:tls").getCACertificates("default").some((p)=>d.has(new (require("node:crypto").X509Certificate)(p).fingerprint256.replaceAll(":","").toLowerCase()))))'\n`,
+          { mode: 0o755 },
+        );
+        const result = await spawnRunner(
+          { command: npm, args: [], env: { NODE_OPTIONS: "--max-old-space-size=512" } },
+          "capture",
+        );
+        expect(result.code).toBe(0);
+        expect(result.stdout).toBe("false");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     },
   );
 });

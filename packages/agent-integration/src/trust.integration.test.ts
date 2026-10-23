@@ -15,6 +15,7 @@ import { join } from "node:path";
 import {
   connect as tlsConnect,
   createServer,
+  getCACertificates,
   type DetailedPeerCertificate,
   type Server,
 } from "node:tls";
@@ -23,7 +24,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vite
 import { PinnedGatewayHttpClient } from "./http.js";
 import { certificateCannotIssue } from "./certificate-authority.js";
 import { GatewayTlsError, type TlsTrust } from "./tls.js";
-import { anchoredByPin, GatewayTrust } from "./trust.js";
+import { anchoredByPin, GatewayTrust, publicRoots } from "./trust.js";
 
 const NAME = "gateway.example.test";
 
@@ -415,5 +416,16 @@ describe("a chain issued under the pin", () => {
       anchoredByPin(chain(signOnlyImpostor, signOnly), signOnly.certPem, signOnly.fingerprint),
     ).toBe(true);
     expect(anchoredByPin(chain(renewed, root), current.certPem, current.fingerprint)).toBe(false);
+  });
+});
+
+describe("the public roots system trust verifies against", () => {
+  test("are Node's bundled roots without the distrusted emSign roots", () => {
+    const emSign = /CN=emSign (ECC )?Root CA - (G3|C1|C3)$/mu;
+    const roots = publicRoots();
+    expect(roots.some((pem) => emSign.test(new X509Certificate(pem).subject))).toBe(false);
+    expect(roots).toEqual(
+      getCACertificates("bundled").filter((pem) => !emSign.test(new X509Certificate(pem).subject)),
+    );
   });
 });

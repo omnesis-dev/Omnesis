@@ -1857,6 +1857,21 @@ fs.writeFileSync(path.join(dir, "..", "..", "installVersion"), "11\\n");
     expect(failed.output).not.toMatch(/remove .*node_modules/i);
   });
 
+  test("npm ci runs with the trust preload, which the installer removes afterwards", () => {
+    const run = runInstaller("npm-trust-preload", ["--no-tls", "--embedder", EMBED_IDS[0]], {
+      OMNESIS_TEST_KEYRING: "ready",
+    });
+    expect(run.status).toBe(0);
+    const preloads = readFileSync(join(run.home, "cli-calls.log.npm-ci-preload"), "utf8")
+      .trim()
+      .split("\n");
+    expect(preloads.length).toBeGreaterThan(0);
+    for (const preload of preloads) {
+      expect(preload).toMatch(/\/distrust-roots\.mjs$/u);
+      expect(existsSync(preload)).toBe(false);
+    }
+  });
+
   test("an operator's own heap setting is left exactly as they wrote it", () => {
     const run = runInstaller("build-heap-operator", ["--no-tls", "--embedder", EMBED_IDS[0]], {
       OMNESIS_TEST_KEYRING: "ready",

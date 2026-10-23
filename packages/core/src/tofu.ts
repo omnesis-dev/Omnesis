@@ -14,6 +14,7 @@ import { isIP } from "node:net";
 import { join } from "node:path";
 import { createLogger } from "./logger.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { publicRoots } from "./tls-distrust.js";
 
 const log = createLogger("tofu");
 
@@ -156,7 +157,7 @@ export function verifiesUnderSystemTrust(
   port: number,
   expectedFingerprint: string,
   options: {
-    /** The public roots to verify against. Defaults to Node's bundled set. */
+    /** The public roots to verify against. Defaults to `publicRoots()`. */
     roots?: readonly string[];
     /** Name resolution for the dial; the default resolves `host` as usual. */
     lookup?: ConnectionOptions["lookup"];
@@ -178,7 +179,7 @@ export function verifiesUnderSystemTrust(
         host,
         port,
         servername: host,
-        ca: [...(options.roots ?? getCACertificates("bundled"))],
+        ca: [...(options.roots ?? publicRoots())],
         rejectUnauthorized: true,
         timeout: options.timeoutMs ?? 10_000,
         ...(options.lookup ? { lookup: options.lookup } : {}),
